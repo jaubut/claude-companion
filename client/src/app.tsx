@@ -12,7 +12,7 @@ const TOOL_ICONS: Record<string, typeof Terminal> = {
 }
 
 export function App() {
-  const { connected, pending, waitingForInput, approve, deny, sendInput } = useCompanion()
+  const { connected, pending, waitingForInput, claudeMessage, approve, deny, sendInput } = useCompanion()
   const [text, setText] = useState("")
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
@@ -128,12 +128,18 @@ export function App() {
           /* Waiting for input — big input card */
           <div className="w-full max-w-sm">
             <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden shadow-2xl">
-              <div className="px-6 py-8 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-[var(--blue)]/15 flex items-center justify-center mx-auto mb-4">
-                  <MessageSquare className="w-7 h-7 text-[var(--blue)]" />
+              <div className="px-6 pt-6 pb-4">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-[var(--blue)]/15 flex items-center justify-center shrink-0">
+                    <MessageSquare className="w-5 h-5 text-[var(--blue)]" />
+                  </div>
+                  <div className="text-base font-bold">Claude is asking</div>
                 </div>
-                <div className="text-lg font-bold mb-1">Claude is waiting</div>
-                <div className="text-sm text-[var(--muted)]">Type or dictate your response</div>
+                {claudeMessage && (
+                  <div className="text-sm text-[var(--fg)] leading-relaxed max-h-48 overflow-y-auto mb-2 whitespace-pre-wrap">
+                    {claudeMessage}
+                  </div>
+                )}
               </div>
 
               <div className="px-4 pb-4 space-y-3">

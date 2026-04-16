@@ -2,11 +2,8 @@
 
 export async function injectText(text: string): Promise<boolean> {
   try {
-    // Copy text to clipboard
-    const pbcopy = Bun.spawn(["pbcopy"], { stdin: "pipe" })
-    const writer = pbcopy.stdin.getWriter()
-    await writer.write(new TextEncoder().encode(text))
-    await writer.close()
+    // Copy text to clipboard via pbcopy
+    const pbcopy = Bun.spawn(["pbcopy"], { stdin: new Blob([text]) })
     await pbcopy.exited
 
     // Small delay to ensure clipboard is ready

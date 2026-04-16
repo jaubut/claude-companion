@@ -142,13 +142,45 @@ export function createCompanionServer(port: number) {
 
       // ── Stop hook — Claude finished its turn, waiting for user input ──
       if (url.pathname === "/hooks/stop" && req.method === "POST") {
+        const body = await req.json() as {
+          transcript_path?: string
+          stop_hook_active?: boolean
+        }
+
+        // Extract Claude's last message from transcript
+        let lastMessage = ""
+        if (body.transcript_path) {
+          try {
+            const transcript = await Bun.file(body.transcript_path).text()
+            const lines = transcript.trim().split("\n")
+            // Walk backwards to find last assistant text
+            for (let i = lines.length - 1; i >= 0; i--) {
+              try {
+                const entry = JSON.parse(lines[i]!)
+                if (entry.type === "assistant") {
+                  const content = entry.message?.content
+                  if (Array.isArray(content)) {
+                    const textBlocks = content
+                      .filter((b: Record<string, unknown>) => b.type === "text")
+                      .map((b: Record<string, unknown>) => b.text as string)
+                    if (textBlocks.length) {
+                      lastMessage = textBlocks.join("\n").slice(-500)
+                      break
+                    }
+                  }
+                }
+              } catch { /* skip unparseable lines */ }
+            }
+          } catch { /* transcript not readable */ }
+        }
+
         waitingForInput = true
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
         const magenta = "\x1b[35m"
         process.stderr.write(`${dim}[companion]${reset} ${magenta}waiting for input${reset} — phone can respond\n`)
 
-        broadcast({ type: "waiting_input", waiting: true })
+        broadcast({ type: "waiting_input", waiting: true, message: lastMessage })
         return Response.json({})
       }
 

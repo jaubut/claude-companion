@@ -11,6 +11,7 @@ interface CompanionState {
   connected: boolean
   pending: ApprovalRequest[]
   waitingForInput: boolean
+  claudeMessage: string
 }
 
 export function useCompanion() {
@@ -18,6 +19,7 @@ export function useCompanion() {
     connected: false,
     pending: [],
     waitingForInput: false,
+    claudeMessage: "",
   })
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -67,7 +69,11 @@ export function useCompanion() {
             break
 
           case "waiting_input":
-            setState(s => ({ ...s, waitingForInput: msg.waiting }))
+            setState(s => ({
+              ...s,
+              waitingForInput: msg.waiting,
+              claudeMessage: msg.message ?? "",
+            }))
             if (msg.waiting && navigator.vibrate) navigator.vibrate([200, 100, 200])
             break
 
