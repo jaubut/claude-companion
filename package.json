@@ -1,0 +1,21 @@
+{
+  "name": "claude-companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "claude-companion": "./cli.ts"
+  },
+  "scripts": {
+    "dev:client": "cd client && bun run dev",
+    "build": "cd client && bun run build",
+    "start": "bun cli.ts"
+  },
+  "dependencies": {
+    "hono": "^4.12.12"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "~5.9.3"
+  }
+}

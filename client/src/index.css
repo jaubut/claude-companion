@@ -1,0 +1,43 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+
+@theme inline {
+  --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+:root {
+  --bg: #0a0a0a;
+  --fg: #e8e6e3;
+  --muted: #8a8a87;
+  --surface: #161616;
+  --border: #2a2a2a;
+  --green: #34d399;
+  --red: #f87171;
+  --blue: #5ba3e8;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+html {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* Terminal output area */
+.terminal-output {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+}
