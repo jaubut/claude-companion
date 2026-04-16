@@ -5,6 +5,7 @@ export interface ApprovalRequest {
   tool: string
   input: Record<string, unknown>
   sessionId: string
+  cwd: string
 }
 
 interface CompanionState {
@@ -56,6 +57,7 @@ export function useCompanion() {
                 tool: msg.tool,
                 input: msg.input ?? {},
                 sessionId: msg.sessionId ?? "",
+                cwd: msg.cwd ?? "",
               }],
             }))
             if (navigator.vibrate) navigator.vibrate([100, 50, 100])

@@ -31,6 +31,7 @@ onApprovalRequest((req) => {
     tool: req.tool,
     input: req.input,
     sessionId: req.sessionId,
+    cwd: req.cwd,
   })
 })
 
@@ -56,11 +57,13 @@ export function createCompanionServer(port: number) {
           session_id?: string
           tool_name?: string
           tool_input?: Record<string, unknown>
+          cwd?: string
         }
 
         const tool = body.tool_name ?? "unknown"
         const input = body.tool_input ?? {}
         const sessionId = body.session_id ?? ""
+        const cwd = body.cwd ?? ""
 
         // Claude is working again — no longer waiting for input
         if (waitingForInput) {
@@ -89,7 +92,7 @@ export function createCompanionServer(port: number) {
         } else {
           // Ask the human via phone
           process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${getSummary(tool, input)}${reset}\n`)
-          decision = await addApprovalRequest({ sessionId, tool, input })
+          decision = await addApprovalRequest({ sessionId, tool, input, cwd })
           const decisionColor = decision === "allow" ? green : red
           process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← phone\n`)
         }
@@ -112,11 +115,13 @@ export function createCompanionServer(port: number) {
           tool_name?: string
           tool_input?: Record<string, unknown>
           hook_event_name?: string
+          cwd?: string
         }
 
         const tool = body.tool_name ?? "permission"
         const input = body.tool_input ?? {}
         const sessionId = body.session_id ?? ""
+        const cwd = body.cwd ?? ""
 
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
@@ -125,7 +130,7 @@ export function createCompanionServer(port: number) {
 
         process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${getSummary(tool, input)}${reset}\n`)
 
-        const decision = await addApprovalRequest({ sessionId, tool, input })
+        const decision = await addApprovalRequest({ sessionId, tool, input, cwd })
 
         const green = "\x1b[32m"
         const red = "\x1b[31m"
@@ -236,6 +241,7 @@ export function createCompanionServer(port: number) {
             tool: req.tool,
             input: req.input,
             sessionId: req.sessionId,
+            cwd: req.cwd,
           }))
         }
 

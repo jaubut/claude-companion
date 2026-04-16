@@ -193,6 +193,11 @@ function ApprovalCard({
     <div className="h-full flex flex-col rounded-3xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden shadow-2xl">
       {/* Tool info */}
       <div className="flex-1 flex flex-col justify-center px-6 py-8">
+        {request.cwd && (
+          <div className="text-xs text-[var(--muted)] font-mono mb-3 truncate">
+            {request.cwd.split("/").pop()}
+          </div>
+        )}
         <div className="flex items-center gap-4 mb-5">
           <div className="w-14 h-14 rounded-2xl bg-[var(--blue)]/15 flex items-center justify-center">
             <Icon className="w-7 h-7 text-[var(--blue)]" />

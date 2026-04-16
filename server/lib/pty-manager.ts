@@ -5,6 +5,7 @@ export interface ApprovalRequest {
   sessionId: string
   tool: string
   input: Record<string, unknown>
+  cwd: string
   timestamp: number
   resolve: (decision: "allow" | "deny") => void
 }
