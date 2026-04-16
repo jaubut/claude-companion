@@ -105,6 +105,41 @@ export function createCompanionServer(port: number) {
         })
       }
 
+      // ── Permission request hook — multi-choice permission dialogs ──
+      if (url.pathname === "/hooks/permission-request" && req.method === "POST") {
+        const body = await req.json() as {
+          session_id?: string
+          tool_name?: string
+          tool_input?: Record<string, unknown>
+          hook_event_name?: string
+        }
+
+        const tool = body.tool_name ?? "permission"
+        const input = body.tool_input ?? {}
+        const sessionId = body.session_id ?? ""
+
+        const dim = "\x1b[2m"
+        const reset = "\x1b[0m"
+        const yellow = "\x1b[33m"
+        const cyan = "\x1b[36m"
+
+        process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${getSummary(tool, input)}${reset}\n`)
+
+        const decision = await addApprovalRequest({ sessionId, tool, input })
+
+        const green = "\x1b[32m"
+        const red = "\x1b[31m"
+        const decisionColor = decision === "allow" ? green : red
+        process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← permission\n`)
+
+        return Response.json({
+          hookSpecificOutput: {
+            hookEventName: "PermissionRequest",
+            decision: { behavior: decision },
+          },
+        })
+      }
+
       // ── Stop hook — Claude finished its turn, waiting for user input ──
       if (url.pathname === "/hooks/stop" && req.method === "POST") {
         waitingForInput = true
