@@ -45,7 +45,6 @@ export function App() {
         .join("")
       setText(transcript)
 
-      // Auto-send on final result
       const lastResult = e.results[e.results.length - 1]
       if (lastResult?.isFinal && transcript.trim()) {
         sendInput(transcript.trim())
@@ -82,22 +81,24 @@ export function App() {
         )}
       </header>
 
-      {/* Card stack area */}
-      <div className="flex-1 flex items-center justify-center p-4">
-        {pending.length === 0 && !waitingForInput ? (
-          <div className="text-center">
-            <div className="opacity-15 mb-4">
-              {connected
-                ? <Check className="w-20 h-20 mx-auto" />
-                : <WifiOff className="w-20 h-20 mx-auto" />
-              }
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col items-center justify-center p-4 gap-4 overflow-y-auto">
+        {/* Claude's question banner */}
+        {waitingForInput && claudeMessage && (
+          <div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-5 py-4">
+            <div className="flex items-center gap-2 mb-2">
+              <MessageSquare className="w-4 h-4 text-[var(--blue)] shrink-0" />
+              <span className="text-xs font-semibold text-[var(--blue)]">Claude is asking</span>
             </div>
-            <div className="text-sm text-[var(--muted)]/60">
-              {!connected ? "Connecting..." : "No pending approvals"}
+            <div className="text-sm text-[var(--fg)] leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {claudeMessage}
             </div>
           </div>
-        ) : pending.length > 0 ? (
-          <div className="relative w-full max-w-sm" style={{ height: "min(70dvh, 480px)" }}>
+        )}
+
+        {/* Approval card stack */}
+        {pending.length > 0 ? (
+          <div className="relative w-full max-w-sm" style={{ height: "min(55dvh, 400px)" }}>
             {pending.slice(0, 3).map((req, i) => {
               const isTop = i === 0
               const offset = i * 8
@@ -124,62 +125,53 @@ export function App() {
               )
             })}
           </div>
-        ) : (
-          /* Waiting for input — big input card */
-          <div className="w-full max-w-sm">
-            <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden shadow-2xl">
-              <div className="px-6 pt-6 pb-4">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-[var(--blue)]/15 flex items-center justify-center shrink-0">
-                    <MessageSquare className="w-5 h-5 text-[var(--blue)]" />
-                  </div>
-                  <div className="text-base font-bold">Claude is asking</div>
-                </div>
-                {claudeMessage && (
-                  <div className="text-sm text-[var(--fg)] leading-relaxed max-h-48 overflow-y-auto mb-2 whitespace-pre-wrap">
-                    {claudeMessage}
-                  </div>
-                )}
-              </div>
-
-              <div className="px-4 pb-4 space-y-3">
-                {/* Text input */}
-                <textarea
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend() } }}
-                  placeholder="Your response..."
-                  rows={3}
-                  className="w-full bg-[var(--bg)] rounded-2xl px-4 py-3 text-base text-[var(--fg)] placeholder:text-[var(--muted)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--blue)] resize-none"
-                />
-
-                {/* Action row */}
-                <div className="flex gap-3">
-                  {hasSpeech && (
-                    <button
-                      onClick={toggleVoice}
-                      className={`flex items-center justify-center w-16 py-4 rounded-2xl transition-all active:scale-95 ${
-                        listening
-                          ? "bg-[var(--red)]/15 text-[var(--red)]"
-                          : "bg-[var(--border)] text-[var(--muted)]"
-                      }`}
-                    >
-                      {listening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
-                    </button>
-                  )}
-                  <button
-                    onClick={handleSend}
-                    disabled={!text.trim()}
-                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl bg-[var(--blue)]/15 text-[var(--blue)] font-bold text-lg active:scale-95 transition-transform disabled:opacity-30"
-                  >
-                    <Send className="w-6 h-6" />
-                    Send
-                  </button>
-                </div>
-              </div>
+        ) : !waitingForInput && (
+          <div className="text-center">
+            <div className="opacity-15 mb-4">
+              {connected
+                ? <Check className="w-20 h-20 mx-auto" />
+                : <WifiOff className="w-20 h-20 mx-auto" />
+              }
+            </div>
+            <div className="text-sm text-[var(--muted)]/60">
+              {!connected ? "Connecting..." : "No pending approvals"}
             </div>
           </div>
         )}
+      </div>
+
+      {/* Persistent input bar — always visible */}
+      <div className="shrink-0 border-t border-[var(--border)] bg-[var(--surface)] px-3 py-2 pb-safe">
+        <div className="flex items-center gap-2">
+          {hasSpeech && (
+            <button
+              onClick={toggleVoice}
+              className={`p-2.5 rounded-full shrink-0 transition-colors active:scale-95 ${
+                listening
+                  ? "bg-[var(--red)]/15 text-[var(--red)]"
+                  : "text-[var(--muted)] active:text-[var(--fg)]"
+              }`}
+            >
+              {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            </button>
+          )}
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSend() }}
+            placeholder={waitingForInput ? "Reply to Claude..." : "Type into terminal..."}
+            disabled={!connected}
+            className="flex-1 bg-[var(--bg)] rounded-xl px-4 py-2.5 text-sm text-[var(--fg)] placeholder:text-[var(--muted)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--blue)] disabled:opacity-40"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!connected || !text.trim()}
+            className="p-2.5 rounded-full bg-[var(--blue)] text-black disabled:opacity-30 shrink-0 transition-opacity active:scale-95"
+          >
+            <Send className="w-5 h-5" />
+          </button>
+        </div>
       </div>
     </div>
   )
