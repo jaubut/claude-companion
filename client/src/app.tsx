@@ -1,5 +1,6 @@
+import { useRef, useState } from "react"
 import { useCompanion, type ApprovalRequest } from "@/hooks/use-companion"
-import { Wifi, WifiOff, Check, X, FileEdit, Terminal, Eye, FileText, Search, FolderSearch } from "lucide-react"
+import { Wifi, WifiOff, Check, X, FileEdit, Terminal, Eye, FileText, Search, FolderSearch, Mic, MicOff, Send, MessageSquare } from "lucide-react"
 
 const TOOL_ICONS: Record<string, typeof Terminal> = {
   Edit: FileEdit,
@@ -11,7 +12,56 @@ const TOOL_ICONS: Record<string, typeof Terminal> = {
 }
 
 export function App() {
-  const { connected, pending, approve, deny } = useCompanion()
+  const { connected, pending, waitingForInput, approve, deny, sendInput } = useCompanion()
+  const [text, setText] = useState("")
+  const [listening, setListening] = useState(false)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
+
+  const handleSend = () => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    sendInput(trimmed)
+    setText("")
+  }
+
+  const toggleVoice = () => {
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+      return
+    }
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return
+
+    const recognition = new SR()
+    recognition.continuous = false
+    recognition.interimResults = true
+    recognition.lang = "en-US"
+
+    recognition.onresult = (e: SpeechRecognitionEvent) => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0]?.transcript ?? "")
+        .join("")
+      setText(transcript)
+
+      // Auto-send on final result
+      const lastResult = e.results[e.results.length - 1]
+      if (lastResult?.isFinal && transcript.trim()) {
+        sendInput(transcript.trim())
+        setText("")
+      }
+    }
+
+    recognition.onend = () => setListening(false)
+    recognition.onerror = () => setListening(false)
+
+    recognitionRef.current = recognition
+    recognition.start()
+    setListening(true)
+  }
+
+  const hasSpeech = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition)
 
   return (
     <div className="h-dvh flex flex-col">
@@ -22,7 +72,7 @@ export function App() {
           : <WifiOff className="w-3.5 h-3.5 text-[var(--red)]" />
         }
         <span className="text-xs text-[var(--muted)]">
-          {!connected ? "Connecting..." : "Listening"}
+          {!connected ? "Connecting..." : waitingForInput ? "Claude is asking..." : "Listening"}
         </span>
         <div className="flex-1" />
         {pending.length > 1 && (
@@ -34,7 +84,7 @@ export function App() {
 
       {/* Card stack area */}
       <div className="flex-1 flex items-center justify-center p-4">
-        {pending.length === 0 ? (
+        {pending.length === 0 && !waitingForInput ? (
           <div className="text-center">
             <div className="opacity-15 mb-4">
               {connected
@@ -46,9 +96,8 @@ export function App() {
               {!connected ? "Connecting..." : "No pending approvals"}
             </div>
           </div>
-        ) : (
+        ) : pending.length > 0 ? (
           <div className="relative w-full max-w-sm" style={{ height: "min(70dvh, 480px)" }}>
-            {/* Stacked cards — show up to 3, top card is interactive */}
             {pending.slice(0, 3).map((req, i) => {
               const isTop = i === 0
               const offset = i * 8
@@ -70,11 +119,59 @@ export function App() {
                     request={req}
                     onApprove={approve}
                     onDeny={deny}
-                    active={isTop}
                   />
                 </div>
               )
             })}
+          </div>
+        ) : (
+          /* Waiting for input — big input card */
+          <div className="w-full max-w-sm">
+            <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden shadow-2xl">
+              <div className="px-6 py-8 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[var(--blue)]/15 flex items-center justify-center mx-auto mb-4">
+                  <MessageSquare className="w-7 h-7 text-[var(--blue)]" />
+                </div>
+                <div className="text-lg font-bold mb-1">Claude is waiting</div>
+                <div className="text-sm text-[var(--muted)]">Type or dictate your response</div>
+              </div>
+
+              <div className="px-4 pb-4 space-y-3">
+                {/* Text input */}
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend() } }}
+                  placeholder="Your response..."
+                  rows={3}
+                  className="w-full bg-[var(--bg)] rounded-2xl px-4 py-3 text-base text-[var(--fg)] placeholder:text-[var(--muted)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--blue)] resize-none"
+                />
+
+                {/* Action row */}
+                <div className="flex gap-3">
+                  {hasSpeech && (
+                    <button
+                      onClick={toggleVoice}
+                      className={`flex items-center justify-center w-16 py-4 rounded-2xl transition-all active:scale-95 ${
+                        listening
+                          ? "bg-[var(--red)]/15 text-[var(--red)]"
+                          : "bg-[var(--border)] text-[var(--muted)]"
+                      }`}
+                    >
+                      {listening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSend}
+                    disabled={!text.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl bg-[var(--blue)]/15 text-[var(--blue)] font-bold text-lg active:scale-95 transition-transform disabled:opacity-30"
+                  >
+                    <Send className="w-6 h-6" />
+                    Send
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -86,19 +183,17 @@ function ApprovalCard({
   request,
   onApprove,
   onDeny,
-  active,
 }: {
   request: ApprovalRequest
   onApprove: (id: string) => void
   onDeny: (id: string) => void
-  active: boolean
 }) {
   const Icon = TOOL_ICONS[request.tool] ?? Terminal
   const summary = getToolSummary(request.tool, request.input)
 
   return (
-    <div className={`h-full flex flex-col rounded-3xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden shadow-2xl ${active ? "" : "shadow-none"}`}>
-      {/* Tool info — top section */}
+    <div className="h-full flex flex-col rounded-3xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden shadow-2xl">
+      {/* Tool info */}
       <div className="flex-1 flex flex-col justify-center px-6 py-8">
         <div className="flex items-center gap-4 mb-5">
           <div className="w-14 h-14 rounded-2xl bg-[var(--blue)]/15 flex items-center justify-center">
@@ -113,7 +208,7 @@ function ApprovalCard({
         )}
       </div>
 
-      {/* Big action buttons — bottom half */}
+      {/* Big action buttons */}
       <div className="flex gap-3 p-4 pt-0">
         <button
           onClick={() => onDeny(request.id)}
@@ -148,5 +243,12 @@ function getToolSummary(tool: string, input: Record<string, unknown>): string {
       return (input.pattern as string) ?? ""
     default:
       return JSON.stringify(input).slice(0, 150)
+  }
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: typeof SpeechRecognition
+    webkitSpeechRecognition: typeof SpeechRecognition
   }
 }

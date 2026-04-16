@@ -7,12 +7,14 @@ import {
   type ApprovalRequest,
 } from "./lib/pty-manager"
 import { autoJudge } from "./lib/auto-judge"
+import { injectText } from "./lib/keyboard-inject"
 
 interface WsData {
   id: string
 }
 
 const clients = new Set<ServerWebSocket<WsData>>()
+let waitingForInput = false
 
 function broadcast(data: Record<string, unknown>) {
   const msg = JSON.stringify(data)
@@ -60,6 +62,12 @@ export function createCompanionServer(port: number) {
         const input = body.tool_input ?? {}
         const sessionId = body.session_id ?? ""
 
+        // Claude is working again — no longer waiting for input
+        if (waitingForInput) {
+          waitingForInput = false
+          broadcast({ type: "waiting_input", waiting: false })
+        }
+
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
         const green = "\x1b[32m"
@@ -97,11 +105,41 @@ export function createCompanionServer(port: number) {
         })
       }
 
+      // ── Stop hook — Claude finished its turn, waiting for user input ──
+      if (url.pathname === "/hooks/stop" && req.method === "POST") {
+        waitingForInput = true
+        const dim = "\x1b[2m"
+        const reset = "\x1b[0m"
+        const magenta = "\x1b[35m"
+        process.stderr.write(`${dim}[companion]${reset} ${magenta}waiting for input${reset} — phone can respond\n`)
+
+        broadcast({ type: "waiting_input", waiting: true })
+        return Response.json({})
+      }
+
+      // ── Inject text from phone into terminal ──
+      if (url.pathname === "/api/inject" && req.method === "POST") {
+        const { text } = await req.json() as { text: string }
+        if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+
+        const dim = "\x1b[2m"
+        const reset = "\x1b[0m"
+        const cyan = "\x1b[36m"
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset} "${text.slice(0, 60)}"\n`)
+
+        waitingForInput = false
+        broadcast({ type: "waiting_input", waiting: false })
+
+        const ok = await injectText(text)
+        return Response.json({ ok })
+      }
+
       // ── Status endpoint ──
       if (url.pathname === "/api/status") {
         return Response.json({
           pending: getPending().length,
           clients: clients.size,
+          waitingForInput,
         })
       }
 
@@ -137,10 +175,11 @@ export function createCompanionServer(port: number) {
         ws.send(JSON.stringify({
           type: "init",
           pending: pendingList.length,
+          waitingForInput,
         }))
       },
       message(ws, raw) {
-        let msg: { type: string; id?: string }
+        let msg: { type: string; id?: string; text?: string }
         try {
           msg = JSON.parse(typeof raw === "string" ? raw : raw.toString())
         } catch { return }
@@ -156,6 +195,13 @@ export function createCompanionServer(port: number) {
             if (msg.id) {
               resolveApproval(msg.id, "deny")
               broadcast({ type: "resolved", id: msg.id, decision: "deny" })
+            }
+            break
+          case "input":
+            if (msg.text?.trim()) {
+              waitingForInput = false
+              broadcast({ type: "waiting_input", waiting: false })
+              injectText(msg.text.trim())
             }
             break
           case "ping":

@@ -10,12 +10,14 @@ export interface ApprovalRequest {
 interface CompanionState {
   connected: boolean
   pending: ApprovalRequest[]
+  waitingForInput: boolean
 }
 
 export function useCompanion() {
   const [state, setState] = useState<CompanionState>({
     connected: false,
     pending: [],
+    waitingForInput: false,
   })
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -54,7 +56,6 @@ export function useCompanion() {
                 sessionId: msg.sessionId ?? "",
               }],
             }))
-            // Vibrate
             if (navigator.vibrate) navigator.vibrate([100, 50, 100])
             break
 
@@ -65,7 +66,13 @@ export function useCompanion() {
             }))
             break
 
+          case "waiting_input":
+            setState(s => ({ ...s, waitingForInput: msg.waiting }))
+            if (msg.waiting && navigator.vibrate) navigator.vibrate([200, 100, 200])
+            break
+
           case "init":
+            setState(s => ({ ...s, waitingForInput: msg.waitingForInput ?? false }))
             break
           case "pong":
             break
@@ -93,8 +100,8 @@ export function useCompanion() {
 
   const approve = useCallback((id: string) => send({ type: "approve", id }), [send])
   const deny = useCallback((id: string) => send({ type: "deny", id }), [send])
+  const sendInput = useCallback((text: string) => send({ type: "input", text }), [send])
 
-  // iOS reconnection
   useEffect(() => {
     const handleVisibility = () => {
       if (!document.hidden && wsRef.current?.readyState !== WebSocket.OPEN) {
@@ -114,5 +121,5 @@ export function useCompanion() {
     }
   }, [connect])
 
-  return { ...state, approve, deny }
+  return { ...state, approve, deny, sendInput }
 }
