@@ -205,7 +205,7 @@ function ApprovalCard({
           <span className="text-2xl font-bold">{request.tool}</span>
         </div>
         {summary && (
-          <div className="text-base font-mono text-[var(--muted)] break-all leading-relaxed max-h-40 overflow-y-auto">
+          <div className="text-sm font-mono text-[var(--muted)] break-all leading-relaxed max-h-56 overflow-y-auto">
             {summary}
           </div>
         )}
@@ -235,17 +235,29 @@ function ApprovalCard({
 function getToolSummary(tool: string, input: Record<string, unknown>): string {
   switch (tool) {
     case "Edit":
-    case "Read":
+      return [
+        input.file_path as string,
+        input.old_string ? `\n- ${(input.old_string as string)}` : "",
+        input.new_string ? `\n+ ${(input.new_string as string)}` : "",
+      ].filter(Boolean).join("")
     case "Write":
+      return [
+        input.file_path as string,
+        input.content ? `\n${(input.content as string)}` : "",
+      ].filter(Boolean).join("")
+    case "Read":
       return (input.file_path as string) ?? ""
     case "Bash":
-      return (input.command as string)?.slice(0, 200) ?? ""
+      return (input.command as string) ?? ""
     case "Grep":
-      return `/${input.pattern as string ?? ""}/`
+      return [
+        `/${input.pattern as string ?? ""}/`,
+        input.path ? ` in ${input.path as string}` : "",
+      ].join("")
     case "Glob":
       return (input.pattern as string) ?? ""
     default:
-      return JSON.stringify(input).slice(0, 150)
+      return JSON.stringify(input, null, 2)
   }
 }
 
