@@ -4,24 +4,28 @@
 @theme inline {
   --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-bg: #09090b;
+  --color-fg: #ffffff;
+  --color-muted: #999999;
+  --color-surface: rgba(255, 255, 255, 0.06);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-green: #34d399;
+  --color-red: #f87171;
+  --color-accent: #ab9ff2;
+  --color-accent-dim: rgba(171, 159, 242, 0.15);
 }
 
 :root {
-  --bg: #0a0a0a;
-  --fg: #e8e6e3;
-  --muted: #8a8a87;
-  --surface: #161616;
-  --border: #2a2a2a;
-  --green: #34d399;
-  --red: #f87171;
-  --blue: #5ba3e8;
+  --glass-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+                  inset -1px 0 0 0 rgba(255, 255, 255, 0.06),
+                  inset 0 -1px 0 0 rgba(255, 255, 255, 0.06),
+                  inset 1px 0 0 0 rgba(255, 255, 255, 0.06);
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-
 body {
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--color-bg);
+  color: var(--color-fg);
   font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
@@ -32,6 +36,13 @@ html {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+/* Glass card */
+.glass-card {
+  background: var(--color-surface);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+}
+
 /* Terminal output area */
 .terminal-output {
   font-family: var(--font-mono);
@@ -39,5 +50,5 @@ html {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--fg);
+  color: var(--color-fg);
 }

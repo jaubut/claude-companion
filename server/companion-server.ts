@@ -8,6 +8,15 @@ import {
 } from "./lib/pty-manager"
 import { autoJudge } from "./lib/auto-judge"
 import { injectText } from "./lib/keyboard-inject"
+import {
+  addSubscription,
+  removeSubscription,
+  sendWebPush,
+  getVapidPublicKey,
+  subscriptionCount,
+  listSubscriptions,
+  type WebPushPayload,
+} from "./lib/web-push"
 
 interface WsData {
   id: string
@@ -23,6 +32,15 @@ function broadcast(data: Record<string, unknown>) {
   }
 }
 
+const COMPANION_URL = process.env.COMPANION_URL || "/"
+
+function maybePush(payload: WebPushPayload): void {
+  // Only push when the UI isn't already foregrounded. When a WS client is open,
+  // the broadcast above is faster and push would be redundant.
+  if (clients.size > 0) return
+  void sendWebPush(payload)
+}
+
 // Notify phone when new approval request comes in
 onApprovalRequest((req) => {
   broadcast({
@@ -32,6 +50,14 @@ onApprovalRequest((req) => {
     input: req.input,
     sessionId: req.sessionId,
     cwd: req.cwd,
+  })
+  maybePush({
+    event: "approval",
+    title: `Claude needs approval: ${req.tool}`,
+    body: getSummary(req.tool, req.input).slice(0, 240) || "Tap to review.",
+    tag: `approval-${req.id}`,
+    url: COMPANION_URL,
+    requireInteraction: true,
   })
 })
 
@@ -130,6 +156,14 @@ export function createCompanionServer(port: number) {
 
         process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${getSummary(tool, input)}${reset}\n`)
 
+        maybePush({
+          event: "permission",
+          title: `Claude needs permission: ${tool}`,
+          body: getSummary(tool, input).slice(0, 240) || "Tap to review.",
+          url: COMPANION_URL,
+          requireInteraction: true,
+        })
+
         const decision = await addApprovalRequest({ sessionId, tool, input, cwd })
 
         const green = "\x1b[32m"
@@ -185,6 +219,13 @@ export function createCompanionServer(port: number) {
         const magenta = "\x1b[35m"
         process.stderr.write(`${dim}[companion]${reset} ${magenta}waiting for input${reset} — phone can respond\n`)
 
+        maybePush({
+          event: "waiting",
+          title: "Claude is waiting for you",
+          body: lastMessage.slice(0, 240) || "Tap to respond.",
+          url: COMPANION_URL,
+        })
+
         broadcast({ type: "waiting_input", waiting: true, message: lastMessage })
         return Response.json({})
       }
@@ -213,6 +254,52 @@ export function createCompanionServer(port: number) {
           clients: clients.size,
           waitingForInput,
         })
+      }
+
+      // ── Web Push: VAPID key ──
+      if (url.pathname === "/api/push/vapid-key") {
+        return Response.json({ publicKey: getVapidPublicKey() })
+      }
+
+      // ── Web Push: subscribe ──
+      if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
+        const body = (await req.json()) as { subscription?: unknown }
+        const sub = body.subscription as { endpoint?: string } | undefined
+        if (!sub?.endpoint) {
+          return Response.json({ ok: false, error: "missing subscription" }, { status: 400 })
+        }
+        const ua = req.headers.get("user-agent") ?? undefined
+        const saved = addSubscription(sub as Parameters<typeof addSubscription>[0], ua)
+        process.stderr.write(
+          `\x1b[2m[companion]\x1b[0m \x1b[32mpush subscribed\x1b[0m ${ua?.slice(0, 60) ?? ""} (total: ${subscriptionCount()})\n`,
+        )
+        return Response.json({ ok: true, id: saved.id })
+      }
+
+      // ── Web Push: unsubscribe ──
+      if (url.pathname === "/api/push/unsubscribe" && req.method === "POST") {
+        const body = (await req.json()) as { endpoint?: string }
+        if (!body.endpoint) {
+          return Response.json({ ok: false, error: "missing endpoint" }, { status: 400 })
+        }
+        const removed = removeSubscription(body.endpoint)
+        return Response.json({ ok: true, removed })
+      }
+
+      // ── Web Push: list (debug) ──
+      if (url.pathname === "/api/push/subscriptions") {
+        return Response.json({ count: subscriptionCount(), subscriptions: listSubscriptions() })
+      }
+
+      // ── Web Push: test push to all devices ──
+      if (url.pathname === "/api/push/test" && req.method === "POST") {
+        const result = await sendWebPush({
+          event: "waiting",
+          title: "Claude Companion",
+          body: "Test notification — push is working.",
+          url: COMPANION_URL,
+        })
+        return Response.json({ ok: true, ...result })
       }
 
       // ── Serve static files ──

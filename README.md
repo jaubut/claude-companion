@@ -94,6 +94,50 @@ Customize the rules in `server/lib/auto-judge.ts`.
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `COMPANION_PORT` | `4245` | Server port |
+| `COMPANION_URL` | `/` | Tap-target for notifications — e.g. `https://mac.tailnet.ts.net` |
+| `COMPANION_VAPID_SUBJECT` | `mailto:companion@localhost` | Written into the VAPID keypair on first run. Most push gateways require a valid-looking `mailto:` — change before generating keys in production |
+
+## Push notifications (Web Push — no extra app)
+
+Push uses the browser's native notification system via VAPID. No ntfy, no native app — the same companion URL you already open on your phone handles both the UI and the notifications through a service worker.
+
+The server pushes only when **no WebSocket client is connected** (tab closed/backgrounded). If the tab is open, the WebSocket is the faster path.
+
+Pushes fire on:
+- **Approval requests** — high urgency, `requireInteraction: true`
+- **Permission requests** — high urgency, `requireInteraction: true`
+- **Claude finishing a turn and waiting for input** — normal urgency
+
+### First-time setup on iPhone (iOS 16.4+)
+
+iOS requires **HTTPS** and the site must be installed on the Home Screen as a PWA before Safari will allow Web Push. Easiest route on a local network:
+
+```bash
+# Serve your local companion over HTTPS on your tailnet
+tailscale serve --bg --https=4244 http://localhost:4245
+
+# You'll get something like https://your-mac.tailnet.ts.net — use that URL:
+export COMPANION_URL="https://your-mac.tailnet.ts.net"
+bun ~/claude-companion/cli.ts
+```
+
+Then on the iPhone (connected to the same tailnet):
+1. Open `https://your-mac.tailnet.ts.net` in **Safari** (not Chrome)
+2. Share icon → **Add to Home Screen**
+3. Open the newly-installed "Claude" app from the Home Screen
+4. Tap the bell icon in the top bar → grant notification permission
+5. Optional: `curl -X POST $COMPANION_URL/api/push/test` to verify
+
+### Android (Chrome)
+
+No PWA install required — HTTPS + granting notification permission is enough. Open the companion URL, tap the bell, done.
+
+### Keys + subscriptions
+
+- VAPID keypair lives at `~/.claude-companion/vapid.json` (0600 perms, auto-generated on first run)
+- Subscriptions at `~/.claude-companion/subscriptions.json` — one record per subscribed device; revoked endpoints are pruned automatically
+
+To wipe all devices, delete `subscriptions.json`. To rotate the VAPID keypair (invalidates all existing subscriptions), delete `vapid.json`.
 
 ## Requirements
 
