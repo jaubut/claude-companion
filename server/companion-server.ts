@@ -6,7 +6,7 @@ import {
   onApprovalRequest,
   type ApprovalRequest,
 } from "./lib/pty-manager"
-import { autoJudge } from "./lib/auto-judge"
+import { judgeWithBranchContext } from "./lib/branch-guard"
 import { injectText } from "./lib/keyboard-inject"
 import {
   addSubscription,
@@ -104,8 +104,8 @@ export function createCompanionServer(port: number) {
         const yellow = "\x1b[33m"
         const cyan = "\x1b[36m"
 
-        // Auto-judge: only escalate real decisions to phone
-        const verdict = autoJudge(tool, input)
+        // Auto-judge with branch-aware git push handling
+        const verdict = await judgeWithBranchContext(tool, input, cwd)
 
         let decision: "allow" | "deny"
 
