@@ -37,9 +37,9 @@ cd claude-companion
 bun install
 cd client && bun install && bun run build && cd ..
 
-# Add the hook to Claude Code
-cp hooks/companion-approval.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/companion-approval.sh
+# Add the hooks to Claude Code
+cp hooks/*.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/companion-*.sh
 ```
 
 Add the hook to your `~/.claude/settings.json`:
@@ -58,10 +58,34 @@ Add the hook to your `~/.claude/settings.json`:
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/companion-post-tool-use.sh", "timeout": 5 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/companion-user-prompt.sh", "timeout": 5 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/companion-stop.sh", "timeout": 5 }
+        ]
+      }
     ]
   }
 }
 ```
+
+The `PostToolUse` and `UserPromptSubmit` hooks drive the live "Whisking… 12s · 2.1k tokens · Bash" status pill on the phone so you can tell the difference between "still thinking" and "wedged".
 
 ## Usage
 
@@ -94,6 +118,34 @@ Customize the rules in `server/lib/auto-judge.ts`.
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `COMPANION_PORT` | `4245` | Server port |
+| `COMPANION_NTFY_TOPIC` | *(unset)* | Enables push notifications. Full `https://ntfy.sh/<slug>` URL, or just the slug |
+| `COMPANION_NTFY_TOKEN` | *(unset)* | Bearer token for self-hosted ntfy with auth |
+| `COMPANION_URL` | *(unset)* | Tap-target URL for notifications (e.g. `http://192.168.1.42:4245` or your Tailscale hostname) |
+
+## Push notifications (optional)
+
+The companion pushes to your phone **only when no WebSocket client is connected** — if the tab is open, the WebSocket is faster. Push fires on:
+
+- **Approval requests** (high priority — buzzes through silent mode)
+- **Permission requests** (high priority)
+- **Claude finishing a turn and waiting for your input** (default priority)
+
+### Setup
+
+1. Install the **ntfy** app on your phone ([iOS](https://apps.apple.com/us/app/ntfy/id1625396347) / [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy))
+2. Pick a long random topic slug — e.g. `claude-companion-<random 10-12 chars>`. Treat it as a password: anyone who knows the slug sees your notifications.
+3. Subscribe to that topic in the ntfy app
+4. Start the companion with the topic set:
+
+```bash
+export COMPANION_NTFY_TOPIC="claude-companion-<your-slug>"
+export COMPANION_URL="http://$(ipconfig getifaddr en0):4245"
+bun ~/claude-companion/cli.ts
+```
+
+Startup prints the configured topic. If `COMPANION_NTFY_TOPIC` is unset, push is silently disabled and the app works exactly as before.
+
+Prefer self-hosted ntfy? Use a full URL like `https://ntfy.your-domain.com/claude-companion-xyz` and optionally set `COMPANION_NTFY_TOKEN` for bearer auth.
 
 ## Requirements
 

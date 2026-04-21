@@ -4,10 +4,19 @@ import {
   resolveApproval,
   getPending,
   onApprovalRequest,
-  type ApprovalRequest,
 } from "./lib/pty-manager"
 import { autoJudge } from "./lib/auto-judge"
 import { injectText } from "./lib/keyboard-inject"
+import {
+  beat,
+  clearActivity,
+  getActivity,
+  readTurnTokens,
+  startTurn,
+  updateTool,
+  type Activity,
+} from "./lib/activity"
+import { pushNotification } from "./lib/push"
 
 interface WsData {
   id: string
@@ -23,6 +32,12 @@ function broadcast(data: Record<string, unknown>) {
   }
 }
 
+function activityPayload(activity: Activity | null): Record<string, unknown> {
+  return { type: "activity", activity }
+}
+
+const COMPANION_URL = process.env.COMPANION_URL || ""
+
 // Notify phone when new approval request comes in
 onApprovalRequest((req) => {
   broadcast({
@@ -33,6 +48,17 @@ onApprovalRequest((req) => {
     sessionId: req.sessionId,
     cwd: req.cwd,
   })
+  // Push: only when no live clients (phone has the tab closed/backgrounded).
+  // When a phone is viewing the UI, the WS broadcast above is the faster path.
+  if (clients.size === 0) {
+    void pushNotification({
+      event: "approval",
+      title: `Claude needs approval: ${req.tool}`,
+      body: getSummary(req.tool, req.input).slice(0, 240) || "Tap to review.",
+      tool: req.tool,
+      clickUrl: COMPANION_URL,
+    })
+  }
 })
 
 export function createCompanionServer(port: number) {
@@ -70,6 +96,10 @@ export function createCompanionServer(port: number) {
           waitingForInput = false
           broadcast({ type: "waiting_input", waiting: false })
         }
+
+        // Update live activity so the phone knows Claude is moving
+        const activity = updateTool(tool, getSummary(tool, input))
+        broadcast(activityPayload(activity))
 
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
@@ -130,6 +160,16 @@ export function createCompanionServer(port: number) {
 
         process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${getSummary(tool, input)}${reset}\n`)
 
+        if (clients.size === 0) {
+          void pushNotification({
+            event: "permission",
+            title: `Claude needs permission: ${tool}`,
+            body: getSummary(tool, input).slice(0, 240) || "Tap to review.",
+            tool,
+            clickUrl: COMPANION_URL,
+          })
+        }
+
         const decision = await addApprovalRequest({ sessionId, tool, input, cwd })
 
         const green = "\x1b[32m"
@@ -153,12 +193,14 @@ export function createCompanionServer(port: number) {
         }
 
         // Extract Claude's last message from transcript
+        // Small delay to let the transcript file flush completely
         let lastMessage = ""
         if (body.transcript_path) {
+          await Bun.sleep(150)
           try {
             const transcript = await Bun.file(body.transcript_path).text()
             const lines = transcript.trim().split("\n")
-            // Walk backwards to find last assistant text
+            // Walk backwards to find last assistant text with actual content
             for (let i = lines.length - 1; i >= 0; i--) {
               try {
                 const entry = JSON.parse(lines[i]!)
@@ -168,8 +210,9 @@ export function createCompanionServer(port: number) {
                     const textBlocks = content
                       .filter((b: Record<string, unknown>) => b.type === "text")
                       .map((b: Record<string, unknown>) => b.text as string)
+                      .filter((t: string) => t.trim().length > 0)
                     if (textBlocks.length) {
-                      lastMessage = textBlocks.join("\n").slice(-500)
+                      lastMessage = textBlocks[textBlocks.length - 1]!.slice(-500)
                       break
                     }
                   }
@@ -180,12 +223,47 @@ export function createCompanionServer(port: number) {
         }
 
         waitingForInput = true
+        clearActivity()
+        broadcast(activityPayload(null))
+
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
         const magenta = "\x1b[35m"
         process.stderr.write(`${dim}[companion]${reset} ${magenta}waiting for input${reset} — phone can respond\n`)
 
+        if (clients.size === 0) {
+          void pushNotification({
+            event: "waiting",
+            title: "Claude is waiting for you",
+            body: lastMessage.slice(0, 240) || "Tap to respond.",
+            clickUrl: COMPANION_URL,
+          })
+        }
+
         broadcast({ type: "waiting_input", waiting: true, message: lastMessage })
+        return Response.json({})
+      }
+
+      // ── UserPromptSubmit hook — start of a new turn, kick off the activity timer ──
+      if (url.pathname === "/hooks/user-prompt-submit" && req.method === "POST") {
+        if (waitingForInput) {
+          waitingForInput = false
+          broadcast({ type: "waiting_input", waiting: false })
+        }
+        const activity = startTurn()
+        broadcast(activityPayload(activity))
+        return Response.json({})
+      }
+
+      // ── PostToolUse hook — heartbeat + token snapshot ──
+      if (url.pathname === "/hooks/post-tool-use" && req.method === "POST") {
+        const body = await req.json() as { transcript_path?: string }
+        let tokens: number | undefined
+        if (body.transcript_path) {
+          tokens = await readTurnTokens(body.transcript_path)
+        }
+        const activity = beat(tokens)
+        if (activity) broadcast(activityPayload(activity))
         return Response.json({})
       }
 
@@ -212,6 +290,7 @@ export function createCompanionServer(port: number) {
           pending: getPending().length,
           clients: clients.size,
           waitingForInput,
+          activity: getActivity(),
         })
       }
 
@@ -249,6 +328,7 @@ export function createCompanionServer(port: number) {
           type: "init",
           pending: pendingList.length,
           waitingForInput,
+          activity: getActivity(),
         }))
       },
       message(ws, raw) {
