@@ -30,7 +30,7 @@ Terminal (Mac)                    Phone (iPhone/Android)
 
 ```bash
 # Clone
-git clone https://github.com/techlabstudio/claude-companion.git
+git clone https://github.com/jaubut/claude-companion.git
 cd claude-companion
 
 # Install dependencies
