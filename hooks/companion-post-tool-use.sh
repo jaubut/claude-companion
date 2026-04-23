@@ -1,5 +1,5 @@
 #!/bin/bash
-# Claude Companion — forward permission prompts to phone
+# Claude Companion — heartbeat + token snapshot after every tool call
 
 COMPANION_URL="http://localhost:4245"
 
@@ -10,18 +10,13 @@ fi
 INPUT=$(cat)
 TTY=$(tty 2>/dev/null || true)
 
-RESPONSE=$(curl -s --max-time 300 \
-  -X POST "$COMPANION_URL/hooks/permission-request" \
+curl -s --max-time 2 \
+  -X POST "$COMPANION_URL/hooks/post-tool-use" \
   -H "Content-Type: application/json" \
   -H "X-Companion-Tty: ${TTY}" \
   -H "X-Companion-Term-Program: ${TERM_PROGRAM:-}" \
   -H "X-Companion-Iterm-Session-Id: ${ITERM_SESSION_ID:-}" \
   -H "X-Companion-Pid: ${PPID:-}" \
-  -d "$INPUT" 2>/dev/null)
+  -d "$INPUT" > /dev/null 2>&1 &
 
-if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
-  exit 0
-fi
-
-echo "$RESPONSE"
 exit 0

@@ -4,19 +4,31 @@ import {
   resolveApproval,
   getPending,
   onApprovalRequest,
-  type ApprovalRequest,
 } from "./lib/pty-manager"
 import { judgeWithBranchContext } from "./lib/branch-guard"
 import { injectText } from "./lib/keyboard-inject"
 import {
-  addSubscription,
-  removeSubscription,
-  sendWebPush,
-  getVapidPublicKey,
-  subscriptionCount,
-  listSubscriptions,
-  type WebPushPayload,
-} from "./lib/web-push"
+  recordSession,
+  removeSession,
+  getSession,
+  listSessions,
+  onSessions,
+  metaFromHeaders,
+  type Session,
+} from "./lib/sessions"
+import {
+  recordToolStart,
+  recordToolEnd,
+  recordUserPrompt,
+  recordTurnEnd,
+  getFeed,
+  getActivity,
+  onFeed,
+  onActivity,
+  summarize,
+  type FeedEvent,
+  type Verdict,
+} from "./lib/activity"
 
 interface WsData {
   id: string
@@ -24,24 +36,36 @@ interface WsData {
 
 const clients = new Set<ServerWebSocket<WsData>>()
 let waitingForInput = false
+let waitingCwd = ""
 
-function broadcast(data: Record<string, unknown>) {
+function broadcast(data: Record<string, unknown>): void {
   const msg = JSON.stringify(data)
   for (const ws of clients) {
     try { ws.send(msg) } catch { /* dead client */ }
   }
 }
 
-const COMPANION_URL = process.env.COMPANION_URL || "/"
-
-function maybePush(payload: WebPushPayload): void {
-  // Only push when the UI isn't already foregrounded. When a WS client is open,
-  // the broadcast above is faster and push would be redundant.
-  if (clients.size > 0) return
-  void sendWebPush(payload)
+function extractLastAssistantMessage(transcriptPath: string | undefined): string {
+  if (!transcriptPath) return ""
+  try {
+    const raw = require("node:fs").readFileSync(transcriptPath, "utf8") as string
+    const lines = raw.trim().split("\n")
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]!)
+        if (entry.type !== "assistant") continue
+        const content = entry.message?.content
+        if (!Array.isArray(content)) continue
+        const textBlocks = content
+          .filter((b: Record<string, unknown>) => b.type === "text")
+          .map((b: Record<string, unknown>) => b.text as string)
+        if (textBlocks.length) return textBlocks.join("\n")
+      } catch { /* skip */ }
+    }
+  } catch { /* unreadable */ }
+  return ""
 }
 
-// Notify phone when new approval request comes in
 onApprovalRequest((req) => {
   broadcast({
     type: "approval",
@@ -51,14 +75,18 @@ onApprovalRequest((req) => {
     sessionId: req.sessionId,
     cwd: req.cwd,
   })
-  maybePush({
-    event: "approval",
-    title: `Claude needs approval: ${req.tool}`,
-    body: getSummary(req.tool, req.input).slice(0, 240) || "Tap to review.",
-    tag: `approval-${req.id}`,
-    url: COMPANION_URL,
-    requireInteraction: true,
-  })
+})
+
+onFeed((ev: FeedEvent) => {
+  broadcast({ type: "event", event: ev })
+})
+
+onActivity((activity) => {
+  broadcast({ type: "activity", activity })
+})
+
+onSessions((sessions: Session[]) => {
+  broadcast({ type: "sessions", sessions })
 })
 
 export function createCompanionServer(port: number) {
@@ -77,7 +105,7 @@ export function createCompanionServer(port: number) {
         return new Response("WebSocket upgrade failed", { status: 500 })
       }
 
-      // ── Hook endpoint — Claude Code HTTP hooks POST here ──
+      // ── Hook endpoint — PreToolUse ──
       if (url.pathname === "/hooks/pre-tool-use" && req.method === "POST") {
         const body = await req.json() as {
           session_id?: string
@@ -91,9 +119,13 @@ export function createCompanionServer(port: number) {
         const sessionId = body.session_id ?? ""
         const cwd = body.cwd ?? ""
 
-        // Claude is working again — no longer waiting for input
+        if (cwd) {
+          recordSession({ cwd, sessionId, ...metaFromHeaders(req.headers) })
+        }
+
         if (waitingForInput) {
           waitingForInput = false
+          waitingCwd = ""
           broadcast({ type: "waiting_input", waiting: false })
         }
 
@@ -104,20 +136,25 @@ export function createCompanionServer(port: number) {
         const yellow = "\x1b[33m"
         const cyan = "\x1b[36m"
 
-        // Auto-judge with branch-aware git push handling
-        const verdict = await judgeWithBranchContext(tool, input, cwd)
+        const verdictJudge = await judgeWithBranchContext(tool, input, cwd)
 
         let decision: "allow" | "deny"
+        let verdict: Verdict
 
-        if (verdict === "allow") {
+        if (verdictJudge === "allow") {
           decision = "allow"
-          process.stderr.write(`${dim}[companion]${reset} ${green}auto-allow${reset} ${tool} ${dim}${getSummary(tool, input)}${reset}\n`)
-        } else if (verdict === "deny") {
+          verdict = "auto-allow"
+          process.stderr.write(`${dim}[companion]${reset} ${green}auto-allow${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
+          recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd })
+        } else if (verdictJudge === "deny") {
           decision = "deny"
-          process.stderr.write(`${dim}[companion]${reset} ${red}auto-deny${reset} ${tool} ${dim}${getSummary(tool, input)}${reset}\n`)
+          verdict = "auto-deny"
+          process.stderr.write(`${dim}[companion]${reset} ${red}auto-deny${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
+          recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd })
         } else {
-          // Ask the human via phone
-          process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${getSummary(tool, input)}${reset}\n`)
+          verdict = "pending"
+          process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}\n`)
+          recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd })
           decision = await addApprovalRequest({ sessionId, tool, input, cwd })
           const decisionColor = decision === "allow" ? green : red
           process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← phone\n`)
@@ -132,6 +169,43 @@ export function createCompanionServer(port: number) {
               : "Denied via Claude Companion",
           },
         })
+      }
+
+      // ── Hook endpoint — PostToolUse ──
+      if (url.pathname === "/hooks/post-tool-use" && req.method === "POST") {
+        const body = await req.json() as {
+          session_id?: string
+          tool_name?: string
+          tool_input?: Record<string, unknown>
+          transcript_path?: string
+          cwd?: string
+        }
+        const tool = body.tool_name ?? "unknown"
+        const input = body.tool_input ?? {}
+        const cwd = body.cwd ?? ""
+
+        if (cwd) {
+          recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
+        }
+
+        recordToolEnd({ tool, input, transcriptPath: body.transcript_path, cwd })
+        return Response.json({})
+      }
+
+      // ── Hook endpoint — UserPromptSubmit ──
+      if (url.pathname === "/hooks/user-prompt-submit" && req.method === "POST") {
+        const body = await req.json() as {
+          session_id?: string
+          prompt?: string
+          transcript_path?: string
+          cwd?: string
+        }
+        const cwd = body.cwd ?? ""
+        if (cwd) {
+          recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
+        }
+        recordUserPrompt(body.prompt ?? "", body.transcript_path, cwd)
+        return Response.json({})
       }
 
       // ── Permission request hook — multi-choice permission dialogs ──
@@ -149,21 +223,18 @@ export function createCompanionServer(port: number) {
         const sessionId = body.session_id ?? ""
         const cwd = body.cwd ?? ""
 
+        if (cwd) {
+          recordSession({ cwd, sessionId, ...metaFromHeaders(req.headers) })
+        }
+
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
         const yellow = "\x1b[33m"
         const cyan = "\x1b[36m"
 
-        process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${getSummary(tool, input)}${reset}\n`)
+        process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
 
-        maybePush({
-          event: "permission",
-          title: `Claude needs permission: ${tool}`,
-          body: getSummary(tool, input).slice(0, 240) || "Tap to review.",
-          url: COMPANION_URL,
-          requireInteraction: true,
-        })
-
+        recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd })
         const decision = await addApprovalRequest({ sessionId, tool, input, cwd })
 
         const green = "\x1b[32m"
@@ -182,69 +253,82 @@ export function createCompanionServer(port: number) {
       // ── Stop hook — Claude finished its turn, waiting for user input ──
       if (url.pathname === "/hooks/stop" && req.method === "POST") {
         const body = await req.json() as {
+          session_id?: string
+          cwd?: string
           transcript_path?: string
           stop_hook_active?: boolean
         }
 
-        // Extract Claude's last message from transcript
-        let lastMessage = ""
-        if (body.transcript_path) {
-          try {
-            const transcript = await Bun.file(body.transcript_path).text()
-            const lines = transcript.trim().split("\n")
-            // Walk backwards to find last assistant text
-            for (let i = lines.length - 1; i >= 0; i--) {
-              try {
-                const entry = JSON.parse(lines[i]!)
-                if (entry.type === "assistant") {
-                  const content = entry.message?.content
-                  if (Array.isArray(content)) {
-                    const textBlocks = content
-                      .filter((b: Record<string, unknown>) => b.type === "text")
-                      .map((b: Record<string, unknown>) => b.text as string)
-                    if (textBlocks.length) {
-                      lastMessage = textBlocks.join("\n").slice(-500)
-                      break
-                    }
-                  }
-                }
-              } catch { /* skip unparseable lines */ }
-            }
-          } catch { /* transcript not readable */ }
+        const cwd = body.cwd ?? ""
+        if (cwd) {
+          recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
         }
 
+        const lastMessage = extractLastAssistantMessage(body.transcript_path)
+
+        recordTurnEnd(body.transcript_path, lastMessage)
+
         waitingForInput = true
+        waitingCwd = cwd
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
         const magenta = "\x1b[35m"
         process.stderr.write(`${dim}[companion]${reset} ${magenta}waiting for input${reset} — phone can respond\n`)
 
-        maybePush({
-          event: "waiting",
-          title: "Claude is waiting for you",
-          body: lastMessage.slice(0, 240) || "Tap to respond.",
-          url: COMPANION_URL,
+        broadcast({
+          type: "waiting_input",
+          waiting: true,
+          message: lastMessage.slice(-500),
+          cwd,
         })
-
-        broadcast({ type: "waiting_input", waiting: true, message: lastMessage })
         return Response.json({})
       }
 
       // ── Inject text from phone into terminal ──
       if (url.pathname === "/api/inject" && req.method === "POST") {
-        const { text } = await req.json() as { text: string }
+        const { text, cwd } = await req.json() as { text: string; cwd?: string }
         if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+
+        const target = cwd ? getSession(cwd) : null
+
+        // If the caller asked for a specific cwd and we don't have it registered,
+        // refuse rather than silently pasting into the frontmost macOS app —
+        // that's what caused "messages sometimes don't reach the terminal".
+        if (cwd && !target) {
+          const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
+          process.stderr.write(`${dim}[companion]${reset} ${red}inject refused${reset} — target cwd ${cwd} not registered\n`)
+          return Response.json({ ok: false, error: "target_gone", cwd }, { status: 410 })
+        }
 
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
         const cyan = "\x1b[36m"
-        process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset} "${text.slice(0, 60)}"\n`)
+        const tag = target?.cwd ? ` → ${target.cwd.split("/").pop()}` : " → frontmost"
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"\n`)
 
         waitingForInput = false
+        waitingCwd = ""
         broadcast({ type: "waiting_input", waiting: false })
 
-        const ok = await injectText(text)
+        const ok = await injectText(text, target ?? undefined)
+        if (!ok) {
+          process.stderr.write(`${dim}[companion]${reset} \x1b[31minject failed\x1b[0m — osascript rejected (Accessibility permission?)\n`)
+        }
         return Response.json({ ok })
+      }
+
+      // ── Hook endpoint — SessionEnd — remove cwd from registry immediately ──
+      if (url.pathname === "/hooks/session-end" && req.method === "POST") {
+        const body = await req.json() as { cwd?: string; session_id?: string; reason?: string }
+        const cwd = body.cwd ?? ""
+        if (cwd) {
+          const removed = removeSession(cwd)
+          const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
+          if (removed) {
+            process.stderr.write(`${dim}[companion]${reset} ${magenta}session end${reset} ${cwd.split("/").pop()} ${dim}(${body.reason ?? "-"})${reset}\n`)
+          }
+        }
+        return Response.json({ ok: true })
       }
 
       // ── Status endpoint ──
@@ -253,53 +337,18 @@ export function createCompanionServer(port: number) {
           pending: getPending().length,
           clients: clients.size,
           waitingForInput,
+          waitingCwd,
+          sessions: listSessions(),
         })
       }
 
-      // ── Web Push: VAPID key ──
-      if (url.pathname === "/api/push/vapid-key") {
-        return Response.json({ publicKey: getVapidPublicKey() })
-      }
-
-      // ── Web Push: subscribe ──
-      if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
-        const body = (await req.json()) as { subscription?: unknown }
-        const sub = body.subscription as { endpoint?: string } | undefined
-        if (!sub?.endpoint) {
-          return Response.json({ ok: false, error: "missing subscription" }, { status: 400 })
-        }
-        const ua = req.headers.get("user-agent") ?? undefined
-        const saved = addSubscription(sub as Parameters<typeof addSubscription>[0], ua)
-        process.stderr.write(
-          `\x1b[2m[companion]\x1b[0m \x1b[32mpush subscribed\x1b[0m ${ua?.slice(0, 60) ?? ""} (total: ${subscriptionCount()})\n`,
-        )
-        return Response.json({ ok: true, id: saved.id })
-      }
-
-      // ── Web Push: unsubscribe ──
-      if (url.pathname === "/api/push/unsubscribe" && req.method === "POST") {
-        const body = (await req.json()) as { endpoint?: string }
-        if (!body.endpoint) {
-          return Response.json({ ok: false, error: "missing endpoint" }, { status: 400 })
-        }
-        const removed = removeSubscription(body.endpoint)
-        return Response.json({ ok: true, removed })
-      }
-
-      // ── Web Push: list (debug) ──
-      if (url.pathname === "/api/push/subscriptions") {
-        return Response.json({ count: subscriptionCount(), subscriptions: listSubscriptions() })
-      }
-
-      // ── Web Push: test push to all devices ──
-      if (url.pathname === "/api/push/test" && req.method === "POST") {
-        const result = await sendWebPush({
-          event: "waiting",
-          title: "Claude Companion",
-          body: "Test notification — push is working.",
-          url: COMPANION_URL,
+      // ── Debug: dump current feed ──
+      if (url.pathname === "/api/feed") {
+        return Response.json({
+          activity: getActivity(),
+          feed: getFeed(),
+          sessions: listSessions(),
         })
-        return Response.json({ ok: true, ...result })
       }
 
       // ── Serve static files ──
@@ -319,7 +368,6 @@ export function createCompanionServer(port: number) {
       open(ws) {
         clients.add(ws)
 
-        // Send any pending approvals
         const pendingList = getPending()
         for (const req of pendingList) {
           ws.send(JSON.stringify({
@@ -336,10 +384,14 @@ export function createCompanionServer(port: number) {
           type: "init",
           pending: pendingList.length,
           waitingForInput,
+          waitingCwd,
+          activity: getActivity(),
+          feed: getFeed(),
+          sessions: listSessions(),
         }))
       },
-      message(ws, raw) {
-        let msg: { type: string; id?: string; text?: string }
+      async message(ws, raw) {
+        let msg: { type: string; id?: string; text?: string; cwd?: string }
         try {
           msg = JSON.parse(typeof raw === "string" ? raw : raw.toString())
         } catch { return }
@@ -359,9 +411,23 @@ export function createCompanionServer(port: number) {
             break
           case "input":
             if (msg.text?.trim()) {
+              const target = msg.cwd ? getSession(msg.cwd) : null
+              // Mirror /api/inject behavior: if a specific cwd was requested
+              // and we don't know it, tell the client so it can surface the
+              // error instead of silently routing to the wrong terminal.
+              if (msg.cwd && !target) {
+                try {
+                  ws.send(JSON.stringify({ type: "inject_error", error: "target_gone", cwd: msg.cwd }))
+                } catch { /* ignore */ }
+                break
+              }
               waitingForInput = false
+              waitingCwd = ""
               broadcast({ type: "waiting_input", waiting: false })
-              injectText(msg.text.trim())
+              const ok = await injectText(msg.text.trim(), target ?? undefined)
+              if (!ok) {
+                try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed" })) } catch { /* ignore */ }
+              }
             }
             break
           case "ping":
@@ -376,22 +442,4 @@ export function createCompanionServer(port: number) {
   })
 
   return server
-}
-
-function getSummary(tool: string, input: Record<string, unknown>): string {
-  switch (tool) {
-    case "Bash":
-      return ((input.command as string) ?? "").slice(0, 80)
-    case "Edit":
-    case "Read":
-    case "Write":
-    case "MultiEdit":
-      return (input.file_path as string) ?? ""
-    case "Grep":
-      return `/${input.pattern as string ?? ""}/`
-    case "Glob":
-      return (input.pattern as string) ?? ""
-    default:
-      return ""
-  }
 }
