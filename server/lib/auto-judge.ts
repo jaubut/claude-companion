@@ -87,10 +87,12 @@ const DANGEROUS_BASH: RegExp[] = [
   /\brm\s+-rf?\s+\.\s*$/,
   /\brm\s+-rf?\s+\*\s*$/,
 
-  // Force push / push to protected branches
+  // Force push — genuinely destructive (rewrites shared history)
   /\bgit\s+push\s+.*--force\b/,
   /\bgit\s+push\s+.*-f\b/,
-  /\bgit\s+push\s+\S+\s+(main|master)\b/,
+  // Non-force `git push origin main` is a fast-forward — not destructive.
+  // It should ask on the phone, not auto-deny. branch-guard already
+  // auto-allows non-force pushes on feature branches.
 
   // History rewrites on shared branches
   /\bgit\s+reset\s+--hard\s+(origin\/)?(main|master)\b/,
