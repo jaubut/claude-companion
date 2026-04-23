@@ -317,6 +317,20 @@ export function createCompanionServer(port: number) {
         return Response.json({ ok })
       }
 
+      // ── Hook endpoint — SessionStart — register on startup/resume/clear/compact
+      // so idle Claude sessions are visible to the phone picker from the moment
+      // they open, without waiting for the user to trigger a tool-call hook.
+      if (url.pathname === "/hooks/session-start" && req.method === "POST") {
+        const body = await req.json() as { cwd?: string; session_id?: string; source?: string }
+        const cwd = body.cwd ?? ""
+        if (cwd) {
+          recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
+          const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+          process.stderr.write(`${dim}[companion]${reset} ${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}\n`)
+        }
+        return Response.json({ ok: true })
+      }
+
       // ── Hook endpoint — SessionEnd — remove cwd from registry immediately ──
       if (url.pathname === "/hooks/session-end" && req.method === "POST") {
         const body = await req.json() as { cwd?: string; session_id?: string; reason?: string }
