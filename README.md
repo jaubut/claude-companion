@@ -29,39 +29,21 @@ Terminal (Mac)                    Phone (iPhone/Android)
 ## Install
 
 ```bash
-# Clone
+# Clone + install
 git clone https://github.com/jaubut/claude-companion.git
 cd claude-companion
-
-# Install dependencies
 bun install
-cd client && bun install && bun run build && cd ..
 
-# Add the hook to Claude Code
-cp hooks/companion-approval.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/companion-approval.sh
+# One-shot: build the client, copy hooks to ~/.claude/hooks/,
+# patch ~/.claude/settings.json, print the pairing token.
+bun cli.ts init
 ```
 
-Add the hook to your `~/.claude/settings.json`:
+`init` is idempotent — safe to re-run. It backs up `settings.json` before
+every write and only adds companion entries that aren't already present, so
+your other hooks are never touched.
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/companion-approval.sh",
-            "timeout": 300
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+To remove later: `bun cli.ts uninstall` (also backs up first).
 
 ## Usage
 
@@ -73,9 +55,86 @@ bun claude-companion/cli.ts
 echo 'alias companion="bun ~/claude-companion/cli.ts"' >> ~/.zshrc
 ```
 
-Then open `http://<your-ip>:4245` on your phone. Works great over [Tailscale](https://tailscale.com) for remote access.
+The server prints the pairing **URL** + **token** on every boot. Open
+`http://<your-ip>:4245` on your phone (or use the iOS app), paste both into
+the Settings screen, and you're connected. Works great over
+[Tailscale](https://tailscale.com) for remote access.
 
-Run `claude` normally in any terminal. Approvals that need your attention will appear on your phone.
+### One-tap pairing via QR
+
+```bash
+bun cli.ts pair                    # auto-detects LAN IP
+bun cli.ts pair --url <override>   # e.g. for a Tailscale Serve URL
+```
+
+Prints a QR + plaintext fallback. In the iOS app's **Settings** screen tap
+"Scan QR from Mac" and point the camera at the terminal — both URL and
+token fill in automatically. Payload is versioned JSON
+(`{"v":1,"url":"…","token":"…"}`) so future formats won't be silently
+misparsed by older clients.
+
+Run `claude` normally in any terminal. Approvals that need your attention
+will appear on your phone.
+
+### Auto-start at login
+
+```bash
+bun cli.ts daemon install
+```
+
+Writes a macOS LaunchAgent at
+`~/Library/LaunchAgents/com.techlabstudio.claude-companion.plist` and loads
+it. The server starts automatically when you log in and `KeepAlive` brings
+it back within ~5 seconds if it ever crashes. Logs land in
+`~/.claude-companion/companion.log`.
+
+```bash
+bun cli.ts daemon status     # is it loaded? running? what PID?
+bun cli.ts daemon logs       # tail -f the server log
+bun cli.ts daemon uninstall  # unload + remove the plist
+```
+
+If port `4245` is already taken when you install, the command refuses with
+the offending PID — kill that process first to avoid a launchd restart loop.
+
+### Menu bar status
+
+```bash
+bun cli.ts menubar install
+```
+
+Builds a tiny SwiftPM macOS app (`mac/`), bundles it into
+`Companion.app`, ad-hoc-signs it, and loads a separate LaunchAgent so it
+launches at login. The menu bar icon polls `/health` every 3 seconds and
+flips between green (running) and red (offline). The dropdown shows
+client + pending counts, plus quick actions:
+
+- **Open Dashboard** — opens the PWA in your default browser
+- **Copy Pairing Token** — copies the bearer token from
+  `~/.claude-companion/auth.token` to the clipboard
+- **Restart Server** — `launchctl kickstart -k` on the server agent
+- **Show Logs** — opens the companion log
+- **Quit**
+
+```bash
+bun cli.ts menubar status     # bundle built? agent loaded? running PID?
+bun cli.ts menubar build      # rebuild the .app without touching launchd
+bun cli.ts menubar uninstall  # unload + remove the agent
+```
+
+Requires the Xcode Command Line Tools (for `swift build`).
+
+### Subcommands
+
+```
+bun cli.ts                   Start the server in the foreground
+bun cli.ts init              Install hooks + patch settings.json + print pairing
+bun cli.ts uninstall         Remove companion hook entries from settings.json
+bun cli.ts print-token       Print pairing URL + token without starting the server
+bun cli.ts daemon <action>   Manage the server LaunchAgent (install/uninstall/status/logs)
+bun cli.ts menubar <action>  Manage the menu bar app (install/uninstall/status/build)
+bun cli.ts help              Show usage
+```
 
 ## Auto-judge rules
 
@@ -95,49 +154,36 @@ Customize the rules in `server/lib/auto-judge.ts`.
 |---------|---------|-------------|
 | `COMPANION_PORT` | `4245` | Server port |
 | `COMPANION_URL` | `/` | Tap-target for notifications — e.g. `https://mac.tailnet.ts.net` |
-| `COMPANION_VAPID_SUBJECT` | `mailto:companion@localhost` | Written into the VAPID keypair on first run. Most push gateways require a valid-looking `mailto:` — change before generating keys in production |
+| `APNS_TEAM_ID` | — | Apple Developer team ID (10-char) |
+| `APNS_KEY_ID` | — | ID of the APNs auth key (.p8) from the Apple Developer portal |
+| `APNS_KEY_P8_PATH` | — | Absolute path to the `.p8` private key file on disk |
+| `APNS_BUNDLE_ID` | — | iOS app bundle identifier (e.g. `com.techlabstudio.companion`) |
 
-## Push notifications (Web Push — no extra app)
+If any APNs env var is missing, the push layer is a silent no-op — the rest of Companion keeps working.
 
-Push uses the browser's native notification system via VAPID. No ntfy, no native app — the same companion URL you already open on your phone handles both the UI and the notifications through a service worker.
+## Push notifications (native iOS app, APNs)
 
-The server pushes only when **no WebSocket client is connected** (tab closed/backgrounded). If the tab is open, the WebSocket is the faster path.
+Push is served by a native iOS companion app (separate bundle) that registers its APNs device token with the local Companion server. The Mac signs a JWT with your APNs auth key and POSTs directly to Apple — no cloud relay, no VAPID, no PWA.
 
 Pushes fire on:
-- **Approval requests** — high urgency, `requireInteraction: true`
-- **Permission requests** — high urgency, `requireInteraction: true`
-- **Claude finishing a turn and waiting for input** — normal urgency
+- **Approval / permission requests** — `interruption-level: time-sensitive`, sound, category `approval`
+- **Claude finishing a turn and waiting for input** — `interruption-level: passive`, no sound, category `waiting_input`
 
-### First-time setup on iPhone (iOS 16.4+)
+The iOS app is expected to suppress the `waiting_input` notification locally when it's already foregrounded on that session.
 
-iOS requires **HTTPS** and the site must be installed on the Home Screen as a PWA before Safari will allow Web Push. Easiest route on a local network:
+### API
 
 ```bash
-# Serve your local companion over HTTPS on your tailnet
-tailscale serve --bg --https=4244 http://localhost:4245
+# iOS app registers its APNs token
+POST /api/register-token
+{ "token": "<hex device token>", "environment": "sandbox"|"production", "device_name": "iPhone 15" }
 
-# You'll get something like https://your-mac.tailnet.ts.net — use that URL:
-export COMPANION_URL="https://your-mac.tailnet.ts.net"
-bun ~/claude-companion/cli.ts
+# Unregister on sign-out / app uninstall cleanup
+DELETE /api/register-token
+{ "token": "<hex device token>" }
 ```
 
-Then on the iPhone (connected to the same tailnet):
-1. Open `https://your-mac.tailnet.ts.net` in **Safari** (not Chrome)
-2. Share icon → **Add to Home Screen**
-3. Open the newly-installed "Claude" app from the Home Screen
-4. Tap the bell icon in the top bar → grant notification permission
-5. Optional: `curl -X POST $COMPANION_URL/api/push/test` to verify
-
-### Android (Chrome)
-
-No PWA install required — HTTPS + granting notification permission is enough. Open the companion URL, tap the bell, done.
-
-### Keys + subscriptions
-
-- VAPID keypair lives at `~/.claude-companion/vapid.json` (0600 perms, auto-generated on first run)
-- Subscriptions at `~/.claude-companion/subscriptions.json` — one record per subscribed device; revoked endpoints are pruned automatically
-
-To wipe all devices, delete `subscriptions.json`. To rotate the VAPID keypair (invalidates all existing subscriptions), delete `vapid.json`.
+Tokens live in a SQLite database at `~/.claude-companion/companion.db` (auto-created). Dead tokens (APNs 410 / BadDeviceToken / Unregistered) are pruned automatically on the next send.
 
 ## Requirements
 

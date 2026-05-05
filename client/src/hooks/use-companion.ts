@@ -17,15 +17,22 @@ export interface Activity {
   lastBeatAt: number
   tokens: number
   cwd: string
+  // v0.x: precise identity — the UI should prefer tty over cwd when two
+  // sessions share a cwd (e.g. two Claude windows in the same repo).
+  sessionId?: string
+  tty?: string
 }
 
 export interface Session {
+  key: string
+  label: string
   cwd: string
   sessionId: string
   termProgram: string
   tty: string
   iTermSessionId: string
   pid: string
+  firstSeenAt: number
   lastSeenAt: number
 }
 
@@ -48,6 +55,8 @@ export interface FeedEvent {
   durationMs?: number
   text?: string
   cwd?: string
+  tty?: string
+  sessionId?: string
 }
 
 interface CompanionState {
@@ -56,15 +65,25 @@ interface CompanionState {
   waitingForInput: boolean
   waitingMessage: string
   waitingCwd: string
+  waitingKey: string
   activity: Activity | null
   feed: FeedEvent[]
   sessions: Session[]
-  injectError: { error: string; cwd?: string; at: number } | null
+  injectError: { error: string; key?: string; cwd?: string; at: number } | null
 }
 
 const SOUND_KEY = "companion.sound"
-const TARGET_KEY = "companion.target"
+const TARGET_KEY = "companion.targetKey"
+const LEGACY_TARGET_KEY = "companion.target"
 const FEED_CAP = 200
+// iOS WKWebView keeps WebSockets in `readyState: OPEN` when the host app
+// goes background, even though the underlying TCP connection is silently
+// dead. When the app comes back, we appear connected but never receive
+// the events that fired during the gap. Detect this by tracking time since
+// the last inbound server message — a ping every 10s plus the server's
+// usual broadcast traffic means real connections refresh constantly.
+const PING_INTERVAL_MS = 10_000
+const STALE_AFTER_MS = 12_000
 
 function readSoundPref(): boolean {
   if (typeof window === "undefined") return true
@@ -74,7 +93,13 @@ function readSoundPref(): boolean {
 
 function readTargetPref(): string {
   if (typeof window === "undefined") return ""
-  return window.localStorage.getItem(TARGET_KEY) ?? ""
+  const modern = window.localStorage.getItem(TARGET_KEY)
+  if (modern) return modern
+  // One-time migration from the old cwd-based pin. The server now accepts
+  // either a key or a cwd as a lookup target, so passing the legacy cwd still
+  // resolves until the user picks a fresh target once.
+  const legacy = window.localStorage.getItem(LEGACY_TARGET_KEY)
+  return legacy ?? ""
 }
 
 function appendEvent(feed: FeedEvent[], ev: FeedEvent): FeedEvent[] {
@@ -85,13 +110,13 @@ function appendEvent(feed: FeedEvent[], ev: FeedEvent): FeedEvent[] {
 export function useCompanion(): CompanionState & {
   approve: (id: string) => void
   deny: (id: string) => void
-  sendInput: (text: string, cwd?: string) => void
+  sendInput: (text: string, key?: string) => void
   clearInjectError: () => void
   soundEnabled: boolean
   setSoundEnabled: (next: boolean) => void
-  targetCwd: string
-  setTargetCwd: (cwd: string) => void
-  effectiveTargetCwd: string
+  targetKey: string
+  setTargetKey: (key: string) => void
+  effectiveTarget: Session | null
   pinnedOffline: boolean
 } {
   const [state, setState] = useState<CompanionState>({
@@ -100,18 +125,20 @@ export function useCompanion(): CompanionState & {
     waitingForInput: false,
     waitingMessage: "",
     waitingCwd: "",
+    waitingKey: "",
     activity: null,
     feed: [],
     sessions: [],
     injectError: null,
   })
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(readSoundPref)
-  const [targetCwd, setTargetCwdState] = useState<string>(readTargetPref)
+  const [targetKey, setTargetKeyState] = useState<string>(readTargetPref)
 
   const wsRef = useRef<WebSocket | null>(null)
   const retriesRef = useRef(0)
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const soundRef = useRef(soundEnabled)
+  const lastServerMsgRef = useRef(0)
 
   useEffect(() => { soundRef.current = soundEnabled }, [soundEnabled])
 
@@ -120,11 +147,12 @@ export function useCompanion(): CompanionState & {
     try { window.localStorage.setItem(SOUND_KEY, next ? "1" : "0") } catch { /* ignore */ }
   }, [])
 
-  const setTargetCwd = useCallback((cwd: string) => {
-    setTargetCwdState(cwd)
+  const setTargetKey = useCallback((key: string) => {
+    setTargetKeyState(key)
     try {
-      if (cwd) window.localStorage.setItem(TARGET_KEY, cwd)
+      if (key) window.localStorage.setItem(TARGET_KEY, key)
       else window.localStorage.removeItem(TARGET_KEY)
+      window.localStorage.removeItem(LEGACY_TARGET_KEY)
     } catch { /* ignore */ }
   }, [])
 
@@ -136,16 +164,25 @@ export function useCompanion(): CompanionState & {
 
     ws.onopen = () => {
       retriesRef.current = 0
+      lastServerMsgRef.current = Date.now()
       setState(s => ({ ...s, connected: true }))
 
       heartbeatRef.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "ping" }))
+        if (ws.readyState !== WebSocket.OPEN) return
+        // Stale-detection — if no server message in STALE_AFTER_MS, treat
+        // the socket as dead even though readyState says OPEN. Closing here
+        // triggers `onclose`, which triggers the reconnect backoff and an
+        // `init` snapshot that backfills any events we missed.
+        if (Date.now() - lastServerMsgRef.current > STALE_AFTER_MS) {
+          try { ws.close() } catch { /* ignore */ }
+          return
         }
-      }, 25_000)
+        ws.send(JSON.stringify({ type: "ping" }))
+      }, PING_INTERVAL_MS)
     }
 
     ws.onmessage = (e) => {
+      lastServerMsgRef.current = Date.now()
       try {
         const msg = JSON.parse(e.data)
 
@@ -191,6 +228,7 @@ export function useCompanion(): CompanionState & {
               waitingForInput: msg.waiting,
               waitingMessage: msg.waiting ? (msg.message ?? "") : "",
               waitingCwd: msg.waiting ? (msg.cwd ?? "") : "",
+              waitingKey: msg.waiting ? (msg.key ?? "") : "",
             }))
             if (msg.waiting) {
               if (navigator.vibrate) navigator.vibrate([200, 100, 200])
@@ -219,6 +257,7 @@ export function useCompanion(): CompanionState & {
               ...s,
               waitingForInput: msg.waitingForInput ?? false,
               waitingCwd: msg.waitingCwd ?? "",
+              waitingKey: msg.waitingKey ?? "",
               activity: msg.activity ?? null,
               feed: Array.isArray(msg.feed) ? (msg.feed as FeedEvent[]) : s.feed,
               sessions: Array.isArray(msg.sessions) ? (msg.sessions as Session[]) : s.sessions,
@@ -227,7 +266,7 @@ export function useCompanion(): CompanionState & {
           case "inject_error":
             setState(s => ({
               ...s,
-              injectError: { error: String(msg.error ?? "unknown"), cwd: msg.cwd, at: Date.now() },
+              injectError: { error: String(msg.error ?? "unknown"), key: msg.key, cwd: msg.cwd, at: Date.now() },
             }))
             if (navigator.vibrate) navigator.vibrate([300, 100, 300])
             break
@@ -258,15 +297,27 @@ export function useCompanion(): CompanionState & {
   const approve = useCallback((id: string) => send({ type: "approve", id }), [send])
   const deny = useCallback((id: string) => send({ type: "deny", id }), [send])
   const sendInput = useCallback(
-    (text: string, cwd?: string) => send({ type: "input", text, cwd: cwd ?? undefined }),
+    (text: string, key?: string) => send({ type: "input", text, key: key ?? undefined }),
     [send],
   )
 
   useEffect(() => {
     const handleVisibility = () => {
-      if (!document.hidden && wsRef.current?.readyState !== WebSocket.OPEN) {
+      if (document.hidden) return
+      // Coming back to foreground. Two cases:
+      //   1. Socket is already CLOSED/CLOSING → start a fresh connect.
+      //   2. Socket is OPEN but possibly a zombie (iOS WKWebView keeps
+      //      backgrounded sockets in OPEN with no traffic flowing). Force
+      //      close if the last server message is older than the stale
+      //      threshold; onclose will rebuild the connection cleanly.
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
         retriesRef.current = 0
         connect()
+        return
+      }
+      if (Date.now() - lastServerMsgRef.current > STALE_AFTER_MS) {
+        try { ws.close() } catch { /* ignore */ }
       }
     }
     document.addEventListener("visibilitychange", handleVisibility)
@@ -282,20 +333,43 @@ export function useCompanion(): CompanionState & {
   }, [connect])
 
   // Effective target:
-  // - explicit pin is sticky — honored even if the session isn't currently in
-  //   the registry (the pinned Claude Code may have gone idle, paused the
-  //   heartbeat, or be mid-reconnect). The server will 410 if it's truly gone,
-  //   and the UI surfaces that via `pinnedOffline` below instead of silently
-  //   rerouting to the wrong terminal.
+  // - explicit pin is sticky; it matches on session.key first (the new path)
+  //   then falls back to cwd so a legacy localStorage pin still resolves.
   // - otherwise fall back to waiting > most-recent-activity > most-recent-seen
-  const pinnedOffline = !!targetCwd && !state.sessions.some(s => s.cwd === targetCwd)
-  const effectiveTargetCwd = useMemo(() => {
-    if (targetCwd) return targetCwd
-    const known = new Set(state.sessions.map(s => s.cwd))
-    if (state.waitingCwd && known.has(state.waitingCwd)) return state.waitingCwd
-    if (state.activity?.cwd && known.has(state.activity.cwd)) return state.activity.cwd
-    return state.sessions[0]?.cwd ?? ""
-  }, [targetCwd, state.waitingCwd, state.activity, state.sessions])
+  const resolvePin = useCallback((pin: string): Session | null => {
+    if (!pin) return null
+    return state.sessions.find(s => s.key === pin)
+      ?? state.sessions.find(s => s.cwd === pin)
+      ?? null
+  }, [state.sessions])
+
+  const pinnedOffline = !!targetKey && resolvePin(targetKey) === null
+  const effectiveTarget = useMemo<Session | null>(() => {
+    const pinned = resolvePin(targetKey)
+    if (pinned) return pinned
+    if (state.waitingKey) {
+      const bySession = state.sessions.find(s => s.key === state.waitingKey)
+      if (bySession) return bySession
+    }
+    if (state.waitingCwd) {
+      const byCwd = state.sessions.find(s => s.cwd === state.waitingCwd)
+      if (byCwd) return byCwd
+    }
+    if (state.activity) {
+      // Precise match first — tty or sessionId — so two sessions sharing a
+      // cwd don't collapse to whichever is first in the list.
+      const a = state.activity
+      const byTty = a.tty ? state.sessions.find(s => s.tty === a.tty) : null
+      if (byTty) return byTty
+      const bySid = a.sessionId ? state.sessions.find(s => s.sessionId === a.sessionId) : null
+      if (bySid) return bySid
+      if (a.cwd) {
+        const byCwd = state.sessions.find(s => s.cwd === a.cwd)
+        if (byCwd) return byCwd
+      }
+    }
+    return state.sessions[0] ?? null
+  }, [resolvePin, targetKey, state.waitingKey, state.waitingCwd, state.activity, state.sessions])
 
   const clearInjectError = useCallback(() => {
     setState(s => ({ ...s, injectError: null }))
@@ -309,9 +383,9 @@ export function useCompanion(): CompanionState & {
     clearInjectError,
     soundEnabled,
     setSoundEnabled,
-    targetCwd,
-    setTargetCwd,
-    effectiveTargetCwd,
+    targetKey,
+    setTargetKey,
+    effectiveTarget,
     pinnedOffline,
   }
 }

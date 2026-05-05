@@ -10,6 +10,12 @@
 // All three are derived from the transcript file that Claude Code writes line
 // by line. Hooks tell us *when* to read; the transcript tells us *what* to
 // show.
+//
+// State is scoped PER TRANSCRIPT PATH (falling back to tty/sessionId/cwd when
+// no transcript is known yet). Two Claude sessions running concurrently no
+// longer trample each other's identity when emitting events — every event
+// carries its originating tty + sessionId + cwd so the client can pin it to
+// the right session even when sessions share a cwd.
 
 import { readFileSync } from "node:fs"
 
@@ -32,6 +38,14 @@ export interface FeedEvent {
   durationMs?: number
   text?: string
   cwd?: string
+  tty?: string
+  sessionId?: string
+  // Bash + similar — first non-empty lines of stdout/stderr after the
+  // tool ran. Capped at ~200 chars so the feed message stays small.
+  outputExcerpt?: string
+  // True when the tool wrote to stderr (not necessarily a non-zero
+  // exit, but a useful "something went sideways" signal for the badge).
+  errored?: boolean
 }
 
 export interface Activity {
@@ -42,51 +56,123 @@ export interface Activity {
   lastBeatAt: number
   tokens: number
   cwd: string
+  // Explicit session identity so the phone can match a precise session even
+  // when two sessions share a cwd (e.g. two Claude windows in the same repo).
+  // The client prefers `tty` for matching, falling back to `sessionId`, and
+  // only uses `cwd` as a last resort.
+  sessionId?: string
+  tty?: string
+}
+
+interface SessionMeta {
+  transcriptPath?: string
+  tty?: string
+  sessionId?: string
+  cwd?: string
+}
+
+// Per-session state. Each Claude session writes its own transcript file, so
+// the transcript path is the strongest key. When the transcript isn't known
+// yet (e.g. PreToolUse before any tool ran), we fall back to tty / sessionId
+// / cwd. As stronger identity arrives on later hooks we update the record
+// in place so the same session keeps one state entry.
+interface PathState {
+  cwd: string
+  sessionId: string
+  tty: string
+  transcriptPath: string
+  turnStartedAt: number
+  lastTokens: number
+  seenAssistantText: Set<string>
+  toolStarts: Map<string, number>
 }
 
 const feed: FeedEvent[] = []
 const FEED_CAP = 200
 
+// One activity pill is shown at a time (the most recently active session).
+// Events, however, are always tagged with precise per-session identity.
 let activity: Activity | null = null
-let turnStartedAt = 0
-// The cwd of the current turn. Tool events carry their own cwd from the hook
-// payload, but assistant_text / turn_end / user_prompt need a fallback so the
-// phone can stamp every line with a session badge.
-let currentCwd = ""
-// Current turn's transcript path — used by the poll timer so we can stream
-// assistant text in near-real-time for text-only turns where no PostToolUse
-// hook ever fires.
-let currentTranscriptPath = ""
-let lastTokens = 0
-// Per-tool start times, keyed by stringified input (tool calls don't carry
-// a stable id across pre/post hooks, but input uniqueness is close enough
-// within a single turn).
-const toolStarts = new Map<string, number>()
-// Track assistant text emitted so we don't replay it when the transcript
-// grows between PostToolUse reads.
-const seenAssistantText = new Set<string>()
+
+const states = new Map<string, PathState>()
+
+function keyFor(meta: SessionMeta): string {
+  if (meta.transcriptPath) return `path:${meta.transcriptPath}`
+  if (meta.tty) return `tty:${meta.tty}`
+  if (meta.sessionId) return `sid:${meta.sessionId}`
+  if (meta.cwd) return `cwd:${meta.cwd}`
+  return "global"
+}
+
+function getState(meta: SessionMeta): PathState {
+  const key = keyFor(meta)
+  const existing = states.get(key)
+  if (existing) {
+    // Fill in fields that arrived on a later hook (e.g. transcript_path shows
+    // up at PostToolUse but not at PreToolUse).
+    if (meta.cwd) existing.cwd = meta.cwd
+    if (meta.sessionId) existing.sessionId = meta.sessionId
+    if (meta.tty) existing.tty = meta.tty
+    if (meta.transcriptPath) existing.transcriptPath = meta.transcriptPath
+    return existing
+  }
+  // Also check under weaker keys — if we previously recorded by cwd and now
+  // have a transcript path, migrate the state rather than orphaning it.
+  for (const weakKey of [
+    meta.tty ? `tty:${meta.tty}` : null,
+    meta.sessionId ? `sid:${meta.sessionId}` : null,
+    meta.cwd ? `cwd:${meta.cwd}` : null,
+  ]) {
+    if (!weakKey || weakKey === key) continue
+    const weak = states.get(weakKey)
+    if (weak) {
+      if (meta.cwd) weak.cwd = meta.cwd
+      if (meta.sessionId) weak.sessionId = meta.sessionId
+      if (meta.tty) weak.tty = meta.tty
+      if (meta.transcriptPath) weak.transcriptPath = meta.transcriptPath
+      states.delete(weakKey)
+      states.set(key, weak)
+      return weak
+    }
+  }
+  const next: PathState = {
+    cwd: meta.cwd ?? "",
+    sessionId: meta.sessionId ?? "",
+    tty: meta.tty ?? "",
+    transcriptPath: meta.transcriptPath ?? "",
+    turnStartedAt: 0,
+    lastTokens: 0,
+    seenAssistantText: new Set(),
+    toolStarts: new Map(),
+  }
+  states.set(key, next)
+  return next
+}
 
 // ── Live poll ────────────────────────────────────────────────────────────
 // Hooks only fire at tool boundaries and turn end. For text-only turns the
 // phone would otherwise sit empty for seconds while Claude is clearly
-// responding in the terminal. Poll the transcript every 1.5s while a turn
-// is active — cheap, since the transcript is a local file.
+// responding in the terminal. Poll every active session's transcript every
+// 1.5s while any session is still turning — cheap, since transcripts are
+// local files.
 const POLL_MS = 1500
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function startPoll(): void {
   if (pollTimer) return
   pollTimer = setInterval(() => {
-    if (!currentTranscriptPath) return
-    readTranscriptDelta(currentTranscriptPath)
-    // Heartbeat — keep the "Claude is … 12s" pill counting even between tools.
+    for (const s of states.values()) {
+      if (s.transcriptPath) readTranscriptDelta(s)
+    }
+    // Heartbeat — keep the "Claude is … 12s" pill counting between tools.
     if (activity) {
-      setActivity({ ...activity, lastBeatAt: Date.now(), tokens: lastTokens })
+      setActivity({ ...activity, lastBeatAt: Date.now() })
     }
   }, POLL_MS)
 }
 
-function stopPoll(): void {
+function stopPollIfIdle(): void {
+  if (activity) return
   if (!pollTimer) return
   clearInterval(pollTimer)
   pollTimer = null
@@ -134,19 +220,28 @@ function toolKey(tool: string, input: Record<string, unknown>): string {
   return `${tool}::${JSON.stringify(input)}`
 }
 
+function identityFor(s: PathState): { cwd: string; tty?: string; sessionId?: string } {
+  return {
+    cwd: s.cwd,
+    tty: s.tty || undefined,
+    sessionId: s.sessionId || undefined,
+  }
+}
+
 export function recordToolStart(args: {
   tool: string
   input: Record<string, unknown>
   summary: string
   verdict: Verdict
   cwd: string
+  sessionId?: string
+  tty?: string
+  transcriptPath?: string
 }): void {
   const now = Date.now()
-  if (args.cwd) currentCwd = args.cwd
-  // If we arrive here without a user_prompt first (e.g. companion started
-  // mid-turn), still kick the poller on so we can stream incoming text.
+  const s = getState(args)
   if (!pollTimer) startPoll()
-  toolStarts.set(toolKey(args.tool, args.input), now)
+  s.toolStarts.set(toolKey(args.tool, args.input), now)
 
   emit({
     id: crypto.randomUUID(),
@@ -155,33 +250,38 @@ export function recordToolStart(args: {
     tool: args.tool,
     summary: args.summary,
     verdict: args.verdict,
-    cwd: args.cwd,
+    ...identityFor(s),
   })
 
-  // Live activity — "Claude is verbing…"
   setActivity({
     verb: verbFor(args.tool),
     tool: args.tool,
     summary: args.summary,
-    turnStartedAt: turnStartedAt || now,
+    turnStartedAt: s.turnStartedAt || now,
     lastBeatAt: now,
-    tokens: lastTokens,
-    cwd: currentCwd,
+    tokens: s.lastTokens,
+    cwd: s.cwd,
+    sessionId: s.sessionId || undefined,
+    tty: s.tty || undefined,
   })
 }
 
 export function recordToolEnd(args: {
   tool: string
   input: Record<string, unknown>
+  toolResponse?: unknown
   transcriptPath?: string
   cwd: string
+  sessionId?: string
+  tty?: string
 }): void {
   const now = Date.now()
-  if (args.cwd) currentCwd = args.cwd
-  if (args.transcriptPath) currentTranscriptPath = args.transcriptPath
+  const s = getState(args)
   const key = toolKey(args.tool, args.input)
-  const startedAt = toolStarts.get(key)
-  toolStarts.delete(key)
+  const startedAt = s.toolStarts.get(key)
+  s.toolStarts.delete(key)
+
+  const result = extractToolResult(args.tool, args.toolResponse)
 
   emit({
     id: crypto.randomUUID(),
@@ -190,34 +290,41 @@ export function recordToolEnd(args: {
     tool: args.tool,
     summary: summarize(args.tool, args.input),
     durationMs: startedAt ? now - startedAt : undefined,
-    cwd: args.cwd,
+    outputExcerpt: result.excerpt,
+    errored: result.errored,
+    ...identityFor(s),
   })
 
-  // Pull any new assistant text + token count from the transcript.
-  if (args.transcriptPath) readTranscriptDelta(args.transcriptPath)
+  if (args.transcriptPath) readTranscriptDelta(s)
 
-  // Keep activity alive as a heartbeat even though this tool is done —
-  // Claude is likely about to fire another one.
-  if (activity) {
-    setActivity({ ...activity, lastBeatAt: now, tokens: lastTokens })
+  // Keep the pill alive as a heartbeat — Claude is likely about to fire
+  // another tool. Only update if the current pill is for *this* session, so
+  // another active session's pill isn't clobbered by a tool_end in ours.
+  if (activity && activityMatches(activity, s)) {
+    setActivity({ ...activity, lastBeatAt: now, tokens: s.lastTokens })
   }
 }
 
-export function recordUserPrompt(text: string, transcriptPath: string | undefined, cwd: string): void {
+export function recordUserPrompt(args: {
+  text: string
+  transcriptPath?: string
+  cwd: string
+  sessionId?: string
+  tty?: string
+}): void {
   const now = Date.now()
-  turnStartedAt = now
-  lastTokens = 0
-  toolStarts.clear()
-  seenAssistantText.clear()
-  if (cwd) currentCwd = cwd
-  currentTranscriptPath = transcriptPath ?? ""
+  const s = getState(args)
+  s.turnStartedAt = now
+  s.lastTokens = 0
+  s.toolStarts.clear()
+  s.seenAssistantText.clear()
 
   emit({
     id: crypto.randomUUID(),
     ts: now,
     kind: "user_prompt",
-    text: text.slice(0, 500),
-    cwd: currentCwd,
+    text: clampLong(args.text, 16_000),
+    ...identityFor(s),
   })
 
   setActivity({
@@ -227,51 +334,88 @@ export function recordUserPrompt(text: string, transcriptPath: string | undefine
     turnStartedAt: now,
     lastBeatAt: now,
     tokens: 0,
-    cwd: currentCwd,
+    cwd: s.cwd,
+    sessionId: s.sessionId || undefined,
+    tty: s.tty || undefined,
   })
 
   // Transcript may already contain this prompt — prime the seen set so we
   // don't echo it back as assistant text.
-  if (transcriptPath) readTranscriptDelta(transcriptPath, { silent: true })
+  if (args.transcriptPath) readTranscriptDelta(s, { silent: true })
 
   startPoll()
 }
 
-export function recordTurnEnd(transcriptPath?: string, finalText?: string): void {
+export function recordTurnEnd(args: {
+  transcriptPath?: string
+  finalText?: string
+  cwd: string
+  sessionId?: string
+  tty?: string
+}): void {
   const now = Date.now()
-  const trimmedFinal = finalText?.trim() ?? ""
+  const s = getState(args)
+  const trimmedFinal = args.finalText?.trim() ?? ""
 
   // Pre-mark the final text so readTranscriptDelta won't also emit it as an
   // assistant_text event — we want it to appear only inside the turn_end card.
   if (trimmedFinal) {
     for (const block of trimmedFinal.split("\n\n")) {
       const t = block.trim()
-      if (t) seenAssistantText.add(hashText(t))
+      if (t) s.seenAssistantText.add(hashText(t))
     }
-    seenAssistantText.add(hashText(trimmedFinal))
+    s.seenAssistantText.add(hashText(trimmedFinal))
   }
 
-  if (transcriptPath) {
-    currentTranscriptPath = transcriptPath
-    readTranscriptDelta(transcriptPath)
-  }
+  if (args.transcriptPath) readTranscriptDelta(s)
 
   emit({
     id: crypto.randomUUID(),
     ts: now,
     kind: "turn_end",
-    cwd: currentCwd,
     text: trimmedFinal ? trimmedFinal.slice(-2000) : undefined,
+    ...identityFor(s),
   })
 
-  setActivity(null)
-  stopPoll()
+  // Only clear the live pill if it belonged to THIS session. Another session
+  // may still be mid-turn — don't blank its activity just because we finished.
+  if (activity && activityMatches(activity, s)) {
+    setActivity(null)
+  }
+  stopPollIfIdle()
+}
+
+// Drop a session's state when its hook signals the terminal closed, so the
+// states Map doesn't grow unbounded.
+export function forgetSession(meta: SessionMeta): void {
+  for (const [k, s] of states) {
+    const matches =
+      (meta.transcriptPath && s.transcriptPath === meta.transcriptPath) ||
+      (meta.tty && s.tty === meta.tty) ||
+      (meta.sessionId && s.sessionId === meta.sessionId)
+    if (matches) states.delete(k)
+  }
+  if (activity) {
+    const stale =
+      (meta.tty && activity.tty === meta.tty) ||
+      (meta.sessionId && activity.sessionId === meta.sessionId)
+    if (stale) setActivity(null)
+  }
+  stopPollIfIdle()
+}
+
+function activityMatches(a: Activity, s: PathState): boolean {
+  if (a.tty && s.tty) return a.tty === s.tty
+  if (a.sessionId && s.sessionId) return a.sessionId === s.sessionId
+  return a.cwd === s.cwd
 }
 
 function readTranscriptDelta(
-  path: string,
+  s: PathState,
   opts: { silent?: boolean } = {},
 ): void {
+  const path = s.transcriptPath
+  if (!path) return
   let raw: string
   try { raw = readFileSync(path, "utf8") } catch { return }
 
@@ -289,7 +433,7 @@ function readTranscriptDelta(
         (usage.cache_read_input_tokens ?? 0) +
         (usage.cache_creation_input_tokens ?? 0) +
         (usage.output_tokens ?? 0)
-      if (total > lastTokens) lastTokens = total
+      if (total > s.lastTokens) s.lastTokens = total
     }
 
     if (entry.type !== "assistant") continue
@@ -301,15 +445,15 @@ function readTranscriptDelta(
       const text = (block.text as string | undefined)?.trim()
       if (!text) continue
       const key = hashText(text)
-      if (seenAssistantText.has(key)) continue
-      seenAssistantText.add(key)
+      if (s.seenAssistantText.has(key)) continue
+      s.seenAssistantText.add(key)
       if (opts.silent) continue
       emit({
         id: crypto.randomUUID(),
         ts: Date.now(),
         kind: "assistant_text",
-        text: text.slice(0, 1200),
-        cwd: currentCwd,
+        text: clampLong(text, 64_000),
+        ...identityFor(s),
       })
     }
   }
@@ -361,4 +505,64 @@ export function summarize(tool: string, input: Record<string, unknown>): string 
     default:
       return ""
   }
+}
+
+// Pull a phone-friendly excerpt from a tool_response payload. We don't try
+// to render the whole thing — for Bash that could be megabytes — just the
+// first few lines so the feed row can show "what happened" at a glance.
+//
+// Returns no excerpt when:
+//  - the tool isn't one whose output is interesting (Edit/Write/Read have
+//    obvious effects already)
+//  - the response is empty or non-string
+function extractToolResult(
+  tool: string,
+  raw: unknown,
+): { excerpt?: string; errored?: boolean } {
+  if (raw == null) return {}
+
+  // Bash is the headline case — give back stdout (or stderr if that's all
+  // we got) trimmed to the first 3 lines / 200 chars.
+  if (tool === "Bash") {
+    if (typeof raw === "object") {
+      const r = raw as Record<string, unknown>
+      const stdout = typeof r.stdout === "string" ? r.stdout : ""
+      const stderr = typeof r.stderr === "string" ? r.stderr : ""
+      const interrupted = r.interrupted === true
+      const text = stripAnsi((stdout || stderr).trim())
+      const errored = interrupted || (!stdout && stderr.trim().length > 0)
+      if (!text) return { errored }
+      const lines = text.split("\n").slice(0, 3).join("\n")
+      return { excerpt: lines.length > 200 ? lines.slice(0, 200) + "…" : lines, errored }
+    }
+    if (typeof raw === "string") {
+      const text = stripAnsi(raw.trim())
+      const lines = text.split("\n").slice(0, 3).join("\n")
+      return { excerpt: lines.length > 200 ? lines.slice(0, 200) + "…" : lines }
+    }
+  }
+
+  // For other tools we don't surface output (Read's response is the file
+  // content, Edit's is just confirmation noise — neither helps the user
+  // judge the row in the feed).
+  return {}
+}
+
+// Strip ANSI CSI sequences (colors, cursor moves) — we render the excerpt
+// as plain monospaced text on iOS, so raw `\x1b[32m…` byte sequences would
+// otherwise show up as visible noise.
+const ANSI_PATTERN = /\[[0-9;?]*[A-Za-z]/g
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_PATTERN, "")
+}
+
+// Bound text-payload size on the wire — protects the WS frame and the iOS
+// in-memory cache from a runaway 100KB reply, but with a *generous* cap so
+// the previous 8000-char limit (which silently chopped real long replies)
+// no longer bites. When we do truncate, we emit a visible marker so the
+// user knows there's more on the Mac side.
+function clampLong(s: string, max: number): string {
+  if (s.length <= max) return s
+  const overflow = s.length - max
+  return s.slice(0, max) + `\n\n…[truncated · +${overflow.toLocaleString()} more chars on the Mac]`
 }

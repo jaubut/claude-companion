@@ -26,23 +26,64 @@ const TOOL_ICONS: Record<string, typeof Terminal> = {
 
 export function App() {
   const {
-    connected, pending, waitingForInput, waitingMessage, waitingCwd,
+    connected, pending, waitingForInput, waitingMessage, waitingCwd, waitingKey,
     activity, feed, sessions, approve, deny, sendInput,
     soundEnabled, setSoundEnabled,
-    targetCwd, setTargetCwd, effectiveTargetCwd,
+    targetKey, setTargetKey, effectiveTarget,
     pinnedOffline, injectError, clearInjectError,
   } = useCompanion()
   const [text, setText] = useState("")
   const [listening, setListening] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [history, setHistory] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("companion.history")
+      if (!raw) return []
+      const parsed: unknown = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string") : []
+    } catch { return [] }
+  })
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+
+  const sendTarget = effectiveTarget?.key ?? targetKey ?? ""
+
+  const pushHistory = (entry: string): void => {
+    const trimmed = entry.trim()
+    if (!trimmed) return
+    setHistory(prev => {
+      const next = [trimmed, ...prev.filter(h => h !== trimmed)].slice(0, 50)
+      try { localStorage.setItem("companion.history", JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
+  // Filter history against current input. Empty input → most recent 4. Non-empty
+  // → prefix matches first, then substring matches, dropping the current text
+  // itself so we don't suggest what the user just typed verbatim.
+  const suggestions = ((): string[] => {
+    if (!suggestionsOpen) return []
+    const q = text.trim().toLowerCase()
+    if (!q) return history.slice(0, 4)
+    const prefix: string[] = []
+    const substring: string[] = []
+    for (const h of history) {
+      const lower = h.toLowerCase()
+      if (lower === q) continue
+      if (lower.startsWith(q)) prefix.push(h)
+      else if (lower.includes(q)) substring.push(h)
+    }
+    return [...prefix, ...substring].slice(0, 4)
+  })()
 
   const handleSend = (): void => {
     const trimmed = text.trim()
     if (!trimmed) return
     unlockAudio()
-    sendInput(trimmed, effectiveTargetCwd || undefined)
+    sendInput(trimmed, sendTarget || undefined)
+    pushHistory(trimmed)
     setText("")
+    setSuggestionsOpen(false)
   }
 
   const toggleSound = (): void => {
@@ -74,7 +115,9 @@ export function App() {
 
       const lastResult = e.results[e.results.length - 1]
       if (lastResult?.isFinal && transcript.trim()) {
-        sendInput(transcript.trim(), effectiveTargetCwd || undefined)
+        const finalText = transcript.trim()
+        sendInput(finalText, sendTarget || undefined)
+        pushHistory(finalText)
         setText("")
       }
     }
@@ -107,7 +150,7 @@ export function App() {
         <button
           onClick={toggleSound}
           aria-label={soundEnabled ? "Mute alerts" : "Unmute alerts"}
-          className="p-1.5 -mr-1.5 rounded-full text-muted active:text-fg active:scale-95 transition-transform"
+          className="min-h-[44px] min-w-[44px] -mr-3 flex items-center justify-center rounded-full text-muted active:text-fg active:scale-95 transition-transform"
         >
           {soundEnabled
             ? <Volume2 className="w-[18px] h-[18px]" />
@@ -118,12 +161,12 @@ export function App() {
 
       {/* Live activity pill — only when feed is the focus */}
       {activity && !pendingRequest && (
-        <ActivityPill activity={activity} />
+        <ActivityPill activity={activity} sessions={sessions} />
       )}
 
       {/* Feed — always rendered, never overlapped */}
       <div className="flex-1 min-h-0">
-        <TerminalFeed feed={feed} onPickCwd={setTargetCwd} />
+        <TerminalFeed feed={feed} sessions={sessions} onPickKey={setTargetKey} />
       </div>
 
       {/* Docked asking panel — visible when an approval is pending */}
@@ -131,6 +174,7 @@ export function App() {
         <ApprovalCard
           key={pendingRequest.id}
           request={pendingRequest}
+          sessions={sessions}
           onApprove={(id) => { unlockAudio(); approve(id) }}
           onDeny={(id) => { unlockAudio(); deny(id) }}
         />
@@ -145,25 +189,51 @@ export function App() {
           >
             {injectError.error === "target_gone"
               ? `⚠ pinned terminal isn't running — pick another session or unpin`
+              : injectError.error === "target_idle"
+              ? `⚠ that terminal is idle — open it and run any command so it re-registers`
               : `⚠ inject failed (${injectError.error}) — check Accessibility permission for Terminal/iTerm`}
             <span className="float-right opacity-60">tap to dismiss</span>
           </div>
         )}
         <TargetBar
           sessions={sessions}
-          effectiveCwd={effectiveTargetCwd}
-          targetCwd={targetCwd}
+          effectiveTarget={effectiveTarget}
+          targetKey={targetKey}
+          waitingKey={waitingKey}
           waitingCwd={waitingCwd}
           waitingForInput={waitingForInput}
           waitingMessage={waitingMessage}
           pinnedOffline={pinnedOffline}
           picking={picking}
           onTogglePick={() => setPicking(v => !v)}
-          onPick={(cwd) => {
-            setTargetCwd(cwd)
+          onPick={(key) => {
+            setTargetKey(key)
             setPicking(false)
           }}
         />
+
+        {suggestions.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto -mx-1 px-1 scrollbar-none">
+            {suggestions.map((s, i) => (
+              <button
+                key={`${s}-${i}`}
+                // preventDefault on mousedown stops the input from blurring
+                // when the chip is tapped — keeps the keyboard up and lets
+                // the user edit the filled suggestion before sending.
+                // onTouchEnd is the iOS 16 WebKit fallback: in some Safari
+                // versions, preventDefault on the synthesized mousedown
+                // suppresses the subsequent click, so we set the text on
+                // touchEnd directly. The onClick still fires on desktop.
+                onMouseDown={(e) => e.preventDefault()}
+                onTouchEnd={(e) => { e.preventDefault(); setText(s) }}
+                onClick={() => setText(s)}
+                className="shrink-0 inline-flex items-center min-h-[44px] px-3.5 rounded-full bg-fg/10 text-fg/85 text-[12px] active:scale-95 active:bg-fg/20 max-w-[240px] truncate whitespace-nowrap"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="glass-card flex items-center gap-2 px-4 py-2">
           {hasSpeech && (
@@ -182,10 +252,15 @@ export function App() {
             type="text"
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onFocus={() => { setPicking(false); setSuggestionsOpen(true) }}
+            // Delay so a tap on a suggestion chip (which triggers blur first)
+            // can register before the row unmounts.
+            onBlur={() => setTimeout(() => setSuggestionsOpen(false), 150)}
             onKeyDown={(e) => { if (e.key === "Enter") handleSend() }}
+            enterKeyHint="send"
             placeholder={waitingForInput ? "Reply…" : "Type into terminal…"}
             disabled={!connected}
-            className="flex-1 bg-transparent py-2.5 text-sm text-fg placeholder:text-muted/40 focus:outline-none disabled:opacity-40"
+            className="flex-1 bg-transparent py-2.5 text-base text-fg placeholder:text-muted/40 focus:outline-none disabled:opacity-40"
           />
           <button
             onClick={handleSend}
@@ -200,25 +275,80 @@ export function App() {
   )
 }
 
+const DEFAULT_SPAWN_CWDS = [
+  "~/Cherrypik",
+  "~/tls-dashboard-v2",
+  "~/claude-companion",
+  "~/tls-vault",
+  "~",
+]
+
+async function spawnClaudeSession(cwd: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch("/api/spawn-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd }),
+    })
+    const data = await res.json()
+    return res.ok ? { ok: true } : { ok: false, error: data.error || `HTTP ${res.status}` }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 function TargetBar({
-  sessions, effectiveCwd, targetCwd, waitingCwd, waitingForInput, waitingMessage,
+  sessions, effectiveTarget, targetKey, waitingKey, waitingCwd, waitingForInput, waitingMessage,
   pinnedOffline, picking, onTogglePick, onPick,
 }: {
   sessions: Session[]
-  effectiveCwd: string
-  targetCwd: string
+  effectiveTarget: Session | null
+  targetKey: string
+  waitingKey: string
   waitingCwd: string
   waitingForInput: boolean
   waitingMessage: string
   pinnedOffline: boolean
   picking: boolean
   onTogglePick: () => void
-  onPick: (cwd: string) => void
+  onPick: (key: string) => void
 }) {
-  if (sessions.length === 0 && !effectiveCwd) return null
+  const [spawning, setSpawning] = useState(false)
+  const [spawnCwd, setSpawnCwd] = useState("")
+  const [spawnBusy, setSpawnBusy] = useState(false)
+  const [spawnError, setSpawnError] = useState("")
 
-  const showHint = waitingForInput && waitingMessage && waitingCwd === effectiveCwd
-  const hue = hashHue(effectiveCwd)
+  if (sessions.length === 0 && !effectiveTarget && !picking) return null
+
+  const waitingMatches = effectiveTarget
+    ? waitingKey === effectiveTarget.key || waitingCwd === effectiveTarget.cwd
+    : false
+  const showHint = waitingForInput && waitingMessage && waitingMatches
+  const hue = hashHue(effectiveTarget?.key ?? "")
+  // `??` falls through only on null/undefined — an empty string label
+  // (provisional session from discovery) would still render as "" and force
+  // the "frontmost" fallback below. Use `||` and derive from the key/tty so
+  // the chip reads e.g. "s009" instead of the misleading "frontmost".
+  const label = effectiveTarget?.label
+    || (effectiveTarget?.tty ? shortKey(`tty:${effectiveTarget.tty}`) : "")
+    || (effectiveTarget?.key ? shortKey(effectiveTarget.key) : "")
+    || (targetKey ? shortKey(targetKey) : "")
+
+  // Recent cwds derived from the session list, deduped + sorted by lastSeen.
+  const recentCwds = Array.from(new Map(
+    [...sessions].sort((a, b) => b.lastSeenAt - a.lastSeenAt).map(s => [s.cwd, s.cwd]),
+  ).keys()).filter(Boolean)
+  const spawnSuggestions = Array.from(new Set([...recentCwds, ...DEFAULT_SPAWN_CWDS]))
+
+  async function doSpawn(cwd: string): Promise<void> {
+    setSpawnError("")
+    setSpawnBusy(true)
+    const r = await spawnClaudeSession(cwd)
+    setSpawnBusy(false)
+    if (!r.ok) { setSpawnError(r.error ?? "failed"); return }
+    setSpawning(false)
+    setSpawnCwd("")
+  }
 
   return (
     <div className="space-y-2">
@@ -234,72 +364,120 @@ function TargetBar({
         </span>
         <button
           onClick={onTogglePick}
-          disabled={sessions.length <= 1 && !effectiveCwd && !pinnedOffline}
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-full glass-card text-fg disabled:opacity-50 active:scale-95 transition-transform ${pinnedOffline ? "ring-1 ring-red/50" : ""}`}
+          disabled={sessions.length <= 1 && !effectiveTarget && !pinnedOffline}
+          className={`flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] rounded-full glass-card text-fg disabled:opacity-50 active:scale-95 transition-transform ${pinnedOffline ? "ring-1 ring-red/50" : ""}`}
           style={{
-            backgroundColor: pinnedOffline ? "hsl(0 70% 40% / 0.15)" : effectiveCwd ? `hsl(${hue} 70% 55% / 0.12)` : undefined,
-            color: pinnedOffline ? "hsl(0 70% 75%)" : effectiveCwd ? `hsl(${hue} 70% 75%)` : undefined,
+            backgroundColor: pinnedOffline ? "hsl(0 70% 40% / 0.15)" : effectiveTarget ? `hsl(${hue} 70% 55% / 0.12)` : undefined,
+            color: pinnedOffline ? "hsl(0 70% 75%)" : effectiveTarget ? `hsl(${hue} 70% 75%)` : undefined,
           }}
         >
           <span
             className="w-1.5 h-1.5 rounded-full shrink-0"
             style={{ backgroundColor: pinnedOffline ? "hsl(0 70% 55%)" : `hsl(${hue} 70% 55%)` }}
           />
-          <span className="font-semibold">{effectiveCwd ? sessionLabel(effectiveCwd) : "frontmost"}</span>
+          <span className="font-semibold">{label || "frontmost"}</span>
           {pinnedOffline && <span className="text-[10px] opacity-80">· offline</span>}
           {(sessions.length > 1 || pinnedOffline) && <ChevronDown className="w-3 h-3 opacity-60" />}
         </button>
-        {targetCwd && (
+        {targetKey && (
           <button
             onClick={() => onPick("")}
-            className="text-muted/50 underline-offset-2 hover:underline"
+            className="px-2 py-2 min-h-[44px] text-muted/60 underline-offset-2 hover:underline active:scale-95 transition-transform"
           >
             auto
           </button>
         )}
       </div>
 
-      {picking && sessions.length > 0 && (
-        <div className="glass-card p-1 max-h-48 overflow-y-auto space-y-0.5">
-          <button
-            onClick={() => onPick("")}
-            className={`w-full text-left px-3 py-2 rounded-lg text-[12px] flex items-center gap-2 active:scale-[0.98] ${
-              targetCwd === "" ? "bg-accent/10 text-accent" : "text-fg hover:bg-fg/5"
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-muted/40" />
-            <span className="font-semibold">Auto</span>
-            <span className="text-muted/60 text-[11px]">most recent activity</span>
-          </button>
+      {picking && (
+        <div className="glass-card p-1 max-h-72 overflow-y-auto space-y-0.5">
+          {sessions.length > 0 && (
+            <button
+              onClick={() => onPick("")}
+              className={`w-full text-left px-3 py-3 min-h-[44px] rounded-lg text-[12px] flex items-center gap-2 active:scale-[0.98] ${
+                targetKey === "" ? "bg-accent/10 text-accent" : "text-fg hover:bg-fg/5"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-muted/40" />
+              <span className="font-semibold">Auto</span>
+              <span className="text-muted/60 text-[11px]">most recent activity</span>
+            </button>
+          )}
           {sessions.map((s) => {
-            const sHue = hashHue(s.cwd)
+            const sHue = hashHue(s.key)
             const term = s.termProgram?.replace(/\.app$/i, "").replace(/_/g, " ")
+            const idle = !s.tty
             return (
               <button
-                key={s.cwd}
-                onClick={() => onPick(s.cwd)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-[12px] flex items-center gap-2 active:scale-[0.98] ${
-                  targetCwd === s.cwd ? "bg-accent/10 text-accent" : "text-fg hover:bg-fg/5"
-                }`}
+                key={s.key}
+                onClick={() => onPick(s.key)}
+                className={`w-full text-left px-3 py-3 min-h-[44px] rounded-lg text-[12px] flex items-center gap-2 active:scale-[0.98] ${
+                  targetKey === s.key ? "bg-accent/10 text-accent" : "text-fg hover:bg-fg/5"
+                } ${idle ? "opacity-50" : ""}`}
               >
                 <span
                   className="w-1.5 h-1.5 rounded-full shrink-0"
                   style={{ backgroundColor: `hsl(${sHue} 70% 55%)` }}
                 />
-                <span className="font-semibold truncate">{sessionLabel(s.cwd)}</span>
+                <span className="font-semibold truncate">{s.label || shortKey(s.key)}</span>
+                {idle && <span className="text-[10px] text-muted/60 italic shrink-0">idle</span>}
                 <span className="flex-1 text-muted/60 text-[10px] font-mono truncate text-right">
-                  {term ? `${term} · ` : ""}{s.tty.replace(/^\/dev\//, "") || "—"}
+                  {term ? `${term} · ` : ""}{s.tty.replace(/^\/dev\//, "") || "no tty"}
                 </span>
               </button>
             )
           })}
+          <div className="border-t border-fg/5 my-1" />
+          <button
+            onClick={() => { setSpawning(v => !v); setSpawnError("") }}
+            className="w-full text-left px-3 py-3 min-h-[44px] rounded-lg text-[12px] flex items-center gap-2 text-fg hover:bg-fg/5 active:scale-[0.98]"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/70 shrink-0" />
+            <span className="font-semibold">+ New Claude session</span>
+            <span className="text-muted/60 text-[11px]">opens a new Terminal window on the Mac</span>
+          </button>
+          {spawning && (
+            <div className="px-2 py-2 space-y-1">
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={spawnCwd}
+                  onChange={(e) => setSpawnCwd(e.target.value)}
+                  placeholder="~/path/to/project or /absolute/path"
+                  className="flex-1 bg-transparent border border-fg/10 rounded-md px-3 py-2 text-[12px] font-mono text-fg placeholder:text-muted/40 focus:outline-none focus:border-fg/30"
+                />
+                <button
+                  onClick={() => doSpawn(spawnCwd)}
+                  disabled={spawnBusy || !spawnCwd.trim()}
+                  className="px-3 py-2 text-[11px] font-semibold rounded-md bg-accent text-bg disabled:opacity-30 active:scale-95"
+                >
+                  {spawnBusy ? "…" : "Spawn"}
+                </button>
+              </div>
+              {spawnError && (
+                <p className="text-[11px] text-red px-1">{spawnError}</p>
+              )}
+              <div className="space-y-0.5 pt-1">
+                {spawnSuggestions.slice(0, 8).map((cwd) => (
+                  <button
+                    key={cwd}
+                    onClick={() => doSpawn(cwd)}
+                    disabled={spawnBusy}
+                    className="w-full text-left px-3 py-2 min-h-[40px] rounded-md text-[11px] font-mono text-muted/80 hover:bg-fg/5 hover:text-fg active:scale-[0.98] disabled:opacity-40"
+                  >
+                    {cwd}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-function ActivityPill({ activity }: { activity: Activity }) {
+function ActivityPill({ activity, sessions }: { activity: Activity; sessions: Session[] }) {
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -310,12 +488,19 @@ function ActivityPill({ activity }: { activity: Activity }) {
   const elapsedSec = Math.max(0, Math.floor((now - activity.turnStartedAt) / 1000))
   const stale = now - activity.lastBeatAt > 30_000
   const toolSummary = [activity.tool, activity.summary && truncate(activity.summary, 40)].filter(Boolean).join(" ")
+  const session = activity.tty
+    ? sessions.find(s => s.tty === activity.tty)
+    : activity.sessionId
+      ? sessions.find(s => s.sessionId === activity.sessionId)
+      : activity.cwd
+        ? sessions.find(s => s.cwd === activity.cwd)
+        : undefined
 
   return (
     <div className="px-5 pb-2 shrink-0">
       <div className={`flex items-center gap-2 px-3 py-2 rounded-full glass-card text-[12px] ${stale ? "text-red" : "text-muted"}`}>
         <Loader2 className={`w-3.5 h-3.5 shrink-0 ${stale ? "" : "animate-spin"}`} />
-        {activity.cwd && <SessionBadge cwd={activity.cwd} />}
+        {session && <SessionBadge session={session} />}
         <span className="font-semibold text-fg">{activity.verb}...</span>
         <span className="font-mono">{formatElapsed(elapsedSec)}</span>
         {activity.tokens > 0 && (
@@ -335,7 +520,7 @@ function ActivityPill({ activity }: { activity: Activity }) {
   )
 }
 
-function TerminalFeed({ feed, onPickCwd }: { feed: FeedEvent[]; onPickCwd: (cwd: string) => void }) {
+function TerminalFeed({ feed, sessions, onPickKey }: { feed: FeedEvent[]; sessions: Session[]; onPickKey: (key: string) => void }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [pinned, setPinned] = useState(true)
 
@@ -372,7 +557,7 @@ function TerminalFeed({ feed, onPickCwd }: { feed: FeedEvent[]; onPickCwd: (cwd:
         className="h-full overflow-y-auto px-5 py-3 font-mono text-[12px] leading-[1.55] text-fg/80"
       >
         {feed.map((ev) => (
-          <FeedLine key={ev.id} ev={ev} onPickCwd={onPickCwd} />
+          <FeedLine key={ev.id} ev={ev} sessions={sessions} onPickKey={onPickKey} />
         ))}
         <div className="h-4" />
       </div>
@@ -393,9 +578,19 @@ function TerminalFeed({ feed, onPickCwd }: { feed: FeedEvent[]; onPickCwd: (cwd:
   )
 }
 
-function FeedLine({ ev, onPickCwd }: { ev: FeedEvent; onPickCwd: (cwd: string) => void }) {
+function FeedLine({ ev, sessions, onPickKey }: { ev: FeedEvent; sessions: Session[]; onPickKey: (key: string) => void }) {
   const time = formatTime(ev.ts)
-  const cwd = ev.cwd ?? ""
+  // Match the event to its originating session using the strongest identity
+  // first. Matching by cwd alone mislabels events when two Claude windows
+  // share a cwd (common when running both Claude + a subagent from the same
+  // repo).
+  const session =
+    (ev.tty ? sessions.find(s => s.tty === ev.tty) : undefined) ??
+    (ev.sessionId ? sessions.find(s => s.sessionId === ev.sessionId) : undefined) ??
+    (ev.cwd ? sessions.find(s => s.cwd === ev.cwd) : undefined)
+  const handlePick = (): void => {
+    if (session?.key) onPickKey(session.key)
+  }
 
   if (ev.kind === "user_prompt") {
     return (
@@ -403,7 +598,7 @@ function FeedLine({ ev, onPickCwd }: { ev: FeedEvent; onPickCwd: (cwd: string) =
         <div className="flex items-center gap-2">
           <span className="text-muted/50 shrink-0">{time}</span>
           <User className="w-3.5 h-3.5 text-accent shrink-0" />
-          <SessionBadge cwd={cwd} onClick={() => cwd && onPickCwd(cwd)} />
+          {session ? <SessionBadge session={session} onClick={handlePick} /> : null}
         </div>
         {ev.text && (
           <div className="whitespace-pre-wrap break-words text-fg pl-[52px]">{ev.text}</div>
@@ -416,19 +611,18 @@ function FeedLine({ ev, onPickCwd }: { ev: FeedEvent; onPickCwd: (cwd: string) =
     return (
       <div className="flex gap-2 py-1">
         <span className="text-muted/40 shrink-0">{time}</span>
-        <SessionDot cwd={cwd} onClick={() => cwd && onPickCwd(cwd)} />
+        <SessionDot session={session} onClick={handlePick} />
         <span className="whitespace-pre-wrap break-words text-fg/90 flex-1">{ev.text}</span>
       </div>
     )
   }
 
   if (ev.kind === "turn_end") {
-    // Show the final assistant message as the close-out instead of a horizontal divider.
     return (
       <div className="my-2 rounded-xl bg-fg/[0.03] border border-outline-variant/30 p-3">
         <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted/60 mb-2">
           <MessageSquare className="w-3 h-3" />
-          <SessionBadge cwd={cwd} onClick={() => cwd && onPickCwd(cwd)} />
+          {session ? <SessionBadge session={session} onClick={handlePick} /> : null}
           <span className="ml-auto font-mono">{time}</span>
         </div>
         {ev.text ? (
@@ -445,7 +639,7 @@ function FeedLine({ ev, onPickCwd }: { ev: FeedEvent; onPickCwd: (cwd: string) =
     return (
       <div className="flex items-start gap-2 py-1">
         <span className="text-muted/40 shrink-0">{time}</span>
-        <SessionDot cwd={cwd} onClick={() => cwd && onPickCwd(cwd)} />
+        <SessionDot session={session} onClick={handlePick} />
         <Icon className="w-3.5 h-3.5 mt-0.5 text-muted shrink-0" />
         <span className="font-semibold text-fg shrink-0">{ev.tool}</span>
         {ev.summary && (
@@ -460,7 +654,7 @@ function FeedLine({ ev, onPickCwd }: { ev: FeedEvent; onPickCwd: (cwd: string) =
     return (
       <div className="flex items-center gap-2 py-0.5 text-muted/60 text-[11px]">
         <span className="shrink-0">{time}</span>
-        <SessionDot cwd={cwd} onClick={() => cwd && onPickCwd(cwd)} />
+        <SessionDot session={session} onClick={handlePick} />
         <span className="opacity-50 shrink-0">└</span>
         <span className="shrink-0">{ev.tool}</span>
         {typeof ev.durationMs === "number" && (
@@ -480,44 +674,85 @@ function hashHue(s: string): number {
   return Math.abs(h) % 360
 }
 
-function sessionLabel(cwd: string): string {
-  if (!cwd) return "—"
-  const last = cwd.split("/").filter(Boolean).pop() ?? cwd
+function shortKey(key: string): string {
+  if (!key) return "—"
+  const colon = key.indexOf(":")
+  const value = colon >= 0 ? key.slice(colon + 1) : key
+  const last = value.split("/").filter(Boolean).pop() ?? value
   return last.length > 18 ? last.slice(0, 17) + "…" : last
 }
 
-function SessionDot({ cwd, onClick }: { cwd: string; onClick?: () => void }) {
-  const hue = hashHue(cwd)
+function SessionDot({ session, onClick }: { session: Session | undefined; onClick?: () => void }) {
+  const hue = hashHue(session?.key ?? "")
+  const dot = (
+    <span
+      className="block w-1.5 h-1.5 rounded-full"
+      style={{ backgroundColor: `hsl(${hue} 70% 55%)` }}
+    />
+  )
+  // Non-tappable (no session or no handler): render a plain span so it doesn't
+  // claim focus or a 44×44 hit area it can't actually use.
+  if (!onClick || !session) {
+    return (
+      <span className="block shrink-0 mt-[7px]" aria-hidden="true">
+        {dot}
+      </span>
+    )
+  }
+  // Tappable: inflate the hit target to 28×28 via padding, then collapse the
+  // surrounding layout with a negative margin so the visual dot stays tiny.
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-1.5 h-1.5 rounded-full mt-[7px] shrink-0 active:scale-125 transition-transform"
-      style={{ backgroundColor: `hsl(${hue} 70% 55%)` }}
-      title={cwd}
-      aria-label={cwd ? `Target ${cwd}` : "session"}
-    />
+      className="shrink-0 p-3 -m-3 mt-[-5px] flex items-center justify-center active:scale-110 transition-transform"
+      title={`${session.label} — ${session.cwd}`}
+      aria-label={`Target ${session.label}`}
+    >
+      {dot}
+    </button>
   )
 }
 
-function SessionBadge({ cwd, onClick }: { cwd: string; onClick?: () => void }) {
-  const hue = hashHue(cwd)
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider active:scale-95 transition-transform"
-      style={{
-        backgroundColor: `hsl(${hue} 70% 55% / 0.15)`,
-        color: `hsl(${hue} 70% 70%)`,
-      }}
-      title={cwd}
-    >
+function SessionBadge({ session, onClick }: { session: Session; onClick?: () => void }) {
+  const hue = hashHue(session.key)
+  const label = session.label || shortKey(session.key)
+  const inner = (
+    <>
       <span
         className="w-1.5 h-1.5 rounded-full"
         style={{ backgroundColor: `hsl(${hue} 70% 55%)` }}
       />
-      {sessionLabel(cwd)}
+      {label}
+    </>
+  )
+  const style = {
+    backgroundColor: `hsl(${hue} 70% 55% / 0.15)`,
+    color: `hsl(${hue} 70% 70%)`,
+  }
+  // Static badge (ActivityPill, ApprovalCard header) — keep the compact pill
+  // look, no tap affordance required.
+  if (!onClick) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider"
+        style={style}
+        title={`${label} — ${session.cwd}`}
+      >
+        {inner}
+      </span>
+    )
+  }
+  // Tappable (feed rows) — grow to HIG minimum so it's reachable on iPhone.
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-2.5 py-2 min-h-[44px] rounded text-[10px] font-semibold uppercase tracking-wider active:scale-95 transition-transform"
+      style={style}
+      title={`${label} — ${session.cwd}`}
+    >
+      {inner}
     </button>
   )
 }
@@ -578,22 +813,25 @@ function truncate(s: string, max: number): string {
 
 function ApprovalCard({
   request,
+  sessions,
   onApprove,
   onDeny,
 }: {
   request: ApprovalRequest
+  sessions: Session[]
   onApprove: (id: string) => void
   onDeny: (id: string) => void
 }) {
   const Icon = TOOL_ICONS[request.tool] ?? Terminal
   const summary = getToolSummary(request.tool, request.input)
+  const session = request.cwd ? sessions.find(s => s.cwd === request.cwd) : undefined
 
   return (
     <div className="shrink-0 px-5 pt-2">
       <div className="w-full flex flex-col glass-card border border-accent/20">
         <div className="flex flex-col px-5 pt-4 pb-3">
           <div className="flex items-center gap-2 mb-3">
-            {request.cwd && <SessionBadge cwd={request.cwd} />}
+            {session && <SessionBadge session={session} />}
             <span className="text-[10px] uppercase tracking-wider text-accent/80 font-semibold">approval needed</span>
           </div>
           <div className="flex items-center gap-3 mb-3">

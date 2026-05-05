@@ -1,0 +1,16 @@
+#!/bin/bash
+# claude-companion tmux launcher
+# Usage: cc-tmux <name>
+#   creates a new detached tmux session named <name>, launches Claude inside,
+#   then attaches. The Claude session inherits $TMUX_PANE; the companion
+#   hook forwards it as X-Companion-Tmux-Pane and routing becomes pane-id
+#   keyed instead of focus-bound — eliminates the inject swap bug.
+set -e
+NAME="${1:-cc-$(date +%s)}"
+if tmux has-session -t "$NAME" 2>/dev/null; then
+  echo "tmux session '$NAME' already exists — attaching"
+  exec tmux attach -t "$NAME"
+fi
+tmux new-session -d -s "$NAME"
+tmux send-keys -t "$NAME" "claude" Enter
+exec tmux attach -t "$NAME"

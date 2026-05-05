@@ -65,7 +65,7 @@ export async function rehydrateSessions(): Promise<RehydrateResult> {
       seen.add(cwd)
 
       const sessionId = basename(file, ".jsonl")
-      recordSession({ cwd, sessionId })
+      recordSession({ cwd, sessionId }, { provisional: true })
       registered++
     }
   }

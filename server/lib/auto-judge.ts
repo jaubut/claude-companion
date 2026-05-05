@@ -4,6 +4,15 @@
 // a security boundary. The phone is the second line of defense; the deny list
 // here is reserved for genuinely irreversible/destructive shapes that no
 // phone-tap should ever accidentally approve.
+//
+// Layered checks (first match wins):
+//   1. Always-safe tool name → allow
+//   2. Static DANGEROUS_BASH → deny
+//   3. Static SAFE_BASH → allow
+//   4. Learned-allow (phone said yes once before for this shape) → allow
+//   5. Otherwise → ask
+
+import { isLearned } from "./learned-allow"
 
 type Verdict = "allow" | "deny" | "ask"
 
@@ -31,12 +40,19 @@ const SAFE_BASH: RegExp[] = [
   // Routine git writes (still gated on push-to-main below)
   /^git\s+add(\s|$)/,
   /^git\s+commit\s+-m\s/,
+  /^git\s+commit\s+-F\s/,
   /^git\s+commit\s+--amend(\s|$)/,
   /^git\s+stash(\s|$)/,
   /^git\s+checkout\s+-b\s/,
   /^git\s+switch(\s|$)/,
   /^git\s+merge\s+--no-ff/,
   /^git\s+restore\s+--staged/,
+
+  // git -C <path> <safe-verb> — same allowlist applied via the cwd flag.
+  // Explicitly does NOT include push / reset / clean — those keep their
+  // existing routing (push falls to branch-guard, reset/clean to
+  // DANGEROUS_BASH for protected forms or "ask" otherwise).
+  /^git\s+-C\s+\S+\s+(status|log|diff|show|branch|remote|tag|blame|fetch|rev-parse|ls-files|stash\s+list|config\s+--get|add|commit\s+-(m|F|-amend)|stash|checkout\s+-b|switch|merge\s+--no-ff|restore\s+--staged)\b/,
 
   // Package info + scripts
   /^(bun|npm|yarn|pnpm)\s+(list|ls|info|view|outdated|why)/,
@@ -88,15 +104,15 @@ const DANGEROUS_BASH: RegExp[] = [
   /\brm\s+-rf?\s+\*\s*$/,
 
   // Force push — genuinely destructive (rewrites shared history)
-  /\bgit\s+push\s+.*--force\b/,
-  /\bgit\s+push\s+.*-f\b/,
+  /\bgit\s+(-C\s+\S+\s+)?push\s+.*--force\b/,
+  /\bgit\s+(-C\s+\S+\s+)?push\s+.*-f\b/,
   // Non-force `git push origin main` is a fast-forward — not destructive.
   // It should ask on the phone, not auto-deny. branch-guard already
   // auto-allows non-force pushes on feature branches.
 
   // History rewrites on shared branches
-  /\bgit\s+reset\s+--hard\s+(origin\/)?(main|master)\b/,
-  /\bgit\s+clean\s+-fd?x?\s+\/(\s|$)/,
+  /\bgit\s+(-C\s+\S+\s+)?reset\s+--hard\s+(origin\/)?(main|master)\b/,
+  /\bgit\s+(-C\s+\S+\s+)?clean\s+-fd?x?\s+\/(\s|$)/,
 
   // System-level danger
   /\bsudo\s/,
@@ -148,6 +164,10 @@ export function autoJudge(tool: string, input: Record<string, unknown>): Verdict
       }
     }
 
+    // Learned-allow: check AFTER the static DANGEROUS list so a one-time
+    // "yes" can never override the catastrophe denylist.
+    if (isLearned(tool, input)) return "allow"
+
     return "ask"
   }
 
@@ -160,6 +180,11 @@ export function autoJudge(tool: string, input: Record<string, unknown>): Verdict
 
     return "allow"
   }
+
+  // Other tools (e.g. Web*, MCP tools): consult the learned table before
+  // bouncing to phone. Tools with no derivable pattern (see learned-allow.ts)
+  // fall through to "ask".
+  if (isLearned(tool, input)) return "allow"
 
   return "ask"
 }

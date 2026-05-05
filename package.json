@@ -11,7 +11,9 @@
     "build": "cd client && bun run build",
     "start": "bun cli.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "sharp": "^0.34.5",
