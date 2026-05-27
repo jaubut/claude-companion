@@ -61,9 +61,13 @@ const CATASTROPHIC_BASH: RegExp[] = [
   /\bcurl\s+[^|]*\bhttps?:\/\/(?!localhost|127\.0\.0\.1)[^\s|]+[^|]*\|\s*(sh|bash|zsh)\b/,
 ]
 
+function isShellTool(tool: string): boolean {
+  return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
+}
+
 export function isCatastrophic(tool: string, input: Record<string, unknown>): boolean {
-  if (tool === "Bash") {
-    const cmd = String(input.command ?? "")
+  if (isShellTool(tool)) {
+    const cmd = String(input.command ?? input.cmd ?? "")
     return CATASTROPHIC_BASH.some(re => re.test(cmd))
   }
   return false

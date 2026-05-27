@@ -100,8 +100,8 @@ if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
 
 Usage:
   bun cli.ts                   Start the companion server (default)
-  bun cli.ts init              Install hooks + patch ~/.claude/settings.json + print pairing token
-  bun cli.ts uninstall         Remove companion hook entries from ~/.claude/settings.json
+  bun cli.ts init              Install Claude/Codex hooks + print pairing token
+  bun cli.ts uninstall         Remove companion hook entries from Claude/Codex config
   bun cli.ts pair [--url URL]  Print a scannable QR + pairing token (auto-detects LAN IP)
   bun cli.ts print-token       Print the pairing URL + token without starting the server
   bun cli.ts daemon <action>   Manage the server LaunchAgent (install/uninstall/status/logs)
@@ -120,6 +120,7 @@ if (subcommand && subcommand.length > 0) {
 import { createCompanionServer } from "./server/companion-server"
 import { rehydrateSessions } from "./server/lib/rehydrate"
 import { discoverLiveClaudes } from "./server/lib/discover"
+import { startCodexFeedMonitor } from "./server/lib/codex-feed"
 import { getAuthToken } from "./server/lib/auth"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
@@ -140,14 +141,32 @@ console.log(`  ${dim}Token${reset} ${cyan}${token}${reset}`)
 console.log(`  ${dim}Paste both into the iOS app's Settings screen.${reset}`)
 console.log()
 
-// Discover live claude-code processes first — gives us tty-keyed entries that
+let codexFeedStarted = false
+function ensureCodexFeedMonitor(): void {
+  if (codexFeedStarted) return
+  codexFeedStarted = true
+  startCodexFeedMonitor()
+  console.log(`${dim}↯ watching local Codex rollout feed${reset}`)
+}
+
+// Discover live Claude/Codex processes first — gives us tty-keyed entries that
 // work for inject on boot. Rehydrate then fills in anything that's recently
 // active but not currently running.
 discoverLiveClaudes().then(({ registered }) => {
   if (registered > 0) {
-    console.log(`${dim}⚡ discovered ${registered} live claude process${registered === 1 ? "" : "es"}${reset}`)
+    console.log(`${dim}⚡ discovered ${registered} live agent process${registered === 1 ? "" : "es"}${reset}`)
   }
-}).catch(() => { /* silent */ })
+}).catch(() => { /* silent */ }).finally(() => {
+  // The Codex feed importer resolves rollout events by thread id. Starting it
+  // after discovery gives live Codex TTY rows their real thread ids first, so
+  // replayed feed events land in the same rows the user can inject into.
+  ensureCodexFeedMonitor()
+})
+
+const codexFeedFallback = setTimeout(ensureCodexFeedMonitor, 3000)
+if (typeof (codexFeedFallback as unknown as { unref?: () => void }).unref === "function") {
+  (codexFeedFallback as unknown as { unref: () => void }).unref()
+}
 
 rehydrateSessions().then(({ registered, scanned }) => {
   if (registered > 0) {

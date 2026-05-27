@@ -6,9 +6,20 @@ import {
   onApprovalRequest,
   onApprovalExpired,
 } from "./lib/pty-manager"
+import {
+  addQuestionRequest,
+  resolveQuestion,
+  getPendingQuestions,
+  onQuestionRequest,
+  onQuestionExpired,
+  isQuestionTool,
+  parseQuestionInput,
+  type QuestionAnswer,
+  type QuestionItem,
+} from "./lib/questions"
 import { judgeWithBranchContext } from "./lib/branch-guard"
-import { injectText } from "./lib/keyboard-inject"
-import { spawnClaudeSession } from "./lib/spawn-session"
+import { injectText, injectKeySequence, type InjectTarget, type KeySeqStep } from "./lib/keyboard-inject"
+import { spawnCompanionSession, type SpawnAgent, type SpawnResult } from "./lib/spawn-session"
 import { isSuperAuto, setSuperAuto, isCatastrophic } from "./lib/super-auto"
 import { recordAllow, listLearned, forgetLearned, clearLearned } from "./lib/learned-allow"
 import {
@@ -31,6 +42,7 @@ import {
   getActivity,
   onFeed,
   onActivity,
+  onFeedReset,
   summarize,
   type FeedEvent,
   type Verdict,
@@ -48,6 +60,46 @@ const clients = new Set<ServerWebSocket<WsData>>()
 let waitingForInput = false
 let waitingCwd = ""
 let waitingKey = ""
+
+function agentFromHeaders(headers: Headers): SpawnAgent {
+  return headers.get("x-companion-agent") === "codex" ? "codex" : "claude"
+}
+
+function agentTitle(agent: SpawnAgent): string {
+  return agent === "codex" ? "Codex" : "Claude"
+}
+
+function cwdFromPayload(payloadCwd: string | undefined, headers: Headers): string {
+  return payloadCwd || headers.get("x-companion-cwd") || ""
+}
+
+function hookDecisionResponse(
+  agent: SpawnAgent,
+  eventName: "PreToolUse" | "PermissionRequest",
+  decision: "allow" | "deny",
+  reason: string,
+): Response {
+  if (agent === "codex") {
+    // Codex hook compatibility: empty stdout continues; blocking is explicit.
+    if (decision === "allow") return new Response("")
+    return Response.json({ decision: "block", reason })
+  }
+  if (eventName === "PermissionRequest") {
+    return Response.json({
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior: decision },
+      },
+    })
+  }
+  return Response.json({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: decision,
+      permissionDecisionReason: reason,
+    },
+  })
+}
 
 function broadcast(data: Record<string, unknown>): void {
   const msg = JSON.stringify(data)
@@ -111,6 +163,7 @@ onApprovalRequest((req) => {
   broadcast({
     type: "approval",
     id: req.id,
+    agent: req.agent ?? "claude",
     tool: req.tool,
     input: req.input,
     sessionId: req.sessionId,
@@ -124,7 +177,7 @@ onApprovalRequest((req) => {
       // Title surfaces "which project is asking + what it wants" — that's
       // the disambiguator when you've got two Claudes running. iOS already
       // prepends the app name ("Claude Companion") so we don't repeat it.
-      title: project ? `${project} · ${req.tool}` : req.tool,
+      title: project ? `${project} · ${req.tool}` : `${agentTitle(req.agent ?? "claude")} · ${req.tool}`,
       // Subtitle goes to a path-shortened preview for path-tools so the
       // banner shows "src/foo.ts" instead of the full /Users/.../path.
       subtitle: subtitleFor(req.tool, summary),
@@ -146,6 +199,81 @@ function projectLabelFor(cwd: string): string | undefined {
   if (home && cwd === home) return undefined
   const last = cwd.split("/").pop()
   return last && last.length > 0 ? last : undefined
+}
+
+// Translate the phone's structured answers into the keystroke sequence
+// that drives Claude Code's interactive AskUserQuestion picker. The picker
+// is an Ink TUI: arrow keys to navigate, Space to toggle in multi-select,
+// Enter to confirm. "Other" is auto-appended by the harness as the last
+// option; selecting it opens a text input that we type into and submit
+// with Enter.
+function buildKeystrokeSequence(questions: QuestionItem[], answers: QuestionAnswer[]): KeySeqStep[] {
+  const steps: KeySeqStep[] = []
+  for (let qi = 0; qi < questions.length; qi++) {
+    const q = questions[qi]!
+    const a = answers[qi] ?? { selected: [] }
+
+    if (qi > 0) {
+      // Inter-question gap — let the harness mount the next picker
+      // before we start arrowing through it.
+      steps.push({ kind: "wait", ms: 250 })
+    }
+
+    if (q.multiSelect) {
+      // Walk options 0..N. For each option whose label is in `selected`,
+      // hit Space while the cursor sits on it. Track cursor position so
+      // we only emit the Down keys we actually need between toggles.
+      let cursor = 0
+      for (let oi = 0; oi < q.options.length; oi++) {
+        const label = q.options[oi]!.label
+        if (!a.selected.includes(label)) continue
+        while (cursor < oi) {
+          steps.push({ kind: "key", name: "Down" })
+          cursor++
+        }
+        steps.push({ kind: "key", name: "Space" })
+      }
+      steps.push({ kind: "key", name: "Enter" })
+      continue
+    }
+
+    // Single-select: locate the picked option's index. "Other" lives at
+    // index q.options.length (auto-added by the harness, not in the
+    // options[] array) — detect it by either the literal label "Other"
+    // or by a non-empty otherText.
+    const picked = a.selected[0] ?? ""
+    let targetIdx = q.options.findIndex((o) => o.label === picked)
+    const isOther = a.otherText !== undefined || picked === "Other" || picked === ""
+    if (targetIdx < 0 && isOther) {
+      targetIdx = q.options.length  // "Other" sits one past the last option
+    }
+    if (targetIdx < 0) targetIdx = 0  // last-resort fallback — pick first option
+
+    for (let i = 0; i < targetIdx; i++) steps.push({ kind: "key", name: "Down" })
+    steps.push({ kind: "key", name: "Enter" })
+
+    if (isOther && (a.otherText ?? "").length > 0) {
+      // Picker now shows a text input — wait briefly for it to mount,
+      // type the custom text, submit with Enter.
+      steps.push({ kind: "wait", ms: 150 })
+      steps.push({ kind: "text", text: a.otherText! })
+      steps.push({ kind: "key", name: "Enter" })
+    }
+  }
+  return steps
+}
+
+function questionInjectTarget(session: Session | null, headerMeta: Partial<Session>): InjectTarget {
+  return {
+    tmuxPane: session?.tmuxPane || headerMeta.tmuxPane || "",
+    tty: session?.tty || headerMeta.tty || "",
+    termProgram: session?.termProgram || headerMeta.termProgram || "",
+    iTermSessionId: session?.iTermSessionId || headerMeta.iTermSessionId || "",
+  }
+}
+
+function hasQuestionInjectTarget(target: InjectTarget): boolean {
+  return !!(target.tmuxPane || target.tty)
 }
 
 function subtitleFor(tool: string, summary: string): string | undefined {
@@ -170,8 +298,45 @@ onApprovalExpired((id) => {
   broadcast({ type: "resolved", id, decision: "expired" })
 })
 
+onQuestionRequest((req) => {
+  broadcast({
+    type: "question",
+    id: req.id,
+    agent: req.agent ?? "claude",
+    sessionId: req.sessionId,
+    cwd: req.cwd,
+    questions: req.questions,
+  })
+  // Same urgency tier as approvals — Claude is blocked until the phone
+  // answers. The push title carries the first question's text so a glance
+  // at the lock screen shows what's being asked.
+  if (apnsConfigured()) {
+    const project = projectLabelFor(req.cwd)
+    const first = req.questions[0]
+    const headerLabel = first?.header || "ask"
+    const agent = req.agent ?? "claude"
+    const body = first?.question || `${agentTitle(agent)} is asking a question`
+    void pushToAll({
+      title: project ? `${project} · ${headerLabel}` : `${agentTitle(agent)} · ${headerLabel}`,
+      body: body.slice(0, 220),
+      category: "question",
+      threadId: req.cwd || "question",
+      userInfo: { questionId: req.id, sessionId: req.sessionId, cwd: req.cwd },
+    }).catch(() => { /* silent — don't let push failure break the hook */ })
+  }
+})
+
+onQuestionExpired((id) => {
+  // Mirrors approval expiry — phones know how to dequeue on `resolved`.
+  broadcast({ type: "resolved", id, decision: "expired" })
+})
+
 onFeed((ev: FeedEvent) => {
   broadcast({ type: "event", event: ev })
+})
+
+onFeedReset((ids: string[]) => {
+  broadcast({ type: "feed_pruned", ids })
 })
 
 onActivity((activity) => {
@@ -232,12 +397,14 @@ export function createCompanionServer(port: number) {
         const tool = body.tool_name ?? "unknown"
         const input = body.tool_input ?? {}
         const sessionId = body.session_id ?? ""
-        const cwd = body.cwd ?? ""
+        const cwd = cwdFromPayload(body.cwd, req.headers)
         const headerMeta = metaFromHeaders(req.headers)
+        const agent = agentFromHeaders(req.headers)
         const tty = headerMeta.tty ?? ""
 
+        let session: Session | null = null
         if (cwd) {
-          recordSession({ cwd, sessionId, ...headerMeta })
+          session = recordSession({ cwd, sessionId, ...headerMeta })
         }
 
         if (waitingForInput) {
@@ -254,6 +421,47 @@ export function createCompanionServer(port: number) {
         const yellow = "\x1b[33m"
         const cyan = "\x1b[36m"
 
+        // ── AskUserQuestion / request_user_input fast path ─────────────
+        // Treat agent questions as structured phone prompts, not binary
+        // approval gates. Routes to phone with question + options, then
+        // drives the local terminal picker after the user answers remotely.
+        if (isQuestionTool(tool)) {
+          const questions = parseQuestionInput(input)
+          const answerTarget = questionInjectTarget(session, headerMeta)
+          if (questions && hasQuestionInjectTarget(answerTarget)) {
+            process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
+            recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
+            const answers = await addQuestionRequest({ agent, sessionId, cwd, questions })
+
+            if (answers.length === 0) {
+              // Expired or otherwise no answer — deny so Claude doesn't
+              // sit on an open picker that nobody is going to drive.
+              process.stderr.write(`${dim}[companion]${reset} ${red}question expired${reset} ← phone\n`)
+              return hookDecisionResponse(agent, "PreToolUse", "deny", "User did not answer in time")
+            }
+
+            process.stderr.write(`${dim}[companion]${reset} ${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
+
+            // Schedule the keystroke drive AFTER we return allow. The
+            // harness only opens its picker once it sees our allow, so
+            // the inject has to land slightly later. 500ms gives Ink
+            // time to mount and start listening for input — enough on a
+            // typical Mac, conservative enough that it's not racing.
+            const steps = buildKeystrokeSequence(questions, answers)
+            queueMicrotask(() => {
+              setTimeout(() => {
+                void injectKeySequence(steps, answerTarget).catch(() => { /* logged inside */ })
+              }, 500)
+            })
+
+            return hookDecisionResponse(agent, "PreToolUse", "allow", "Answered via Claude Companion")
+          }
+          // Either parse failed or we don't have a live terminal target to
+          // drive. Fall through to the generic card so the Mac flow still
+          // works instead of swallowing the question.
+          process.stderr.write(`${dim}[companion]${reset} ${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}\n`)
+        }
+
         let decision: "allow" | "deny"
         let verdict: Verdict
 
@@ -266,13 +474,7 @@ export function createCompanionServer(port: number) {
           verdict = "auto-allow"
           process.stderr.write(`${dim}[companion]${reset} \x1b[35msuper-allow\x1b[0m ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
           recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty })
-          return Response.json({
-            hookSpecificOutput: {
-              hookEventName: "PreToolUse",
-              permissionDecision: decision,
-              permissionDecisionReason: "Approved via Claude Companion (SUPER)",
-            },
-          })
+          return hookDecisionResponse(agent, "PreToolUse", decision, "Approved via Claude Companion (SUPER)")
         }
 
         const verdictJudge = await judgeWithBranchContext(tool, input, cwd)
@@ -291,7 +493,7 @@ export function createCompanionServer(port: number) {
           verdict = "pending"
           process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}\n`)
           recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty })
-          decision = await addApprovalRequest({ sessionId, tool, input, cwd })
+          decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd })
           const decisionColor = decision === "allow" ? green : red
           process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← phone\n`)
           // Phone said yes — remember this shape so future identical prompts
@@ -303,15 +505,12 @@ export function createCompanionServer(port: number) {
           }
         }
 
-        return Response.json({
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: decision,
-            permissionDecisionReason: decision === "allow"
-              ? "Approved via Claude Companion"
-              : "Denied via Claude Companion",
-          },
-        })
+        return hookDecisionResponse(
+          agent,
+          "PreToolUse",
+          decision,
+          decision === "allow" ? "Approved via Claude Companion" : "Denied via Claude Companion",
+        )
       }
 
       // ── Hook endpoint — PostToolUse ──
@@ -326,12 +525,12 @@ export function createCompanionServer(port: number) {
         }
         const tool = body.tool_name ?? "unknown"
         const input = body.tool_input ?? {}
-        const cwd = body.cwd ?? ""
+        const cwd = cwdFromPayload(body.cwd, req.headers)
         const headerMeta = metaFromHeaders(req.headers)
 
-        if (cwd) {
-          recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
-        }
+        const session = cwd
+          ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
+          : null
 
         recordToolEnd({
           tool,
@@ -353,11 +552,22 @@ export function createCompanionServer(port: number) {
           transcript_path?: string
           cwd?: string
         }
-        const cwd = body.cwd ?? ""
+        const cwd = cwdFromPayload(body.cwd, req.headers)
         const headerMeta = metaFromHeaders(req.headers)
-        if (cwd) {
-          recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
+        // Diagnostic — surfaces hook fires + prompt-field shape so the
+        // "phone never sees my own message" bug can be triaged from logs
+        // alone. Trim text to keep noise low.
+        {
+          const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const yellow = "\x1b[33m"
+          const promptText = (body.prompt ?? "").trim()
+          const tag = promptText
+            ? `${cyan}user-prompt${reset} "${promptText.slice(0, 60)}${promptText.length > 60 ? "…" : ""}"`
+            : `${yellow}user-prompt EMPTY${reset}`
+          process.stderr.write(`${dim}[companion]${reset} ${tag} tty=${headerMeta.tty || "?"} sid=${(body.session_id ?? "").slice(0, 8) || "?"}\n`)
         }
+        const session = cwd
+          ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
+          : null
         recordUserPrompt({
           text: body.prompt ?? "",
           transcriptPath: body.transcript_path,
@@ -369,7 +579,7 @@ export function createCompanionServer(port: number) {
         // what was typed on the Mac. Without this the phone only sees
         // assistant replies — picking up mid-conversation on mobile would
         // show half the dialogue.
-        const promptKey = headerMeta.tty ? `tty:${headerMeta.tty}` : ""
+        const promptKey = session?.key ?? ""
         broadcast({
           type: "user_prompt",
           text: body.prompt ?? "",
@@ -393,12 +603,14 @@ export function createCompanionServer(port: number) {
         const tool = body.tool_name ?? "permission"
         const input = body.tool_input ?? {}
         const sessionId = body.session_id ?? ""
-        const cwd = body.cwd ?? ""
+        const cwd = cwdFromPayload(body.cwd, req.headers)
         const headerMeta = metaFromHeaders(req.headers)
+        const agent = agentFromHeaders(req.headers)
         const tty = headerMeta.tty ?? ""
 
+        let session: Session | null = null
         if (cwd) {
-          recordSession({ cwd, sessionId, ...headerMeta })
+          session = recordSession({ cwd, sessionId, ...headerMeta })
         }
 
         const dim = "\x1b[2m"
@@ -406,10 +618,43 @@ export function createCompanionServer(port: number) {
         const yellow = "\x1b[33m"
         const cyan = "\x1b[36m"
 
+        // ── AskUserQuestion / request_user_input fast path ─────────────
+        // Same logic as the PreToolUse fast path, just with the
+        // PermissionRequest response shape ({behavior:"allow"} instead
+        // of permissionDecision). Claude Code currently fires permission-
+        // request for AskUserQuestion; Codex may use request_user_input.
+        if (isQuestionTool(tool)) {
+          const questions = parseQuestionInput(input)
+          const answerTarget = questionInjectTarget(session, headerMeta)
+          if (questions && hasQuestionInjectTarget(answerTarget)) {
+            process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
+            recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
+            const answers = await addQuestionRequest({ agent, sessionId, cwd, questions })
+
+            const greenFP = "\x1b[32m"; const redFP = "\x1b[31m"
+            if (answers.length === 0) {
+              process.stderr.write(`${dim}[companion]${reset} ${redFP}question expired${reset} ← phone\n`)
+              return hookDecisionResponse(agent, "PermissionRequest", "deny", "User did not answer in time")
+            }
+
+            process.stderr.write(`${dim}[companion]${reset} ${greenFP}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
+
+            const steps = buildKeystrokeSequence(questions, answers)
+            queueMicrotask(() => {
+              setTimeout(() => {
+                void injectKeySequence(steps, answerTarget).catch(() => { /* logged inside */ })
+              }, 500)
+            })
+
+            return hookDecisionResponse(agent, "PermissionRequest", "allow", "Answered via Claude Companion")
+          }
+          process.stderr.write(`${dim}[companion]${reset} ${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}\n`)
+        }
+
         process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
 
         recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
-        const decision = await addApprovalRequest({ sessionId, tool, input, cwd })
+        const decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd })
 
         const green = "\x1b[32m"
         const red = "\x1b[31m"
@@ -422,12 +667,12 @@ export function createCompanionServer(port: number) {
           recordAllow(tool, input)
         }
 
-        return Response.json({
-          hookSpecificOutput: {
-            hookEventName: "PermissionRequest",
-            decision: { behavior: decision },
-          },
-        })
+        return hookDecisionResponse(
+          agent,
+          "PermissionRequest",
+          decision,
+          decision === "allow" ? "Approved via Claude Companion" : "Denied via Claude Companion",
+        )
       }
 
       // ── Stop hook — Claude finished its turn, waiting for user input ──
@@ -436,17 +681,20 @@ export function createCompanionServer(port: number) {
           session_id?: string
           cwd?: string
           transcript_path?: string
+          last_assistant_message?: string
           stop_hook_active?: boolean
         }
 
-        const cwd = body.cwd ?? ""
+        const cwd = cwdFromPayload(body.cwd, req.headers)
         const headerMeta = metaFromHeaders(req.headers)
+        const agent = agentFromHeaders(req.headers)
         let session: Session | null = null
         if (cwd) {
           session = recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
         }
 
-        const lastMessage = await extractLastAssistantMessage(body.transcript_path)
+        const lastMessage = (body.last_assistant_message ?? "").trim()
+          || await extractLastAssistantMessage(body.transcript_path)
 
         recordTurnEnd({
           transcriptPath: body.transcript_path,
@@ -484,7 +732,7 @@ export function createCompanionServer(port: number) {
           void pushToAll({
             // Lead with the project so a glance tells you which Claude is
             // waiting before you read the body.
-            title: project ? `${project} · waiting` : "Claude is waiting",
+            title: project ? `${project} · waiting` : `${agentTitle(agent)} is waiting`,
             body: lastMessage.trim().slice(0, 220) || "Tap to respond",
             category: "waiting_input",
             threadId: cwd || "waiting_input",
@@ -507,6 +755,30 @@ export function createCompanionServer(port: number) {
         }
         const ok = resolveApproval(id, decision)
         if (ok) broadcast({ type: "resolved", id, decision })
+        return Response.json({ ok })
+      }
+
+      // ── AskUserQuestion answer (HTTP) ──
+      // Counterpart to /api/resolve, but for the structured-question flow.
+      // Body: { id, answers: [{selected: string[], otherText?}] } — one
+      // entry per question, in order. Resolves the pending question; the
+      // PreToolUse hook handler then drives the local picker via tmux.
+      if (url.pathname === "/api/answer" && req.method === "POST") {
+        const body = await req.json() as {
+          id?: string
+          answers?: Array<{ selected?: string[]; otherText?: string }>
+        }
+        const id = (body.id ?? "").trim()
+        const rawAnswers = body.answers
+        if (!id || !Array.isArray(rawAnswers) || rawAnswers.length === 0) {
+          return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
+        }
+        const answers: QuestionAnswer[] = rawAnswers.map((a) => ({
+          selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
+          otherText: typeof a.otherText === "string" ? a.otherText : undefined,
+        }))
+        const ok = resolveQuestion(id, answers)
+        if (ok) broadcast({ type: "resolved", id, decision: "answered" })
         return Response.json({ ok })
       }
 
@@ -545,16 +817,58 @@ export function createCompanionServer(port: number) {
         return Response.json({ configured: apnsConfigured(), count: tokens.length, tokens })
       }
       if (url.pathname === "/api/push/test" && req.method === "POST") {
-        const body = await req.json() as { category?: "approval" | "waiting_input"; body?: string }
-        const category = body.category === "waiting_input" ? "waiting_input" : "approval"
+        const body = await req.json() as { category?: "approval" | "question" | "waiting_input"; body?: string }
+        const category = body.category === "waiting_input"
+          ? "waiting_input"
+          : body.category === "question"
+            ? "question"
+            : "approval"
         const result = await pushToAll({
-          title: category === "approval" ? "Approval needed (test)" : "Claude is waiting (test)",
+          title: category === "waiting_input"
+            ? "Claude is waiting (test)"
+            : category === "question"
+              ? "Question asked (test)"
+              : "Approval needed (test)",
           body: body.body || (category === "approval" ? "Bash: echo hello" : "Tap to respond"),
           category,
           userInfo: category === "approval"
             ? { approvalId: "test-" + Date.now(), sessionId: "test", cwd: "" }
-            : { cwd: "", sessionId: "test", key: "" },
+            : category === "question"
+              ? { questionId: "test-" + Date.now(), sessionId: "test", cwd: "" }
+              : { cwd: "", sessionId: "test", key: "" },
         })
+        return Response.json({ ok: true, ...result })
+      }
+
+      // ── Generic broadcast — for scheduled briefings, system updates ──
+      // Used by cron jobs (e.g. `/today` daily push) to fan out a banner
+      // to every registered device. category="briefing" keeps these
+      // semantically distinct from approval / waiting_input flows.
+      if (url.pathname === "/api/push/broadcast" && req.method === "POST") {
+        const body = await req.json() as {
+          title?: string
+          subtitle?: string
+          body?: string
+          category?: "approval" | "waiting_input" | "briefing"
+          threadId?: string
+          userInfo?: Record<string, string>
+        }
+        const title = (body.title ?? "").trim()
+        const text = (body.body ?? "").trim()
+        if (!title || !text) {
+          return Response.json({ ok: false, error: "title-and-body-required" }, { status: 400 })
+        }
+        const category = body.category ?? "briefing"
+        const result = await pushToAll({
+          title,
+          subtitle: body.subtitle,
+          body: text,
+          category,
+          threadId: body.threadId,
+          userInfo: body.userInfo ?? {},
+        })
+        const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}broadcast${reset} cat=${category} sent=${result.sent}/${result.total} title="${title.slice(0, 40)}"\n`)
         return Response.json({ ok: true, ...result })
       }
 
@@ -564,7 +878,20 @@ export function createCompanionServer(port: number) {
         if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
 
         const lookup = key || cwd || ""
-        const target = lookup ? resolveSession(lookup) : null
+        let target = lookup ? resolveSession(lookup) : null
+
+        // No explicit target: pick the most-recently-active registered
+        // session as "frontmost". On Linux this is the only sane fallback —
+        // the legacy pbcopy + Cmd+V path is macOS-only and ENOENTs on Bun
+        // under Linux. On macOS this is also a safer default than blind
+        // System Events paste into whatever app happens to be frontmost
+        // (Cursor, Safari, anything). Caller that truly wants the
+        // System-Events fallback can still send key="" + cwd="" on a
+        // server with no registered sessions; injectText handles that.
+        if (!lookup) {
+          const recent = listSessions().find(s => !!s.tty)
+          if (recent) target = recent
+        }
 
         // If the caller asked for a specific target and we don't have it
         // registered, refuse rather than silently pasting into the frontmost
@@ -598,6 +925,23 @@ export function createCompanionServer(port: number) {
         const ok = await injectText(text, target ?? undefined)
         if (!ok) {
           process.stderr.write(`${dim}[companion]${reset} \x1b[31minject failed\x1b[0m — osascript rejected (Accessibility permission?)\n`)
+        } else if (target) {
+          // Speculative fix for issue #8: phone-originated prompts weren't
+          // appearing in the iOS conversation feed. Hypothesis: synthetic
+          // keystrokes (tmux send-keys / osascript do script) don't always
+          // trigger Claude Code's UserPromptSubmit hook the same way a real
+          // keypress does, so the hook never POSTs to /hooks/user-prompt-submit.
+          //
+          // Record the user_prompt event ourselves on successful inject. If
+          // the Mac-side hook ALSO fires later, the iOS Snapshot.append
+          // dedup catches identical consecutive same-role text, so the
+          // double-record is harmless.
+          recordUserPrompt({
+            text,
+            cwd: target.cwd,
+            sessionId: target.sessionId,
+            tty: target.tty,
+          })
         }
         return Response.json({ ok })
       }
@@ -634,21 +978,29 @@ export function createCompanionServer(port: number) {
         return Response.json({ ok: true, enabled: next })
       }
 
-      // ── Spawn a fresh Claude session from the phone ──
+      // ── Spawn a fresh Claude/Codex session from the phone ──
       if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-        const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto" }
+        const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent }
         const cwd = (body.cwd ?? "").trim()
         if (!cwd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
+        const agent: SpawnAgent = body.agent === "codex" ? "codex" : "claude"
 
         const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
-        process.stderr.write(`${dim}[companion]${reset} ${cyan}spawn${reset} claude in ${cwd}\n`)
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}spawn${reset} ${agent} in ${cwd}\n`)
 
-        const result = await spawnClaudeSession({ cwd, app: body.app })
+        let result: SpawnResult
+        try {
+          result = await spawnCompanionSession({ cwd, app: body.app, agent })
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          process.stderr.write(`${dim}[companion]${reset} ${red}spawn crashed${reset} — ${message}\n`)
+          return Response.json({ ok: false, error: message || "spawn crashed" }, { status: 500 })
+        }
         if (!result.ok) {
           process.stderr.write(`${dim}[companion]${reset} ${red}spawn failed${reset} — ${result.error}\n`)
           return Response.json({ ok: false, error: result.error }, { status: 400 })
         }
-        return Response.json({ ok: true, app: result.app, cwd })
+        return Response.json({ ok: true, app: result.app, cwd, agent })
       }
 
       // ── Hook endpoint — SessionStart — register on startup/resume/clear/compact
@@ -656,7 +1008,7 @@ export function createCompanionServer(port: number) {
       // they open, without waiting for the user to trigger a tool-call hook.
       if (url.pathname === "/hooks/session-start" && req.method === "POST") {
         const body = await req.json() as { cwd?: string; session_id?: string; source?: string }
-        const cwd = body.cwd ?? ""
+        const cwd = cwdFromPayload(body.cwd, req.headers)
         if (cwd) {
           recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
           const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
@@ -671,7 +1023,7 @@ export function createCompanionServer(port: number) {
       // the last-resort fallback for hooks that couldn't resolve a tty.
       if (url.pathname === "/hooks/session-end" && req.method === "POST") {
         const body = await req.json() as { cwd?: string; session_id?: string; reason?: string }
-        const cwd = body.cwd ?? ""
+        const cwd = cwdFromPayload(body.cwd, req.headers)
         const headerMeta = metaFromHeaders(req.headers)
         const tty = headerMeta.tty ?? ""
         let removed = false
@@ -745,10 +1097,25 @@ export function createCompanionServer(port: number) {
           ws.send(JSON.stringify({
             type: "approval",
             id: req.id,
+            agent: req.agent ?? "claude",
             tool: req.tool,
             input: req.input,
             sessionId: req.sessionId,
             cwd: req.cwd,
+          }))
+        }
+
+        // Replay any pending questions too — without this, a phone that
+        // reconnects mid-question would stay blank until Claude asks
+        // something new.
+        for (const q of getPendingQuestions()) {
+          ws.send(JSON.stringify({
+            type: "question",
+            id: q.id,
+            agent: q.agent ?? "claude",
+            sessionId: q.sessionId,
+            cwd: q.cwd,
+            questions: q.questions,
           }))
         }
 
@@ -765,7 +1132,14 @@ export function createCompanionServer(port: number) {
         }))
       },
       async message(ws, raw) {
-        let msg: { type: string; id?: string; text?: string; key?: string; cwd?: string }
+        let msg: {
+          type: string
+          id?: string
+          text?: string
+          key?: string
+          cwd?: string
+          answers?: Array<{ selected?: string[]; otherText?: string }>
+        }
         try {
           msg = JSON.parse(typeof raw === "string" ? raw : raw.toString())
         } catch { return }
@@ -781,6 +1155,17 @@ export function createCompanionServer(port: number) {
             if (msg.id) {
               resolveApproval(msg.id, "deny")
               broadcast({ type: "resolved", id: msg.id, decision: "deny" })
+            }
+            break
+          case "answer":
+            if (msg.id && Array.isArray(msg.answers) && msg.answers.length > 0) {
+              const answers: QuestionAnswer[] = msg.answers.map((a) => ({
+                selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
+                otherText: typeof a.otherText === "string" ? a.otherText : undefined,
+              }))
+              if (resolveQuestion(msg.id, answers)) {
+                broadcast({ type: "resolved", id: msg.id, decision: "answered" })
+              }
             }
             break
           case "input":

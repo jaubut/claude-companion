@@ -10,7 +10,19 @@ function keyId(): string { return process.env.APNS_KEY_ID ?? "" }
 function p8Path(): string { return process.env.APNS_KEY_P8_PATH ?? "" }
 function bundleId(): string { return process.env.APNS_BUNDLE_ID ?? "" }
 
+// Broker mode — if BROKER_URL + BROKER_TOKEN are set, forward sends to a
+// hosted broker that holds the .p8 server-side. Beta testers who don't have
+// their own Apple Dev account can still receive push by pointing at Jeremie's
+// broker. Direct mode (apnsConfigured() below) remains the path for self-
+// hosters who set up their own keys.
+function brokerUrl(): string { return (process.env.BROKER_URL ?? "").trim() }
+function brokerToken(): string { return (process.env.BROKER_TOKEN ?? "").trim() }
+export function brokerConfigured(): boolean {
+  return Boolean(brokerUrl() && brokerToken())
+}
+
 export function apnsConfigured(): boolean {
+  if (brokerConfigured()) return true
   return Boolean(teamId() && keyId() && p8Path() && bundleId())
 }
 
@@ -66,7 +78,7 @@ export interface ApnsPayload {
   /** One-line context shown between title and body on iOS banners. */
   subtitle?: string
   body: string
-  category: "approval" | "waiting_input"
+  category: "approval" | "question" | "waiting_input" | "briefing"
   threadId?: string
   /** Arbitrary key/value data the iOS app can read from userInfo. */
   userInfo?: Record<string, string>
@@ -102,8 +114,9 @@ export function closeApnsSessions(): void {
 }
 
 export async function sendApns(deviceToken: string, env: ApnsEnv, payload: ApnsPayload): Promise<ApnsResult> {
+  if (brokerConfigured()) return sendViaBroker(deviceToken, env, payload)
   if (!apnsConfigured()) return { token: deviceToken, ok: false, status: 0, reason: "not-configured" }
-  const interruptive = payload.category === "approval"
+  const interruptive = payload.category === "approval" || payload.category === "question"
   const alert: Record<string, string> = { title: payload.title, body: payload.body }
   if (payload.subtitle) alert.subtitle = payload.subtitle
   const body: Record<string, unknown> = {
@@ -177,5 +190,52 @@ export async function sendApns(deviceToken: string, env: ApnsEnv, payload: ApnsP
     })
   } catch (err) {
     return { token: deviceToken, ok: false, status: 0, reason: err instanceof Error ? err.message : "send-failed" }
+  }
+}
+
+// Broker path — POST {deviceToken, env, payload} to BROKER_URL with a Bearer
+// token. Broker holds the .p8 server-side and dispatches to APNs on our
+// behalf. Used by beta testers who don't have their own Apple Dev account.
+async function sendViaBroker(
+  deviceToken: string,
+  env: ApnsEnv,
+  payload: ApnsPayload,
+): Promise<ApnsResult> {
+  const url = brokerUrl()
+  const token = brokerToken()
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 12_000)
+    const res = await fetch(url, {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify({ deviceToken, env, payload }),
+    })
+    clearTimeout(timer)
+    let parsed: { ok?: boolean; status?: number; reason?: string } = {}
+    try { parsed = await res.json() as typeof parsed } catch { /* non-JSON */ }
+    if (!res.ok) {
+      return {
+        token: deviceToken,
+        ok: false,
+        status: res.status,
+        reason: parsed.reason ?? `broker-${res.status}`,
+      }
+    }
+    return {
+      token: deviceToken,
+      ok: parsed.ok === true,
+      status: parsed.status ?? 200,
+      reason: parsed.reason,
+    }
+  } catch (err) {
+    const reason = err instanceof Error
+      ? (err.name === "AbortError" ? "broker-timeout" : err.message)
+      : "broker-send-failed"
+    return { token: deviceToken, ok: false, status: 0, reason }
   }
 }

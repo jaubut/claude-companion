@@ -18,6 +18,7 @@
 // the right session even when sessions share a cwd.
 
 import { readFileSync } from "node:fs"
+import { isQuestionTool } from "./questions"
 
 export type EventKind =
   | "user_prompt"
@@ -32,6 +33,11 @@ export interface FeedEvent {
   id: string
   ts: number
   kind: EventKind
+  // Optional public session key when a producer can resolve it exactly.
+  // Hook-fed events usually carry tty/sessionId/cwd and let clients resolve
+  // against the current sessions table; log-fed imports can often name the
+  // final key directly.
+  key?: string
   tool?: string
   summary?: string
   verdict?: Verdict
@@ -85,6 +91,11 @@ interface PathState {
   lastTokens: number
   seenAssistantText: Set<string>
   toolStarts: Map<string, number>
+  // True once any assistant_text event has been emitted this turn. Drives
+  // turn_end's wrap-up policy: if streaming already happened, turn_end omits
+  // its own text so iOS doesn't append a duplicate concat block. Reset on
+  // each user prompt (turn boundary).
+  streamedThisTurn: boolean
 }
 
 const feed: FeedEvent[] = []
@@ -144,6 +155,7 @@ function getState(meta: SessionMeta): PathState {
     lastTokens: 0,
     seenAssistantText: new Set(),
     toolStarts: new Map(),
+    streamedThisTurn: false,
   }
   states.set(key, next)
   return next
@@ -180,8 +192,10 @@ function stopPollIfIdle(): void {
 
 type Listener = (ev: FeedEvent) => void
 type ActivityListener = (act: Activity | null) => void
+type FeedResetListener = (removedIds: string[]) => void
 const feedListeners = new Set<Listener>()
 const activityListeners = new Set<ActivityListener>()
+const feedResetListeners = new Set<FeedResetListener>()
 
 export function onFeed(fn: Listener): () => void {
   feedListeners.add(fn)
@@ -193,6 +207,11 @@ export function onActivity(fn: ActivityListener): () => void {
   return () => activityListeners.delete(fn)
 }
 
+export function onFeedReset(fn: FeedResetListener): () => void {
+  feedResetListeners.add(fn)
+  return () => feedResetListeners.delete(fn)
+}
+
 export function getFeed(): FeedEvent[] {
   return feed.slice()
 }
@@ -202,11 +221,16 @@ export function getActivity(): Activity | null {
 }
 
 function emit(ev: FeedEvent): void {
+  if (feed.some((existing) => existing.id === ev.id)) return
   feed.push(ev)
   if (feed.length > FEED_CAP) feed.splice(0, feed.length - FEED_CAP)
   for (const fn of feedListeners) {
     try { fn(ev) } catch { /* ignore */ }
   }
+}
+
+export function appendFeedEvent(ev: FeedEvent): void {
+  emit(ev)
 }
 
 function setActivity(next: Activity | null): void {
@@ -318,6 +342,7 @@ export function recordUserPrompt(args: {
   s.lastTokens = 0
   s.toolStarts.clear()
   s.seenAssistantText.clear()
+  s.streamedThisTurn = false
 
   emit({
     id: crypto.randomUUID(),
@@ -357,9 +382,25 @@ export function recordTurnEnd(args: {
   const s = getState(args)
   const trimmedFinal = args.finalText?.trim() ?? ""
 
-  // Pre-mark the final text so readTranscriptDelta won't also emit it as an
-  // assistant_text event — we want it to appear only inside the turn_end card.
-  if (trimmedFinal) {
+  // Two paths for the wrap-up text, branching on whether anything streamed
+  // during the turn:
+  //
+  // (A) Nothing streamed (single-block fast reply, polling never ticked):
+  //     turn_end is the ONLY path the reply takes to the phone, so we send
+  //     the whole finalText. Pre-mark its blocks so readTranscriptDelta
+  //     doesn't also emit them as assistant_text after the fact.
+  //
+  // (B) Something streamed (typical multi-tool turn, or a slow single-block
+  //     reply that polling caught): mid-turn assistant_text events already
+  //     carried each block individually. Sending finalText here would make
+  //     iOS append a duplicate concat block (its dedup is exact-match against
+  //     the last assistant message, which is the FINAL block — not the
+  //     concat). Skip pre-marking so readTranscriptDelta still catches a
+  //     racy final block as a normal assistant_text, and emit turn_end
+  //     WITHOUT text so the phone treats it as a structural marker only.
+  const streamed = s.streamedThisTurn
+
+  if (!streamed && trimmedFinal) {
     for (const block of trimmedFinal.split("\n\n")) {
       const t = block.trim()
       if (t) s.seenAssistantText.add(hashText(t))
@@ -373,9 +414,11 @@ export function recordTurnEnd(args: {
     id: crypto.randomUUID(),
     ts: now,
     kind: "turn_end",
-    text: trimmedFinal ? trimmedFinal.slice(-2000) : undefined,
+    text: !streamed && trimmedFinal ? clampLong(trimmedFinal, 64_000) : undefined,
     ...identityFor(s),
   })
+
+  s.streamedThisTurn = false
 
   // Only clear the live pill if it belonged to THIS session. Another session
   // may still be mid-turn — don't blank its activity just because we finished.
@@ -400,6 +443,29 @@ export function forgetSession(meta: SessionMeta): void {
       (meta.tty && activity.tty === meta.tty) ||
       (meta.sessionId && activity.sessionId === meta.sessionId)
     if (stale) setActivity(null)
+  }
+  // Prune feed events that originated from this session — otherwise the
+  // phone replays a dead conversation when the user spawns a fresh chat.
+  // Match on tty / sessionId only; cwd alone is too weak (two windows can
+  // share a cwd, dropping events for the wrong session).
+  if (meta.tty || meta.sessionId) {
+    const removed: string[] = []
+    for (let i = feed.length - 1; i >= 0; i--) {
+      const ev = feed[i]
+      if (!ev) continue
+      const hit =
+        (meta.tty && ev.tty === meta.tty) ||
+        (meta.sessionId && ev.sessionId === meta.sessionId)
+      if (hit) {
+        removed.push(ev.id)
+        feed.splice(i, 1)
+      }
+    }
+    if (removed.length > 0) {
+      for (const fn of feedResetListeners) {
+        try { fn(removed) } catch { /* ignore */ }
+      }
+    }
   }
   stopPollIfIdle()
 }
@@ -455,6 +521,7 @@ function readTranscriptDelta(
         text: clampLong(text, 64_000),
         ...identityFor(s),
       })
+      s.streamedThisTurn = true
     }
   }
 }
@@ -467,12 +534,16 @@ function hashText(s: string): string {
 }
 
 function verbFor(tool: string): string {
+  if (isQuestionTool(tool)) return "Asking"
   switch (tool) {
     case "Read": return "Reading"
     case "Write": return "Writing"
     case "Edit":
     case "MultiEdit": return "Editing"
     case "Bash": return "Running"
+    case "shell":
+    case "unified_exec":
+    case "exec_command": return "Running"
     case "Grep": return "Searching"
     case "Glob": return "Finding"
     case "WebFetch": return "Fetching"
@@ -483,10 +554,31 @@ function verbFor(tool: string): string {
   }
 }
 
+function isShellTool(tool: string): boolean {
+  return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
+}
+
 export function summarize(tool: string, input: Record<string, unknown>): string {
+  if (isQuestionTool(tool)) {
+    // Show the first question's text so the feed row reads as
+    // "request_user_input: Which framework?" instead of just the tool name.
+    const qs = input.questions
+    if (Array.isArray(qs) && qs.length > 0) {
+      const first = qs[0] as Record<string, unknown> | undefined
+      const q = typeof first?.question === "string" ? first.question : ""
+      return q.slice(0, 160)
+    }
+    const q = typeof input.question === "string" ? input.question : ""
+    return q.slice(0, 160)
+  }
   switch (tool) {
     case "Bash":
-      return ((input.command as string) ?? "").slice(0, 120)
+    case "shell":
+    case "unified_exec":
+    case "exec_command": {
+      const command = (input.command as string) ?? (input.cmd as string) ?? ""
+      return command.slice(0, 120)
+    }
     case "Edit":
     case "Read":
     case "Write":
@@ -521,9 +613,9 @@ function extractToolResult(
 ): { excerpt?: string; errored?: boolean } {
   if (raw == null) return {}
 
-  // Bash is the headline case — give back stdout (or stderr if that's all
-  // we got) trimmed to the first 3 lines / 200 chars.
-  if (tool === "Bash") {
+  // Shell commands are the headline case — give back stdout (or stderr if
+  // that's all we got) trimmed to the first 3 lines / 200 chars.
+  if (isShellTool(tool)) {
     if (typeof raw === "object") {
       const r = raw as Record<string, unknown>
       const stdout = typeof r.stdout === "string" ? r.stdout : ""

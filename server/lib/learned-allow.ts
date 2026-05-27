@@ -62,6 +62,10 @@ function tokenize(cmd: string): string[] {
   return cmd.trim().split(/\s+/).filter(Boolean)
 }
 
+function isShellTool(tool: string): boolean {
+  return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
+}
+
 /**
  * Derive a stable pattern from a tool call. Returns null if the call
  * shouldn't be learned (unsafe, unknown shape, etc).
@@ -77,8 +81,8 @@ function tokenize(cmd: string): string[] {
  *   "edit:client/src/pages/foo.tsx"  (full file path — exact match only)
  */
 export function patternFor(tool: string, input: Record<string, unknown>): string | null {
-  if (tool === "Bash") {
-    const cmd = ((input.command as string) ?? "").trim()
+  if (isShellTool(tool)) {
+    const cmd = String(input.command ?? input.cmd ?? "").trim()
     if (!cmd) return null
 
     // Don't learn chained commands — too easy to widen the blast radius
@@ -169,7 +173,7 @@ export function clearLearned(toolFilter?: string): number {
 }
 
 function sampleFor(tool: string, input: Record<string, unknown>): string {
-  if (tool === "Bash") return ((input.command as string) ?? "").trim().slice(0, 200)
+  if (isShellTool(tool)) return String(input.command ?? input.cmd ?? "").trim().slice(0, 200)
   if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
     return String(input.file_path ?? "")
   }

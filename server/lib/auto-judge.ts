@@ -16,6 +16,14 @@ import { isLearned } from "./learned-allow"
 
 type Verdict = "allow" | "deny" | "ask"
 
+function isShellTool(tool: string): boolean {
+  return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
+}
+
+function commandFromInput(input: Record<string, unknown>): string {
+  return String(input.command ?? input.cmd ?? "").trim()
+}
+
 // ── Safe Bash patterns — auto-approve ──
 const SAFE_BASH: RegExp[] = [
   // Localhost / Companion API calls
@@ -145,8 +153,8 @@ const ALWAYS_SAFE_TOOLS = new Set([
 export function autoJudge(tool: string, input: Record<string, unknown>): Verdict {
   if (ALWAYS_SAFE_TOOLS.has(tool)) return "allow"
 
-  if (tool === "Bash") {
-    const cmd = ((input.command as string) ?? "").trim()
+  if (isShellTool(tool)) {
+    const cmd = commandFromInput(input)
 
     for (const pattern of DANGEROUS_BASH) {
       if (pattern.test(cmd)) return "deny"

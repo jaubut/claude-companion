@@ -16,6 +16,10 @@ import { autoJudge } from "./auto-judge"
 
 type Verdict = "allow" | "deny" | "ask"
 
+function isShellTool(tool: string): boolean {
+  return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
+}
+
 const PROTECTED_BRANCHES = new Set(["main", "master"])
 
 async function currentBranch(cwd: string): Promise<string | null> {
@@ -55,8 +59,8 @@ export async function judgeWithBranchContext(
   input: Record<string, unknown>,
   cwd: string,
 ): Promise<Verdict> {
-  if (tool === "Bash") {
-    const cmd = ((input.command as string) ?? "").trim()
+  if (isShellTool(tool)) {
+    const cmd = String(input.command ?? input.cmd ?? "").trim()
     if (isNonForcePush(cmd)) {
       const branch = await currentBranch(cwd)
       if (branch && !PROTECTED_BRANCHES.has(branch)) {

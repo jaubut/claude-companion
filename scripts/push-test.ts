@@ -5,6 +5,7 @@
  *
  * Usage:
  *   bun scripts/push-test.ts approval
+ *   bun scripts/push-test.ts question
  *   bun scripts/push-test.ts waiting
  *   bun scripts/push-test.ts approval "Bash" "rm -rf /tmp/junk"
  */
@@ -47,8 +48,15 @@ if (kind === "approval") {
     category: "waiting_input",
     userInfo: { cwd: process.cwd(), sessionId: "test-session", key: "" },
   }
+} else if (kind === "question") {
+  payload = {
+    title: "Question asked (test)",
+    body: arg1 || "Pick an answer in the app",
+    category: "question",
+    userInfo: { questionId: "test-" + Date.now(), sessionId: "test-session", cwd: process.cwd() },
+  }
 } else {
-  console.error(`Unknown kind: ${kind}. Use 'approval' or 'waiting'.`)
+  console.error(`Unknown kind: ${kind}. Use 'approval', 'question', or 'waiting'.`)
   process.exit(1)
 }
 

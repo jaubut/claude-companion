@@ -246,6 +246,13 @@ export function useCompanion(): CompanionState & {
             }
             break
 
+          case "feed_pruned":
+            if (Array.isArray(msg.ids) && msg.ids.length > 0) {
+              const drop = new Set(msg.ids as string[])
+              setState(s => ({ ...s, feed: s.feed.filter(ev => !drop.has(ev.id)) }))
+            }
+            break
+
           case "sessions":
             if (Array.isArray(msg.sessions)) {
               setState(s => ({ ...s, sessions: msg.sessions as Session[] }))

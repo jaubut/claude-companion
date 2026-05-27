@@ -5,7 +5,7 @@
 // (iTerm or macOS Terminal, matched by tty) so multi-session users can pick
 // which instance their reply lands in.
 
-interface InjectTarget {
+export interface InjectTarget {
   tty?: string
   termProgram?: string
   iTermSessionId?: string
@@ -367,6 +367,29 @@ async function tmuxSendKeys(args: readonly string[], timeoutMs: number): Promise
   }
 }
 
+// Resolve a tmux pane id from the pty it's hosting. Used when the hook
+// stack didn't capture $TMUX_PANE at registration time (Linux server-spawn
+// path: claude inherits $TMUX_PANE but the hook script may have raced the
+// initial registration, leaving the session with a tty but no pane). tmux
+// itself knows the mapping — ask it.
+async function resolveTmuxPaneFromTty(tty: string): Promise<string | null> {
+  try {
+    const proc = Bun.spawn(["tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"], {
+      stdout: "pipe", stderr: "pipe",
+    })
+    const out = (await new Response(proc.stdout).text()).trim()
+    await proc.exited
+    if ((proc.exitCode ?? 1) !== 0) return null
+    for (const line of out.split("\n")) {
+      const [pane, paneTty] = line.split(" ")
+      if (paneTty === tty && TMUX_PANE_RE.test(pane ?? "")) return pane
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 async function deliverViaTmux(paneId: string, text: string): Promise<TmuxResult> {
   // Two send-keys calls — first with `-l` (literal) so the text is typed
   // exactly as-is regardless of contents, second to send Enter as a real
@@ -409,6 +432,27 @@ async function injectTextLocked(text: string, target?: InjectTarget): Promise<bo
     // Targeted path: deliver directly to the tab's pty. Doesn't steal focus,
     // doesn't touch the clipboard, doesn't race with the window manager.
     if (target?.tty) {
+      // Linux path: tty but no tmuxPane (hook race during server-spawn or
+      // bare-pts session). tmux knows the pty→pane mapping — resolve via
+      // `tmux list-panes` and route through the same send-keys path the
+      // macOS targeted path uses. Without this, deliverToTty's AppleScript
+      // would fail on Linux every time and we'd fall through to the
+      // pbcopy/osascript untargeted path (also macOS-only). This makes
+      // phone-spawned Linux sessions actually receive injects.
+      if (process.platform === "linux") {
+        const pane = await resolveTmuxPaneFromTty(target.tty)
+        if (pane) {
+          const result = await deliverViaTmux(pane, text)
+          if (result.ok) {
+            process.stderr.write(`${dim}[companion]${reset} ${green}delivered (tmux)${reset} → ${pane} (resolved from ${target.tty})\n`)
+            return true
+          }
+          process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — tmux send-keys to ${pane}: ${result.reason}\n`)
+          return false
+        }
+        process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — no tmux pane backs ${target.tty}\n`)
+        return false
+      }
       const delivered = await deliverToTty(target, text)
       if (delivered) {
         process.stderr.write(`${dim}[companion]${reset} ${cyan}delivered${reset} → ${target.tty}\n`)
@@ -442,4 +486,147 @@ async function injectTextLocked(text: string, target?: InjectTarget): Promise<bo
     console.error("[companion] keyboard inject failed:", err)
     return false
   }
+}
+
+// ── Key-sequence inject (for AskUserQuestion picker) ─────────────────────
+//
+// AskUserQuestion's terminal UI is an interactive picker: arrow keys to
+// navigate, Space to toggle in multi-select, Enter to confirm, type-and-Enter
+// for "Other" custom input. injectText() above is built for typing a prompt
+// (literal text + Enter) — wrong shape for this. injectKeySequence() sends
+// each step as a distinct keypress, so the picker's input loop reacts to it.
+// tmux is preferred when present; plain iTerm/Terminal sessions are driven by
+// focusing the exact tty before every keypress and using System Events.
+//
+// Steps:
+//   { kind: "key", name: "Down" | "Up" | "Space" | "Enter" }
+//   { kind: "text", text: "..." }   // typed literally into "Other" input
+
+export type KeySeqStep =
+  | { kind: "key"; name: "Down" | "Up" | "Space" | "Enter" | "Escape" }
+  | { kind: "text"; text: string }
+  | { kind: "wait"; ms: number }
+
+export async function injectKeySequence(
+  steps: readonly KeySeqStep[],
+  target: InjectTarget,
+): Promise<boolean> {
+  return withInjectLock(() => injectKeySequenceLocked(steps, target))
+}
+
+function keyCodeFor(name: Extract<KeySeqStep, { kind: "key" }>["name"]): number {
+  switch (name) {
+    case "Down": return 125
+    case "Up": return 126
+    case "Space": return 49
+    case "Enter": return 36
+    case "Escape": return 53
+  }
+}
+
+async function deliverKeySequenceToTty(
+  steps: readonly KeySeqStep[],
+  target: InjectTarget,
+): Promise<TmuxResult> {
+  const tty = target.tty?.trim()
+  if (!tty) return { ok: false, reason: "missing tty" }
+
+  for (const step of steps) {
+    if (step.kind === "wait") {
+      await new Promise(r => setTimeout(r, step.ms))
+      continue
+    }
+
+    const focused = await focusTerminal(target)
+    if (!focused) return { ok: false, reason: `no tab for tty ${tty}` }
+    await new Promise(r => setTimeout(r, 80))
+
+    if (step.kind === "key") {
+      const r = await runOsa(`
+        tell application "System Events"
+          key code ${keyCodeFor(step.name)}
+        end tell
+      `)
+      if (!r.ok) return { ok: false, reason: `key ${step.name}: ${r.stderr || `exit ${r.exitCode}`}` }
+    } else {
+      const r = await runOsa(`
+        tell application "System Events"
+          keystroke "${escapeForAppleScript(step.text)}"
+        end tell
+      `)
+      if (!r.ok) return { ok: false, reason: `text: ${r.stderr || `exit ${r.exitCode}`}` }
+    }
+
+    await new Promise(r => setTimeout(r, 30))
+  }
+
+  return { ok: true, reason: "" }
+}
+
+async function injectKeySequenceLocked(
+  steps: readonly KeySeqStep[],
+  target: InjectTarget,
+): Promise<boolean> {
+  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const green = "\x1b[32m"; const cyan = "\x1b[36m"
+  const pane = target.tmuxPane?.trim() ?? ""
+
+  if (pane) {
+    if (!TMUX_PANE_RE.test(pane)) {
+      process.stderr.write(`${dim}[companion]${reset} ${yellow}key-seq tmux skipped${reset} — invalid pane "${pane}"\n`)
+    } else {
+      let tmuxFailure = ""
+      let tmuxSentAny = false
+      for (const step of steps) {
+        if (step.kind === "key") {
+          const r = await tmuxSendKeys(["send-keys", "-t", pane, step.name], 2000)
+          if (!r.ok) {
+            tmuxFailure = `key=${step.name} — ${r.reason}`
+            break
+          }
+          tmuxSentAny = true
+        } else if (step.kind === "text") {
+          // -l = literal: type text exactly (no key-event interpretation), so
+          // characters land in the picker's text buffer for "Other" input.
+          const r = await tmuxSendKeys(["send-keys", "-t", pane, "-l", step.text], 2000)
+          if (!r.ok) {
+            tmuxFailure = `text=${JSON.stringify(step.text.slice(0, 30))} — ${r.reason}`
+            break
+          }
+          tmuxSentAny = true
+        } else {
+          // Explicit wait — used between sequential questions in a multi-
+          // question AskUserQuestion so the harness has time to render the
+          // next picker before we type into it. The default 30ms inter-step
+          // delay below is too short for that transition.
+          await new Promise(r => setTimeout(r, step.ms))
+          continue
+        }
+        // Small inter-key delay — Ink's input handler debounces rapid arrow
+        // events and our discrete tmux calls can arrive faster than the TUI
+        // can repaint between them. 30ms is empirically enough on macOS to
+        // make sequential arrow-down + Enter feel like a real human keypress.
+        await new Promise(r => setTimeout(r, 30))
+      }
+
+      if (!tmuxFailure) {
+        process.stderr.write(`${dim}[companion]${reset} ${green}key-seq delivered${reset} → ${cyan}${pane}${reset} ${dim}(${steps.length} steps)${reset}\n`)
+        return true
+      }
+      process.stderr.write(`${dim}[companion]${reset} ${yellow}key-seq tmux failed${reset} pane=${pane} ${tmuxFailure}\n`)
+      if (tmuxSentAny) return false
+    }
+  }
+
+  if (target.tty) {
+    const r = await deliverKeySequenceToTty(steps, target)
+    if (r.ok) {
+      process.stderr.write(`${dim}[companion]${reset} ${green}key-seq delivered${reset} → ${cyan}${target.tty}${reset} ${dim}(${steps.length} steps)${reset}\n`)
+      return true
+    }
+    process.stderr.write(`${dim}[companion]${reset} ${red}key-seq failed${reset} tty=${target.tty} — ${r.reason}\n`)
+    return false
+  }
+
+  process.stderr.write(`${dim}[companion]${reset} ${red}key-seq refused${reset} — no tmux pane or tty target\n`)
+  return false
 }

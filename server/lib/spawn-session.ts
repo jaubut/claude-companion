@@ -1,5 +1,5 @@
-// Spawn a fresh Claude Code session from the companion (phone tap → new
-// Terminal/iTerm window on the Mac, cd'd into a directory, claude already
+// Spawn a fresh Claude/Codex session from the companion (phone tap → new
+// Terminal/iTerm window on the Mac, cd'd into a directory, agent already
 // launched inside a tmux session). The usual session hooks pick up the
 // new session within a second or two, and the phone picker sees it
 // automatically.
@@ -8,18 +8,20 @@
 // inject path otherwise. Wrapping the launch in `tmux new-session -s
 // cc-<basename>` makes $TMUX_PANE available to the hook, so subsequent
 // phone messages route via tmux send-keys (pane-keyed, focus-independent).
-// If a session with that name already exists, we suffix `-2`, `-3`, … so
-// a re-tap launches a *new* claude instance instead of opening a second
+// If a session with that name already exists, we suffix `-2`, `-3`, ... so
+// a re-tap launches a *new* agent instance instead of opening a second
 // terminal window mirroring the first (tmux mirrors any session attached
 // from multiple clients in real time, which looked like a "copy" bug).
 
 import { existsSync } from "node:fs"
 
-export type SpawnApp = "terminal" | "iterm" | "auto"
+export type SpawnApp = "terminal" | "iterm" | "tmux" | "auto"
+export type SpawnAgent = "claude" | "codex"
 
 export interface SpawnResult {
   ok: boolean
-  app?: "Terminal" | "iTerm"
+  app?: "Terminal" | "iTerm" | "tmux"
+  sessionName?: string
   error?: string
 }
 
@@ -33,44 +35,70 @@ function escapeForAppleScript(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
 }
 
-async function runOsa(script: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+async function runOsa(script: string, timeoutMs = 15_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["osascript", "-e", script], { stdout: "pipe", stderr: "pipe" })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    proc.kill()
+  }, timeoutMs)
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
   ])
+  clearTimeout(timer)
   await proc.exited
+  if (timedOut) return { ok: false, stdout: stdout.trim(), stderr: "Terminal launch timed out" }
   return { ok: (proc.exitCode ?? 0) === 0, stdout: stdout.trim(), stderr: stderr.trim() }
 }
 
 async function isAppRunning(appName: string): Promise<boolean> {
-  const r = await runOsa(`tell application "System Events" to return (name of processes) contains "${appName}"`)
-  return r.ok && r.stdout.toLowerCase() === "true"
+  // Avoid System Events here. AppleScript process-list checks can hang or
+  // require extra automation permissions, which makes the phone-side spawn
+  // request time out before Terminal is even opened.
+  const proc = Bun.spawn(["pgrep", "-x", appName], { stdout: "ignore", stderr: "ignore" })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    proc.kill()
+  }, 1_000)
+  const code = await proc.exited
+  clearTimeout(timer)
+  return !timedOut && code === 0
 }
 
 // Build a tmux-wrapped invocation. The result is a single shell command
 // suitable for AppleScript's `do script` / iTerm's `write text`. Layout:
 //
-//   tmux new-session -s '<sess>' 'cd '\''<cwd>'\'' && claude'
+//   tmux new-session -s '<sess>' 'cd '\''<cwd>'\'' && claude' \; \
+//     set-option -t '<sess>' detach-on-destroy on
 //
 // All single-quote nesting goes through escapeForShellSingleQuoted so paths
 // containing apostrophes survive intact. tmux runs the inner command via
 // /bin/sh so standard POSIX quoting applies.
-function buildTmuxLaunch(cwd: string, sessionName: string): string {
+//
+// detach-on-destroy=on is forced per-session: when claude exits, the tmux
+// client detaches cleanly and Terminal returns to its parent shell. Without
+// this, a global `detach-on-destroy off` (Jeremie's setup) makes the client
+// switch to a sibling tmux session — a stray `cc-…` from a cmd+W'd window
+// or an unrelated long-lived session — which surfaces as "an emulation of
+// another tmux terminal" appearing right when the user expected a clean exit.
+function buildTmuxLaunch(cwd: string, sessionName: string, agent: SpawnAgent): string {
   const sessEscaped = escapeForShellSingleQuoted(sessionName)
   const cwdEscaped = escapeForShellSingleQuoted(cwd)
-  const inner = `cd '${cwdEscaped}' && claude`
+  const inner = `cd '${cwdEscaped}' && ${agent}`
   const innerEscaped = escapeForShellSingleQuoted(inner)
-  return `tmux new-session -s '${sessEscaped}' '${innerEscaped}'`
+  return (
+    `tmux new-session -s '${sessEscaped}' '${innerEscaped}'`
+    + ` \\; set-option -t '${sessEscaped}' detach-on-destroy on`
+  )
 }
 
-// tmux session names cannot contain ':' or '.', and whitespace is awkward
-// for later `tmux attach -t` from a shell. Collapse to '-' and prefix with
-// 'cc-' so these stand out from manually-created tmux sessions.
-function tmuxSessionName(cwd: string): string {
+function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
+  const prefix = agent === "codex" ? "cx" : "cc"
   const base = cwd.split("/").filter(Boolean).pop() ?? "session"
   const safe = base.replace(/[:.]/g, "-").replace(/\s+/g, "-")
-  return `cc-${safe}`
+  return `${prefix}-${safe}`
 }
 
 // `=name` forces an exact match — without it, tmux treats the target as a
@@ -80,12 +108,18 @@ async function tmuxSessionExists(name: string): Promise<boolean> {
     stdout: "ignore",
     stderr: "ignore",
   })
-  await proc.exited
-  return (proc.exitCode ?? 1) === 0
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    proc.kill()
+  }, 1_500)
+  const code = await proc.exited
+  clearTimeout(timer)
+  return !timedOut && code === 0
 }
 
-async function uniqueTmuxSessionName(cwd: string): Promise<string> {
-  const base = tmuxSessionName(cwd)
+async function uniqueTmuxSessionName(cwd: string, agent: SpawnAgent): Promise<string> {
+  const base = agentTmuxSessionName(cwd, agent)
   if (!(await tmuxSessionExists(base))) return base
   for (let i = 2; i < 100; i++) {
     const candidate = `${base}-${i}`
@@ -94,9 +128,9 @@ async function uniqueTmuxSessionName(cwd: string): Promise<string> {
   return `${base}-${Date.now()}`
 }
 
-async function spawnInTerminal(cwd: string): Promise<SpawnResult> {
-  const sessionName = await uniqueTmuxSessionName(cwd)
-  const cmd = buildTmuxLaunch(cwd, sessionName)
+async function spawnInTerminal(cwd: string, agent: SpawnAgent): Promise<SpawnResult> {
+  const sessionName = await uniqueTmuxSessionName(cwd, agent)
+  const cmd = buildTmuxLaunch(cwd, sessionName, agent)
   const cmdEscaped = escapeForAppleScript(cmd)
   const r = await runOsa(`
     tell application "Terminal"
@@ -109,9 +143,54 @@ async function spawnInTerminal(cwd: string): Promise<SpawnResult> {
   return { ok: true, app: "Terminal" }
 }
 
-async function spawnInIterm(cwd: string): Promise<SpawnResult> {
-  const sessionName = await uniqueTmuxSessionName(cwd)
-  const cmd = buildTmuxLaunch(cwd, sessionName)
+// Headless tmux spawn — the Linux/server path. No GUI Terminal to open;
+// we just create a detached tmux session running the agent at the given cwd.
+// The session-start hook (~/.claude/hooks/companion-session-start.sh) picks
+// it up via $TMUX_PANE the moment Claude initializes inside the pane, so
+// subsequent phone messages route via tmux send-keys exactly like the Mac
+// path.
+//
+// Attaching from a human shell (when you want to peek): ssh aubut@zettlab
+// then `tmux attach -t cc-<name>`. detach-on-destroy=on so claude exiting
+// cleanly drops you back to the shell instead of switching sessions.
+async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent): Promise<SpawnResult> {
+  const sessionName = await uniqueTmuxSessionName(cwd, agent)
+  const cwdEscaped = escapeForShellSingleQuoted(cwd)
+  const inner = `cd '${cwdEscaped}' && ${agent}`
+  // Create the session detached. Run the inner command via /bin/sh so the
+  // single-quote escaping works. tmux passes through $TMUX/$TMUX_PANE so
+  // the session-start hook fires the moment claude initializes.
+  const create = Bun.spawn(
+    ["tmux", "new-session", "-d", "-s", sessionName, "/bin/sh", "-c", inner],
+    { stdout: "pipe", stderr: "pipe" },
+  )
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    create.kill()
+  }, 8_000)
+  const stderr = await new Response(create.stderr).text()
+  const code = await create.exited
+  clearTimeout(timer)
+  if (timedOut) return { ok: false, app: "tmux", error: "tmux new-session timed out" }
+  if (code !== 0) return { ok: false, app: "tmux", error: stderr.trim() || `tmux exit ${code}` }
+
+  // Force detach-on-destroy so a human attaching later (`tmux attach -t
+  // cc-foo`) is dropped back to their shell when claude exits — instead of
+  // tmux switching them to some unrelated sibling session. Best-effort:
+  // failure here is non-fatal, the session still works.
+  const opt = Bun.spawn(
+    ["tmux", "set-option", "-t", sessionName, "detach-on-destroy", "on"],
+    { stdout: "ignore", stderr: "ignore" },
+  )
+  await opt.exited
+
+  return { ok: true, app: "tmux", sessionName }
+}
+
+async function spawnInIterm(cwd: string, agent: SpawnAgent): Promise<SpawnResult> {
+  const sessionName = await uniqueTmuxSessionName(cwd, agent)
+  const cmd = buildTmuxLaunch(cwd, sessionName, agent)
   const cmdEscaped = escapeForAppleScript(cmd)
   // iTerm's AppleScript dictionary: create window with default profile, then
   // write text into its current session.
@@ -129,7 +208,7 @@ async function spawnInIterm(cwd: string): Promise<SpawnResult> {
   return { ok: true, app: "iTerm" }
 }
 
-export async function spawnClaudeSession(opts: { cwd: string; app?: SpawnApp }): Promise<SpawnResult> {
+export async function spawnCompanionSession(opts: { cwd: string; app?: SpawnApp; agent?: SpawnAgent }): Promise<SpawnResult> {
   const cwd = opts.cwd.trim()
   if (!cwd) return { ok: false, error: "cwd required" }
   if (!cwd.startsWith("/") && !cwd.startsWith("~")) {
@@ -144,16 +223,34 @@ export async function spawnClaudeSession(opts: { cwd: string; app?: SpawnApp }):
   }
 
   const app: SpawnApp = opts.app ?? "auto"
-  if (app === "iterm") return spawnInIterm(resolved)
-  if (app === "terminal") return spawnInTerminal(resolved)
+  const agent: SpawnAgent = opts.agent === "codex" ? "codex" : "claude"
 
-  // Auto: prefer the app that's already running. If both, prefer Terminal
-  // (that's what today's sessions show); if neither, launch Terminal.
+  // Linux / headless server path. macOS-only apps don't apply, and there's
+  // no GUI Terminal to open — every spawn just creates a detached tmux
+  // session. The user can attach with `tmux attach` over SSH if they want
+  // to interact directly; iOS routes via the tmux pane regardless.
+  if (process.platform !== "darwin") {
+    if (app === "terminal" || app === "iterm") {
+      return { ok: false, error: `app="${app}" is macOS-only; use "tmux" or "auto" on this server` }
+    }
+    return spawnInTmuxDetached(resolved, agent)
+  }
+
+  if (app === "tmux") return spawnInTmuxDetached(resolved, agent)
+  if (app === "iterm") return spawnInIterm(resolved, agent)
+  if (app === "terminal") return spawnInTerminal(resolved, agent)
+
+  // macOS Auto: prefer the app that's already running. If both, prefer
+  // Terminal (that's what today's sessions show); if neither, launch Terminal.
   const [terminalRunning, itermRunning] = await Promise.all([
     isAppRunning("Terminal"),
     isAppRunning("iTerm2"),
   ])
-  if (terminalRunning) return spawnInTerminal(resolved)
-  if (itermRunning) return spawnInIterm(resolved)
-  return spawnInTerminal(resolved)
+  if (terminalRunning) return spawnInTerminal(resolved, agent)
+  if (itermRunning) return spawnInIterm(resolved, agent)
+  return spawnInTerminal(resolved, agent)
+}
+
+export async function spawnClaudeSession(opts: { cwd: string; app?: SpawnApp }): Promise<SpawnResult> {
+  return spawnCompanionSession({ ...opts, agent: "claude" })
 }
