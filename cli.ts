@@ -155,6 +155,22 @@ rehydrateSessions().then(({ registered, scanned }) => {
   }
 }).catch(() => { /* silent */ })
 
+// Periodic live-process re-scan. Hooks register sessions on prompt/tool fire,
+// but an idle session that started after companion boot (e.g. `tmux new -d`
+// spawn) can sit invisible until its first hook. Re-discovering on an
+// interval keeps the picker honest without persisting state to disk —
+// truth comes from /proc on each tick, never from a cached row that can
+// drift out of sync with reality.
+const DISCOVER_INTERVAL_MS = Number(process.env.COMPANION_DISCOVER_INTERVAL_MS ?? "60000")
+if (DISCOVER_INTERVAL_MS > 0) {
+  const rediscover = setInterval(() => {
+    discoverLiveClaudes().catch(() => { /* silent */ })
+  }, DISCOVER_INTERVAL_MS)
+  if (typeof (rediscover as unknown as { unref?: () => void }).unref === "function") {
+    (rediscover as unknown as { unref: () => void }).unref()
+  }
+}
+
 console.log(`${dim}Phone approvals will appear here. Press Ctrl+C to stop.${reset}\n`)
 
 process.on("SIGINT", () => {
