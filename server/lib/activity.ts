@@ -371,13 +371,13 @@ export function recordUserPrompt(args: {
   startPoll()
 }
 
-export function recordTurnEnd(args: {
+export async function recordTurnEnd(args: {
   transcriptPath?: string
   finalText?: string
   cwd: string
   sessionId?: string
   tty?: string
-}): void {
+}): Promise<void> {
   const now = Date.now()
   const s = getState(args)
   const trimmedFinal = args.finalText?.trim() ?? ""
@@ -408,7 +408,24 @@ export function recordTurnEnd(args: {
     s.seenAssistantText.add(hashText(trimmedFinal))
   }
 
-  if (args.transcriptPath) readTranscriptDelta(s)
+  if (args.transcriptPath) {
+    // On a long, tool-heavy turn the final assistant block is written to the
+    // transcript AFTER the Stop hook fires — a single read here races the
+    // flush and misses it, so the whole closing answer silently vanishes
+    // (turn_end carries no text on the streamed path). Retry the delta read
+    // with backoff until the final block lands. The first read short-circuits
+    // the wait for fast turns; we only loop when nothing new appeared AND
+    // something streamed earlier (i.e. a closing block is plausibly inflight).
+    let got = readTranscriptDelta(s)
+    if (got === 0 && streamed) {
+      const deadline = now + 4_000
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 250))
+        got = readTranscriptDelta(s)
+        if (got > 0) break
+      }
+    }
+  }
 
   emit({
     id: crypto.randomUUID(),
@@ -479,11 +496,12 @@ function activityMatches(a: Activity, s: PathState): boolean {
 function readTranscriptDelta(
   s: PathState,
   opts: { silent?: boolean } = {},
-): void {
+): number {
+  let emitted = 0
   const path = s.transcriptPath
-  if (!path) return
+  if (!path) return emitted
   let raw: string
-  try { raw = readFileSync(path, "utf8") } catch { return }
+  try { raw = readFileSync(path, "utf8") } catch { return emitted }
 
   const lines = raw.split("\n")
   for (const line of lines) {
@@ -522,8 +540,10 @@ function readTranscriptDelta(
         ...identityFor(s),
       })
       s.streamedThisTurn = true
+      emitted++
     }
   }
+  return emitted
 }
 
 function hashText(s: string): string {

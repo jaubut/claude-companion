@@ -13,7 +13,32 @@
 // terminal window mirroring the first (tmux mirrors any session attached
 // from multiple clients in real time, which looked like a "copy" bug).
 
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs"
+
+// Claude Code blocks interactive startup at the "Do you trust the files in
+// this folder?" dialog until the dir is accepted — and the SessionStart hook
+// (how the companion learns a session exists) fires only AFTER trust. So a
+// spawn into an untrusted dir just sits at the prompt forever and never
+// registers: the phone shows nothing. Pre-seed trust for the target dir in
+// ~/.claude.json so the spawned agent boots straight into the session. Once
+// claude runs in a trusted dir it keeps the flag on exit, so this write is a
+// one-time cost per dir.
+function ensureFolderTrusted(cwd: string): void {
+  const home = process.env.HOME
+  if (!home) return
+  const cfgPath = `${home}/.claude.json`
+  let cfg: { projects?: Record<string, Record<string, unknown>> }
+  try { cfg = JSON.parse(readFileSync(cfgPath, "utf8")) } catch { return }
+  const projects = cfg.projects ?? (cfg.projects = {})
+  const entry = projects[cwd] ?? (projects[cwd] = {})
+  if (entry.hasTrustDialogAccepted === true) return
+  entry.hasTrustDialogAccepted = true
+  try {
+    const tmp = `${cfgPath}.companion-${process.pid}`
+    writeFileSync(tmp, JSON.stringify(cfg, null, 2))
+    renameSync(tmp, cfgPath)
+  } catch { /* best-effort — worst case the trust dialog still appears */ }
+}
 
 export type SpawnApp = "terminal" | "iterm" | "tmux" | "auto"
 export type SpawnAgent = "claude" | "codex"
@@ -224,6 +249,10 @@ export async function spawnCompanionSession(opts: { cwd: string; app?: SpawnApp;
 
   const app: SpawnApp = opts.app ?? "auto"
   const agent: SpawnAgent = opts.agent === "codex" ? "codex" : "claude"
+
+  // Trust the target dir before launching so claude doesn't hang at the
+  // folder-trust dialog (codex has no such gate, so skip it there).
+  if (agent === "claude") ensureFolderTrusted(resolved)
 
   // Linux / headless server path. macOS-only apps don't apply, and there's
   // no GUI Terminal to open — every spawn just creates a detached tmux

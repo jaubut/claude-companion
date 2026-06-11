@@ -696,7 +696,11 @@ export function createCompanionServer(port: number) {
         const lastMessage = (body.last_assistant_message ?? "").trim()
           || await extractLastAssistantMessage(body.transcript_path)
 
-        recordTurnEnd({
+        // Fire-and-forget: recordTurnEnd may now poll the transcript for up
+        // to ~4s waiting on a late-flushed closing block. Don't await it —
+        // the waiting_input broadcast + push below must fire immediately; the
+        // closing assistant_text emits on its own whenever the block lands.
+        void recordTurnEnd({
           transcriptPath: body.transcript_path,
           finalText: lastMessage,
           cwd,
