@@ -51,6 +51,17 @@ import { registerToken, removeToken, tokenCount, listTokens, type ApnsEnv } from
 import { apnsConfigured } from "./lib/apns"
 import { pushToAll } from "./lib/push"
 import { checkBearer, unauthorized } from "./lib/auth"
+import {
+  appendTurn as orchAppendTurn,
+  getThread,
+  createTask,
+  bindTaskSession,
+  setTaskStatus,
+  matchUnboundTaskByCwd,
+  findTaskBySessionKey,
+  listTasks,
+  type Turn as OrchTurn,
+} from "./lib/orchestrator-chat"
 
 interface WsData {
   id: string
@@ -106,6 +117,12 @@ function broadcast(data: Record<string, unknown>): void {
   for (const ws of clients) {
     try { ws.send(msg) } catch { /* dead client */ }
   }
+}
+
+// Orchestrator single-thread (PRJ-OR1T): push every new thread turn to all
+// clients so the one always-open chat stays live on every device.
+function orchEmit(turn: OrchTurn): void {
+  broadcast({ type: "orchestrator", turn })
 }
 
 function readAssistantAfterLastUser(transcriptPath: string): string | null {
@@ -696,6 +713,19 @@ export function createCompanionServer(port: number) {
         const lastMessage = (body.last_assistant_message ?? "").trim()
           || await extractLastAssistantMessage(body.transcript_path)
 
+        // Orchestrator (PRJ-OR1T): if this turn-end belongs to a dispatched
+        // worker, capture its first reply back into the single thread tagged by
+        // task, and close the task so later turn-ends don't re-report.
+        if (session?.key) {
+          const task = findTaskBySessionKey(session.key)
+          if (task) {
+            setTaskStatus(task.taskId, "done")
+            orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId))
+            const dim = "\x1b[2m"; const reset = "\x1b[0m"; const green = "\x1b[32m"
+            process.stderr.write(`${dim}[companion]${reset} ${green}orchestrator reply${reset} [${task.taskId}] → thread\n`)
+          }
+        }
+
         // Fire-and-forget: recordTurnEnd may now poll the transcript for up
         // to ~4s waiting on a late-flushed closing block. Don't await it —
         // the waiting_input broadcast + push below must fire immediately; the
@@ -1007,6 +1037,47 @@ export function createCompanionServer(port: number) {
         return Response.json({ ok: true, app: result.app, cwd, agent })
       }
 
+      // ── Orchestrator single-thread: chat + worker dispatch (PRJ-OR1T Phase 1) ──
+      // One always-open thread per host. /send records a user message; /dispatch
+      // spawns a worker bound to this thread (its turn-end reports back tagged by
+      // task, via the session-start + stop hooks above); /thread reads it all.
+      if (url.pathname === "/api/orchestrator/thread" && req.method === "GET") {
+        return Response.json({ turns: getThread(), tasks: listTasks() })
+      }
+      if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
+        const { text } = await req.json() as { text?: string }
+        if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+        const turn = orchAppendTurn("user", text.trim())
+        orchEmit(turn)
+        return Response.json({ ok: true, turn })
+      }
+      if (url.pathname === "/api/orchestrator/dispatch" && req.method === "POST") {
+        const { prompt, cwd } = await req.json() as { prompt?: string; cwd?: string }
+        if (!prompt?.trim()) return Response.json({ ok: false, error: "prompt required" }, { status: 400 })
+        const wd = (cwd ?? "").trim()
+        if (!wd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
+
+        const task = createTask(prompt.trim(), wd)
+        const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
+        let result: SpawnResult
+        try {
+          result = await spawnCompanionSession({ cwd: wd, agent: "claude" })
+        } catch (err) {
+          setTaskStatus(task.taskId, "error")
+          const message = err instanceof Error ? err.message : String(err)
+          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} [${task.taskId}] — ${message}\n`)
+          return Response.json({ ok: false, error: message || "spawn crashed", taskId: task.taskId }, { status: 500 })
+        }
+        if (!result.ok) {
+          setTaskStatus(task.taskId, "error")
+          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} [${task.taskId}] — ${result.error}\n`)
+          return Response.json({ ok: false, error: result.error, taskId: task.taskId }, { status: 400 })
+        }
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd}\n`)
+        orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId))
+        return Response.json({ ok: true, taskId: task.taskId, app: result.app })
+      }
+
       // ── Hook endpoint — SessionStart — register on startup/resume/clear/compact
       // so idle Claude sessions are visible to the phone picker from the moment
       // they open, without waiting for the user to trigger a tool-call hook.
@@ -1014,9 +1085,26 @@ export function createCompanionServer(port: number) {
         const body = await req.json() as { cwd?: string; session_id?: string; source?: string }
         const cwd = cwdFromPayload(body.cwd, req.headers)
         if (cwd) {
-          recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
+          const session = recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
           const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
           process.stderr.write(`${dim}[companion]${reset} ${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}\n`)
+
+          // Orchestrator (PRJ-OR1T): a freshly-spawned worker registers here.
+          // Bind it back to the dispatch task waiting on this cwd, then fire the
+          // queued prompt into it. Small delay so Claude's input box is ready
+          // before send-keys lands (the pty buffers, but boot can outrace it).
+          const pending = matchUnboundTaskByCwd(cwd)
+          if (pending && session?.key) {
+            bindTaskSession(pending.taskId, session.key)
+            orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId))
+            // Only fire the prompt at a session we can target precisely (tmux
+            // pane / tty). Without one, injectText would fall back to pasting
+            // into the macOS frontmost window — never what a dispatch wants.
+            const worker = session
+            if (worker.tmuxPane || worker.tty) {
+              setTimeout(() => { void injectText(pending.prompt, worker) }, 1200)
+            }
+          }
         }
         return Response.json({ ok: true })
       }
