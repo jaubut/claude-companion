@@ -29,7 +29,7 @@ Last updated: 2026-06-22
 - [x] Phase 1: endpoints /api/orchestrator/{send,dispatch,thread} (Bearer) — 2026-06-22
 - [x] Phase 1: worker bind on session-start + reply capture on stop, tagged by task — 2026-06-22
 - [x] Phase 1: verified — send/thread/auth + dispatch state machine via simulated hooks; persistence across restart
-- [ ] Phase 1: real-worker e2e (manual phone-spawn against prod :4245) — global hooks target prod port, can't e2e on a test port
+- [x] Phase 1: real-worker e2e GREEN — dispatch spawns a real Claude worker, prompt delivered, reply lands tagged in 15s, fully automated (2026-06-22, after dispatch-delivery fix)
 - [ ] Phase 2: propose-confirm dispatch (orchestrator proposes worker+context, one-tap approve)
 - [ ] Phase 3: model tiers (Haiku gate / Opus compose / Sonnet inline chat)
 - [ ] UI phase (mobile-ux-gated): orchestrator thread in the session picker + chat surface
@@ -41,3 +41,9 @@ Last updated: 2026-06-22
 - injectText falls back to macOS frontmost-paste when the target has no tty/tmuxPane — always guard inject on `tmuxPane || tty` (the /api/inject endpoint already does) (2026-06-22).
 - A true dispatch e2e can't run on a test port: companion hooks in ~/.claude/settings.json globally target prod :4245, so a spawned worker reports there, not to a test server (2026-06-22).
 - keyboard-inject.ts:385 has a pre-existing tsc error on main (string|undefined vs string|null) — not from this work.
+- **The real e2e found 3 bugs the simulated-hook test masked** (2026-06-22):
+  1. Binding only ran in the session-start hook — but spawned workers often surface via ps-discovery first, so the hook never fired and the task never bound. Fix: reconcile binding off `onSessions` (any registration path).
+  2. A tmux-wrapped worker discovered via ps has empty `tmuxPane`, and its client tty has no Terminal tab → AppleScript/tty inject fails ("no tab for tty"). Fix: capture the worker's tmux session name at spawn (Mac Terminal/iTerm paths weren't returning `sessionName` — only Linux was) and deliver via `tmux send-keys -t <session>`.
+  3. Inside tmux the worker's pty ≠ the ps-discovered key, so stop-hook reply matching by session key missed. Fix: match by cwd — the only identifier present in every hook payload.
+- Send-keys before Claude's TUI renders is silently dropped; ps-discovery sees the process seconds before the input box is ready. Gate the send on a pane-content readiness poll (Welcome/auto-mode/shortcuts markers) (2026-06-22).
+- Lesson: simulated-hook tests prove the state machine but hide the real spawn/registration/inject environment. A real-worker e2e is mandatory before declaring dispatch done.

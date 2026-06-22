@@ -58,7 +58,7 @@ import {
   bindTaskSession,
   setTaskStatus,
   matchUnboundTaskByCwd,
-  findTaskBySessionKey,
+  findRunningTaskByCwd,
   listTasks,
   type Turn as OrchTurn,
 } from "./lib/orchestrator-chat"
@@ -360,8 +360,76 @@ onActivity((activity) => {
   broadcast({ type: "activity", activity })
 })
 
+async function capturePane(sessionName: string): Promise<string | null> {
+  try {
+    const p = Bun.spawn(["tmux", "capture-pane", "-t", sessionName, "-p"], { stdout: "pipe", stderr: "ignore" })
+    const out = await new Response(p.stdout).text()
+    return (await p.exited) === 0 ? out : null
+  } catch {
+    return null
+  }
+}
+
+// A freshly-spawned Claude renders its boot screen (welcome box + the input
+// frame + the auto-mode/shortcuts footer) only once the TUI is ready to accept
+// keystrokes. ps-discovery surfaces the process seconds earlier, and keys sent
+// before the box is up are silently dropped. Gate on these markers.
+function paneInputReady(pane: string): boolean {
+  return /Welcome back|auto mode|for shortcuts|to interrupt/.test(pane)
+}
+
+// Deliver a dispatched prompt straight to the worker's tmux session by name.
+// We spawned it (cc-<name>), so send-keys -t <session> hits its active pane no
+// matter how the session surfaced in the registry. This is the reliable path: a
+// tmux-wrapped worker discovered via ps has no tmuxPane recorded and its client
+// tty has no Terminal tab, so AppleScript/tty inject fails ("no tab for tty").
+// tmux send-keys does not care — it just needs the TUI to be input-ready first.
+async function sendToTmux(sessionName: string, text: string): Promise<void> {
+  let ready = false
+  for (let i = 0; i < 25; i++) {
+    const pane = await capturePane(sessionName)
+    if (pane === null) return // worker session gone
+    if (paneInputReady(pane)) { ready = true; break }
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  if (!ready) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
+    process.stderr.write(`${dim}[companion]${reset} ${red}orchestrator → tmux timeout${reset} ${sessionName} never became input-ready\n`)
+    return
+  }
+  try {
+    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "-l", text], { stdout: "ignore", stderr: "ignore" }).exited
+    await new Promise((r) => setTimeout(r, 300))
+    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Enter"], { stdout: "ignore", stderr: "ignore" }).exited
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+    process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator → tmux${reset} ${sessionName} "${text.slice(0, 50)}"\n`)
+  } catch { /* worker session gone */ }
+}
+
+// Orchestrator (PRJ-OR1T): when a worker session appears for a dispatched task's
+// cwd, bind it and fire the queued prompt into its tmux session. Driven off
+// onSessions so it catches the worker no matter how it registered — session-start
+// hook, ps discovery, or rehydrate (the session-start hook alone is unreliable; a
+// spawned worker often surfaces via ps-scan first). Idempotent: matchUnbound…
+// only returns still-dispatched, unbound tasks, so a bound task is never re-fired.
+function reconcileDispatch(sessions: Session[]): void {
+  for (const s of sessions) {
+    if (!s.cwd) continue
+    const pending = matchUnboundTaskByCwd(s.cwd)
+    if (!pending) continue
+    bindTaskSession(pending.taskId, s.key || s.cwd)
+    orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId))
+    const { tmuxSession, prompt } = pending
+    // sendToTmux self-paces: it polls the pane until the TUI is input-ready
+    // before send-keys, so binding the instant ps-discovery sees the worker is
+    // fine — the prompt won't land until Claude can actually receive it.
+    if (tmuxSession) void sendToTmux(tmuxSession, prompt)
+  }
+}
+
 onSessions((sessions: Session[]) => {
   broadcast({ type: "sessions", sessions })
+  reconcileDispatch(sessions)
 })
 
 export function createCompanionServer(port: number) {
@@ -714,10 +782,11 @@ export function createCompanionServer(port: number) {
           || await extractLastAssistantMessage(body.transcript_path)
 
         // Orchestrator (PRJ-OR1T): if this turn-end belongs to a dispatched
-        // worker, capture its first reply back into the single thread tagged by
-        // task, and close the task so later turn-ends don't re-report.
-        if (session?.key) {
-          const task = findTaskBySessionKey(session.key)
+        // worker (matched by cwd — stable across registration paths), capture its
+        // first reply back into the single thread tagged by task, and close the
+        // task so later turn-ends don't re-report.
+        if (cwd) {
+          const task = findRunningTaskByCwd(cwd)
           if (task) {
             setTaskStatus(task.taskId, "done")
             orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId))
@@ -1057,23 +1126,23 @@ export function createCompanionServer(port: number) {
         const wd = (cwd ?? "").trim()
         if (!wd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
 
-        const task = createTask(prompt.trim(), wd)
         const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
+        // Spawn first so we can record the worker's tmux session name on the
+        // task — that's how the prompt is delivered (send-keys -t <session>).
         let result: SpawnResult
         try {
           result = await spawnCompanionSession({ cwd: wd, agent: "claude" })
         } catch (err) {
-          setTaskStatus(task.taskId, "error")
           const message = err instanceof Error ? err.message : String(err)
-          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} [${task.taskId}] — ${message}\n`)
-          return Response.json({ ok: false, error: message || "spawn crashed", taskId: task.taskId }, { status: 500 })
+          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} — ${message}\n`)
+          return Response.json({ ok: false, error: message || "spawn crashed" }, { status: 500 })
         }
         if (!result.ok) {
-          setTaskStatus(task.taskId, "error")
-          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} [${task.taskId}] — ${result.error}\n`)
-          return Response.json({ ok: false, error: result.error, taskId: task.taskId }, { status: 400 })
+          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} — ${result.error}\n`)
+          return Response.json({ ok: false, error: result.error }, { status: 400 })
         }
-        process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd}\n`)
+        const task = createTask(prompt.trim(), wd, result.sessionName ?? null)
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
         orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId))
         return Response.json({ ok: true, taskId: task.taskId, app: result.app })
       }
@@ -1085,26 +1154,11 @@ export function createCompanionServer(port: number) {
         const body = await req.json() as { cwd?: string; session_id?: string; source?: string }
         const cwd = cwdFromPayload(body.cwd, req.headers)
         if (cwd) {
-          const session = recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
+          // recordSession fires onSessions → reconcileDispatch binds this worker
+          // to its dispatch task and sends the prompt. No inline binding needed.
+          recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
           const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
           process.stderr.write(`${dim}[companion]${reset} ${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}\n`)
-
-          // Orchestrator (PRJ-OR1T): a freshly-spawned worker registers here.
-          // Bind it back to the dispatch task waiting on this cwd, then fire the
-          // queued prompt into it. Small delay so Claude's input box is ready
-          // before send-keys lands (the pty buffers, but boot can outrace it).
-          const pending = matchUnboundTaskByCwd(cwd)
-          if (pending && session?.key) {
-            bindTaskSession(pending.taskId, session.key)
-            orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId))
-            // Only fire the prompt at a session we can target precisely (tmux
-            // pane / tty). Without one, injectText would fall back to pasting
-            // into the macOS frontmost window — never what a dispatch wants.
-            const worker = session
-            if (worker.tmuxPane || worker.tty) {
-              setTimeout(() => { void injectText(pending.prompt, worker) }, 1200)
-            }
-          }
         }
         return Response.json({ ok: true })
       }
