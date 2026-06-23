@@ -33,6 +33,7 @@ Last updated: 2026-06-22
 - [x] Phase 2: propose-confirm dispatch — brain (claude -p, tools disabled) classifies chat vs task; task → proposal with reasoning; approve → spawn+deliver; reject → drop. Real e2e green, fully automated (2026-06-22)
 - [x] Phase 3: model tiers — Haiku gates+chats in one cheap call; Opus composes only on a task. Brain runs in a bare cwd (no project MCP). chat ~10s, task ~22s on prod (2026-06-23)
 - [x] Phase 4: native iOS UI — OrchestratorView (thread + proposal cards + input) in the SwiftUI app, reachable from the top-bar sparkles button. Compiles (BUILD SUCCEEDED via xcodebuild), mobile-ux-auditor pass + fixes applied (2026-06-23)
+- [x] Phase 5: Tasks panel — live dispatched-work status (running/done/error), tap-to-watch a worker. Server emitTask broadcasts + iOS TasksView. Deployed to Zettlab (2026-06-23)
 
 ## Learnings
 
