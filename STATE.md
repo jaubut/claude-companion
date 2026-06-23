@@ -31,7 +31,7 @@ Last updated: 2026-06-22
 - [x] Phase 1: verified — send/thread/auth + dispatch state machine via simulated hooks; persistence across restart
 - [x] Phase 1: real-worker e2e GREEN — dispatch spawns a real Claude worker, prompt delivered, reply lands tagged in 15s, fully automated (2026-06-22, after dispatch-delivery fix)
 - [x] Phase 2: propose-confirm dispatch — brain (claude -p, tools disabled) classifies chat vs task; task → proposal with reasoning; approve → spawn+deliver; reject → drop. Real e2e green, fully automated (2026-06-22)
-- [ ] Phase 3: model tiers (Haiku gate / Opus compose / Sonnet inline chat)
+- [x] Phase 3: model tiers — Haiku gates+chats in one cheap call; Opus composes only on a task. Brain runs in a bare cwd (no project MCP). chat ~10s, task ~22s on prod (2026-06-23)
 - [ ] UI phase (mobile-ux-gated): orchestrator thread in the session picker + chat surface
 
 ## Learnings
@@ -51,3 +51,9 @@ Last updated: 2026-06-22
 - Launchd service PATH excludes ~/.local/bin where claude installs — the brain must resolve the claude binary to an absolute path, not rely on `claude` in PATH (2026-06-22).
 - **Dispatched workers wedge on project onboarding dialogs** (new-MCP-server enable, folder-trust) that overlay the input box AFTER the welcome/footer renders — so the `auto mode` readiness marker is fooled and the prompt lands on the dialog. Mitigation: detect dialog markers in the pane and send Escape to dismiss before delivering. `ensureFolderTrusted` handles trust pre-seed but not MCP-enable (2026-06-22).
 - A proposal is a task in `proposed` state; reconcileDispatch ignores it (only acts on `dispatched`+unbound), so approve must spawn FIRST then `setTaskSpawn` flips it to dispatched+tmux — never bind a worker before we know its tmux session (2026-06-22).
+- **Phase 3 model tiers, shaped by `claude -p` reality** (2026-06-23):
+  - Each `claude -p` carries a ~11s process-startup floor (no API-key path on Max to avoid it). So the literal 3-tier (Haiku gate → Sonnet chat → Opus compose) would add a whole extra call's latency to chat for marginal gain. Folded gate+chat into ONE Haiku call; only a task escalates to a second (Opus) call.
+  - Running brain calls in the project cwd makes claude -p load that project's MCP servers every time (~+5s). Run them in a bare cwd (`~/.claude-companion`, no .mcp.json) instead. Measured: 9s→4s api, 20s→15s wall.
+  - Net on prod: chat ~10s (1 Haiku call), task ~22s (Haiku gate + Opus compose). The ~10s floor is inherent to claude -p; true-instant would need API access.
+  - The brain's headless `claude -p` sub-sessions trigger the companion's OWN user-prompt hook (they show as `tty=?` user-prompts in the log/feed). Minor noise; could suppress later by tagging brain sessions.
+  - Tradeoff: tasks pay a small Haiku gate tax vs Phase 2's single-Opus, but the common case (chat) drops from Opus to Haiku — the right call for an always-on orchestrator where chat dominates.
