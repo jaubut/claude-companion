@@ -55,13 +55,18 @@ import {
   appendTurn as orchAppendTurn,
   getThread,
   createTask,
+  createProposal,
+  getTask,
+  setTaskSpawn,
   bindTaskSession,
   setTaskStatus,
   matchUnboundTaskByCwd,
   findRunningTaskByCwd,
   listTasks,
   type Turn as OrchTurn,
+  type Task as OrchTask,
 } from "./lib/orchestrator-chat"
+import { decide as brainDecide } from "./lib/orchestrator-brain"
 
 interface WsData {
   id: string
@@ -378,6 +383,13 @@ function paneInputReady(pane: string): boolean {
   return /Welcome back|auto mode|for shortcuts|to interrupt/.test(pane)
 }
 
+// Onboarding dialogs (new-MCP-server enable, folder-trust) overlay the input box
+// AFTER the welcome/footer renders — so paneInputReady alone is fooled and the
+// prompt lands on the dialog. Detect them and Escape to dismiss before sending.
+function paneHasDialog(pane: string): boolean {
+  return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
+}
+
 // Deliver a dispatched prompt straight to the worker's tmux session by name.
 // We spawned it (cc-<name>), so send-keys -t <session> hits its active pane no
 // matter how the session surfaced in the registry. This is the reliable path: a
@@ -386,9 +398,16 @@ function paneInputReady(pane: string): boolean {
 // tmux send-keys does not care — it just needs the TUI to be input-ready first.
 async function sendToTmux(sessionName: string, text: string): Promise<void> {
   let ready = false
-  for (let i = 0; i < 25; i++) {
+  for (let i = 0; i < 30; i++) {
     const pane = await capturePane(sessionName)
     if (pane === null) return // worker session gone
+    if (paneHasDialog(pane)) {
+      // Dismiss the onboarding dialog (Escape = reject MCP enable / decline
+      // trust), then keep polling for the real input box.
+      await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Escape"], { stdout: "ignore", stderr: "ignore" }).exited
+      await new Promise((r) => setTimeout(r, 1500))
+      continue
+    }
     if (paneInputReady(pane)) { ready = true; break }
     await new Promise((r) => setTimeout(r, 2000))
   }
@@ -431,6 +450,67 @@ onSessions((sessions: Session[]) => {
   broadcast({ type: "sessions", sessions })
   reconcileDispatch(sessions)
 })
+
+// ── Orchestrator brain (PRJ-OR1T Phase 2): propose-confirm dispatch ──
+
+// Project directories the brain may dispatch into: cwds of live registered
+// sessions, deduped. Keeps proposals grounded in real, currently-open projects.
+function candidateCwds(): string[] {
+  return [...new Set(listSessions().map((s) => s.cwd).filter(Boolean))]
+}
+
+// Spawn a worker for an approved proposal and record its tmux session so
+// reconcileDispatch delivers the prompt. The task stays 'proposed' (which
+// reconcile ignores) until setTaskSpawn flips it to 'dispatched' AFTER the tmux
+// session exists — so a worker is never bound before we know where to send.
+async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; error?: string }> {
+  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
+  let result: SpawnResult
+  try {
+    result = await spawnCompanionSession({ cwd: task.cwd, agent: "claude" })
+  } catch (err) {
+    setTaskStatus(task.taskId, "error")
+    const message = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} [${task.taskId}] — ${message}\n`)
+    return { ok: false, error: message }
+  }
+  if (!result.ok) {
+    setTaskStatus(task.taskId, "error")
+    process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} [${task.taskId}] — ${result.error}\n`)
+    return { ok: false, error: result.error }
+  }
+  setTaskSpawn(task.taskId, result.sessionName ?? null)
+  process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
+  orchEmit(orchAppendTurn("orchestrator", `approved [${task.taskId}] — worker dispatched`, task.taskId))
+  return { ok: true }
+}
+
+// Run the brain on a user message: answer inline (chat) or stage a dispatch
+// proposal for one-tap approval. Fire-and-forget — never blocks /send. Falls back
+// to a soft note on any model failure so the thread never wedges.
+async function runBrain(userText: string): Promise<void> {
+  let decision
+  try {
+    decision = await brainDecide(getThread(), userText, candidateCwds())
+  } catch {
+    decision = null
+  }
+  if (!decision) {
+    orchEmit(orchAppendTurn("orchestrator", "I couldn't process that — try rephrasing?"))
+    return
+  }
+  if (decision.kind === "chat") {
+    orchEmit(orchAppendTurn("orchestrator", decision.text))
+    return
+  }
+  const task = createProposal(decision.prompt, decision.cwd, decision.reasoning)
+  orchEmit(orchAppendTurn(
+    "orchestrator",
+    `Proposal [${task.taskId}] — dispatch a worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to run.`,
+    task.taskId,
+  ))
+  broadcast({ type: "orchestrator_proposal", task })
+}
 
 export function createCompanionServer(port: number) {
   const server = Bun.serve<WsData>({
@@ -1118,6 +1198,9 @@ export function createCompanionServer(port: number) {
         if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
         const turn = orchAppendTurn("user", text.trim())
         orchEmit(turn)
+        // Brain decides chat-vs-dispatch async; the user message is already
+        // recorded, so /send returns instantly and the reply/proposal streams in.
+        void runBrain(text.trim())
         return Response.json({ ok: true, turn })
       }
       if (url.pathname === "/api/orchestrator/dispatch" && req.method === "POST") {
@@ -1145,6 +1228,29 @@ export function createCompanionServer(port: number) {
         process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
         orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId))
         return Response.json({ ok: true, taskId: task.taskId, app: result.app })
+      }
+
+      // Approve or reject a brain proposal (Phase 2). POST .../proposal/<id>/approve
+      // spawns the worker; .../<id>/reject drops it. Only a 'proposed' task is valid.
+      if (url.pathname.startsWith("/api/orchestrator/proposal/") && req.method === "POST") {
+        const [taskId, action] = url.pathname.slice("/api/orchestrator/proposal/".length).split("/")
+        if (!taskId) return Response.json({ ok: false, error: "no such proposal" }, { status: 404 })
+        const task = getTask(taskId)
+        if (!task) return Response.json({ ok: false, error: "no such proposal" }, { status: 404 })
+        if (task.status !== "proposed") {
+          return Response.json({ ok: false, error: `not proposable (status ${task.status})` }, { status: 409 })
+        }
+        if (action === "reject") {
+          setTaskStatus(taskId, "rejected")
+          orchEmit(orchAppendTurn("orchestrator", `rejected [${taskId}] — not dispatched`, taskId))
+          return Response.json({ ok: true, taskId, status: "rejected" })
+        }
+        if (action === "approve") {
+          const r = await executeDispatch(task)
+          if (!r.ok) return Response.json({ ok: false, error: r.error, taskId }, { status: 500 })
+          return Response.json({ ok: true, taskId, status: "dispatched" })
+        }
+        return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
       }
 
       // ── Hook endpoint — SessionStart — register on startup/resume/clear/compact

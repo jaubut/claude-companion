@@ -30,7 +30,7 @@ Last updated: 2026-06-22
 - [x] Phase 1: worker bind on session-start + reply capture on stop, tagged by task — 2026-06-22
 - [x] Phase 1: verified — send/thread/auth + dispatch state machine via simulated hooks; persistence across restart
 - [x] Phase 1: real-worker e2e GREEN — dispatch spawns a real Claude worker, prompt delivered, reply lands tagged in 15s, fully automated (2026-06-22, after dispatch-delivery fix)
-- [ ] Phase 2: propose-confirm dispatch (orchestrator proposes worker+context, one-tap approve)
+- [x] Phase 2: propose-confirm dispatch — brain (claude -p, tools disabled) classifies chat vs task; task → proposal with reasoning; approve → spawn+deliver; reject → drop. Real e2e green, fully automated (2026-06-22)
 - [ ] Phase 3: model tiers (Haiku gate / Opus compose / Sonnet inline chat)
 - [ ] UI phase (mobile-ux-gated): orchestrator thread in the session picker + chat surface
 
@@ -47,3 +47,7 @@ Last updated: 2026-06-22
   3. Inside tmux the worker's pty ≠ the ps-discovered key, so stop-hook reply matching by session key missed. Fix: match by cwd — the only identifier present in every hook payload.
 - Send-keys before Claude's TUI renders is silently dropped; ps-discovery sees the process seconds before the input box is ready. Gate the send on a pane-content readiness poll (Welcome/auto-mode/shortcuts markers) (2026-06-22).
 - Lesson: simulated-hook tests prove the state machine but hide the real spawn/registration/inject environment. A real-worker e2e is mandatory before declaring dispatch done.
+- **Phase 2 brain runs via `claude -p` (Max OAuth, no API key)** — but `claude -p` is a full agent WITH tools, so left unconstrained it DOES the task instead of classifying it. Must pass `--disallowed-tools <work tools>` + `--append-system-prompt` pinning classifier-only behavior. Use only valid tool names (an unknown name prints a warning to stdout that corrupts JSON parsing) and parse the wrapper from the first `{"type"` (2026-06-22).
+- Launchd service PATH excludes ~/.local/bin where claude installs — the brain must resolve the claude binary to an absolute path, not rely on `claude` in PATH (2026-06-22).
+- **Dispatched workers wedge on project onboarding dialogs** (new-MCP-server enable, folder-trust) that overlay the input box AFTER the welcome/footer renders — so the `auto mode` readiness marker is fooled and the prompt lands on the dialog. Mitigation: detect dialog markers in the pane and send Escape to dismiss before delivering. `ensureFolderTrusted` handles trust pre-seed but not MCP-enable (2026-06-22).
+- A proposal is a task in `proposed` state; reconcileDispatch ignores it (only acts on `dispatched`+unbound), so approve must spawn FIRST then `setTaskSpawn` flips it to dispatched+tmux — never bind a worker before we know its tmux session (2026-06-22).
