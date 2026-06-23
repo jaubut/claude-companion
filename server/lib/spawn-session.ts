@@ -165,7 +165,7 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent): Promise<SpawnRes
     return "OK"
   `)
   if (!r.ok) return { ok: false, app: "Terminal", error: r.stderr || "Terminal spawn failed" }
-  return { ok: true, app: "Terminal" }
+  return { ok: true, app: "Terminal", sessionName }
 }
 
 // Headless tmux spawn — the Linux/server path. No GUI Terminal to open;
@@ -230,7 +230,7 @@ async function spawnInIterm(cwd: string, agent: SpawnAgent): Promise<SpawnResult
     return "OK"
   `)
   if (!r.ok) return { ok: false, app: "iTerm", error: r.stderr || "iTerm spawn failed" }
-  return { ok: true, app: "iTerm" }
+  return { ok: true, app: "iTerm", sessionName }
 }
 
 export async function spawnCompanionSession(opts: { cwd: string; app?: SpawnApp; agent?: SpawnAgent }): Promise<SpawnResult> {

@@ -32,12 +32,20 @@ db.exec(`
     prompt TEXT NOT NULL,
     cwd TEXT NOT NULL,
     session_key TEXT,
+    tmux_session TEXT,
     status TEXT NOT NULL DEFAULT 'dispatched',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_tasks_cwd ON orchestrator_tasks (cwd, status);
 `)
+// Migrate dbs created before tmux_session existed. ALTER throws if the column
+// is already present, so swallow that one case.
+try {
+  db.exec("ALTER TABLE orchestrator_tasks ADD COLUMN tmux_session TEXT")
+} catch {
+  /* column already exists */
+}
 
 // Single-thread product: one canonical thread id. Schema keeps thread_id so a
 // future multi-thread mode is a non-breaking change.
@@ -61,6 +69,7 @@ export interface Task {
   prompt: string
   cwd: string
   sessionKey: string | null
+  tmuxSession: string | null
   status: TaskStatus
   createdAt: number
   updatedAt: number
@@ -81,6 +90,7 @@ interface TaskRow {
   prompt: string
   cwd: string
   session_key: string | null
+  tmux_session: string | null
   status: TaskStatus
   created_at: number
   updated_at: number
@@ -97,6 +107,7 @@ function toTask(r: TaskRow): Task {
     prompt: r.prompt,
     cwd: r.cwd,
     sessionKey: r.session_key,
+    tmuxSession: r.tmux_session,
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -122,7 +133,7 @@ export function getThread(threadId: string = MAIN_THREAD, limit = 200): Turn[] {
 
 // ---- dispatch tasks -------------------------------------------------------
 
-export function createTask(prompt: string, cwd: string, threadId: string = MAIN_THREAD): Task {
+export function createTask(prompt: string, cwd: string, tmuxSession: string | null = null, threadId: string = MAIN_THREAD): Task {
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8),
@@ -130,14 +141,15 @@ export function createTask(prompt: string, cwd: string, threadId: string = MAIN_
     prompt,
     cwd,
     sessionKey: null,
+    tmuxSession,
     status: "dispatched",
     createdAt: now,
     updatedAt: now,
   }
   db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(task.taskId, task.threadId, task.prompt, task.cwd, null, task.status, now, now)
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, status, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(task.taskId, task.threadId, task.prompt, task.cwd, null, task.tmuxSession, task.status, now, now)
   return task
 }
 
@@ -169,11 +181,14 @@ export function matchUnboundTaskByCwd(cwd: string): Task | null {
   return row ? toTask(row) : null
 }
 
-// Find the task a turn-end belongs to, by the worker's bound session key.
-export function findTaskBySessionKey(sessionKey: string): Task | null {
+// Find the task a turn-end belongs to, by cwd — the only identifier reliably
+// present in every hook payload. A worker running inside tmux reports a pty that
+// differs from the ps-discovered session key used at bind time, so matching on
+// the key misses; cwd is stable across spawn → session-start → stop.
+export function findRunningTaskByCwd(cwd: string): Task | null {
   const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE session_key = ? AND status = 'running' ORDER BY updated_at DESC LIMIT 1")
-    .get(sessionKey) as TaskRow | null
+    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' ORDER BY updated_at DESC LIMIT 1")
+    .get(cwd) as TaskRow | null
   return row ? toTask(row) : null
 }
 
