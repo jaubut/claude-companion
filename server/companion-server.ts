@@ -130,6 +130,13 @@ function orchEmit(turn: OrchTurn): void {
   broadcast({ type: "orchestrator", turn })
 }
 
+// Broadcast a task's current state on every transition (proposed → dispatched →
+// running → done/error/rejected) so the phone's Tasks panel tracks live work.
+function emitTask(taskId: string): void {
+  const t = getTask(taskId)
+  if (t) broadcast({ type: "orchestrator_task", task: t })
+}
+
 function readAssistantAfterLastUser(transcriptPath: string): string | null {
   // Returns the concatenated text of all assistant entries that appear AFTER
   // the most recent user entry in the transcript. Returns null if the file
@@ -437,6 +444,7 @@ function reconcileDispatch(sessions: Session[]): void {
     const pending = matchUnboundTaskByCwd(s.cwd)
     if (!pending) continue
     bindTaskSession(pending.taskId, s.key || s.cwd)
+    emitTask(pending.taskId)
     orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId))
     const { tmuxSession, prompt } = pending
     // sendToTmux self-paces: it polls the pane until the TUI is input-ready
@@ -470,16 +478,19 @@ async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; error?: s
     result = await spawnCompanionSession({ cwd: task.cwd, agent: "claude" })
   } catch (err) {
     setTaskStatus(task.taskId, "error")
+    emitTask(task.taskId)
     const message = err instanceof Error ? err.message : String(err)
     process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} [${task.taskId}] — ${message}\n`)
     return { ok: false, error: message }
   }
   if (!result.ok) {
     setTaskStatus(task.taskId, "error")
+    emitTask(task.taskId)
     process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} [${task.taskId}] — ${result.error}\n`)
     return { ok: false, error: result.error }
   }
   setTaskSpawn(task.taskId, result.sessionName ?? null)
+  emitTask(task.taskId)
   process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
   orchEmit(orchAppendTurn("orchestrator", `approved [${task.taskId}] — worker dispatched`, task.taskId))
   return { ok: true }
@@ -509,7 +520,7 @@ async function runBrain(userText: string): Promise<void> {
     `Proposal [${task.taskId}] — dispatch a worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to run.`,
     task.taskId,
   ))
-  broadcast({ type: "orchestrator_proposal", task })
+  emitTask(task.taskId)
 }
 
 export function createCompanionServer(port: number) {
@@ -869,6 +880,7 @@ export function createCompanionServer(port: number) {
           const task = findRunningTaskByCwd(cwd)
           if (task) {
             setTaskStatus(task.taskId, "done")
+            emitTask(task.taskId)
             orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId))
             const dim = "\x1b[2m"; const reset = "\x1b[0m"; const green = "\x1b[32m"
             process.stderr.write(`${dim}[companion]${reset} ${green}orchestrator reply${reset} [${task.taskId}] → thread\n`)
@@ -1227,6 +1239,7 @@ export function createCompanionServer(port: number) {
         const task = createTask(prompt.trim(), wd, result.sessionName ?? null)
         process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
         orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId))
+        emitTask(task.taskId)
         return Response.json({ ok: true, taskId: task.taskId, app: result.app })
       }
 
@@ -1242,6 +1255,7 @@ export function createCompanionServer(port: number) {
         }
         if (action === "reject") {
           setTaskStatus(taskId, "rejected")
+          emitTask(taskId)
           orchEmit(orchAppendTurn("orchestrator", `rejected [${taskId}] — not dispatched`, taskId))
           return Response.json({ ok: true, taskId, status: "rejected" })
         }
