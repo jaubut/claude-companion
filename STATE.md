@@ -32,7 +32,7 @@ Last updated: 2026-06-22
 - [x] Phase 1: real-worker e2e GREEN — dispatch spawns a real Claude worker, prompt delivered, reply lands tagged in 15s, fully automated (2026-06-22, after dispatch-delivery fix)
 - [x] Phase 2: propose-confirm dispatch — brain (claude -p, tools disabled) classifies chat vs task; task → proposal with reasoning; approve → spawn+deliver; reject → drop. Real e2e green, fully automated (2026-06-22)
 - [x] Phase 3: model tiers — Haiku gates+chats in one cheap call; Opus composes only on a task. Brain runs in a bare cwd (no project MCP). chat ~10s, task ~22s on prod (2026-06-23)
-- [ ] UI phase (mobile-ux-gated): orchestrator thread in the session picker + chat surface
+- [x] Phase 4: native iOS UI — OrchestratorView (thread + proposal cards + input) in the SwiftUI app, reachable from the top-bar sparkles button. Compiles (BUILD SUCCEEDED via xcodebuild), mobile-ux-auditor pass + fixes applied (2026-06-23)
 
 ## Learnings
 
@@ -57,3 +57,7 @@ Last updated: 2026-06-22
   - Net on prod: chat ~10s (1 Haiku call), task ~22s (Haiku gate + Opus compose). The ~10s floor is inherent to claude -p; true-instant would need API access.
   - The brain's headless `claude -p` sub-sessions trigger the companion's OWN user-prompt hook (they show as `tty=?` user-prompts in the log/feed). Minor noise; could suppress later by tagging brain sessions.
   - Tradeoff: tasks pay a small Haiku gate tax vs Phase 2's single-Opus, but the common case (chat) drops from Opus to Haiku — the right call for an always-on orchestrator where chat dominates.
+- **Phase 4 native iOS UI** lives in `~/apps/claude companion/` (separate Xcode project, fully native SwiftUI — NOT the React PWA in claude-companion/client). Integration points: WSFrame.swift (2 new frame cases), CompanionSocket.swift (SocketEvent + emit), AppState.swift (@Published orchestratorTurns/Proposals + apply cases + 4 methods), CompanionClient.swift (4 HTTP methods, withFailover pattern), Models.swift (OrchestratorTurn/Task structs), OrchestratorView.swift (new), ContentView.swift (top-bar button + sheet) (2026-06-23).
+  - The socket GROUP's `default:` case forwards unknown SocketEvents unchanged → new event cases auto-propagate. But WSFrame.emit() and AppState.apply() are exhaustive switches (no default) → new enum cases MUST be handled there or it won't compile.
+  - SourceKit single-file diagnostics report every cross-file type as "Cannot find type X in scope" (it can't see other files in the module) — these are noise. The real check is `xcodebuild -scheme "claude companion" -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO` — it compiled clean here, so the loop is closable without Xcode/a device.
+  - The mobile-ux gate (frontend-mobile.md) applies to native SwiftUI too (STATIC mode). Found + fixed: input bar needs `.safeAreaInset(edge:.bottom)` not fixed padding; bar buttons need 44pt hit area even if visually smaller (`.frame(44).contentShape(Rectangle())`); TextField ≥16pt to avoid iOS auto-zoom; never `focused=true` during sheet entrance animation.
