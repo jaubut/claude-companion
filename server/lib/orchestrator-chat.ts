@@ -33,18 +33,21 @@ db.exec(`
     cwd TEXT NOT NULL,
     session_key TEXT,
     tmux_session TEXT,
+    reasoning TEXT,
     status TEXT NOT NULL DEFAULT 'dispatched',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_tasks_cwd ON orchestrator_tasks (cwd, status);
 `)
-// Migrate dbs created before tmux_session existed. ALTER throws if the column
-// is already present, so swallow that one case.
-try {
-  db.exec("ALTER TABLE orchestrator_tasks ADD COLUMN tmux_session TEXT")
-} catch {
-  /* column already exists */
+// Migrate dbs created before these columns existed. ALTER throws if the column
+// is already present, so swallow that one case per column.
+for (const col of ["tmux_session TEXT", "reasoning TEXT"]) {
+  try {
+    db.exec(`ALTER TABLE orchestrator_tasks ADD COLUMN ${col}`)
+  } catch {
+    /* column already exists */
+  }
 }
 
 // Single-thread product: one canonical thread id. Schema keeps thread_id so a
@@ -52,7 +55,8 @@ try {
 export const MAIN_THREAD = "main"
 
 export type TurnRole = "user" | "orchestrator" | "worker"
-export type TaskStatus = "dispatched" | "running" | "done" | "error"
+// proposed → (approve) → dispatched → running → done | error ; (reject) → rejected
+export type TaskStatus = "proposed" | "dispatched" | "running" | "done" | "error" | "rejected"
 
 export interface Turn {
   id: string
@@ -70,6 +74,7 @@ export interface Task {
   cwd: string
   sessionKey: string | null
   tmuxSession: string | null
+  reasoning: string | null
   status: TaskStatus
   createdAt: number
   updatedAt: number
@@ -91,6 +96,7 @@ interface TaskRow {
   cwd: string
   session_key: string | null
   tmux_session: string | null
+  reasoning: string | null
   status: TaskStatus
   created_at: number
   updated_at: number
@@ -108,6 +114,7 @@ function toTask(r: TaskRow): Task {
     cwd: r.cwd,
     sessionKey: r.session_key,
     tmuxSession: r.tmux_session,
+    reasoning: r.reasoning,
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -133,24 +140,47 @@ export function getThread(threadId: string = MAIN_THREAD, limit = 200): Turn[] {
 
 // ---- dispatch tasks -------------------------------------------------------
 
+function insertTask(task: Task): void {
+  db.query(
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, reasoning, status, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    task.taskId, task.threadId, task.prompt, task.cwd, task.sessionKey,
+    task.tmuxSession, task.reasoning, task.status, task.createdAt, task.updatedAt,
+  )
+}
+
+// Direct dispatch (Phase 1, manual /dispatch): task is spawned immediately.
 export function createTask(prompt: string, cwd: string, tmuxSession: string | null = null, threadId: string = MAIN_THREAD): Task {
   const now = Date.now()
   const task: Task = {
-    taskId: randomUUID().slice(0, 8),
-    threadId,
-    prompt,
-    cwd,
-    sessionKey: null,
-    tmuxSession,
-    status: "dispatched",
-    createdAt: now,
-    updatedAt: now,
+    taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
+    sessionKey: null, tmuxSession, reasoning: null, status: "dispatched", createdAt: now, updatedAt: now,
   }
-  db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(task.taskId, task.threadId, task.prompt, task.cwd, null, task.tmuxSession, task.status, now, now)
+  insertTask(task)
   return task
+}
+
+// Propose-confirm (Phase 2): the brain proposes a dispatch; nothing spawns until
+// the user approves (setTaskSpawn flips it to dispatched).
+export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = MAIN_THREAD): Task {
+  const now = Date.now()
+  const task: Task = {
+    taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
+    sessionKey: null, tmuxSession: null, reasoning, status: "proposed", createdAt: now, updatedAt: now,
+  }
+  insertTask(task)
+  return task
+}
+
+// Approve a proposal: record the spawned worker's tmux session and flip to
+// dispatched so reconcileDispatch picks it up and delivers the prompt.
+export function setTaskSpawn(taskId: string, tmuxSession: string | null): void {
+  db.query("UPDATE orchestrator_tasks SET tmux_session = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?").run(
+    tmuxSession,
+    Date.now(),
+    taskId,
+  )
 }
 
 export function getTask(taskId: string): Task | null {
