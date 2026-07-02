@@ -530,7 +530,11 @@ async function runBrain(userText: string, channel: OrchChannel): Promise<void> {
     decision = null
   }
   if (!decision) {
-    orchEmit(orchAppendTurn("orchestrator", "I couldn't process that — try rephrasing?", null, channel.id))
+    // decide() returns null only after runClaude exhausts its retries — the model
+    // call itself kept failing (overload / auth contention), NOT because the
+    // message was unclear. Genuine ambiguity comes back as a chat clarifying
+    // question, not null. So don't tell the user to rephrase a message that was fine.
+    orchEmit(orchAppendTurn("orchestrator", "Couldn't reach the model just now — transient error on my side, not your message. Send that again.", null, channel.id))
     return
   }
   if (decision.kind === "chat") {

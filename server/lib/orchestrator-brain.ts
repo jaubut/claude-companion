@@ -26,6 +26,8 @@ export type BrainDecision =
 const GATE_MODEL = process.env.COMPANION_GATE_MODEL || "claude-haiku-4-5"
 const COMPOSE_MODEL = process.env.COMPANION_COMPOSE_MODEL || "claude-opus-4-8"
 const CALL_TIMEOUT_MS = 90_000
+const BRAIN_MAX_ATTEMPTS = 3
+const BRAIN_RETRY_BACKOFF_MS = 1500
 
 // Run brain calls here — a directory with no .mcp.json — so claude -p doesn't
 // load project MCP servers on every classification. The companion data dir fits.
@@ -54,7 +56,7 @@ function history(turns: Turn[]): string {
 
 // One headless model call, tools disabled. Returns the model's text (the wrapper
 // `.result`), or null on any failure. Caller decides how to parse it.
-async function runClaude(model: string, prompt: string): Promise<string | null> {
+async function runClaudeOnce(model: string, prompt: string): Promise<string | null> {
   const bin = resolveClaudeBin()
   const proc = Bun.spawn(
     [bin, "-p", prompt, "--append-system-prompt", NO_TOOLS_SYSTEM, "--disallowed-tools", ...DENY_TOOLS,
@@ -81,6 +83,21 @@ async function runClaude(model: string, prompt: string): Promise<string | null> 
   } catch {
     return null
   }
+}
+
+// Retry the headless call before giving up. The dominant failure in the wild was
+// a transient non-zero exit (model 429/529, or OAuth token-refresh contention
+// between the concurrent brain + worker `claude -p` calls that share one Max
+// credential) on a message that was itself perfectly clear — the same text that
+// "failed" succeeds on the next attempt. A null return now means the model was
+// genuinely unreachable, not that the user was unclear.
+async function runClaude(model: string, prompt: string): Promise<string | null> {
+  for (let attempt = 0; attempt < BRAIN_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await Bun.sleep(BRAIN_RETRY_BACKOFF_MS * attempt)
+    const out = await runClaudeOnce(model, prompt)
+    if (out !== null) return out
+  }
+  return null
 }
 
 // ---- tier 1: gate + chat (Haiku) ------------------------------------------
