@@ -42,7 +42,7 @@ db.exec(`
 `)
 // Migrate dbs created before these columns existed. ALTER throws if the column
 // is already present, so swallow that one case per column.
-for (const col of ["tmux_session TEXT", "reasoning TEXT"]) {
+for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT"]) {
   try {
     db.exec(`ALTER TABLE orchestrator_tasks ADD COLUMN ${col}`)
   } catch {
@@ -50,9 +50,16 @@ for (const col of ["tmux_session TEXT", "reasoning TEXT"]) {
   }
 }
 
-// Single-thread product: one canonical thread id. Schema keeps thread_id so a
-// future multi-thread mode is a non-breaking change.
+// Channels (PRJ-OR1T Phase 6): thread_id is the channel — 'main' for general
+// chat, a project slug (basename of the dispatch cwd) for per-project threads.
+// Pre-Phase-6 rows all carry 'main', so the migration is free.
 export const MAIN_THREAD = "main"
+
+// A project channel id is the cwd basename: /home/x/tls-dashboard-v2 → tls-dashboard-v2.
+export function channelForCwd(cwd: string): string {
+  const base = cwd.replace(/\/+$/, "").split("/").pop() ?? ""
+  return base || MAIN_THREAD
+}
 
 export type TurnRole = "user" | "orchestrator" | "worker"
 // proposed → (approve) → dispatched → running → done | error ; (reject) → rejected
@@ -75,9 +82,18 @@ export interface Task {
   sessionKey: string | null
   tmuxSession: string | null
   reasoning: string | null
+  logTail: string | null
   status: TaskStatus
   createdAt: number
   updatedAt: number
+}
+
+export interface Channel {
+  id: string
+  lastTurnAt: number | null
+  lastText: string | null
+  activeTasks: number
+  proposedTasks: number
 }
 
 interface TurnRow {
@@ -97,6 +113,7 @@ interface TaskRow {
   session_key: string | null
   tmux_session: string | null
   reasoning: string | null
+  log_tail: string | null
   status: TaskStatus
   created_at: number
   updated_at: number
@@ -115,6 +132,7 @@ function toTask(r: TaskRow): Task {
     sessionKey: r.session_key,
     tmuxSession: r.tmux_session,
     reasoning: r.reasoning,
+    logTail: r.log_tail,
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -142,11 +160,11 @@ export function getThread(threadId: string = MAIN_THREAD, limit = 200): Turn[] {
 
 function insertTask(task: Task): void {
   db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, reasoning, status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, reasoning, log_tail, status, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     task.taskId, task.threadId, task.prompt, task.cwd, task.sessionKey,
-    task.tmuxSession, task.reasoning, task.status, task.createdAt, task.updatedAt,
+    task.tmuxSession, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
   )
 }
 
@@ -155,7 +173,7 @@ export function createTask(prompt: string, cwd: string, tmuxSession: string | nu
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
-    sessionKey: null, tmuxSession, reasoning: null, status: "dispatched", createdAt: now, updatedAt: now,
+    sessionKey: null, tmuxSession, reasoning: null, logTail: null, status: "dispatched", createdAt: now, updatedAt: now,
   }
   insertTask(task)
   return task
@@ -167,7 +185,7 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
-    sessionKey: null, tmuxSession: null, reasoning, status: "proposed", createdAt: now, updatedAt: now,
+    sessionKey: null, tmuxSession: null, reasoning, logTail: null, status: "proposed", createdAt: now, updatedAt: now,
   }
   insertTask(task)
   return task
@@ -227,4 +245,61 @@ export function listTasks(status?: TaskStatus): Task[] {
     ? (db.query("SELECT * FROM orchestrator_tasks WHERE status = ? ORDER BY created_at DESC").all(status) as TaskRow[])
     : (db.query("SELECT * FROM orchestrator_tasks ORDER BY created_at DESC LIMIT 100").all() as TaskRow[])
   return rows.map(toTask)
+}
+
+export function listTasksByThread(threadId: string): Task[] {
+  const rows = db
+    .query("SELECT * FROM orchestrator_tasks WHERE thread_id = ? ORDER BY created_at DESC LIMIT 100")
+    .all(threadId) as TaskRow[]
+  return rows.map(toTask)
+}
+
+// Final pane snapshot for the collapsed worker card (hybrid output model): live
+// lines stream transiently over WS while running; only this last tail persists.
+export function setTaskLogTail(taskId: string, logTail: string): void {
+  db.query("UPDATE orchestrator_tasks SET log_tail = ?, updated_at = ? WHERE task_id = ?").run(logTail, Date.now(), taskId)
+}
+
+// ---- channels ---------------------------------------------------------------
+
+// Sidebar list: every thread that has turns or tasks, newest activity first,
+// 'main' always present and pinned on top.
+export function listChannels(): Channel[] {
+  const rows = db
+    .query(
+      `SELECT t.thread_id AS id,
+              MAX(t.last_at) AS last_at,
+              SUM(t.active) AS active,
+              SUM(t.proposed) AS proposed
+       FROM (
+         SELECT thread_id, MAX(created_at) AS last_at, 0 AS active, 0 AS proposed FROM orchestrator_turns GROUP BY thread_id
+         UNION ALL
+         SELECT thread_id, MAX(updated_at),
+                SUM(CASE WHEN status IN ('dispatched','running') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'proposed' THEN 1 ELSE 0 END)
+         FROM orchestrator_tasks GROUP BY thread_id
+       ) t
+       GROUP BY t.thread_id`,
+    )
+    .all() as { id: string; last_at: number | null; active: number | null; proposed: number | null }[]
+
+  const lastText = db.query(
+    "SELECT text FROM orchestrator_turns WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1",
+  )
+  const channels: Channel[] = rows.map((r) => ({
+    id: r.id,
+    lastTurnAt: r.last_at,
+    lastText: (lastText.get(r.id) as { text: string } | null)?.text ?? null,
+    activeTasks: r.active ?? 0,
+    proposedTasks: r.proposed ?? 0,
+  }))
+  if (!channels.some((c) => c.id === MAIN_THREAD)) {
+    channels.push({ id: MAIN_THREAD, lastTurnAt: null, lastText: null, activeTasks: 0, proposedTasks: 0 })
+  }
+  channels.sort((a, b) => {
+    if (a.id === MAIN_THREAD) return -1
+    if (b.id === MAIN_THREAD) return 1
+    return (b.lastTurnAt ?? 0) - (a.lastTurnAt ?? 0)
+  })
+  return channels
 }
