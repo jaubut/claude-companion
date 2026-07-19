@@ -41,7 +41,19 @@ function ensureFolderTrusted(cwd: string): void {
 }
 
 export type SpawnApp = "terminal" | "iterm" | "tmux" | "auto"
-export type SpawnAgent = "claude" | "codex"
+export type SpawnAgent = "claude" | "codex" | "kimi"
+
+// Kimi sessions are regular Claude Code pointed at Moonshot's Anthropic-
+// compatible endpoint. All config (base URL, API key, model pins) lives in
+// ~/.config/kimi/kimi.env so the token never appears in the tmux command
+// line, ps output, or this repo. Everything downstream (hooks, injection,
+// session feed) behaves exactly like a claude session.
+const KIMI_ENV_FILE = `${process.env.HOME}/.config/kimi/kimi.env`
+
+function agentLaunchCommand(agent: SpawnAgent): string {
+  if (agent === "kimi") return `. "$HOME/.config/kimi/kimi.env" && claude`
+  return agent
+}
 
 export interface SpawnResult {
   ok: boolean
@@ -111,7 +123,7 @@ async function isAppRunning(appName: string): Promise<boolean> {
 function buildTmuxLaunch(cwd: string, sessionName: string, agent: SpawnAgent): string {
   const sessEscaped = escapeForShellSingleQuoted(sessionName)
   const cwdEscaped = escapeForShellSingleQuoted(cwd)
-  const inner = `cd '${cwdEscaped}' && ${agent}`
+  const inner = `cd '${cwdEscaped}' && ${agentLaunchCommand(agent)}`
   const innerEscaped = escapeForShellSingleQuoted(inner)
   return (
     `tmux new-session -s '${sessEscaped}' '${innerEscaped}'`
@@ -120,7 +132,7 @@ function buildTmuxLaunch(cwd: string, sessionName: string, agent: SpawnAgent): s
 }
 
 function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
-  const prefix = agent === "codex" ? "cx" : "cc"
+  const prefix = agent === "codex" ? "cx" : agent === "kimi" ? "km" : "cc"
   const base = cwd.split("/").filter(Boolean).pop() ?? "session"
   const safe = base.replace(/[:.]/g, "-").replace(/\s+/g, "-")
   return `${prefix}-${safe}`
@@ -181,7 +193,7 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent): Promise<SpawnRes
 async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent): Promise<SpawnResult> {
   const sessionName = await uniqueTmuxSessionName(cwd, agent)
   const cwdEscaped = escapeForShellSingleQuoted(cwd)
-  const inner = `cd '${cwdEscaped}' && ${agent}`
+  const inner = `cd '${cwdEscaped}' && ${agentLaunchCommand(agent)}`
   // Create the session detached. Run the inner command via /bin/sh so the
   // single-quote escaping works. tmux passes through $TMUX/$TMUX_PANE so
   // the session-start hook fires the moment claude initializes.
@@ -248,11 +260,19 @@ export async function spawnCompanionSession(opts: { cwd: string; app?: SpawnApp;
   }
 
   const app: SpawnApp = opts.app ?? "auto"
-  const agent: SpawnAgent = opts.agent === "codex" ? "codex" : "claude"
+  const agent: SpawnAgent =
+    opts.agent === "codex" || opts.agent === "kimi" ? opts.agent : "claude"
+
+  // A kimi spawn with no env file would die inside /bin/sh before claude
+  // starts — the tmux session vanishes and the phone never sees an error.
+  // Fail the spawn request instead.
+  if (agent === "kimi" && !existsSync(KIMI_ENV_FILE)) {
+    return { ok: false, error: `kimi env file missing: ${KIMI_ENV_FILE}` }
+  }
 
   // Trust the target dir before launching so claude doesn't hang at the
   // folder-trust dialog (codex has no such gate, so skip it there).
-  if (agent === "claude") ensureFolderTrusted(resolved)
+  if (agent !== "codex") ensureFolderTrusted(resolved)
 
   // Linux / headless server path. macOS-only apps don't apply, and there's
   // no GUI Terminal to open — every spawn just creates a detached tmux
