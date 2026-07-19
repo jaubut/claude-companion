@@ -220,8 +220,8 @@ async function whoOwnsPort(port: number): Promise<PortOwner | null> {
   const code = await proc.exited
   if (code !== 0 || !text.trim()) return null
   // -F output: lines beginning p<pid> and c<command>
-  const pidLine = text.match(/^p(\d+)/m)
+  const pid = text.match(/^p(\d+)/m)?.[1]
   const cmdLine = text.match(/^c(.+)/m)
-  if (!pidLine) return null
-  return { pid: pidLine[1], command: cmdLine?.[1] ?? "?", label: null }
+  if (!pid) return null
+  return { pid, command: cmdLine?.[1] ?? "?", label: null }
 }
