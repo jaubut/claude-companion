@@ -1206,7 +1206,8 @@ export function createCompanionServer(port: number) {
         const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent }
         const cwd = (body.cwd ?? "").trim()
         if (!cwd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
-        const agent: SpawnAgent = body.agent === "codex" ? "codex" : "claude"
+        const agent: SpawnAgent =
+          body.agent === "codex" || body.agent === "kimi" ? body.agent : "claude"
 
         const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
         process.stderr.write(`${dim}[companion]${reset} ${cyan}spawn${reset} ${agent} in ${cwd}\n`)

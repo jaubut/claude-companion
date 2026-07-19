@@ -2,7 +2,7 @@
 
 export interface ApprovalRequest {
   id: string
-  agent?: "claude" | "codex"
+  agent?: "claude" | "codex" | "kimi"
   sessionId: string
   tool: string
   input: Record<string, unknown>

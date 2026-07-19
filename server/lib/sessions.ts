@@ -19,7 +19,7 @@
 
 export interface Session {
   key: string
-  agent: "claude" | "codex"
+  agent: "claude" | "codex" | "kimi"
   label: string
   cwd: string
   sessionId: string
