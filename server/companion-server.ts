@@ -63,8 +63,13 @@ import {
   matchUnboundTaskByCwd,
   findRunningTaskByCwd,
   listTasks,
+  listChannels,
+  getChannel,
+  createChannel,
+  GENERAL_CHANNEL,
   type Turn as OrchTurn,
   type Task as OrchTask,
+  type Channel as OrchChannel,
 } from "./lib/orchestrator-chat"
 import { decide as brainDecide } from "./lib/orchestrator-brain"
 
@@ -135,6 +140,20 @@ function orchEmit(turn: OrchTurn): void {
 function emitTask(taskId: string): void {
   const t = getTask(taskId)
   if (t) broadcast({ type: "orchestrator_task", task: t })
+}
+
+// Broadcast a new/updated channel so every device's channel rail live-updates
+// (PRJ-OR1T Phase 6).
+function emitChannel(channel: OrchChannel): void {
+  broadcast({ type: "orchestrator_channel", channel })
+}
+
+// Resolve a channel id from a request (query param or body field), defaulting to
+// General. Returns null only when a non-empty id names a channel that doesn't
+// exist — callers reject that as a 404.
+function resolveChannel(id: string | null | undefined): OrchChannel | null {
+  const wanted = id?.trim() || GENERAL_CHANNEL
+  return getChannel(wanted)
 }
 
 function readAssistantAfterLastUser(transcriptPath: string): string | null {
@@ -445,7 +464,7 @@ function reconcileDispatch(sessions: Session[]): void {
     if (!pending) continue
     bindTaskSession(pending.taskId, s.key || s.cwd)
     emitTask(pending.taskId)
-    orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId))
+    orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId, pending.threadId))
     const { tmuxSession, prompt } = pending
     // sendToTmux self-paces: it polls the pane until the TUI is input-ready
     // before send-keys, so binding the instant ps-discovery sees the worker is
@@ -492,33 +511,38 @@ async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; error?: s
   setTaskSpawn(task.taskId, result.sessionName ?? null)
   emitTask(task.taskId)
   process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
-  orchEmit(orchAppendTurn("orchestrator", `approved [${task.taskId}] — worker dispatched`, task.taskId))
+  orchEmit(orchAppendTurn("orchestrator", `approved [${task.taskId}] — worker dispatched`, task.taskId, task.threadId))
   return { ok: true }
 }
 
 // Run the brain on a user message: answer inline (chat) or stage a dispatch
 // proposal for one-tap approval. Fire-and-forget — never blocks /send. Falls back
 // to a soft note on any model failure so the thread never wedges.
-async function runBrain(userText: string): Promise<void> {
+async function runBrain(userText: string, channel: OrchChannel): Promise<void> {
+  // History and cwd candidates are scoped to the channel so the brain reasons
+  // within one project's thread. A channel bound to a cwd puts it first so the
+  // brain leans toward that project when composing a dispatch.
+  const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
   let decision
   try {
-    decision = await brainDecide(getThread(), userText, candidateCwds())
+    decision = await brainDecide(getThread(channel.id), userText, cwds)
   } catch {
     decision = null
   }
   if (!decision) {
-    orchEmit(orchAppendTurn("orchestrator", "I couldn't process that — try rephrasing?"))
+    orchEmit(orchAppendTurn("orchestrator", "I couldn't process that — try rephrasing?", null, channel.id))
     return
   }
   if (decision.kind === "chat") {
-    orchEmit(orchAppendTurn("orchestrator", decision.text))
+    orchEmit(orchAppendTurn("orchestrator", decision.text, null, channel.id))
     return
   }
-  const task = createProposal(decision.prompt, decision.cwd, decision.reasoning)
+  const task = createProposal(decision.prompt, decision.cwd, decision.reasoning, channel.id)
   orchEmit(orchAppendTurn(
     "orchestrator",
     `Proposal [${task.taskId}] — dispatch a worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to run.`,
     task.taskId,
+    channel.id,
   ))
   emitTask(task.taskId)
 }
@@ -881,7 +905,7 @@ export function createCompanionServer(port: number) {
           if (task) {
             setTaskStatus(task.taskId, "done")
             emitTask(task.taskId)
-            orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId))
+            orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId, task.threadId))
             const dim = "\x1b[2m"; const reset = "\x1b[0m"; const green = "\x1b[32m"
             process.stderr.write(`${dim}[companion]${reset} ${green}orchestrator reply${reset} [${task.taskId}] → thread\n`)
           }
@@ -1202,23 +1226,42 @@ export function createCompanionServer(port: number) {
       // One always-open thread per host. /send records a user message; /dispatch
       // spawns a worker bound to this thread (its turn-end reports back tagged by
       // task, via the session-start + stop hooks above); /thread reads it all.
+      if (url.pathname === "/api/orchestrator/channels" && req.method === "GET") {
+        return Response.json({ channels: listChannels() })
+      }
+      if (url.pathname === "/api/orchestrator/channels" && req.method === "POST") {
+        const { name, cwd } = await req.json() as { name?: string; cwd?: string }
+        if (!name?.trim()) return Response.json({ ok: false, error: "name required" }, { status: 400 })
+        const channel = createChannel(name.trim(), cwd?.trim() || null)
+        emitChannel(channel)
+        return Response.json({ ok: true, channel })
+      }
       if (url.pathname === "/api/orchestrator/thread" && req.method === "GET") {
-        return Response.json({ turns: getThread(), tasks: listTasks() })
+        const ch = resolveChannel(url.searchParams.get("channel"))
+        if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+        // Returns the channel roster too, so the client fills the rail and the
+        // active thread in one round-trip.
+        return Response.json({ channel: ch.id, channels: listChannels(), turns: getThread(ch.id), tasks: listTasks(ch.id) })
       }
       if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
-        const { text } = await req.json() as { text?: string }
+        const { text, channel } = await req.json() as { text?: string; channel?: string }
         if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
-        const turn = orchAppendTurn("user", text.trim())
+        const ch = resolveChannel(channel)
+        if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+        const turn = orchAppendTurn("user", text.trim(), null, ch.id)
         orchEmit(turn)
         // Brain decides chat-vs-dispatch async; the user message is already
         // recorded, so /send returns instantly and the reply/proposal streams in.
-        void runBrain(text.trim())
+        void runBrain(text.trim(), ch)
         return Response.json({ ok: true, turn })
       }
       if (url.pathname === "/api/orchestrator/dispatch" && req.method === "POST") {
-        const { prompt, cwd } = await req.json() as { prompt?: string; cwd?: string }
+        const { prompt, cwd, channel } = await req.json() as { prompt?: string; cwd?: string; channel?: string }
         if (!prompt?.trim()) return Response.json({ ok: false, error: "prompt required" }, { status: 400 })
-        const wd = (cwd ?? "").trim()
+        const ch = resolveChannel(channel)
+        if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+        // Explicit cwd wins; otherwise fall back to the channel's bound project dir.
+        const wd = ((cwd ?? "").trim() || ch.cwd || "")
         if (!wd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
 
         const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
@@ -1236,9 +1279,9 @@ export function createCompanionServer(port: number) {
           process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} — ${result.error}\n`)
           return Response.json({ ok: false, error: result.error }, { status: 400 })
         }
-        const task = createTask(prompt.trim(), wd, result.sessionName ?? null)
+        const task = createTask(prompt.trim(), wd, result.sessionName ?? null, ch.id)
         process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
-        orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId))
+        orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId, ch.id))
         emitTask(task.taskId)
         return Response.json({ ok: true, taskId: task.taskId, app: result.app })
       }
@@ -1256,7 +1299,7 @@ export function createCompanionServer(port: number) {
         if (action === "reject") {
           setTaskStatus(taskId, "rejected")
           emitTask(taskId)
-          orchEmit(orchAppendTurn("orchestrator", `rejected [${taskId}] — not dispatched`, taskId))
+          orchEmit(orchAppendTurn("orchestrator", `rejected [${taskId}] — not dispatched`, taskId, task.threadId))
           return Response.json({ ok: true, taskId, status: "rejected" })
         }
         if (action === "approve") {
