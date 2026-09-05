@@ -382,7 +382,7 @@ async function resolveTmuxPaneFromTty(tty: string): Promise<string | null> {
     if ((proc.exitCode ?? 1) !== 0) return null
     for (const line of out.split("\n")) {
       const [pane, paneTty] = line.split(" ")
-      if (paneTty === tty && TMUX_PANE_RE.test(pane ?? "")) return pane
+      if (paneTty === tty && pane && TMUX_PANE_RE.test(pane)) return pane
     }
     return null
   } catch {

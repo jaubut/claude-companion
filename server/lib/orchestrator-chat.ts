@@ -11,7 +11,9 @@ import { randomUUID } from "node:crypto"
 // is built on (memory-proof gate, PRJ-OR1T Phase 0).
 
 const DB_DIR = join(homedir(), ".claude-companion")
-const DB_PATH = join(DB_DIR, "companion.db")
+// COMPANION_DB_PATH lets tests run against an isolated sqlite file; production
+// uses the real companion.db (shared with push-tokens / learned-allow).
+const DB_PATH = process.env.COMPANION_DB_PATH ?? join(DB_DIR, "companion.db")
 
 mkdirSync(DB_DIR, { recursive: true })
 const db = new Database(DB_PATH)
@@ -39,6 +41,14 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_tasks_cwd ON orchestrator_tasks (cwd, status);
+
+  CREATE TABLE IF NOT EXISTS orchestrator_channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    cwd TEXT,
+    created_at INTEGER NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0
+  );
 `)
 // Migrate dbs created before these columns existed. ALTER throws if the column
 // is already present, so swallow that one case per column.
@@ -50,9 +60,20 @@ for (const col of ["tmux_session TEXT", "reasoning TEXT"]) {
   }
 }
 
-// Single-thread product: one canonical thread id. Schema keeps thread_id so a
-// future multi-thread mode is a non-breaking change.
-export const MAIN_THREAD = "main"
+// Default channel (PRJ-OR1T Phase 6). Was the single hardcoded thread id 'main';
+// now the seeded catch-all channel that holds pre-Phase-6 history and any turn or
+// task sent without an explicit channel.
+export const GENERAL_CHANNEL = "general"
+
+// Seed the General channel and fold the legacy single-thread 'main' history into
+// it. Idempotent: INSERT OR IGNORE no-ops once General exists, and the backfill
+// only rewrites rows still tagged 'main'.
+db.query("INSERT OR IGNORE INTO orchestrator_channels (id, name, cwd, created_at) VALUES (?, 'General', NULL, ?)").run(
+  GENERAL_CHANNEL,
+  Date.now(),
+)
+db.query("UPDATE orchestrator_turns SET thread_id = ? WHERE thread_id = ?").run(GENERAL_CHANNEL, "main")
+db.query("UPDATE orchestrator_tasks SET thread_id = ? WHERE thread_id = ?").run(GENERAL_CHANNEL, "main")
 
 export type TurnRole = "user" | "orchestrator" | "worker"
 // proposed → (approve) → dispatched → running → done | error ; (reject) → rejected
@@ -123,7 +144,7 @@ function toTask(r: TaskRow): Task {
 
 // ---- turns ----------------------------------------------------------------
 
-export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = MAIN_THREAD): Turn {
+export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = GENERAL_CHANNEL): Turn {
   const turn: Turn = { id: randomUUID(), threadId, role, text, taskId, createdAt: Date.now() }
   db.query(
     "INSERT INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -131,7 +152,7 @@ export function appendTurn(role: TurnRole, text: string, taskId: string | null =
   return turn
 }
 
-export function getThread(threadId: string = MAIN_THREAD, limit = 200): Turn[] {
+export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn[] {
   const rows = db
     .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? ORDER BY created_at ASC LIMIT ?")
     .all(threadId, limit) as TurnRow[]
@@ -151,7 +172,7 @@ function insertTask(task: Task): void {
 }
 
 // Direct dispatch (Phase 1, manual /dispatch): task is spawned immediately.
-export function createTask(prompt: string, cwd: string, tmuxSession: string | null = null, threadId: string = MAIN_THREAD): Task {
+export function createTask(prompt: string, cwd: string, tmuxSession: string | null = null, threadId: string = GENERAL_CHANNEL): Task {
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
@@ -163,7 +184,7 @@ export function createTask(prompt: string, cwd: string, tmuxSession: string | nu
 
 // Propose-confirm (Phase 2): the brain proposes a dispatch; nothing spawns until
 // the user approves (setTaskSpawn flips it to dispatched).
-export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = MAIN_THREAD): Task {
+export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL): Task {
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
@@ -222,9 +243,62 @@ export function findRunningTaskByCwd(cwd: string): Task | null {
   return row ? toTask(row) : null
 }
 
-export function listTasks(status?: TaskStatus): Task[] {
-  const rows = status
-    ? (db.query("SELECT * FROM orchestrator_tasks WHERE status = ? ORDER BY created_at DESC").all(status) as TaskRow[])
+// List tasks, optionally scoped to one channel. threadId omitted → all channels
+// (the Tasks panel's global view); scoped → that channel's dispatched work.
+export function listTasks(threadId?: string): Task[] {
+  const rows = threadId
+    ? (db.query("SELECT * FROM orchestrator_tasks WHERE thread_id = ? ORDER BY created_at DESC LIMIT 100").all(threadId) as TaskRow[])
     : (db.query("SELECT * FROM orchestrator_tasks ORDER BY created_at DESC LIMIT 100").all() as TaskRow[])
   return rows.map(toTask)
+}
+
+// ---- channels (PRJ-OR1T Phase 6) ------------------------------------------
+
+export interface Channel {
+  id: string
+  name: string
+  cwd: string | null
+  createdAt: number
+  archived: boolean
+}
+
+interface ChannelRow {
+  id: string
+  name: string
+  cwd: string | null
+  created_at: number
+  archived: number
+}
+
+function toChannel(r: ChannelRow): Channel {
+  return { id: r.id, name: r.name, cwd: r.cwd, createdAt: r.created_at, archived: !!r.archived }
+}
+
+function slugify(name: string): string {
+  return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "channel"
+}
+
+export function listChannels(): Channel[] {
+  const rows = db
+    .query("SELECT * FROM orchestrator_channels WHERE archived = 0 ORDER BY created_at ASC")
+    .all() as ChannelRow[]
+  return rows.map(toChannel)
+}
+
+export function getChannel(id: string): Channel | null {
+  const row = db.query("SELECT * FROM orchestrator_channels WHERE id = ?").get(id) as ChannelRow | null
+  return row ? toChannel(row) : null
+}
+
+// Create a user-defined channel. The id is a slug of the name, disambiguated with
+// a -N suffix on collision so two "TLS Dashboard" channels can coexist.
+export function createChannel(name: string, cwd: string | null = null): Channel {
+  const base = slugify(name)
+  let id = base
+  for (let n = 2; getChannel(id); n++) id = `${base}-${n}`
+  const ch: Channel = { id, name: name.trim(), cwd: cwd?.trim() || null, createdAt: Date.now(), archived: false }
+  db.query("INSERT INTO orchestrator_channels (id, name, cwd, created_at, archived) VALUES (?, ?, ?, ?, 0)").run(
+    ch.id, ch.name, ch.cwd, ch.createdAt,
+  )
+  return ch
 }
