@@ -38,7 +38,7 @@ Last updated: 2026-09-05
 
 ### Phase 7 — autonomy
 - [x] Server (PR #6): `orchestrator-queue.ts` admission + FIFO drain (on worker exit, boot, 30s tick); `auto_dispatch` on channels + `channelTrust`; `POST /task/<id>/cancel` (kills tmux, flips auto off); `POST /channels/<id>/auto`; `/thread` returns `queue {cap, live, queued}`; statuses `queued` + `cancelled`. 22 bun tests, route smoke, two real e2e on Zettlab: 4 dispatches at cap 3 → 1 queued → cancel freed the slot and the queued task started in <5s; natural finish → drain → all 4 DONE with log tails; dead-pane backstop had flipped the killed workers to `error` — 2026-09-05
-- [ ] iOS: `queued`/`cancelled` states + queue header in Tasks panel, cancel button, per-channel auto toggle + trust ramp hint, live worker tail card + collapsed `logTail` (server has emitted these since v0.2)
+- [x] iOS (iOS repo PR #3, merged): control-room Tasks panel (queue summary, Auto-dispatch toggle + trust line, rows live → queued #N → finished, stop/remove behind a confirmation, watch), live worker tail cards + collapsed `logTail`, ramp hint, `auto` header badge. xcodebuild green; mobile-ux-auditor 5.5 → 9.5 after fixes, residual closed. Not yet on a device — needs a TestFlight build — 2026-09-05
 
 
 - [x] Phase 0: memory-proof gate (kb-memory-proof suite, 5/5) — 2026-06-22
@@ -60,6 +60,7 @@ Last updated: 2026-09-05
 - **Same-cwd fan-out cross-matches tasks** (2026-09-05): worker binding and stop-hook matching are by cwd (Phase 1 design), so N workers in one cwd can close each other's tasks. The e2e used 4 distinct cwds. Fix = per-worker identity in hook headers (tmux session name) — Phase 8 candidate.
 - Zettlab companion's previous 2.6-day run peaked at 6.7G RSS + 1.4G swap (journal, pre-v0.2 code). Cause unmeasured; watch it now that worker-tail adds a 1.5s poll per live task.
 
+- **Pinned bottom chrome needs one shared height budget** (2026-09-05, mobile-ux CRITICAL): ramp hint + live tails + proposals + input all rode one `.safeAreaInset(edge: .bottom)` and only proposals self-capped, so two workers + a hint + a proposal could push the thread off an SE screen. Pattern now: one `budget` (42% of height) split between the scrolling panels, fixed rows line-limited, compose field capped at 3 lines when crowded. Also: a `Menu`'s `.accessibilityLabel` overrides its children — badge state must be spoken on the container.
 - **Phase 6 got built twice** (2026-09-05 post-mortem): Zettlab session shipped channels + worker-tail on 2026-07-02 to a branch with no PR; the Mac session redid channels on 2026-07-19 without checking `git branch -r`. Zettlab prod then ran a local-only branch (`feat/kimi-agent`) for 7 weeks. Rules: `git fetch --prune && git branch -r && gh pr list` before starting any phase; Zettlab runs `main`, never a feature branch; a phase isn't done until its PR is merged.
 - Kept the Mac sidebar channel model (user-created rows in `orchestrator_channels`) over Zettlab's cwd-basename channels — Jeremie's call from Phase 6a. Only the brain's explicit "this channel is the project at X" prompt line was worth taking from the Zettlab version; cwd ordering alone is a weaker hint.
 - worker-tail's pane-vanished → `error` path is the herdr "hook-independent liveness" backstop (docs/herdr-teardown.md) at the task level. Session-level liveness is still hooks + ps-discovery.
