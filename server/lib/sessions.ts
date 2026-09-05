@@ -24,6 +24,10 @@ export interface Session {
   // The chat's name: first real prompt of the session (see session-titles.ts).
   // Empty until a prompt lands or a resolver recovers it from the transcript.
   title: string
+  // sessionId came from an authoritative source (hook payload, Claude Code's
+  // ~/.claude/sessions/<pid>.json, or the transcript itself) rather than a
+  // newest-transcript-in-this-cwd guess. Guesses never name a chat.
+  sidConfirmed: boolean
   cwd: string
   sessionId: string
   termProgram: string
@@ -153,6 +157,10 @@ export interface RecordOptions {
   // hook lands, which avoids labelling every discovered session "jeremieaubut"
   // when claudes were launched from HOME.
   provisional?: boolean
+  // Whether meta.sessionId is exact. Hooks and rehydrate are exact; a ps
+  // discovery that fell back to the newest transcript in the cwd is not.
+  // Defaults to true for non-provisional records.
+  sessionIdConfirmed?: boolean
 }
 
 export function recordSession(
@@ -168,6 +176,20 @@ export function recordSession(
   // Always include the tty tag when we have one so the picker can distinguish
   // sessions that share a cwd. When two Claude windows run from the same repo
   // they'd otherwise collide to an identical "claude-companion" label.
+  // Session-id trust: a guess never overwrites a confirmed id, and a
+  // confirmed id that differs from what we had drops the old title so the
+  // resolver names the chat from the right transcript.
+  const incomingSid = meta.sessionId || ""
+  const incomingConfirmed = opts.sessionIdConfirmed ?? !opts.provisional
+  let sessionId = prev?.sessionId || ""
+  let sidConfirmed = prev?.sidConfirmed ?? false
+  let titleReset = false
+  if (incomingSid && (incomingConfirmed || !sidConfirmed)) {
+    if (incomingConfirmed && sessionId && sessionId !== incomingSid) titleReset = true
+    sessionId = incomingSid
+    sidConfirmed = incomingConfirmed
+  }
+
   const explicitLabel = meta.label?.trim() ?? ""
   const generatedLabel = opts.provisional && !prev?.label
     ? ""
@@ -178,9 +200,10 @@ export function recordSession(
     key,
     agent: meta.agent || prev?.agent || "claude",
     label: nextLabel || prev?.label || "",
-    title: meta.title?.trim() || prev?.title || "",
+    title: meta.title?.trim() || (titleReset ? "" : prev?.title || ""),
+    sidConfirmed,
     cwd: meta.cwd,
-    sessionId: meta.sessionId || prev?.sessionId || "",
+    sessionId,
     termProgram: meta.termProgram || prev?.termProgram || "",
     tty: mergedTty,
     iTermSessionId: meta.iTermSessionId || prev?.iTermSessionId || "",
@@ -197,7 +220,7 @@ export function recordSession(
   if (!prev && next.pid && meta.firstSeenAt === undefined) {
     void backfillStart(key, next.pid)
   }
-  if (!next.title && next.sessionId && titleResolver && !resolvingTitle.has(key)) {
+  if (!next.title && next.sessionId && next.sidConfirmed && titleResolver && !resolvingTitle.has(key)) {
     resolvingTitle.add(key)
     titleResolver(next)
       .then((t) => { if (t) setSessionTitle(key, t) })

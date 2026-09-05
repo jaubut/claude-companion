@@ -65,7 +65,8 @@ export async function rehydrateSessions(): Promise<RehydrateResult> {
       seen.add(cwd)
 
       const sessionId = basename(file, ".jsonl")
-      recordSession({ cwd, sessionId }, { provisional: true })
+      // The transcript IS the session — its id is exact.
+      recordSession({ cwd, sessionId }, { provisional: true, sessionIdConfirmed: true })
       registered++
     }
   }
