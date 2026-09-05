@@ -154,3 +154,14 @@ export function dialogSignature(d: Dialog | null): string {
   if (!d) return ""
   return [d.title, d.items.map((i) => `${i.cursor ? ">" : " "}${i.selected ? "*" : " "}${i.text}`).join("|"), d.more].join("\n")
 }
+
+// Keys that move the cursor onto row `index`: Up/Down deltas from where the
+// cursor sits. Arrows work in every Claude Code list; digits only in the
+// question picker (/model ignores them), so arrows are the one path. The
+// phone confirms with Enter (or a hint key) separately.
+export function pickKeys(dialog: Dialog, index: number): string[] | null {
+  if (index < 0 || index >= dialog.items.length) return null
+  const from = Math.max(0, dialog.items.findIndex((it) => it.cursor))
+  const delta = index - from
+  return Array.from({ length: Math.abs(delta) }, () => (delta > 0 ? "Down" : "Up"))
+}

@@ -25,6 +25,7 @@ import { injectText, withPickerIO, type InjectTarget } from "./lib/keyboard-inje
 import { driveQuestionPicker } from "./lib/question-driver"
 import { titleFromPrompt, rememberTitle, resolveTitle } from "./lib/session-titles"
 import { createDialogWatcher, type SessionStatus } from "./lib/dialog-watch"
+import { pickKeys } from "./lib/dialogs"
 import { spawnCompanionSession, type SpawnAgent, type SpawnResult } from "./lib/spawn-session"
 import { isSuperAuto, setSuperAuto, isCatastrophic } from "./lib/super-auto"
 import { recordAllow, listLearned, forgetLearned, clearLearned } from "./lib/learned-allow"
@@ -1520,28 +1521,20 @@ export function createCompanionServer(port: number) {
         return Response.json({ ok: true })
       }
 
-      // Pick a row: numbered rows take their digit; plain lists move the cursor
-      // with Up/Down from where it sits (the phone still confirms with Enter).
+      // Pick a row: move the cursor onto it with Up/Down from where it sits
+      // (arrows work in every list; digits only in the question picker). The
+      // phone confirms with Enter or a hint key.
       if (url.pathname === "/api/dialog/pick" && req.method === "POST") {
         const body = await req.json() as { key?: string; index?: number }
         const key = (body.key ?? "").trim()
         const session = key ? resolveSession(key) : null
         if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
         const dialog = dialogWatcher.current()[session.key]
-        const index = typeof body.index === "number" ? body.index : -1
-        const row = dialog?.items[index]
-        if (!dialog || !row) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
-        const keys: string[][] = []
-        if (row.number !== null && row.number >= 1 && row.number <= 9) {
-          keys.push(["-l", String(row.number)])
-        } else {
-          const from = dialog.items.findIndex((it) => it.cursor)
-          const delta = index - (from < 0 ? 0 : from)
-          for (let i = 0; i < Math.abs(delta); i++) keys.push([delta > 0 ? "Down" : "Up"])
-        }
+        const keys = dialog ? pickKeys(dialog, typeof body.index === "number" ? body.index : -1) : null
+        if (!keys) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
         try {
           for (const k of keys) {
-            await Bun.spawn(["tmux", "send-keys", "-t", session.tmuxPane, ...k], { stdout: "ignore", stderr: "ignore" }).exited
+            await Bun.spawn(["tmux", "send-keys", "-t", session.tmuxPane, k], { stdout: "ignore", stderr: "ignore" }).exited
             await new Promise((r) => setTimeout(r, 40))
           }
         } catch {

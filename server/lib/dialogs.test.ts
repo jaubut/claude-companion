@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { parseDialog, parseHints } from "./dialogs"
+import { parseDialog, parseHints, pickKeys } from "./dialogs"
 
 const MODEL = `
  ▐▛███▛█   Claude Code v2.1.261
@@ -110,4 +110,14 @@ test("parseHints maps keys and splits combined arrows", () => {
     { key: "Left", label: "adjust" }, { key: "Right", label: "adjust" }, { key: "y", label: "confirm" },
   ])
   expect(parseHints("nothing here")).toEqual([])
+})
+
+test("pickKeys moves the cursor with arrows from wherever it sits", () => {
+  const d = parseDialog(MCP)!
+  expect(pickKeys(d, 0)).toEqual([])
+  expect(pickKeys(d, 3)).toEqual(["Down", "Down", "Down"])
+  const moved = { ...d, items: d.items.map((it, i) => ({ ...it, cursor: i === 3 })) }
+  expect(pickKeys(moved, 1)).toEqual(["Up", "Up"])
+  expect(pickKeys(d, 99)).toBeNull()
+  expect(pickKeys(d, -1)).toBeNull()
 })
