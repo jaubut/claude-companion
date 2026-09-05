@@ -136,6 +136,8 @@ interface ClaudeSessionFile {
   startedAt?: number
   tmux?: string      // "claude-<ts>:@<win>.%<pane>"
   name?: string
+  status?: string    // busy | waiting | idle
+  waitingFor?: string
 }
 
 async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | null> {
@@ -250,6 +252,8 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
               agent: p.agent, cwd, sessionId: file.sessionId!, tty: p.tty, pid: p.pid, termProgram,
               tmuxPane: tmuxPaneFromSessionFile(file.tmux),
               firstSeenAt: file.startedAt || undefined,
+              agentStatus: file.status ?? "",
+              waitingFor: file.waitingFor ?? "",
             },
             { provisional: true, sessionIdConfirmed: true },
           )

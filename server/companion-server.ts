@@ -24,6 +24,8 @@ import { judgeWithBranchContext } from "./lib/branch-guard"
 import { injectText, withPickerIO, type InjectTarget } from "./lib/keyboard-inject"
 import { driveQuestionPicker } from "./lib/question-driver"
 import { titleFromPrompt, rememberTitle, resolveTitle } from "./lib/session-titles"
+import { createDialogWatcher, type SessionStatus } from "./lib/dialog-watch"
+import { pickKeys } from "./lib/dialogs"
 import { spawnCompanionSession, type SpawnAgent, type SpawnResult } from "./lib/spawn-session"
 import { isSuperAuto, setSuperAuto, isCatastrophic } from "./lib/super-auto"
 import { recordAllow, listLearned, forgetLearned, clearLearned } from "./lib/learned-allow"
@@ -38,6 +40,7 @@ import {
   type Session,
   setSessionTitle,
   setTitleResolver,
+  setSessionStatus,
 } from "./lib/sessions"
 import {
   recordToolStart,
@@ -388,6 +391,38 @@ function paneInputReady(pane: string): boolean {
 function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
+
+// Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
+// /mcp, trust, MCP-enable) is parsed off the pane and pushed to clients as a
+// `dialog` frame; keys tapped on the phone go back through /api/dialog/key.
+async function readSessionStatus(pid: string): Promise<SessionStatus | null> {
+  try {
+    const text = await Bun.file(`${process.env.HOME}/.claude/sessions/${pid}.json`).text()
+    const j = JSON.parse(text) as { status?: string; waitingFor?: string }
+    return { status: j.status ?? "", waitingFor: j.waitingFor ?? "" }
+  } catch {
+    return null
+  }
+}
+
+const dialogWatcher = createDialogWatcher({
+  sessions: listSessions,
+  capture: capturePane,
+  sessionStatus: readSessionStatus,
+  hasPendingQuestion: (s) => getPendingQuestions().some((q) => (q.sessionId && q.sessionId === s.sessionId) || q.cwd === s.cwd),
+  onDialog(key, dialog) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}dialog${reset} ${dim}${dialog.title || "(untitled)"} · ${dialog.items.length} rows · ${key}${reset}\n`)
+    broadcast({ type: "dialog", key, dialog })
+  },
+  onDialogClosed(key) {
+    broadcast({ type: "dialog_closed", key })
+  },
+  onStatus(key, st) {
+    setSessionStatus(key, st.status, st.waitingFor)
+  },
+})
+dialogWatcher.start()
 
 // Sessions that arrive without a title (session-start hook, ps discovery,
 // transcript rehydrate) get one from the stored table or the transcript.
@@ -1458,7 +1493,55 @@ export function createCompanionServer(port: number) {
           waitingCwd,
           waitingKey,
           sessions: listSessions(),
+          dialogs: dialogWatcher.current(),
         })
+      }
+
+      // ── Dialog mirror — keys from the phone into an open Claude Code dialog ──
+      // Body: { key, name } where name is Enter | Escape | Up | Down | Left |
+      // Right | Tab | Space or one literal character (a digit picks a numbered
+      // row, "s" answers a hint like "s to use this session only").
+      if (url.pathname === "/api/dialog/key" && req.method === "POST") {
+        const body = await req.json() as { key?: string; name?: string }
+        const key = (body.key ?? "").trim()
+        const name = (body.name ?? "").trim()
+        const session = key ? resolveSession(key) : null
+        if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
+        const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(name)
+        if (!named && [...name].length !== 1) return Response.json({ ok: false, error: "name must be a key name or one character" }, { status: 400 })
+        const args = named ? ["send-keys", "-t", session.tmuxPane, name] : ["send-keys", "-t", session.tmuxPane, "-l", name]
+        try {
+          await Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited
+        } catch {
+          return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
+        }
+        const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}dialog key${reset} ${name} → ${session.tmuxPane}\n`)
+        setTimeout(() => void dialogWatcher.refresh(session.key), 350)
+        return Response.json({ ok: true })
+      }
+
+      // Pick a row: move the cursor onto it with Up/Down from where it sits
+      // (arrows work in every list; digits only in the question picker). The
+      // phone confirms with Enter or a hint key.
+      if (url.pathname === "/api/dialog/pick" && req.method === "POST") {
+        const body = await req.json() as { key?: string; index?: number }
+        const key = (body.key ?? "").trim()
+        const session = key ? resolveSession(key) : null
+        if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
+        const dialog = dialogWatcher.current()[session.key]
+        const keys = dialog ? pickKeys(dialog, typeof body.index === "number" ? body.index : -1) : null
+        if (!keys) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
+        try {
+          for (const k of keys) {
+            await Bun.spawn(["tmux", "send-keys", "-t", session.tmuxPane, k], { stdout: "ignore", stderr: "ignore" }).exited
+            await new Promise((r) => setTimeout(r, 40))
+          }
+        } catch {
+          return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
+        }
+        setTimeout(() => void dialogWatcher.refresh(session.key), 350)
+        return Response.json({ ok: true, sent: keys.length })
       }
 
       // ── Debug: dump current feed ──
@@ -1536,6 +1619,7 @@ export function createCompanionServer(port: number) {
           feed: getFeed(),
           sessions: listSessions(),
           superAuto: isSuperAuto(),
+          dialogs: dialogWatcher.current(),
         }))
       },
       async message(ws, raw) {
