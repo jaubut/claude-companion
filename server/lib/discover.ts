@@ -217,8 +217,11 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
           label: thread ? codexThreadLabel(thread, p.tty) : undefined,
         }, { provisional: true })
       } else {
-        const sessionId = await findClaudeSessionIdForCwd(cwd)
-        recordSession({ agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram }, { provisional: true })
+        const [sessionId, startedAt] = await Promise.all([findClaudeSessionIdForCwd(cwd), findProcessStartMs(p.pid)])
+        recordSession(
+          { agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram, firstSeenAt: startedAt || undefined },
+          { provisional: true },
+        )
       }
       registered++
     } catch { /* one bad pid doesn't fail the rest */ }
