@@ -63,3 +63,14 @@ test("proposals carry their channel through createProposal", () => {
   expect(p.status).toBe("proposed")
   expect(chat.listTasks(z.id).some((t) => t.taskId === p.taskId)).toBe(true)
 })
+
+test("log_tail migrates onto a legacy db and round-trips through setTaskLogTail", () => {
+  // The legacy seed had no log_tail column — module init must have ALTERed it in.
+  expect(chat.getTask("k1")?.logTail).toBeNull()
+  const t = chat.createTask("tail me", "/y", "cc-y", "general")
+  expect(t.logTail).toBeNull()
+  chat.setTaskLogTail(t.taskId, "last\nlines")
+  expect(chat.getTask(t.taskId)?.logTail).toBe("last\nlines")
+  // a proposal carries the column too
+  expect(chat.createProposal("p", "/y", "why", "general").logTail).toBeNull()
+})

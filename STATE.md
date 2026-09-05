@@ -1,6 +1,6 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-06-22
+Last updated: 2026-09-05
 
 ## Active Decisions
 
@@ -24,6 +24,17 @@ Last updated: 2026-06-22
 
 ## Progress
 
+### v0.2 — consolidation (2026-09-05)
+- [x] Merged PR #4 (server channels) + iOS PR #2 (channel picker) — both sat open since 2026-07-19
+- [x] Ported from Zettlab's `feat/orchestrator-phase6-channels` + `feat/kimi-agent` onto the sidebar base: brain-retry (3 attempts, backoff), kimi agent spawn (`km-` tmux prefix, env at ~/.config/kimi/kimi.env), worker-tail (live tmux tail → `orchestrator_worker_output` frame, `log_tail` persisted on finish, pane-vanished → task `error`), brain `channelCwd` anchor line. 12 bun tests, server tsc clean, route smoke on isolated port + DB
+- [ ] Deploy branch Mac + Zettlab → real dispatch e2e → merge PR #5 → both hosts on `main`
+- [ ] iOS: render `orchestrator_worker_output` + collapsed `logTail` card (server emits it; client ignores it today)
+
+### Phase 7 — autonomy (next)
+- [ ] Backpressure: WIP cap (3–5 running workers), queue past it, queue state visible on phone
+- [ ] Auto-dispatch trust ramp: per-channel `auto` mode — proposals dispatch without a tap when the ramp allows; every auto-dispatch still shows its reasoning in the thread
+
+
 - [x] Phase 0: memory-proof gate (kb-memory-proof suite, 5/5) — 2026-06-22
 - [x] Phase 1: orchestrator-chat.ts (SQLite thread + tasks) — 2026-06-22
 - [x] Phase 1: endpoints /api/orchestrator/{send,dispatch,thread} (Bearer) — 2026-06-22
@@ -38,6 +49,11 @@ Last updated: 2026-06-22
 - [x] Phase 6b (iOS): channel model + header picker Menu + NewChannelSheet + per-channel turn/task filter + activity badges; handle `orchestrator_channel` frame. xcodebuild BUILD SUCCEEDED; mobile-ux-auditor 8/10 → HIGH+MEDIUM fixed (iOS repo `feat/orchestrator-sidebar`: d3c39ec + 94d8c3f) — 2026-07-19
 
 ## Learnings
+
+- **Phase 6 got built twice** (2026-09-05 post-mortem): Zettlab session shipped channels + worker-tail on 2026-07-02 to a branch with no PR; the Mac session redid channels on 2026-07-19 without checking `git branch -r`. Zettlab prod then ran a local-only branch (`feat/kimi-agent`) for 7 weeks. Rules: `git fetch --prune && git branch -r && gh pr list` before starting any phase; Zettlab runs `main`, never a feature branch; a phase isn't done until its PR is merged.
+- Kept the Mac sidebar channel model (user-created rows in `orchestrator_channels`) over Zettlab's cwd-basename channels — Jeremie's call from Phase 6a. Only the brain's explicit "this channel is the project at X" prompt line was worth taking from the Zettlab version; cwd ordering alone is a weaker hint.
+- worker-tail's pane-vanished → `error` path is the herdr "hook-independent liveness" backstop (docs/herdr-teardown.md) at the task level. Session-level liveness is still hooks + ps-discovery.
+- `worker-tail` takes `pollMs` in deps so tests run on a 10ms poll against fake pane/task seams — the same DI shape as `COMPANION_DB_PATH` for sqlite. Real timers, no mocks.
 
 - `broadcast()` is `Record<string, unknown>` — no WsMessage union to extend; new `{type:"orchestrator"}` events just work (2026-06-22).
 - Worker→thread linkage: cwd is the only signal shared between /dispatch (we pick cwd) and the session-start hook before the session key exists. Bind oldest unbound task for that cwd, then match turn-ends by the bound session key (2026-06-22).

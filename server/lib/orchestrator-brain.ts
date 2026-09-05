@@ -160,8 +160,11 @@ function parseProposal(raw: string): BrainDecision | null {
   return null
 }
 
-async function composeProposal(turns: Turn[], userMessage: string, candidateCwds: string[]): Promise<BrainDecision | null> {
+async function composeProposal(turns: Turn[], userMessage: string, candidateCwds: string[], channelCwd: string | null): Promise<BrainDecision | null> {
   const dirs = candidateCwds.length ? candidateCwds.map((d) => `  - ${d}`).join("\n") : "  (none currently active)"
+  const channelLine = channelCwd
+    ? `- This conversation is the channel for the project at ${channelCwd} — dispatch there unless the user explicitly names another project.`
+    : null
   const prompt = [
     "You are the orchestrator brain. The user wants real work done — compose a dispatch proposal for a worker Claude.",
     "Return ONLY minified JSON. No prose, no markdown fences. One of:",
@@ -171,6 +174,7 @@ async function composeProposal(turns: Turn[], userMessage: string, candidateCwds
     "Rules:",
     "- cwd MUST be an absolute path. Candidate project directories (pick the best fit; if none fit, ask which):",
     dirs,
+    ...(channelLine ? [channelLine] : []),
     "- The worker prompt must be self-contained — the worker has NO memory of this conversation.",
     "- If it's ambiguous which project or what to do, return the chat form with a clarifying question instead of guessing.",
     "",
@@ -187,14 +191,20 @@ async function composeProposal(turns: Turn[], userMessage: string, candidateCwds
 // ---- orchestration --------------------------------------------------------
 
 // Tiered decide: Haiku gates-and-chats; only a task escalates to Opus compose.
-// Same return contract as before, so the server is unchanged. Returns null only
-// if the gate call fails outright (caller falls back to a soft note).
-export async function decide(turns: Turn[], userMessage: string, candidateCwds: string[]): Promise<BrainDecision | null> {
+// channelCwd (Phase 6) anchors compose to the project channel the message came
+// from, so "fix the payload" sent in #tls-dashboard needs no project spelled out.
+// Returns null only if the gate call fails outright (caller falls back to a soft note).
+export async function decide(
+  turns: Turn[],
+  userMessage: string,
+  candidateCwds: string[],
+  channelCwd: string | null = null,
+): Promise<BrainDecision | null> {
   const g = await gateAndChat(turns, userMessage)
   if (!g) return null
   if (g.kind === "chat") return g
   // task → Opus composes the dispatch (and may downgrade to a clarifying chat).
-  const proposal = await composeProposal(turns, userMessage, candidateCwds)
+  const proposal = await composeProposal(turns, userMessage, candidateCwds, channelCwd)
   if (proposal) return proposal
   return { kind: "chat", text: "Looks like a task, but I couldn't pin down the project — which directory?" }
 }

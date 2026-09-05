@@ -52,7 +52,7 @@ db.exec(`
 `)
 // Migrate dbs created before these columns existed. ALTER throws if the column
 // is already present, so swallow that one case per column.
-for (const col of ["tmux_session TEXT", "reasoning TEXT"]) {
+for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT"]) {
   try {
     db.exec(`ALTER TABLE orchestrator_tasks ADD COLUMN ${col}`)
   } catch {
@@ -96,6 +96,7 @@ export interface Task {
   sessionKey: string | null
   tmuxSession: string | null
   reasoning: string | null
+  logTail: string | null
   status: TaskStatus
   createdAt: number
   updatedAt: number
@@ -118,6 +119,7 @@ interface TaskRow {
   session_key: string | null
   tmux_session: string | null
   reasoning: string | null
+  log_tail: string | null
   status: TaskStatus
   created_at: number
   updated_at: number
@@ -136,6 +138,7 @@ function toTask(r: TaskRow): Task {
     sessionKey: r.session_key,
     tmuxSession: r.tmux_session,
     reasoning: r.reasoning,
+    logTail: r.log_tail,
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -163,11 +166,11 @@ export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn
 
 function insertTask(task: Task): void {
   db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, reasoning, status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, reasoning, log_tail, status, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     task.taskId, task.threadId, task.prompt, task.cwd, task.sessionKey,
-    task.tmuxSession, task.reasoning, task.status, task.createdAt, task.updatedAt,
+    task.tmuxSession, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
   )
 }
 
@@ -176,7 +179,7 @@ export function createTask(prompt: string, cwd: string, tmuxSession: string | nu
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
-    sessionKey: null, tmuxSession, reasoning: null, status: "dispatched", createdAt: now, updatedAt: now,
+    sessionKey: null, tmuxSession, reasoning: null, logTail: null, status: "dispatched", createdAt: now, updatedAt: now,
   }
   insertTask(task)
   return task
@@ -188,7 +191,7 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
-    sessionKey: null, tmuxSession: null, reasoning, status: "proposed", createdAt: now, updatedAt: now,
+    sessionKey: null, tmuxSession: null, reasoning, logTail: null, status: "proposed", createdAt: now, updatedAt: now,
   }
   insertTask(task)
   return task
@@ -219,6 +222,12 @@ export function bindTaskSession(taskId: string, sessionKey: string): void {
 
 export function setTaskStatus(taskId: string, status: TaskStatus): void {
   db.query("UPDATE orchestrator_tasks SET status = ?, updated_at = ? WHERE task_id = ?").run(status, Date.now(), taskId)
+}
+
+// Final pane snapshot for the collapsed worker card (hybrid output model): live
+// lines stream transiently over WS while running; only this last tail persists.
+export function setTaskLogTail(taskId: string, logTail: string): void {
+  db.query("UPDATE orchestrator_tasks SET log_tail = ?, updated_at = ? WHERE task_id = ?").run(logTail, Date.now(), taskId)
 }
 
 // Match a freshly-registered worker session back to the task that spawned it:

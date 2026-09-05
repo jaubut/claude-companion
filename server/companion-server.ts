@@ -60,6 +60,7 @@ import {
   setTaskSpawn,
   bindTaskSession,
   setTaskStatus,
+  setTaskLogTail,
   matchUnboundTaskByCwd,
   findRunningTaskByCwd,
   listTasks,
@@ -72,6 +73,7 @@ import {
   type Channel as OrchChannel,
 } from "./lib/orchestrator-chat"
 import { decide as brainDecide } from "./lib/orchestrator-brain"
+import { createWorkerTailManager } from "./lib/worker-tail"
 
 interface WsData {
   id: string
@@ -416,6 +418,28 @@ function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
 
+// Live worker tail (Phase 6, hybrid output model): stream the dispatched
+// worker's tmux pane into its channel as transient frames; the final snapshot
+// persists on the task row when it finishes. Workers outlive server restarts in
+// detached tmux, so resumeAll reattaches viewers on boot. A pane that vanishes
+// while the task is still live means the worker died without a stop hook — the
+// task is marked error instead of sitting in 'running' forever.
+const workerTail = createWorkerTailManager({
+  capturePane,
+  getTask,
+  setTaskLogTail,
+  setTaskDead(taskId) {
+    setTaskStatus(taskId, "error")
+  },
+  onLines(task, lines) {
+    broadcast({ type: "orchestrator_worker_output", taskId: task.taskId, channel: task.threadId, lines, ts: Date.now() })
+  },
+  onFinished(taskId) {
+    emitTask(taskId) // now carries logTail — clients collapse the live card
+  },
+})
+workerTail.resumeAll(listTasks())
+
 // Deliver a dispatched prompt straight to the worker's tmux session by name.
 // We spawned it (cc-<name>), so send-keys -t <session> hits its active pane no
 // matter how the session surfaced in the registry. This is the reliable path: a
@@ -510,6 +534,7 @@ async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; error?: s
   }
   setTaskSpawn(task.taskId, result.sessionName ?? null)
   emitTask(task.taskId)
+  workerTail.watch(task.taskId)
   process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
   orchEmit(orchAppendTurn("orchestrator", `approved [${task.taskId}] — worker dispatched`, task.taskId, task.threadId))
   return { ok: true }
@@ -525,7 +550,7 @@ async function runBrain(userText: string, channel: OrchChannel): Promise<void> {
   const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
   let decision
   try {
-    decision = await brainDecide(getThread(channel.id), userText, cwds)
+    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd)
   } catch {
     decision = null
   }
@@ -1288,6 +1313,7 @@ export function createCompanionServer(port: number) {
         process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
         orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId, ch.id))
         emitTask(task.taskId)
+        workerTail.watch(task.taskId)
         return Response.json({ ok: true, taskId: task.taskId, app: result.app })
       }
 
