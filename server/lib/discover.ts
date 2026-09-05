@@ -6,7 +6,7 @@
 // transcript in the last 30 min — an idle session misses that window.
 // Process scanning catches those too.
 
-import { readdir, stat } from "node:fs/promises"
+import { readdir, stat, readFile } from "node:fs/promises"
 import { join, basename } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
@@ -127,6 +127,32 @@ async function findClaudeSessionIdForCwd(cwd: string): Promise<string> {
   return bestFile ? basename(bestFile, ".jsonl") : ""
 }
 
+// Claude Code ≥ 2.1 writes ~/.claude/sessions/<pid>.json for every live
+// interactive session: the exact session id, cwd, start time, tmux pane and
+// its own derived name. Exact beats the newest-transcript guess below.
+interface ClaudeSessionFile {
+  sessionId?: string
+  cwd?: string
+  startedAt?: number
+  tmux?: string      // "claude-<ts>:@<win>.%<pane>"
+  name?: string
+}
+
+async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | null> {
+  try {
+    const text = await readFile(join(homedir(), ".claude", "sessions", `${pid}.json`), "utf-8")
+    const j = JSON.parse(text) as ClaudeSessionFile
+    return typeof j.sessionId === "string" && j.sessionId ? j : null
+  } catch {
+    return null
+  }
+}
+
+function tmuxPaneFromSessionFile(tmux: string | undefined): string {
+  const m = (tmux ?? "").match(/(%\d+)$/)
+  return m?.[1] ?? ""
+}
+
 async function findProcessStartMs(pid: string): Promise<number> {
   const raw = await run("ps", ["-p", pid, "-o", "lstart="])
   const start = Date.parse(raw.trim())
@@ -217,8 +243,23 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
           label: thread ? codexThreadLabel(thread, p.tty) : undefined,
         }, { provisional: true })
       } else {
-        const sessionId = await findClaudeSessionIdForCwd(cwd)
-        recordSession({ agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram }, { provisional: true })
+        const file = await readClaudeSessionFile(p.pid)
+        if (file) {
+          recordSession(
+            {
+              agent: p.agent, cwd, sessionId: file.sessionId!, tty: p.tty, pid: p.pid, termProgram,
+              tmuxPane: tmuxPaneFromSessionFile(file.tmux),
+              firstSeenAt: file.startedAt || undefined,
+            },
+            { provisional: true, sessionIdConfirmed: true },
+          )
+        } else {
+          const [sessionId, startedAt] = await Promise.all([findClaudeSessionIdForCwd(cwd), findProcessStartMs(p.pid)])
+          recordSession(
+            { agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram, firstSeenAt: startedAt || undefined },
+            { provisional: true, sessionIdConfirmed: false },
+          )
+        }
       }
       registered++
     } catch { /* one bad pid doesn't fail the rest */ }

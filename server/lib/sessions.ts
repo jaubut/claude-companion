@@ -21,6 +21,13 @@ export interface Session {
   key: string
   agent: "claude" | "codex" | "kimi"
   label: string
+  // The chat's name: first real prompt of the session (see session-titles.ts).
+  // Empty until a prompt lands or a resolver recovers it from the transcript.
+  title: string
+  // sessionId came from an authoritative source (hook payload, Claude Code's
+  // ~/.claude/sessions/<pid>.json, or the transcript itself) rather than a
+  // newest-transcript-in-this-cwd guess. Guesses never name a chat.
+  sidConfirmed: boolean
   cwd: string
   sessionId: string
   termProgram: string
@@ -123,10 +130,14 @@ function basename(cwd: string): string {
 }
 
 // Tail of the tty for disambiguation when two sessions share a cwd.
-// `/dev/ttys017` → `s017`. Empty if we don't have a tty yet.
-function ttyTag(tty: string): string {
-  const m = tty.match(/ttys?(\d+)$/)
-  return m ? `s${m[1]}` : ""
+// macOS `/dev/ttys017` → `s017`; Linux `/dev/pts/8` → `pts8`. Empty if we
+// don't have a tty yet. (Linux ttys used to fall through untagged, which is
+// why every Zettlab session launched from $HOME was labelled "aubut".)
+export function ttyTag(tty: string): string {
+  const mac = tty.match(/ttys?(\d+)$/)
+  if (mac) return `s${mac[1]}`
+  const pts = tty.match(/pts\/(\d+)$/)
+  return pts ? `pts${pts[1]}` : ""
 }
 
 function makeLabel(cwd: string, tty: string): string {
@@ -146,6 +157,10 @@ export interface RecordOptions {
   // hook lands, which avoids labelling every discovered session "jeremieaubut"
   // when claudes were launched from HOME.
   provisional?: boolean
+  // Whether meta.sessionId is exact. Hooks and rehydrate are exact; a ps
+  // discovery that fell back to the newest transcript in the cwd is not.
+  // Defaults to true for non-provisional records.
+  sessionIdConfirmed?: boolean
 }
 
 export function recordSession(
@@ -161,6 +176,20 @@ export function recordSession(
   // Always include the tty tag when we have one so the picker can distinguish
   // sessions that share a cwd. When two Claude windows run from the same repo
   // they'd otherwise collide to an identical "claude-companion" label.
+  // Session-id trust: a guess never overwrites a confirmed id, and a
+  // confirmed id that differs from what we had drops the old title so the
+  // resolver names the chat from the right transcript.
+  const incomingSid = meta.sessionId || ""
+  const incomingConfirmed = opts.sessionIdConfirmed ?? !opts.provisional
+  let sessionId = prev?.sessionId || ""
+  let sidConfirmed = prev?.sidConfirmed ?? false
+  let titleReset = false
+  if (incomingSid && (incomingConfirmed || !sidConfirmed)) {
+    if (incomingConfirmed && sessionId && sessionId !== incomingSid) titleReset = true
+    sessionId = incomingSid
+    sidConfirmed = incomingConfirmed
+  }
+
   const explicitLabel = meta.label?.trim() ?? ""
   const generatedLabel = opts.provisional && !prev?.label
     ? ""
@@ -171,17 +200,33 @@ export function recordSession(
     key,
     agent: meta.agent || prev?.agent || "claude",
     label: nextLabel || prev?.label || "",
+    title: meta.title?.trim() || (titleReset ? "" : prev?.title || ""),
+    sidConfirmed,
     cwd: meta.cwd,
-    sessionId: meta.sessionId || prev?.sessionId || "",
+    sessionId,
     termProgram: meta.termProgram || prev?.termProgram || "",
     tty: mergedTty,
     iTermSessionId: meta.iTermSessionId || prev?.iTermSessionId || "",
     tmuxPane: meta.tmuxPane || prev?.tmuxPane || "",
     pid: meta.pid || prev?.pid || "",
-    firstSeenAt: prev?.firstSeenAt ?? now,
+    // Creation time is the picker's sort key — keep the earliest we know
+    // (a discovery pass may report the real process start after a hook
+    // registered the session as "now").
+    firstSeenAt: Math.min(prev?.firstSeenAt ?? now, meta.firstSeenAt ?? now),
     lastSeenAt: now,
   }
   sessions.set(key, next)
+
+  if (!prev && next.pid && meta.firstSeenAt === undefined) {
+    void backfillStart(key, next.pid)
+  }
+  if (!next.title && next.sessionId && next.sidConfirmed && titleResolver && !resolvingTitle.has(key)) {
+    resolvingTitle.add(key)
+    titleResolver(next)
+      .then((t) => { if (t) setSessionTitle(key, t) })
+      .catch(() => { /* best effort */ })
+      .finally(() => resolvingTitle.delete(key))
+  }
 
   // When a hook fires with a stronger identity than what rehydrate seeded, the
   // weaker entry (e.g. sid:/cwd:) refers to the same terminal — drop it so the
@@ -209,12 +254,58 @@ export function recordSession(
     prev.cwd !== next.cwd ||
     prev.agent !== next.agent ||
     prev.label !== next.label ||
+    prev.title !== next.title ||
+    prev.firstSeenAt !== next.firstSeenAt ||
     prev.tty !== next.tty ||
     prev.termProgram !== next.termProgram ||
     prev.sessionId !== next.sessionId
 
   if (meaningfulChange) emit()
   return next
+}
+
+// ---- titles + creation time -------------------------------------------------
+
+type TitleResolver = (s: Session) => Promise<string | null>
+let titleResolver: TitleResolver | null = null
+const resolvingTitle = new Set<string>()
+
+// The server installs this: stored title by session id, else the transcript's
+// first prompt. Runs once per session that lacks a title.
+export function setTitleResolver(fn: TitleResolver | null): void {
+  titleResolver = fn
+}
+
+export function setSessionTitle(key: string, title: string): void {
+  const s = sessions.get(key)
+  const t = title.trim()
+  if (!s || !t || s.title === t) return
+  s.title = t
+  emit()
+}
+
+// `ps -o lstart=` for a pid → epoch ms, 0 if unknown.
+export async function processStartMs(pid: string): Promise<number> {
+  try {
+    const p = Bun.spawn(["ps", "-p", pid, "-o", "lstart="], { stdout: "pipe", stderr: "ignore" })
+    const raw = (await new Response(p.stdout).text()).trim()
+    if ((await p.exited) !== 0) return 0
+    const start = Date.parse(raw)
+    return Number.isFinite(start) ? start : 0
+  } catch {
+    return 0
+  }
+}
+
+// A hook-registered session knows its pid but not when it started; ask ps so
+// the picker order survives a companion restart (ps-discovery reports the
+// same start time later).
+async function backfillStart(key: string, pid: string): Promise<void> {
+  const start = await processStartMs(pid)
+  const s = sessions.get(key)
+  if (!s || !start || start >= s.firstSeenAt) return
+  s.firstSeenAt = start
+  emit()
 }
 
 export function getSessionByKey(key: string): Session | null {

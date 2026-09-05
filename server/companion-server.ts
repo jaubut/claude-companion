@@ -23,6 +23,7 @@ import {
 import { judgeWithBranchContext } from "./lib/branch-guard"
 import { injectText, withPickerIO, type InjectTarget } from "./lib/keyboard-inject"
 import { driveQuestionPicker } from "./lib/question-driver"
+import { titleFromPrompt, rememberTitle, resolveTitle } from "./lib/session-titles"
 import { spawnCompanionSession, type SpawnAgent, type SpawnResult } from "./lib/spawn-session"
 import { isSuperAuto, setSuperAuto, isCatastrophic } from "./lib/super-auto"
 import { recordAllow, listLearned, forgetLearned, clearLearned } from "./lib/learned-allow"
@@ -35,6 +36,8 @@ import {
   onSessions,
   metaFromHeaders,
   type Session,
+  setSessionTitle,
+  setTitleResolver,
 } from "./lib/sessions"
 import {
   recordToolStart,
@@ -385,6 +388,10 @@ function paneInputReady(pane: string): boolean {
 function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
+
+// Sessions that arrive without a title (session-start hook, ps discovery,
+// transcript rehydrate) get one from the stored table or the transcript.
+setTitleResolver((s) => resolveTitle(s.cwd, s.sessionId))
 
 // Backpressure (PRJ-OR1T Phase 7): at most WIP_CAP live workers on this host.
 // Anything admitted past that — approved proposal, auto-dispatch, or a manual
@@ -805,6 +812,15 @@ export function createCompanionServer(port: number) {
         const session = cwd
           ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
           : null
+        // First real prompt names the chat (persisted by session id so a
+        // restart or rediscovery brings the same name back).
+        if (session && !session.title) {
+          const title = titleFromPrompt(body.prompt ?? "")
+          if (title) {
+            if (session.sessionId) rememberTitle(session.sessionId, title)
+            setSessionTitle(session.key, title)
+          }
+        }
         recordUserPrompt({
           text: body.prompt ?? "",
           transcriptPath: body.transcript_path,
