@@ -343,7 +343,8 @@ interface ChannelRow {
 export function channelTrust(threadId: string): ChannelTrust {
   const rows = db
     .query(
-      "SELECT status FROM orchestrator_tasks WHERE thread_id = ? AND reasoning IS NOT NULL AND status != 'proposed' ORDER BY created_at DESC LIMIT 200",
+      // rowid breaks same-millisecond ties so the streak walks true insertion order.
+      "SELECT status FROM orchestrator_tasks WHERE thread_id = ? AND reasoning IS NOT NULL AND status != 'proposed' ORDER BY created_at DESC, rowid DESC LIMIT 200",
     )
     .all(threadId) as { status: TaskStatus }[]
   let approved = 0

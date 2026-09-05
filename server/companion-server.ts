@@ -16,9 +16,13 @@ import {
   parseQuestionInput,
   type QuestionAnswer,
   type QuestionItem,
+  questionDedupeKey,
+  markQuestionAnswered,
+  wasQuestionAnswered,
 } from "./lib/questions"
 import { judgeWithBranchContext } from "./lib/branch-guard"
-import { injectText, injectKeySequence, type InjectTarget, type KeySeqStep } from "./lib/keyboard-inject"
+import { injectText, withPickerIO, type InjectTarget } from "./lib/keyboard-inject"
+import { driveQuestionPicker } from "./lib/question-driver"
 import { spawnCompanionSession, type SpawnAgent, type SpawnResult } from "./lib/spawn-session"
 import { isSuperAuto, setSuperAuto, isCatastrophic } from "./lib/super-auto"
 import { recordAllow, listLearned, forgetLearned, clearLearned } from "./lib/learned-allow"
@@ -256,66 +260,25 @@ function projectLabelFor(cwd: string): string | undefined {
   return last && last.length > 0 ? last : undefined
 }
 
-// Translate the phone's structured answers into the keystroke sequence
-// that drives Claude Code's interactive AskUserQuestion picker. The picker
-// is an Ink TUI: arrow keys to navigate, Space to toggle in multi-select,
-// Enter to confirm. "Other" is auto-appended by the harness as the last
-// option; selecting it opens a text input that we type into and submit
-// with Enter.
-function buildKeystrokeSequence(questions: QuestionItem[], answers: QuestionAnswer[]): KeySeqStep[] {
-  const steps: KeySeqStep[] = []
-  for (let qi = 0; qi < questions.length; qi++) {
-    const q = questions[qi]!
-    const a = answers[qi] ?? { selected: [] }
-
-    if (qi > 0) {
-      // Inter-question gap — let the harness mount the next picker
-      // before we start arrowing through it.
-      steps.push({ kind: "wait", ms: 250 })
+// Drive the terminal picker with the phone's answers. Fire-and-forget after
+// the hook returns allow: the driver waits for the picker to actually mount
+// (pane-driven, see question-driver.ts) instead of guessing a delay, then
+// verifies the "User answered" confirmation. Logged either way.
+function driveAnswer(target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[]): void {
+  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const green = "\x1b[32m"; const red = "\x1b[31m"; const cyan = "\x1b[36m"
+  void withPickerIO(target, async (io, via) => {
+    const r = await driveQuestionPicker(io, questions, answers)
+    if (r.ok) {
+      process.stderr.write(`${dim}[companion]${reset} ${green}picker driven${reset} → ${cyan}${via}${reset} ${dim}(${questions.length} question${questions.length === 1 ? "" : "s"}${r.reason ? `, ${r.reason}` : ""})${reset}\n`)
+    } else {
+      process.stderr.write(`${dim}[companion]${reset} ${red}picker drive failed${reset} → ${via} — ${r.reason}\n`)
     }
-
-    if (q.multiSelect) {
-      // Walk options 0..N. For each option whose label is in `selected`,
-      // hit Space while the cursor sits on it. Track cursor position so
-      // we only emit the Down keys we actually need between toggles.
-      let cursor = 0
-      for (let oi = 0; oi < q.options.length; oi++) {
-        const label = q.options[oi]!.label
-        if (!a.selected.includes(label)) continue
-        while (cursor < oi) {
-          steps.push({ kind: "key", name: "Down" })
-          cursor++
-        }
-        steps.push({ kind: "key", name: "Space" })
-      }
-      steps.push({ kind: "key", name: "Enter" })
-      continue
+    return r.ok
+  }).then((res) => {
+    if (res === null) {
+      process.stderr.write(`${dim}[companion]${reset} ${red}picker drive refused${reset} — no tmux pane or tty target\n`)
     }
-
-    // Single-select: locate the picked option's index. "Other" lives at
-    // index q.options.length (auto-added by the harness, not in the
-    // options[] array) — detect it by either the literal label "Other"
-    // or by a non-empty otherText.
-    const picked = a.selected[0] ?? ""
-    let targetIdx = q.options.findIndex((o) => o.label === picked)
-    const isOther = a.otherText !== undefined || picked === "Other" || picked === ""
-    if (targetIdx < 0 && isOther) {
-      targetIdx = q.options.length  // "Other" sits one past the last option
-    }
-    if (targetIdx < 0) targetIdx = 0  // last-resort fallback — pick first option
-
-    for (let i = 0; i < targetIdx; i++) steps.push({ kind: "key", name: "Down" })
-    steps.push({ kind: "key", name: "Enter" })
-
-    if (isOther && (a.otherText ?? "").length > 0) {
-      // Picker now shows a text input — wait briefly for it to mount,
-      // type the custom text, submit with Enter.
-      steps.push({ kind: "wait", ms: 150 })
-      steps.push({ kind: "text", text: a.otherText! })
-      steps.push({ kind: "key", name: "Enter" })
-    }
-  }
-  return steps
+  }).catch(() => { /* logged above */ })
 }
 
 function questionInjectTarget(session: Session | null, headerMeta: Partial<Session>): InjectTarget {
@@ -704,6 +667,14 @@ export function createCompanionServer(port: number) {
           const questions = parseQuestionInput(input)
           const answerTarget = questionInjectTarget(session, headerMeta)
           if (questions && hasQuestionInjectTarget(answerTarget)) {
+            // Both PreToolUse and PermissionRequest can fire for one call —
+            // whichever hook got here first already asked the phone and is
+            // driving the picker. Just let this one through.
+            const dedupeKey = questionDedupeKey(sessionId, cwd, questions)
+            if (wasQuestionAnswered(dedupeKey)) {
+              process.stderr.write(`${dim}[companion]${reset} ${dim}question already answered — allow (PreToolUse)${reset}\n`)
+              return hookDecisionResponse(agent, "PreToolUse", "allow", "Answered via Claude Companion")
+            }
             process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
             recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
             const answers = await addQuestionRequest({ agent, sessionId, cwd, questions })
@@ -716,19 +687,10 @@ export function createCompanionServer(port: number) {
             }
 
             process.stderr.write(`${dim}[companion]${reset} ${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
-
-            // Schedule the keystroke drive AFTER we return allow. The
-            // harness only opens its picker once it sees our allow, so
-            // the inject has to land slightly later. 500ms gives Ink
-            // time to mount and start listening for input — enough on a
-            // typical Mac, conservative enough that it's not racing.
-            const steps = buildKeystrokeSequence(questions, answers)
-            queueMicrotask(() => {
-              setTimeout(() => {
-                void injectKeySequence(steps, answerTarget).catch(() => { /* logged inside */ })
-              }, 500)
-            })
-
+            markQuestionAnswered(dedupeKey)
+            // The driver waits for the picker to mount, so it can start now
+            // even though the harness only opens the picker after our allow.
+            driveAnswer(answerTarget, questions, answers)
             return hookDecisionResponse(agent, "PreToolUse", "allow", "Answered via Claude Companion")
           }
           // Either parse failed or we don't have a live terminal target to
@@ -902,6 +864,11 @@ export function createCompanionServer(port: number) {
           const questions = parseQuestionInput(input)
           const answerTarget = questionInjectTarget(session, headerMeta)
           if (questions && hasQuestionInjectTarget(answerTarget)) {
+            const dedupeKey = questionDedupeKey(sessionId, cwd, questions)
+            if (wasQuestionAnswered(dedupeKey)) {
+              process.stderr.write(`${dim}[companion]${reset} ${dim}question already answered — allow (PermissionRequest)${reset}\n`)
+              return hookDecisionResponse(agent, "PermissionRequest", "allow", "Answered via Claude Companion")
+            }
             process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
             recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
             const answers = await addQuestionRequest({ agent, sessionId, cwd, questions })
@@ -913,14 +880,8 @@ export function createCompanionServer(port: number) {
             }
 
             process.stderr.write(`${dim}[companion]${reset} ${greenFP}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
-
-            const steps = buildKeystrokeSequence(questions, answers)
-            queueMicrotask(() => {
-              setTimeout(() => {
-                void injectKeySequence(steps, answerTarget).catch(() => { /* logged inside */ })
-              }, 500)
-            })
-
+            markQuestionAnswered(dedupeKey)
+            driveAnswer(answerTarget, questions, answers)
             return hookDecisionResponse(agent, "PermissionRequest", "allow", "Answered via Claude Companion")
           }
           process.stderr.write(`${dim}[companion]${reset} ${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}\n`)
