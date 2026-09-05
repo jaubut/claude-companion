@@ -17,7 +17,7 @@ const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
 const CODEX_START_MATCH_WINDOW_MS = 2 * 60 * 1000
 
 interface DiscoveredAgent {
-  agent: "claude" | "codex"
+  agent: "claude" | "codex" | "kimi"
   pid: string
   tty: string
   cwd: string

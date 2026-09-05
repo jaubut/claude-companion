@@ -21,7 +21,7 @@ export interface QuestionItem {
 
 export interface QuestionRequest {
   id: string
-  agent?: "claude" | "codex"
+  agent?: "claude" | "codex" | "kimi"
   sessionId: string
   cwd: string
   questions: QuestionItem[]

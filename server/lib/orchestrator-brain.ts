@@ -26,6 +26,8 @@ export type BrainDecision =
 const GATE_MODEL = process.env.COMPANION_GATE_MODEL || "claude-haiku-4-5"
 const COMPOSE_MODEL = process.env.COMPANION_COMPOSE_MODEL || "claude-opus-4-8"
 const CALL_TIMEOUT_MS = 90_000
+const BRAIN_MAX_ATTEMPTS = 3
+const BRAIN_RETRY_BACKOFF_MS = 1500
 
 // Run brain calls here — a directory with no .mcp.json — so claude -p doesn't
 // load project MCP servers on every classification. The companion data dir fits.
@@ -54,7 +56,7 @@ function history(turns: Turn[]): string {
 
 // One headless model call, tools disabled. Returns the model's text (the wrapper
 // `.result`), or null on any failure. Caller decides how to parse it.
-async function runClaude(model: string, prompt: string): Promise<string | null> {
+async function runClaudeOnce(model: string, prompt: string): Promise<string | null> {
   const bin = resolveClaudeBin()
   const proc = Bun.spawn(
     [bin, "-p", prompt, "--append-system-prompt", NO_TOOLS_SYSTEM, "--disallowed-tools", ...DENY_TOOLS,
@@ -81,6 +83,21 @@ async function runClaude(model: string, prompt: string): Promise<string | null> 
   } catch {
     return null
   }
+}
+
+// Retry the headless call before giving up. The dominant failure in the wild was
+// a transient non-zero exit (model 429/529, or OAuth token-refresh contention
+// between the concurrent brain + worker `claude -p` calls that share one Max
+// credential) on a message that was itself perfectly clear — the same text that
+// "failed" succeeds on the next attempt. A null return now means the model was
+// genuinely unreachable, not that the user was unclear.
+async function runClaude(model: string, prompt: string): Promise<string | null> {
+  for (let attempt = 0; attempt < BRAIN_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await Bun.sleep(BRAIN_RETRY_BACKOFF_MS * attempt)
+    const out = await runClaudeOnce(model, prompt)
+    if (out !== null) return out
+  }
+  return null
 }
 
 // ---- tier 1: gate + chat (Haiku) ------------------------------------------
@@ -143,8 +160,11 @@ function parseProposal(raw: string): BrainDecision | null {
   return null
 }
 
-async function composeProposal(turns: Turn[], userMessage: string, candidateCwds: string[]): Promise<BrainDecision | null> {
+async function composeProposal(turns: Turn[], userMessage: string, candidateCwds: string[], channelCwd: string | null): Promise<BrainDecision | null> {
   const dirs = candidateCwds.length ? candidateCwds.map((d) => `  - ${d}`).join("\n") : "  (none currently active)"
+  const channelLine = channelCwd
+    ? `- This conversation is the channel for the project at ${channelCwd} — dispatch there unless the user explicitly names another project.`
+    : null
   const prompt = [
     "You are the orchestrator brain. The user wants real work done — compose a dispatch proposal for a worker Claude.",
     "Return ONLY minified JSON. No prose, no markdown fences. One of:",
@@ -154,6 +174,7 @@ async function composeProposal(turns: Turn[], userMessage: string, candidateCwds
     "Rules:",
     "- cwd MUST be an absolute path. Candidate project directories (pick the best fit; if none fit, ask which):",
     dirs,
+    ...(channelLine ? [channelLine] : []),
     "- The worker prompt must be self-contained — the worker has NO memory of this conversation.",
     "- If it's ambiguous which project or what to do, return the chat form with a clarifying question instead of guessing.",
     "",
@@ -170,14 +191,20 @@ async function composeProposal(turns: Turn[], userMessage: string, candidateCwds
 // ---- orchestration --------------------------------------------------------
 
 // Tiered decide: Haiku gates-and-chats; only a task escalates to Opus compose.
-// Same return contract as before, so the server is unchanged. Returns null only
-// if the gate call fails outright (caller falls back to a soft note).
-export async function decide(turns: Turn[], userMessage: string, candidateCwds: string[]): Promise<BrainDecision | null> {
+// channelCwd (Phase 6) anchors compose to the project channel the message came
+// from, so "fix the payload" sent in #tls-dashboard needs no project spelled out.
+// Returns null only if the gate call fails outright (caller falls back to a soft note).
+export async function decide(
+  turns: Turn[],
+  userMessage: string,
+  candidateCwds: string[],
+  channelCwd: string | null = null,
+): Promise<BrainDecision | null> {
   const g = await gateAndChat(turns, userMessage)
   if (!g) return null
   if (g.kind === "chat") return g
   // task → Opus composes the dispatch (and may downgrade to a clarifying chat).
-  const proposal = await composeProposal(turns, userMessage, candidateCwds)
+  const proposal = await composeProposal(turns, userMessage, candidateCwds, channelCwd)
   if (proposal) return proposal
   return { kind: "chat", text: "Looks like a task, but I couldn't pin down the project — which directory?" }
 }
