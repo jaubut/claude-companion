@@ -163,3 +163,39 @@ export function parseQuestionInput(input: unknown): QuestionItem[] | null {
   }
   return out
 }
+
+// ---- hook dedupe ------------------------------------------------------------
+//
+// Claude Code can fire BOTH PreToolUse and PermissionRequest for one
+// AskUserQuestion call (Zettlab wires both hooks with matcher "*"). Without
+// this, the phone gets two cards and two drivers type into one picker (seen
+// live 2026-09-05: "answered ← phone" + "key-seq delivered" twice per
+// question, picker left half-filled, never submitted). The first hook to see
+// a question asks the phone and drives the picker; any later hook carrying
+// the same session + questions inside the window just allows.
+
+const RECENT_ANSWER_TTL_MS = 180_000
+const recentlyAnswered = new Map<string, number>()
+
+export function questionDedupeKey(sessionId: string, cwd: string, questions: QuestionItem[]): string {
+  const who = sessionId || cwd || "?"
+  const what = questions.map((q) => `${q.header}|${q.question}|${q.multiSelect ? 1 : 0}|${q.options.map((o) => o.label).join(",")}`).join("||")
+  return `${who}::${what}`
+}
+
+export function markQuestionAnswered(key: string, now = Date.now()): void {
+  recentlyAnswered.set(key, now)
+  for (const [k, at] of recentlyAnswered) {
+    if (now - at > RECENT_ANSWER_TTL_MS) recentlyAnswered.delete(k)
+  }
+}
+
+export function wasQuestionAnswered(key: string, now = Date.now()): boolean {
+  const at = recentlyAnswered.get(key)
+  if (at === undefined) return false
+  if (now - at > RECENT_ANSWER_TTL_MS) {
+    recentlyAnswered.delete(key)
+    return false
+  }
+  return true
+}

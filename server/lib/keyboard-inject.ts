@@ -488,145 +488,75 @@ async function injectTextLocked(text: string, target?: InjectTarget): Promise<bo
   }
 }
 
-// ── Key-sequence inject (for AskUserQuestion picker) ─────────────────────
+// ── AskUserQuestion picker IO ─────────────────────────────────────────────
 //
-// AskUserQuestion's terminal UI is an interactive picker: arrow keys to
-// navigate, Space to toggle in multi-select, Enter to confirm, type-and-Enter
-// for "Other" custom input. injectText() above is built for typing a prompt
-// (literal text + Enter) — wrong shape for this. injectKeySequence() sends
-// each step as a distinct keypress, so the picker's input loop reacts to it.
-// tmux is preferred when present; plain iTerm/Terminal sessions are driven by
-// focusing the exact tty before every keypress and using System Events.
-//
-// Steps:
-//   { kind: "key", name: "Down" | "Up" | "Space" | "Enter" }
-//   { kind: "text", text: "..." }   // typed literally into "Other" input
+// The picker is driven by question-driver.ts, which only needs a way to read
+// the pane and press keys. tmux gives both (capture-pane + send-keys) and is
+// the path every Zettlab session and every Mac cc-tmux session takes. A plain
+// iTerm/Terminal tty gets keys via System Events but no readable pane, so the
+// driver runs blind there.
 
-export type KeySeqStep =
-  | { kind: "key"; name: "Down" | "Up" | "Space" | "Enter" | "Escape" }
-  | { kind: "text"; text: string }
-  | { kind: "wait"; ms: number }
+import type { PickerIO } from "./question-driver"
 
-export async function injectKeySequence(
-  steps: readonly KeySeqStep[],
-  target: InjectTarget,
-): Promise<boolean> {
-  return withInjectLock(() => injectKeySequenceLocked(steps, target))
-}
-
-function keyCodeFor(name: Extract<KeySeqStep, { kind: "key" }>["name"]): number {
-  switch (name) {
-    case "Down": return 125
-    case "Up": return 126
-    case "Space": return 49
-    case "Enter": return 36
-    case "Escape": return 53
+async function tmuxCapture(pane: string): Promise<string | null> {
+  try {
+    const p = Bun.spawn(["tmux", "capture-pane", "-p", "-t", pane], { stdout: "pipe", stderr: "ignore" })
+    const out = await new Response(p.stdout).text()
+    return (await p.exited) === 0 ? out : null
+  } catch {
+    return null
   }
 }
 
-async function deliverKeySequenceToTty(
-  steps: readonly KeySeqStep[],
-  target: InjectTarget,
-): Promise<TmuxResult> {
-  const tty = target.tty?.trim()
-  if (!tty) return { ok: false, reason: "missing tty" }
+function tmuxPickerIO(pane: string): PickerIO {
+  return {
+    capture: () => tmuxCapture(pane),
+    key: async (name) => (await tmuxSendKeys(["send-keys", "-t", pane, name], 2000)).ok,
+    // -l = literal so a digit lands as the character, not a key name.
+    digit: async (n) => (await tmuxSendKeys(["send-keys", "-t", pane, "-l", String(n)], 2000)).ok,
+    text: async (t) => (await tmuxSendKeys(["send-keys", "-t", pane, "-l", t], 2000)).ok,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  }
+}
 
-  for (const step of steps) {
-    if (step.kind === "wait") {
-      await new Promise(r => setTimeout(r, step.ms))
-      continue
-    }
-
+// macOS key codes: Tab 48, Enter 36.
+function ttyPickerIO(target: InjectTarget): PickerIO {
+  async function press(body: string): Promise<boolean> {
     const focused = await focusTerminal(target)
-    if (!focused) return { ok: false, reason: `no tab for tty ${tty}` }
-    await new Promise(r => setTimeout(r, 80))
-
-    if (step.kind === "key") {
-      const r = await runOsa(`
-        tell application "System Events"
-          key code ${keyCodeFor(step.name)}
-        end tell
-      `)
-      if (!r.ok) return { ok: false, reason: `key ${step.name}: ${r.stderr || `exit ${r.exitCode}`}` }
-    } else {
-      const r = await runOsa(`
-        tell application "System Events"
-          keystroke "${escapeForAppleScript(step.text)}"
-        end tell
-      `)
-      if (!r.ok) return { ok: false, reason: `text: ${r.stderr || `exit ${r.exitCode}`}` }
-    }
-
-    await new Promise(r => setTimeout(r, 30))
+    if (!focused) return false
+    await new Promise((r) => setTimeout(r, 80))
+    const r = await runOsa(`
+      tell application "System Events"
+        ${body}
+      end tell
+    `)
+    return r.ok
   }
-
-  return { ok: true, reason: "" }
+  return {
+    capture: null,
+    key: (name) => press(`key code ${name === "Tab" ? 48 : 36}`),
+    digit: (n) => press(`keystroke "${n}"`),
+    text: (t) => press(`keystroke "${escapeForAppleScript(t)}"`),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  }
 }
 
-async function injectKeySequenceLocked(
-  steps: readonly KeySeqStep[],
+// Pick the IO for a question target: tmux pane (recorded, or resolved from the
+// tty on Linux where every session lives in tmux), else a macOS tty. Returns
+// null when there is nothing to drive. Serialised with the text-inject lock so
+// a phone prompt can't interleave with picker keys.
+export async function withPickerIO<T>(
   target: InjectTarget,
-): Promise<boolean> {
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const green = "\x1b[32m"; const cyan = "\x1b[36m"
-  const pane = target.tmuxPane?.trim() ?? ""
-
-  if (pane) {
-    if (!TMUX_PANE_RE.test(pane)) {
-      process.stderr.write(`${dim}[companion]${reset} ${yellow}key-seq tmux skipped${reset} — invalid pane "${pane}"\n`)
-    } else {
-      let tmuxFailure = ""
-      let tmuxSentAny = false
-      for (const step of steps) {
-        if (step.kind === "key") {
-          const r = await tmuxSendKeys(["send-keys", "-t", pane, step.name], 2000)
-          if (!r.ok) {
-            tmuxFailure = `key=${step.name} — ${r.reason}`
-            break
-          }
-          tmuxSentAny = true
-        } else if (step.kind === "text") {
-          // -l = literal: type text exactly (no key-event interpretation), so
-          // characters land in the picker's text buffer for "Other" input.
-          const r = await tmuxSendKeys(["send-keys", "-t", pane, "-l", step.text], 2000)
-          if (!r.ok) {
-            tmuxFailure = `text=${JSON.stringify(step.text.slice(0, 30))} — ${r.reason}`
-            break
-          }
-          tmuxSentAny = true
-        } else {
-          // Explicit wait — used between sequential questions in a multi-
-          // question AskUserQuestion so the harness has time to render the
-          // next picker before we type into it. The default 30ms inter-step
-          // delay below is too short for that transition.
-          await new Promise(r => setTimeout(r, step.ms))
-          continue
-        }
-        // Small inter-key delay — Ink's input handler debounces rapid arrow
-        // events and our discrete tmux calls can arrive faster than the TUI
-        // can repaint between them. 30ms is empirically enough on macOS to
-        // make sequential arrow-down + Enter feel like a real human keypress.
-        await new Promise(r => setTimeout(r, 30))
-      }
-
-      if (!tmuxFailure) {
-        process.stderr.write(`${dim}[companion]${reset} ${green}key-seq delivered${reset} → ${cyan}${pane}${reset} ${dim}(${steps.length} steps)${reset}\n`)
-        return true
-      }
-      process.stderr.write(`${dim}[companion]${reset} ${yellow}key-seq tmux failed${reset} pane=${pane} ${tmuxFailure}\n`)
-      if (tmuxSentAny) return false
+  run: (io: PickerIO, via: string) => Promise<T>,
+): Promise<T | null> {
+  return withInjectLock(async () => {
+    let pane = target.tmuxPane?.trim() ?? ""
+    if (pane && !TMUX_PANE_RE.test(pane)) pane = ""
+    if (!pane && target.tty && process.platform === "linux") {
+      pane = (await resolveTmuxPaneFromTty(target.tty)) ?? ""
     }
-  }
-
-  if (target.tty) {
-    const r = await deliverKeySequenceToTty(steps, target)
-    if (r.ok) {
-      process.stderr.write(`${dim}[companion]${reset} ${green}key-seq delivered${reset} → ${cyan}${target.tty}${reset} ${dim}(${steps.length} steps)${reset}\n`)
-      return true
-    }
-    process.stderr.write(`${dim}[companion]${reset} ${red}key-seq failed${reset} tty=${target.tty} — ${r.reason}\n`)
-    return false
-  }
-
-  process.stderr.write(`${dim}[companion]${reset} ${red}key-seq refused${reset} — no tmux pane or tty target\n`)
-  return false
+    if (pane) return run(tmuxPickerIO(pane), pane)
+    if (target.tty && process.platform === "darwin") return run(ttyPickerIO(target), target.tty)
+    return null
+  })
 }
