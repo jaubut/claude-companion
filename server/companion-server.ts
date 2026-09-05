@@ -61,6 +61,7 @@ import { registerToken, removeToken, tokenCount, listTokens, type ApnsEnv } from
 import { apnsConfigured } from "./lib/apns"
 import { pushToAll } from "./lib/push"
 import { checkBearer, unauthorized } from "./lib/auth"
+import { hostname } from "node:os"
 import {
   appendTurn as orchAppendTurn,
   getThread,
@@ -391,6 +392,11 @@ function paneInputReady(pane: string): boolean {
 function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
+
+// Who this companion is — the phone shows it as a per-session host badge
+// (Mac vs Zettlab) instead of guessing from URLs. Hostname's first label,
+// platform for the icon.
+const HOST_INFO = { name: hostname().split(".")[0] ?? "", platform: process.platform }
 
 // Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
 // /mcp, trust, MCP-enable) is parsed off the pane and pushed to clients as a
@@ -1494,6 +1500,7 @@ export function createCompanionServer(port: number) {
           waitingKey,
           sessions: listSessions(),
           dialogs: dialogWatcher.current(),
+          host: HOST_INFO,
         })
       }
 
@@ -1620,6 +1627,7 @@ export function createCompanionServer(port: number) {
           sessions: listSessions(),
           superAuto: isSuperAuto(),
           dialogs: dialogWatcher.current(),
+          host: HOST_INFO,
         }))
       },
       async message(ws, raw) {
