@@ -47,7 +47,8 @@ db.exec(`
     name TEXT NOT NULL,
     cwd TEXT,
     created_at INTEGER NOT NULL,
-    archived INTEGER NOT NULL DEFAULT 0
+    archived INTEGER NOT NULL DEFAULT 0,
+    auto_dispatch INTEGER NOT NULL DEFAULT 0
   );
 `)
 // Migrate dbs created before these columns existed. ALTER throws if the column
@@ -58,6 +59,11 @@ for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT"]) {
   } catch {
     /* column already exists */
   }
+}
+try {
+  db.exec("ALTER TABLE orchestrator_channels ADD COLUMN auto_dispatch INTEGER NOT NULL DEFAULT 0")
+} catch {
+  /* column already exists */
 }
 
 // Default channel (PRJ-OR1T Phase 6). Was the single hardcoded thread id 'main';
@@ -76,8 +82,14 @@ db.query("UPDATE orchestrator_turns SET thread_id = ? WHERE thread_id = ?").run(
 db.query("UPDATE orchestrator_tasks SET thread_id = ? WHERE thread_id = ?").run(GENERAL_CHANNEL, "main")
 
 export type TurnRole = "user" | "orchestrator" | "worker"
-// proposed → (approve) → dispatched → running → done | error ; (reject) → rejected
-export type TaskStatus = "proposed" | "dispatched" | "running" | "done" | "error" | "rejected"
+// proposed → (approve | auto) → dispatched → running → done | error ; (reject) → rejected
+// Backpressure (Phase 7): past the WIP cap an admitted task parks as queued and
+// drains FIFO into dispatched when a live worker exits. cancelled = user pulled a
+// queued/dispatched/running task (its tmux worker is killed).
+export type TaskStatus = "proposed" | "queued" | "dispatched" | "running" | "done" | "error" | "rejected" | "cancelled"
+
+// Statuses that hold a worker slot against the WIP cap.
+export const LIVE_STATUSES: readonly TaskStatus[] = ["dispatched", "running"]
 
 export interface Turn {
   id: string
@@ -185,6 +197,18 @@ export function createTask(prompt: string, cwd: string, tmuxSession: string | nu
   return task
 }
 
+// Manual /dispatch that hit the WIP cap (Phase 7): recorded now, spawned by the
+// queue drain once a worker slot frees. No tmux session until then.
+export function createQueuedTask(prompt: string, cwd: string, threadId: string = GENERAL_CHANNEL): Task {
+  const now = Date.now()
+  const task: Task = {
+    taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
+    sessionKey: null, tmuxSession: null, reasoning: null, logTail: null, status: "queued", createdAt: now, updatedAt: now,
+  }
+  insertTask(task)
+  return task
+}
+
 // Propose-confirm (Phase 2): the brain proposes a dispatch; nothing spawns until
 // the user approves (setTaskSpawn flips it to dispatched).
 export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL): Task {
@@ -261,7 +285,39 @@ export function listTasks(threadId?: string): Task[] {
   return rows.map(toTask)
 }
 
+// ---- backpressure (PRJ-OR1T Phase 7) --------------------------------------
+
+// Workers currently holding a slot: dispatched (spawned, prompt in flight) or
+// running (bound to a session). Queued/proposed tasks hold nothing.
+export function countLiveTasks(): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE status IN ('dispatched', 'running')")
+    .get() as { n: number }
+  return row.n
+}
+
+// FIFO: oldest queued task first — the order the user admitted them.
+export function listQueued(): Task[] {
+  const rows = db
+    .query("SELECT * FROM orchestrator_tasks WHERE status = 'queued' ORDER BY created_at ASC")
+    .all() as TaskRow[]
+  return rows.map(toTask)
+}
+
 // ---- channels (PRJ-OR1T Phase 6) ------------------------------------------
+
+// Trust ramp (Phase 7): how this channel's proposals have fared. approved = the
+// user (or auto mode) let it run; rejected = tapped reject; streak = consecutive
+// approvals since the last reject, newest first. eligible flags a streak long
+// enough that the client may suggest auto-dispatch — the server never flips it.
+export interface ChannelTrust {
+  approved: number
+  rejected: number
+  streak: number
+  eligible: boolean
+}
+
+export const AUTO_ELIGIBLE_STREAK = 5
 
 export interface Channel {
   id: string
@@ -269,6 +325,8 @@ export interface Channel {
   cwd: string | null
   createdAt: number
   archived: boolean
+  autoDispatch: boolean
+  trust: ChannelTrust
 }
 
 interface ChannelRow {
@@ -277,10 +335,44 @@ interface ChannelRow {
   cwd: string | null
   created_at: number
   archived: number
+  auto_dispatch: number
+}
+
+// Proposals are the tasks that carry brain reasoning; manual /dispatch tasks
+// don't count toward trust because the user never had a proposal to judge.
+export function channelTrust(threadId: string): ChannelTrust {
+  const rows = db
+    .query(
+      "SELECT status FROM orchestrator_tasks WHERE thread_id = ? AND reasoning IS NOT NULL AND status != 'proposed' ORDER BY created_at DESC LIMIT 200",
+    )
+    .all(threadId) as { status: TaskStatus }[]
+  let approved = 0
+  let rejected = 0
+  let streak = 0
+  let streakOpen = true
+  for (const r of rows) {
+    if (r.status === "rejected") {
+      rejected++
+      streakOpen = false
+    } else {
+      approved++
+      if (streakOpen) streak++
+    }
+  }
+  return { approved, rejected, streak, eligible: streak >= AUTO_ELIGIBLE_STREAK }
 }
 
 function toChannel(r: ChannelRow): Channel {
-  return { id: r.id, name: r.name, cwd: r.cwd, createdAt: r.created_at, archived: !!r.archived }
+  return {
+    id: r.id, name: r.name, cwd: r.cwd, createdAt: r.created_at, archived: !!r.archived,
+    autoDispatch: !!r.auto_dispatch, trust: channelTrust(r.id),
+  }
+}
+
+// Flip a channel's auto-dispatch. Returns the updated channel, null if unknown.
+export function setChannelAuto(id: string, enabled: boolean): Channel | null {
+  db.query("UPDATE orchestrator_channels SET auto_dispatch = ? WHERE id = ?").run(enabled ? 1 : 0, id)
+  return getChannel(id)
 }
 
 function slugify(name: string): string {
@@ -305,8 +397,11 @@ export function createChannel(name: string, cwd: string | null = null): Channel 
   const base = slugify(name)
   let id = base
   for (let n = 2; getChannel(id); n++) id = `${base}-${n}`
-  const ch: Channel = { id, name: name.trim(), cwd: cwd?.trim() || null, createdAt: Date.now(), archived: false }
-  db.query("INSERT INTO orchestrator_channels (id, name, cwd, created_at, archived) VALUES (?, ?, ?, ?, 0)").run(
+  const ch: Channel = {
+    id, name: name.trim(), cwd: cwd?.trim() || null, createdAt: Date.now(), archived: false,
+    autoDispatch: false, trust: { approved: 0, rejected: 0, streak: 0, eligible: false },
+  }
+  db.query("INSERT INTO orchestrator_channels (id, name, cwd, created_at, archived, auto_dispatch) VALUES (?, ?, ?, ?, 0, 0)").run(
     ch.id, ch.name, ch.cwd, ch.createdAt,
   )
   return ch

@@ -61,6 +61,10 @@ import {
   bindTaskSession,
   setTaskStatus,
   setTaskLogTail,
+  countLiveTasks,
+  listQueued,
+  createQueuedTask,
+  setChannelAuto,
   matchUnboundTaskByCwd,
   findRunningTaskByCwd,
   listTasks,
@@ -74,6 +78,7 @@ import {
 } from "./lib/orchestrator-chat"
 import { decide as brainDecide } from "./lib/orchestrator-brain"
 import { createWorkerTailManager } from "./lib/worker-tail"
+import { createQueue, DEFAULT_WIP_CAP } from "./lib/orchestrator-queue"
 
 interface WsData {
   id: string
@@ -418,6 +423,29 @@ function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
 
+// Backpressure (PRJ-OR1T Phase 7): at most WIP_CAP live workers on this host.
+// Anything admitted past that — approved proposal, auto-dispatch, or a manual
+// /dispatch — parks as queued and drains FIFO when a worker exits (stop hook,
+// dead-pane backstop, cancel), on boot, and on a 30s safety tick.
+const WIP_CAP = Number(process.env.COMPANION_WIP_CAP) || DEFAULT_WIP_CAP
+const workerQueue = createQueue({
+  cap: WIP_CAP,
+  countLive: countLiveTasks,
+  listQueued,
+  markQueued(task) {
+    setTaskStatus(task.taskId, "queued")
+    emitTask(task.taskId)
+    orchEmit(orchAppendTurn(
+      "orchestrator",
+      `queued [${task.taskId}] — ${countLiveTasks()} of ${WIP_CAP} worker slots busy; starts when one frees`,
+      task.taskId,
+      task.threadId,
+    ))
+  },
+  dispatch: executeDispatch,
+})
+setInterval(() => void workerQueue.drain(), 30_000)
+
 // Live worker tail (Phase 6, hybrid output model): stream the dispatched
 // worker's tmux pane into its channel as transient frames; the final snapshot
 // persists on the task row when it finishes. Workers outlive server restarts in
@@ -430,6 +458,7 @@ const workerTail = createWorkerTailManager({
   setTaskLogTail,
   setTaskDead(taskId) {
     setTaskStatus(taskId, "error")
+    void workerQueue.drain() // the dead worker's slot is free
   },
   onLines(task, lines) {
     broadcast({ type: "orchestrator_worker_output", taskId: task.taskId, channel: task.threadId, lines, ts: Date.now() })
@@ -439,6 +468,7 @@ const workerTail = createWorkerTailManager({
   },
 })
 workerTail.resumeAll(listTasks())
+void workerQueue.drain() // queued work left over from before a restart
 
 // Deliver a dispatched prompt straight to the worker's tmux session by name.
 // We spawned it (cc-<name>), so send-keys -t <session> hits its active pane no
@@ -536,7 +566,8 @@ async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; error?: s
   emitTask(task.taskId)
   workerTail.watch(task.taskId)
   process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
-  orchEmit(orchAppendTurn("orchestrator", `approved [${task.taskId}] — worker dispatched`, task.taskId, task.threadId))
+  const verb = task.status === "queued" ? "starting" : "approved"
+  orchEmit(orchAppendTurn("orchestrator", `${verb} [${task.taskId}] — worker dispatched`, task.taskId, task.threadId))
   return { ok: true }
 }
 
@@ -567,6 +598,21 @@ async function runBrain(userText: string, channel: OrchChannel): Promise<void> {
     return
   }
   const task = createProposal(decision.prompt, decision.cwd, decision.reasoning, channel.id)
+  // Trust ramp (Phase 7): re-read the channel — the toggle may have flipped
+  // during the brain call. Auto mode skips the tap but never the reasoning:
+  // every auto-dispatch shows why + what in the thread, so a bad route is
+  // caught at step 2, not step 20. Cancel is the veto.
+  if (getChannel(channel.id)?.autoDispatch) {
+    orchEmit(orchAppendTurn(
+      "orchestrator",
+      `Auto-dispatch [${task.taskId}] — worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}`,
+      task.taskId,
+      channel.id,
+    ))
+    emitTask(task.taskId)
+    void workerQueue.admit(task)
+    return
+  }
   orchEmit(orchAppendTurn(
     "orchestrator",
     `Proposal [${task.taskId}] — dispatch a worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to run.`,
@@ -935,6 +981,7 @@ export function createCompanionServer(port: number) {
             setTaskStatus(task.taskId, "done")
             emitTask(task.taskId)
             orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId, task.threadId))
+            void workerQueue.drain() // slot freed
             const dim = "\x1b[2m"; const reset = "\x1b[0m"; const green = "\x1b[32m"
             process.stderr.write(`${dim}[companion]${reset} ${green}orchestrator reply${reset} [${task.taskId}] → thread\n`)
           }
@@ -1266,12 +1313,35 @@ export function createCompanionServer(port: number) {
         emitChannel(channel)
         return Response.json({ ok: true, channel })
       }
+      // Trust ramp toggle (Phase 7). POST .../channels/<id>/auto { enabled }.
+      // The server reports eligibility (trust.eligible); only the user flips it.
+      if (url.pathname.startsWith("/api/orchestrator/channels/") && req.method === "POST") {
+        const [id, action] = url.pathname.slice("/api/orchestrator/channels/".length).split("/")
+        if (action !== "auto" || !id) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
+        const { enabled } = await req.json() as { enabled?: unknown }
+        if (typeof enabled !== "boolean") return Response.json({ ok: false, error: "enabled must be boolean" }, { status: 400 })
+        const ch = setChannelAuto(id, enabled)
+        if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+        emitChannel(ch)
+        orchEmit(orchAppendTurn(
+          "orchestrator",
+          enabled
+            ? `auto-dispatch ON for #${ch.name} — proposals run without a tap; cancel any task to switch it back off`
+            : `auto-dispatch OFF for #${ch.name} — back to propose-confirm`,
+          null,
+          ch.id,
+        ))
+        return Response.json({ ok: true, channel: ch })
+      }
       if (url.pathname === "/api/orchestrator/thread" && req.method === "GET") {
         const ch = resolveChannel(url.searchParams.get("channel"))
         if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
         // Returns the channel roster too, so the client fills the rail and the
         // active thread in one round-trip.
-        return Response.json({ channel: ch.id, channels: listChannels(), turns: getThread(ch.id), tasks: listTasks(ch.id) })
+        return Response.json({
+          channel: ch.id, channels: listChannels(), turns: getThread(ch.id), tasks: listTasks(ch.id),
+          queue: { cap: WIP_CAP, live: countLiveTasks(), queued: listQueued().length },
+        })
       }
       if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
         const { text, channel } = await req.json() as { text?: string; channel?: string }
@@ -1294,27 +1364,46 @@ export function createCompanionServer(port: number) {
         const wd = ((cwd ?? "").trim() || ch.cwd || "")
         if (!wd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
 
-        const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
-        // Spawn first so we can record the worker's tmux session name on the
-        // task — that's how the prompt is delivered (send-keys -t <session>).
-        let result: SpawnResult
-        try {
-          result = await spawnCompanionSession({ cwd: wd, agent: "claude" })
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
-          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} — ${message}\n`)
-          return Response.json({ ok: false, error: message || "spawn crashed" }, { status: 500 })
+        // Manual dispatch goes through the same admission as proposals (Phase 7):
+        // the task is recorded queued, then either spawned now (executeDispatch
+        // records the tmux session + starts the tail) or left for the drain.
+        const task = createQueuedTask(prompt.trim(), wd, ch.id)
+        orchEmit(orchAppendTurn("orchestrator", `dispatch [${task.taskId}]: ${prompt.trim()}`, task.taskId, ch.id))
+        const admission = await workerQueue.admit(task)
+        if (admission.status === "queued") return Response.json({ ok: true, taskId: task.taskId, status: "queued" })
+        if (!admission.ok) return Response.json({ ok: false, error: admission.error ?? "spawn failed", taskId: task.taskId }, { status: 500 })
+        return Response.json({ ok: true, taskId: task.taskId, status: "dispatched" })
+      }
+
+      // Cancel queued/dispatched/running work (Phase 7). Kills the tmux worker if
+      // one exists. In an auto channel a cancel is the veto — it flips the channel
+      // back to propose-confirm so autonomy only stays on while it's earning it.
+      if (url.pathname.startsWith("/api/orchestrator/task/") && req.method === "POST") {
+        const [taskId, action] = url.pathname.slice("/api/orchestrator/task/".length).split("/")
+        if (action !== "cancel" || !taskId) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
+        const task = getTask(taskId)
+        if (!task) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
+        if (task.status !== "queued" && task.status !== "dispatched" && task.status !== "running") {
+          return Response.json({ ok: false, error: `not cancellable (status ${task.status})` }, { status: 409 })
         }
-        if (!result.ok) {
-          process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} — ${result.error}\n`)
-          return Response.json({ ok: false, error: result.error }, { status: 400 })
+        if (task.tmuxSession) {
+          try {
+            await Bun.spawn(["tmux", "kill-session", "-t", task.tmuxSession], { stdout: "ignore", stderr: "ignore" }).exited
+          } catch { /* already gone */ }
         }
-        const task = createTask(prompt.trim(), wd, result.sessionName ?? null, ch.id)
-        process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${wd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
-        orchEmit(orchAppendTurn("orchestrator", `dispatched [${task.taskId}]: ${prompt.trim()}`, task.taskId, ch.id))
-        emitTask(task.taskId)
-        workerTail.watch(task.taskId)
-        return Response.json({ ok: true, taskId: task.taskId, app: result.app })
+        setTaskStatus(taskId, "cancelled")
+        emitTask(taskId)
+        orchEmit(orchAppendTurn("orchestrator", `cancelled [${taskId}]`, taskId, task.threadId))
+        const ch = getChannel(task.threadId)
+        if (ch?.autoDispatch) {
+          const updated = setChannelAuto(ch.id, false)
+          if (updated) {
+            emitChannel(updated)
+            orchEmit(orchAppendTurn("orchestrator", `auto-dispatch OFF for #${ch.name} — a cancel resets the ramp; flip it back on when ready`, null, ch.id))
+          }
+        }
+        void workerQueue.drain()
+        return Response.json({ ok: true, taskId, status: "cancelled" })
       }
 
       // Approve or reject a brain proposal (Phase 2). POST .../proposal/<id>/approve
@@ -1334,8 +1423,9 @@ export function createCompanionServer(port: number) {
           return Response.json({ ok: true, taskId, status: "rejected" })
         }
         if (action === "approve") {
-          const r = await executeDispatch(task)
-          if (!r.ok) return Response.json({ ok: false, error: r.error, taskId }, { status: 500 })
+          const admission = await workerQueue.admit(task)
+          if (admission.status === "queued") return Response.json({ ok: true, taskId, status: "queued" })
+          if (!admission.ok) return Response.json({ ok: false, error: admission.error, taskId }, { status: 500 })
           return Response.json({ ok: true, taskId, status: "dispatched" })
         }
         return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
