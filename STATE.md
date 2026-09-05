@@ -22,17 +22,23 @@ Last updated: 2026-09-05
 **Why:** Keeps the build tight and defers the mobile-ux-auditor gate to the UI phase.
 **Rejected:** building UI now (drags the mobile gate into plumbing work).
 
+### Phase 7 autonomy shape: cap + FIFO + user-flipped auto
+**Date:** 2026-09-05
+**Choice:** WIP cap 3 live workers per host (`COMPANION_WIP_CAP` override), FIFO queue past it, per-channel `autoDispatch` toggle that only the user flips. Server reports trust (approved/rejected/streak, eligible at a 5-approval streak) and posts every auto-dispatch's reasoning in the thread. Cancel is the veto: it kills the worker and flips the channel back to propose-confirm.
+**Why:** autonomy must grow with proof and stay one-tap reversible from the phone. The server suggesting is fine; the server deciding to go autonomous is not (CLAUDE.md agent-dispatch policy, Jevan "read its thoughts" rule).
+**Rejected:** global auto toggle (trust is per project); server auto-enabling at the streak (removes the human from the ramp); per-cwd cap (host capacity is the real limit, not the project).
+**Revisit if:** Mac + Zettlab need one shared queue (today each host caps independently).
+
 ## Progress
 
 ### v0.2 — consolidation (2026-09-05)
 - [x] Merged PR #4 (server channels) + iOS PR #2 (channel picker) — both sat open since 2026-07-19
 - [x] Ported from Zettlab's `feat/orchestrator-phase6-channels` + `feat/kimi-agent` onto the sidebar base: brain-retry (3 attempts, backoff), kimi agent spawn (`km-` tmux prefix, env at ~/.config/kimi/kimi.env), worker-tail (live tmux tail → `orchestrator_worker_output` frame, `log_tail` persisted on finish, pane-vanished → task `error`), brain `channelCwd` anchor line. 12 bun tests, server tsc clean, route smoke on isolated port + DB
-- [ ] Deploy branch Mac + Zettlab → real dispatch e2e → merge PR #5 → both hosts on `main`
-- [ ] iOS: render `orchestrator_worker_output` + collapsed `logTail` card (server emits it; client ignores it today)
+- [x] Deployed to both hosts, real dispatch e2e on Zettlab green (PONG in 15s, logTail persisted), PR #5 merged, Mac + Zettlab on `main` — 2026-09-05
 
-### Phase 7 — autonomy (next)
-- [ ] Backpressure: WIP cap (3–5 running workers), queue past it, queue state visible on phone
-- [ ] Auto-dispatch trust ramp: per-channel `auto` mode — proposals dispatch without a tap when the ramp allows; every auto-dispatch still shows its reasoning in the thread
+### Phase 7 — autonomy
+- [x] Server (PR #6): `orchestrator-queue.ts` admission + FIFO drain (on worker exit, boot, 30s tick); `auto_dispatch` on channels + `channelTrust`; `POST /task/<id>/cancel` (kills tmux, flips auto off); `POST /channels/<id>/auto`; `/thread` returns `queue {cap, live, queued}`; statuses `queued` + `cancelled`. 22 bun tests, route smoke, two real e2e on Zettlab: 4 dispatches at cap 3 → 1 queued → cancel freed the slot and the queued task started in <5s; natural finish → drain → all 4 DONE with log tails; dead-pane backstop had flipped the killed workers to `error` — 2026-09-05
+- [ ] iOS: `queued`/`cancelled` states + queue header in Tasks panel, cancel button, per-channel auto toggle + trust ramp hint, live worker tail card + collapsed `logTail` (server has emitted these since v0.2)
 
 
 - [x] Phase 0: memory-proof gate (kb-memory-proof suite, 5/5) — 2026-06-22
@@ -49,6 +55,10 @@ Last updated: 2026-09-05
 - [x] Phase 6b (iOS): channel model + header picker Menu + NewChannelSheet + per-channel turn/task filter + activity badges; handle `orchestrator_channel` frame. xcodebuild BUILD SUCCEEDED; mobile-ux-auditor 8/10 → HIGH+MEDIUM fixed (iOS repo `feat/orchestrator-sidebar`: d3c39ec + 94d8c3f) — 2026-07-19
 
 ## Learnings
+
+- **Bun test shares the module cache across files** (2026-09-05): a second test file that sets `COMPANION_DB_PATH` and imports `orchestrator-chat` either gets ignored or steals the sqlite binding from the legacy-seed fixture, depending on run order. Rule: one test file per sqlite-bound module; DI'd modules (worker-tail, queue policy) can test anywhere.
+- **Same-cwd fan-out cross-matches tasks** (2026-09-05): worker binding and stop-hook matching are by cwd (Phase 1 design), so N workers in one cwd can close each other's tasks. The e2e used 4 distinct cwds. Fix = per-worker identity in hook headers (tmux session name) — Phase 8 candidate.
+- Zettlab companion's previous 2.6-day run peaked at 6.7G RSS + 1.4G swap (journal, pre-v0.2 code). Cause unmeasured; watch it now that worker-tail adds a 1.5s poll per live task.
 
 - **Phase 6 got built twice** (2026-09-05 post-mortem): Zettlab session shipped channels + worker-tail on 2026-07-02 to a branch with no PR; the Mac session redid channels on 2026-07-19 without checking `git branch -r`. Zettlab prod then ran a local-only branch (`feat/kimi-agent`) for 7 weeks. Rules: `git fetch --prune && git branch -r && gh pr list` before starting any phase; Zettlab runs `main`, never a feature branch; a phase isn't done until its PR is merged.
 - Kept the Mac sidebar channel model (user-created rows in `orchestrator_channels`) over Zettlab's cwd-basename channels — Jeremie's call from Phase 6a. Only the brain's explicit "this channel is the project at X" prompt line was worth taking from the Zettlab version; cwd ordering alone is a weaker hint.
