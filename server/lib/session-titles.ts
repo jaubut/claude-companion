@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
-import { readFile } from "node:fs/promises"
+import { readFile, readdir, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -25,10 +25,18 @@ db.exec(`
 export const TITLE_MAX = 48
 const DEFAULT_PROJECTS_DIR = join(homedir(), ".claude", "projects")
 
+// Prompts often arrive wrapped in injected XML (system reminders, IDE
+// selection, command output). Drop those blocks and keep what the user typed.
+function stripInjectedXml(text: string): string {
+  return text
+    .replace(/<([a-z][\w-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/?[a-z][\w-]*(?:\s[^>]*)?>/gi, " ")
+}
+
 // A prompt worth naming a chat after: not a slash command, not bash-mode, not
-// injected XML (system reminders, command output), not a fragment.
+// leftover markup, not a fragment.
 export function titleFromPrompt(text: string): string | null {
-  const t = text.replace(/\s+/g, " ").trim()
+  const t = stripInjectedXml(text).replace(/\s+/g, " ").trim()
   if (t.length < 4) return null
   if (t.startsWith("/") || t.startsWith("!") || t.startsWith("<")) return null
   if (t.length <= TITLE_MAX) return t
@@ -74,12 +82,39 @@ function userText(entry: TranscriptEntry): string | null {
   return null
 }
 
+// The transcript for a session id: at the cwd-derived path, else wherever it
+// lives under the projects dir (a session that was started elsewhere, or
+// resumed into a different folder, keeps its file under the original dir).
+async function findTranscript(cwd: string, sessionId: string, projectsDir: string): Promise<string | null> {
+  const direct = transcriptPath(cwd, sessionId, projectsDir)
+  try {
+    await readFile(direct, { encoding: "utf-8", flag: "r" })
+    return direct
+  } catch { /* fall through */ }
+  let dirs: string[]
+  try {
+    dirs = await readdir(projectsDir)
+  } catch {
+    return null
+  }
+  for (const d of dirs) {
+    const candidate = join(projectsDir, d, `${sessionId}.jsonl`)
+    try {
+      await stat(candidate)
+      return candidate
+    } catch { /* next */ }
+  }
+  return null
+}
+
 // First user message of the transcript that qualifies as a title.
 export async function titleFromTranscript(cwd: string, sessionId: string, projectsDir = DEFAULT_PROJECTS_DIR): Promise<string | null> {
-  if (!cwd || !sessionId) return null
+  if (!sessionId) return null
+  const path = await findTranscript(cwd, sessionId, projectsDir)
+  if (!path) return null
   let text: string
   try {
-    text = await readFile(transcriptPath(cwd, sessionId, projectsDir), "utf-8")
+    text = await readFile(path, "utf-8")
   } catch {
     return null
   }

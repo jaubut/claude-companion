@@ -11,6 +11,9 @@ test("titleFromPrompt names a chat after a real prompt, never a command or fragm
   expect(titles.titleFromPrompt("/clear")).toBeNull()
   expect(titles.titleFromPrompt("!ls -la")).toBeNull()
   expect(titles.titleFromPrompt("<command-name>/exit</command-name>")).toBeNull()
+  expect(titles.titleFromPrompt("<system-reminder>\nstuff\n</system-reminder>\nyo, we need to find which day we film")).toBe("yo, we need to find which day we film")
+  expect(titles.titleFromPrompt("<ide_opened_file>a.ts</ide_opened_file> fix the export")).toBe("fix the export")
+  expect(titles.titleFromPrompt("<local-command-stdout>ok</local-command-stdout>")).toBeNull()
   expect(titles.titleFromPrompt("ok")).toBeNull()
   const long = titles.titleFromPrompt("Use the AskUserQuestion tool right now, before anything else, to ask me two questions")
   expect(long!.length).toBeLessThanOrEqual(titles.TITLE_MAX + 1)
@@ -42,5 +45,7 @@ test("titleFromTranscript skips summaries, injected XML and tool results, takes 
   writeFileSync(join(dir, "abc.jsonl"), lines.join("\n") + "\n")
   expect(await titles.titleFromTranscript("/home/aubut", "abc", projects)).toBe("Rename the camera files for the BRP shoot")
   expect(await titles.titleFromTranscript("/home/aubut", "missing", projects)).toBeNull()
+  // started elsewhere: the file lives under another project dir → still found
+  expect(await titles.titleFromTranscript("/home/aubut/lanes/qa", "abc", projects)).toBe("Rename the camera files for the BRP shoot")
   expect(titles.transcriptPath("/home/aubut/lanes/qa", "s1", "/p")).toBe("/p/-home-aubut-lanes-qa/s1.jsonl")
 })
