@@ -28,6 +28,10 @@ export interface Session {
   // ~/.claude/sessions/<pid>.json, or the transcript itself) rather than a
   // newest-transcript-in-this-cwd guess. Guesses never name a chat.
   sidConfirmed: boolean
+  // Claude Code's own view of the session, from ~/.claude/sessions/<pid>.json:
+  // "busy" | "waiting" | "idle" and what it waits for ("dialog open", …).
+  agentStatus: string
+  waitingFor: string
   cwd: string
   sessionId: string
   termProgram: string
@@ -202,6 +206,8 @@ export function recordSession(
     label: nextLabel || prev?.label || "",
     title: meta.title?.trim() || (titleReset ? "" : prev?.title || ""),
     sidConfirmed,
+    agentStatus: meta.agentStatus ?? prev?.agentStatus ?? "",
+    waitingFor: meta.waitingFor ?? prev?.waitingFor ?? "",
     cwd: meta.cwd,
     sessionId,
     termProgram: meta.termProgram || prev?.termProgram || "",
@@ -255,6 +261,8 @@ export function recordSession(
     prev.agent !== next.agent ||
     prev.label !== next.label ||
     prev.title !== next.title ||
+    prev.agentStatus !== next.agentStatus ||
+    prev.waitingFor !== next.waitingFor ||
     prev.firstSeenAt !== next.firstSeenAt ||
     prev.tty !== next.tty ||
     prev.termProgram !== next.termProgram ||
@@ -274,6 +282,14 @@ const resolvingTitle = new Set<string>()
 // first prompt. Runs once per session that lacks a title.
 export function setTitleResolver(fn: TitleResolver | null): void {
   titleResolver = fn
+}
+
+export function setSessionStatus(key: string, status: string, waitingFor: string): void {
+  const s = sessions.get(key)
+  if (!s || (s.agentStatus === status && s.waitingFor === waitingFor)) return
+  s.agentStatus = status
+  s.waitingFor = waitingFor
+  emit()
 }
 
 export function setSessionTitle(key: string, title: string): void {
