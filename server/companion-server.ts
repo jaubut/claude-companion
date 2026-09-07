@@ -1,4 +1,3 @@
-import type { ServerWebSocket } from "bun"
 import {
   addApprovalRequest,
   resolveApproval,
@@ -61,7 +60,7 @@ import { registerToken, removeToken, tokenCount, listTokens, type ApnsEnv } from
 import { apnsConfigured } from "./lib/apns"
 import { pushToAll } from "./lib/push"
 import { checkBearer, unauthorized } from "./lib/auth"
-import { hostname } from "node:os"
+import { clients, broadcast, HOST_INFO, getWaiting, setWaiting, clearWaiting, type WsData } from "./state"
 import {
   appendTurn as orchAppendTurn,
   getThread,
@@ -91,14 +90,6 @@ import { decide as brainDecide } from "./lib/orchestrator-brain"
 import { createWorkerTailManager } from "./lib/worker-tail"
 import { createQueue, DEFAULT_WIP_CAP } from "./lib/orchestrator-queue"
 
-interface WsData {
-  id: string
-}
-
-const clients = new Set<ServerWebSocket<WsData>>()
-let waitingForInput = false
-let waitingCwd = ""
-let waitingKey = ""
 
 function agentFromHeaders(headers: Headers): SpawnAgent {
   return headers.get("x-companion-agent") === "codex" ? "codex" : "claude"
@@ -138,13 +129,6 @@ function hookDecisionResponse(
       permissionDecisionReason: reason,
     },
   })
-}
-
-function broadcast(data: Record<string, unknown>): void {
-  const msg = JSON.stringify(data)
-  for (const ws of clients) {
-    try { ws.send(msg) } catch { /* dead client */ }
-  }
 }
 
 // Orchestrator single-thread (PRJ-OR1T): push every new thread turn to all
@@ -392,11 +376,6 @@ function paneInputReady(pane: string): boolean {
 function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
-
-// Who this companion is — the phone shows it as a per-session host badge
-// (Mac vs Zettlab) instead of guessing from URLs. Hostname's first label,
-// platform for the icon.
-const HOST_INFO = { name: hostname().split(".")[0] ?? "", platform: process.platform }
 
 // Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
 // /mcp, trust, MCP-enable) is parsed off the pane and pushed to clients as a
@@ -693,10 +672,8 @@ export function createCompanionServer(port: number) {
           session = recordSession({ cwd, sessionId, ...headerMeta })
         }
 
-        if (waitingForInput) {
-          waitingForInput = false
-          waitingCwd = ""
-          waitingKey = ""
+        if (getWaiting().waitingForInput) {
+          clearWaiting()
           broadcast({ type: "waiting_input", waiting: false })
         }
 
@@ -1017,9 +994,7 @@ export function createCompanionServer(port: number) {
           tty: headerMeta.tty ?? "",
         })
 
-        waitingForInput = true
-        waitingCwd = cwd
-        waitingKey = session?.key ?? ""
+        setWaiting(cwd, session?.key ?? "")
         const dim = "\x1b[2m"
         const reset = "\x1b[0m"
         const magenta = "\x1b[35m"
@@ -1036,7 +1011,7 @@ export function createCompanionServer(port: number) {
           // full reply. lastMessage is still used for the push body
           // below where a 220-char preview is what we want.
           cwd,
-          key: waitingKey,
+          key: getWaiting().waitingKey,
         })
         // Waiting = passive nudge, no sound. Client should suppress when the
         // PWA/app is already focused on this session (handled on-device).
@@ -1049,7 +1024,7 @@ export function createCompanionServer(port: number) {
             body: lastMessage.trim().slice(0, 220) || "Tap to respond",
             category: "waiting_input",
             threadId: cwd || "waiting_input",
-            userInfo: { cwd, sessionId: body.session_id ?? "", key: waitingKey },
+            userInfo: { cwd, sessionId: body.session_id ?? "", key: getWaiting().waitingKey },
           }).catch(() => { /* silent */ })
         }
         return Response.json({})
@@ -1230,9 +1205,7 @@ export function createCompanionServer(port: number) {
         const tag = target?.label ? ` → ${target.label}` : " → frontmost"
         process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"\n`)
 
-        waitingForInput = false
-        waitingCwd = ""
-        waitingKey = ""
+        clearWaiting()
         broadcast({ type: "waiting_input", waiting: false })
 
         const ok = await injectText(text, target ?? undefined)
@@ -1495,9 +1468,7 @@ export function createCompanionServer(port: number) {
         return Response.json({
           pending: getPending().length,
           clients: clients.size,
-          waitingForInput,
-          waitingCwd,
-          waitingKey,
+          ...getWaiting(),
           sessions: listSessions(),
           dialogs: dialogWatcher.current(),
           host: HOST_INFO,
@@ -1619,9 +1590,7 @@ export function createCompanionServer(port: number) {
         ws.send(JSON.stringify({
           type: "init",
           pending: pendingList.length,
-          waitingForInput,
-          waitingCwd,
-          waitingKey,
+          ...getWaiting(),
           activity: getActivity(),
           feed: getFeed(),
           sessions: listSessions(),
@@ -1688,9 +1657,7 @@ export function createCompanionServer(port: number) {
                 } catch { /* ignore */ }
                 break
               }
-              waitingForInput = false
-              waitingCwd = ""
-              waitingKey = ""
+              clearWaiting()
               broadcast({ type: "waiting_input", waiting: false })
               const ok = await injectText(msg.text.trim(), target ?? undefined)
               if (!ok) {
