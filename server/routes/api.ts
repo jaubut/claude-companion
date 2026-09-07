@@ -23,8 +23,6 @@ import {
   getWaiting,
 } from "../state"
 import { dialogWatcher } from "../wiring/dialogs"
-import { handleDialogRoute } from "../routes/dialogs"
-import { handleOrchestratorRoute } from "../routes/orchestrator"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
 // push debug, generic broadcast, inject, learned-allow, SUPER toggle, spawn,
@@ -291,10 +289,6 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ ok: true, app: result.app, cwd, agent })
   }
 
-  {
-    const handled = await handleOrchestratorRoute(req, url)
-    if (handled) return handled
-  }
 
   // ── Status endpoint ──
   if (url.pathname === "/api/status") {
@@ -308,10 +302,6 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     })
   }
 
-  {
-    const handled = await handleDialogRoute(req, url)
-    if (handled) return handled
-  }
 
   // ── Debug: dump current feed ──
   if (url.pathname === "/api/feed") {
