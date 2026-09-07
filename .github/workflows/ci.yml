@@ -24,7 +24,7 @@ jobs:
         run: cd client && bun install --frozen-lockfile
 
       - name: Typecheck server
-        run: bunx tsc --noEmit
+        run: bunx tsc --noEmit -p tsconfig.server.json
 
       - name: Typecheck + build client
         run: cd client && bunx tsc -b && bun run build
