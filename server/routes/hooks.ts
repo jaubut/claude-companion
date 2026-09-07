@@ -26,13 +26,13 @@ import {
   setSessionTitle,
 } from "../lib/sessions"
 import {
-  type Verdict,
   forgetSession,
   recordToolEnd,
   recordToolStart,
   recordTurnEnd,
   recordUserPrompt,
 } from "../lib/activity"
+import { type Verdict } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"

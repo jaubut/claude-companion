@@ -19,40 +19,7 @@
 
 import { readFileSync } from "node:fs"
 import { verbFor, summarize, extractToolResult, clampLong } from "./tool-format"
-
-export type EventKind =
-  | "user_prompt"
-  | "assistant_text"
-  | "tool_start"
-  | "tool_end"
-  | "turn_end"
-
-export type Verdict = "auto-allow" | "auto-deny" | "approved" | "denied" | "pending"
-
-export interface FeedEvent {
-  id: string
-  ts: number
-  kind: EventKind
-  // Optional public session key when a producer can resolve it exactly.
-  // Hook-fed events usually carry tty/sessionId/cwd and let clients resolve
-  // against the current sessions table; log-fed imports can often name the
-  // final key directly.
-  key?: string
-  tool?: string
-  summary?: string
-  verdict?: Verdict
-  durationMs?: number
-  text?: string
-  cwd?: string
-  tty?: string
-  sessionId?: string
-  // Bash + similar — first non-empty lines of stdout/stderr after the
-  // tool ran. Capped at ~200 chars so the feed message stays small.
-  outputExcerpt?: string
-  // True when the tool wrote to stderr (not necessarily a non-zero
-  // exit, but a useful "something went sideways" signal for the badge).
-  errored?: boolean
-}
+import { appendFeedEvent, pruneFeedForSession, type FeedEvent, type Verdict } from "./feed"
 
 export interface Activity {
   verb: string
@@ -98,12 +65,12 @@ interface PathState {
   streamedThisTurn: boolean
 }
 
-const feed: FeedEvent[] = []
-const FEED_CAP = 200
-
 // One activity pill is shown at a time (the most recently active session).
 // Events, however, are always tagged with precise per-session identity.
 let activity: Activity | null = null
+
+type ActivityListener = (act: Activity | null) => void
+const activityListeners = new Set<ActivityListener>()
 
 const states = new Map<string, PathState>()
 
@@ -190,47 +157,13 @@ function stopPollIfIdle(): void {
   pollTimer = null
 }
 
-type Listener = (ev: FeedEvent) => void
-type ActivityListener = (act: Activity | null) => void
-type FeedResetListener = (removedIds: string[]) => void
-const feedListeners = new Set<Listener>()
-const activityListeners = new Set<ActivityListener>()
-const feedResetListeners = new Set<FeedResetListener>()
-
-export function onFeed(fn: Listener): () => void {
-  feedListeners.add(fn)
-  return () => feedListeners.delete(fn)
-}
-
 export function onActivity(fn: ActivityListener): () => void {
   activityListeners.add(fn)
   return () => activityListeners.delete(fn)
 }
 
-export function onFeedReset(fn: FeedResetListener): () => void {
-  feedResetListeners.add(fn)
-  return () => feedResetListeners.delete(fn)
-}
-
-export function getFeed(): FeedEvent[] {
-  return feed.slice()
-}
-
 export function getActivity(): Activity | null {
   return activity
-}
-
-function emit(ev: FeedEvent): void {
-  if (feed.some((existing) => existing.id === ev.id)) return
-  feed.push(ev)
-  if (feed.length > FEED_CAP) feed.splice(0, feed.length - FEED_CAP)
-  for (const fn of feedListeners) {
-    try { fn(ev) } catch { /* ignore */ }
-  }
-}
-
-export function appendFeedEvent(ev: FeedEvent): void {
-  emit(ev)
 }
 
 function setActivity(next: Activity | null): void {
@@ -267,7 +200,7 @@ export function recordToolStart(args: {
   if (!pollTimer) startPoll()
   s.toolStarts.set(toolKey(args.tool, args.input), now)
 
-  emit({
+  appendFeedEvent({
     id: crypto.randomUUID(),
     ts: now,
     kind: "tool_start",
@@ -307,7 +240,7 @@ export function recordToolEnd(args: {
 
   const result = extractToolResult(args.tool, args.toolResponse)
 
-  emit({
+  appendFeedEvent({
     id: crypto.randomUUID(),
     ts: now,
     kind: "tool_end",
@@ -344,7 +277,7 @@ export function recordUserPrompt(args: {
   s.seenAssistantText.clear()
   s.streamedThisTurn = false
 
-  emit({
+  appendFeedEvent({
     id: crypto.randomUUID(),
     ts: now,
     kind: "user_prompt",
@@ -427,7 +360,7 @@ export async function recordTurnEnd(args: {
     }
   }
 
-  emit({
+  appendFeedEvent({
     id: crypto.randomUUID(),
     ts: now,
     kind: "turn_end",
@@ -461,29 +394,7 @@ export function forgetSession(meta: SessionMeta): void {
       (meta.sessionId && activity.sessionId === meta.sessionId)
     if (stale) setActivity(null)
   }
-  // Prune feed events that originated from this session — otherwise the
-  // phone replays a dead conversation when the user spawns a fresh chat.
-  // Match on tty / sessionId only; cwd alone is too weak (two windows can
-  // share a cwd, dropping events for the wrong session).
-  if (meta.tty || meta.sessionId) {
-    const removed: string[] = []
-    for (let i = feed.length - 1; i >= 0; i--) {
-      const ev = feed[i]
-      if (!ev) continue
-      const hit =
-        (meta.tty && ev.tty === meta.tty) ||
-        (meta.sessionId && ev.sessionId === meta.sessionId)
-      if (hit) {
-        removed.push(ev.id)
-        feed.splice(i, 1)
-      }
-    }
-    if (removed.length > 0) {
-      for (const fn of feedResetListeners) {
-        try { fn(removed) } catch { /* ignore */ }
-      }
-    }
-  }
+  pruneFeedForSession(meta)
   stopPollIfIdle()
 }
 
@@ -532,7 +443,7 @@ function readTranscriptDelta(
       if (s.seenAssistantText.has(key)) continue
       s.seenAssistantText.add(key)
       if (opts.silent) continue
-      emit({
+      appendFeedEvent({
         id: crypto.randomUUID(),
         ts: Date.now(),
         kind: "assistant_text",
