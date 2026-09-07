@@ -211,7 +211,7 @@
         },
         {
           "path": "lib/dialog-watch.ts",
-          "lines": 110,
+          "lines": 113,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -233,7 +233,7 @@
         },
         {
           "path": "lib/dialogs.ts",
-          "lines": 168,
+          "lines": 175,
           "kind": "lib",
           "exports": [
             "DialogItem",

@@ -31,6 +31,145 @@ Last updated: 2026-09-07
 
 ## Change Plans
 
+### Change Plan — split-activity (2026-09-07)
+**Request:** Split `server/lib/activity.ts` (681 lines: 200-cap event feed, live activity pill, 1.5 s transcript poll, token accounting, assistant-text streaming, the turn-end retry that catches late-flushed closing blocks, and the feed/activity/feed-reset listener sets) into modules under the 600 cap. Every contract unchanged — same export names/signatures for `routes/hooks.ts`, `routes/api.ts`, `wiring/events.ts`, `lib/codex-feed.ts`, `ws.ts`; same `event` / `activity` / `feed_pruned` frames; same feed shapes; same turn-end retry behaviour. Mechanical move, no redesign.
+**Done when:**
+- archmap shows **no ⚠ under server** (`lib/activity.ts` was the last one); every new module < 600.
+- `bun test` 51/51 green; route/WS/stderr smoke diff vs the pre-split baseline is empty.
+- Long-answer regression check green: a streamed turn whose closing block flushes *after* Stop still reaches the feed as `assistant_text`.
+
+**State decisions**
+- `feed` (200-cap `FeedEvent[]`) + `feedListeners` + `feedResetListeners`: live in **`lib/feed.ts`**. Mutated only by `appendFeedEvent()` (id-dedupe + FEED_CAP splice) and the moved prune block, now `pruneFeedForSession(meta): void` (private to feed.ts, called by `forgetSession`). Announced by `event` (onFeed) / `feed_pruned` (onFeedReset) via `wiring/events.ts`. Persistence: none (in-memory, unchanged).
+- `activity` pill + `activityListeners` + `pollTimer`: stay in **`lib/activity.ts`**. Mutated only by private `setActivity()` — called by the 4 recorders, the 1.5 s heartbeat and `forgetSession`. Announced by `activity`. Persistence: none.
+- `states` Map (per-transcript `PathState`) + `keyFor` + `getState` (incl. weak-key migration) + `identityFor`: move to **`lib/transcript.ts`** — the state is keyed by transcript path and the delta reader is its main mutator (`lastTokens`, `seenAssistantText`, `streamedThisTurn`). Recorders in activity.ts keep mutating `turnStartedAt` / `toolStarts` / turn resets through the record they get from `getState()`. Two new internal exports, no external consumer: `activeStates()` (poll iteration) and `forgetStates(meta)` (drop on session end). Persistence: none.
+- Pure formatters (`summarize`, `verbFor`, `isShellTool`, `extractToolResult`, `stripAnsi`, `clampLong`) move to **`lib/tool-format.ts`** — zero state, only import is `isQuestionTool` from `questions.ts` (which imports nothing → no cycle).
+- **No barrel re-export from `activity.ts`.** A façade would be a back-compat shim (global rule). The 5 importers get their import lines rewritten to the new owner; export names and signatures are byte-identical. Archmap fan-in owners change (`summarize()` → `lib/tool-format.ts`, `getFeed()` → `lib/feed.ts`) — expected map churn, not a contract change.
+
+**Contracts touched** (from architecture.md) — no shape changes anywhere
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `event` `activity` `feed_pruned` | frame | none — still emitted by `wiring/events.ts`; only the module its `onFeed`/`onFeedReset`/`onActivity` import resolves to changes | client/hooks/use-companion.ts, ios/WSFrame.swift (`event`,`activity`) | identical |
+| `* /api/feed`, `* /ws` init | endpoint/frame | none — `getFeed()`/`getActivity()` keep shape (`getFeed` still returns a copy) | routes/api.ts, ws.ts | identical |
+| `summarize()` | export | file moves to `lib/tool-format.ts` | lib/codex-feed.ts, wiring/events.ts, routes/hooks.ts#POST /hooks/pre-tool-use, #POST /hooks/permission-request | same signature |
+| `getFeed()` `appendFeedEvent()` `onFeed()` `onFeedReset()` + types `FeedEvent` `EventKind` `Verdict` | export | file moves to `lib/feed.ts` | routes/api.ts#* /api/feed, ws.ts, lib/codex-feed.ts, wiring/events.ts, routes/hooks.ts (`Verdict`) | same signatures |
+| `getActivity()` `onActivity()` `recordToolStart/End()` `recordUserPrompt()` `recordTurnEnd()` `forgetSession()` + type `Activity` | export | stay in `lib/activity.ts` | routes/api.ts, routes/hooks.ts, ws.ts, wiring/events.ts | unchanged |
+| iOS TestFlight build + React client | — | zero code change | — | untouched |
+
+**Files — one owner each** (all builder; sequenced, never two open at once)
+| file | change | lines now → after cap check |
+|---|---|---|
+| `server/lib/tool-format.ts` | NEW, pure moves: `summarize`, `verbFor`, `isShellTool`, `extractToolResult`, `stripAnsi` + `ANSI_PATTERN`, `clampLong` (shared by transcript.ts and activity.ts) | 0 → ~130 ✓ |
+| `server/lib/feed.ts` | NEW: `EventKind`/`Verdict`/`FeedEvent` types, `feed`, `FEED_CAP`, `emit`→`appendFeedEvent`, `getFeed`, `onFeed`, `onFeedReset`, `pruneFeedForSession` | 0 → ~100 ✓ |
+| `server/lib/transcript.ts` | NEW: `SessionMeta`, `PathState`, `states`, `keyFor`, `getState`, `identityFor`, `activeStates`, `forgetStates`, `readTranscriptDelta` (**keeps `: number` return**), `hashText` | 0 → ~175 ✓ |
+| `server/lib/activity.ts` | keeps: `Activity`, pill + `setActivity`/`getActivity`/`onActivity`, `POLL_MS`/`startPoll`/`stopPollIfIdle`, `toolKey`, `activityMatches`, `recordToolStart/End`, `recordUserPrompt`, `recordTurnEnd` (retry verbatim), `forgetSession` | 681 → ~315 ✓ |
+| `server/routes/hooks.ts` | import line only: `Verdict`←feed, `summarize`←tool-format, recorders+`forgetSession`←activity | 555 → 557 ✓ |
+| `server/routes/api.ts` | import line only: `getFeed`←feed | 316 → 317 ✓ |
+| `server/wiring/events.ts` | import line only: `onFeed`/`onFeedReset`/`FeedEvent`←feed, `summarize`←tool-format, `onActivity`←activity | 108 → 110 ✓ |
+| `server/lib/codex-feed.ts` | import line only: `appendFeedEvent`/`FeedEvent`←feed, `summarize`←tool-format (no longer imports activity at all) | 354 → 355 ✓ |
+| `server/ws.ts` | import line only: `getFeed`←feed, `getActivity`←activity | 132 → 133 ✓ |
+| `server/lib/transcript.test.ts` | NEW, last commit, own step: delta returns emitted-count, dedupe by `hashText`, `silent` primes without emitting, token high-water | 0 → ~90 ✓ |
+
+**Move order** (server boots + `bun test` + smoke diff after every step; one commit per step)
+1. `lib/tool-format.ts` — pure leaf, no state, no timers. activity.ts imports it back. Update `codex-feed.ts` / `routes/hooks.ts` / `wiring/events.ts` for `summarize`. **After this step activity.ts is ~545 → already under the cap**, so every later step is optional-safe.
+2. `lib/feed.ts` — feed store + event types + prune. activity.ts calls `appendFeedEvent` where it called `emit`; `forgetSession` calls `pruneFeedForSession`. Update `ws.ts`, `routes/api.ts`, `wiring/events.ts`, `codex-feed.ts`, `routes/hooks.ts` (`Verdict`). activity.ts → ~420.
+3. `lib/transcript.ts` — state map + delta reader. activity.ts imports `getState`, `identityFor`, `activeStates`, `forgetStates`, `readTranscriptDelta`. activity.ts → ~315.
+4. Regenerate archmap; confirm server ⚠ list is empty and 19 frames / 30 endpoints / 7 hooks still listed.
+5. `lib/transcript.test.ts` (51 → 54). The 51 must be green before this commit lands, so a failure here is provably the new test, never the move.
+
+Dependency direction is a DAG: `tool-format` (leaf) ← `feed` (leaf) ← `transcript` ← `activity`. No module under `lib/` imports `activity.ts` after step 3.
+
+**Fan-in paths to guard**
+- `summarize()` — 4 call sites (codex-feed import-time helper, wiring/events push title, `#POST /hooks/pre-tool-use`, `#POST /hooks/permission-request`). Pure; the `isQuestionTool` branch must keep firing first or question rows lose their text.
+- `recordToolStart()` — `#POST /hooks/pre-tool-use` + `#POST /hooks/permission-request` fire as a pair for one AskUserQuestion (STATE learning). Today that emits two `tool_start` events (ids are fresh UUIDs, so `emit`'s id-dedupe does not collapse them) and sets the same `toolStarts` key twice. **Keep that exactly** — do not "fix" it into a dedupe during the move.
+- `appendFeedEvent()` — codex-feed supplies its own stable ids; the id-dedupe inside `emit` is what makes a re-read of a rollout file idempotent against its `offsets` Map. Must stay inside feed.ts, first line of the function.
+- `recordUserPrompt()` — `/api/inject` and `#POST /hooks/user-prompt-submit`. Stays the only turn-boundary reset (`turnStartedAt`, `lastTokens=0`, `toolStarts.clear()`, `seenAssistantText.clear()`, `streamedThisTurn=false`) and the only `silent:true` delta read.
+- `getFeed()`/`getActivity()` — `* /api/feed` and WS `init`. Same two keys in the init frame, same order.
+- `forgetSession()` — `#POST /hooks/session-end` only, but now fans out to three modules (`forgetStates` → `setActivity(null)` → `pruneFeedForSession` → `stopPollIfIdle`). Order must stay as written: prune fires `feed_pruned` after the pill is cleared.
+
+**Risks**
+- **Long-answer regression (the one that matters).** `recordTurnEnd`'s retry depends on `readTranscriptDelta` returning the count of *non-silent* emits and on `s.streamedThisTurn = true` being set **inside** the reader. If the move drops the return type to `void`, or lifts the `streamedThisTurn` flip into activity.ts, the 250 ms × 4 s loop silently no-ops and long closing answers vanish again (memory: companion known bugs, "Long answers never reached phone"). Mitigation: return type is named in the files table, step 5's test pins it, and Verify 5 exercises it end to end.
+- Type-only import cycle if `PathState` were left in activity.ts. Mitigation: `PathState`/`SessionMeta` move with the states Map; grep guard in Verify 6.
+- Module-eval side effects: none of the three new files may start a timer at import. `pollTimer` stays lazy (first `recordToolStart`/`recordUserPrompt`). Guard: `grep -n "setInterval" server/lib/{feed,transcript,tool-format}.ts` → empty.
+- `clampLong` has two callers after the split (transcript `assistant_text`, activity `user_prompt` + `turn_end`) with different caps (64 000 / 16 000 / 64 000). Copy the call sites, not the constant.
+- Map blind spot: archmap's `state:` column attributes module-level state per file; after the move re-read the server table and confirm `feed`/`states`/`activity`/`pollTimer` are each listed under exactly one module. If a Set/Map shows under two, that's a duplicated declaration, not an adapter bug.
+
+**Verify**
+1. `bun test` → 51 pass / 0 fail / 208 expects / 8 files (baseline today), after every step. After step 5: 54 pass / 9 files.
+2. `bunx tsc --noEmit -p tsconfig.json 2>&1 | grep -E '^server/'` → only the pre-existing `keyboard-inject.ts:385` error (baseline), nothing new.
+3. `wc -l server/lib/*.ts server/routes/*.ts server/wiring/*.ts server/*.ts | sort -n | tail -3` → max < 600; `bun run ~/.claude/tools/archmap/cli.ts . --quiet` → **server section has no ⚠**, and still 19 frames / 30 endpoints / 7 hook routes.
+4. Route + WS + stderr smoke, same fixture as the split-companion-server plan (port 4299, scratch `COMPANION_DB_PATH`), captured BEFORE step 1: `/api/feed` (`{feed:[],activity:null}`), `/api/status`, hooks `user-prompt-submit` → `user_prompt` frame, `post-tool-use`, `session-end`; WS `init` key set. `diff before.out after.out` and `diff before.err after.err` empty after every step.
+5. **Long-answer regression, scripted (no phone needed):** on the test port, POST `user-prompt-submit` with a `transcript_path` pointing at a scratch JSONL; append one assistant text block, wait ~2 s so the 1.5 s poll emits it (`streamedThisTurn = true`); POST `/hooks/stop` with `finalText` empty and the same transcript path; **then**, ~1 s later, append a second 3 500-char assistant block. `GET /api/feed` within 5 s must contain that block as `kind:"assistant_text"` with full length, and exactly one `turn_end` with no `text`. Run it against `main` first — it must pass before and after.
+6. Grep guards: `grep -rn "from \"./activity\"" server/lib` → empty; `grep -rn "let activity\|const feed\b\|const states" server` → one hit each, in the owning module.
+7. Real e2e on the Mac after merge: one long tool-heavy turn (≥3 000-char closing answer) in a live session → the closing block lands on the phone; one `/api/inject` prompt → `user_prompt` row; one session close → `feed_pruned` drops only that session's rows.
+
+**Out of scope:** `client/app.tsx` (906) and the iOS over-cap files; any change to the feed cap, poll interval, retry window, dedupe policy or clamp sizes; merging codex-feed's `summarizeCodexTool` with `summarize`; persisting the feed; new route/frame/log lines; the duplicate `tool_start` on the PreToolUse+PermissionRequest pair (documented above, deliberately preserved).
+
+### Change Plan — split-client-app (2026-09-07)
+**Request:** Split `client/src/app.tsx` (906 lines: layout, session picker, feed rendering, approval card, tool-call summaries, composer, spawn-session form, sound toggle) into components under the 600 cap. No behaviour or visual change: same WS frames (via `hooks/use-companion.ts`, untouched), same `/api/spawn-session` call, same DOM/classes. Mechanical move, no new deps.
+**Done when:**
+- every `client/src/**` module < 600 lines; archmap client target shows no ⚠
+- `bun run build` (client, = `vite build`) green + `bunx tsc -b` clean; built `dist/` loads through the server's static handler on an isolated port
+- className inventory and `dist/index.html` (modulo asset hashes) identical before/after
+
+**State decisions**
+- All shared state stays the `useCompanion()` return value, called **exactly once, in `App`**, passed down as props. No context, no second call — the hook opens the `/ws` socket in a mount effect, so a second call = a second WebSocket. Persistence: none (hook-internal `localStorage` untouched).
+- `picking` (picker open) stays **lifted in `app.tsx`**: `TargetBar` renders the picker, `Composer`'s input `onFocus` closes it. Passed as `picking` + `onTogglePick`/`onFocusInput`.
+- Pushed **down** with their only consumer (nothing else reads them today): `text`/`listening`/`history`/`suggestionsOpen`/`recognitionRef` → `Composer`; `pinned`/`scrollRef` → `TerminalFeed`; `now` → `ActivityPill`; `spawning`/`spawnCwd`/`spawnBusy`/`spawnError` → `SpawnSession` (one level down from `TargetBar`). Reset-on-close behaviour is preserved because the whole `{picking && …}` subtree still unmounts.
+- `companion.history` localStorage key + shape unchanged, owner moves to `Composer`.
+
+**Contracts touched** (from architecture.md) — no shape changes anywhere
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `sessions` `activity` `event` `feed_pruned` `approval` `resolved` `waiting_input` `inject_error` `init` `pong` | frame | none — `hooks/use-companion.ts` is not edited | client/hooks/use-companion.ts, ios/WSFrame.swift | identical |
+| `POST /api/spawn-session` | endpoint | same request/response; **caller file moves** `client/app.tsx` → `client/components/spawn-session.tsx` (map row will change) | server/routes/api.ts, ios/CompanionClient.swift | identical |
+| `App` named export at `client/src/app.tsx` | export | must keep name + path — `main.tsx` does `import { App } from "./app"` | client/main.tsx | identical |
+| `unlockAudio()` from `lib/alert-sound.ts` | export | fan-out grows: called from `Composer`, `StatusBar`, and `app.tsx` approve/deny | client/lib/alert-sound.ts | additive |
+
+**Files — one owner each** (all builder, sequential; no parallel workstreams — every step edits `app.tsx`)
+| file | change | lines now → after cap check |
+|---|---|---|
+| `client/src/lib/format.ts` | NEW: `hashHue`, `shortKey`, `formatTime`, `formatElapsed`, `formatDuration`, `formatTokens`, `truncate` | 0 → ~50 ✓ |
+| `client/src/lib/tool-summary.ts` | NEW: `TOOL_ICONS` + `getToolSummary` (fan-in: ApprovalCard + FeedLine) | 0 → ~45 ✓ |
+| `client/src/components/session-badge.tsx` | NEW: `SessionDot` + `SessionBadge` (used by pill, feed, approval) | 0 → ~80 ✓ |
+| `client/src/components/activity-pill.tsx` | NEW: `ActivityPill` | 0 → ~50 ✓ |
+| `client/src/components/feed-line.tsx` | NEW: `FeedLine` + `VerdictBadge` (the 5 `ev.kind` branches verbatim) | 0 → ~120 ✓ |
+| `client/src/components/terminal-feed.tsx` | NEW: `TerminalFeed` (scroll pin + "Latest" + empty state) | 0 → ~65 ✓ |
+| `client/src/components/approval-card.tsx` | NEW: `ApprovalCard` | 0 → ~65 ✓ |
+| `client/src/components/spawn-session.tsx` | NEW: `DEFAULT_SPAWN_CWDS`, `spawnClaudeSession()`, `SpawnSession` — returns a **fragment** (the "+ New Claude session" button then `{spawning && form}`), same two adjacent siblings in the same parent → identical DOM. Derives `spawnSuggestions` from `sessions` prop | 0 → ~90 ✓ |
+| `client/src/components/target-bar.tsx` | NEW: `TargetBar` minus the spawn block; zero hooks after the move, so the `return null` early exit is safe | 0 → ~130 ✓ |
+| `client/src/components/composer.tsx` | NEW: `Composer` — history + suggestion chips + speech recognition + input row + send; carries the `declare global { interface Window { SpeechRecognition… } }` block with it | 0 → ~155 ✓ |
+| `client/src/components/status-bar.tsx` | NEW: `StatusBar` — connection dot, status word, "N queued", sound toggle (the only settings affordance) | 0 → ~40 ✓ |
+| `client/src/app.tsx` | keeps: `useCompanion()` call, `picking`, the inject-error banner (13 lines, stays inline), layout + composition | 906 → ~95 ✓ |
+| `client/src/hooks/use-companion.ts` | untouched | 399 ✓ |
+
+**Move order** (build green between every step; imports use the existing `@/` alias from vite.config.ts + tsconfig.app.json)
+1. `lib/format.ts` → 2. `lib/tool-summary.ts` → 3. `session-badge` → 4. `activity-pill` → 5. `feed-line` → 6. `terminal-feed` → 7. `approval-card` → 8. `spawn-session` → 9. `target-bar` → 10. `composer` → 11. `status-bar` → 12. final `app.tsx` cleanup (dead imports).
+Leaves first, composites after; each step is cut → import back → `bun run build` + `bunx tsc -b`. One commit per step so a visual regression bisects to a single component.
+
+**Fan-in paths to guard**
+- `App` is reached only from `client/src/main.tsx` — name and path are frozen.
+- `TOOL_ICONS` is reached from `FeedLine` (tool_start) and `ApprovalCard`; `getToolSummary` only from `ApprovalCard`. One owner: `lib/tool-summary.ts` — do not duplicate the icon map.
+- `SessionBadge` has three call sites with different affordances (`onClick` present = 44px button, absent = compact span). Keep the prop optional; passing `onClick` unconditionally silently changes ActivityPill/ApprovalCard markup.
+- `hashHue`/`shortKey` are reached from `TargetBar`, `SessionDot`, `SessionBadge` — single owner `lib/format.ts`.
+
+**Risks**
+- `bun run build` is bare `vite build` — **it does not typecheck**. A broken prop type ships silently. → run `bunx tsc -b` in `client/` at every step, not just at the end.
+- Tailwind v4 scans source files; classes now live in new paths. A missed file = missing styles with a green build. → diff the built CSS selector set before/after (verify 3).
+- The spawn form's fragment shape is the one place where a wrapper `<div>` would change layout (it sits inside the picker's `space-y-0.5` flow). → assert no extra wrapper element.
+- A second server instance on the isolated port shares the real hook/watcher singletons (activity poller, dialog watcher, APNs fan-out). → keep the test window to seconds and kill it; do not run it while a live session is ending.
+- No client tests exist — the only regression net is the build + the two diffs below. Accepted for a mechanical move; not a place to also "improve" anything.
+- Map blind spot: none found for this change. The archmap react-client adapter does record client `fetch` call sites (it caught `/api/spawn-session`), and `use-companion.ts` uses WS only — the `calls:` gap on it is correct, not a miss.
+
+**Verify**
+1. Baseline before touching anything: `cd client && bun run build && cp -R dist /tmp/dist-before` → note the `assets/*.js|css` names.
+2. After each step: `cd client && bun run build && bunx tsc -b` → both exit 0.
+3. Final CSS/class proof: `grep -ohE 'className=(\"[^\"]*\"|\{`[^`]*`\})' <old app.tsx from git> | sort -u` vs the same over `src/app.tsx src/components/*.tsx` → empty diff; and sorted CSS selectors of `/tmp/dist-before/assets/*.css` vs the new one → empty diff.
+4. Served-bundle load on an isolated port: `bun -e 'const m = await import("/Users/jeremieaubut/claude-companion/server/companion-server.ts"); m.createCompanionServer(4299)'` then `curl -s localhost:4299/ -o /tmp/index-after.html` → 200 HTML; `diff /tmp/dist-before/index.html /tmp/index-after.html` differs only in asset hashes; `curl -sI localhost:4299/assets/<new-hash>.js` → 200 + `Cache-Control: public, max-age=31536000, immutable`; `curl -s localhost:4299/nope` → SPA fallback HTML. Kill the process.
+5. `bun test` at repo root still 50/50 (server untouched — regression guard only).
+6. `bun run ~/.claude/tools/archmap/cli.ts . --quiet` → client target lists 13 modules, no ⚠, and `/api/spawn-session` now shows `client/components/spawn-session.tsx` as caller.
+
+**Out of scope:** `hooks/use-companion.ts` (not edited, not split), any frame/endpoint shape change, the iOS app, `server/lib/activity.ts` (681, pre-existing ⚠), adding client tests, any styling/UX/mobile change, new deps, PWA/manifest/service-worker work.
+
 ### Change Plan — split-companion-server (2026-09-07) — ✅ shipped (branch refactor/split-companion-server, 10 commits)
 **Request:** Split `server/companion-server.ts` (1714 lines: all HTTP routes, hook endpoints, WS upgrade/init/message, orchestrator wiring, dialog-mirror wiring) into route/wiring modules, no server file over 600 lines, every contract unchanged (WS frame names/shapes, endpoints + methods, hook responses, auth gate, log lines). iOS TestFlight build 4 + React client untouched. Mechanical move — the only dedupe is the AskUserQuestion fast path shared by PreToolUse and PermissionRequest.
 **Done when:**
