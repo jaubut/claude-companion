@@ -90,9 +90,12 @@ test("/mcp list: un-numbered rows, cursor, more marker, arrow hints", () => {
   expect(d.hints.map((h) => h.key)).toEqual(["Up", "Down", "Enter", "Escape"])
 })
 
-test("AskUserQuestion picker parses too (rows below the tab bar)", () => {
+test("AskUserQuestion picker parses too (rows below the tab bar) and is tagged as a question", () => {
   const d = parseDialog(QUESTION)!
   expect(d).not.toBeNull()
+  expect(d.kind).toBe("question")
+  expect(parseDialog(MODEL)!.kind).toBe("dialog")
+  expect(parseDialog(MCP)!.kind).toBe("dialog")
   expect(d.numbered).toBe(true)
   expect(d.items.map((i) => i.number)).toEqual([1, 2, 3, 4, 5])
   expect(d.items[0]).toMatchObject({ cursor: true, text: "Red Red" })
