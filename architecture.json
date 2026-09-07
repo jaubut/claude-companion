@@ -1,0 +1,2543 @@
+{
+  "generatedAt": "2026-09-07",
+  "repo": "claude-companion",
+  "targets": [
+    {
+      "name": "server",
+      "adapter": "bun-server",
+      "root": "server",
+      "cap": 600,
+      "modules": [
+        {
+          "path": "companion-server.ts",
+          "lines": 1714,
+          "kind": "route-host",
+          "exports": [
+            "createCompanionServer"
+          ],
+          "state": [
+            "clients: Set",
+            "let waitingForInput",
+            "let waitingCwd",
+            "let waitingKey"
+          ],
+          "emits": [
+            "orchestrator",
+            "orchestrator_task",
+            "orchestrator_channel",
+            "approval",
+            "resolved",
+            "question",
+            "event",
+            "feed_pruned",
+            "activity",
+            "dialog",
+            "dialog_closed",
+            "orchestrator_worker_output",
+            "sessions",
+            "waiting_input",
+            "user_prompt",
+            "super_auto",
+            "init",
+            "inject_error",
+            "pong"
+          ],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "*",
+              "path": "/hooks/",
+              "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/health",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/ws",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/",
+              "prefix": true
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/pre-tool-use",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/post-tool-use",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/user-prompt-submit",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/permission-request",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/stop",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/resolve",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/answer",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/register-token",
+              "prefix": false
+            },
+            {
+              "method": "DELETE",
+              "path": "/api/register-token",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/push/tokens",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/push/test",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/push/broadcast",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/inject",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/learned",
+              "prefix": false
+            },
+            {
+              "method": "DELETE",
+              "path": "/api/learned",
+              "prefix": false
+            },
+            {
+              "method": "DELETE",
+              "path": "/api/learned/",
+              "prefix": true
+            },
+            {
+              "method": "GET",
+              "path": "/api/super-auto",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/super-auto",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/spawn-session",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/orchestrator/channels",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/channels",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/channels/",
+              "prefix": true
+            },
+            {
+              "method": "GET",
+              "path": "/api/orchestrator/thread",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/send",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/dispatch",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/task/",
+              "prefix": true
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/proposal/",
+              "prefix": true
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/session-start",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/session-end",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/status",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/dialog/key",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/dialog/pick",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/feed",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/pty-manager.ts",
+            "lib/questions.ts",
+            "lib/branch-guard.ts",
+            "lib/keyboard-inject.ts",
+            "lib/question-driver.ts",
+            "lib/session-titles.ts",
+            "lib/dialog-watch.ts",
+            "lib/dialogs.ts",
+            "lib/spawn-session.ts",
+            "lib/super-auto.ts",
+            "lib/learned-allow.ts",
+            "lib/sessions.ts",
+            "lib/activity.ts",
+            "lib/push-tokens.ts",
+            "lib/apns.ts",
+            "lib/push.ts",
+            "lib/auth.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/worker-tail.ts",
+            "lib/orchestrator-queue.ts"
+          ],
+          "listeners": [
+            "onApprovalRequest",
+            "onApprovalExpired",
+            "onQuestionRequest",
+            "onQuestionExpired",
+            "onFeed",
+            "onFeedReset",
+            "onActivity",
+            "dialogWatcher.start",
+            "setInterval",
+            "onSessions"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "lib/activity.ts",
+          "lines": 681,
+          "kind": "lib",
+          "exports": [
+            "EventKind",
+            "Verdict",
+            "FeedEvent",
+            "Activity",
+            "onFeed",
+            "onActivity",
+            "onFeedReset",
+            "getFeed",
+            "getActivity",
+            "appendFeedEvent",
+            "recordToolStart",
+            "recordToolEnd",
+            "recordUserPrompt",
+            "recordTurnEnd",
+            "forgetSession",
+            "summarize"
+          ],
+          "state": [
+            "let activity",
+            "states: Map",
+            "let pollTimer",
+            "feedListeners: Set",
+            "activityListeners: Set",
+            "feedResetListeners: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/questions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/apns.ts",
+          "lines": 242,
+          "kind": "lib",
+          "exports": [
+            "brokerConfigured",
+            "apnsConfigured",
+            "ApnsPayload",
+            "ApnsResult",
+            "closeApnsSessions",
+            "sendApns"
+          ],
+          "state": [
+            "let keyPromise",
+            "let cachedJwt",
+            "sessions: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/push-tokens.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/auth.ts",
+          "lines": 84,
+          "kind": "lib",
+          "exports": [
+            "getAuthToken",
+            "checkBearer",
+            "unauthorized"
+          ],
+          "state": [
+            "let cached"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/auto-judge.ts",
+          "lines": 199,
+          "kind": "lib",
+          "exports": [
+            "autoJudge"
+          ],
+          "state": [
+            "ALWAYS_SAFE_TOOLS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/learned-allow.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/branch-guard.ts",
+          "lines": 77,
+          "kind": "lib",
+          "exports": [
+            "judgeWithBranchContext"
+          ],
+          "state": [
+            "PROTECTED_BRANCHES: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auto-judge.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/codex-feed.ts",
+          "lines": 354,
+          "kind": "lib",
+          "exports": [
+            "startCodexFeedMonitor"
+          ],
+          "state": [
+            "offsets: Map",
+            "lineCounts: Map",
+            "callsByThread: Map",
+            "let timer"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/activity.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/dialog-watch.ts",
+          "lines": 110,
+          "kind": "lib",
+          "exports": [
+            "SessionStatus",
+            "DialogWatchDeps",
+            "DialogWatcher",
+            "createDialogWatcher"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dialogs.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/dialogs.ts",
+          "lines": 168,
+          "kind": "lib",
+          "exports": [
+            "DialogItem",
+            "DialogHint",
+            "Dialog",
+            "parseHints",
+            "parseDialog",
+            "dialogSignature",
+            "pickKeys"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/discover.ts",
+          "lines": 274,
+          "kind": "lib",
+          "exports": [
+            "discoverLiveClaudes"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/dotenv.ts",
+          "lines": 34,
+          "kind": "lib",
+          "exports": [
+            "loadDefaultDotEnv",
+            "loadDotEnv"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/keyboard-inject.ts",
+          "lines": 563,
+          "kind": "lib",
+          "exports": [
+            "InjectTarget",
+            "injectText",
+            "withPickerIO"
+          ],
+          "state": [
+            "let injectQueue"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/question-driver.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/learned-allow.ts",
+          "lines": 182,
+          "kind": "lib",
+          "exports": [
+            "patternFor",
+            "LearnedEntry",
+            "recordAllow",
+            "isLearned",
+            "listLearned",
+            "forgetLearned",
+            "clearLearned"
+          ],
+          "state": [
+            "db: Database",
+            "MULTI_VERB_BINARIES: Set",
+            "NEVER_LEARN: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/orchestrator-brain.ts",
+          "lines": 211,
+          "kind": "lib",
+          "exports": [
+            "BrainDecision",
+            "decide"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/orchestrator-chat.ts",
+          "lines": 410,
+          "kind": "lib",
+          "exports": [
+            "GENERAL_CHANNEL",
+            "TurnRole",
+            "TaskStatus",
+            "LIVE_STATUSES",
+            "Turn",
+            "Task",
+            "appendTurn",
+            "getThread",
+            "createTask",
+            "createQueuedTask",
+            "createProposal",
+            "setTaskSpawn",
+            "getTask",
+            "bindTaskSession",
+            "setTaskStatus",
+            "setTaskLogTail",
+            "matchUnboundTaskByCwd",
+            "findRunningTaskByCwd",
+            "listTasks",
+            "countLiveTasks",
+            "listQueued",
+            "ChannelTrust",
+            "AUTO_ELIGIBLE_STREAK",
+            "Channel",
+            "channelTrust",
+            "setChannelAuto",
+            "listChannels",
+            "getChannel",
+            "createChannel"
+          ],
+          "state": [
+            "db: Database"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/orchestrator-queue.ts",
+          "lines": 79,
+          "kind": "lib",
+          "exports": [
+            "DEFAULT_WIP_CAP",
+            "QueueDeps",
+            "Admission",
+            "Queue",
+            "createQueue"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/pty-manager.ts",
+          "lines": 91,
+          "kind": "lib",
+          "exports": [
+            "ApprovalRequest",
+            "addApprovalRequest",
+            "resolveApproval",
+            "getPending",
+            "onApprovalRequest",
+            "onApprovalExpired"
+          ],
+          "state": [
+            "pending: Map",
+            "expiryTimers: Map",
+            "handlers: Set",
+            "expiryHandlers: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/push-tokens.ts",
+          "lines": 48,
+          "kind": "lib",
+          "exports": [
+            "ApnsEnv",
+            "PushToken",
+            "registerToken",
+            "listTokens",
+            "removeToken",
+            "tokenCount"
+          ],
+          "state": [
+            "db: Database"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/push.ts",
+          "lines": 28,
+          "kind": "lib",
+          "exports": [
+            "PushDispatchResult",
+            "pushToAll"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/push-tokens.ts",
+            "lib/apns.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/question-driver.ts",
+          "lines": 181,
+          "kind": "lib",
+          "exports": [
+            "PickerIO",
+            "DriveResult",
+            "PICKER_READY_RE",
+            "REVIEW_RE",
+            "ANSWERED_RE",
+            "pickerRegion",
+            "driveQuestionPicker"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/questions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/questions.ts",
+          "lines": 202,
+          "kind": "lib",
+          "exports": [
+            "QuestionOption",
+            "QuestionItem",
+            "QuestionRequest",
+            "QuestionAnswer",
+            "addQuestionRequest",
+            "resolveQuestion",
+            "getPendingQuestions",
+            "onQuestionRequest",
+            "onQuestionExpired",
+            "isQuestionTool",
+            "parseQuestionInput",
+            "questionDedupeKey",
+            "markQuestionAnswered",
+            "wasQuestionAnswered"
+          ],
+          "state": [
+            "pending: Map",
+            "expiryTimers: Map",
+            "handlers: Set",
+            "expiryHandlers: Set",
+            "recentlyAnswered: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/rehydrate.ts",
+          "lines": 76,
+          "kind": "lib",
+          "exports": [
+            "rehydrateSessions"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/session-titles.ts",
+          "lines": 145,
+          "kind": "lib",
+          "exports": [
+            "TITLE_MAX",
+            "titleFromPrompt",
+            "rememberTitle",
+            "storedTitle",
+            "transcriptPath",
+            "titleFromTranscript",
+            "resolveTitle"
+          ],
+          "state": [
+            "db: Database"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/sessions.ts",
+          "lines": 435,
+          "kind": "lib",
+          "exports": [
+            "Session",
+            "ttyTag",
+            "RecordOptions",
+            "recordSession",
+            "setTitleResolver",
+            "setSessionStatus",
+            "setSessionTitle",
+            "processStartMs",
+            "getSessionByKey",
+            "resolveSession",
+            "removeSessionByCwd",
+            "removeSessionByKey",
+            "removeSessionByTty",
+            "listSessions",
+            "onSessions",
+            "metaFromHeaders"
+          ],
+          "state": [
+            "sessions: Map",
+            "listeners: Set",
+            "let pruneTimer",
+            "let titleResolver",
+            "resolvingTitle: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/spawn-session.ts",
+          "lines": 306,
+          "kind": "lib",
+          "exports": [
+            "SpawnApp",
+            "SpawnAgent",
+            "SpawnResult",
+            "spawnCompanionSession",
+            "spawnClaudeSession"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/super-auto.ts",
+          "lines": 75,
+          "kind": "lib",
+          "exports": [
+            "isSuperAuto",
+            "setSuperAuto",
+            "isCatastrophic"
+          ],
+          "state": [
+            "let cached"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/worker-tail.ts",
+          "lines": 120,
+          "kind": "lib",
+          "exports": [
+            "WorkerTailDeps",
+            "WorkerTailManager",
+            "createWorkerTailManager"
+          ],
+          "state": [
+            "LIVE_STATUSES: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        }
+      ],
+      "fanIn": {
+        "getTask": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /api/orchestrator/task/",
+            "companion-server.ts#POST /api/orchestrator/proposal/",
+            "lib/worker-tail.ts"
+          ]
+        },
+        "getChannel": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /api/orchestrator/task/"
+          ]
+        },
+        "onApprovalRequest": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "apnsConfigured": {
+          "module": "lib/apns.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /hooks/stop",
+            "companion-server.ts#POST /api/register-token",
+            "companion-server.ts#GET /api/push/tokens",
+            "lib/push.ts"
+          ]
+        },
+        "summarize": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request",
+            "lib/codex-feed.ts"
+          ]
+        },
+        "pushToAll": {
+          "module": "lib/push.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /hooks/stop",
+            "companion-server.ts#POST /api/push/test",
+            "companion-server.ts#POST /api/push/broadcast"
+          ]
+        },
+        "withPickerIO": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "driveQuestionPicker": {
+          "module": "lib/question-driver.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "onApprovalExpired": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "onQuestionRequest": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "onQuestionExpired": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "onFeed": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "onFeedReset": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "onActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "createDialogWatcher": {
+          "module": "lib/dialog-watch.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "getPendingQuestions": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#* /"
+          ]
+        },
+        "setSessionStatus": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "resolveTitle": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "setTitleResolver": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "createQueue": {
+          "module": "lib/orchestrator-queue.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "setTaskStatus": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /hooks/stop",
+            "companion-server.ts#POST /api/orchestrator/task/",
+            "companion-server.ts#POST /api/orchestrator/proposal/"
+          ]
+        },
+        "countLiveTasks": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "createWorkerTailManager": {
+          "module": "lib/worker-tail.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "listTasks": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "matchUnboundTaskByCwd": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "bindTaskSession": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "onSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "listSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /api/inject",
+            "companion-server.ts#* /api/status",
+            "companion-server.ts#* /api/feed",
+            "companion-server.ts#* /",
+            "lib/codex-feed.ts"
+          ]
+        },
+        "spawnCompanionSession": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#POST /api/spawn-session"
+          ]
+        },
+        "setTaskSpawn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "getThread": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts",
+            "companion-server.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "decide": {
+          "module": "lib/orchestrator-brain.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "createProposal": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "checkBearer": {
+          "module": "lib/auth.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "unauthorized": {
+          "module": "lib/auth.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "metaFromHeaders": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/post-tool-use",
+            "companion-server.ts#POST /hooks/user-prompt-submit",
+            "companion-server.ts#POST /hooks/permission-request",
+            "companion-server.ts#POST /hooks/stop",
+            "companion-server.ts#POST /hooks/session-end"
+          ]
+        },
+        "recordSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/post-tool-use",
+            "companion-server.ts#POST /hooks/user-prompt-submit",
+            "companion-server.ts#POST /hooks/permission-request",
+            "companion-server.ts#POST /hooks/stop",
+            "companion-server.ts#POST /hooks/session-start",
+            "lib/discover.ts",
+            "lib/rehydrate.ts"
+          ]
+        },
+        "isQuestionTool": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request",
+            "lib/activity.ts"
+          ]
+        },
+        "parseQuestionInput": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "questionDedupeKey": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "wasQuestionAnswered": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "recordToolStart": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "addQuestionRequest": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "markQuestionAnswered": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "isSuperAuto": {
+          "module": "lib/super-auto.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#GET /api/super-auto",
+            "companion-server.ts#* /"
+          ]
+        },
+        "isCatastrophic": {
+          "module": "lib/super-auto.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use"
+          ]
+        },
+        "judgeWithBranchContext": {
+          "module": "lib/branch-guard.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use"
+          ]
+        },
+        "addApprovalRequest": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "recordAllow": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/pre-tool-use",
+            "companion-server.ts#POST /hooks/permission-request"
+          ]
+        },
+        "recordToolEnd": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/post-tool-use"
+          ]
+        },
+        "titleFromPrompt": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "rememberTitle": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "setSessionTitle": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "recordUserPrompt": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/user-prompt-submit",
+            "companion-server.ts#POST /api/inject"
+          ]
+        },
+        "findRunningTaskByCwd": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/stop"
+          ]
+        },
+        "recordTurnEnd": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/stop"
+          ]
+        },
+        "resolveApproval": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "companion-server.ts#POST /api/resolve",
+            "companion-server.ts#* /"
+          ]
+        },
+        "resolveQuestion": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "companion-server.ts#POST /api/answer",
+            "companion-server.ts#* /"
+          ]
+        },
+        "registerToken": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "companion-server.ts#POST /api/register-token"
+          ]
+        },
+        "tokenCount": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "companion-server.ts#POST /api/register-token",
+            "companion-server.ts#DELETE /api/register-token"
+          ]
+        },
+        "removeToken": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "companion-server.ts#DELETE /api/register-token",
+            "lib/push.ts"
+          ]
+        },
+        "listTokens": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "companion-server.ts#GET /api/push/tokens",
+            "lib/push.ts"
+          ]
+        },
+        "resolveSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts#POST /api/inject",
+            "companion-server.ts#POST /api/dialog/key",
+            "companion-server.ts#POST /api/dialog/pick",
+            "companion-server.ts#* /"
+          ]
+        },
+        "injectText": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "companion-server.ts#POST /api/inject",
+            "companion-server.ts#* /"
+          ]
+        },
+        "listLearned": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "companion-server.ts#GET /api/learned"
+          ]
+        },
+        "clearLearned": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "companion-server.ts#DELETE /api/learned"
+          ]
+        },
+        "forgetLearned": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "companion-server.ts#DELETE /api/learned/"
+          ]
+        },
+        "setSuperAuto": {
+          "module": "lib/super-auto.ts",
+          "callers": [
+            "companion-server.ts#POST /api/super-auto"
+          ]
+        },
+        "listChannels": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts#GET /api/orchestrator/channels",
+            "companion-server.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "createChannel": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts#POST /api/orchestrator/channels"
+          ]
+        },
+        "setChannelAuto": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts#POST /api/orchestrator/channels/",
+            "companion-server.ts#POST /api/orchestrator/task/"
+          ]
+        },
+        "listQueued": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts#GET /api/orchestrator/thread",
+            "lib/orchestrator-queue.ts"
+          ]
+        },
+        "createQueuedTask": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "companion-server.ts#POST /api/orchestrator/dispatch"
+          ]
+        },
+        "removeSessionByTty": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/session-end"
+          ]
+        },
+        "removeSessionByCwd": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/session-end"
+          ]
+        },
+        "forgetSession": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts#POST /hooks/session-end"
+          ]
+        },
+        "getPending": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "companion-server.ts#* /api/status",
+            "companion-server.ts#* /"
+          ]
+        },
+        "pickKeys": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "companion-server.ts#POST /api/dialog/pick"
+          ]
+        },
+        "getActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts#* /api/feed",
+            "companion-server.ts#* /"
+          ]
+        },
+        "getFeed": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "companion-server.ts#* /api/feed",
+            "companion-server.ts#* /"
+          ]
+        },
+        "isLearned": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "lib/auto-judge.ts"
+          ]
+        },
+        "autoJudge": {
+          "module": "lib/auto-judge.ts",
+          "callers": [
+            "lib/branch-guard.ts"
+          ]
+        },
+        "appendFeedEvent": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/codex-feed.ts"
+          ]
+        },
+        "parseDialog": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "lib/dialog-watch.ts"
+          ]
+        },
+        "dialogSignature": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "lib/dialog-watch.ts"
+          ]
+        },
+        "sendApns": {
+          "module": "lib/apns.ts",
+          "callers": [
+            "lib/push.ts"
+          ]
+        },
+        "setTaskLogTail": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/worker-tail.ts"
+          ]
+        }
+      }
+    },
+    {
+      "name": "client",
+      "adapter": "react-client",
+      "root": "client/src",
+      "cap": 600,
+      "modules": [
+        {
+          "path": "app.tsx",
+          "lines": 906,
+          "kind": "view",
+          "exports": [
+            "App"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [
+            "/api/spawn-session"
+          ],
+          "imports": [
+            "hooks/use-companion",
+            "lib/alert-sound"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "hooks/use-companion.ts",
+          "lines": 399,
+          "kind": "lib",
+          "exports": [
+            "useCompanion"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [
+            "approval",
+            "resolved",
+            "waiting_input",
+            "activity",
+            "event",
+            "feed_pruned",
+            "sessions",
+            "init",
+            "inject_error",
+            "pong"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/alert-sound"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/alert-sound.ts",
+          "lines": 53,
+          "kind": "lib",
+          "exports": [
+            "unlockAudio",
+            "playAlert"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "main.tsx",
+          "lines": 6,
+          "kind": "view",
+          "exports": [],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "app"
+          ],
+          "listeners": [],
+          "sheets": 0
+        }
+      ],
+      "fanIn": {}
+    },
+    {
+      "name": "ios",
+      "adapter": "swiftui",
+      "root": "~/apps/claude companion/claude companion",
+      "cap": 600,
+      "modules": [
+        {
+          "path": "AppDelegate.swift",
+          "lines": 153,
+          "kind": "lib",
+          "exports": [
+            "AppDelegate",
+            "application()",
+            "userNotificationCenter()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".notDetermined",
+            ".denied"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "AppState.swift",
+          "lines": 825,
+          "kind": "state",
+          "exports": [
+            "AppState",
+            "hostInfo()",
+            "channelPendingCount()",
+            "channelActiveCount()",
+            "start()",
+            "nudgeReconnect()",
+            "refreshFromNotificationTap()",
+            "select()",
+            "presentApproval()",
+            "dismissApproval()",
+            "resolve()",
+            "dismissQuestion()",
+            "submitAnswer()",
+            "sendInput()",
+            "spawnNewSession()",
+            "dialogPick()",
+            "dialogKey()",
+            "dismissInjectIssue()",
+            "loadOrchestratorThread()",
+            "selectChannel()",
+            "createChannel()",
+            "sendOrchestratorMessage()",
+            "approveProposal()",
+            "rejectProposal()",
+            "cancelTask()",
+            "setChannelAuto()",
+            "setSuperAuto()"
+          ],
+          "state": [
+            "@Published sessions",
+            "@Published activeKey",
+            "@Published conversations",
+            "@Published pendingApproval",
+            "@Published pendingQueue",
+            "@Published pendingQuestion",
+            "@Published isConnected",
+            "@Published activity",
+            "@Published lastInjectIssue",
+            "@Published superAuto",
+            "@Published orchestratorTurns",
+            "@Published orchestratorTasks",
+            "@Published orchestratorChannels",
+            "@Published activeChannelId",
+            "@Published hosts",
+            "@Published dialogs",
+            "@Published orchestratorQueue",
+            "@Published workerTails"
+          ],
+          "emits": [],
+          "consumes": [
+            "allow",
+            "deny",
+            "expired",
+            "answered",
+            "user_prompt",
+            "assistant_text",
+            "tool_start",
+            "tool_end",
+            "turn_end"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".ok",
+            ".failed",
+            ".connected",
+            ".disconnected",
+            ".sessions",
+            ".waitingInput",
+            ".approval",
+            ".question",
+            ".resolved",
+            ".activity",
+            ".feedEvent",
+            ".userPrompt",
+            ".injectError",
+            ".superAuto",
+            ".orchestratorTurn",
+            ".orchestratorProposal",
+            ".orchestratorChannel",
+            ".orchestratorWorkerOutput",
+            ".dialog",
+            ".dialogClosed",
+            ".hostInfo",
+            ".pendingSpawn",
+            ".pinned",
+            ".auto"
+          ],
+          "sheets": 1
+        },
+        {
+          "path": "ApprovalSheet.swift",
+          "lines": 268,
+          "kind": "view",
+          "exports": [
+            "ApprovalContent",
+            "ApprovalSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "CompanionClient.swift",
+          "lines": 439,
+          "kind": "lib",
+          "exports": [
+            "CompanionClient",
+            "resetLastGood()",
+            "registerToken()",
+            "unregisterToken()",
+            "resolve()",
+            "answer()",
+            "probe()",
+            "probeAuthorized()",
+            "inject()",
+            "setSuperAuto()",
+            "spawnSession()",
+            "sendDialogKey()",
+            "pickDialogRow()",
+            "getOrchestratorThread()",
+            "sendOrchestratorMessage()",
+            "createOrchestratorChannel()",
+            "approveOrchestratorProposal()",
+            "rejectOrchestratorProposal()",
+            "cancelOrchestratorTask()",
+            "setOrchestratorChannelAuto()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [
+            "/api/register-token",
+            "/api/resolve",
+            "/api/answer",
+            "/api/inject",
+            "/api/super-auto",
+            "/api/spawn-session",
+            "/api/dialog/key",
+            "/api/dialog/pick",
+            "/api/orchestrator/thread",
+            "/api/orchestrator/send",
+            "/api/orchestrator/channels",
+            "/api/orchestrator/proposal/\\(taskId)/\\(action)",
+            "/api/orchestrator/task/\\(taskId)/cancel"
+          ],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "CompanionSocket.swift",
+          "lines": 408,
+          "kind": "lib",
+          "exports": [
+            "SocketEvent",
+            "FeedEvent",
+            "CompanionSocket",
+            "connect()",
+            "disconnect()",
+            "send()"
+          ],
+          "state": [],
+          "emits": [
+            ".sessions",
+            ".waitingInput",
+            ".approval",
+            ".question",
+            ".resolved",
+            ".userPrompt",
+            ".activity",
+            ".feedEvent",
+            ".injectError",
+            ".superAuto",
+            ".orchestratorTurn",
+            ".orchestratorProposal",
+            ".orchestratorChannel",
+            ".orchestratorWorkerOutput",
+            ".dialog",
+            ".dialogClosed",
+            ".hostInfo"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".success",
+            ".failure",
+            ".data",
+            ".string",
+            ".initial",
+            ".sessions",
+            ".approval",
+            ".question",
+            ".resolved",
+            ".waitingInput",
+            ".event",
+            ".activity",
+            ".userPrompt",
+            ".injectError",
+            ".superAuto",
+            ".orchestratorTurn",
+            ".orchestratorProposal",
+            ".orchestratorChannel",
+            ".orchestratorWorkerOutput",
+            ".dialog",
+            ".dialogClosed"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "CompanionSocketGroup.swift",
+          "lines": 160,
+          "kind": "lib",
+          "exports": [
+            "CompanionSocketGroup",
+            "connect()",
+            "disconnect()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".sessions",
+            ".approval",
+            ".question",
+            ".dialog",
+            ".hostInfo",
+            ".activity",
+            ".connected",
+            ".disconnected"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "Composer.swift",
+          "lines": 189,
+          "kind": "view",
+          "exports": [
+            "Composer"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "ContentView.swift",
+          "lines": 252,
+          "kind": "view",
+          "exports": [
+            "ContentView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 6
+        },
+        {
+          "path": "ConversationCache.swift",
+          "lines": 127,
+          "kind": "lib",
+          "exports": [
+            "ConversationCache",
+            "hydrate()",
+            "scheduleSave()",
+            "flush()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "ConversationView.swift",
+          "lines": 454,
+          "kind": "view",
+          "exports": [
+            "ConversationView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".user",
+            ".assistant",
+            ".tool"
+          ],
+          "sheets": 1
+        },
+        {
+          "path": "DialogSheet.swift",
+          "lines": 272,
+          "kind": "view",
+          "exports": [
+            "DialogContent",
+            "DialogSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "DiffView.swift",
+          "lines": 127,
+          "kind": "view",
+          "exports": [
+            "DiffView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "HostBadge.swift",
+          "lines": 95,
+          "kind": "view",
+          "exports": [
+            "HostBadge",
+            "HostIdentity",
+            "guessName()",
+            "guessPlatform()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "InjectErrorBanner.swift",
+          "lines": 92,
+          "kind": "view",
+          "exports": [
+            "InjectErrorBanner"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [
+            "target_gone",
+            "target_idle",
+            "osascript_failed"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "KeychainStore.swift",
+          "lines": 52,
+          "kind": "lib",
+          "exports": [
+            "KeychainStore",
+            "string()",
+            "set()",
+            "delete()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "LiveActivityManager.swift",
+          "lines": 85,
+          "kind": "lib",
+          "exports": [
+            "LiveActivityManager",
+            "update()",
+            "adoptInFlight()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "MarkdownText.swift",
+          "lines": 125,
+          "kind": "view",
+          "exports": [
+            "MarkdownText"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".prose",
+            ".code"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "MessageDetailSheet.swift",
+          "lines": 189,
+          "kind": "view",
+          "exports": [
+            "MessageDetailSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".tool",
+            ".assistant",
+            ".user"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "Models.swift",
+          "lines": 608,
+          "kind": "lib",
+          "exports": [
+            "CompanionSession",
+            "SelectionMode",
+            "InjectIssue",
+            "PendingApproval",
+            "QuestionOption",
+            "QuestionItem",
+            "QuestionAnswer",
+            "PendingQuestion",
+            "WaitingState",
+            "ClaudeActivity",
+            "MessageRole",
+            "Message",
+            "ConversationSnapshot",
+            "OrchestratorTurn",
+            "OrchestratorTask",
+            "ChannelTrust",
+            "OrchestratorQueueSummary",
+            "OrchestratorWorkerOutput",
+            "OrchestratorChannel",
+            "OrchestratorThreadResponse",
+            "DialogItem",
+            "DialogHint",
+            "DialogPayload",
+            "CompanionDialog",
+            "HostInfo"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [
+            "waiting",
+            "busy"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "NewSessionSheet.swift",
+          "lines": 145,
+          "kind": "view",
+          "exports": [
+            "NewSessionSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "NotificationCategories.swift",
+          "lines": 59,
+          "kind": "lib",
+          "exports": [
+            "NotificationCategory",
+            "NotificationCategories",
+            "registerAll()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "OrchestratorView.swift",
+          "lines": 930,
+          "kind": "view",
+          "exports": [
+            "OrchestratorView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [
+            "running",
+            "dispatched",
+            "queued",
+            "done",
+            "error",
+            "cancelled",
+            "rejected"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 3
+        },
+        {
+          "path": "PendingApprovalActivityAttributes.swift",
+          "lines": 39,
+          "kind": "lib",
+          "exports": [
+            "PendingApprovalActivityAttributes"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "PendingQueueSheet.swift",
+          "lines": 123,
+          "kind": "view",
+          "exports": [
+            "PendingQueueSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "QRScannerView.swift",
+          "lines": 123,
+          "kind": "lib",
+          "exports": [
+            "QRScannerView",
+            "makeUIViewController()",
+            "updateUIViewController()",
+            "makeCoordinator()",
+            "PairingPayload",
+            "decode()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".barcode",
+            ".success",
+            ".failure"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "QuestionSheet.swift",
+          "lines": 397,
+          "kind": "view",
+          "exports": [
+            "QuestionContent",
+            "QuestionSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "SessionChip.swift",
+          "lines": 141,
+          "kind": "view",
+          "exports": [
+            "SessionChip"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 1
+        },
+        {
+          "path": "SessionRowView.swift",
+          "lines": 89,
+          "kind": "view",
+          "exports": [
+            "SessionRowView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "SessionsDrawer.swift",
+          "lines": 160,
+          "kind": "view",
+          "exports": [
+            "SessionsDrawer"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 1
+        },
+        {
+          "path": "Settings.swift",
+          "lines": 195,
+          "kind": "lib",
+          "exports": [
+            "AppSettings",
+            "companionEndpoints()",
+            "endpointLabel()",
+            "pushComposerHistory()",
+            "pushSpawnCwdHistory()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "SettingsView.swift",
+          "lines": 228,
+          "kind": "view",
+          "exports": [
+            "SettingsView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".ok",
+            ".authFail",
+            ".fail",
+            ".idle"
+          ],
+          "sheets": 1
+        },
+        {
+          "path": "StatusBar.swift",
+          "lines": 213,
+          "kind": "view",
+          "exports": [
+            "StatusBar"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "Theme.swift",
+          "lines": 33,
+          "kind": "lib",
+          "exports": [
+            "Theme",
+            "mono()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "ToolDetailSheet.swift",
+          "lines": 45,
+          "kind": "lib",
+          "exports": [
+            "VerdictBadgePalette"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [
+            "approved",
+            "denied",
+            "pending",
+            "expired"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "WSFrame.swift",
+          "lines": 411,
+          "kind": "lib",
+          "exports": [
+            "WSFrame",
+            "decode()",
+            "InitPayload",
+            "ApprovalPayload",
+            "QuestionPayload",
+            "ApprovalInput",
+            "EditOp",
+            "WaitingPayload",
+            "FeedEventPayload",
+            "ClaudeActivityPayload",
+            "UserPromptPayload",
+            "InjectErrorPayload"
+          ],
+          "state": [],
+          "emits": [
+            ".initial",
+            ".sessions",
+            ".approval",
+            ".question",
+            ".resolved",
+            ".waitingInput",
+            ".event",
+            ".activity",
+            ".userPrompt",
+            ".injectError",
+            ".superAuto",
+            ".orchestratorTurn",
+            ".orchestratorProposal",
+            ".orchestratorChannel",
+            ".orchestratorWorkerOutput",
+            ".dialog",
+            ".dialogClosed",
+            ".unknown"
+          ],
+          "consumes": [
+            "init",
+            "sessions",
+            "approval",
+            "question",
+            "resolved",
+            "waiting_input",
+            "event",
+            "activity",
+            "user_prompt",
+            "inject_error",
+            "super_auto",
+            "orchestrator",
+            "orchestrator_proposal",
+            "orchestrator_task",
+            "orchestrator_channel",
+            "orchestrator_worker_output",
+            "dialog",
+            "dialog_closed",
+            "pong"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "claude_companionApp.swift",
+          "lines": 27,
+          "kind": "lib",
+          "exports": [
+            "claude_companionApp"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "iPad/IPadCockpitView.swift",
+          "lines": 105,
+          "kind": "view",
+          "exports": [
+            "IPadCockpitView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 1
+        },
+        {
+          "path": "iPad/InspectorView.swift",
+          "lines": 73,
+          "kind": "view",
+          "exports": [
+            "InspectorView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "iPad/SessionsRailView.swift",
+          "lines": 242,
+          "kind": "view",
+          "exports": [
+            "SessionsRailView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        }
+      ],
+      "fanIn": {}
+    }
+  ]
+}

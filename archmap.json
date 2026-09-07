@@ -1,0 +1,8 @@
+{
+  "repo": "claude-companion",
+  "targets": [
+    { "name": "server", "adapter": "bun-server", "root": "server", "cap": 600 },
+    { "name": "client", "adapter": "react-client", "root": "client/src", "cap": 600 },
+    { "name": "ios", "adapter": "swiftui", "root": "~/apps/claude companion/claude companion", "cap": 600 }
+  ]
+}
