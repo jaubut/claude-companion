@@ -31,7 +31,7 @@ Last updated: 2026-09-07
 
 ## Change Plans
 
-### Change Plan — split-companion-server (2026-09-07)
+### Change Plan — split-companion-server (2026-09-07) — ✅ shipped (branch refactor/split-companion-server, 10 commits)
 **Request:** Split `server/companion-server.ts` (1714 lines: all HTTP routes, hook endpoints, WS upgrade/init/message, orchestrator wiring, dialog-mirror wiring) into route/wiring modules, no server file over 600 lines, every contract unchanged (WS frame names/shapes, endpoints + methods, hook responses, auth gate, log lines). iOS TestFlight build 4 + React client untouched. Mechanical move — the only dedupe is the AskUserQuestion fast path shared by PreToolUse and PermissionRequest.
 **Done when:**
 - every `server/**/*.ts` < 600 lines except pre-existing `lib/activity.ts` (681, out of scope); archmap shows only that ⚠ under server
@@ -136,6 +136,8 @@ Last updated: 2026-09-07
 
 ## Learnings
 
+- **First `/change` run (2026-09-07):** the split shipped as 10 commits, `bun test` 50/50 + server tsc + a fixed route/WS/stderr smoke diffed against the pre-split baseline after every one. Both cross-module contract checks that the plan named paid off: the mechanical route extractor moved a section's *neighbours* along with it when an earlier extraction had removed the marker between them, so three chain calls ended up nested inside other route modules — every behavioural check stayed green (identical responses) and only the **import-boundary guard** ("no module imports routes or the host") exposed it. That is the boundary lint's job; wire it into CI (PRJ-LGDV Phase 4).
+- Layout after the split: `state.ts` (clients, broadcast, host, waiting flag) · `lib/hook-common.ts` + `lib/tmux-pane.ts` (shared helpers) · `wiring/{orchestrator,dialogs,events}.ts` (singletons + listeners, side effects at import) · `routes/{hooks,api,orchestrator,dialogs}.ts` (each returns null for other paths) · `ws.ts` · host = auth gate, health, upgrade, route chain, static. Add a route to the matching `routes/` file, never to the host; new always-on state goes in `wiring/`.
 - **Dialog mirror (PR #9, 2026-09-05):** a session parked on /model, /mcp, trust or MCP-enable looks dead from the phone — hooks don't fire while a dialog is up. `~/.claude/sessions/<pid>.json` says `status: waiting, waitingFor: "dialog open"`; that gates a 2s tmux capture, `dialogs.ts` parses the Ink dialog (cursor row + hint footer; numbered pickers and plain lists), and the phone gets `dialog` / `dialog_closed` frames plus `/api/dialog/key` and `/api/dialog/pick`. Row picks use Up/Down deltas: digits only work in the question picker, /model ignores them. Fixtures came from real captures — recapture if Claude Code restyles its pickers.
 - **`~/.claude/sessions/<pid>.json` is the exact pid → session map** (Claude Code ≥ 2.1, found 2026-09-05): sessionId, cwd, startedAt, tmux pane, Claude's own derived name, status. Discovery now reads it instead of guessing the newest transcript in the cwd — the guess gave every $HOME peer the same id (and, once titles existed, the same name). Guessed ids are marked unconfirmed and never name a chat.
 - **Chat titles = first real prompt**, persisted by session id, recovered from the transcript (any project dir) on restart; injected XML is stripped first. Picker sorts on creation time (process start), not last activity — activity-sorted menus reshuffle on every hook fire.
