@@ -1,8 +1,24 @@
 {
   "repo": "claude-companion",
+  "intent": "Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) that turns Claude Code hook calls into a curated phone experience \u2014 approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (primary), the React PWA (desktop), and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
-    { "name": "server", "adapter": "bun-server", "root": "server", "cap": 600 },
-    { "name": "client", "adapter": "react-client", "root": "client/src", "cap": 600 },
-    { "name": "ios", "adapter": "swiftui", "root": "~/apps/claude companion/claude companion", "cap": 600 }
+    {
+      "name": "server",
+      "adapter": "bun-server",
+      "root": "server",
+      "cap": 600
+    },
+    {
+      "name": "client",
+      "adapter": "react-client",
+      "root": "client/src",
+      "cap": 600
+    },
+    {
+      "name": "ios",
+      "adapter": "swiftui",
+      "root": "~/apps/claude companion/claude companion",
+      "cap": 600
+    }
   ]
 }

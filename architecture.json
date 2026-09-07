@@ -1,6 +1,7 @@
 {
   "generatedAt": "2026-09-07",
   "repo": "claude-companion",
+  "intent": "Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (primary), the React PWA (desktop), and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
     {
       "name": "server",
@@ -2129,7 +2130,7 @@
         },
         {
           "path": "components/composer.tsx",
-          "lines": 176,
+          "lines": 170,
           "kind": "view",
           "exports": [
             "Composer"
@@ -2364,6 +2365,20 @@
           ],
           "listeners": [],
           "sheets": 0
+        },
+        {
+          "path": "types/speech.d.ts",
+          "lines": 52,
+          "kind": "lib",
+          "exports": [],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
         }
       ],
       "fanIn": {}
@@ -2396,28 +2411,52 @@
           "sheets": 0
         },
         {
-          "path": "AppState.swift",
-          "lines": 825,
-          "kind": "state",
+          "path": "AppState+Approvals.swift",
+          "lines": 83,
+          "kind": "lib",
           "exports": [
-            "AppState",
-            "hostInfo()",
-            "channelPendingCount()",
-            "channelActiveCount()",
-            "start()",
-            "nudgeReconnect()",
-            "refreshFromNotificationTap()",
-            "select()",
             "presentApproval()",
             "dismissApproval()",
             "resolve()",
             "dismissQuestion()",
             "submitAnswer()",
-            "sendInput()",
-            "spawnNewSession()",
-            "dialogPick()",
-            "dialogKey()",
             "dismissInjectIssue()",
+            "setSuperAuto()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 1
+        },
+        {
+          "path": "AppState+Dialogs.swift",
+          "lines": 28,
+          "kind": "lib",
+          "exports": [
+            "dialogPick()",
+            "dialogKey()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "AppState+Orchestrator.swift",
+          "lines": 148,
+          "kind": "lib",
+          "exports": [
+            "channelPendingCount()",
+            "channelActiveCount()",
+            "upsertChannel()",
             "loadOrchestratorThread()",
             "selectChannel()",
             "createChannel()",
@@ -2425,8 +2464,98 @@
             "approveProposal()",
             "rejectProposal()",
             "cancelTask()",
-            "setChannelAuto()",
-            "setSuperAuto()"
+            "setChannelAuto()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "AppState+Sessions.swift",
+          "lines": 164,
+          "kind": "lib",
+          "exports": [
+            "hostInfo()",
+            "select()",
+            "sendInput()",
+            "spawnNewSession()",
+            "applySelection()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".ok",
+            ".failed",
+            ".pendingSpawn",
+            ".pinned",
+            ".auto"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "AppState+SocketEvents.swift",
+          "lines": 260,
+          "kind": "state",
+          "exports": [
+            "apply()"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [
+            "allow",
+            "deny",
+            "expired",
+            "answered",
+            "user_prompt",
+            "assistant_text",
+            "tool_start",
+            "tool_end",
+            "turn_end"
+          ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [
+            ".connected",
+            ".disconnected",
+            ".sessions",
+            ".waitingInput",
+            ".approval",
+            ".question",
+            ".resolved",
+            ".activity",
+            ".feedEvent",
+            ".userPrompt",
+            ".injectError",
+            ".superAuto",
+            ".orchestratorTurn",
+            ".orchestratorProposal",
+            ".orchestratorChannel",
+            ".orchestratorWorkerOutput",
+            ".dialog",
+            ".dialogClosed",
+            ".hostInfo"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "AppState.swift",
+          "lines": 204,
+          "kind": "state",
+          "exports": [
+            "AppState",
+            "start()",
+            "nudgeReconnect()",
+            "refreshFromNotificationTap()"
           ],
           "state": [
             "@Published sessions",
@@ -2449,47 +2578,12 @@
             "@Published workerTails"
           ],
           "emits": [],
-          "consumes": [
-            "allow",
-            "deny",
-            "expired",
-            "answered",
-            "user_prompt",
-            "assistant_text",
-            "tool_start",
-            "tool_end",
-            "turn_end"
-          ],
+          "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
-          "listeners": [
-            ".ok",
-            ".failed",
-            ".connected",
-            ".disconnected",
-            ".sessions",
-            ".waitingInput",
-            ".approval",
-            ".question",
-            ".resolved",
-            ".activity",
-            ".feedEvent",
-            ".userPrompt",
-            ".injectError",
-            ".superAuto",
-            ".orchestratorTurn",
-            ".orchestratorProposal",
-            ".orchestratorChannel",
-            ".orchestratorWorkerOutput",
-            ".dialog",
-            ".dialogClosed",
-            ".hostInfo",
-            ".pendingSpawn",
-            ".pinned",
-            ".auto"
-          ],
-          "sheets": 1
+          "listeners": [],
+          "sheets": 0
         },
         {
           "path": "ApprovalSheet.swift",
@@ -2908,6 +3002,22 @@
           "sheets": 0
         },
         {
+          "path": "NewChannelSheet.swift",
+          "lines": 64,
+          "kind": "view",
+          "exports": [
+            "NewChannelSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
           "path": "NewSessionSheet.swift",
           "lines": 145,
           "kind": "view",
@@ -2942,11 +3052,11 @@
           "sheets": 0
         },
         {
-          "path": "OrchestratorView.swift",
-          "lines": 930,
+          "path": "OrchestratorTaskRow.swift",
+          "lines": 118,
           "kind": "view",
           "exports": [
-            "OrchestratorView"
+            "TaskRow"
           ],
           "state": [],
           "emits": [],
@@ -2963,7 +3073,55 @@
           "apiCalls": [],
           "imports": [],
           "listeners": [],
-          "sheets": 3
+          "sheets": 0
+        },
+        {
+          "path": "OrchestratorTasksView.swift",
+          "lines": 163,
+          "kind": "view",
+          "exports": [
+            "TasksView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 1
+        },
+        {
+          "path": "OrchestratorTurnRow.swift",
+          "lines": 49,
+          "kind": "view",
+          "exports": [
+            "OrchestratorTurnRow"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "OrchestratorView.swift",
+          "lines": 413,
+          "kind": "view",
+          "exports": [
+            "OrchestratorView"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 2
         },
         {
           "path": "PendingApprovalActivityAttributes.swift",
@@ -2987,6 +3145,22 @@
           "kind": "view",
           "exports": [
             "PendingQueueSheet"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "ProposalCard.swift",
+          "lines": 80,
+          "kind": "view",
+          "exports": [
+            "ProposalCard"
           ],
           "state": [],
           "emits": [],
@@ -3145,6 +3319,22 @@
           "sheets": 0
         },
         {
+          "path": "TerminalLines.swift",
+          "lines": 25,
+          "kind": "view",
+          "exports": [
+            "TerminalLines"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
           "path": "Theme.swift",
           "lines": 33,
           "kind": "lib",
@@ -3242,6 +3432,22 @@
             "dialog_closed",
             "pong"
           ],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "WorkerTailCard.swift",
+          "lines": 32,
+          "kind": "view",
+          "exports": [
+            "WorkerTailCard"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
