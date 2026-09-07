@@ -80,6 +80,22 @@ test("no status file (older CLI): capture anyway", async () => {
   expect(h.opened).toHaveLength(1)
 })
 
+test("a question picker on screen is never mirrored, even with no pending question", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = `
+❯ ask me
+────────────────────────
+←  ☐ Color  ✔ Submit  →
+Pick one color
+❯ 1. Red
+  2. Green
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+`
+  await w.tick()
+  expect(h.opened).toEqual([])
+})
+
 test("a question the hooks already routed is not mirrored", async () => {
   const { h, w } = harness()
   h.status = { status: "waiting", waitingFor: "dialog open" }
