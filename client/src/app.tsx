@@ -19,6 +19,7 @@ import { ApprovalCard } from "@/components/approval-card"
 import { SpawnSession } from "@/components/spawn-session"
 import { TargetBar } from "@/components/target-bar"
 import { Composer } from "@/components/composer"
+import { StatusBar } from "@/components/status-bar"
 import {
   Wifi, Check, X, FileEdit, Terminal, Eye, FileText, Search, FolderSearch,
   Mic, MicOff, Send, Volume2, VolumeX, Loader2, ChevronsDown, Globe, User,
@@ -36,38 +37,20 @@ export function App() {
   const [picking, setPicking] = useState(false)
   const sendTarget = effectiveTarget?.key ?? targetKey ?? ""
 
-  const toggleSound = (): void => {
-    unlockAudio()
-    setSoundEnabled(!soundEnabled)
-  }
-
   const pendingRequest = pending[0]
 
   return (
     <div className="h-dvh flex flex-col bg-bg overflow-hidden">
       {/* Status bar */}
-      <header className="flex items-center gap-3 px-6 pt-5 pb-3 shrink-0">
-        <div className={`w-2 h-2 rounded-full ${connected ? "bg-green" : "bg-red"}`} />
-        <span className="text-[13px] font-semibold text-fg">
-          {!connected ? "Offline" : pendingRequest ? "Asking" : waitingForInput ? "Done" : activity ? "Working" : "Idle"}
-        </span>
-        <div className="flex-1" />
-        {pending.length > 1 && (
-          <span className="text-xs text-muted font-mono">
-            {pending.length} queued
-          </span>
-        )}
-        <button
-          onClick={toggleSound}
-          aria-label={soundEnabled ? "Mute alerts" : "Unmute alerts"}
-          className="min-h-[44px] min-w-[44px] -mr-3 flex items-center justify-center rounded-full text-muted active:text-fg active:scale-95 transition-transform"
-        >
-          {soundEnabled
-            ? <Volume2 className="w-[18px] h-[18px]" />
-            : <VolumeX className="w-[18px] h-[18px]" />
-          }
-        </button>
-      </header>
+      <StatusBar
+        connected={connected}
+        pending={pending}
+        pendingRequest={pendingRequest}
+        waitingForInput={waitingForInput}
+        activity={activity}
+        soundEnabled={soundEnabled}
+        setSoundEnabled={setSoundEnabled}
+      />
 
       {/* Live activity pill — only when feed is the focus */}
       {activity && !pendingRequest && (
