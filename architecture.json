@@ -2076,14 +2076,14 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "lib/alert-sound",
-            "components/activity-pill",
-            "components/terminal-feed",
-            "components/approval-card",
-            "components/target-bar",
-            "components/composer",
-            "components/status-bar"
+            "hooks/use-companion.ts",
+            "lib/alert-sound.ts",
+            "components/activity-pill.tsx",
+            "components/terminal-feed.tsx",
+            "components/approval-card.tsx",
+            "components/target-bar.tsx",
+            "components/composer.tsx",
+            "components/status-bar.tsx"
           ],
           "listeners": [],
           "sheets": 0
@@ -2101,9 +2101,9 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "components/session-badge",
-            "lib/format"
+            "hooks/use-companion.ts",
+            "components/session-badge.tsx",
+            "lib/format.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2121,9 +2121,9 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "components/session-badge",
-            "lib/tool-summary"
+            "hooks/use-companion.ts",
+            "components/session-badge.tsx",
+            "lib/tool-summary.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2141,7 +2141,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/alert-sound"
+            "lib/alert-sound.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2159,10 +2159,10 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "components/session-badge",
-            "lib/format",
-            "lib/tool-summary"
+            "hooks/use-companion.ts",
+            "components/session-badge.tsx",
+            "lib/format.ts",
+            "lib/tool-summary.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2181,8 +2181,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "lib/format"
+            "hooks/use-companion.ts",
+            "lib/format.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2202,7 +2202,7 @@
             "/api/spawn-session"
           ],
           "imports": [
-            "hooks/use-companion"
+            "hooks/use-companion.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2220,8 +2220,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "lib/alert-sound"
+            "hooks/use-companion.ts",
+            "lib/alert-sound.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2239,9 +2239,9 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "components/spawn-session",
-            "lib/format"
+            "hooks/use-companion.ts",
+            "components/spawn-session.tsx",
+            "lib/format.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2259,8 +2259,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "hooks/use-companion",
-            "components/feed-line"
+            "hooks/use-companion.ts",
+            "components/feed-line.tsx"
           ],
           "listeners": [],
           "sheets": 0
@@ -2289,7 +2289,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/alert-sound"
+            "lib/alert-sound.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -2361,1165 +2361,135 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "app"
+            "app.tsx"
           ],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "types/speech.d.ts",
-          "lines": 52,
-          "kind": "lib",
-          "exports": [],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
           "listeners": [],
           "sheets": 0
         }
       ],
-      "fanIn": {}
-    },
+      "fanIn": {
+        "useCompanion": {
+          "module": "hooks/use-companion.ts",
+          "callers": [
+            "app.tsx"
+          ]
+        },
+        "ActivityPill": {
+          "module": "components/activity-pill.tsx",
+          "callers": [
+            "app.tsx"
+          ]
+        },
+        "TerminalFeed": {
+          "module": "components/terminal-feed.tsx",
+          "callers": [
+            "app.tsx"
+          ]
+        },
+        "unlockAudio": {
+          "module": "lib/alert-sound.ts",
+          "callers": [
+            "app.tsx",
+            "components/composer.tsx",
+            "components/status-bar.tsx"
+          ]
+        },
+        "truncate": {
+          "module": "lib/format.ts",
+          "callers": [
+            "components/activity-pill.tsx",
+            "components/target-bar.tsx"
+          ]
+        },
+        "SessionBadge": {
+          "module": "components/session-badge.tsx",
+          "callers": [
+            "components/activity-pill.tsx",
+            "components/approval-card.tsx",
+            "components/feed-line.tsx"
+          ]
+        },
+        "formatElapsed": {
+          "module": "lib/format.ts",
+          "callers": [
+            "components/activity-pill.tsx"
+          ]
+        },
+        "formatTokens": {
+          "module": "lib/format.ts",
+          "callers": [
+            "components/activity-pill.tsx"
+          ]
+        },
+        "getToolSummary": {
+          "module": "lib/tool-summary.ts",
+          "callers": [
+            "components/approval-card.tsx"
+          ]
+        },
+        "formatTime": {
+          "module": "lib/format.ts",
+          "callers": [
+            "components/feed-line.tsx"
+          ]
+        },
+        "SessionDot": {
+          "module": "components/session-badge.tsx",
+          "callers": [
+            "components/feed-line.tsx"
+          ]
+        },
+        "formatDuration": {
+          "module": "lib/format.ts",
+          "callers": [
+            "components/feed-line.tsx"
+          ]
+        },
+        "hashHue": {
+          "module": "lib/format.ts",
+          "callers": [
+            "components/session-badge.tsx",
+            "components/target-bar.tsx"
+          ]
+        },
+        "shortKey": {
+          "module": "lib/format.ts",
+          "callers": [
+            "components/session-badge.tsx",
+            "components/target-bar.tsx"
+          ]
+        },
+        "SpawnSession": {
+          "module": "components/spawn-session.tsx",
+          "callers": [
+            "components/target-bar.tsx"
+          ]
+        },
+        "FeedLine": {
+          "module": "components/feed-line.tsx",
+          "callers": [
+            "components/terminal-feed.tsx"
+          ]
+        },
+        "playAlert": {
+          "module": "lib/alert-sound.ts",
+          "callers": [
+            "hooks/use-companion.ts"
+          ]
+        },
+        "App": {
+          "module": "app.tsx",
+          "callers": [
+            "main.tsx"
+          ]
+        }
+      }
+    }
+  ],
+  "refs": [
     {
       "name": "ios",
-      "adapter": "swiftui",
-      "root": "~/apps/claude companion/claude companion",
-      "cap": 600,
-      "modules": [
-        {
-          "path": "AppDelegate.swift",
-          "lines": 153,
-          "kind": "lib",
-          "exports": [
-            "AppDelegate",
-            "application()",
-            "userNotificationCenter()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".notDetermined",
-            ".denied"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "AppState+Approvals.swift",
-          "lines": 83,
-          "kind": "lib",
-          "exports": [
-            "presentApproval()",
-            "dismissApproval()",
-            "resolve()",
-            "dismissQuestion()",
-            "submitAnswer()",
-            "dismissInjectIssue()",
-            "setSuperAuto()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 1
-        },
-        {
-          "path": "AppState+Dialogs.swift",
-          "lines": 28,
-          "kind": "lib",
-          "exports": [
-            "dialogPick()",
-            "dialogKey()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "AppState+Orchestrator.swift",
-          "lines": 148,
-          "kind": "lib",
-          "exports": [
-            "channelPendingCount()",
-            "channelActiveCount()",
-            "upsertChannel()",
-            "loadOrchestratorThread()",
-            "selectChannel()",
-            "createChannel()",
-            "sendOrchestratorMessage()",
-            "approveProposal()",
-            "rejectProposal()",
-            "cancelTask()",
-            "setChannelAuto()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "AppState+Sessions.swift",
-          "lines": 164,
-          "kind": "lib",
-          "exports": [
-            "hostInfo()",
-            "select()",
-            "sendInput()",
-            "spawnNewSession()",
-            "applySelection()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".ok",
-            ".failed",
-            ".pendingSpawn",
-            ".pinned",
-            ".auto"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "AppState+SocketEvents.swift",
-          "lines": 260,
-          "kind": "state",
-          "exports": [
-            "apply()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [
-            "allow",
-            "deny",
-            "expired",
-            "answered",
-            "user_prompt",
-            "assistant_text",
-            "tool_start",
-            "tool_end",
-            "turn_end"
-          ],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".connected",
-            ".disconnected",
-            ".sessions",
-            ".waitingInput",
-            ".approval",
-            ".question",
-            ".resolved",
-            ".activity",
-            ".feedEvent",
-            ".userPrompt",
-            ".injectError",
-            ".superAuto",
-            ".orchestratorTurn",
-            ".orchestratorProposal",
-            ".orchestratorChannel",
-            ".orchestratorWorkerOutput",
-            ".dialog",
-            ".dialogClosed",
-            ".hostInfo"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "AppState.swift",
-          "lines": 204,
-          "kind": "state",
-          "exports": [
-            "AppState",
-            "start()",
-            "nudgeReconnect()",
-            "refreshFromNotificationTap()"
-          ],
-          "state": [
-            "@Published sessions",
-            "@Published activeKey",
-            "@Published conversations",
-            "@Published pendingApproval",
-            "@Published pendingQueue",
-            "@Published pendingQuestion",
-            "@Published isConnected",
-            "@Published activity",
-            "@Published lastInjectIssue",
-            "@Published superAuto",
-            "@Published orchestratorTurns",
-            "@Published orchestratorTasks",
-            "@Published orchestratorChannels",
-            "@Published activeChannelId",
-            "@Published hosts",
-            "@Published dialogs",
-            "@Published orchestratorQueue",
-            "@Published workerTails"
-          ],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "ApprovalSheet.swift",
-          "lines": 268,
-          "kind": "view",
-          "exports": [
-            "ApprovalContent",
-            "ApprovalSheet"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "CompanionClient.swift",
-          "lines": 439,
-          "kind": "lib",
-          "exports": [
-            "CompanionClient",
-            "resetLastGood()",
-            "registerToken()",
-            "unregisterToken()",
-            "resolve()",
-            "answer()",
-            "probe()",
-            "probeAuthorized()",
-            "inject()",
-            "setSuperAuto()",
-            "spawnSession()",
-            "sendDialogKey()",
-            "pickDialogRow()",
-            "getOrchestratorThread()",
-            "sendOrchestratorMessage()",
-            "createOrchestratorChannel()",
-            "approveOrchestratorProposal()",
-            "rejectOrchestratorProposal()",
-            "cancelOrchestratorTask()",
-            "setOrchestratorChannelAuto()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [
-            "/api/register-token",
-            "/api/resolve",
-            "/api/answer",
-            "/api/inject",
-            "/api/super-auto",
-            "/api/spawn-session",
-            "/api/dialog/key",
-            "/api/dialog/pick",
-            "/api/orchestrator/thread",
-            "/api/orchestrator/send",
-            "/api/orchestrator/channels",
-            "/api/orchestrator/proposal/\\(taskId)/\\(action)",
-            "/api/orchestrator/task/\\(taskId)/cancel"
-          ],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "CompanionSocket.swift",
-          "lines": 408,
-          "kind": "lib",
-          "exports": [
-            "SocketEvent",
-            "FeedEvent",
-            "CompanionSocket",
-            "connect()",
-            "disconnect()",
-            "send()"
-          ],
-          "state": [],
-          "emits": [
-            ".sessions",
-            ".waitingInput",
-            ".approval",
-            ".question",
-            ".resolved",
-            ".userPrompt",
-            ".activity",
-            ".feedEvent",
-            ".injectError",
-            ".superAuto",
-            ".orchestratorTurn",
-            ".orchestratorProposal",
-            ".orchestratorChannel",
-            ".orchestratorWorkerOutput",
-            ".dialog",
-            ".dialogClosed",
-            ".hostInfo"
-          ],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".success",
-            ".failure",
-            ".data",
-            ".string",
-            ".initial",
-            ".sessions",
-            ".approval",
-            ".question",
-            ".resolved",
-            ".waitingInput",
-            ".event",
-            ".activity",
-            ".userPrompt",
-            ".injectError",
-            ".superAuto",
-            ".orchestratorTurn",
-            ".orchestratorProposal",
-            ".orchestratorChannel",
-            ".orchestratorWorkerOutput",
-            ".dialog",
-            ".dialogClosed"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "CompanionSocketGroup.swift",
-          "lines": 160,
-          "kind": "lib",
-          "exports": [
-            "CompanionSocketGroup",
-            "connect()",
-            "disconnect()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".sessions",
-            ".approval",
-            ".question",
-            ".dialog",
-            ".hostInfo",
-            ".activity",
-            ".connected",
-            ".disconnected"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "Composer.swift",
-          "lines": 189,
-          "kind": "view",
-          "exports": [
-            "Composer"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "ContentView.swift",
-          "lines": 252,
-          "kind": "view",
-          "exports": [
-            "ContentView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 6
-        },
-        {
-          "path": "ConversationCache.swift",
-          "lines": 127,
-          "kind": "lib",
-          "exports": [
-            "ConversationCache",
-            "hydrate()",
-            "scheduleSave()",
-            "flush()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "ConversationView.swift",
-          "lines": 454,
-          "kind": "view",
-          "exports": [
-            "ConversationView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".user",
-            ".assistant",
-            ".tool"
-          ],
-          "sheets": 1
-        },
-        {
-          "path": "DialogSheet.swift",
-          "lines": 272,
-          "kind": "view",
-          "exports": [
-            "DialogContent",
-            "DialogSheet"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "DiffView.swift",
-          "lines": 127,
-          "kind": "view",
-          "exports": [
-            "DiffView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "HostBadge.swift",
-          "lines": 95,
-          "kind": "view",
-          "exports": [
-            "HostBadge",
-            "HostIdentity",
-            "guessName()",
-            "guessPlatform()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "InjectErrorBanner.swift",
-          "lines": 92,
-          "kind": "view",
-          "exports": [
-            "InjectErrorBanner"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [
-            "target_gone",
-            "target_idle",
-            "osascript_failed"
-          ],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "KeychainStore.swift",
-          "lines": 52,
-          "kind": "lib",
-          "exports": [
-            "KeychainStore",
-            "string()",
-            "set()",
-            "delete()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "LiveActivityManager.swift",
-          "lines": 85,
-          "kind": "lib",
-          "exports": [
-            "LiveActivityManager",
-            "update()",
-            "adoptInFlight()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "MarkdownText.swift",
-          "lines": 125,
-          "kind": "view",
-          "exports": [
-            "MarkdownText"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".prose",
-            ".code"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "MessageDetailSheet.swift",
-          "lines": 189,
-          "kind": "view",
-          "exports": [
-            "MessageDetailSheet"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".tool",
-            ".assistant",
-            ".user"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "Models.swift",
-          "lines": 608,
-          "kind": "lib",
-          "exports": [
-            "CompanionSession",
-            "SelectionMode",
-            "InjectIssue",
-            "PendingApproval",
-            "QuestionOption",
-            "QuestionItem",
-            "QuestionAnswer",
-            "PendingQuestion",
-            "WaitingState",
-            "ClaudeActivity",
-            "MessageRole",
-            "Message",
-            "ConversationSnapshot",
-            "OrchestratorTurn",
-            "OrchestratorTask",
-            "ChannelTrust",
-            "OrchestratorQueueSummary",
-            "OrchestratorWorkerOutput",
-            "OrchestratorChannel",
-            "OrchestratorThreadResponse",
-            "DialogItem",
-            "DialogHint",
-            "DialogPayload",
-            "CompanionDialog",
-            "HostInfo"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [
-            "waiting",
-            "busy"
-          ],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "NewChannelSheet.swift",
-          "lines": 64,
-          "kind": "view",
-          "exports": [
-            "NewChannelSheet"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "NewSessionSheet.swift",
-          "lines": 145,
-          "kind": "view",
-          "exports": [
-            "NewSessionSheet"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "NotificationCategories.swift",
-          "lines": 59,
-          "kind": "lib",
-          "exports": [
-            "NotificationCategory",
-            "NotificationCategories",
-            "registerAll()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "OrchestratorTaskRow.swift",
-          "lines": 118,
-          "kind": "view",
-          "exports": [
-            "TaskRow"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [
-            "running",
-            "dispatched",
-            "queued",
-            "done",
-            "error",
-            "cancelled",
-            "rejected"
-          ],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "OrchestratorTasksView.swift",
-          "lines": 163,
-          "kind": "view",
-          "exports": [
-            "TasksView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 1
-        },
-        {
-          "path": "OrchestratorTurnRow.swift",
-          "lines": 49,
-          "kind": "view",
-          "exports": [
-            "OrchestratorTurnRow"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "OrchestratorView.swift",
-          "lines": 413,
-          "kind": "view",
-          "exports": [
-            "OrchestratorView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 2
-        },
-        {
-          "path": "PendingApprovalActivityAttributes.swift",
-          "lines": 39,
-          "kind": "lib",
-          "exports": [
-            "PendingApprovalActivityAttributes"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "PendingQueueSheet.swift",
-          "lines": 123,
-          "kind": "view",
-          "exports": [
-            "PendingQueueSheet"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "ProposalCard.swift",
-          "lines": 80,
-          "kind": "view",
-          "exports": [
-            "ProposalCard"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "QRScannerView.swift",
-          "lines": 123,
-          "kind": "lib",
-          "exports": [
-            "QRScannerView",
-            "makeUIViewController()",
-            "updateUIViewController()",
-            "makeCoordinator()",
-            "PairingPayload",
-            "decode()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".barcode",
-            ".success",
-            ".failure"
-          ],
-          "sheets": 0
-        },
-        {
-          "path": "QuestionSheet.swift",
-          "lines": 397,
-          "kind": "view",
-          "exports": [
-            "QuestionContent",
-            "QuestionSheet"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "SessionChip.swift",
-          "lines": 141,
-          "kind": "view",
-          "exports": [
-            "SessionChip"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 1
-        },
-        {
-          "path": "SessionRowView.swift",
-          "lines": 89,
-          "kind": "view",
-          "exports": [
-            "SessionRowView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "SessionsDrawer.swift",
-          "lines": 160,
-          "kind": "view",
-          "exports": [
-            "SessionsDrawer"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 1
-        },
-        {
-          "path": "Settings.swift",
-          "lines": 195,
-          "kind": "lib",
-          "exports": [
-            "AppSettings",
-            "companionEndpoints()",
-            "endpointLabel()",
-            "pushComposerHistory()",
-            "pushSpawnCwdHistory()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "SettingsView.swift",
-          "lines": 228,
-          "kind": "view",
-          "exports": [
-            "SettingsView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [
-            ".ok",
-            ".authFail",
-            ".fail",
-            ".idle"
-          ],
-          "sheets": 1
-        },
-        {
-          "path": "StatusBar.swift",
-          "lines": 213,
-          "kind": "view",
-          "exports": [
-            "StatusBar"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "TerminalLines.swift",
-          "lines": 25,
-          "kind": "view",
-          "exports": [
-            "TerminalLines"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "Theme.swift",
-          "lines": 33,
-          "kind": "lib",
-          "exports": [
-            "Theme",
-            "mono()"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "ToolDetailSheet.swift",
-          "lines": 45,
-          "kind": "lib",
-          "exports": [
-            "VerdictBadgePalette"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [
-            "approved",
-            "denied",
-            "pending",
-            "expired"
-          ],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "WSFrame.swift",
-          "lines": 411,
-          "kind": "lib",
-          "exports": [
-            "WSFrame",
-            "decode()",
-            "InitPayload",
-            "ApprovalPayload",
-            "QuestionPayload",
-            "ApprovalInput",
-            "EditOp",
-            "WaitingPayload",
-            "FeedEventPayload",
-            "ClaudeActivityPayload",
-            "UserPromptPayload",
-            "InjectErrorPayload"
-          ],
-          "state": [],
-          "emits": [
-            ".initial",
-            ".sessions",
-            ".approval",
-            ".question",
-            ".resolved",
-            ".waitingInput",
-            ".event",
-            ".activity",
-            ".userPrompt",
-            ".injectError",
-            ".superAuto",
-            ".orchestratorTurn",
-            ".orchestratorProposal",
-            ".orchestratorChannel",
-            ".orchestratorWorkerOutput",
-            ".dialog",
-            ".dialogClosed",
-            ".unknown"
-          ],
-          "consumes": [
-            "init",
-            "sessions",
-            "approval",
-            "question",
-            "resolved",
-            "waiting_input",
-            "event",
-            "activity",
-            "user_prompt",
-            "inject_error",
-            "super_auto",
-            "orchestrator",
-            "orchestrator_proposal",
-            "orchestrator_task",
-            "orchestrator_channel",
-            "orchestrator_worker_output",
-            "dialog",
-            "dialog_closed",
-            "pong"
-          ],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "WorkerTailCard.swift",
-          "lines": 32,
-          "kind": "view",
-          "exports": [
-            "WorkerTailCard"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "claude_companionApp.swift",
-          "lines": 27,
-          "kind": "lib",
-          "exports": [
-            "claude_companionApp"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "iPad/IPadCockpitView.swift",
-          "lines": 105,
-          "kind": "view",
-          "exports": [
-            "IPadCockpitView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 1
-        },
-        {
-          "path": "iPad/InspectorView.swift",
-          "lines": 73,
-          "kind": "view",
-          "exports": [
-            "InspectorView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        },
-        {
-          "path": "iPad/SessionsRailView.swift",
-          "lines": 242,
-          "kind": "view",
-          "exports": [
-            "SessionsRailView"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0
-        }
-      ],
-      "fanIn": {}
+      "repo": "~/apps/claude companion"
     }
   ]
 }

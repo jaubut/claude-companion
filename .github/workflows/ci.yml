@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Install client deps
+        run: cd client && bun install --frozen-lockfile
+
+      - name: Typecheck server
+        run: bunx tsc --noEmit
+
+      - name: Typecheck + build client
+        run: cd client && bunx tsc -b && bun run build
+
+      # The committed architecture map must match the code (--check) and no
+      # module may cross an import boundary or grow past the 600-line cap
+      # beyond what main already carries (--lint, ratcheted against main).
+      - name: Architecture map (fresh + boundaries)
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          git show FETCH_HEAD:architecture.json > /tmp/archmap-base.json 2>/dev/null || cp architecture.json /tmp/archmap-base.json
+          bun run tools/archmap/cli.ts . --check --lint --baseline /tmp/archmap-base.json
+
+      - name: Tests
+        run: bun test
