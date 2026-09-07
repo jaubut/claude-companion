@@ -1,3 +1,4 @@
+import type { SpawnAgent } from "../lib/spawn-session"
 import { addApprovalRequest } from "../lib/pty-manager"
 import {
   type QuestionAnswer,
@@ -136,6 +137,58 @@ function hasQuestionInjectTarget(target: InjectTarget): boolean {
   return !!(target.tmuxPane || target.tty)
 }
 
+// One AskUserQuestion / request_user_input fast path for both hook events.
+// Treat agent questions as structured phone prompts, not binary approval
+// gates: route to the phone with question + options, then drive the local
+// terminal picker after the user answers remotely. Claude Code can fire BOTH
+// PreToolUse and PermissionRequest for one call — whichever hook got here
+// first asked the phone and is driving the picker; the sibling just allows.
+// Returns a Response when the question was handled (already answered,
+// answered now, or expired), null to fall through to the generic approval
+// card (parse failed / no live terminal target) so the Mac flow still works.
+async function questionFastPath(p: {
+  agent: SpawnAgent
+  eventName: "PreToolUse" | "PermissionRequest"
+  tool: string
+  input: Record<string, unknown>
+  sessionId: string
+  cwd: string
+  tty: string
+  session: Session | null
+  headerMeta: Partial<Session>
+}): Promise<Response | null> {
+  if (!isQuestionTool(p.tool)) return null
+  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"; const green = "\x1b[32m"; const red = "\x1b[31m"
+  const questions = parseQuestionInput(p.input)
+  const answerTarget = questionInjectTarget(p.session, p.headerMeta)
+  if (questions && hasQuestionInjectTarget(answerTarget)) {
+    const dedupeKey = questionDedupeKey(p.sessionId, p.cwd, questions)
+    if (wasQuestionAnswered(dedupeKey)) {
+      process.stderr.write(`${dim}[companion]${reset} ${dim}question already answered — allow (${p.eventName})${reset}\n`)
+      return hookDecisionResponse(p.agent, p.eventName, "allow", "Answered via Claude Companion")
+    }
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
+    recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty })
+    const answers = await addQuestionRequest({ agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions })
+
+    if (answers.length === 0) {
+      // Expired or otherwise no answer — deny so Claude doesn't sit on an
+      // open picker that nobody is going to drive.
+      process.stderr.write(`${dim}[companion]${reset} ${red}question expired${reset} ← phone\n`)
+      return hookDecisionResponse(p.agent, p.eventName, "deny", "User did not answer in time")
+    }
+
+    process.stderr.write(`${dim}[companion]${reset} ${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
+    markQuestionAnswered(dedupeKey)
+    // The driver waits for the picker to mount, so it can start now even
+    // though the harness only opens the picker after our allow.
+    driveAnswer(answerTarget, questions, answers)
+    return hookDecisionResponse(p.agent, p.eventName, "allow", "Answered via Claude Companion")
+  }
+  process.stderr.write(`${dim}[companion]${reset} ${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}\n`)
+  return null
+}
+
 export async function handleHookRoute(req: Request, url: URL): Promise<Response | null> {
   // ── Hook endpoint — PreToolUse ──
   if (url.pathname === "/hooks/pre-tool-use" && req.method === "POST") {
@@ -172,43 +225,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const cyan = "\x1b[36m"
 
     // ── AskUserQuestion / request_user_input fast path ─────────────
-    // Treat agent questions as structured phone prompts, not binary
-    // approval gates. Routes to phone with question + options, then
-    // drives the local terminal picker after the user answers remotely.
-    if (isQuestionTool(tool)) {
-      const questions = parseQuestionInput(input)
-      const answerTarget = questionInjectTarget(session, headerMeta)
-      if (questions && hasQuestionInjectTarget(answerTarget)) {
-        // Both PreToolUse and PermissionRequest can fire for one call —
-        // whichever hook got here first already asked the phone and is
-        // driving the picker. Just let this one through.
-        const dedupeKey = questionDedupeKey(sessionId, cwd, questions)
-        if (wasQuestionAnswered(dedupeKey)) {
-          process.stderr.write(`${dim}[companion]${reset} ${dim}question already answered — allow (PreToolUse)${reset}\n`)
-          return hookDecisionResponse(agent, "PreToolUse", "allow", "Answered via Claude Companion")
-        }
-        process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
-        recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
-        const answers = await addQuestionRequest({ agent, sessionId, cwd, questions })
-
-        if (answers.length === 0) {
-          // Expired or otherwise no answer — deny so Claude doesn't
-          // sit on an open picker that nobody is going to drive.
-          process.stderr.write(`${dim}[companion]${reset} ${red}question expired${reset} ← phone\n`)
-          return hookDecisionResponse(agent, "PreToolUse", "deny", "User did not answer in time")
-        }
-
-        process.stderr.write(`${dim}[companion]${reset} ${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
-        markQuestionAnswered(dedupeKey)
-        // The driver waits for the picker to mount, so it can start now
-        // even though the harness only opens the picker after our allow.
-        driveAnswer(answerTarget, questions, answers)
-        return hookDecisionResponse(agent, "PreToolUse", "allow", "Answered via Claude Companion")
-      }
-      // Either parse failed or we don't have a live terminal target to
-      // drive. Fall through to the generic card so the Mac flow still
-      // works instead of swallowing the question.
-      process.stderr.write(`${dim}[companion]${reset} ${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}\n`)
+    {
+      const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, session, headerMeta })
+      if (handled) return handled
     }
 
     let decision: "allow" | "deny"
@@ -377,35 +396,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const cyan = "\x1b[36m"
 
     // ── AskUserQuestion / request_user_input fast path ─────────────
-    // Same logic as the PreToolUse fast path, just with the
-    // PermissionRequest response shape ({behavior:"allow"} instead
-    // of permissionDecision). Claude Code currently fires permission-
-    // request for AskUserQuestion; Codex may use request_user_input.
-    if (isQuestionTool(tool)) {
-      const questions = parseQuestionInput(input)
-      const answerTarget = questionInjectTarget(session, headerMeta)
-      if (questions && hasQuestionInjectTarget(answerTarget)) {
-        const dedupeKey = questionDedupeKey(sessionId, cwd, questions)
-        if (wasQuestionAnswered(dedupeKey)) {
-          process.stderr.write(`${dim}[companion]${reset} ${dim}question already answered — allow (PermissionRequest)${reset}\n`)
-          return hookDecisionResponse(agent, "PermissionRequest", "allow", "Answered via Claude Companion")
-        }
-        process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
-        recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
-        const answers = await addQuestionRequest({ agent, sessionId, cwd, questions })
-
-        const greenFP = "\x1b[32m"; const redFP = "\x1b[31m"
-        if (answers.length === 0) {
-          process.stderr.write(`${dim}[companion]${reset} ${redFP}question expired${reset} ← phone\n`)
-          return hookDecisionResponse(agent, "PermissionRequest", "deny", "User did not answer in time")
-        }
-
-        process.stderr.write(`${dim}[companion]${reset} ${greenFP}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
-        markQuestionAnswered(dedupeKey)
-        driveAnswer(answerTarget, questions, answers)
-        return hookDecisionResponse(agent, "PermissionRequest", "allow", "Answered via Claude Companion")
-      }
-      process.stderr.write(`${dim}[companion]${reset} ${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}\n`)
+    {
+      const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, session, headerMeta })
+      if (handled) return handled
     }
 
     process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
