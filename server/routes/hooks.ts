@@ -45,7 +45,6 @@ import {
   projectLabelFor,
 } from "../lib/hook-common"
 import { emitTask, orchEmit, workerQueue } from "../wiring/orchestrator"
-import { handleApiRoute } from "../routes/api"
 import { appendTurn as orchAppendTurn, findRunningTaskByCwd, setTaskStatus } from "../lib/orchestrator-chat"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
@@ -510,10 +509,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     return Response.json({})
   }
 
-  {
-    const handled = await handleApiRoute(req, url)
-    if (handled) return handled
-  }
 
   // ── Hook endpoint — SessionStart — register on startup/resume/clear/compact
   // so idle Claude sessions are visible to the phone picker from the moment
