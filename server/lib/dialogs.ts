@@ -23,6 +23,10 @@ export interface DialogHint {
 }
 
 export interface Dialog {
+  // "question" = the AskUserQuestion picker (tab bar / Tab-to-navigate
+  // footer) — the phone already has the structured card for it, and the
+  // hook-driven driver types into it, so it is never mirrored.
+  kind: "dialog" | "question"
   title: string
   body: string           // lines between the title and the first row
   items: DialogItem[]
@@ -109,12 +113,14 @@ export function parseDialog(pane: string): Dialog | null {
     if (DIVIDER_RE.test(all[i]!)) { start = i + 1; break }
   }
   const textCol = classify(all[cursorIdx]!).col
+  const region = all.slice(start, footerIdx)
+  const isQuestion = region.some((l) => TAB_BAR_RE.test(l)) || /Tab\/Arrow keys to navigate/.test(all[footerIdx]!)
 
   const items: DialogItem[] = []
   const pre: string[] = []
   const notes: string[] = []
   let more = ""
-  for (const raw of all.slice(start, footerIdx)) {
+  for (const raw of region) {
     const line = raw.replace(/\s+$/, "")
     if (!line.trim() || DIVIDER_RE.test(line) || TAB_BAR_RE.test(line)) continue
     if (MORE_RE.test(line)) { more = line.trim(); continue }
@@ -140,6 +146,7 @@ export function parseDialog(pane: string): Dialog | null {
   }
   if (!items.length) return null
   return {
+    kind: isQuestion ? "question" : "dialog",
     title: pre[0] ?? "",
     body: [...pre.slice(1), ...notes].join("\n"),
     items,

@@ -62,7 +62,10 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     if (deps.hasPendingQuestion(s)) { close(s.key); return }
     const pane = await deps.capture(s.tmuxPane)
     const dialog = pane === null ? null : parseDialog(pane)
-    if (!dialog) { close(s.key); return }
+    // Question pickers are the hooks' business (structured card + driver);
+    // mirroring one — e.g. for the second the driver is still typing after
+    // the phone answered — would put a stray dialog card on the phone.
+    if (!dialog || dialog.kind === "question") { close(s.key); return }
     const sig = dialogSignature(dialog)
     if (open.get(s.key)?.sig === sig) return
     open.set(s.key, { sig, dialog })
