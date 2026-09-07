@@ -10,38 +10,13 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 1714,
+          "lines": 86,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
           ],
-          "state": [
-            "clients: Set",
-            "let waitingForInput",
-            "let waitingCwd",
-            "let waitingKey"
-          ],
-          "emits": [
-            "orchestrator",
-            "orchestrator_task",
-            "orchestrator_channel",
-            "approval",
-            "resolved",
-            "question",
-            "event",
-            "feed_pruned",
-            "activity",
-            "dialog",
-            "dialog_closed",
-            "orchestrator_worker_output",
-            "sessions",
-            "waiting_input",
-            "user_prompt",
-            "super_auto",
-            "init",
-            "inject_error",
-            "pong"
-          ],
+          "state": [],
+          "emits": [],
           "consumes": [],
           "endpoints": [
             {
@@ -65,171 +40,6 @@
               "prefix": true
             },
             {
-              "method": "POST",
-              "path": "/hooks/pre-tool-use",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/hooks/post-tool-use",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/hooks/user-prompt-submit",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/hooks/permission-request",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/hooks/stop",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/resolve",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/answer",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/register-token",
-              "prefix": false
-            },
-            {
-              "method": "DELETE",
-              "path": "/api/register-token",
-              "prefix": false
-            },
-            {
-              "method": "GET",
-              "path": "/api/push/tokens",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/push/test",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/push/broadcast",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/inject",
-              "prefix": false
-            },
-            {
-              "method": "GET",
-              "path": "/api/learned",
-              "prefix": false
-            },
-            {
-              "method": "DELETE",
-              "path": "/api/learned",
-              "prefix": false
-            },
-            {
-              "method": "DELETE",
-              "path": "/api/learned/",
-              "prefix": true
-            },
-            {
-              "method": "GET",
-              "path": "/api/super-auto",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/super-auto",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/spawn-session",
-              "prefix": false
-            },
-            {
-              "method": "GET",
-              "path": "/api/orchestrator/channels",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/orchestrator/channels",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/orchestrator/channels/",
-              "prefix": true
-            },
-            {
-              "method": "GET",
-              "path": "/api/orchestrator/thread",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/orchestrator/send",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/orchestrator/dispatch",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/orchestrator/task/",
-              "prefix": true
-            },
-            {
-              "method": "POST",
-              "path": "/api/orchestrator/proposal/",
-              "prefix": true
-            },
-            {
-              "method": "POST",
-              "path": "/hooks/session-start",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/hooks/session-end",
-              "prefix": false
-            },
-            {
-              "method": "*",
-              "path": "/api/status",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/dialog/key",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/dialog/pick",
-              "prefix": false
-            },
-            {
-              "method": "*",
-              "path": "/api/feed",
-              "prefix": false
-            },
-            {
               "method": "*",
               "path": "/",
               "prefix": false
@@ -237,40 +47,15 @@
           ],
           "apiCalls": [],
           "imports": [
-            "lib/pty-manager.ts",
-            "lib/questions.ts",
-            "lib/branch-guard.ts",
-            "lib/keyboard-inject.ts",
-            "lib/question-driver.ts",
-            "lib/session-titles.ts",
-            "lib/dialog-watch.ts",
-            "lib/dialogs.ts",
-            "lib/spawn-session.ts",
-            "lib/super-auto.ts",
-            "lib/learned-allow.ts",
-            "lib/sessions.ts",
-            "lib/activity.ts",
-            "lib/push-tokens.ts",
-            "lib/apns.ts",
-            "lib/push.ts",
             "lib/auth.ts",
-            "lib/orchestrator-chat.ts",
-            "lib/orchestrator-brain.ts",
-            "lib/worker-tail.ts",
-            "lib/orchestrator-queue.ts"
+            "state.ts",
+            "routes/hooks.ts",
+            "routes/api.ts",
+            "routes/orchestrator.ts",
+            "routes/dialogs.ts",
+            "ws.ts"
           ],
-          "listeners": [
-            "onApprovalRequest",
-            "onApprovalExpired",
-            "onQuestionRequest",
-            "onQuestionExpired",
-            "onFeed",
-            "onFeedReset",
-            "onActivity",
-            "dialogWatcher.start",
-            "setInterval",
-            "onSessions"
-          ],
+          "listeners": [],
           "sheets": 0
         },
         {
@@ -500,6 +285,29 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/hook-common.ts",
+          "lines": 73,
+          "kind": "lib",
+          "exports": [
+            "agentFromHeaders",
+            "agentTitle",
+            "cwdFromPayload",
+            "hookDecisionResponse",
+            "projectLabelFor",
+            "subtitleFor"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/spawn-session.ts"
+          ],
           "listeners": [],
           "sheets": 0
         },
@@ -886,6 +694,24 @@
           "sheets": 0
         },
         {
+          "path": "lib/tmux-pane.ts",
+          "lines": 29,
+          "kind": "lib",
+          "exports": [
+            "capturePane",
+            "paneInputReady",
+            "paneHasDialog"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
           "path": "lib/worker-tail.ts",
           "lines": 120,
           "kind": "lib",
@@ -906,234 +732,456 @@
           ],
           "listeners": [],
           "sheets": 0
+        },
+        {
+          "path": "routes/api.ts",
+          "lines": 316,
+          "kind": "route-host",
+          "exports": [
+            "handleApiRoute"
+          ],
+          "state": [],
+          "emits": [
+            "resolved",
+            "waiting_input",
+            "super_auto"
+          ],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/api/resolve",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/answer",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/register-token",
+              "prefix": false
+            },
+            {
+              "method": "DELETE",
+              "path": "/api/register-token",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/push/tokens",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/push/test",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/push/broadcast",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/inject",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/learned",
+              "prefix": false
+            },
+            {
+              "method": "DELETE",
+              "path": "/api/learned",
+              "prefix": false
+            },
+            {
+              "method": "DELETE",
+              "path": "/api/learned/",
+              "prefix": true
+            },
+            {
+              "method": "GET",
+              "path": "/api/super-auto",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/super-auto",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/spawn-session",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/status",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/feed",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/pty-manager.ts",
+            "lib/questions.ts",
+            "lib/keyboard-inject.ts",
+            "lib/spawn-session.ts",
+            "lib/super-auto.ts",
+            "lib/learned-allow.ts",
+            "lib/sessions.ts",
+            "lib/activity.ts",
+            "lib/push-tokens.ts",
+            "lib/apns.ts",
+            "lib/push.ts",
+            "state.ts",
+            "wiring/dialogs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "routes/dialogs.ts",
+          "lines": 57,
+          "kind": "route-host",
+          "exports": [
+            "handleDialogRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/api/dialog/key",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/dialog/pick",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/dialogs.ts",
+            "lib/sessions.ts",
+            "wiring/dialogs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "routes/hooks.ts",
+          "lines": 555,
+          "kind": "route-host",
+          "exports": [
+            "handleHookRoute"
+          ],
+          "state": [],
+          "emits": [
+            "waiting_input",
+            "user_prompt"
+          ],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/hooks/pre-tool-use",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/post-tool-use",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/user-prompt-submit",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/permission-request",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/stop",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/session-start",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/session-end",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/spawn-session.ts",
+            "lib/pty-manager.ts",
+            "lib/questions.ts",
+            "lib/branch-guard.ts",
+            "lib/keyboard-inject.ts",
+            "lib/question-driver.ts",
+            "lib/session-titles.ts",
+            "lib/super-auto.ts",
+            "lib/learned-allow.ts",
+            "lib/sessions.ts",
+            "lib/activity.ts",
+            "lib/apns.ts",
+            "lib/push.ts",
+            "state.ts",
+            "lib/hook-common.ts",
+            "wiring/orchestrator.ts",
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "routes/orchestrator.ts",
+          "lines": 173,
+          "kind": "route-host",
+          "exports": [
+            "handleOrchestratorRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "GET",
+              "path": "/api/orchestrator/channels",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/channels",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/channels/",
+              "prefix": true
+            },
+            {
+              "method": "GET",
+              "path": "/api/orchestrator/thread",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/send",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/dispatch",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/task/",
+              "prefix": true
+            },
+            {
+              "method": "POST",
+              "path": "/api/orchestrator/proposal/",
+              "prefix": true
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "wiring/orchestrator.ts",
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "state.ts",
+          "lines": 49,
+          "kind": "lib",
+          "exports": [
+            "WsData",
+            "clients",
+            "broadcast",
+            "HOST_INFO",
+            "getWaiting",
+            "setWaiting",
+            "clearWaiting"
+          ],
+          "state": [
+            "let waitingForInput",
+            "let waitingCwd",
+            "let waitingKey"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "wiring/dialogs.ts",
+          "lines": 38,
+          "kind": "lib",
+          "exports": [
+            "dialogWatcher"
+          ],
+          "state": [],
+          "emits": [
+            "dialog",
+            "dialog_closed"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "state.ts",
+            "lib/dialog-watch.ts",
+            "lib/sessions.ts",
+            "lib/questions.ts",
+            "lib/tmux-pane.ts"
+          ],
+          "listeners": [
+            "dialogWatcher.start"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "wiring/events.ts",
+          "lines": 108,
+          "kind": "lib",
+          "exports": [],
+          "state": [],
+          "emits": [
+            "approval",
+            "resolved",
+            "question",
+            "event",
+            "feed_pruned",
+            "activity",
+            "sessions"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "state.ts",
+            "lib/pty-manager.ts",
+            "lib/questions.ts",
+            "lib/activity.ts",
+            "lib/apns.ts",
+            "lib/push.ts",
+            "lib/sessions.ts",
+            "lib/session-titles.ts",
+            "lib/hook-common.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [
+            "onApprovalRequest",
+            "onApprovalExpired",
+            "onQuestionRequest",
+            "onQuestionExpired",
+            "onFeed",
+            "onFeedReset",
+            "onActivity",
+            "onSessions"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "wiring/orchestrator.ts",
+          "lines": 245,
+          "kind": "lib",
+          "exports": [
+            "orchEmit",
+            "emitTask",
+            "emitChannel",
+            "WIP_CAP",
+            "workerQueue",
+            "workerTail",
+            "reconcileDispatch",
+            "executeDispatch",
+            "runBrain"
+          ],
+          "state": [],
+          "emits": [
+            "orchestrator",
+            "orchestrator_task",
+            "orchestrator_channel",
+            "orchestrator_worker_output"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "state.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/worker-tail.ts",
+            "lib/orchestrator-queue.ts",
+            "lib/tmux-pane.ts",
+            "lib/sessions.ts",
+            "lib/spawn-session.ts"
+          ],
+          "listeners": [
+            "setInterval"
+          ],
+          "sheets": 0
+        },
+        {
+          "path": "ws.ts",
+          "lines": 132,
+          "kind": "lib",
+          "exports": [
+            "websocket"
+          ],
+          "state": [],
+          "emits": [
+            "approval",
+            "question",
+            "init",
+            "resolved",
+            "inject_error",
+            "waiting_input",
+            "pong"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/pty-manager.ts",
+            "lib/questions.ts",
+            "lib/keyboard-inject.ts",
+            "lib/super-auto.ts",
+            "lib/sessions.ts",
+            "lib/activity.ts",
+            "state.ts",
+            "wiring/dialogs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
         }
       ],
       "fanIn": {
-        "getTask": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /api/orchestrator/task/",
-            "companion-server.ts#POST /api/orchestrator/proposal/",
-            "lib/worker-tail.ts"
-          ]
-        },
-        "getChannel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /api/orchestrator/task/"
-          ]
-        },
-        "onApprovalRequest": {
-          "module": "lib/pty-manager.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "apnsConfigured": {
-          "module": "lib/apns.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /hooks/stop",
-            "companion-server.ts#POST /api/register-token",
-            "companion-server.ts#GET /api/push/tokens",
-            "lib/push.ts"
-          ]
-        },
-        "summarize": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request",
-            "lib/codex-feed.ts"
-          ]
-        },
-        "pushToAll": {
-          "module": "lib/push.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /hooks/stop",
-            "companion-server.ts#POST /api/push/test",
-            "companion-server.ts#POST /api/push/broadcast"
-          ]
-        },
-        "withPickerIO": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "driveQuestionPicker": {
-          "module": "lib/question-driver.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "onApprovalExpired": {
-          "module": "lib/pty-manager.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "onQuestionRequest": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "onQuestionExpired": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "onFeed": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "onFeedReset": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "onActivity": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "createDialogWatcher": {
-          "module": "lib/dialog-watch.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "getPendingQuestions": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#* /"
-          ]
-        },
-        "setSessionStatus": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "resolveTitle": {
-          "module": "lib/session-titles.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "setTitleResolver": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "createQueue": {
-          "module": "lib/orchestrator-queue.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "setTaskStatus": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /hooks/stop",
-            "companion-server.ts#POST /api/orchestrator/task/",
-            "companion-server.ts#POST /api/orchestrator/proposal/"
-          ]
-        },
-        "countLiveTasks": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#GET /api/orchestrator/thread"
-          ]
-        },
-        "createWorkerTailManager": {
-          "module": "lib/worker-tail.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "listTasks": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#GET /api/orchestrator/thread"
-          ]
-        },
-        "matchUnboundTaskByCwd": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "bindTaskSession": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "onSessions": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "listSessions": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /api/inject",
-            "companion-server.ts#* /api/status",
-            "companion-server.ts#* /api/feed",
-            "companion-server.ts#* /",
-            "lib/codex-feed.ts"
-          ]
-        },
-        "spawnCompanionSession": {
-          "module": "lib/spawn-session.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#POST /api/spawn-session"
-          ]
-        },
-        "setTaskSpawn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "getThread": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts",
-            "companion-server.ts#GET /api/orchestrator/thread"
-          ]
-        },
-        "decide": {
-          "module": "lib/orchestrator-brain.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "createProposal": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
@@ -1146,314 +1194,11 @@
             "companion-server.ts#* /ws"
           ]
         },
-        "metaFromHeaders": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/post-tool-use",
-            "companion-server.ts#POST /hooks/user-prompt-submit",
-            "companion-server.ts#POST /hooks/permission-request",
-            "companion-server.ts#POST /hooks/stop",
-            "companion-server.ts#POST /hooks/session-end"
-          ]
-        },
-        "recordSession": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/post-tool-use",
-            "companion-server.ts#POST /hooks/user-prompt-submit",
-            "companion-server.ts#POST /hooks/permission-request",
-            "companion-server.ts#POST /hooks/stop",
-            "companion-server.ts#POST /hooks/session-start",
-            "lib/discover.ts",
-            "lib/rehydrate.ts"
-          ]
-        },
         "isQuestionTool": {
           "module": "lib/questions.ts",
           "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request",
-            "lib/activity.ts"
-          ]
-        },
-        "parseQuestionInput": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "questionDedupeKey": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "wasQuestionAnswered": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "recordToolStart": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "addQuestionRequest": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "markQuestionAnswered": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "isSuperAuto": {
-          "module": "lib/super-auto.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#GET /api/super-auto",
-            "companion-server.ts#* /"
-          ]
-        },
-        "isCatastrophic": {
-          "module": "lib/super-auto.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use"
-          ]
-        },
-        "judgeWithBranchContext": {
-          "module": "lib/branch-guard.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use"
-          ]
-        },
-        "addApprovalRequest": {
-          "module": "lib/pty-manager.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "recordAllow": {
-          "module": "lib/learned-allow.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/pre-tool-use",
-            "companion-server.ts#POST /hooks/permission-request"
-          ]
-        },
-        "recordToolEnd": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/post-tool-use"
-          ]
-        },
-        "titleFromPrompt": {
-          "module": "lib/session-titles.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "rememberTitle": {
-          "module": "lib/session-titles.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "setSessionTitle": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "recordUserPrompt": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/user-prompt-submit",
-            "companion-server.ts#POST /api/inject"
-          ]
-        },
-        "findRunningTaskByCwd": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/stop"
-          ]
-        },
-        "recordTurnEnd": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/stop"
-          ]
-        },
-        "resolveApproval": {
-          "module": "lib/pty-manager.ts",
-          "callers": [
-            "companion-server.ts#POST /api/resolve",
-            "companion-server.ts#* /"
-          ]
-        },
-        "resolveQuestion": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "companion-server.ts#POST /api/answer",
-            "companion-server.ts#* /"
-          ]
-        },
-        "registerToken": {
-          "module": "lib/push-tokens.ts",
-          "callers": [
-            "companion-server.ts#POST /api/register-token"
-          ]
-        },
-        "tokenCount": {
-          "module": "lib/push-tokens.ts",
-          "callers": [
-            "companion-server.ts#POST /api/register-token",
-            "companion-server.ts#DELETE /api/register-token"
-          ]
-        },
-        "removeToken": {
-          "module": "lib/push-tokens.ts",
-          "callers": [
-            "companion-server.ts#DELETE /api/register-token",
-            "lib/push.ts"
-          ]
-        },
-        "listTokens": {
-          "module": "lib/push-tokens.ts",
-          "callers": [
-            "companion-server.ts#GET /api/push/tokens",
-            "lib/push.ts"
-          ]
-        },
-        "resolveSession": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts#POST /api/inject",
-            "companion-server.ts#POST /api/dialog/key",
-            "companion-server.ts#POST /api/dialog/pick",
-            "companion-server.ts#* /"
-          ]
-        },
-        "injectText": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "companion-server.ts#POST /api/inject",
-            "companion-server.ts#* /"
-          ]
-        },
-        "listLearned": {
-          "module": "lib/learned-allow.ts",
-          "callers": [
-            "companion-server.ts#GET /api/learned"
-          ]
-        },
-        "clearLearned": {
-          "module": "lib/learned-allow.ts",
-          "callers": [
-            "companion-server.ts#DELETE /api/learned"
-          ]
-        },
-        "forgetLearned": {
-          "module": "lib/learned-allow.ts",
-          "callers": [
-            "companion-server.ts#DELETE /api/learned/"
-          ]
-        },
-        "setSuperAuto": {
-          "module": "lib/super-auto.ts",
-          "callers": [
-            "companion-server.ts#POST /api/super-auto"
-          ]
-        },
-        "listChannels": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts#GET /api/orchestrator/channels",
-            "companion-server.ts#GET /api/orchestrator/thread"
-          ]
-        },
-        "createChannel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts#POST /api/orchestrator/channels"
-          ]
-        },
-        "setChannelAuto": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts#POST /api/orchestrator/channels/",
-            "companion-server.ts#POST /api/orchestrator/task/"
-          ]
-        },
-        "listQueued": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts#GET /api/orchestrator/thread",
-            "lib/orchestrator-queue.ts"
-          ]
-        },
-        "createQueuedTask": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "companion-server.ts#POST /api/orchestrator/dispatch"
-          ]
-        },
-        "removeSessionByTty": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/session-end"
-          ]
-        },
-        "removeSessionByCwd": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/session-end"
-          ]
-        },
-        "forgetSession": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts#POST /hooks/session-end"
-          ]
-        },
-        "getPending": {
-          "module": "lib/pty-manager.ts",
-          "callers": [
-            "companion-server.ts#* /api/status",
-            "companion-server.ts#* /"
-          ]
-        },
-        "pickKeys": {
-          "module": "lib/dialogs.ts",
-          "callers": [
-            "companion-server.ts#POST /api/dialog/pick"
-          ]
-        },
-        "getActivity": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts#* /api/feed",
-            "companion-server.ts#* /"
-          ]
-        },
-        "getFeed": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "companion-server.ts#* /api/feed",
-            "companion-server.ts#* /"
+            "lib/activity.ts",
+            "routes/hooks.ts"
           ]
         },
         "isLearned": {
@@ -1474,6 +1219,27 @@
             "lib/codex-feed.ts"
           ]
         },
+        "listSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/codex-feed.ts",
+            "routes/api.ts#POST /api/inject",
+            "routes/api.ts#* /api/status",
+            "routes/api.ts#* /api/feed",
+            "wiring/orchestrator.ts",
+            "ws.ts"
+          ]
+        },
+        "summarize": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/codex-feed.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "wiring/events.ts"
+          ]
+        },
         "parseDialog": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -1486,16 +1252,663 @@
             "lib/dialog-watch.ts"
           ]
         },
+        "recordSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/rehydrate.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start"
+          ]
+        },
+        "listQueued": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/orchestrator-queue.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "apnsConfigured": {
+          "module": "lib/apns.ts",
+          "callers": [
+            "lib/push.ts",
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#GET /api/push/tokens",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts"
+          ]
+        },
+        "listTokens": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "lib/push.ts",
+            "routes/api.ts#GET /api/push/tokens"
+          ]
+        },
         "sendApns": {
           "module": "lib/apns.ts",
           "callers": [
             "lib/push.ts"
           ]
         },
+        "removeToken": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "lib/push.ts",
+            "routes/api.ts#DELETE /api/register-token"
+          ]
+        },
+        "capturePane": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/worker-tail.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "getTask": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/worker-tail.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "routes/orchestrator.ts#POST /api/orchestrator/proposal/",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "setTaskLogTail": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/worker-tail.ts"
+          ]
+        },
+        "resolveApproval": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "routes/api.ts#POST /api/resolve",
+            "ws.ts"
+          ]
+        },
+        "broadcast": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#POST /api/resolve",
+            "routes/api.ts#POST /api/answer",
+            "routes/api.ts#POST /api/inject",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/dialogs.ts",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts",
+            "ws.ts"
+          ]
+        },
+        "resolveQuestion": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "routes/api.ts#POST /api/answer",
+            "ws.ts"
+          ]
+        },
+        "registerToken": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "routes/api.ts#POST /api/register-token"
+          ]
+        },
+        "tokenCount": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#DELETE /api/register-token"
+          ]
+        },
+        "pushToAll": {
+          "module": "lib/push.ts",
+          "callers": [
+            "routes/api.ts#POST /api/push/test",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts"
+          ]
+        },
+        "resolveSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "ws.ts"
+          ]
+        },
+        "clearWaiting": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "ws.ts"
+          ]
+        },
+        "injectText": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
+        "recordUserPrompt": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "listLearned": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "routes/api.ts#GET /api/learned"
+          ]
+        },
+        "clearLearned": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "routes/api.ts#DELETE /api/learned"
+          ]
+        },
+        "forgetLearned": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "routes/api.ts#DELETE /api/learned/"
+          ]
+        },
+        "isSuperAuto": {
+          "module": "lib/super-auto.ts",
+          "callers": [
+            "routes/api.ts#GET /api/super-auto",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "ws.ts"
+          ]
+        },
+        "setSuperAuto": {
+          "module": "lib/super-auto.ts",
+          "callers": [
+            "routes/api.ts#POST /api/super-auto"
+          ]
+        },
+        "spawnCompanionSession": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "routes/api.ts#POST /api/spawn-session",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "getPending": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "ws.ts"
+          ]
+        },
+        "getActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "getFeed": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "pickKeys": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "routes/dialogs.ts#POST /api/dialog/pick"
+          ]
+        },
+        "withPickerIO": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "driveQuestionPicker": {
+          "module": "lib/question-driver.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "parseQuestionInput": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "questionDedupeKey": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "wasQuestionAnswered": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "hookDecisionResponse": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "recordToolStart": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "addQuestionRequest": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "markQuestionAnswered": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "cwdFromPayload": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "metaFromHeaders": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "agentFromHeaders": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "getWaiting": {
+          "module": "state.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "isCatastrophic": {
+          "module": "lib/super-auto.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
+          ]
+        },
+        "judgeWithBranchContext": {
+          "module": "lib/branch-guard.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
+          ]
+        },
+        "addApprovalRequest": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "recordAllow": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "recordToolEnd": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/post-tool-use"
+          ]
+        },
+        "titleFromPrompt": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "rememberTitle": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "setSessionTitle": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "findRunningTaskByCwd": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "setTaskStatus": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "routes/orchestrator.ts#POST /api/orchestrator/proposal/",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "emitTask": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
+          ]
+        },
+        "orchEmit": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
+          ]
+        },
+        "recordTurnEnd": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "setWaiting": {
+          "module": "state.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "projectLabelFor": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts"
+          ]
+        },
+        "agentTitle": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts"
+          ]
+        },
+        "removeSessionByTty": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "removeSessionByCwd": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "forgetSession": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "getChannel": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "listChannels": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/channels",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "createChannel": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/channels"
+          ]
+        },
+        "emitChannel": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/channels",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/"
+          ]
+        },
+        "setChannelAuto": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/"
+          ]
+        },
+        "getThread": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "listTasks": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "countLiveTasks": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "runBrain": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/send"
+          ]
+        },
+        "createQueuedTask": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
+          ]
+        },
+        "createDialogWatcher": {
+          "module": "lib/dialog-watch.ts",
+          "callers": [
+            "wiring/dialogs.ts"
+          ]
+        },
+        "getPendingQuestions": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "wiring/dialogs.ts",
+            "ws.ts"
+          ]
+        },
+        "setSessionStatus": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/dialogs.ts"
+          ]
+        },
+        "onApprovalRequest": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "subtitleFor": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onApprovalExpired": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onQuestionRequest": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onQuestionExpired": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onFeed": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onFeedReset": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "reconcileDispatch": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "resolveTitle": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "setTitleResolver": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "createQueue": {
+          "module": "lib/orchestrator-queue.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "createWorkerTailManager": {
+          "module": "lib/worker-tail.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "paneHasDialog": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "paneInputReady": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "matchUnboundTaskByCwd": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "bindTaskSession": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "setTaskSpawn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "decide": {
+          "module": "lib/orchestrator-brain.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "createProposal": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
           ]
         }
       }

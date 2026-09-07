@@ -1,6 +1,6 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-09-05
+Last updated: 2026-09-07
 
 ## Active Decisions
 
@@ -28,6 +28,83 @@ Last updated: 2026-09-05
 **Why:** autonomy must grow with proof and stay one-tap reversible from the phone. The server suggesting is fine; the server deciding to go autonomous is not (CLAUDE.md agent-dispatch policy, Jevan "read its thoughts" rule).
 **Rejected:** global auto toggle (trust is per project); server auto-enabling at the streak (removes the human from the ramp); per-cwd cap (host capacity is the real limit, not the project).
 **Revisit if:** Mac + Zettlab need one shared queue (today each host caps independently).
+
+## Change Plans
+
+### Change Plan — split-companion-server (2026-09-07) — ✅ shipped (branch refactor/split-companion-server, 10 commits)
+**Request:** Split `server/companion-server.ts` (1714 lines: all HTTP routes, hook endpoints, WS upgrade/init/message, orchestrator wiring, dialog-mirror wiring) into route/wiring modules, no server file over 600 lines, every contract unchanged (WS frame names/shapes, endpoints + methods, hook responses, auth gate, log lines). iOS TestFlight build 4 + React client untouched. Mechanical move — the only dedupe is the AskUserQuestion fast path shared by PreToolUse and PermissionRequest.
+**Done when:**
+- every `server/**/*.ts` < 600 lines except pre-existing `lib/activity.ts` (681, out of scope); archmap shows only that ⚠ under server
+- `bun test` 50/50; before/after route + WS + stderr smoke diff empty; 3 real e2e green (Zettlab dispatch, phone AskUserQuestion, /model mirror)
+
+**State decisions**
+- `clients` Set, `broadcast()`, `HOST_INFO`, `WsData`: live in `server/state.ts` (new; imports nothing from server/ → no cycles). `clients` mutated only by `ws.ts` open/close.
+- `waitingForInput/waitingCwd/waitingKey`: `server/state.ts`, module `let`s behind `getWaiting()`, `setWaiting(cwd, key)`, `clearWaiting()`. Setters are forced, not a redesign — an imported `let` is read-only. Setters only assign; the `broadcast({type:"waiting_input", waiting:false})` line stays verbatim at its 3 sites (pre-tool-use guarded by `if (getWaiting().active)`, `/api/inject`, WS `input`); the stop hook keeps its richer `waiting_input` frame + push inline. Persistence: none.
+- Sharing = **module imports, not a context object**: every side effect runs at import time today (listeners, `dialogWatcher.start()`, queue tick, `workerTail.resumeAll`, boot drain) before `createCompanionServer()` is called; a ctx object would force factories = redesign. Libs already are module singletons (sessions.ts, questions.ts, pty-manager.ts).
+- One `dialogWatcher` instance in `wiring/dialogs.ts` (3 consumers: routes/dialogs, `/api/status`, WS `init`). One `onSessions` listener in `wiring/events.ts` doing `sessions` frame THEN `reconcileDispatch` — two listeners could reorder `sessions` vs `orchestrator_task`.
+
+**Contracts touched** (from architecture.md) — no shape changes; only the emitting/handling file moves
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `approval` `question` `resolved`(expired) `event` `feed_pruned` `activity` `sessions` | frame | emitter → `wiring/events.ts` | client/hooks/use-companion.ts, ios/WSFrame.swift | identical |
+| `orchestrator` `orchestrator_task` `orchestrator_channel` `orchestrator_worker_output` / `dialog` `dialog_closed` | frame | emitter → `wiring/orchestrator.ts` / `wiring/dialogs.ts` | ios/WSFrame.swift | identical |
+| `init` `pong` `inject_error` + `resolved` `waiting_input` `user_prompt` `super_auto` | frame | emitter → `ws.ts` / `routes/hooks.ts` / `routes/api.ts` | client/hooks/use-companion.ts, ios/WSFrame.swift, ios/AppState.swift | identical |
+| 7 `POST /hooks/*` | hook endpoint | handler → `routes/hooks.ts`; `hookDecisionResponse` (incl. Codex empty-body branch) moves verbatim | Claude Code / Codex hook scripts | identical |
+| 21 `/api/*` + `/api/status` `/api/feed` / 8 `/api/orchestrator/*` / `/api/dialog/{key,pick}` | endpoint | handler → `routes/api.ts` / `routes/orchestrator.ts` / `routes/dialogs.ts` | client/app.tsx (`/api/spawn-session`), ios/CompanionClient.swift | identical |
+| auth gate, `/health`, `/ws` upgrade, static + SPA | — | stay in `companion-server.ts` (gate runs before any route module; `import.meta.dir/../client/dist` only resolves from `server/`) | all | identical |
+
+**Files — one owner each** (all builder; cli.ts untouched — `createCompanionServer` name/signature kept)
+| file | change | lines now → after cap check |
+|---|---|---|
+| `server/state.ts` | NEW: `WsData`, `clients`, `broadcast`, `HOST_INFO`, waiting `let`s + `getWaiting/setWaiting/clearWaiting` | 0 → ~55 ✓ |
+| `server/lib/hook-common.ts` | NEW, pure moves: `agentFromHeaders`, `agentTitle`, `cwdFromPayload`, `hookDecisionResponse`, `projectLabelFor`, `subtitleFor` (fan-in: routes/hooks + wiring/events) | 0 → ~80 ✓ |
+| `server/lib/tmux-pane.ts` | NEW, moves: `capturePane`, `paneInputReady`, `paneHasDialog` (fan-in: wiring/dialogs + wiring/orchestrator) | 0 → ~30 ✓ |
+| `server/wiring/dialogs.ts` | `readSessionStatus`, `dialogWatcher = createDialogWatcher({listSessions, capturePane, getPendingQuestions, broadcast, setSessionStatus})` + `.start()`; exports `dialogWatcher` | 0 → ~45 ✓ |
+| `server/wiring/orchestrator.ts` | `orchEmit`, `emitTask`, `emitChannel`, `WIP_CAP`, `workerQueue` (+30 s tick), `workerTail` (+`resumeAll`, boot drain), `sendToTmux`, `reconcileDispatch`, `candidateCwds`, `executeDispatch`, `runBrain`. Exports orchEmit/emitTask/emitChannel/WIP_CAP/workerQueue/runBrain/reconcileDispatch. Needs `broadcast`, tmux-pane, orchestrator-chat/-brain/-queue, worker-tail, spawn-session, listSessions | 0 → ~240 ✓ |
+| `server/wiring/events.ts` | lib-event → frame/push bridge: `onApprovalRequest/Expired`, `onQuestionRequest/Expired`, `onFeed`, `onFeedReset`, `onActivity`, `onSessions` (+`reconcileDispatch`), `setTitleResolver`. Needs state, hook-common labels, wiring/orchestrator, pty-manager, questions, activity, sessions, session-titles, apns, push | 0 → ~110 ✓ |
+| `server/routes/hooks.ts` | `handleHookRoute(req, url): Promise<Response \| null>`: 7 hooks + `driveAnswer`, `questionInjectTarget`, `hasQuestionInjectTarget`, `readAssistantAfterLastUser`, `extractLastAssistantMessage`, NEW private `questionFastPath`. Needs state (waiting setters, broadcast), hook-common, wiring/orchestrator (emitTask, orchEmit, workerQueue), libs | 0 → ~540 ✓ (relief valve if Phase 8 worker-identity headers push it over: move the 2 transcript readers to `lib/transcript.ts`) |
+| `server/routes/api.ts` | `handleApiRoute`: resolve, answer, register-token ×2, push/{tokens,test,broadcast}, inject, learned ×3, super-auto ×2, spawn-session, status, feed. Needs state (`clients.size`, getWaiting, clearWaiting, broadcast, HOST_INFO), `dialogWatcher.current()`, libs | 0 → ~330 ✓ |
+| `server/routes/orchestrator.ts` | `handleOrchestratorRoute`: channels GET/POST, channels/<id>/auto, thread, send, dispatch, task/<id>/cancel, proposal/<id>/{approve,reject}; private `resolveChannel`. Needs wiring/orchestrator exports, orchestrator-chat | 0 → ~170 ✓ |
+| `server/routes/dialogs.ts` | `handleDialogRoute`: dialog/key, dialog/pick. Needs `dialogWatcher`, resolveSession, pickKeys | 0 → ~65 ✓ |
+| `server/ws.ts` | exported `websocket` handlers: open (replay pending + `init`), message (approve/deny/answer/input/ping), close. Needs state, `dialogWatcher`, pty-manager, questions, activity, sessions, super-auto, keyboard-inject | 0 → ~145 ✓ |
+| `server/companion-server.ts` | keeps `createCompanionServer`: auth gate, `/health`, `/ws`, then `for (h of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute])` first non-null wins, then static/SPA. Ordered side-effect imports: state → wiring/dialogs → wiring/orchestrator → wiring/events → routes → ws | 1714 → ~95 ✓ |
+
+**Move order** (server boots + `bun test` + smoke diff after every step; one commit per step)
+1. `state.ts` — extract clients/broadcast/HOST_INFO/waiting; replace the 3 clear blocks with `clearWaiting()` and stop's with `setWaiting(cwd, key)`.
+2. `lib/hook-common.ts` + `lib/tmux-pane.ts` — pure moves.
+3. `wiring/dialogs.ts` → `wiring/orchestrator.ts` → `wiring/events.ts` (events imports reconcileDispatch, so orchestrator first).
+4. `routes/orchestrator.ts` → `routes/dialogs.ts` → `routes/api.ts` → `routes/hooks.ts` (largest, last; the `questionFastPath` dedupe is its own commit inside this step).
+5. `ws.ts`; companion-server.ts is now the ~95-line host. Regenerate archmap.
+
+**Shared helper (the one dedupe):** `questionFastPath({ agent, eventName, tool, input, sessionId, cwd, tty, session, headerMeta }): Promise<Response | null>` in `routes/hooks.ts`. Body = today's PreToolUse block verbatim; `eventName` feeds `hookDecisionResponse` and the `question already answered — allow (<eventName>)` log suffix; returns null after the `question fallback` log line so the caller continues to its generic approval path. Callers: `POST /hooks/pre-tool-use` (after the waiting-input reset) and `POST /hooks/permission-request` (right after `recordSession`). `wasQuestionAnswered(dedupeKey)` stays the first check inside — idempotency across the PreToolUse+PermissionRequest pair (STATE learning). NOT deduped: the two generic approval paths (super-auto + branch-guard exist only in PreToolUse; `← phone` vs `← permission` log suffixes differ).
+
+**Fan-in paths to guard**
+- `recordSession()` (6 hooks + discover + rehydrate) fires `onSessions` → exactly one listener: `sessions` frame, then `reconcileDispatch` (bind → `emitTask` → `sendToTmux`); idempotent via `matchUnboundTaskByCwd`.
+- `setTaskStatus()`/`getTask()` from stop hook, orchestrator routes, wiring — every flip is followed by `emitTask()`; all three import the one `emitTask` from wiring/orchestrator.
+- `resolveApproval()`/`resolveQuestion()` from HTTP (`routes/api.ts`) and WS (`ws.ts`) — both keep broadcasting `resolved`; HTTP validates + returns `{ok}`, WS is fire-and-forget.
+- `injectText()` + `recordUserPrompt()` — `/api/inject` records `user_prompt` on success (issue #8), WS `input` does not. Keep the asymmetry.
+- `workerQueue.drain()` from stop hook, cancel route, `setTaskDead`, boot, 30 s tick — re-entrancy lives inside the queue; callers stay `void drain()`.
+- `dialogWatcher`: `/api/dialog/*` call `.refresh(key)` at +350 ms; `/api/status` and `init` read `.current()`.
+
+**Risks**
+- Cross-module `let` assignment → tsc error (good); `grep -rn "let waiting" server` must hit state.ts only.
+- Import cycle → forbid: nothing under `lib/`, `wiring/`, `state.ts` imports `companion-server.ts`, `ws.ts`, or `routes/*` (grep guard in Verify).
+- Module-eval order shifts (listeners now register after `dialogWatcher.start()` + boot drain). Safe: every emitter is async (2 s poll, timers, promises) and cannot fire during synchronous import — confirm boot-log line order on the test port.
+- Route order: hooks → api → orchestrator → dialogs. All matches are exact path(+method) or disjoint prefixes; the prefix pairs (`/api/learned` vs `/api/learned/`, `channels` vs `channels/`) stay inside one module in today's order; `/api/status`, `/api/feed` keep matching any method.
+- Map blind spot: archmap attributes frames/routes by literal `broadcast({type})` / `url.pathname` per file — after the split confirm 19 frames + 30 endpoints + 7 hooks still listed; if not, it's an adapter bug to file, never a code change.
+- Log lines: every `process.stderr.write` and per-handler ANSI const block moves verbatim (consolidating colors = redesign); stderr diff proves it.
+
+**Verify**
+1. `bun test` → 50 pass / 0 fail (baseline 2026-09-07: 50 pass, 204 expects, 8 files).
+2. `bunx tsc --noEmit -p tsconfig.json 2>&1 | grep -E '^server/|^cli\.ts'` → empty (baseline today: empty; `client/` errors pre-existing, unrelated).
+3. `wc -l server/*.ts server/routes/*.ts server/wiring/*.ts server/lib/*.ts | sort -n | tail -3` → only `lib/activity.ts` ≥ 600; `bun run ~/.claude/tools/archmap/cli.ts . --quiet` → server ⚠ = activity.ts only.
+4. Route smoke diff — BEFORE step 1: `COMPANION_PORT=4299 COMPANION_DB_PATH=<scratch>/smoke.db bun cli.ts 2><scratch>/before.err`, fixed curl set → `before.out`: `/health`; `/api/status` no token → 401, with token → 200 (keys pending/clients/waitingForInput/waitingCwd/waitingKey/sessions/dialogs/host); `/api/feed`; `GET /api/learned`; `GET /api/super-auto`; `GET /api/orchestrator/channels` + `/thread`; 400s: `POST /api/resolve {}`, `/api/answer {}`, `/api/inject {}`, `/api/spawn-session {}`, `/api/orchestrator/send {}`, `/api/push/broadcast {}`; 404s: `/api/dialog/key {}`, `/api/dialog/pick {}`, `/api/orchestrator/proposal/x/approve`, `/api/orchestrator/task/x/cancel`; hooks `post-tool-use`, `session-start`, `session-end`, `user-prompt-submit` synthetic → `{}`/`{ok:true}`; `pre-tool-use` with super-auto ON + tool Read → `hookSpecificOutput.permissionDecision:"allow"`, same with `x-companion-agent: codex` → empty body; `/nope` → SPA index. After every move step: rerun, `diff before.out after.out` and `diff before.err after.err` (boot banner stripped) both empty.
+5. WS smoke (`bun -e`, `ws://127.0.0.1:4299/ws?token=…`): `init` key set == {type,pending,waitingForInput,waitingCwd,waitingKey,activity,feed,sessions,superAuto,dialogs,host}; `ping`→`pong`; `input` key "nope" → `inject_error target_gone`; `POST /hooks/user-prompt-submit` → `user_prompt` frame {text,key,cwd,sessionId}.
+6. Grep guards: `grep -rn "companion-server\|from \"\.\./ws\"\|from \"\.\./routes/" server/lib server/wiring server/state.ts` → empty.
+7. Real e2e after PR merge with Zettlab on `main` (STATE rule): (a) `POST /api/orchestrator/dispatch` → `orchestrator_task` dispatched→running→done with `logTail`, worker reply in thread; (b) AskUserQuestion from the phone → one card, `question already answered — allow (PermissionRequest)` on the duplicate, `picker driven`, transcript "User answered"; (c) `/model` in a tmux session → `dialog` frame, `/api/dialog/pick` → `dialog_closed`. Mac: PermissionRequest-only question path.
+8. iOS build 4 + React client: zero code change; steps 4/5/7 are the proof.
+
+**Out of scope:** `lib/activity.ts` (681), `client/app.tsx` (906), iOS over-cap files; unifying `capturePane` with keyboard-inject.ts's private tmux capture (l.503) or `readSessionStatus` with discover.ts's session-file reader; ANSI const consolidation; new test files (route tests need the one-sqlite-module-per-test-file rule — separate task); any frame/route/log change; deploy units (entry `bun cli.ts` unchanged).
 
 ## Progress
 
@@ -59,6 +136,8 @@ Last updated: 2026-09-05
 
 ## Learnings
 
+- **First `/change` run (2026-09-07):** the split shipped as 10 commits, `bun test` 50/50 + server tsc + a fixed route/WS/stderr smoke diffed against the pre-split baseline after every one. Both cross-module contract checks that the plan named paid off: the mechanical route extractor moved a section's *neighbours* along with it when an earlier extraction had removed the marker between them, so three chain calls ended up nested inside other route modules — every behavioural check stayed green (identical responses) and only the **import-boundary guard** ("no module imports routes or the host") exposed it. That is the boundary lint's job; wire it into CI (PRJ-LGDV Phase 4).
+- Layout after the split: `state.ts` (clients, broadcast, host, waiting flag) · `lib/hook-common.ts` + `lib/tmux-pane.ts` (shared helpers) · `wiring/{orchestrator,dialogs,events}.ts` (singletons + listeners, side effects at import) · `routes/{hooks,api,orchestrator,dialogs}.ts` (each returns null for other paths) · `ws.ts` · host = auth gate, health, upgrade, route chain, static. Add a route to the matching `routes/` file, never to the host; new always-on state goes in `wiring/`.
 - **Dialog mirror (PR #9, 2026-09-05):** a session parked on /model, /mcp, trust or MCP-enable looks dead from the phone — hooks don't fire while a dialog is up. `~/.claude/sessions/<pid>.json` says `status: waiting, waitingFor: "dialog open"`; that gates a 2s tmux capture, `dialogs.ts` parses the Ink dialog (cursor row + hint footer; numbered pickers and plain lists), and the phone gets `dialog` / `dialog_closed` frames plus `/api/dialog/key` and `/api/dialog/pick`. Row picks use Up/Down deltas: digits only work in the question picker, /model ignores them. Fixtures came from real captures — recapture if Claude Code restyles its pickers.
 - **`~/.claude/sessions/<pid>.json` is the exact pid → session map** (Claude Code ≥ 2.1, found 2026-09-05): sessionId, cwd, startedAt, tmux pane, Claude's own derived name, status. Discovery now reads it instead of guessing the newest transcript in the cwd — the guess gave every $HOME peer the same id (and, once titles existed, the same name). Guessed ids are marked unconfirmed and never name a chat.
 - **Chat titles = first real prompt**, persisted by session id, recovered from the transcript (any project dir) on restart; injected XML is stripped first. Picker sorts on creation time (process start), not last activity — activity-sorted menus reshuffle on every hook fire.
