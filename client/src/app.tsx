@@ -1,30 +1,12 @@
-import { useEffect, useRef, useState } from "react"
-import {
-  useCompanion,
-  type ApprovalRequest,
-  type Activity,
-  type FeedEvent,
-  type Session,
-} from "@/hooks/use-companion"
+import { useState } from "react"
+import { useCompanion } from "@/hooks/use-companion"
 import { unlockAudio } from "@/lib/alert-sound"
-import {
-  hashHue, shortKey, formatTime, formatElapsed, formatDuration, formatTokens, truncate,
-} from "@/lib/format"
-import { TOOL_ICONS, getToolSummary } from "@/lib/tool-summary"
-import { SessionDot, SessionBadge } from "@/components/session-badge"
 import { ActivityPill } from "@/components/activity-pill"
-import { FeedLine } from "@/components/feed-line"
 import { TerminalFeed } from "@/components/terminal-feed"
 import { ApprovalCard } from "@/components/approval-card"
-import { SpawnSession } from "@/components/spawn-session"
 import { TargetBar } from "@/components/target-bar"
 import { Composer } from "@/components/composer"
 import { StatusBar } from "@/components/status-bar"
-import {
-  Wifi, Check, X, FileEdit, Terminal, Eye, FileText, Search, FolderSearch,
-  Mic, MicOff, Send, Volume2, VolumeX, Loader2, ChevronsDown, Globe, User,
-  CornerDownLeft, ChevronDown, MessageSquare,
-} from "lucide-react"
 
 export function App() {
   const {
