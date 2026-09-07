@@ -60,40 +60,31 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 681,
+          "lines": 308,
           "kind": "lib",
           "exports": [
-            "EventKind",
-            "Verdict",
-            "FeedEvent",
             "Activity",
-            "onFeed",
             "onActivity",
-            "onFeedReset",
-            "getFeed",
             "getActivity",
-            "appendFeedEvent",
             "recordToolStart",
             "recordToolEnd",
             "recordUserPrompt",
             "recordTurnEnd",
-            "forgetSession",
-            "summarize"
+            "forgetSession"
           ],
           "state": [
             "let activity",
-            "states: Map",
-            "let pollTimer",
-            "feedListeners: Set",
             "activityListeners: Set",
-            "feedResetListeners: Set"
+            "let pollTimer"
           ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/questions.ts"
+            "lib/tool-format.ts",
+            "lib/feed.ts",
+            "lib/transcript.ts"
           ],
           "listeners": [],
           "sheets": 0
@@ -187,7 +178,7 @@
         },
         {
           "path": "lib/codex-feed.ts",
-          "lines": 354,
+          "lines": 355,
           "kind": "lib",
           "exports": [
             "startCodexFeedMonitor"
@@ -203,7 +194,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/activity.ts",
+            "lib/feed.ts",
+            "lib/tool-format.ts",
             "lib/sessions.ts"
           ],
           "listeners": [],
@@ -211,7 +203,7 @@
         },
         {
           "path": "lib/dialog-watch.ts",
-          "lines": 110,
+          "lines": 113,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -233,7 +225,7 @@
         },
         {
           "path": "lib/dialogs.ts",
-          "lines": 168,
+          "lines": 175,
           "kind": "lib",
           "exports": [
             "DialogItem",
@@ -280,6 +272,32 @@
             "loadDotEnv"
           ],
           "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/feed.ts",
+          "lines": 97,
+          "kind": "lib",
+          "exports": [
+            "EventKind",
+            "Verdict",
+            "FeedEvent",
+            "onFeed",
+            "onFeedReset",
+            "getFeed",
+            "appendFeedEvent",
+            "pruneFeedForSession"
+          ],
+          "state": [
+            "feedListeners: Set",
+            "feedResetListeners: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -712,6 +730,57 @@
           "sheets": 0
         },
         {
+          "path": "lib/tool-format.ts",
+          "lines": 134,
+          "kind": "lib",
+          "exports": [
+            "verbFor",
+            "isShellTool",
+            "summarize",
+            "extractToolResult",
+            "ANSI_PATTERN",
+            "clampLong"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/questions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/transcript.ts",
+          "lines": 180,
+          "kind": "lib",
+          "exports": [
+            "SessionMeta",
+            "PathState",
+            "getState",
+            "identityFor",
+            "activeStates",
+            "forgetStates",
+            "readTranscriptDelta",
+            "hashText"
+          ],
+          "state": [
+            "states: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feed.ts",
+            "lib/tool-format.ts"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
           "path": "lib/worker-tail.ts",
           "lines": 120,
           "kind": "lib",
@@ -735,7 +804,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 316,
+          "lines": 317,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -839,6 +908,7 @@
             "lib/learned-allow.ts",
             "lib/sessions.ts",
             "lib/activity.ts",
+            "lib/feed.ts",
             "lib/push-tokens.ts",
             "lib/apns.ts",
             "lib/push.ts",
@@ -942,6 +1012,8 @@
             "lib/learned-allow.ts",
             "lib/sessions.ts",
             "lib/activity.ts",
+            "lib/feed.ts",
+            "lib/tool-format.ts",
             "lib/apns.ts",
             "lib/push.ts",
             "state.ts",
@@ -1067,7 +1139,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 108,
+          "lines": 110,
           "kind": "lib",
           "exports": [],
           "state": [],
@@ -1088,6 +1160,8 @@
             "lib/pty-manager.ts",
             "lib/questions.ts",
             "lib/activity.ts",
+            "lib/feed.ts",
+            "lib/tool-format.ts",
             "lib/apns.ts",
             "lib/push.ts",
             "lib/sessions.ts",
@@ -1149,7 +1223,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 132,
+          "lines": 133,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -1174,6 +1248,7 @@
             "lib/super-auto.ts",
             "lib/sessions.ts",
             "lib/activity.ts",
+            "lib/feed.ts",
             "state.ts",
             "wiring/dialogs.ts"
           ],
@@ -1194,11 +1269,88 @@
             "companion-server.ts#* /ws"
           ]
         },
-        "isQuestionTool": {
-          "module": "lib/questions.ts",
+        "activeStates": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "readTranscriptDelta": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "getState": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "appendFeedEvent": {
+          "module": "lib/feed.ts",
           "callers": [
             "lib/activity.ts",
-            "routes/hooks.ts"
+            "lib/codex-feed.ts",
+            "lib/transcript.ts"
+          ]
+        },
+        "verbFor": {
+          "module": "lib/tool-format.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "extractToolResult": {
+          "module": "lib/tool-format.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "summarize": {
+          "module": "lib/tool-format.ts",
+          "callers": [
+            "lib/activity.ts",
+            "lib/codex-feed.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "wiring/events.ts"
+          ]
+        },
+        "clampLong": {
+          "module": "lib/tool-format.ts",
+          "callers": [
+            "lib/activity.ts",
+            "lib/codex-feed.ts",
+            "lib/transcript.ts"
+          ]
+        },
+        "hashText": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "forgetStates": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "pruneFeedForSession": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "isShellTool": {
+          "module": "lib/tool-format.ts",
+          "callers": [
+            "lib/auto-judge.ts",
+            "lib/branch-guard.ts",
+            "lib/learned-allow.ts",
+            "lib/super-auto.ts"
           ]
         },
         "isLearned": {
@@ -1213,12 +1365,6 @@
             "lib/branch-guard.ts"
           ]
         },
-        "appendFeedEvent": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "lib/codex-feed.ts"
-          ]
-        },
         "listSessions": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -1228,16 +1374,6 @@
             "routes/api.ts#* /api/feed",
             "wiring/orchestrator.ts",
             "ws.ts"
-          ]
-        },
-        "summarize": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "lib/codex-feed.ts",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "wiring/events.ts"
           ]
         },
         "parseDialog": {
@@ -1300,6 +1436,13 @@
           "callers": [
             "lib/push.ts",
             "routes/api.ts#DELETE /api/register-token"
+          ]
+        },
+        "isQuestionTool": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/tool-format.ts",
+            "routes/hooks.ts"
           ]
         },
         "capturePane": {
@@ -1461,7 +1604,7 @@
           ]
         },
         "getFeed": {
-          "module": "lib/activity.ts",
+          "module": "lib/feed.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
             "ws.ts"
@@ -1816,13 +1959,13 @@
           ]
         },
         "onFeed": {
-          "module": "lib/activity.ts",
+          "module": "lib/feed.ts",
           "callers": [
             "wiring/events.ts"
           ]
         },
         "onFeedReset": {
-          "module": "lib/activity.ts",
+          "module": "lib/feed.ts",
           "callers": [
             "wiring/events.ts"
           ]

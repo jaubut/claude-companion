@@ -4,7 +4,8 @@ import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib
 import { injectText } from "./lib/keyboard-inject"
 import { isSuperAuto } from "./lib/super-auto"
 import { resolveSession, listSessions } from "./lib/sessions"
-import { getFeed, getActivity } from "./lib/activity"
+import { getActivity } from "./lib/activity"
+import { getFeed } from "./lib/feed"
 import { clients, broadcast, HOST_INFO, getWaiting, clearWaiting, type WsData } from "./state"
 import { dialogWatcher } from "./wiring/dialogs"
 

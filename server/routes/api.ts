@@ -5,7 +5,8 @@ import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
 import { listSessions, resolveSession } from "../lib/sessions"
-import { getActivity, getFeed, recordUserPrompt } from "../lib/activity"
+import { getActivity, recordUserPrompt } from "../lib/activity"
+import { getFeed } from "../lib/feed"
 import {
   type ApnsEnv,
   listTokens,

@@ -10,7 +10,8 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
-import { appendFeedEvent, summarize, type FeedEvent } from "./activity"
+import { appendFeedEvent, type FeedEvent } from "./feed"
+import { summarize } from "./tool-format"
 import { listSessions } from "./sessions"
 
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
