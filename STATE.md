@@ -104,7 +104,7 @@ Dependency direction is a DAG: `tool-format` (leaf) ← `feed` (leaf) ← `trans
 
 **Out of scope:** `client/app.tsx` (906) and the iOS over-cap files; any change to the feed cap, poll interval, retry window, dedupe policy or clamp sizes; merging codex-feed's `summarizeCodexTool` with `summarize`; persisting the feed; new route/frame/log lines; the duplicate `tool_start` on the PreToolUse+PermissionRequest pair (documented above, deliberately preserved).
 
-### Change Plan — split-client-app (2026-09-07)
+### Change Plan — split-client-app (2026-09-07) — ✅ shipped (PR #14 via a builder in its own worktree: 12 moves + map; classNames 103/103, CSS byte-identical, served bundle checked)
 **Request:** Split `client/src/app.tsx` (906 lines: layout, session picker, feed rendering, approval card, tool-call summaries, composer, spawn-session form, sound toggle) into components under the 600 cap. No behaviour or visual change: same WS frames (via `hooks/use-companion.ts`, untouched), same `/api/spawn-session` call, same DOM/classes. Mechanical move, no new deps.
 **Done when:**
 - every `client/src/**` module < 600 lines; archmap client target shows no ⚠
