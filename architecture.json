@@ -2064,10 +2064,134 @@
       "modules": [
         {
           "path": "app.tsx",
-          "lines": 906,
+          "lines": 101,
           "kind": "view",
           "exports": [
             "App"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "hooks/use-companion",
+            "lib/alert-sound",
+            "components/activity-pill",
+            "components/terminal-feed",
+            "components/approval-card",
+            "components/target-bar",
+            "components/composer",
+            "components/status-bar"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/activity-pill.tsx",
+          "lines": 49,
+          "kind": "view",
+          "exports": [
+            "ActivityPill"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "hooks/use-companion",
+            "components/session-badge",
+            "lib/format"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/approval-card.tsx",
+          "lines": 62,
+          "kind": "view",
+          "exports": [
+            "ApprovalCard"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "hooks/use-companion",
+            "components/session-badge",
+            "lib/tool-summary"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/composer.tsx",
+          "lines": 176,
+          "kind": "view",
+          "exports": [
+            "Composer"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/alert-sound"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/feed-line.tsx",
+          "lines": 117,
+          "kind": "view",
+          "exports": [
+            "FeedLine"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "hooks/use-companion",
+            "components/session-badge",
+            "lib/format",
+            "lib/tool-summary"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/session-badge.tsx",
+          "lines": 78,
+          "kind": "view",
+          "exports": [
+            "SessionDot",
+            "SessionBadge"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "hooks/use-companion",
+            "lib/format"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/spawn-session.tsx",
+          "lines": 96,
+          "kind": "view",
+          "exports": [
+            "SpawnSession"
           ],
           "state": [],
           "emits": [],
@@ -2077,8 +2201,65 @@
             "/api/spawn-session"
           ],
           "imports": [
+            "hooks/use-companion"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/status-bar.tsx",
+          "lines": 46,
+          "kind": "view",
+          "exports": [
+            "StatusBar"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
             "hooks/use-companion",
             "lib/alert-sound"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/target-bar.tsx",
+          "lines": 122,
+          "kind": "view",
+          "exports": [
+            "TargetBar"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "hooks/use-companion",
+            "components/spawn-session",
+            "lib/format"
+          ],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "components/terminal-feed.tsx",
+          "lines": 63,
+          "kind": "view",
+          "exports": [
+            "TerminalFeed"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "hooks/use-companion",
+            "components/feed-line"
           ],
           "listeners": [],
           "sheets": 0
@@ -2119,6 +2300,45 @@
           "exports": [
             "unlockAudio",
             "playAlert"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/format.ts",
+          "lines": 47,
+          "kind": "lib",
+          "exports": [
+            "hashHue",
+            "shortKey",
+            "formatTime",
+            "formatElapsed",
+            "formatDuration",
+            "formatTokens",
+            "truncate"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0
+        },
+        {
+          "path": "lib/tool-summary.ts",
+          "lines": 44,
+          "kind": "lib",
+          "exports": [
+            "TOOL_ICONS",
+            "getToolSummary"
           ],
           "state": [],
           "emits": [],
