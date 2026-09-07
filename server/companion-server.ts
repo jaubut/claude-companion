@@ -1,16 +1,8 @@
-import {
-  addApprovalRequest,
-  resolveApproval,
-  getPending,
-  onApprovalRequest,
-  onApprovalExpired,
-} from "./lib/pty-manager"
+import { addApprovalRequest, resolveApproval, getPending } from "./lib/pty-manager"
 import {
   addQuestionRequest,
   resolveQuestion,
   getPendingQuestions,
-  onQuestionRequest,
-  onQuestionExpired,
   isQuestionTool,
   parseQuestionInput,
   type QuestionAnswer,
@@ -22,8 +14,7 @@ import {
 import { judgeWithBranchContext } from "./lib/branch-guard"
 import { injectText, withPickerIO, type InjectTarget } from "./lib/keyboard-inject"
 import { driveQuestionPicker } from "./lib/question-driver"
-import { titleFromPrompt, rememberTitle, resolveTitle } from "./lib/session-titles"
-import { createDialogWatcher, type SessionStatus } from "./lib/dialog-watch"
+import { titleFromPrompt, rememberTitle } from "./lib/session-titles"
 import { pickKeys } from "./lib/dialogs"
 import { spawnCompanionSession, type SpawnAgent, type SpawnResult } from "./lib/spawn-session"
 import { isSuperAuto, setSuperAuto, isCatastrophic } from "./lib/super-auto"
@@ -38,8 +29,6 @@ import {
   metaFromHeaders,
   type Session,
   setSessionTitle,
-  setTitleResolver,
-  setSessionStatus,
 } from "./lib/sessions"
 import {
   recordToolStart,
@@ -49,68 +38,64 @@ import {
   forgetSession,
   getFeed,
   getActivity,
-  onFeed,
-  onActivity,
-  onFeedReset,
   summarize,
-  type FeedEvent,
   type Verdict,
 } from "./lib/activity"
-import { registerToken, removeToken, tokenCount, listTokens, type ApnsEnv } from "./lib/push-tokens"
+import {
+  registerToken,
+  removeToken,
+  tokenCount,
+  listTokens,
+  type ApnsEnv,
+} from "./lib/push-tokens"
 import { apnsConfigured } from "./lib/apns"
 import { pushToAll } from "./lib/push"
 import { checkBearer, unauthorized } from "./lib/auth"
-import { clients, broadcast, HOST_INFO, getWaiting, setWaiting, clearWaiting, type WsData } from "./state"
-import { agentFromHeaders, agentTitle, cwdFromPayload, hookDecisionResponse, projectLabelFor, subtitleFor } from "./lib/hook-common"
-import { capturePane, paneInputReady, paneHasDialog } from "./lib/tmux-pane"
+import {
+  clients,
+  broadcast,
+  HOST_INFO,
+  getWaiting,
+  setWaiting,
+  clearWaiting,
+  type WsData,
+} from "./state"
+import {
+  agentFromHeaders,
+  agentTitle,
+  cwdFromPayload,
+  hookDecisionResponse,
+  projectLabelFor,
+} from "./lib/hook-common"
+import {
+  orchEmit,
+  emitTask,
+  emitChannel,
+  workerQueue,
+  executeDispatch,
+  runBrain,
+  WIP_CAP,
+} from "./wiring/orchestrator"
+import { dialogWatcher } from "./wiring/dialogs"
+import "./wiring/events"
 import {
   appendTurn as orchAppendTurn,
   getThread,
-  createTask,
-  createProposal,
   getTask,
-  setTaskSpawn,
-  bindTaskSession,
   setTaskStatus,
-  setTaskLogTail,
   countLiveTasks,
   listQueued,
   createQueuedTask,
   setChannelAuto,
-  matchUnboundTaskByCwd,
   findRunningTaskByCwd,
   listTasks,
   listChannels,
   getChannel,
   createChannel,
   GENERAL_CHANNEL,
-  type Turn as OrchTurn,
-  type Task as OrchTask,
   type Channel as OrchChannel,
 } from "./lib/orchestrator-chat"
-import { decide as brainDecide } from "./lib/orchestrator-brain"
-import { createWorkerTailManager } from "./lib/worker-tail"
-import { createQueue, DEFAULT_WIP_CAP } from "./lib/orchestrator-queue"
 
-
-// Orchestrator single-thread (PRJ-OR1T): push every new thread turn to all
-// clients so the one always-open chat stays live on every device.
-function orchEmit(turn: OrchTurn): void {
-  broadcast({ type: "orchestrator", turn })
-}
-
-// Broadcast a task's current state on every transition (proposed → dispatched →
-// running → done/error/rejected) so the phone's Tasks panel tracks live work.
-function emitTask(taskId: string): void {
-  const t = getTask(taskId)
-  if (t) broadcast({ type: "orchestrator_task", task: t })
-}
-
-// Broadcast a new/updated channel so every device's channel rail live-updates
-// (PRJ-OR1T Phase 6).
-function emitChannel(channel: OrchChannel): void {
-  broadcast({ type: "orchestrator_channel", channel })
-}
 
 // Resolve a channel id from a request (query param or body field), defaulting to
 // General. Returns null only when a non-empty id names a channel that doesn't
@@ -171,36 +156,6 @@ async function extractLastAssistantMessage(transcriptPath: string | undefined): 
   return ""
 }
 
-onApprovalRequest((req) => {
-  broadcast({
-    type: "approval",
-    id: req.id,
-    agent: req.agent ?? "claude",
-    tool: req.tool,
-    input: req.input,
-    sessionId: req.sessionId,
-    cwd: req.cwd,
-  })
-  // Approval = interruptive, time-sensitive. Blocks Claude until answered.
-  if (apnsConfigured()) {
-    const project = projectLabelFor(req.cwd)
-    const summary = summarize(req.tool, req.input)
-    void pushToAll({
-      // Title surfaces "which project is asking + what it wants" — that's
-      // the disambiguator when you've got two Claudes running. iOS already
-      // prepends the app name ("Claude Companion") so we don't repeat it.
-      title: project ? `${project} · ${req.tool}` : `${agentTitle(req.agent ?? "claude")} · ${req.tool}`,
-      // Subtitle goes to a path-shortened preview for path-tools so the
-      // banner shows "src/foo.ts" instead of the full /Users/.../path.
-      subtitle: subtitleFor(req.tool, summary),
-      body: summary.slice(0, 220) || req.tool,
-      category: "approval",
-      threadId: req.cwd || "approval",
-      userInfo: { approvalId: req.id, sessionId: req.sessionId, cwd: req.cwd },
-    }).catch(() => { /* silent — don't let push failure break the hook */ })
-  }
-})
-
 // Drive the terminal picker with the phone's answers. Fire-and-forget after
 // the hook returns allow: the driver waits for the picker to actually mount
 // (pane-driven, see question-driver.ts) instead of guessing a delay, then
@@ -233,294 +188,6 @@ function questionInjectTarget(session: Session | null, headerMeta: Partial<Sessi
 
 function hasQuestionInjectTarget(target: InjectTarget): boolean {
   return !!(target.tmuxPane || target.tty)
-}
-
-onApprovalExpired((id) => {
-  // Tell every connected client the approval expired before the user
-  // could decide. Use the existing `resolved` frame (clients already
-  // know how to dequeue and flip verdict on it) with a third decision
-  // value so the row badge can read "EXPIRED" instead of OK/DENY.
-  broadcast({ type: "resolved", id, decision: "expired" })
-})
-
-onQuestionRequest((req) => {
-  broadcast({
-    type: "question",
-    id: req.id,
-    agent: req.agent ?? "claude",
-    sessionId: req.sessionId,
-    cwd: req.cwd,
-    questions: req.questions,
-  })
-  // Same urgency tier as approvals — Claude is blocked until the phone
-  // answers. The push title carries the first question's text so a glance
-  // at the lock screen shows what's being asked.
-  if (apnsConfigured()) {
-    const project = projectLabelFor(req.cwd)
-    const first = req.questions[0]
-    const headerLabel = first?.header || "ask"
-    const agent = req.agent ?? "claude"
-    const body = first?.question || `${agentTitle(agent)} is asking a question`
-    void pushToAll({
-      title: project ? `${project} · ${headerLabel}` : `${agentTitle(agent)} · ${headerLabel}`,
-      body: body.slice(0, 220),
-      category: "question",
-      threadId: req.cwd || "question",
-      userInfo: { questionId: req.id, sessionId: req.sessionId, cwd: req.cwd },
-    }).catch(() => { /* silent — don't let push failure break the hook */ })
-  }
-})
-
-onQuestionExpired((id) => {
-  // Mirrors approval expiry — phones know how to dequeue on `resolved`.
-  broadcast({ type: "resolved", id, decision: "expired" })
-})
-
-onFeed((ev: FeedEvent) => {
-  broadcast({ type: "event", event: ev })
-})
-
-onFeedReset((ids: string[]) => {
-  broadcast({ type: "feed_pruned", ids })
-})
-
-onActivity((activity) => {
-  broadcast({ type: "activity", activity })
-})
-
-// Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
-// /mcp, trust, MCP-enable) is parsed off the pane and pushed to clients as a
-// `dialog` frame; keys tapped on the phone go back through /api/dialog/key.
-async function readSessionStatus(pid: string): Promise<SessionStatus | null> {
-  try {
-    const text = await Bun.file(`${process.env.HOME}/.claude/sessions/${pid}.json`).text()
-    const j = JSON.parse(text) as { status?: string; waitingFor?: string }
-    return { status: j.status ?? "", waitingFor: j.waitingFor ?? "" }
-  } catch {
-    return null
-  }
-}
-
-const dialogWatcher = createDialogWatcher({
-  sessions: listSessions,
-  capture: capturePane,
-  sessionStatus: readSessionStatus,
-  hasPendingQuestion: (s) => getPendingQuestions().some((q) => (q.sessionId && q.sessionId === s.sessionId) || q.cwd === s.cwd),
-  onDialog(key, dialog) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}dialog${reset} ${dim}${dialog.title || "(untitled)"} · ${dialog.items.length} rows · ${key}${reset}\n`)
-    broadcast({ type: "dialog", key, dialog })
-  },
-  onDialogClosed(key) {
-    broadcast({ type: "dialog_closed", key })
-  },
-  onStatus(key, st) {
-    setSessionStatus(key, st.status, st.waitingFor)
-  },
-})
-dialogWatcher.start()
-
-// Sessions that arrive without a title (session-start hook, ps discovery,
-// transcript rehydrate) get one from the stored table or the transcript.
-setTitleResolver((s) => resolveTitle(s.cwd, s.sessionId))
-
-// Backpressure (PRJ-OR1T Phase 7): at most WIP_CAP live workers on this host.
-// Anything admitted past that — approved proposal, auto-dispatch, or a manual
-// /dispatch — parks as queued and drains FIFO when a worker exits (stop hook,
-// dead-pane backstop, cancel), on boot, and on a 30s safety tick.
-const WIP_CAP = Number(process.env.COMPANION_WIP_CAP) || DEFAULT_WIP_CAP
-const workerQueue = createQueue({
-  cap: WIP_CAP,
-  countLive: countLiveTasks,
-  listQueued,
-  markQueued(task) {
-    setTaskStatus(task.taskId, "queued")
-    emitTask(task.taskId)
-    orchEmit(orchAppendTurn(
-      "orchestrator",
-      `queued [${task.taskId}] — ${countLiveTasks()} of ${WIP_CAP} worker slots busy; starts when one frees`,
-      task.taskId,
-      task.threadId,
-    ))
-  },
-  dispatch: executeDispatch,
-})
-setInterval(() => void workerQueue.drain(), 30_000)
-
-// Live worker tail (Phase 6, hybrid output model): stream the dispatched
-// worker's tmux pane into its channel as transient frames; the final snapshot
-// persists on the task row when it finishes. Workers outlive server restarts in
-// detached tmux, so resumeAll reattaches viewers on boot. A pane that vanishes
-// while the task is still live means the worker died without a stop hook — the
-// task is marked error instead of sitting in 'running' forever.
-const workerTail = createWorkerTailManager({
-  capturePane,
-  getTask,
-  setTaskLogTail,
-  setTaskDead(taskId) {
-    setTaskStatus(taskId, "error")
-    void workerQueue.drain() // the dead worker's slot is free
-  },
-  onLines(task, lines) {
-    broadcast({ type: "orchestrator_worker_output", taskId: task.taskId, channel: task.threadId, lines, ts: Date.now() })
-  },
-  onFinished(taskId) {
-    emitTask(taskId) // now carries logTail — clients collapse the live card
-  },
-})
-workerTail.resumeAll(listTasks())
-void workerQueue.drain() // queued work left over from before a restart
-
-// Deliver a dispatched prompt straight to the worker's tmux session by name.
-// We spawned it (cc-<name>), so send-keys -t <session> hits its active pane no
-// matter how the session surfaced in the registry. This is the reliable path: a
-// tmux-wrapped worker discovered via ps has no tmuxPane recorded and its client
-// tty has no Terminal tab, so AppleScript/tty inject fails ("no tab for tty").
-// tmux send-keys does not care — it just needs the TUI to be input-ready first.
-async function sendToTmux(sessionName: string, text: string): Promise<void> {
-  let ready = false
-  for (let i = 0; i < 30; i++) {
-    const pane = await capturePane(sessionName)
-    if (pane === null) return // worker session gone
-    if (paneHasDialog(pane)) {
-      // Dismiss the onboarding dialog (Escape = reject MCP enable / decline
-      // trust), then keep polling for the real input box.
-      await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Escape"], { stdout: "ignore", stderr: "ignore" }).exited
-      await new Promise((r) => setTimeout(r, 1500))
-      continue
-    }
-    if (paneInputReady(pane)) { ready = true; break }
-    await new Promise((r) => setTimeout(r, 2000))
-  }
-  if (!ready) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-    process.stderr.write(`${dim}[companion]${reset} ${red}orchestrator → tmux timeout${reset} ${sessionName} never became input-ready\n`)
-    return
-  }
-  try {
-    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "-l", text], { stdout: "ignore", stderr: "ignore" }).exited
-    await new Promise((r) => setTimeout(r, 300))
-    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Enter"], { stdout: "ignore", stderr: "ignore" }).exited
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator → tmux${reset} ${sessionName} "${text.slice(0, 50)}"\n`)
-  } catch { /* worker session gone */ }
-}
-
-// Orchestrator (PRJ-OR1T): when a worker session appears for a dispatched task's
-// cwd, bind it and fire the queued prompt into its tmux session. Driven off
-// onSessions so it catches the worker no matter how it registered — session-start
-// hook, ps discovery, or rehydrate (the session-start hook alone is unreliable; a
-// spawned worker often surfaces via ps-scan first). Idempotent: matchUnbound…
-// only returns still-dispatched, unbound tasks, so a bound task is never re-fired.
-function reconcileDispatch(sessions: Session[]): void {
-  for (const s of sessions) {
-    if (!s.cwd) continue
-    const pending = matchUnboundTaskByCwd(s.cwd)
-    if (!pending) continue
-    bindTaskSession(pending.taskId, s.key || s.cwd)
-    emitTask(pending.taskId)
-    orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId, pending.threadId))
-    const { tmuxSession, prompt } = pending
-    // sendToTmux self-paces: it polls the pane until the TUI is input-ready
-    // before send-keys, so binding the instant ps-discovery sees the worker is
-    // fine — the prompt won't land until Claude can actually receive it.
-    if (tmuxSession) void sendToTmux(tmuxSession, prompt)
-  }
-}
-
-onSessions((sessions: Session[]) => {
-  broadcast({ type: "sessions", sessions })
-  reconcileDispatch(sessions)
-})
-
-// ── Orchestrator brain (PRJ-OR1T Phase 2): propose-confirm dispatch ──
-
-// Project directories the brain may dispatch into: cwds of live registered
-// sessions, deduped. Keeps proposals grounded in real, currently-open projects.
-function candidateCwds(): string[] {
-  return [...new Set(listSessions().map((s) => s.cwd).filter(Boolean))]
-}
-
-// Spawn a worker for an approved proposal and record its tmux session so
-// reconcileDispatch delivers the prompt. The task stays 'proposed' (which
-// reconcile ignores) until setTaskSpawn flips it to 'dispatched' AFTER the tmux
-// session exists — so a worker is never bound before we know where to send.
-async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; error?: string }> {
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
-  let result: SpawnResult
-  try {
-    result = await spawnCompanionSession({ cwd: task.cwd, agent: "claude" })
-  } catch (err) {
-    setTaskStatus(task.taskId, "error")
-    emitTask(task.taskId)
-    const message = err instanceof Error ? err.message : String(err)
-    process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} [${task.taskId}] — ${message}\n`)
-    return { ok: false, error: message }
-  }
-  if (!result.ok) {
-    setTaskStatus(task.taskId, "error")
-    emitTask(task.taskId)
-    process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} [${task.taskId}] — ${result.error}\n`)
-    return { ok: false, error: result.error }
-  }
-  setTaskSpawn(task.taskId, result.sessionName ?? null)
-  emitTask(task.taskId)
-  workerTail.watch(task.taskId)
-  process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
-  const verb = task.status === "queued" ? "starting" : "approved"
-  orchEmit(orchAppendTurn("orchestrator", `${verb} [${task.taskId}] — worker dispatched`, task.taskId, task.threadId))
-  return { ok: true }
-}
-
-// Run the brain on a user message: answer inline (chat) or stage a dispatch
-// proposal for one-tap approval. Fire-and-forget — never blocks /send. Falls back
-// to a soft note on any model failure so the thread never wedges.
-async function runBrain(userText: string, channel: OrchChannel): Promise<void> {
-  // History and cwd candidates are scoped to the channel so the brain reasons
-  // within one project's thread. A channel bound to a cwd puts it first so the
-  // brain leans toward that project when composing a dispatch.
-  const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
-  let decision
-  try {
-    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd)
-  } catch {
-    decision = null
-  }
-  if (!decision) {
-    // decide() returns null only after runClaude exhausts its retries — the model
-    // call itself kept failing (overload / auth contention), NOT because the
-    // message was unclear. Genuine ambiguity comes back as a chat clarifying
-    // question, not null. So don't tell the user to rephrase a message that was fine.
-    orchEmit(orchAppendTurn("orchestrator", "Couldn't reach the model just now — transient error on my side, not your message. Send that again.", null, channel.id))
-    return
-  }
-  if (decision.kind === "chat") {
-    orchEmit(orchAppendTurn("orchestrator", decision.text, null, channel.id))
-    return
-  }
-  const task = createProposal(decision.prompt, decision.cwd, decision.reasoning, channel.id)
-  // Trust ramp (Phase 7): re-read the channel — the toggle may have flipped
-  // during the brain call. Auto mode skips the tap but never the reasoning:
-  // every auto-dispatch shows why + what in the thread, so a bad route is
-  // caught at step 2, not step 20. Cancel is the veto.
-  if (getChannel(channel.id)?.autoDispatch) {
-    orchEmit(orchAppendTurn(
-      "orchestrator",
-      `Auto-dispatch [${task.taskId}] — worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}`,
-      task.taskId,
-      channel.id,
-    ))
-    emitTask(task.taskId)
-    void workerQueue.admit(task)
-    return
-  }
-  orchEmit(orchAppendTurn(
-    "orchestrator",
-    `Proposal [${task.taskId}] — dispatch a worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to run.`,
-    task.taskId,
-    channel.id,
-  ))
-  emitTask(task.taskId)
 }
 
 export function createCompanionServer(port: number) {
