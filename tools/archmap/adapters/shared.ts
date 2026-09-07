@@ -1,0 +1,122 @@
+import { readdirSync, statSync, readFileSync, existsSync } from "node:fs"
+import { dirname, join, normalize, relative, isAbsolute } from "node:path"
+import { homedir } from "node:os"
+import { uniq, type ModuleInfo, type Target } from "../types"
+
+export function walk(root: string, exts: string[], ignore: string[] = []): string[] {
+  const out: string[] = []
+  const skip = new Set(["node_modules", ".git", "dist", "build", ".build", ".nuxt", ".output", "DerivedData", ...ignore])
+  function rec(dir: string): void {
+    for (const name of readdirSync(dir)) {
+      if (skip.has(name)) continue
+      const full = join(dir, name)
+      const st = statSync(full)
+      if (st.isDirectory()) rec(full)
+      else if (exts.some((e) => name.endsWith(e))) out.push(full)
+    }
+  }
+  rec(root)
+  return out.sort()
+}
+
+export function read(path: string): { text: string; lines: string[] } {
+  const text = readFileSync(path, "utf-8")
+  return { text, lines: text.split("\n") }
+}
+
+// Roots may be relative to the repo, absolute, or ~-prefixed.
+export function resolveRoot(repoRoot: string, root: string): string {
+  if (root.startsWith("~/")) return join(homedir(), root.slice(2))
+  return isAbsolute(root) ? root : join(repoRoot, root)
+}
+
+export function rel(root: string, path: string): string {
+  return relative(root, path)
+}
+
+export function isTest(path: string): boolean {
+  return /\.test\.[tj]sx?$|\.spec\.[tj]sx?$|Tests?\//.test(path)
+}
+
+// `/api/expense/${id}` → `/api/expense/:p` so template calls join param routes.
+export function normalizeCall(path: string): string {
+  return path.replace(/\$\{[^}]*\}/g, ":p").replace(/\?.*$/, "")
+}
+
+// --- TypeScript module basics shared by the server adapters -----------------
+
+export const TS_EXPORT_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function|const|let|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/
+const STATE_RE = /^(?:const|let)\s+([A-Za-z_$][\w$]*)(?::\s*[^=]+)?\s*=\s*new\s+(Map|Set|WeakMap|Database)\b/
+const LET_RE = /^let\s+([A-Za-z_$][\w$]*)/
+const IMPORT_RE = /from\s+["'](\.{1,2}\/[^"']+|[~@]\/[^"']+)["']/
+const LISTENER_RE = /^(on[A-Z]\w*|setInterval|[a-zA-Z_]\w*\.start)\(/
+
+// `~/x` and `@/x` resolve against `alias`; relative specs against the file.
+export function resolveImport(fromFile: string, spec: string, root: string, alias: string = root): string {
+  const base = /^[~@]\//.test(spec) ? join(alias, spec.slice(2)) : normalize(join(dirname(fromFile), spec))
+  for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}.vue`, `${base}.js`, join(base, "index.ts"), join(base, "index.vue")]) {
+    if (existsSync(cand)) return rel(root, cand)
+  }
+  return rel(root, `${base}.ts`)
+}
+
+export function scanTsBasics(m: ModuleInfo, file: string, lines: string[], root: string, alias: string = root): void {
+  for (const l of lines) {
+    const ex = l.match(TS_EXPORT_RE); if (ex) m.exports.push(ex[1]!)
+    const st = l.match(STATE_RE); if (st) m.state.push(`${st[1]}: ${st[2]}`)
+    else { const lt = l.match(LET_RE); if (lt) m.state.push(`let ${lt[1]}`) }
+    const im = l.match(IMPORT_RE); if (im) m.imports.push(resolveImport(file, im[1]!, root, alias))
+    const ls = l.match(LISTENER_RE); if (ls) m.listeners.push(ls[1]!)
+  }
+}
+
+// --- Fan-in ------------------------------------------------------------------
+// For every export unique across the target, which OTHER modules call it.
+// `label(module, line)` runs on every line and names the caller for that line —
+// a plain module path, or a finer site (route inside a host) when the adapter
+// can tell.
+
+export interface FanInOpts {
+  minLen?: number
+  label?: (m: ModuleInfo, line: string) => string
+  // how a call looks: default `name(`; JSX/Swift adapters add `<Name` / `Name.`
+  callRe?: (name: string) => RegExp
+}
+
+export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[]>, opts: FanInOpts = {}): Target["fanIn"] {
+  const minLen = opts.minLen ?? 3
+  const owners = new Map<string, string>()
+  const dup = new Set<string>()
+  for (const m of modules) for (const raw of m.exports) {
+    const name = raw.replace(/\(\)$/, "")
+    if (name.length < minLen) continue
+    if (owners.has(name) && owners.get(name) !== m.path) dup.add(name)
+    else owners.set(name, m.path)
+  }
+  for (const d of dup) owners.delete(d)
+  const esc = (n: string) => n.replace(/\$/g, "\\$")
+  const mk = opts.callRe ?? ((n: string) => new RegExp(`(?<![\\w$.])${esc(n)}\\s*\\(`))
+  const res = new Map([...owners.keys()].map((n) => [n, mk(n)]))
+  // the regex is the slow path; `includes` (or the kebab/lowercase forms a
+  // template tag may use) gates it
+  const needles = new Map([...owners.keys()].map((n) => [n, uniq([n, n[0]!.toLowerCase() + n.slice(1), n.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()])]))
+  const fanIn: Target["fanIn"] = {}
+  for (const m of modules) {
+    const lines = sources.get(m.path) ?? []
+    for (const l of lines) {
+      const caller = opts.label ? opts.label(m, l) : m.path
+      for (const [name, re] of res) {
+        const owner = owners.get(name)!
+        if (owner === m.path) continue
+        if (!needles.get(name)!.some((n) => l.includes(n)) || !re.test(l)) continue
+        const entry = (fanIn[name] ??= { module: owner, callers: [] })
+        if (!entry.callers.includes(caller)) entry.callers.push(caller)
+      }
+    }
+  }
+  return fanIn
+}
+
+export function sourcesOf(root: string, modules: ModuleInfo[]): Map<string, string[]> {
+  return new Map(modules.map((m) => [m.path, read(join(root, m.path)).lines]))
+}
