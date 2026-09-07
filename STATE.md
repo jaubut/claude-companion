@@ -31,7 +31,7 @@ Last updated: 2026-09-07
 
 ## Change Plans
 
-### Change Plan — split-activity (2026-09-07)
+### Change Plan — split-activity (2026-09-07) — ✅ shipped (PR #13, 3 moves + transcript.test.ts; long-answer regression PASS on every commit)
 **Request:** Split `server/lib/activity.ts` (681 lines: 200-cap event feed, live activity pill, 1.5 s transcript poll, token accounting, assistant-text streaming, the turn-end retry that catches late-flushed closing blocks, and the feed/activity/feed-reset listener sets) into modules under the 600 cap. Every contract unchanged — same export names/signatures for `routes/hooks.ts`, `routes/api.ts`, `wiring/events.ts`, `lib/codex-feed.ts`, `ws.ts`; same `event` / `activity` / `feed_pruned` frames; same feed shapes; same turn-end retry behaviour. Mechanical move, no redesign.
 **Done when:**
 - archmap shows **no ⚠ under server** (`lib/activity.ts` was the last one); every new module < 600.
