@@ -61,6 +61,8 @@ import { apnsConfigured } from "./lib/apns"
 import { pushToAll } from "./lib/push"
 import { checkBearer, unauthorized } from "./lib/auth"
 import { clients, broadcast, HOST_INFO, getWaiting, setWaiting, clearWaiting, type WsData } from "./state"
+import { agentFromHeaders, agentTitle, cwdFromPayload, hookDecisionResponse, projectLabelFor, subtitleFor } from "./lib/hook-common"
+import { capturePane, paneInputReady, paneHasDialog } from "./lib/tmux-pane"
 import {
   appendTurn as orchAppendTurn,
   getThread,
@@ -90,46 +92,6 @@ import { decide as brainDecide } from "./lib/orchestrator-brain"
 import { createWorkerTailManager } from "./lib/worker-tail"
 import { createQueue, DEFAULT_WIP_CAP } from "./lib/orchestrator-queue"
 
-
-function agentFromHeaders(headers: Headers): SpawnAgent {
-  return headers.get("x-companion-agent") === "codex" ? "codex" : "claude"
-}
-
-function agentTitle(agent: SpawnAgent): string {
-  return agent === "codex" ? "Codex" : "Claude"
-}
-
-function cwdFromPayload(payloadCwd: string | undefined, headers: Headers): string {
-  return payloadCwd || headers.get("x-companion-cwd") || ""
-}
-
-function hookDecisionResponse(
-  agent: SpawnAgent,
-  eventName: "PreToolUse" | "PermissionRequest",
-  decision: "allow" | "deny",
-  reason: string,
-): Response {
-  if (agent === "codex") {
-    // Codex hook compatibility: empty stdout continues; blocking is explicit.
-    if (decision === "allow") return new Response("")
-    return Response.json({ decision: "block", reason })
-  }
-  if (eventName === "PermissionRequest") {
-    return Response.json({
-      hookSpecificOutput: {
-        hookEventName: "PermissionRequest",
-        decision: { behavior: decision },
-      },
-    })
-  }
-  return Response.json({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: decision,
-      permissionDecisionReason: reason,
-    },
-  })
-}
 
 // Orchestrator single-thread (PRJ-OR1T): push every new thread turn to all
 // clients so the one always-open chat stays live on every device.
@@ -239,18 +201,6 @@ onApprovalRequest((req) => {
   }
 })
 
-// "claude-companion", "tls-dashboard-v2", or undefined when cwd is the
-// user's home dir (the default `cwd.split('/').pop()` would return the
-// macOS username which is meaningless project context). Empty cwds also
-// yield undefined so the title falls back to just the tool name.
-function projectLabelFor(cwd: string): string | undefined {
-  if (!cwd) return undefined
-  const home = process.env.HOME ?? ""
-  if (home && cwd === home) return undefined
-  const last = cwd.split("/").pop()
-  return last && last.length > 0 ? last : undefined
-}
-
 // Drive the terminal picker with the phone's answers. Fire-and-forget after
 // the hook returns allow: the driver waits for the picker to actually mount
 // (pane-driven, see question-driver.ts) instead of guessing a delay, then
@@ -283,20 +233,6 @@ function questionInjectTarget(session: Session | null, headerMeta: Partial<Sessi
 
 function hasQuestionInjectTarget(target: InjectTarget): boolean {
   return !!(target.tmuxPane || target.tty)
-}
-
-function subtitleFor(tool: string, summary: string): string | undefined {
-  if (!summary) return undefined
-  // Path-based tools: show the basename so the banner doesn't waste space
-  // on /Users/<long>/path/to/. The full path stays in the body.
-  if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "Read") {
-    const base = summary.split("/").pop()
-    if (base && base.length > 0 && base !== summary) return base
-    return undefined
-  }
-  // Bash / Grep / etc — already concise, no value in showing the same
-  // string twice across subtitle and body.
-  return undefined
 }
 
 onApprovalExpired((id) => {
@@ -351,31 +287,6 @@ onFeedReset((ids: string[]) => {
 onActivity((activity) => {
   broadcast({ type: "activity", activity })
 })
-
-async function capturePane(sessionName: string): Promise<string | null> {
-  try {
-    const p = Bun.spawn(["tmux", "capture-pane", "-t", sessionName, "-p"], { stdout: "pipe", stderr: "ignore" })
-    const out = await new Response(p.stdout).text()
-    return (await p.exited) === 0 ? out : null
-  } catch {
-    return null
-  }
-}
-
-// A freshly-spawned Claude renders its boot screen (welcome box + the input
-// frame + the auto-mode/shortcuts footer) only once the TUI is ready to accept
-// keystrokes. ps-discovery surfaces the process seconds earlier, and keys sent
-// before the box is up are silently dropped. Gate on these markers.
-function paneInputReady(pane: string): boolean {
-  return /Welcome back|auto mode|for shortcuts|to interrupt/.test(pane)
-}
-
-// Onboarding dialogs (new-MCP-server enable, folder-trust) overlay the input box
-// AFTER the welcome/footer renders — so paneInputReady alone is fooled and the
-// prompt lands on the dialog. Detect them and Escape to dismiss before sending.
-function paneHasDialog(pane: string): boolean {
-  return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
-}
 
 // Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
 // /mcp, trust, MCP-enable) is parsed off the pane and pushed to clients as a
