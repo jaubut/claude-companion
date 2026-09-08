@@ -1,3 +1,5 @@
+import { readdirSync, statSync } from "node:fs"
+import { join } from "node:path"
 import { emptyModule, uniq, type ModuleInfo, type Target, type TargetConfig } from "../types"
 import { walk, read, rel, isTest, resolveRoot, computeFanIn, sourcesOf } from "./shared"
 
@@ -19,11 +21,16 @@ const PUBLISHED_RE = /@Published(?:\s+private\(set\))?\s+var\s+([A-Za-z_]\w*)/g
 const SHEET_RE = /\.(?:sheet|fullScreenCover)\(\s*(?:isPresented|item)\s*:|\.confirmationDialog\(/g
 const EVENT_CASE_RE = /^\s*case\s+([a-z]\w*)\(/  // enum case name(payload)
 const APPLY_CASE_RE = /case\s+\.([a-z]\w*)(?:\(|:)/g
+// `import Foo`, `@_exported import Foo`, `import struct Foo.Bar` → Foo
+const SWIFT_IMPORT_RE = /^\s*(?:@_exported\s+|@testable\s+)*import\s+(?:(?:struct|class|enum|protocol|typealias|func|var|let)\s+)?([A-Za-z_]\w*)/
 
 export function scanSwiftUI(cfg: TargetConfig, repoRoot: string): Target {
   const root = resolveRoot(repoRoot, cfg.root)
   const cap = cfg.cap ?? 600
   const files = walk(root, [".swift"], cfg.ignore).filter((f) => !isTest(f))
+  // a module named like a directory under the root (or like the target) is the
+  // app's own; everything else — Apple frameworks included — is external
+  const local = new Set([cfg.name.toLowerCase(), ...readdirSync(root).filter((e) => statSync(join(root, e)).isDirectory()).map((e) => e.toLowerCase())])
   const modules: ModuleInfo[] = []
   for (const file of files) {
     const { text, lines } = read(file)
@@ -43,12 +50,21 @@ export function scanSwiftUI(cfg: TargetConfig, repoRoot: string): Target {
     m.apiCalls = uniq([...text.matchAll(PATH_RE)].map((x) => x[1]!).filter((p) => p.startsWith("/")))
     m.state = uniq([...text.matchAll(PUBLISHED_RE)].map((x) => `@Published ${x[1]}`))
     m.sheets = [...text.matchAll(SHEET_RE)].length
+    m.externals = uniq(lines.map((l) => l.match(SWIFT_IMPORT_RE)?.[1]).filter((n): n is string => !!n && !local.has(n.toLowerCase()))).sort()
     m.exports = uniq(m.exports)
     modules.push(m)
   }
+  // One module, so no import gate. A func is used as `x.name(` or bare
+  // `name(`; a type as `Name(`, `Name.`, `Name<`, `: Name` or `-> Name`.
+  // String literals and `//` comments are stripped first — "play.fill" is
+  // not a call to play().
+  const funcs = new Set(modules.flatMap((m) => m.exports.filter((e) => e.endsWith("()")).map((e) => e.slice(0, -2))))
   const fanIn = computeFanIn(modules, sourcesOf(root, modules), {
     minLen: 4,
-    callRe: (n) => new RegExp(`(?<![\\w.])${n}\\s*[(.<]`),
+    stripLiterals: true,
+    callRe: (n) => funcs.has(n)
+      ? new RegExp(`(?<![\\w])\\.?${n}\\s*\\(`)
+      : new RegExp(`(?<![\\w.])${n}\\s*[(.<]|[:>]\\s*\\[?${n}\\b`),
   })
   return { name: cfg.name, adapter: cfg.adapter, root: cfg.root, cap, modules, fanIn }
 }

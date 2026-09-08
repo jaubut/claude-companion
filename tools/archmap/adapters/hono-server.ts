@@ -1,5 +1,5 @@
 import { emptyModule, uniq, type Endpoint, type ModuleInfo, type Target, type TargetConfig } from "../types"
-import { walk, read, rel, isTest, resolveRoot, resolveImport, scanTsBasics, computeFanIn, sourcesOf } from "./shared"
+import { walk, read, rel, isTest, resolveRoot, resolveImport, scanTsBasics, computeFanIn, sourcesOf, scanExternals } from "./shared"
 import { frameEmits } from "./bun-server"
 
 // Hono server: routers (`const router = new Hono()` + `.get("/path", …)`)
@@ -49,6 +49,7 @@ export function scanHonoServer(cfg: TargetConfig, repoRoot: string): Target {
     const path = rel(root, file)
     const m = emptyModule(path, lines.length, "lib")
     scanTsBasics(m, file, lines, root)
+    scanExternals(m, lines)
     const isRouter = /new\s+Hono\b/.test(text)
     const imported = new Map<string, string>()
     for (const l of lines) {

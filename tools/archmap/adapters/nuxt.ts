@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { basename, join } from "node:path"
 import { emptyModule, uniq, type Endpoint, type ModuleInfo, type Target, type TargetConfig } from "../types"
-import { walk, read, rel, isTest, resolveRoot, computeFanIn, sourcesOf, normalizeCall, scanTsBasics, identRe } from "./shared"
+import { walk, read, rel, isTest, resolveRoot, computeFanIn, sourcesOf, normalizeCall, scanTsBasics, identRe, scanExternals } from "./shared"
 
 // Nuxt 3/4 site. Contracts come from the file system, which IS the router:
 // pages/ → PAGE routes, server/api + server/routes → HTTP endpoints
@@ -71,6 +71,7 @@ export function scanNuxt(cfg: TargetConfig, repoRoot: string): Target {
     const top = inApp.split("/")[0]!
     const m = emptyModule(path, lines.length, "lib")
     scanTsBasics(m, file, lines, root, appDir)
+    scanExternals(m, lines)
     if (top === "pages") { m.kind = "page"; m.endpoints.push({ method: "PAGE", path: pageRoute(inApp.slice("pages/".length)), prefix: false }) }
     else if (top === "components") { m.kind = "component"; const n = componentName(inApp.slice("components/".length)); m.exports.push(n); byName.set(n, path) }
     else if (top === "layouts") { m.kind = "layout"; m.exports.push(`layout:${basename(file).replace(/\.vue$/, "")}`) }

@@ -1,5 +1,5 @@
 import { emptyModule, uniq, type Endpoint, type ModuleInfo, type Target, type TargetConfig } from "../types"
-import { walk, read, rel, isTest, resolveRoot, scanTsBasics, computeFanIn, sourcesOf } from "./shared"
+import { walk, read, rel, isTest, resolveRoot, scanTsBasics, computeFanIn, sourcesOf, scanExternals } from "./shared"
 
 // Bun.serve server: one or more route hosts (fetch handlers switching on
 // url.pathname) plus lib modules. Contracts recorded per module: exports,
@@ -44,6 +44,7 @@ export function scanBunServer(cfg: TargetConfig, repoRoot: string): Target {
     const eps = endpoints(text)
     const m = emptyModule(rel(root, file), lines.length, eps.length ? "route-host" : "lib")
     scanTsBasics(m, file, lines, root)
+    scanExternals(m, lines)
     m.emits = frameEmits(lines)
     m.endpoints = eps
     m.imports = uniq(m.imports)

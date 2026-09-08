@@ -1,5 +1,5 @@
 import { emptyModule, uniq, type ModuleInfo, type Target, type TargetConfig } from "../types"
-import { walk, read, rel, isTest, resolveRoot, resolveImport, computeFanIn, sourcesOf, normalizeCall, identRe } from "./shared"
+import { walk, read, rel, isTest, resolveRoot, resolveImport, computeFanIn, sourcesOf, normalizeCall, identRe, scanExternals } from "./shared"
 
 // React/Vite client: frames consumed (case "x" literals — the renderer keeps
 // only those a server emits), HTTP paths called, local imports, exports.
@@ -24,6 +24,7 @@ export function scanReactClient(cfg: TargetConfig, repoRoot: string): Target {
       const ex = l.match(EXPORT_RE); if (ex) m.exports.push(ex[1]!)
       const im = l.match(IMPORT_RE); if (im) m.imports.push(resolveImport(file, im[1]!, root))
     }
+    scanExternals(m, lines)   // shared scanner: both quote styles, bare specifiers only
     m.consumes = uniq([...text.matchAll(CASE_RE), ...text.matchAll(TYPE_EQ_RE)].map((x) => x[1]!))
     m.apiCalls = uniq([...text.matchAll(FETCH_RE)].map((x) => normalizeCall(x[1]!)).filter((p) => p.startsWith("/")))
     m.imports = uniq(m.imports)
