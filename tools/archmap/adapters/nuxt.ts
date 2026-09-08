@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { basename, join } from "node:path"
 import { emptyModule, uniq, type Endpoint, type ModuleInfo, type Target, type TargetConfig } from "../types"
-import { walk, read, rel, isTest, resolveRoot, computeFanIn, sourcesOf, normalizeCall, scanTsBasics } from "./shared"
+import { walk, read, rel, isTest, resolveRoot, computeFanIn, sourcesOf, normalizeCall, scanTsBasics, identRe } from "./shared"
 
 // Nuxt 3/4 site. Contracts come from the file system, which IS the router:
 // pages/ → PAGE routes, server/api + server/routes → HTTP endpoints
@@ -11,9 +11,10 @@ import { walk, read, rel, isTest, resolveRoot, computeFanIn, sourcesOf, normaliz
 // Nuxt 4 keeps app code under app/; server/ stays at the root. Both layouts
 // are detected from the root.
 
-const SCRIPT_DIRS = ["composables", "utils", "stores", "plugins", "middleware"]
+const SCRIPT_DIRS = ["composables", "utils", "lib", "stores", "plugins", "middleware"]
 const APP_DIRS = ["pages", "components", "layouts", ...SCRIPT_DIRS]
-const CALL_RE = /(?:\$fetch|useFetch|useLazyFetch|fetch)\(\s*[`"']([^`"'?]+)/g
+// `$fetch<Slot[]>("/api/…")` — the generic is common in TS SFCs
+const CALL_RE = /(?:\$fetch|useFetch|useLazyFetch|fetch)(?:<[^>]*>)?\(\s*[`"']([^`"'?]+)/g
 const STATE_RE = /(?:useState|defineStore)\(\s*["'`]([^"'`]+)/g
 const LAYOUT_RE = /layout:\s*["'`]([^"'`]+)/g
 
@@ -59,6 +60,8 @@ export function scanNuxt(cfg: TargetConfig, repoRoot: string): Target {
   const files: string[] = []
   for (const d of APP_DIRS) if (existsSync(join(appDir, d))) files.push(...walk(join(appDir, d), [".vue", ".ts", ".js"], cfg.ignore))
   if (existsSync(join(root, "server"))) files.push(...walk(join(root, "server"), [".ts", ".js"], cfg.ignore))
+  // non-Nuxt dirs the site still owns (trigger.dev jobs, scripts) — kind = dir name
+  for (const d of cfg.extraDirs ?? []) if (existsSync(join(root, d))) files.push(...walk(join(root, d), [".ts", ".js"], cfg.ignore))
   for (const f of ["app.vue", "app/app.vue", "error.vue", "app/error.vue", "nuxt.config.ts"]) if (existsSync(join(root, f))) files.push(join(root, f))
   for (const file of uniq(files).sort()) {
     if (isTest(file) || file.endsWith(".d.ts")) continue
@@ -78,6 +81,7 @@ export function scanNuxt(cfg: TargetConfig, repoRoot: string): Target {
     else if (path.startsWith("server/")) m.kind = "server-lib"
     else if (/(^|\/)app\.vue$/.test(path)) m.kind = "app"
     else if (path === "nuxt.config.ts") m.kind = "config"
+    else { const extra = (cfg.extraDirs ?? []).find((d) => path.startsWith(d + "/")); if (extra) m.kind = extra.replace(/s$/, "") }
     m.apiCalls = uniq([...text.matchAll(CALL_RE)].map((x) => normalizeCall(x[1]!)).filter((p) => p.startsWith("/")))
     m.state = uniq([...m.state, ...[...text.matchAll(STATE_RE)].map((x) => `useState ${x[1]}`)])
     for (const l of text.matchAll(LAYOUT_RE)) m.listeners.push(`layout:${l[1]}`)
@@ -88,12 +92,16 @@ export function scanNuxt(cfg: TargetConfig, repoRoot: string): Target {
   }
   // Template tags resolve a component whether written <TlsHeader>, <tlsHeader>
   // or <tls-header>; layouts are reached through `layout:` meta or <NuxtLayout name>.
+  // Components, composables, utils and layouts are auto-imported; anything else
+  // (lib/, server/, extra dirs) must be imported to count.
+  const AUTO = new Set(["component", "composable", "util", "layout"])
   const fanIn = computeFanIn(modules, sourcesOf(root, modules), {
     minLen: 3,
+    requireImport: (owner) => !AUTO.has(owner.kind),
     callRe: (n) => {
       if (n.startsWith("layout:")) { const l = n.slice(7); return new RegExp(`layout:\\s*["'\`]${l}["'\`]|name=["']${l}["']`) }
       if (byName.has(n)) return new RegExp(`<(?:${n}|${n[0]!.toLowerCase()}${n.slice(1)}|${kebab(n)})[\\s/>]`)
-      return new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}\\s*\\(`)
+      return identRe(n)
     },
   })
   return { name: cfg.name, adapter: cfg.adapter, root: cfg.root, cap, modules, fanIn }

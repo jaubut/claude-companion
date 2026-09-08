@@ -79,13 +79,26 @@ export function scanTsBasics(m: ModuleInfo, file: string, lines: string[], root:
 export interface FanInOpts {
   minLen?: number
   label?: (m: ModuleInfo, line: string) => string
-  // how a call looks: default `name(`; JSX/Swift adapters add `<Name` / `Name.`
+  // how a use looks: default a bare identifier (`name(`, `name,`, `: Name`);
+  // JSX/Swift/Nuxt adapters narrow or widen it (`<Name`, `Name.`, kebab tags)
   callRe?: (name: string) => RegExp
+  // when true for an owner, a module counts as a caller only if it imports the
+  // owner — kills same-name false positives in TS targets. Swift (one module)
+  // and Nuxt auto-imports (components, composables, utils) say false.
+  requireImport?: (owner: ModuleInfo) => boolean
 }
+
+// bare identifier: not part of a longer name, not a property (`x.name`), not an object key (`name:`)
+export function identRe(name: string): RegExp {
+  return new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])(?!\\s*:)`)
+}
+
+const IMPORT_LINE_RE = /^\s*(?:import\b|export\s+(?:\*|\{[^}]*\})\s+from\b)/
 
 export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[]>, opts: FanInOpts = {}): Target["fanIn"] {
   const minLen = opts.minLen ?? 3
   const owners = new Map<string, string>()
+  const byPath = new Map(modules.map((m) => [m.path, m]))
   const dup = new Set<string>()
   for (const m of modules) for (const raw of m.exports) {
     const name = raw.replace(/\(\)$/, "")
@@ -94,8 +107,7 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
     else owners.set(name, m.path)
   }
   for (const d of dup) owners.delete(d)
-  const esc = (n: string) => n.replace(/\$/g, "\\$")
-  const mk = opts.callRe ?? ((n: string) => new RegExp(`(?<![\\w$.])${esc(n)}\\s*\\(`))
+  const mk = opts.callRe ?? identRe
   const res = new Map([...owners.keys()].map((n) => [n, mk(n)]))
   // the regex is the slow path; `includes` (or the kebab/lowercase forms a
   // template tag may use) gates it
@@ -105,9 +117,11 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
     const lines = sources.get(m.path) ?? []
     for (const l of lines) {
       const caller = opts.label ? opts.label(m, l) : m.path
+      if (IMPORT_LINE_RE.test(l)) continue
       for (const [name, re] of res) {
         const owner = owners.get(name)!
         if (owner === m.path) continue
+        if (opts.requireImport?.(byPath.get(owner)!) && !m.imports.includes(owner)) continue
         if (!needles.get(name)!.some((n) => l.includes(n)) || !re.test(l)) continue
         const entry = (fanIn[name] ??= { module: owner, callers: [] })
         if (!entry.callers.includes(caller)) entry.callers.push(caller)

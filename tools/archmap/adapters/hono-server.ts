@@ -96,6 +96,7 @@ export function scanHonoServer(cfg: TargetConfig, repoRoot: string): Target {
   }
   const route = new Map<string, string>()
   const fanIn = computeFanIn(modules, sourcesOf(root, modules), {
+    requireImport: () => true,
     label: (m, l) => {
       const r = l.match(ROUTE_LINE_RE)
       if (r) route.set(m.path, `${r[1] === "all" ? "*" : r[1]!.toUpperCase()} ${joinPath(firstPrefix.get(m.path) ?? "", cleanPath(r[2]!))}`)

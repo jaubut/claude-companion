@@ -5,7 +5,7 @@ import { walk, read, rel, isTest, resolveRoot, scanTsBasics, computeFanIn, sourc
 // url.pathname) plus lib modules. Contracts recorded per module: exports,
 // module-level state, WS frames emitted, endpoints, imports, top-level
 // listener registrations. Fan-in is computed across the target: for every
-// export, which other modules call it.
+// export, which other modules use it (and import its owner).
 
 const ENDPOINT_RE = /url\.pathname(?:\s*===\s*|\.startsWith\()"([^"]+)"\)?(?:\s*&&\s*req\.method\s*===\s*"([A-Z]+)")?/g
 const ROUTE_RE = /url\.pathname(?:\s*===\s*|\.startsWith\()"([^"]+)"\)?(?:\s*&&\s*req\.method\s*===\s*"([A-Z]+)")?/
@@ -55,6 +55,7 @@ export function scanBunServer(cfg: TargetConfig, repoRoot: string): Target {
   // function show up as two callers. That is the bug class this map exposes.
   const route = new Map<string, string>()
   const fanIn = computeFanIn(modules, sourcesOf(root, modules), {
+    requireImport: () => true,
     label: (m, l) => {
       const r = l.match(ROUTE_RE)
       if (r) route.set(m.path, `${r[2] ?? "*"} ${r[1]}`)

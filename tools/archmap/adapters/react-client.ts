@@ -1,5 +1,5 @@
 import { emptyModule, uniq, type ModuleInfo, type Target, type TargetConfig } from "../types"
-import { walk, read, rel, isTest, resolveRoot, resolveImport, computeFanIn, sourcesOf, normalizeCall } from "./shared"
+import { walk, read, rel, isTest, resolveRoot, resolveImport, computeFanIn, sourcesOf, normalizeCall, identRe } from "./shared"
 
 // React/Vite client: frames consumed (case "x" literals — the renderer keeps
 // only those a server emits), HTTP paths called, local imports, exports.
@@ -31,7 +31,8 @@ export function scanReactClient(cfg: TargetConfig, repoRoot: string): Target {
     modules.push(m)
   }
   const fanIn = computeFanIn(modules, sourcesOf(root, modules), {
-    callRe: (n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}\\s*\\(|<${n}[\\s/>]`),
+    requireImport: () => true,
+    callRe: (n) => new RegExp(`${identRe(n).source}|<${n}[\\s/>]`),
   })
   return { name: cfg.name, adapter: cfg.adapter, root: cfg.root, cap, modules, fanIn }
 }
