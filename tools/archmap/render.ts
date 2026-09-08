@@ -34,6 +34,23 @@ function moduleTable(t: Target): string {
   return ["| module | lines | kind | exports | contracts |", "|---|---|---|---|---|", ...rows].join("\n")
 }
 
+// One row per external package across the repo's targets: pinned version(s),
+// how many modules import it, which targets. Sorted by module count — the top
+// of this table is what a dependency change hits first.
+export function externalsTable(map: ArchMap): string {
+  const acc = new Map<string, { versions: Set<string>; modules: number; targets: Set<string> }>()
+  for (const t of map.targets) for (const [pkg, use] of Object.entries(t.packages ?? {})) {
+    const e = acc.get(pkg) ?? acc.set(pkg, { versions: new Set(), modules: 0, targets: new Set() }).get(pkg)!
+    e.versions.add(use.version ?? "—")
+    e.modules += use.modules.length
+    e.targets.add(t.name)
+  }
+  if (!acc.size) return ""
+  const rows = [...acc.entries()].sort((a, b) => b[1].modules - a[1].modules || a[0].localeCompare(b[0]))
+    .map(([pkg, e]) => `| \`${pkg}\` | ${[...e.versions].join(", ")} | ${e.modules} | ${[...e.targets].join(", ")} |`)
+  return ["## External packages", "", "| package | version | modules | targets |", "|---|---|---|---|", ...rows].join("\n")
+}
+
 // `/api/note/:id` matches `/api/note/:p` and `/api/note/abc`; prefix routes match by startsWith.
 export function pathMatches(e: Endpoint, call: string): boolean {
   if (e.prefix) return call.startsWith(e.path)
@@ -81,6 +98,8 @@ export function renderMarkdown(map: ArchMap, refs: RefTarget[] = [], unresolved:
     if (over.length) out.push(`⚠ over cap: ${over.map((m) => `\`${m.path}\` (${m.lines})`).join(", ")}`, "")
     out.push(moduleTable(t), "")
   }
+  const ext = externalsTable(map)
+  if (ext) out.push(ext, "")
   if (refs.length || unresolved.length) {
     out.push("## Referenced maps (joined by reference — regenerate the sibling to refresh)", "")
     for (const r of refs) out.push(`- \`${r.ref}:${r.name}\` — \`${r.repo}/architecture.json\` generated ${r.generatedAt}, ${r.modules.length} modules`)
