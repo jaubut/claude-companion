@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07",
+  "generatedAt": "2026-09-08",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (primary), the React PWA (desktop), and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1258,6 +1258,13 @@
         }
       ],
       "fanIn": {
+        "WsData": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts",
+            "ws.ts"
+          ]
+        },
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
@@ -1270,6 +1277,36 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleApiRoute": {
+          "module": "routes/api.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleDialogRoute": {
+          "module": "routes/dialogs.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleHookRoute": {
+          "module": "routes/hooks.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleOrchestratorRoute": {
+          "module": "routes/orchestrator.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "websocket": {
+          "module": "ws.ts",
+          "callers": [
+            "companion-server.ts#* /"
+          ]
+        },
         "activeStates": {
           "module": "lib/transcript.ts",
           "callers": [
@@ -1280,6 +1317,13 @@
           "module": "lib/transcript.ts",
           "callers": [
             "lib/activity.ts"
+          ]
+        },
+        "Verdict": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/activity.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
           ]
         },
         "getState": {
@@ -1333,6 +1377,12 @@
             "lib/activity.ts"
           ]
         },
+        "SessionMeta": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
         "forgetStates": {
           "module": "lib/transcript.ts",
           "callers": [
@@ -1345,13 +1395,18 @@
             "lib/activity.ts"
           ]
         },
-        "isShellTool": {
-          "module": "lib/tool-format.ts",
+        "PathState": {
+          "module": "lib/transcript.ts",
           "callers": [
-            "lib/auto-judge.ts",
-            "lib/branch-guard.ts",
-            "lib/learned-allow.ts",
-            "lib/super-auto.ts"
+            "lib/activity.ts"
+          ]
+        },
+        "ApnsEnv": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "lib/apns.ts",
+            "routes/api.ts",
+            "routes/api.ts#POST /api/register-token"
           ]
         },
         "isLearned": {
@@ -1366,6 +1421,13 @@
             "lib/branch-guard.ts"
           ]
         },
+        "FeedEvent": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/codex-feed.ts",
+            "wiring/events.ts"
+          ]
+        },
         "listSessions": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -1373,8 +1435,34 @@
             "routes/api.ts#POST /api/inject",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
+            "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
+          ]
+        },
+        "ANSI_PATTERN": {
+          "module": "lib/tool-format.ts",
+          "callers": [
+            "lib/codex-feed.ts"
+          ]
+        },
+        "Session": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/dialog-watch.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "Dialog": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "lib/dialog-watch.ts",
+            "routes/dialogs.ts"
           ]
         },
         "parseDialog": {
@@ -1394,6 +1482,7 @@
           "callers": [
             "lib/discover.ts",
             "lib/rehydrate.ts",
+            "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/post-tool-use",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
@@ -1402,11 +1491,49 @@
             "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
+        "SpawnAgent": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "lib/hook-common.ts",
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/hooks.ts"
+          ]
+        },
+        "PickerIO": {
+          "module": "lib/question-driver.ts",
+          "callers": [
+            "lib/keyboard-inject.ts"
+          ]
+        },
+        "Task": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts",
+            "lib/orchestrator-queue.ts",
+            "lib/worker-tail.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "Turn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "listQueued": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/orchestrator-queue.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "ApnsPayload": {
+          "module": "lib/apns.ts",
+          "callers": [
+            "lib/push.ts"
           ]
         },
         "apnsConfigured": {
@@ -1423,6 +1550,7 @@
           "module": "lib/push-tokens.ts",
           "callers": [
             "lib/push.ts",
+            "routes/api.ts",
             "routes/api.ts#GET /api/push/tokens"
           ]
         },
@@ -1436,7 +1564,24 @@
           "module": "lib/push-tokens.ts",
           "callers": [
             "lib/push.ts",
+            "routes/api.ts",
             "routes/api.ts#DELETE /api/register-token"
+          ]
+        },
+        "QuestionItem": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-driver.ts",
+            "routes/hooks.ts"
+          ]
+        },
+        "QuestionAnswer": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-driver.ts",
+            "routes/api.ts#POST /api/answer",
+            "routes/hooks.ts",
+            "ws.ts"
           ]
         },
         "isQuestionTool": {
@@ -1446,17 +1591,17 @@
             "routes/hooks.ts"
           ]
         },
-        "capturePane": {
-          "module": "lib/tmux-pane.ts",
+        "LIVE_STATUSES": {
+          "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "lib/worker-tail.ts",
-            "wiring/orchestrator.ts"
+            "lib/worker-tail.ts"
           ]
         },
         "getTask": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/worker-tail.ts",
+            "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/task/",
             "routes/orchestrator.ts#POST /api/orchestrator/proposal/",
             "wiring/orchestrator.ts"
@@ -1465,21 +1610,41 @@
         "setTaskLogTail": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "lib/worker-tail.ts"
+            "lib/worker-tail.ts",
+            "wiring/orchestrator.ts"
           ]
         },
-        "resolveApproval": {
-          "module": "lib/pty-manager.ts",
+        "registerToken": {
+          "module": "lib/push-tokens.ts",
           "callers": [
-            "routes/api.ts#POST /api/resolve",
+            "routes/api.ts",
+            "routes/api.ts#POST /api/register-token"
+          ]
+        },
+        "tokenCount": {
+          "module": "lib/push-tokens.ts",
+          "callers": [
+            "routes/api.ts",
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#DELETE /api/register-token"
+          ]
+        },
+        "HOST_INFO": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts",
+            "routes/api.ts#* /api/status",
             "ws.ts"
           ]
         },
         "broadcast": {
           "module": "state.ts",
           "callers": [
+            "routes/api.ts",
             "routes/api.ts#POST /api/resolve",
             "routes/api.ts#POST /api/answer",
+            "routes/api.ts#POST /api/push/test",
+            "routes/api.ts#POST /api/push/broadcast",
             "routes/api.ts#POST /api/inject",
             "routes/api.ts#POST /api/super-auto",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
@@ -1491,24 +1656,46 @@
             "ws.ts"
           ]
         },
+        "clearWaiting": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts",
+            "routes/api.ts#POST /api/inject",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "ws.ts"
+          ]
+        },
+        "clients": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts",
+            "routes/api.ts#* /api/status",
+            "wiring/dialogs.ts",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts",
+            "ws.ts"
+          ]
+        },
+        "getWaiting": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "resolveApproval": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "routes/api.ts#POST /api/resolve",
+            "ws.ts"
+          ]
+        },
         "resolveQuestion": {
           "module": "lib/questions.ts",
           "callers": [
             "routes/api.ts#POST /api/answer",
             "ws.ts"
-          ]
-        },
-        "registerToken": {
-          "module": "lib/push-tokens.ts",
-          "callers": [
-            "routes/api.ts#POST /api/register-token"
-          ]
-        },
-        "tokenCount": {
-          "module": "lib/push-tokens.ts",
-          "callers": [
-            "routes/api.ts#POST /api/register-token",
-            "routes/api.ts#DELETE /api/register-token"
           ]
         },
         "pushToAll": {
@@ -1529,14 +1716,6 @@
             "ws.ts"
           ]
         },
-        "clearWaiting": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "ws.ts"
-          ]
-        },
         "injectText": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -1548,6 +1727,7 @@
           "module": "lib/activity.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
+            "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
@@ -1583,6 +1763,13 @@
             "routes/api.ts#POST /api/super-auto"
           ]
         },
+        "SpawnResult": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "routes/api.ts#POST /api/spawn-session",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "spawnCompanionSession": {
           "module": "lib/spawn-session.ts",
           "callers": [
@@ -1594,6 +1781,15 @@
           "module": "lib/pty-manager.ts",
           "callers": [
             "routes/api.ts#* /api/status",
+            "ws.ts"
+          ]
+        },
+        "dialogWatcher": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
             "ws.ts"
           ]
         },
@@ -1617,14 +1813,14 @@
             "routes/dialogs.ts#POST /api/dialog/pick"
           ]
         },
-        "withPickerIO": {
-          "module": "lib/keyboard-inject.ts",
+        "addQuestionRequest": {
+          "module": "lib/questions.ts",
           "callers": [
             "routes/hooks.ts"
           ]
         },
-        "driveQuestionPicker": {
-          "module": "lib/question-driver.ts",
+        "markQuestionAnswered": {
+          "module": "lib/questions.ts",
           "callers": [
             "routes/hooks.ts"
           ]
@@ -1647,12 +1843,60 @@
             "routes/hooks.ts"
           ]
         },
-        "hookDecisionResponse": {
-          "module": "lib/hook-common.ts",
+        "metaFromHeaders": {
+          "module": "lib/sessions.ts",
           "callers": [
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request"
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "onSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "removeSessionByCwd": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "removeSessionByTty": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "setSessionTitle": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "forgetSession": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "recordToolEnd": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/post-tool-use"
           ]
         },
         "recordToolStart": {
@@ -1663,21 +1907,34 @@
             "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
-        "addQuestionRequest": {
-          "module": "lib/questions.ts",
+        "recordTurnEnd": {
+          "module": "lib/activity.ts",
           "callers": [
-            "routes/hooks.ts"
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "markQuestionAnswered": {
-          "module": "lib/questions.ts",
+        "agentFromHeaders": {
+          "module": "lib/hook-common.ts",
           "callers": [
-            "routes/hooks.ts"
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "agentTitle": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts"
           ]
         },
         "cwdFromPayload": {
           "module": "lib/hook-common.ts",
           "callers": [
+            "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/post-tool-use",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
@@ -1687,30 +1944,44 @@
             "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
-        "metaFromHeaders": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/post-tool-use",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
-        "agentFromHeaders": {
+        "hookDecisionResponse": {
           "module": "lib/hook-common.ts",
           "callers": [
+            "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop"
+            "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
-        "getWaiting": {
-          "module": "state.ts",
+        "projectLabelFor": {
+          "module": "lib/hook-common.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/stop"
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts"
+          ]
+        },
+        "transcriptPath": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "InjectTarget": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "withPickerIO": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "driveQuestionPicker": {
+          "module": "lib/question-driver.ts",
+          "callers": [
+            "routes/hooks.ts"
           ]
         },
         "isCatastrophic": {
@@ -1739,12 +2010,6 @@
             "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
-        "recordToolEnd": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/post-tool-use"
-          ]
-        },
         "titleFromPrompt": {
           "module": "lib/session-titles.ts",
           "callers": [
@@ -1753,12 +2018,6 @@
         },
         "rememberTitle": {
           "module": "lib/session-titles.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "setSessionTitle": {
-          "module": "lib/sessions.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
@@ -1773,6 +2032,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
+            "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/task/",
             "routes/orchestrator.ts#POST /api/orchestrator/proposal/",
             "wiring/orchestrator.ts"
@@ -1782,6 +2042,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
+            "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/task/",
             "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
           ]
@@ -1790,6 +2051,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
+            "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
@@ -1797,10 +2059,14 @@
             "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
           ]
         },
-        "recordTurnEnd": {
-          "module": "lib/activity.ts",
+        "workerQueue": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
           ]
         },
         "setWaiting": {
@@ -1809,36 +2075,83 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "projectLabelFor": {
-          "module": "lib/hook-common.ts",
+        "reconcileDispatch": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
             "wiring/events.ts"
           ]
         },
-        "agentTitle": {
-          "module": "lib/hook-common.ts",
+        "WIP_CAP": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/stop",
-            "wiring/events.ts"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
-        "removeSessionByTty": {
-          "module": "lib/sessions.ts",
+        "emitChannel": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/session-end"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/"
           ]
         },
-        "removeSessionByCwd": {
-          "module": "lib/sessions.ts",
+        "executeDispatch": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/session-end"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
           ]
         },
-        "forgetSession": {
-          "module": "lib/activity.ts",
+        "runBrain": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/session-end"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send"
+          ]
+        },
+        "Channel": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "GENERAL_CHANNEL": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "appendTurn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "countLiveTasks": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "createChannel": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels"
+          ]
+        },
+        "createQueuedTask": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
           ]
         },
         "getChannel": {
@@ -1849,71 +2162,55 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "listChannels": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts#GET /api/orchestrator/channels",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
-          ]
-        },
-        "createChannel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/channels"
-          ]
-        },
-        "emitChannel": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/channels",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/"
-          ]
-        },
-        "setChannelAuto": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/"
-          ]
-        },
         "getThread": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
+            "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "listChannels": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/channels",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
+            "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/orchestrator.ts"
           ]
         },
-        "countLiveTasks": {
+        "setChannelAuto": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "wiring/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/"
           ]
         },
-        "runBrain": {
-          "module": "wiring/orchestrator.ts",
+        "SessionStatus": {
+          "module": "lib/dialog-watch.ts",
           "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/send"
-          ]
-        },
-        "createQueuedTask": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
+            "wiring/dialogs.ts"
           ]
         },
         "createDialogWatcher": {
           "module": "lib/dialog-watch.ts",
           "callers": [
             "wiring/dialogs.ts"
+          ]
+        },
+        "capturePane": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "wiring/dialogs.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "getPendingQuestions": {
@@ -1977,18 +2274,6 @@
             "wiring/events.ts"
           ]
         },
-        "onSessions": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "reconcileDispatch": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
         "resolveTitle": {
           "module": "lib/session-titles.ts",
           "callers": [
@@ -1999,6 +2284,36 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/events.ts"
+          ]
+        },
+        "createProposal": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "setTaskSpawn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "bindTaskSession": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "matchUnboundTaskByCwd": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "DEFAULT_WIP_CAP": {
+          "module": "lib/orchestrator-queue.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
           ]
         },
         "createQueue": {
@@ -2025,32 +2340,8 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "matchUnboundTaskByCwd": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "bindTaskSession": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "setTaskSpawn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
         "decide": {
           "module": "lib/orchestrator-brain.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "createProposal": {
-          "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]
@@ -2374,6 +2665,12 @@
             "app.tsx"
           ]
         },
+        "StatusBar": {
+          "module": "components/status-bar.tsx",
+          "callers": [
+            "app.tsx"
+          ]
+        },
         "ActivityPill": {
           "module": "components/activity-pill.tsx",
           "callers": [
@@ -2386,12 +2683,30 @@
             "app.tsx"
           ]
         },
+        "ApprovalCard": {
+          "module": "components/approval-card.tsx",
+          "callers": [
+            "app.tsx"
+          ]
+        },
         "unlockAudio": {
           "module": "lib/alert-sound.ts",
           "callers": [
             "app.tsx",
             "components/composer.tsx",
             "components/status-bar.tsx"
+          ]
+        },
+        "TargetBar": {
+          "module": "components/target-bar.tsx",
+          "callers": [
+            "app.tsx"
+          ]
+        },
+        "Composer": {
+          "module": "components/composer.tsx",
+          "callers": [
+            "app.tsx"
           ]
         },
         "truncate": {
@@ -2419,6 +2734,13 @@
           "module": "lib/format.ts",
           "callers": [
             "components/activity-pill.tsx"
+          ]
+        },
+        "TOOL_ICONS": {
+          "module": "lib/tool-summary.ts",
+          "callers": [
+            "components/approval-card.tsx",
+            "components/feed-line.tsx"
           ]
         },
         "getToolSummary": {

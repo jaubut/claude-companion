@@ -56,6 +56,7 @@ export interface TargetConfig {
   root: string
   cap?: number
   ignore?: string[]
+  extraDirs?: string[]   // nuxt: extra top-level dirs to scan (trigger/, scripts/)
 }
 
 // Import boundary: modules matching `from` may not import modules matching any
