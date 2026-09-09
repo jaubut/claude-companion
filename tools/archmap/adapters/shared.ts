@@ -70,6 +70,39 @@ export function scanTsBasics(m: ModuleInfo, file: string, lines: string[], root:
   }
 }
 
+// --- External packages -------------------------------------------------------
+// Bare specifiers only: `hono/cors`, `@libsql/client`, `react`. Relative,
+// alias (`~/`, `@/`) and runtime builtins are dropped; type-only imports count
+// (they still pin the package). The full specifier is kept so a consumer can
+// tell `hono/cors` from `hono/jsx`; `packageOf` folds it to the package name.
+
+const NODE_BUILTINS = new Set(["assert", "async_hooks", "buffer", "child_process", "cluster", "constants", "crypto", "dgram", "diagnostics_channel", "dns", "domain", "events", "fs", "http", "http2", "https", "inspector", "module", "net", "os", "path", "perf_hooks", "process", "punycode", "querystring", "readline", "repl", "stream", "string_decoder", "sys", "test", "timers", "tls", "trace_events", "tty", "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib"])
+// `from "x"`, `import "x"`, `require("x")`, `import("x")`; both quote styles
+const EXTERNAL_RE = /(?:\bfrom\s+|^\s*import\s+|\brequire\(\s*|\bimport\(\s*)["']([^"'\s]+)["']/
+
+export function isBuiltinSpec(spec: string): boolean {
+  if (spec === "bun" || spec.startsWith("bun:") || spec.startsWith("node:")) return true
+  return NODE_BUILTINS.has(spec.split("/")[0]!)
+}
+
+export function packageOf(spec: string): string {
+  const parts = spec.split("/")
+  return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!
+}
+
+export function scanExternals(m: ModuleInfo, lines: string[]): void {
+  const out: string[] = []
+  for (const l of lines) {
+    if (/^\s*(?:\/\/|\*|\/\*)/.test(l)) continue          // comment-only line
+    const x = l.replace(/\s\/\/.*$/, "").match(EXTERNAL_RE)   // trailing comment stripped: a quoted import in prose is not an import
+    if (!x) continue
+    const spec = x[1]!
+    if (/^[.\/~]|^@\//.test(spec) || isBuiltinSpec(spec)) continue
+    out.push(spec)
+  }
+  m.externals = uniq([...(m.externals ?? []), ...out]).sort()
+}
+
 // --- Fan-in ------------------------------------------------------------------
 // For every export unique across the target, which OTHER modules call it.
 // `label(module, line)` runs on every line and names the caller for that line —
@@ -86,6 +119,12 @@ export interface FanInOpts {
   // owner — kills same-name false positives in TS targets. Swift (one module)
   // and Nuxt auto-imports (components, composables, utils) say false.
   requireImport?: (owner: ModuleInfo) => boolean
+  // drop "…" string literals and // comments from each line before matching
+  stripLiterals?: boolean
+}
+
+export function stripLiterals(line: string): string {
+  return line.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/\/\/.*$/, "")
 }
 
 // bare identifier: not part of a longer name, not a property (`x.name`), not an object key (`name:`)
@@ -115,9 +154,10 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
   const fanIn: Target["fanIn"] = {}
   for (const m of modules) {
     const lines = sources.get(m.path) ?? []
-    for (const l of lines) {
-      const caller = opts.label ? opts.label(m, l) : m.path
-      if (IMPORT_LINE_RE.test(l)) continue
+    for (const raw of lines) {
+      const caller = opts.label ? opts.label(m, raw) : m.path
+      if (IMPORT_LINE_RE.test(raw)) continue
+      const l = opts.stripLiterals ? stripLiterals(raw) : raw
       for (const [name, re] of res) {
         const owner = owners.get(name)!
         if (owner === m.path) continue

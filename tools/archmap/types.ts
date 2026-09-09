@@ -20,6 +20,14 @@ export interface ModuleInfo {
   imports: string[]      // local module paths imported
   listeners: string[]    // event registrations at top level (onSessions(...), setInterval, watcher.start)
   sheets: number         // SwiftUI presentation sites
+  externals?: string[]   // bare external import specifiers ("hono/cors", "@libsql/client", "SwiftUI"); optional so older maps stay valid
+}
+
+// Per-target view of the external packages its modules import, resolved
+// against the nearest lockfile. `version` is null when no lockfile pins it.
+export interface PackageUse {
+  version: string | null
+  modules: string[]      // module paths (target-relative) importing the package
 }
 
 export interface Target {
@@ -30,6 +38,7 @@ export interface Target {
   modules: ModuleInfo[]
   // export name → { module, callers: [module, ...] } across the target
   fanIn: Record<string, { module: string; callers: string[] }>
+  packages?: Record<string, PackageUse>   // package name → use; optional so older maps stay valid
 }
 
 // A sibling repo's committed map, joined by reference: its targets take part in
@@ -46,6 +55,29 @@ export interface ArchMap {
   intent: string
   targets: Target[]
   refs: RefConfig[]
+}
+
+// --- Fleet: many repos' committed maps, aggregated by external package -------
+// The roster lists repos with candidate paths (Mac and Zettlab differ); the
+// first existing path with an architecture.json wins. The aggregation reads
+// committed maps only — it never scans a sibling.
+export interface RosterEntry {
+  name: string
+  paths: string[]
+}
+
+export interface FleetPackage {
+  repos: string[]                         // roster names importing it
+  modules: string[]                       // "<repo>:<target>/<module>" — every importing module
+  versions: Record<string, string | null> // roster name → pinned version (null = unresolved)
+  fanIn: number                           // modules.length — a plain count, NOT Target.fanIn's shape
+}
+
+export interface FleetMap {
+  generatedAt: string
+  repos: { name: string; path: string; generatedAt: string }[]
+  skipped: string[]                       // roster entries with no committed map on this machine
+  packages: Record<string, FleetPackage>  // sorted by fanIn desc, then name
 }
 
 export type AdapterName = "bun-server" | "hono-server" | "react-client" | "swiftui" | "nuxt"
@@ -81,7 +113,7 @@ export interface RepoConfig {
 }
 
 export function emptyModule(path: string, lines: number, kind: string): ModuleInfo {
-  return { path, lines, kind, exports: [], state: [], emits: [], consumes: [], endpoints: [], apiCalls: [], imports: [], listeners: [], sheets: 0 }
+  return { path, lines, kind, exports: [], state: [], emits: [], consumes: [], endpoints: [], apiCalls: [], imports: [], listeners: [], sheets: 0, externals: [] }
 }
 
 export function uniq(xs: string[]): string[] {
