@@ -19,7 +19,6 @@ import { recordAllow } from "../lib/learned-allow"
 import {
   type Session,
   clearSessionWaiting,
-  metaFromHeaders,
   recordSession,
   removeSessionByCwd,
   removeSessionByTmuxPane,
@@ -44,6 +43,7 @@ import {
   agentTitle,
   cwdFromPayload,
   hookDecisionResponse,
+  metaFromHeaders,
   projectLabelFor,
 } from "../lib/hook-common"
 import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"

@@ -1,4 +1,5 @@
 import type { SpawnAgent } from "./spawn-session"
+import type { Session } from "./sessions"
 
 // Helpers shared by every hook endpoint and the event wiring: which agent a
 // hook came from, the cwd it reports, the decision envelope each hook event
@@ -69,4 +70,25 @@ export function subtitleFor(tool: string, summary: string): string | undefined {
   // Bash / Grep / etc — already concise, no value in showing the same
   // string twice across subtitle and body.
   return undefined
+}
+
+// Session identity as reported by the hook wrapper's headers. Sibling of
+// agentFromHeaders above; the registry consumes the result but does not own
+// the parsing. `Session` is a type-only import (erased) so there is no cycle.
+export function metaFromHeaders(headers: Headers): Partial<Session> {
+  const raw = (name: string): string => {
+    const v = headers.get(name) ?? ""
+    // Claude Code hooks sometimes emit "not a tty" when stdin is piped — treat
+    // that as absent so we don't key a session on garbage.
+    return v === "not a tty" ? "" : v
+  }
+  return {
+    termProgram: raw("x-companion-term-program"),
+    agent: raw("x-companion-agent") === "codex" ? "codex" : "claude",
+    tty: raw("x-companion-tty"),
+    iTermSessionId: raw("x-companion-iterm-session-id"),
+    tmuxPane: raw("x-companion-tmux-pane"),
+    taskId: raw("x-companion-task-id"),
+    pid: raw("x-companion-pid"),
+  }
 }

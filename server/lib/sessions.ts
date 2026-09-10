@@ -17,6 +17,8 @@
 // Codex process on /dev/ttys007 can inherit an old iOS cache entry from a
 // previous Claude process that used the same TTY.
 
+import { isAgentPidAlive, processStartMs } from "./agent-pid"
+
 export interface Session {
   key: string
   agent: "claude" | "codex" | "kimi"
@@ -71,24 +73,6 @@ const listeners = new Set<Listener>()
 // or ambiguous (which would otherwise let orphans linger forever).
 const PRUNE_AFTER_MS_NO_PID = 60 * 60 * 1000
 const PRUNE_INTERVAL_MS = 60 * 1000
-
-function isAgentPidAlive(pid: string, agent: Session["agent"]): boolean {
-  if (!pid) return false
-  const n = Number(pid)
-  if (!Number.isFinite(n) || n <= 1) return false
-  // `kill -0` only tells us a process with that pid exists. After pid reuse it
-  // could be anything, so verify the command name still matches the agent.
-  try {
-    const res = Bun.spawnSync(["ps", "-p", String(n), "-o", "comm="])
-    if (!res.success) return false
-    const comm = new TextDecoder().decode(res.stdout).trim()
-    const base = comm.split("/").pop() ?? comm
-    if (agent === "codex") return base === "codex"
-    return base === "claude"
-  } catch {
-    return false
-  }
-}
 
 function prune(now: number): boolean {
   let changed = false
@@ -418,19 +402,6 @@ export function clearWaitingForTarget(target: Session | null): { cleared: Sessio
   return { cleared: only, refused: 0 }
 }
 
-// `ps -o lstart=` for a pid → epoch ms, 0 if unknown.
-export async function processStartMs(pid: string): Promise<number> {
-  try {
-    const p = Bun.spawn(["ps", "-p", pid, "-o", "lstart="], { stdout: "pipe", stderr: "ignore" })
-    const raw = (await new Response(p.stdout).text()).trim()
-    if ((await p.exited) !== 0) return 0
-    const start = Date.parse(raw)
-    return Number.isFinite(start) ? start : 0
-  } catch {
-    return 0
-  }
-}
-
 // A hook-registered session knows its pid but not when it started; ask ps so
 // the picker order survives a companion restart (ps-discovery reports the
 // same start time later).
@@ -548,23 +519,5 @@ function emit(): void {
   const snapshot = listSessions()
   for (const fn of listeners) {
     try { fn(snapshot) } catch { /* ignore */ }
-  }
-}
-
-export function metaFromHeaders(headers: Headers): Partial<Session> {
-  const raw = (name: string): string => {
-    const v = headers.get(name) ?? ""
-    // Claude Code hooks sometimes emit "not a tty" when stdin is piped — treat
-    // that as absent so we don't key a session on garbage.
-    return v === "not a tty" ? "" : v
-  }
-  return {
-    termProgram: raw("x-companion-term-program"),
-    agent: raw("x-companion-agent") === "codex" ? "codex" : "claude",
-    tty: raw("x-companion-tty"),
-    iTermSessionId: raw("x-companion-iterm-session-id"),
-    tmuxPane: raw("x-companion-tmux-pane"),
-    taskId: raw("x-companion-task-id"),
-    pid: raw("x-companion-pid"),
   }
 }

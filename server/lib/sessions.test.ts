@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test"
-import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, metaFromHeaders, removeSessionByTmuxPane, setSessionWaiting, clearSessionWaiting, clearWaitingForTarget, waitingSummary } from "./sessions"
+import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, setSessionWaiting, clearSessionWaiting, clearWaitingForTarget, waitingSummary } from "./sessions"
+import { metaFromHeaders } from "./hook-common"
 
 test("Linux pts ttys get a tag like macOS ttys do", () => {
   expect(ttyTag("/dev/ttys017")).toBe("s017")
