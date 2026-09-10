@@ -18,7 +18,7 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `lib/spawn-session.ts` | 341 | lib | 6 |  |
 | `routes/api.ts` | 317 | route-host | 1 | emits: resolved, waiting_input, super_auto · routes: 16 |
 | `lib/activity.ts` | 308 | lib | 8 | state: let activity, activityListeners: Set, let pollTimer |
-| `wiring/orchestrator.ts` | 296 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output · listens: setInterval |
+| `wiring/orchestrator.ts` | 302 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output · listens: setInterval |
 | `lib/discover.ts` | 274 | lib | 1 |  |
 | `lib/apns.ts` | 242 | lib | 6 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
