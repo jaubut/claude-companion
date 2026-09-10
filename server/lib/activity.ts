@@ -16,10 +16,16 @@
 // longer trample each other's identity when emitting events — every event
 // carries its originating tty + sessionId + cwd so the client can pin it to
 // the right session even when sessions share a cwd.
+//
+// The pill is a property of that same per-session record (PRJ-OR1T Phase 10):
+// every hook writes ONLY the PathState it was handed, and the host-wide
+// `activity` the shipped clients read is DERIVED at read time as the most
+// recently active session's pill. Nothing in here is a host singleton.
 
 import { verbFor, summarize, extractToolResult, clampLong } from "./tool-format"
 import { appendFeedEvent, pruneFeedForSession, type Verdict } from "./feed"
 import { getState, identityFor, activeStates, forgetStates, readTranscriptDelta, hashText, type SessionMeta, type PathState } from "./transcript"
+import type { Session } from "./sessions"
 
 export interface Activity {
   verb: string
@@ -35,14 +41,20 @@ export interface Activity {
   // only uses `cwd` as a last resort.
   sessionId?: string
   tty?: string
+  // The owning Session.key ("claude:tty:/dev/ttys004"), issued by the route
+  // that already holds the Session — never inferred here. "" when the hook
+  // carried no cwd, so no Session was ever registered for it.
+  key: string
 }
 
-// One activity pill is shown at a time (the most recently active session).
-// Events, however, are always tagged with precise per-session identity.
-let activity: Activity | null = null
-
-type ActivityListener = (act: Activity | null) => void
+type ActivityListener = (rollup: Activity | null, activities: Activity[], key: string) => void
 const activityListeners = new Set<ActivityListener>()
+
+// How stale a pill must be before the liveness reconcile drops it. The window
+// covers one race only: recordSession's collapse rewrites a session's key
+// after the `sessions` emit, so a pill written by an earlier hook can name the
+// pre-collapse key for the few ms before this session's next event refreshes it.
+const LIVENESS_GRACE_MS = 5_000
 
 // ── Live poll ────────────────────────────────────────────────────────────
 // Hooks only fire at tool boundaries and turn end. For text-only turns the
@@ -56,19 +68,31 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 function startPoll(): void {
   if (pollTimer) return
   pollTimer = setInterval(() => {
+    const now = Date.now()
+    let beat = false
     for (const s of activeStates()) {
       if (s.transcriptPath) readTranscriptDelta(s)
+      // Heartbeat — keep every live "Claude is … 12s" pill counting between
+      // tools. lastBeatAt ONLY: bumping lastEventAt would re-sort the rollup
+      // on every tick and flip the shipped clients' pill between sessions.
+      if (s.activity) {
+        s.activity = { ...s.activity, lastBeatAt: now }
+        beat = true
+      }
     }
-    // Heartbeat — keep the "Claude is … 12s" pill counting between tools.
-    if (activity) {
-      setActivity({ ...activity, lastBeatAt: Date.now() })
-    }
+    // One frame per tick, never one per session — WS volume stays at today's
+    // rate whatever N is.
+    if (beat) emitActivity("")
   }, POLL_MS)
+  // Don't keep the event loop alive just for the heartbeat.
+  if (typeof (pollTimer as unknown as { unref?: () => void }).unref === "function") {
+    (pollTimer as unknown as { unref: () => void }).unref()
+  }
 }
 
 function stopPollIfIdle(): void {
-  if (activity) return
   if (!pollTimer) return
+  for (const s of activeStates()) if (s.activity) return
   clearInterval(pollTimer)
   pollTimer = null
 }
@@ -78,14 +102,76 @@ export function onActivity(fn: ActivityListener): () => void {
   return () => activityListeners.delete(fn)
 }
 
-export function getActivity(): Activity | null {
-  return activity
+// Every live pill, most-recent-EVENT first. Ordering on lastEventAt (not on
+// the 1.5s beat) is what keeps the rollup pinned to one session for a whole turn.
+export function listActivities(): Activity[] {
+  const rows: Array<{ at: number; activity: Activity }> = []
+  for (const s of activeStates()) {
+    if (s.activity) rows.push({ at: s.lastEventAt, activity: s.activity })
+  }
+  rows.sort((a, b) => b.at - a.at)
+  return rows.map(r => r.activity)
 }
 
-function setActivity(next: Activity | null): void {
-  activity = next
+// The host rollup every shipped client still reads: the session that did
+// something most recently. Same rule that used to pick the singleton, derived.
+export function getActivity(): Activity | null {
+  return listActivities()[0] ?? null
+}
+
+function emitActivity(key: string): void {
+  const activities = listActivities()
+  const rollup = activities[0] ?? null
   for (const fn of activityListeners) {
-    try { fn(next) } catch { /* ignore */ }
+    try { fn(rollup, activities, key) } catch { /* ignore */ }
+  }
+}
+
+// Write THIS session's pill and announce it. Real events (tool start, prompt,
+// tool end) bump lastEventAt, the rollup's ordering key; the heartbeat above
+// never routes through here.
+function setActivity(s: PathState, next: Omit<Activity, "key">, sessionKey: string): void {
+  s.activity = { ...next, key: sessionKey }
+  s.lastEventAt = Date.now()
+  emitActivity(sessionKey)
+}
+
+function clearActivity(s: PathState, sessionKey: string): void {
+  if (!s.activity) return
+  s.activity = null
+  emitActivity(sessionKey)
+}
+
+// A SIGKILLed terminal fires no session-end hook, so its pill would sit on the
+// phone forever. Ride the existing `sessions` emit — all 11 of its call sites
+// are change-gated, so this runs on real transitions, never periodically — and
+// drop any pill whose session left the live set.
+//
+// Two keyspaces, easy to mix up: compare the pill's own Session.key
+// ("claude:tty:…") against the live sessions' keys, NEVER against the states
+// map's key (path:/tty:/sid:/cwd:).
+export function reconcileActivityLiveness(sessions: Session[]): void {
+  const now = Date.now()
+  let live: Set<string> | null = null
+  let cleared = false
+  for (const s of activeStates()) {
+    const pill = s.activity
+    // No key = a hook with no cwd, so no Session exists to judge it against.
+    // It clears on that session's turn-end or session-end, exactly as before.
+    if (!pill || !pill.key) continue
+    if (!live) {
+      live = new Set<string>()
+      for (const sess of sessions) live.add(sess.key)
+    }
+    if (live.has(pill.key)) continue
+    if (now - s.lastEventAt <= LIVENESS_GRACE_MS) continue
+    s.activity = null
+    cleared = true
+  }
+  // Emit only on a real clear, or this would broadcast at the dialog-poll rate.
+  if (cleared) {
+    emitActivity("")
+    stopPollIfIdle()
   }
 }
 
@@ -102,6 +188,7 @@ export function recordToolStart(args: {
   sessionId?: string
   tty?: string
   transcriptPath?: string
+  sessionKey: string
 }): void {
   const now = Date.now()
   const s = getState(args)
@@ -118,7 +205,7 @@ export function recordToolStart(args: {
     ...identityFor(s),
   })
 
-  setActivity({
+  setActivity(s, {
     verb: verbFor(args.tool),
     tool: args.tool,
     summary: args.summary,
@@ -128,7 +215,7 @@ export function recordToolStart(args: {
     cwd: s.cwd,
     sessionId: s.sessionId || undefined,
     tty: s.tty || undefined,
-  })
+  }, args.sessionKey)
 }
 
 export function recordToolEnd(args: {
@@ -139,6 +226,7 @@ export function recordToolEnd(args: {
   cwd: string
   sessionId?: string
   tty?: string
+  sessionKey: string
 }): void {
   const now = Date.now()
   const s = getState(args)
@@ -163,10 +251,10 @@ export function recordToolEnd(args: {
   if (args.transcriptPath) readTranscriptDelta(s)
 
   // Keep the pill alive as a heartbeat — Claude is likely about to fire
-  // another tool. Only update if the current pill is for *this* session, so
-  // another active session's pill isn't clobbered by a tool_end in ours.
-  if (activity && activityMatches(activity, s)) {
-    setActivity({ ...activity, lastBeatAt: now, tokens: s.lastTokens })
+  // another tool. Only THIS session's record is touched, which is why the old
+  // anti-clobber guard is gone rather than moved.
+  if (s.activity) {
+    setActivity(s, { ...s.activity, lastBeatAt: now, tokens: s.lastTokens }, args.sessionKey)
   }
 }
 
@@ -176,6 +264,7 @@ export function recordUserPrompt(args: {
   cwd: string
   sessionId?: string
   tty?: string
+  sessionKey: string
 }): void {
   const now = Date.now()
   const s = getState(args)
@@ -193,7 +282,7 @@ export function recordUserPrompt(args: {
     ...identityFor(s),
   })
 
-  setActivity({
+  setActivity(s, {
     verb: "Thinking",
     tool: "",
     summary: "",
@@ -203,7 +292,7 @@ export function recordUserPrompt(args: {
     cwd: s.cwd,
     sessionId: s.sessionId || undefined,
     tty: s.tty || undefined,
-  })
+  }, args.sessionKey)
 
   // Transcript may already contain this prompt — prime the seen set so we
   // don't echo it back as assistant text.
@@ -218,6 +307,7 @@ export async function recordTurnEnd(args: {
   cwd: string
   sessionId?: string
   tty?: string
+  sessionKey: string
 }): Promise<void> {
   const now = Date.now()
   const s = getState(args)
@@ -278,30 +368,19 @@ export async function recordTurnEnd(args: {
 
   s.streamedThisTurn = false
 
-  // Only clear the live pill if it belonged to THIS session. Another session
-  // may still be mid-turn — don't blank its activity just because we finished.
-  if (activity && activityMatches(activity, s)) {
-    setActivity(null)
-  }
+  // Clear THIS session's pill only. Another session may still be mid-turn —
+  // its pill stays up and the host rollup hands back to it.
+  clearActivity(s, args.sessionKey)
   stopPollIfIdle()
 }
 
 // Drop a session's state when its hook signals the terminal closed, so the
-// states Map doesn't grow unbounded.
+// states Map doesn't grow unbounded. The record and its pill go together.
 export function forgetSession(meta: SessionMeta): void {
-  forgetStates(meta)
-  if (activity) {
-    const stale =
-      (meta.tty && activity.tty === meta.tty) ||
-      (meta.sessionId && activity.sessionId === meta.sessionId)
-    if (stale) setActivity(null)
-  }
+  // forgetStates hands back what it deleted — never call getState(meta) after
+  // it, since getState creates on miss and would resurrect the record.
+  const dropped = forgetStates(meta)
+  if (dropped.some(s => s.activity)) emitActivity("")
   pruneFeedForSession(meta)
   stopPollIfIdle()
-}
-
-function activityMatches(a: Activity, s: PathState): boolean {
-  if (a.tty && s.tty) return a.tty === s.tty
-  if (a.sessionId && s.sessionId) return a.sessionId === s.sessionId
-  return a.cwd === s.cwd
 }

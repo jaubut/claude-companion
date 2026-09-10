@@ -5,7 +5,7 @@ import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
 import { clearWaitingForTarget, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
-import { getActivity, recordUserPrompt } from "../lib/activity"
+import { getActivity, listActivities, recordUserPrompt } from "../lib/activity"
 import { getFeed } from "../lib/feed"
 import {
   type ApnsEnv,
@@ -232,6 +232,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
         cwd: target.cwd,
         sessionId: target.sessionId,
         tty: target.tty,
+        sessionKey: target.key,
       })
     }
     return Response.json({ ok })
@@ -313,6 +314,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   if (url.pathname === "/api/feed") {
     return Response.json({
       activity: getActivity(),
+      activities: listActivities(),
       feed: getFeed(),
       sessions: listSessions(),
     })

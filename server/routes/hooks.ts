@@ -20,7 +20,6 @@ import {
   type Session,
   clearSessionWaiting,
   metaFromHeaders,
-  onSessions,
   recordSession,
   removeSessionByCwd,
   removeSessionByTmuxPane,
@@ -170,7 +169,7 @@ async function questionFastPath(p: {
       return hookDecisionResponse(p.agent, p.eventName, "allow", "Answered via Claude Companion")
     }
     process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
-    recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty })
+    recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
     const answers = await addQuestionRequest({ agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions })
 
     if (answers.length === 0) {
@@ -245,7 +244,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       decision = "allow"
       verdict = "auto-allow"
       process.stderr.write(`${dim}[companion]${reset} \x1b[35msuper-allow\x1b[0m ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty })
+      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
       return hookDecisionResponse(agent, "PreToolUse", decision, "Approved via Claude Companion (SUPER)")
     }
 
@@ -255,16 +254,16 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       decision = "allow"
       verdict = "auto-allow"
       process.stderr.write(`${dim}[companion]${reset} ${green}auto-allow${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty })
+      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
     } else if (verdictJudge === "deny") {
       decision = "deny"
       verdict = "auto-deny"
       process.stderr.write(`${dim}[companion]${reset} ${red}auto-deny${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty })
+      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
     } else {
       verdict = "pending"
       process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}\n`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty })
+      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
       decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd })
       const decisionColor = decision === "allow" ? green : red
       process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← phone\n`)
@@ -312,6 +311,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       cwd,
       sessionId: body.session_id ?? "",
       tty: headerMeta.tty ?? "",
+      sessionKey: session?.key ?? "",
     })
     return Response.json({})
   }
@@ -355,6 +355,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       cwd,
       sessionId: body.session_id ?? "",
       tty: headerMeta.tty ?? "",
+      sessionKey: session?.key ?? "",
     })
     // Mirror the user's prompt to every WS client so the iOS app shows
     // what was typed on the Mac. Without this the phone only sees
@@ -407,7 +408,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
     process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
 
-    recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty })
+    recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty, sessionKey: session?.key ?? "" })
     const decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd })
 
     const green = "\x1b[32m"
@@ -483,6 +484,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       cwd,
       sessionId: body.session_id ?? "",
       tty: headerMeta.tty ?? "",
+      sessionKey: session?.key ?? "",
     })
 
     // Waiting now lives on the Session record; the host rollup is derived on

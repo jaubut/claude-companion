@@ -15,13 +15,12 @@ export function ActivityPill({ activity, sessions }: { activity: Activity; sessi
   const elapsedSec = Math.max(0, Math.floor((now - activity.turnStartedAt) / 1000))
   const stale = now - activity.lastBeatAt > 30_000
   const toolSummary = [activity.tool, activity.summary && truncate(activity.summary, 40)].filter(Boolean).join(" ")
-  const session = activity.tty
-    ? sessions.find(s => s.tty === activity.tty)
-    : activity.sessionId
-      ? sessions.find(s => s.sessionId === activity.sessionId)
-      : activity.cwd
-        ? sessions.find(s => s.cwd === activity.cwd)
-        : undefined
+  // The issued key is the exact match (PRJ-OR1T Phase 10); the tty/sessionId/cwd
+  // chain still resolves a pill that arrived without one.
+  const session = (activity.key ? sessions.find(s => s.key === activity.key) : undefined)
+    ?? (activity.tty ? sessions.find(s => s.tty === activity.tty) : undefined)
+    ?? (activity.sessionId ? sessions.find(s => s.sessionId === activity.sessionId) : undefined)
+    ?? (activity.cwd ? sessions.find(s => s.cwd === activity.cwd) : undefined)
 
   return (
     <div className="px-5 pb-2 shrink-0">

@@ -21,6 +21,10 @@ export interface Activity {
   // sessions share a cwd (e.g. two Claude windows in the same repo).
   sessionId?: string
   tty?: string
+  // The owning session's key, issued by the server (PRJ-OR1T Phase 10). The
+  // exact match, tried before the identity chain above. Optional: an older
+  // server's pill doesn't carry it.
+  key?: string
 }
 
 export interface Session {
@@ -73,7 +77,9 @@ interface CompanionState {
   connected: boolean
   pending: ApprovalRequest[]
   waitingByKey: Record<string, WaitingEntry>
-  activity: Activity | null
+  // Every working session's pill, most-recent-event first (the server's order).
+  // The host rollup the status bar reads is derived from it, never stored.
+  activities: Activity[]
   feed: FeedEvent[]
   sessions: Session[]
   injectError: { error: string; key?: string; cwd?: string; at: number } | null
@@ -137,6 +143,24 @@ function waitingFromInit(msg: Record<string, unknown>): Record<string, WaitingEn
   return out
 }
 
+// Both `activity` and `init` carry the per-session array. The scalar fallback
+// keeps a fresh bundle working against a server that predates Phase 10 — it
+// degrades to one pill, exactly what that server means.
+function activitiesFrom(msg: Record<string, unknown>): Activity[] {
+  if (Array.isArray(msg.activities)) return msg.activities as Activity[]
+  return msg.activity ? [msg.activity as Activity] : []
+}
+
+// Which session a pill belongs to: its issued key first (exact), then the
+// legacy precise-identity chain for a pill that arrived without one.
+function sessionForActivity(sessions: Session[], a: Activity): Session | null {
+  return (a.key ? sessions.find(s => s.key === a.key) : undefined)
+    ?? (a.tty ? sessions.find(s => s.tty === a.tty) : undefined)
+    ?? (a.sessionId ? sessions.find(s => s.sessionId === a.sessionId) : undefined)
+    ?? (a.cwd ? sessions.find(s => s.cwd === a.cwd) : undefined)
+    ?? null
+}
+
 function appendEvent(feed: FeedEvent[], ev: FeedEvent): FeedEvent[] {
   const next = feed.concat(ev)
   return next.length > FEED_CAP ? next.slice(next.length - FEED_CAP) : next
@@ -157,12 +181,18 @@ export function useCompanion(): CompanionState & {
   waitingForInput: boolean
   // The waiting entry for the session the composer would send to, or null.
   targetWaiting: WaitingEntry | null
+  // Derived rollup: the most recently active session's pill. Unchanged shape,
+  // so the status bar keeps reading it.
+  activity: Activity | null
+  // The pill of the session the composer would send to, or null. Not to be
+  // confused with Phase 9's targetWaiting.
+  targetActivity: Activity | null
 } {
   const [state, setState] = useState<CompanionState>({
     connected: false,
     pending: [],
     waitingByKey: {},
-    activity: null,
+    activities: [],
     feed: [],
     sessions: [],
     injectError: null,
@@ -293,7 +323,7 @@ export function useCompanion(): CompanionState & {
             break
 
           case "activity":
-            setState(s => ({ ...s, activity: msg.activity ?? null }))
+            setState(s => ({ ...s, activities: activitiesFrom(msg) }))
             break
 
           case "event":
@@ -319,7 +349,7 @@ export function useCompanion(): CompanionState & {
             setState(s => ({
               ...s,
               waitingByKey: waitingFromInit(msg),
-              activity: msg.activity ?? null,
+              activities: activitiesFrom(msg),
               feed: Array.isArray(msg.feed) ? (msg.feed as FeedEvent[]) : s.feed,
               sessions: Array.isArray(msg.sessions) ? (msg.sessions as Session[]) : s.sessions,
             }))
@@ -426,26 +456,35 @@ export function useCompanion(): CompanionState & {
         : null
       if (byCwd) return byCwd
     }
-    if (state.activity) {
-      // Precise match first — tty or sessionId — so two sessions sharing a
-      // cwd don't collapse to whichever is first in the list.
-      const a = state.activity
-      const byTty = a.tty ? state.sessions.find(s => s.tty === a.tty) : null
-      if (byTty) return byTty
-      const bySid = a.sessionId ? state.sessions.find(s => s.sessionId === a.sessionId) : null
-      if (bySid) return bySid
-      if (a.cwd) {
-        const byCwd = state.sessions.find(s => s.cwd === a.cwd)
-        if (byCwd) return byCwd
-      }
+    // Walk the pills in rollup order (most recent event first) and take the
+    // first that resolves to a live session — key, then tty/sessionId/cwd, so
+    // two sessions sharing a cwd don't collapse to whichever is listed first.
+    for (const a of state.activities) {
+      const match = sessionForActivity(state.sessions, a)
+      if (match) return match
     }
     return state.sessions[0] ?? null
-  }, [resolvePin, targetKey, newestWaiting, state.activity, state.sessions])
+  }, [resolvePin, targetKey, newestWaiting, state.activities, state.sessions])
 
   const targetWaiting = useMemo<WaitingEntry | null>(
     () => (effectiveTarget ? state.waitingByKey[effectiveTarget.key] ?? null : null),
     [effectiveTarget, state.waitingByKey],
   )
+
+  // Same rule the server applies: the rollup is the head of the list.
+  const activity = state.activities[0] ?? null
+
+  // The pill for the session we'd send to, so a pinned target keeps its own
+  // pill while another session fires tools.
+  const targetActivity = useMemo<Activity | null>(() => {
+    const t = effectiveTarget
+    if (!t) return null
+    return state.activities.find(a => a.key && a.key === t.key)
+      ?? state.activities.find(a => !!a.tty && a.tty === t.tty)
+      ?? state.activities.find(a => !!a.sessionId && a.sessionId === t.sessionId)
+      ?? state.activities.find(a => !!a.cwd && a.cwd === t.cwd)
+      ?? null
+  }, [effectiveTarget, state.activities])
 
   const clearInjectError = useCallback(() => {
     setState(s => ({ ...s, injectError: null }))
@@ -465,5 +504,7 @@ export function useCompanion(): CompanionState & {
     pinnedOffline,
     waitingForInput,
     targetWaiting,
+    activity,
+    targetActivity,
   }
 }

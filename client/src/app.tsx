@@ -11,13 +11,16 @@ import { StatusBar } from "@/components/status-bar"
 export function App() {
   const {
     connected, pending, waitingForInput, waitingByKey, targetWaiting,
-    activity, feed, sessions, approve, deny, sendInput,
+    activity, activities, targetActivity, feed, sessions, approve, deny, sendInput,
     soundEnabled, setSoundEnabled,
     targetKey, setTargetKey, effectiveTarget,
     pinnedOffline, injectError, clearInjectError,
   } = useCompanion()
   const [picking, setPicking] = useState(false)
   const sendTarget = effectiveTarget?.key ?? targetKey ?? ""
+  // The pill follows the session we'd send to; the host rollup is the fallback
+  // when that session isn't working (PRJ-OR1T Phase 10).
+  const pillActivity = targetActivity ?? activity
 
   const pendingRequest = pending[0]
 
@@ -35,8 +38,8 @@ export function App() {
       />
 
       {/* Live activity pill — only when feed is the focus */}
-      {activity && !pendingRequest && (
-        <ActivityPill activity={activity} sessions={sessions} />
+      {pillActivity && !pendingRequest && (
+        <ActivityPill activity={pillActivity} sessions={sessions} />
       )}
 
       {/* Feed — always rendered, never overlapped */}
@@ -75,6 +78,7 @@ export function App() {
           effectiveTarget={effectiveTarget}
           targetKey={targetKey}
           waitingByKey={waitingByKey}
+          activities={activities}
           targetWaiting={targetWaiting}
           pinnedOffline={pinnedOffline}
           picking={picking}
