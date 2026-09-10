@@ -8,6 +8,7 @@ import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, HOST_INFO, type WsData } from "./state"
 import { dialogWatcher } from "./wiring/dialogs"
+import { announceWaiting } from "./wiring/waiting"
 
 // WebSocket handlers: on open, replay pending approvals/questions and send the
 // init frame; on message, approve/deny/answer/input/ping; on close, drop the
@@ -115,11 +116,10 @@ export const websocket: WebSocketHandler<WsData> = {
             break
           }
           // `target` is exactly what the client addressed (null when it sent
-          // neither key nor cwd), so this never clears a bystander.
-          const { cleared } = clearWaitingForTarget(target)
-          if (cleared) {
-            broadcast({ type: "waiting_input", waiting: false, key: cleared.key, cwd: cleared.cwd })
-          }
+          // neither key nor cwd), so this never clears a bystander — and only
+          // its turn-end reason, since typed text answers nothing else.
+          const { cleared } = clearWaitingForTarget(target, "turn-end")
+          announceWaiting(cleared)
           const ok = await injectText(msg.text.trim(), target ?? undefined)
           if (!ok) {
             try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed" })) } catch { /* ignore */ }

@@ -25,6 +25,9 @@ export interface QuestionRequest {
   sessionId: string
   cwd: string
   questions: QuestionItem[]
+  // The Session this question blocks, issued by the route that already holds
+  // the record (PRJ-OR1T Phase 11). Never reaches the wire.
+  sessionKey: string
   timestamp: number
   resolve: (answers: QuestionAnswer[]) => void
 }
@@ -38,18 +41,26 @@ export interface QuestionAnswer {
 }
 
 type EventHandler = (event: QuestionRequest) => void
-type ExpiryHandler = (id: string) => void
+// Expiry and resolve both hand back the request: the listener needs its
+// sessionKey and id to clear the waiting reason it created.
+type ExpiryHandler = (req: QuestionRequest) => void
 
 const pending = new Map<string, QuestionRequest>()
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const handlers = new Set<EventHandler>()
 const expiryHandlers = new Set<ExpiryHandler>()
+const resolvedHandlers = new Set<EventHandler>()
 
 // Same 290s budget as approvals — Claude's hook curl times out at 300s and
 // we want to broadcast a clean `expired` signal before that fires.
 const EXPIRY_MS = 290_000
 
-export function addQuestionRequest(req: Omit<QuestionRequest, "id" | "timestamp" | "resolve">): Promise<QuestionAnswer[]> {
+// `opts.expiryMs` is a test seam for the expiry exit — same reasoning as
+// pty-manager's: a param, not an env var.
+export function addQuestionRequest(
+  req: Omit<QuestionRequest, "id" | "timestamp" | "resolve">,
+  opts: { expiryMs?: number } = {},
+): Promise<QuestionAnswer[]> {
   return new Promise((resolve) => {
     const id = crypto.randomUUID()
     const request: QuestionRequest = {
@@ -70,13 +81,15 @@ export function addQuestionRequest(req: Omit<QuestionRequest, "id" | "timestamp"
     const timer = setTimeout(() => {
       const r = pending.get(id)
       if (!r) return
+      // One of the only two exits from `pending` (the other is resolveQuestion);
+      // both fire a listener, so a question can never strand its waiting reason.
       pending.delete(id)
       expiryTimers.delete(id)
       for (const handler of expiryHandlers) {
-        try { handler(id) } catch { /* ignore */ }
+        try { handler(r) } catch { /* ignore */ }
       }
       r.resolve([])
-    }, EXPIRY_MS)
+    }, opts.expiryMs ?? EXPIRY_MS)
     expiryTimers.set(id, timer)
   })
 }
@@ -89,7 +102,14 @@ export function resolveQuestion(id: string, answers: QuestionAnswer[]): boolean 
     clearTimeout(timer)
     expiryTimers.delete(id)
   }
+  // Fired inside the `pending.get` guard, so an answer arriving over both the
+  // WS and REST paths notifies exactly once.
+  for (const handler of resolvedHandlers) {
+    try { handler(req) } catch { /* ignore */ }
+  }
   req.resolve(answers)
+  // One of the only two exits from `pending` (the other is the expiry timer);
+  // both fire a listener.
   pending.delete(id)
   return true
 }
@@ -106,6 +126,13 @@ export function onQuestionRequest(handler: EventHandler): () => void {
 export function onQuestionExpired(handler: ExpiryHandler): () => void {
   expiryHandlers.add(handler)
   return () => expiryHandlers.delete(handler)
+}
+
+// Subscribe to "the user answered" — the counterpart exit to onQuestionExpired.
+// wiring/events.ts uses it to clear the session's `question` waiting reason.
+export function onQuestionResolved(handler: EventHandler): () => void {
+  resolvedHandlers.add(handler)
+  return () => resolvedHandlers.delete(handler)
 }
 
 export function isQuestionTool(tool: string): boolean {

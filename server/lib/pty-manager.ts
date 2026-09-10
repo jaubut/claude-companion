@@ -7,17 +7,24 @@ export interface ApprovalRequest {
   tool: string
   input: Record<string, unknown>
   cwd: string
+  // The Session this approval blocks, issued by the route that already holds
+  // the record (PRJ-OR1T Phase 11). Never reaches the wire: wiring/events.ts
+  // builds the `approval` frame as a literal, never `...req`.
+  sessionKey: string
   timestamp: number
   resolve: (decision: "allow" | "deny") => void
 }
 
 type EventHandler = (event: ApprovalRequest) => void
-type ExpiryHandler = (id: string) => void
+// Expiry and resolve both hand back the request: the listener needs its
+// sessionKey and id to clear the waiting reason it created.
+type ExpiryHandler = (req: ApprovalRequest) => void
 
 const pending = new Map<string, ApprovalRequest>()
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const handlers = new Set<EventHandler>()
 const expiryHandlers = new Set<ExpiryHandler>()
+const resolvedHandlers = new Set<EventHandler>()
 
 // Hook's curl times out at 300s and Claude defaults to "allow" when the
 // hook returns nothing. We expire the server-side request slightly before
@@ -25,7 +32,12 @@ const expiryHandlers = new Set<ExpiryHandler>()
 // instead of having the approval just silently fall off the queue.
 const EXPIRY_MS = 290_000
 
-export function addApprovalRequest(req: Omit<ApprovalRequest, "id" | "timestamp" | "resolve">): Promise<"allow" | "deny"> {
+// `opts.expiryMs` is a test seam for the expiry exit — an env var would
+// reintroduce the Bun import-order trap COMPANION_DB_PATH lives with.
+export function addApprovalRequest(
+  req: Omit<ApprovalRequest, "id" | "timestamp" | "resolve">,
+  opts: { expiryMs?: number } = {},
+): Promise<"allow" | "deny"> {
   return new Promise((resolve) => {
     const id = crypto.randomUUID()
     const request: ApprovalRequest = {
@@ -48,13 +60,15 @@ export function addApprovalRequest(req: Omit<ApprovalRequest, "id" | "timestamp"
     const timer = setTimeout(() => {
       const req = pending.get(id)
       if (!req) return
+      // One of the only two exits from `pending` (the other is resolveApproval);
+      // both fire a listener, so an approval can never strand its waiting reason.
       pending.delete(id)
       expiryTimers.delete(id)
       for (const handler of expiryHandlers) {
-        try { handler(id) } catch { /* ignore */ }
+        try { handler(req) } catch { /* ignore */ }
       }
       req.resolve("allow")
-    }, EXPIRY_MS)
+    }, opts.expiryMs ?? EXPIRY_MS)
     expiryTimers.set(id, timer)
   })
 }
@@ -67,7 +81,14 @@ export function resolveApproval(id: string, decision: "allow" | "deny"): boolean
     clearTimeout(timer)
     expiryTimers.delete(id)
   }
+  // Fired inside the `pending.get` guard, so a decision arriving over both the
+  // WS and REST paths notifies exactly once.
+  for (const handler of resolvedHandlers) {
+    try { handler(req) } catch { /* ignore */ }
+  }
   req.resolve(decision)
+  // One of the only two exits from `pending` (the other is the expiry timer);
+  // both fire a listener.
   pending.delete(id)
   return true
 }
@@ -87,4 +108,12 @@ export function onApprovalRequest(handler: EventHandler): () => void {
 export function onApprovalExpired(handler: ExpiryHandler): () => void {
   expiryHandlers.add(handler)
   return () => expiryHandlers.delete(handler)
+}
+
+// Subscribe to "the user decided" — the counterpart exit to onApprovalExpired.
+// wiring/events.ts uses it to clear the session's `approval` waiting reason;
+// the `resolved` frame is already broadcast by ws.ts and routes/api.ts.
+export function onApprovalResolved(handler: EventHandler): () => void {
+  resolvedHandlers.add(handler)
+  return () => resolvedHandlers.delete(handler)
 }

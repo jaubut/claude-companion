@@ -18,6 +18,7 @@ import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clients } from "../state"
 import { dialogWatcher } from "../wiring/dialogs"
+import { announceWaiting } from "../wiring/waiting"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
 // push debug, generic broadcast, inject, learned-allow, SUPER toggle, spawn,
@@ -204,12 +205,13 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const tag = target?.label ? ` → ${target.label}` : " → frontmost"
     process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"\n`)
 
-    // Clear only what the caller named. With no explicit target and more than
-    // one session waiting, clear nothing rather than blank the wrong badge.
-    const { cleared, refused } = clearWaitingForTarget(explicit)
-    if (cleared) {
-      broadcast({ type: "waiting_input", waiting: false, key: cleared.key, cwd: cleared.cwd })
-    } else if (refused > 0) {
+    // Clear only what the caller named, and only its turn-end reason: typed
+    // text answers neither a pending approval nor an open dialog. With no
+    // explicit target and more than one session waiting on a turn-end, clear
+    // nothing rather than blank the wrong badge.
+    const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
+    announceWaiting(cleared)
+    if (!cleared && refused > 0) {
       process.stderr.write(`${dim}[companion]${reset} \x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m\n`)
     }
 

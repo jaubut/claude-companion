@@ -1,6 +1,6 @@
 import { broadcast } from "../state"
-import { onApprovalRequest, onApprovalExpired } from "../lib/pty-manager"
-import { onQuestionRequest, onQuestionExpired } from "../lib/questions"
+import { onApprovalRequest, onApprovalExpired, onApprovalResolved } from "../lib/pty-manager"
+import { onQuestionRequest, onQuestionExpired, onQuestionResolved } from "../lib/questions"
 import { onActivity, reconcileActivityLiveness, type Activity } from "../lib/activity"
 import { onFeed, onFeedReset, type FeedEvent } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
@@ -10,11 +10,16 @@ import { onSessions, setTitleResolver, type Session } from "../lib/sessions"
 import { resolveTitle } from "../lib/session-titles"
 import { projectLabelFor, agentTitle, subtitleFor } from "../lib/hook-common"
 import { reconcileDispatch } from "./orchestrator"
+import { markWaiting, unmarkWaiting } from "./waiting"
 
 // Event wiring: every lib store's listener → WS frame (+ push where the phone
 // must be interrupted). One onSessions listener does the `sessions` frame and
 // then reconcileDispatch, so a worker's `orchestrator_task` never precedes the
 // `sessions` frame that introduced it. Registered at import time.
+//
+// It also joins the approval/question lifecycles to the session's waiting state
+// (PRJ-OR1T Phase 11) — here and not in the routes, because the expiry timers
+// live inside the libs where a route could never clear the flag.
 
 onApprovalRequest((req) => {
   broadcast({
@@ -26,6 +31,7 @@ onApprovalRequest((req) => {
     sessionId: req.sessionId,
     cwd: req.cwd,
   })
+  markWaiting(req.sessionKey, "approval", req.id)
   // Approval = interruptive, time-sensitive. Blocks Claude until answered.
   if (apnsConfigured()) {
     const project = projectLabelFor(req.cwd)
@@ -46,12 +52,19 @@ onApprovalRequest((req) => {
   }
 })
 
-onApprovalExpired((id) => {
+onApprovalExpired((req) => {
   // Tell every connected client the approval expired before the user
   // could decide. Use the existing `resolved` frame (clients already
   // know how to dequeue and flip verdict on it) with a third decision
   // value so the row badge can read "EXPIRED" instead of OK/DENY.
-  broadcast({ type: "resolved", id, decision: "expired" })
+  broadcast({ type: "resolved", id: req.id, decision: "expired" })
+  unmarkWaiting(req.sessionKey, "approval", req.id)
+})
+
+// Deliberately does NOT broadcast `resolved`: ws.ts and routes/api.ts already
+// send it on every decision path, and a second frame double-dequeues on iOS.
+onApprovalResolved((req) => {
+  unmarkWaiting(req.sessionKey, "approval", req.id)
 })
 
 onQuestionRequest((req) => {
@@ -63,6 +76,7 @@ onQuestionRequest((req) => {
     cwd: req.cwd,
     questions: req.questions,
   })
+  markWaiting(req.sessionKey, "question", req.id)
   // Same urgency tier as approvals — Claude is blocked until the phone
   // answers. The push title carries the first question's text so a glance
   // at the lock screen shows what's being asked.
@@ -82,9 +96,15 @@ onQuestionRequest((req) => {
   }
 })
 
-onQuestionExpired((id) => {
+onQuestionExpired((req) => {
   // Mirrors approval expiry — phones know how to dequeue on `resolved`.
-  broadcast({ type: "resolved", id, decision: "expired" })
+  broadcast({ type: "resolved", id: req.id, decision: "expired" })
+  unmarkWaiting(req.sessionKey, "question", req.id)
+})
+
+// Same rule as onApprovalResolved: the `resolved` frame is already sent.
+onQuestionResolved((req) => {
+  unmarkWaiting(req.sessionKey, "question", req.id)
 })
 
 onFeed((ev: FeedEvent) => {

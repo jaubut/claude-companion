@@ -3,6 +3,7 @@ import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
 import { listSessions, setSessionStatus } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
 import { capturePane } from "../lib/tmux-pane"
+import { markWaiting, unmarkWaiting } from "./waiting"
 
 // Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
 // /mcp, trust, MCP-enable) is parsed off the pane and pushed to clients as a
@@ -26,9 +27,16 @@ export const dialogWatcher = createDialogWatcher({
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"
     process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}dialog${reset} ${dim}${dialog.title || "(untitled)"} · ${dialog.items.length} rows · ${key}${reset}\n`)
     broadcast({ type: "dialog", key, dialog })
+    // A dialog is modal in the terminal: nothing else can be driven while it is
+    // up, so it outranks every other waiting reason. Edge-triggered and deduped
+    // by signature upstream, so this only fires on a real open. The reason's ref
+    // is the key it was opened with — the liveness sweep below can close an
+    // already-collapsed key, and unmarkWaiting falls back to that ref.
+    markWaiting(key, "dialog", key)
   },
   onDialogClosed(key) {
     broadcast({ type: "dialog_closed", key })
+    unmarkWaiting(key, "dialog", key)
   },
   onStatus(key, st) {
     setSessionStatus(key, st.status, st.waitingFor)

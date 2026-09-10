@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, setSessionWaiting, clearSessionWaiting, clearWaitingForTarget, waitingSummary } from "./sessions"
+import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
 import { metaFromHeaders } from "./hook-common"
 
 test("Linux pts ttys get a tag like macOS ttys do", () => {
@@ -208,6 +208,16 @@ test("waitingSummary lists every waiter and derives the scalars from the newest"
   expect(summary.waitingKey).toBe(b.key)
   expect(summary.waitingCwd).toBe("/home/aubut/lanes/w4b")
   expect(summary.waitingSessions.map((w) => w.key).sort()).toEqual([a.key, b.key].sort())
+  // The init array's shape: every entry names what blocks it, not just when.
+  const entry = summary.waitingSessions.find((w) => w.key === a.key)!
+  expect(entry.kind).toBe("turn-end")
+  expect(entry.ref).toBe("")
+  // …and the record spread into `sessions` / `init` / status carries both the
+  // projection and the raw list the next iOS build reads.
+  const rec = listSessions().find((x) => x.key === a.key)!
+  expect(rec.waitingKind).toBe("turn-end")
+  expect(rec.waitingRef).toBe("")
+  expect(rec.waitingReasons).toEqual([{ kind: "turn-end", since: rec.waitingSince, ref: "" }])
 
   clearAllWaiting()
   expect(waitingSummary().waitingForInput).toBe(false)
@@ -265,4 +275,156 @@ test("a waiting change emits; clearing a session that isn't waiting does not", (
   expect(setSessionWaiting("claude:tty:/dev/pts/999", "turn-end")).toBe(0)
   expect(emits).toBe(2)
   off()
+})
+
+// ---- one waiting kind per session (PRJ-OR1T Phase 11) -----------------------
+
+test("an approval and a turn-end coexist; the projection prefers the approval", () => {
+  clearAllWaiting()
+  const a = recordSession({ cwd: "/home/aubut/lanes/p1", tty: "/dev/pts/60" })!
+  setSessionWaiting(a.key, "turn-end")
+  setSessionWaiting(a.key, "approval", "appr-1")
+
+  const rec = () => listSessions().find((x) => x.key === a.key)!
+  expect(rec().waitingKind).toBe("approval")
+  expect(rec().waitingRef).toBe("appr-1")
+  expect(rec().waitingReasons.map((r) => r.kind).sort()).toEqual(["approval", "turn-end"])
+  // One session, one waiting entry — the list is the detail, not a second row.
+  expect(waitingSummary().waitingSessions.length).toBe(1)
+  clearAllWaiting()
+})
+
+test("clearing the approval falls back to the turn-end instead of blanking it", () => {
+  clearAllWaiting()
+  const a = recordSession({ cwd: "/home/aubut/lanes/p2", tty: "/dev/pts/61" })!
+  const turnStamp = setSessionWaiting(a.key, "turn-end")
+  setSessionWaiting(a.key, "dialog", a.key)
+  const rec = () => listSessions().find((x) => x.key === a.key)!
+  expect(rec().waitingKind).toBe("dialog")
+
+  // Esc on a /model dialog opened after the turn ended. Before Phase 11 this
+  // was a waiting:false that darkened a badge the user still owed an answer.
+  expect(clearSessionWaiting(a.key, "dialog", a.key)).toBe(true)
+  expect(rec().waitingKind).toBe("turn-end")
+  expect(rec().waitingSince).toBe(turnStamp)
+  expect(rec().waitingRef).toBe("")
+  clearAllWaiting()
+})
+
+test("two approvals on one session: clearing the first leaves the second with its ref", async () => {
+  clearAllWaiting()
+  const a = recordSession({ cwd: "/home/aubut/lanes/p3", tty: "/dev/pts/62" })!
+  setSessionWaiting(a.key, "approval", "appr-1")
+  await Bun.sleep(2)
+  setSessionWaiting(a.key, "approval", "appr-2")
+  const rec = () => listSessions().find((x) => x.key === a.key)!
+  // Oldest within the kind — the one whose 290s expiry fires first.
+  expect(rec().waitingRef).toBe("appr-1")
+
+  expect(clearSessionWaiting(a.key, "approval", "appr-1")).toBe(true)
+  expect(rec().waitingKind).toBe("approval")
+  expect(rec().waitingRef).toBe("appr-2")
+
+  expect(clearSessionWaiting(a.key, "approval", "appr-2")).toBe(true)
+  expect(rec().waitingKind).toBe("")
+  expect(rec().waitingSince).toBe(0)
+  // Idempotent: the phone can resolve over both the WS and REST paths.
+  expect(clearSessionWaiting(a.key, "approval", "appr-2")).toBe(false)
+  clearAllWaiting()
+})
+
+test("clearSessionWaitingByRef finds an approval whose key went stale in the collapse", () => {
+  clearAllWaiting()
+  // The PermissionRequest hook fired without a tty, so the request captured a
+  // sid: key…
+  const weak = recordSession({ cwd: "/home/aubut/lanes/p4", sessionId: "sid-p4" })!
+  expect(weak.key).toBe("claude:sid:sid-p4")
+  setSessionWaiting(weak.key, "approval", "appr-stale")
+
+  // …then a hook with a tty collapsed that record into a strong one.
+  const strong = recordSession({ cwd: "/home/aubut/lanes/p4", sessionId: "sid-p4", tty: "/dev/pts/63" })!
+  expect(strong.key).not.toBe(weak.key)
+  const rec = () => listSessions().find((x) => x.key === strong.key)!
+  expect(rec().waitingKind).toBe("approval")
+  expect(rec().waitingRef).toBe("appr-stale")
+
+  // The direct lookup misses — the request still names the dead key.
+  expect(clearSessionWaiting(weak.key, "approval", "appr-stale")).toBe(false)
+  // The fallback is an exact (kind, ref) match, and it hands back the session
+  // so the caller can announce what survived.
+  const cleared = clearSessionWaitingByRef("approval", "appr-stale")
+  expect(cleared?.key).toBe(strong.key)
+  expect(rec().waitingSince).toBe(0)
+  expect(clearSessionWaitingByRef("approval", "appr-stale")).toBeNull()
+  clearAllWaiting()
+})
+
+test("the same fallback closes a dialog whose key the liveness sweep already retired", () => {
+  clearAllWaiting()
+  const weak = recordSession({ cwd: "/home/aubut/lanes/p5", sessionId: "sid-p5" })!
+  // The watcher opened the dialog against the key it saw, and uses that key as
+  // the reason's ref — so the reason survives the collapse verbatim.
+  setSessionWaiting(weak.key, "dialog", weak.key)
+  const strong = recordSession({ cwd: "/home/aubut/lanes/p5", sessionId: "sid-p5", tty: "/dev/pts/64" })!
+  const rec = () => listSessions().find((x) => x.key === strong.key)!
+  expect(rec().waitingKind).toBe("dialog")
+  expect(rec().waitingRef).toBe(weak.key)
+
+  expect(clearSessionWaiting(weak.key, "dialog", weak.key)).toBe(false)
+  expect(clearSessionWaitingByRef("dialog", weak.key)?.key).toBe(strong.key)
+  expect(rec().waitingSince).toBe(0)
+  clearAllWaiting()
+})
+
+test("reasons survive the identity collapse and re-project onto the strong record", () => {
+  clearAllWaiting()
+  const weak = recordSession({ cwd: "/home/aubut/lanes/p6", sessionId: "sid-p6" })!
+  const stamp = setSessionWaiting(weak.key, "turn-end")
+  setSessionWaiting(weak.key, "approval", "appr-6")
+
+  const strong = recordSession({ cwd: "/home/aubut/lanes/p6", sessionId: "sid-p6", tty: "/dev/pts/65" })!
+  expect(listSessions().some((x) => x.key === weak.key)).toBe(false)
+  const rec = () => listSessions().find((x) => x.key === strong.key)!
+  expect(rec().waitingReasons.map((r) => r.kind).sort()).toEqual(["approval", "turn-end"])
+  expect(rec().waitingKind).toBe("approval")
+  // The turn-end kept its original stamp through the move.
+  expect(rec().waitingReasons.find((r) => r.kind === "turn-end")?.since).toBe(stamp)
+
+  // A header-less discovery tick must not blank the list.
+  recordSession({ cwd: "/home/aubut/lanes/p6", tty: "/dev/pts/65", agentStatus: "busy" }, { provisional: true })
+  expect(rec().waitingReasons.length).toBe(2)
+  expect(rec().waitingKind).toBe("approval")
+  clearAllWaiting()
+})
+
+test("an inject answers turn-end only, and the ambiguity count reads the raw reasons", () => {
+  clearAllWaiting()
+  const a = recordSession({ cwd: "/home/aubut/lanes/p7a", tty: "/dev/pts/66" })!
+  const b = recordSession({ cwd: "/home/aubut/lanes/p7b", tty: "/dev/pts/67" })!
+
+  // A is blocked on an approval only — typed text does not answer it, so it is
+  // not a candidate and B is the single unambiguous turn-end waiter.
+  setSessionWaiting(a.key, "approval", "appr-7")
+  setSessionWaiting(b.key, "turn-end")
+  const single = clearWaitingForTarget(null, "turn-end")
+  expect(single.cleared?.key).toBe(b.key)
+  expect(single.refused).toBe(0)
+  // A's approval badge stays lit.
+  expect(listSessions().find((x) => x.key === a.key)?.waitingKind).toBe("approval")
+
+  // Now A holds turn-end AND approval: it must still COUNT as a turn-end
+  // waiter, or naming nobody would silently clear B and leave A's turn-end lit
+  // with no text delivered.
+  setSessionWaiting(a.key, "turn-end")
+  setSessionWaiting(b.key, "turn-end")
+  const ambiguous = clearWaitingForTarget(null, "turn-end")
+  expect(ambiguous.cleared).toBeNull()
+  expect(ambiguous.refused).toBe(2)
+
+  // Naming A clears its turn-end and nothing else.
+  expect(clearWaitingForTarget(a, "turn-end").cleared?.key).toBe(a.key)
+  const rec = listSessions().find((x) => x.key === a.key)!
+  expect(rec.waitingKind).toBe("approval")
+  expect(rec.waitingRef).toBe("appr-7")
+  clearAllWaiting()
 })

@@ -94,6 +94,12 @@ export function TargetBar({
             const sHue = hashHue(s.key)
             const term = s.termProgram?.replace(/\.app$/i, "").replace(/_/g, " ")
             const idle = !s.tty
+            // One waiting state per row, with the kind that won precedence. A
+            // server that predates Phase 11 sends no kind — read that as the
+            // turn-end it always was.
+            const waiting = waitingByKey[s.key]
+            const waitingKind = waiting ? waiting.kind || "turn-end" : ""
+            const answersTurn = waitingKind === "turn-end"
             return (
               <button
                 key={s.key}
@@ -117,14 +123,16 @@ export function TargetBar({
                     className="w-1.5 h-1.5 rounded-full bg-green shrink-0 animate-pulse"
                   />
                 )}
-                {!!waitingByKey[s.key] && (
+                {!!waiting && (
                   // Which session is waiting — the whole point of Phase 9. More
-                  // than one row can carry this at the same time.
+                  // than one row can carry this at the same time. A reason the
+                  // composer cannot answer (approval, question, dialog) gets a
+                  // muted, still dot so it reads as "blocked elsewhere".
                   <span
-                    title="waiting for input"
-                    aria-label="waiting for input"
+                    title={waitingKind}
+                    aria-label={answersTurn ? "waiting for input" : `waiting · ${waitingKind}`}
                     role="img"
-                    className="w-1.5 h-1.5 rounded-full bg-accent shrink-0 animate-pulse"
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${answersTurn ? "bg-accent animate-pulse" : "bg-accent/40"}`}
                   />
                 )}
                 {idle && <span className="text-[10px] text-muted/60 italic shrink-0">idle</span>}

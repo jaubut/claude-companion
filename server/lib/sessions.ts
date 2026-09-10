@@ -18,6 +18,13 @@
 // previous Claude process that used the same TTY.
 
 import { isAgentPidAlive, processStartMs } from "./agent-pid"
+import {
+  type WaitingKind,
+  type WaitingReason,
+  removeReason,
+  resolveWaiting,
+  upsertReason,
+} from "./waiting"
 
 export interface Session {
   key: string
@@ -50,11 +57,18 @@ export interface Session {
   // never inferred (PRJ-OR1T Phase 8).
   taskId: string
   // "Waiting for input" as a property of the session, not of the host
-  // (PRJ-OR1T Phase 9). Set by the Stop hook, cleared when THIS session gets
-  // input; 0 means not waiting. The host-wide rollup every client used to read
-  // is derived at read time by waitingSummary(), never stored.
+  // (PRJ-OR1T Phase 9). 0 means not waiting. The host-wide rollup every client
+  // used to read is derived at read time by waitingSummary(), never stored.
+  //
+  // Phase 11: four mechanisms can block one session at once (turn-end,
+  // approval, question, dialog), so the truth is the reason LIST and these
+  // three scalars are its projection — recomputed on every mutation, not
+  // read-time getters, because listSessions() spreads raw records into four
+  // contracts where a getter would silently vanish.
   waitingSince: number
   waitingKind: string
+  waitingRef: string
+  waitingReasons: WaitingReason[]
   pid: string
   firstSeenAt: number
   lastSeenAt: number
@@ -148,6 +162,15 @@ function makeLabel(cwd: string, tty: string): string {
   return `${base} · ${tag}`
 }
 
+// Recompute the three wire scalars from the reason list. Every mutation of
+// waitingReasons calls this; nothing else writes the scalars.
+function project(s: Session): void {
+  const top = resolveWaiting(s.waitingReasons)
+  s.waitingSince = top?.since ?? 0
+  s.waitingKind = top?.kind ?? ""
+  s.waitingRef = top?.ref ?? ""
+}
+
 export interface RecordOptions {
   // Provisional sources (discovery, rehydrate) know the cwd but not the
   // session root the user cares about — the first real hook with a cwd from
@@ -217,6 +240,8 @@ export function recordSession(
     // every waiting badge off on the next tick.
     waitingSince: meta.waitingSince ?? prev?.waitingSince ?? 0,
     waitingKind: meta.waitingKind ?? prev?.waitingKind ?? "",
+    waitingRef: meta.waitingRef ?? prev?.waitingRef ?? "",
+    waitingReasons: meta.waitingReasons ?? prev?.waitingReasons ?? [],
     pid: meta.pid || prev?.pid || "",
     // Creation time is the picker's sort key — keep the earliest we know
     // (a discovery pass may report the real process start after a hook
@@ -252,16 +277,20 @@ export function recordSession(
         // Waiting is the only field with no re-derivation path: a Stop hook
         // that fired without a tty (the Linux `?` case) set it on the weaker
         // record, and deleting that record outright would lose it for good.
-        // Everything else here re-derives itself within one poll.
-        if (!next.waitingSince && s.waitingSince) {
-          next.waitingSince = s.waitingSince
-          next.waitingKind = s.waitingKind
+        // Everything else here re-derives itself within one poll. Carry the
+        // whole reason list (refs verbatim, so a later clear-by-ref still
+        // converges) and let the projection below rebuild the scalars.
+        if (next.waitingReasons.length === 0 && s.waitingReasons.length > 0) {
+          next.waitingReasons = s.waitingReasons
         }
         sessions.delete(otherKey)
         collapsed = true
       }
     }
   }
+
+  // Sticky merge + any collapse carry are in; the scalars follow the list.
+  project(next)
 
   const pruned = prune(now)
   const meaningfulChange =
@@ -333,34 +362,59 @@ export interface WaitingSession {
   key: string
   cwd: string
   kind: string
+  ref: string
   since: number
 }
 
-// Returns the epoch ms stamped on the record, or 0 if the key is unknown.
-export function setSessionWaiting(key: string, kind: string): number {
+// Add one reason and re-project. Returns the projected epoch ms on the record,
+// or 0 if the key is unknown. Re-asserting the same (kind, ref) keeps its
+// original stamp; a new ref on the same kind is a new reason.
+export function setSessionWaiting(key: string, kind: WaitingKind, ref = ""): number {
   const s = sessions.get(key)
   if (!s) return 0
-  s.waitingSince = Date.now()
-  s.waitingKind = kind
+  s.waitingReasons = upsertReason(s.waitingReasons, kind, ref, Date.now())
+  project(s)
   emit()
   return s.waitingSince
 }
 
-// Idempotent: clearing a session that isn't waiting is a no-op with no emit,
-// because the phone can send an answer over both the WS and REST paths.
-export function clearSessionWaiting(key: string): boolean {
+// Drop one reason (or every reason of a kind, or all of them) and re-project.
+// Idempotent: clearing what isn't there is a no-op with no emit, because the
+// phone can send an answer over both the WS and REST paths.
+export function clearSessionWaiting(key: string, kind?: WaitingKind, ref?: string): boolean {
   const s = sessions.get(key)
-  if (!s || !s.waitingSince) return false
-  s.waitingSince = 0
-  s.waitingKind = ""
+  if (!s) return false
+  const next = removeReason(s.waitingReasons, kind, ref)
+  if (next.length === s.waitingReasons.length) return false
+  s.waitingReasons = next
+  project(s)
   emit()
   return true
+}
+
+// The collapse escape hatch. A request captures its sessionKey once at
+// creation, and the identity collapse (weak sid:/cwd: → strong tty:) can make
+// that key stale before the approval resolves; the dialog watcher's liveness
+// sweep closes an already-deleted key the same way. An exact (kind, ref) match
+// over a handful of live records, not a heuristic. Returns the session it
+// cleared so the caller can announce that session's surviving state.
+export function clearSessionWaitingByRef(kind: WaitingKind, ref: string): Session | null {
+  for (const s of sessions.values()) {
+    if (!s.waitingReasons.some((r) => r.kind === kind && r.ref === ref)) continue
+    s.waitingReasons = removeReason(s.waitingReasons, kind, ref)
+    project(s)
+    emit()
+    return s
+  }
+  return null
 }
 
 function waitingList(): WaitingSession[] {
   const out: WaitingSession[] = []
   for (const s of sessions.values()) {
-    if (s.waitingSince) out.push({ key: s.key, cwd: s.cwd, kind: s.waitingKind, since: s.waitingSince })
+    if (s.waitingSince) {
+      out.push({ key: s.key, cwd: s.cwd, kind: s.waitingKind, ref: s.waitingRef, since: s.waitingSince })
+    }
   }
   return out
 }
@@ -391,14 +445,25 @@ export function waitingSummary(): {
 // none, clear the single waiter if there is exactly one — otherwise clear
 // nothing and report how many were waiting, so the caller can log a refusal.
 // Guessing here would blank the badge of a session that never got the text.
-export function clearWaitingForTarget(target: Session | null): { cleared: Session | null; refused: number } {
+// An inject answers turn-end only: text typed into a terminal does not answer
+// a pending approval or close a dialog, so those badges stay lit.
+export function clearWaitingForTarget(
+  target: Session | null,
+  kind: WaitingKind = "turn-end",
+): { cleared: Session | null; refused: number } {
   if (target) {
-    return { cleared: clearSessionWaiting(target.key) ? target : null, refused: 0 }
+    return { cleared: clearSessionWaiting(target.key, kind) ? target : null, refused: 0 }
   }
-  const waiting = waitingList()
-  const only = waiting.length === 1 ? sessions.get(waiting[0]!.key) ?? null : null
+  // Count over each session's RAW reason list, never the projected scalar: a
+  // session holding turn-end AND approval projects as "approval" and would
+  // drop out of the count, blanking a badge the inject did answer.
+  const waiting: Session[] = []
+  for (const s of sessions.values()) {
+    if (s.waitingReasons.some((r) => r.kind === kind)) waiting.push(s)
+  }
+  const only = waiting.length === 1 ? waiting[0]! : null
   if (!only) return { cleared: null, refused: waiting.length }
-  clearSessionWaiting(only.key)
+  clearSessionWaiting(only.key, kind)
   return { cleared: only, refused: 0 }
 }
 
