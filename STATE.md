@@ -64,6 +64,8 @@ Last updated: 2026-09-07
 | `recordToolStart/End`, `recordUserPrompt`, `recordTurnEnd` | export | each gains `sessionKey: string` | `routes/hooks.ts` ×9, `routes/api.ts#POST /api/inject` | breaking within the repo only |
 | `PathState` | export | `+activity`, `+lastEventAt` | `lib/activity.ts`, `lib/transcript.test.ts` (constructs none — uses `getState`) | additive |
 | `forgetStates()` | export | returns the deleted `PathState[]` instead of `void` | `lib/activity.ts` only | breaking within the repo only |
+| `listActivities()` | export (NEW) | the derived per-session list, most-recent-event first | `ws.ts` (init), `routes/api.ts#* /api/feed` — same call sites as `getActivity()` | additive |
+| `reconcileActivityLiveness()` | export (NEW) | evicts pills whose `activity.key` is not a live `Session.key` and older than 5 s; emits only on a real clear | `wiring/events.ts` (the single `onSessions` listener) | additive |
 - **`* /api/status` deliberately does NOT gain `activities`**, against the brief: it carries no activity today, and its two shipped consumers poll it (the Mac menubar every 3 s, `mac/Sources/claude-companion-menubar/App.swift:223-233`) for `clients`+`pending`. Activity belongs to `/api/feed`, where it already lives. Say the word and it is a one-line add.
 
 **Build-4 compat — what the shipped iOS app does when two sessions work**
