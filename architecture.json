@@ -668,7 +668,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 469,
+          "lines": 571,
           "kind": "lib",
           "exports": [
             "Session",
@@ -678,6 +678,11 @@
             "setTitleResolver",
             "setSessionStatus",
             "setSessionTitle",
+            "WaitingSession",
+            "setSessionWaiting",
+            "clearSessionWaiting",
+            "waitingSummary",
+            "clearWaitingForTarget",
             "processStartMs",
             "getSessionByKey",
             "resolveSession",
@@ -707,15 +712,14 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 341,
+          "lines": 337,
           "kind": "lib",
           "exports": [
             "SpawnApp",
             "SpawnAgent",
             "buildInner",
             "SpawnResult",
-            "spawnCompanionSession",
-            "spawnClaudeSession"
+            "spawnCompanionSession"
           ],
           "state": [],
           "emits": [],
@@ -870,7 +874,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 317,
+          "lines": 322,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1019,7 +1023,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 568,
+          "lines": 577,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -1156,22 +1160,15 @@
         },
         {
           "path": "state.ts",
-          "lines": 49,
+          "lines": 25,
           "kind": "lib",
           "exports": [
             "WsData",
             "clients",
             "broadcast",
-            "HOST_INFO",
-            "getWaiting",
-            "setWaiting",
-            "clearWaiting"
+            "HOST_INFO"
           ],
-          "state": [
-            "let waitingForInput",
-            "let waitingCwd",
-            "let waitingKey"
-          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -1256,7 +1253,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 296,
+          "lines": 306,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -1293,15 +1290,13 @@
             "lib/sessions.ts",
             "lib/spawn-session.ts"
           ],
-          "listeners": [
-            "setInterval"
-          ],
+          "listeners": [],
           "sheets": 0,
           "externals": []
         },
         {
           "path": "ws.ts",
-          "lines": 133,
+          "lines": 137,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -1766,14 +1761,6 @@
             "routes/api.ts#DELETE /api/register-token"
           ]
         },
-        "HOST_INFO": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts",
-            "routes/api.ts#* /api/status",
-            "ws.ts"
-          ]
-        },
         "broadcast": {
           "module": "state.ts",
           "callers": [
@@ -1793,15 +1780,6 @@
             "ws.ts"
           ]
         },
-        "clearWaiting": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts",
-            "routes/api.ts#POST /api/inject",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "ws.ts"
-          ]
-        },
         "clients": {
           "module": "state.ts",
           "callers": [
@@ -1811,14 +1789,6 @@
             "wiring/events.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
-          ]
-        },
-        "getWaiting": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "resolveApproval": {
@@ -1855,6 +1825,13 @@
         },
         "injectText": {
           "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
+        "clearWaitingForTarget": {
+          "module": "lib/sessions.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
             "ws.ts"
@@ -1930,6 +1907,13 @@
             "ws.ts"
           ]
         },
+        "HOST_INFO": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "ws.ts"
+          ]
+        },
         "getActivity": {
           "module": "lib/activity.ts",
           "callers": [
@@ -1980,6 +1964,13 @@
             "routes/hooks.ts"
           ]
         },
+        "clearSessionWaiting": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
+          ]
+        },
         "metaFromHeaders": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -2027,6 +2018,13 @@
           "callers": [
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "setSessionWaiting": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "forgetSession": {
@@ -2211,12 +2209,6 @@
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
             "routes/orchestrator.ts#POST /api/orchestrator/task/",
             "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
-          ]
-        },
-        "setWaiting": {
-          "module": "state.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "reconcileDispatch": {
@@ -2507,7 +2499,7 @@
       "modules": [
         {
           "path": "app.tsx",
-          "lines": 101,
+          "lines": 99,
           "kind": "view",
           "exports": [
             "App"
@@ -2582,7 +2574,7 @@
         },
         {
           "path": "components/composer.tsx",
-          "lines": 170,
+          "lines": 173,
           "kind": "view",
           "exports": [
             "Composer"
@@ -2593,7 +2585,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/alert-sound.ts"
+            "lib/alert-sound.ts",
+            "hooks/use-companion.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2694,7 +2687,7 @@
         },
         {
           "path": "components/target-bar.tsx",
-          "lines": 122,
+          "lines": 129,
           "kind": "view",
           "exports": [
             "TargetBar"
@@ -2740,7 +2733,7 @@
         },
         {
           "path": "hooks/use-companion.ts",
-          "lines": 399,
+          "lines": 470,
           "kind": "lib",
           "exports": [
             "useCompanion"

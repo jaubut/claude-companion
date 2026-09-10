@@ -78,7 +78,11 @@ export const workerQueue = createQueue({
   },
   dispatch: executeDispatch,
 })
-setInterval(() => void workerQueue.drain(), 30_000)
+const drainTimer = setInterval(() => void workerQueue.drain(), 30_000)
+// Don't keep the event loop alive just for the safety tick (sessions.ts:113-123).
+if (typeof (drainTimer as unknown as { unref?: () => void }).unref === "function") {
+  (drainTimer as unknown as { unref: () => void }).unref()
+}
 
 // Live worker tail (Phase 6, hybrid output model): stream the dispatched
 // worker's tmux pane into its channel as transient frames; the final snapshot

@@ -10,7 +10,7 @@ import { StatusBar } from "@/components/status-bar"
 
 export function App() {
   const {
-    connected, pending, waitingForInput, waitingMessage, waitingCwd, waitingKey,
+    connected, pending, waitingForInput, waitingByKey, targetWaiting,
     activity, feed, sessions, approve, deny, sendInput,
     soundEnabled, setSoundEnabled,
     targetKey, setTargetKey, effectiveTarget,
@@ -74,10 +74,8 @@ export function App() {
           sessions={sessions}
           effectiveTarget={effectiveTarget}
           targetKey={targetKey}
-          waitingKey={waitingKey}
-          waitingCwd={waitingCwd}
-          waitingForInput={waitingForInput}
-          waitingMessage={waitingMessage}
+          waitingByKey={waitingByKey}
+          targetWaiting={targetWaiting}
           pinnedOffline={pinnedOffline}
           picking={picking}
           onTogglePick={() => setPicking(v => !v)}
@@ -89,7 +87,7 @@ export function App() {
 
         <Composer
           connected={connected}
-          waitingForInput={waitingForInput}
+          targetWaiting={targetWaiting}
           sendTarget={sendTarget}
           sendInput={sendInput}
           onFocusInput={() => setPicking(false)}

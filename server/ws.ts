@@ -3,10 +3,10 @@ import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
 import { injectText } from "./lib/keyboard-inject"
 import { isSuperAuto } from "./lib/super-auto"
-import { resolveSession, listSessions } from "./lib/sessions"
+import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
 import { getActivity } from "./lib/activity"
 import { getFeed } from "./lib/feed"
-import { clients, broadcast, HOST_INFO, getWaiting, clearWaiting, type WsData } from "./state"
+import { clients, broadcast, HOST_INFO, type WsData } from "./state"
 import { dialogWatcher } from "./wiring/dialogs"
 
 // WebSocket handlers: on open, replay pending approvals/questions and send the
@@ -46,7 +46,7 @@ export const websocket: WebSocketHandler<WsData> = {
     ws.send(JSON.stringify({
       type: "init",
       pending: pendingList.length,
-      ...getWaiting(),
+      ...waitingSummary(),
       activity: getActivity(),
       feed: getFeed(),
       sessions: listSessions(),
@@ -113,8 +113,12 @@ export const websocket: WebSocketHandler<WsData> = {
             } catch { /* ignore */ }
             break
           }
-          clearWaiting()
-          broadcast({ type: "waiting_input", waiting: false })
+          // `target` is exactly what the client addressed (null when it sent
+          // neither key nor cwd), so this never clears a bystander.
+          const { cleared } = clearWaitingForTarget(target)
+          if (cleared) {
+            broadcast({ type: "waiting_input", waiting: false, key: cleared.key, cwd: cleared.cwd })
+          }
           const ok = await injectText(msg.text.trim(), target ?? undefined)
           if (!ok) {
             try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed" })) } catch { /* ignore */ }

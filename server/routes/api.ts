@@ -4,7 +4,7 @@ import { injectText } from "../lib/keyboard-inject"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
-import { listSessions, resolveSession } from "../lib/sessions"
+import { clearWaitingForTarget, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
 import { getActivity, recordUserPrompt } from "../lib/activity"
 import { getFeed } from "../lib/feed"
 import {
@@ -16,13 +16,7 @@ import {
 } from "../lib/push-tokens"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import {
-  HOST_INFO,
-  broadcast,
-  clearWaiting,
-  clients,
-  getWaiting,
-} from "../state"
+import { HOST_INFO, broadcast, clients } from "../state"
 import { dialogWatcher } from "../wiring/dialogs"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
@@ -167,6 +161,11 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
     const lookup = key || cwd || ""
     let target = lookup ? resolveSession(lookup) : null
+    // The target the caller actually named, captured before the fallback below
+    // reassigns `target`. Only this one may have its waiting badge cleared:
+    // the fallback is a delivery convenience and picks whichever session was
+    // active last, which is not the session the text was addressed to.
+    const explicit = target
 
     // No explicit target: pick the most-recently-active registered
     // session as "frontmost". On Linux this is the only sane fallback —
@@ -205,8 +204,14 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const tag = target?.label ? ` → ${target.label}` : " → frontmost"
     process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"\n`)
 
-    clearWaiting()
-    broadcast({ type: "waiting_input", waiting: false })
+    // Clear only what the caller named. With no explicit target and more than
+    // one session waiting, clear nothing rather than blank the wrong badge.
+    const { cleared, refused } = clearWaitingForTarget(explicit)
+    if (cleared) {
+      broadcast({ type: "waiting_input", waiting: false, key: cleared.key, cwd: cleared.cwd })
+    } else if (refused > 0) {
+      process.stderr.write(`${dim}[companion]${reset} \x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m\n`)
+    }
 
     const ok = await injectText(text, target ?? undefined)
     if (!ok) {
@@ -296,7 +301,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({
       pending: getPending().length,
       clients: clients.size,
-      ...getWaiting(),
+      ...waitingSummary(),
       sessions: listSessions(),
       dialogs: dialogWatcher.current(),
       host: HOST_INFO,

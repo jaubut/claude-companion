@@ -1,12 +1,15 @@
 import { useRef, useState } from "react"
 import { unlockAudio } from "@/lib/alert-sound"
 import { Mic, MicOff, Send } from "lucide-react"
+import type { WaitingEntry } from "@/hooks/use-companion"
 
 export function Composer({
-  connected, waitingForInput, sendTarget, sendInput, onFocusInput,
+  connected, targetWaiting, sendTarget, sendInput, onFocusInput,
 }: {
   connected: boolean
-  waitingForInput: boolean
+  // The waiting entry for the session this composer sends to, or null. Keyed
+  // off the pinned target so "Reply…" never refers to a different terminal.
+  targetWaiting: WaitingEntry | null
   sendTarget: string
   sendInput: (text: string, key?: string) => void
   onFocusInput: () => void
@@ -151,7 +154,7 @@ export function Composer({
           onBlur={() => setTimeout(() => setSuggestionsOpen(false), 150)}
           onKeyDown={(e) => { if (e.key === "Enter") handleSend() }}
           enterKeyHint="send"
-          placeholder={waitingForInput ? "Reply…" : "Type into terminal…"}
+          placeholder={targetWaiting ? "Reply…" : "Type into terminal…"}
           disabled={!connected}
           className="flex-1 bg-transparent py-2.5 text-base text-fg placeholder:text-muted/40 focus:outline-none disabled:opacity-40"
         />

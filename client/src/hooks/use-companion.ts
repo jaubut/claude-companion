@@ -59,13 +59,20 @@ export interface FeedEvent {
   sessionId?: string
 }
 
+// One waiting session, keyed by session key in `waitingByKey`. `message` is
+// kept per key rather than host-wide: the server deliberately sends none today,
+// but an older one does, and it belongs to the session that produced it.
+export interface WaitingEntry {
+  cwd: string
+  kind: string
+  since: number
+  message: string
+}
+
 interface CompanionState {
   connected: boolean
   pending: ApprovalRequest[]
-  waitingForInput: boolean
-  waitingMessage: string
-  waitingCwd: string
-  waitingKey: string
+  waitingByKey: Record<string, WaitingEntry>
   activity: Activity | null
   feed: FeedEvent[]
   sessions: Session[]
@@ -102,6 +109,34 @@ function readTargetPref(): string {
   return legacy ?? ""
 }
 
+// The init frame seeds the whole map from `waitingSessions[]`. An older server
+// doesn't send that array, so fall back to its three legacy scalars — one
+// waiter, the most recent one.
+function waitingFromInit(msg: Record<string, unknown>): Record<string, WaitingEntry> {
+  const out: Record<string, WaitingEntry> = {}
+  if (Array.isArray(msg.waitingSessions)) {
+    for (const raw of msg.waitingSessions) {
+      const w = raw as Record<string, unknown>
+      out[typeof w.key === "string" ? w.key : ""] = {
+        cwd: typeof w.cwd === "string" ? w.cwd : "",
+        kind: typeof w.kind === "string" ? w.kind : "",
+        since: typeof w.since === "number" ? w.since : 0,
+        message: "",
+      }
+    }
+    return out
+  }
+  if (msg.waitingForInput) {
+    out[typeof msg.waitingKey === "string" ? msg.waitingKey : ""] = {
+      cwd: typeof msg.waitingCwd === "string" ? msg.waitingCwd : "",
+      kind: "",
+      since: 0,
+      message: "",
+    }
+  }
+  return out
+}
+
 function appendEvent(feed: FeedEvent[], ev: FeedEvent): FeedEvent[] {
   const next = feed.concat(ev)
   return next.length > FEED_CAP ? next.slice(next.length - FEED_CAP) : next
@@ -118,14 +153,15 @@ export function useCompanion(): CompanionState & {
   setTargetKey: (key: string) => void
   effectiveTarget: Session | null
   pinnedOffline: boolean
+  // Derived rollup: is ANY session waiting. The status bar reads this.
+  waitingForInput: boolean
+  // The waiting entry for the session the composer would send to, or null.
+  targetWaiting: WaitingEntry | null
 } {
   const [state, setState] = useState<CompanionState>({
     connected: false,
     pending: [],
-    waitingForInput: false,
-    waitingMessage: "",
-    waitingCwd: "",
-    waitingKey: "",
+    waitingByKey: {},
     activity: null,
     feed: [],
     sessions: [],
@@ -222,14 +258,34 @@ export function useCompanion(): CompanionState & {
             break
           }
 
+          // `msg.waiting` is the boolean on THIS frame — not to be confused
+          // with `msg.waitingSessions`, the array on `init`.
           case "waiting_input":
-            setState(s => ({
-              ...s,
-              waitingForInput: msg.waiting,
-              waitingMessage: msg.waiting ? (msg.message ?? "") : "",
-              waitingCwd: msg.waiting ? (msg.cwd ?? "") : "",
-              waitingKey: msg.waiting ? (msg.key ?? "") : "",
-            }))
+            setState(s => {
+              const key = typeof msg.key === "string" ? msg.key : ""
+              if (msg.waiting) {
+                return {
+                  ...s,
+                  waitingByKey: {
+                    ...s.waitingByKey,
+                    [key]: {
+                      cwd: typeof msg.cwd === "string" ? msg.cwd : "",
+                      kind: typeof msg.kind === "string" ? msg.kind : "",
+                      since: typeof msg.since === "number" ? msg.since : Date.now(),
+                      message: typeof msg.message === "string" ? msg.message : "",
+                    },
+                  },
+                }
+              }
+              // A clear with no key means "nobody is waiting" and only an older
+              // server sends it. A keyed clear touches exactly one session, so
+              // one terminal's tool call can't blank another's badge.
+              if (!key) return { ...s, waitingByKey: {} }
+              if (!(key in s.waitingByKey)) return s
+              const next = { ...s.waitingByKey }
+              delete next[key]
+              return { ...s, waitingByKey: next }
+            })
             if (msg.waiting) {
               if (navigator.vibrate) navigator.vibrate([200, 100, 200])
               if (soundRef.current) playAlert("waiting")
@@ -262,9 +318,7 @@ export function useCompanion(): CompanionState & {
           case "init":
             setState(s => ({
               ...s,
-              waitingForInput: msg.waitingForInput ?? false,
-              waitingCwd: msg.waitingCwd ?? "",
-              waitingKey: msg.waitingKey ?? "",
+              waitingByKey: waitingFromInit(msg),
               activity: msg.activity ?? null,
               feed: Array.isArray(msg.feed) ? (msg.feed as FeedEvent[]) : s.feed,
               sessions: Array.isArray(msg.sessions) ? (msg.sessions as Session[]) : s.sessions,
@@ -350,16 +404,26 @@ export function useCompanion(): CompanionState & {
       ?? null
   }, [state.sessions])
 
+  // Rollups are derived, never stored — same rule the server follows.
+  const newestWaiting = useMemo<(WaitingEntry & { key: string }) | null>(() => {
+    let newest: (WaitingEntry & { key: string }) | null = null
+    for (const [key, w] of Object.entries(state.waitingByKey)) {
+      if (!newest || w.since >= newest.since) newest = { key, ...w }
+    }
+    return newest
+  }, [state.waitingByKey])
+  const waitingForInput = newestWaiting !== null
+
   const pinnedOffline = !!targetKey && resolvePin(targetKey) === null
   const effectiveTarget = useMemo<Session | null>(() => {
     const pinned = resolvePin(targetKey)
     if (pinned) return pinned
-    if (state.waitingKey) {
-      const bySession = state.sessions.find(s => s.key === state.waitingKey)
+    if (newestWaiting) {
+      const bySession = state.sessions.find(s => s.key === newestWaiting.key)
       if (bySession) return bySession
-    }
-    if (state.waitingCwd) {
-      const byCwd = state.sessions.find(s => s.cwd === state.waitingCwd)
+      const byCwd = newestWaiting.cwd
+        ? state.sessions.find(s => s.cwd === newestWaiting.cwd)
+        : null
       if (byCwd) return byCwd
     }
     if (state.activity) {
@@ -376,7 +440,12 @@ export function useCompanion(): CompanionState & {
       }
     }
     return state.sessions[0] ?? null
-  }, [resolvePin, targetKey, state.waitingKey, state.waitingCwd, state.activity, state.sessions])
+  }, [resolvePin, targetKey, newestWaiting, state.activity, state.sessions])
+
+  const targetWaiting = useMemo<WaitingEntry | null>(
+    () => (effectiveTarget ? state.waitingByKey[effectiveTarget.key] ?? null : null),
+    [effectiveTarget, state.waitingByKey],
+  )
 
   const clearInjectError = useCallback(() => {
     setState(s => ({ ...s, injectError: null }))
@@ -394,5 +463,7 @@ export function useCompanion(): CompanionState & {
     setTargetKey,
     effectiveTarget,
     pinnedOffline,
+    waitingForInput,
+    targetWaiting,
   }
 }
