@@ -10,32 +10,32 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `routes/hooks.ts` | 577 | route-host | 1 | emits: waiting_input, user_prompt · routes: 7 |
+| `routes/hooks.ts` | 579 | route-host | 1 | emits: waiting_input, user_prompt · routes: 7 |
 | `lib/sessions.ts` | 571 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/keyboard-inject.ts` | 563 | lib | 3 | state: let injectQueue |
 | `lib/orchestrator-chat.ts` | 471 | lib | 35 | state: db: Database |
+| `lib/activity.ts` | 387 | lib | 10 | state: activityListeners: Set, let pollTimer |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/spawn-session.ts` | 337 | lib | 5 |  |
-| `routes/api.ts` | 322 | route-host | 1 | emits: resolved, waiting_input, super_auto · routes: 16 |
-| `lib/activity.ts` | 308 | lib | 8 | state: let activity, activityListeners: Set, let pollTimer |
+| `routes/api.ts` | 324 | route-host | 1 | emits: resolved, waiting_input, super_auto · routes: 16 |
 | `wiring/orchestrator.ts` | 306 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/discover.ts` | 274 | lib | 1 |  |
 | `lib/apns.ts` | 242 | lib | 6 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
 | `lib/questions.ts` | 202 | lib | 14 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, recentlyAnswered: Map |
 | `lib/auto-judge.ts` | 199 | lib | 1 | state: ALWAYS_SAFE_TOOLS: Set |
+| `lib/transcript.ts` | 199 | lib | 8 | state: states: Map |
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 181 | lib | 7 |  |
-| `lib/transcript.ts` | 180 | lib | 8 | state: states: Map |
 | `lib/dialogs.ts` | 175 | lib | 7 |  |
 | `routes/orchestrator.ts` | 173 | route-host | 1 | routes: 8 |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
-| `ws.ts` | 137 | lib | 1 | emits: approval, question, init, resolved, inject_error, waiting_input, pong |
+| `ws.ts` | 138 | lib | 1 | emits: approval, question, init, resolved, inject_error, waiting_input, pong |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/worker-identity.ts` | 127 | lib | 6 |  |
 | `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
+| `wiring/events.ts` | 116 | lib | 0 | emits: approval, resolved, question, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onQuestionRequest, onQuestionExpired, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/dialog-watch.ts` | 113 | lib | 4 |  |
-| `wiring/events.ts` | 110 | lib | 0 | emits: approval, resolved, question, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onQuestionRequest, onQuestionExpired, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/feed.ts` | 97 | lib | 8 | state: feedListeners: Set, feedResetListeners: Set |
 | `lib/pty-manager.ts` | 91 | lib | 6 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set |
 | `companion-server.ts` | 86 | route-host | 1 | routes: 5 |
@@ -57,17 +57,17 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `hooks/use-companion.ts` | 470 | lib | 1 |  |
+| `hooks/use-companion.ts` | 511 | lib | 1 |  |
 | `components/composer.tsx` | 173 | view | 1 |  |
-| `components/target-bar.tsx` | 129 | view | 1 |  |
+| `components/target-bar.tsx` | 144 | view | 1 |  |
 | `components/feed-line.tsx` | 117 | view | 1 |  |
-| `app.tsx` | 99 | view | 1 |  |
+| `app.tsx` | 103 | view | 1 |  |
 | `components/spawn-session.tsx` | 96 | view | 1 | calls: /api/spawn-session |
 | `components/session-badge.tsx` | 78 | view | 2 |  |
 | `components/terminal-feed.tsx` | 63 | view | 1 |  |
 | `components/approval-card.tsx` | 62 | view | 1 |  |
 | `lib/alert-sound.ts` | 53 | lib | 2 |  |
-| `components/activity-pill.tsx` | 49 | view | 1 |  |
+| `components/activity-pill.tsx` | 48 | view | 1 |  |
 | `lib/format.ts` | 47 | lib | 7 |  |
 | `components/status-bar.tsx` | 46 | view | 1 |  |
 | `lib/tool-summary.ts` | 44 | lib | 2 |  |
@@ -162,10 +162,10 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | export | owner | callers |
 |---|---|---|
 | `broadcast()` | `state.ts` | `routes/api.ts`, `routes/api.ts#POST /api/resolve`, `routes/api.ts#POST /api/answer`, `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#POST /api/inject`, `routes/api.ts#POST /api/super-auto`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/orchestrator.ts`, `ws.ts` |
-| `recordSession()` | `lib/sessions.ts` | `lib/discover.ts`, `lib/rehydrate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start` |
+| `recordSession()` | `lib/sessions.ts` | `lib/activity.ts`, `lib/discover.ts`, `lib/rehydrate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start` |
+| `Session()` | `lib/sessions.ts` | `lib/activity.ts`, `lib/dialog-watch.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts`, `wiring/orchestrator.ts` |
 | `cwdFromPayload()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `listSessions()` | `lib/sessions.ts` | `lib/codex-feed.ts`, `routes/api.ts#POST /api/inject`, `routes/api.ts#* /api/status`, `routes/api.ts#* /api/feed`, `wiring/dialogs.ts`, `wiring/orchestrator.ts`, `ws.ts` |
-| `Session()` | `lib/sessions.ts` | `lib/dialog-watch.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts`, `wiring/orchestrator.ts` |
 | `metaFromHeaders()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-end` |
 | `orchEmit()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
 | `summarize()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/codex-feed.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `wiring/events.ts` |
@@ -180,7 +180,6 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `pushToAll()` | `lib/push.ts` | `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
 | `resolveSession()` | `lib/sessions.ts` | `routes/api.ts#POST /api/inject`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `ws.ts` |
 | `dialogWatcher()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/status`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `ws.ts` |
-| `onSessions()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-start`, `wiring/events.ts`, `wiring/orchestrator.ts` |
 | `agentFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop` |
 | `emitTask()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
 | `emitChannel()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/task/` |
@@ -190,6 +189,7 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `SpawnAgent()` | `lib/spawn-session.ts` | `lib/hook-common.ts`, `routes/api.ts#POST /api/spawn-session`, `routes/hooks.ts` |
 | `listTokens()` | `lib/push-tokens.ts` | `lib/push.ts`, `routes/api.ts`, `routes/api.ts#GET /api/push/tokens` |
 | `removeToken()` | `lib/push-tokens.ts` | `lib/push.ts`, `routes/api.ts`, `routes/api.ts#DELETE /api/register-token` |
+| `recordTurnEnd()` | `lib/activity.ts` | `lib/transcript.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop` |
 | `tokenCount()` | `lib/push-tokens.ts` | `routes/api.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#DELETE /api/register-token` |
 | `recordUserPrompt()` | `lib/activity.ts` | `routes/api.ts#POST /api/inject`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/user-prompt-submit` |
 | `isSuperAuto()` | `lib/super-auto.ts` | `routes/api.ts#GET /api/super-auto`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `ws.ts` |
@@ -197,6 +197,7 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `agentTitle()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
 | `hookDecisionResponse()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `projectLabelFor()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
+| `onSessions()` | `lib/sessions.ts` | `routes/hooks.ts#POST /hooks/session-start`, `wiring/events.ts`, `wiring/orchestrator.ts` |
 | `countLiveTasks()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
 | `getChannel()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `wiring/orchestrator.ts` |
 | `getThread()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
@@ -210,6 +211,7 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `Turn()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-brain.ts`, `wiring/orchestrator.ts` |
 | `QuestionItem()` | `lib/questions.ts` | `lib/question-driver.ts`, `routes/hooks.ts` |
 | `isQuestionTool()` | `lib/questions.ts` | `lib/tool-format.ts`, `routes/hooks.ts` |
+| `Activity()` | `lib/activity.ts` | `lib/transcript.ts`, `wiring/events.ts` |
 | `matchUnboundTaskById()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
 | `findRunningTaskById()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
 | `matchUnboundTaskByTmuxSession()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
@@ -229,6 +231,7 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `getPending()` | `lib/pty-manager.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `HOST_INFO()` | `state.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `getActivity()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
+| `listActivities()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `clearSessionWaiting()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use` |
 | `removeSessionByCwd()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end` |
@@ -238,7 +241,6 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `setSessionWaiting()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop` |
 | `forgetSession()` | `lib/activity.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end` |
 | `recordToolEnd()` | `lib/activity.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/post-tool-use` |
-| `recordTurnEnd()` | `lib/activity.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop` |
 | `addApprovalRequest()` | `lib/pty-manager.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `recordAllow()` | `lib/learned-allow.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `reconcileDispatch()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/session-start`, `wiring/events.ts` |

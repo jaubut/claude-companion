@@ -1,16 +1,17 @@
-import type { Session, WaitingEntry } from "@/hooks/use-companion"
+import type { Activity, Session, WaitingEntry } from "@/hooks/use-companion"
 import { SpawnSession } from "@/components/spawn-session"
 import { hashHue, shortKey, truncate } from "@/lib/format"
 import { CornerDownLeft, ChevronDown } from "lucide-react"
 
 export function TargetBar({
-  sessions, effectiveTarget, targetKey, waitingByKey, targetWaiting,
+  sessions, effectiveTarget, targetKey, waitingByKey, activities, targetWaiting,
   pinnedOffline, picking, onTogglePick, onPick,
 }: {
   sessions: Session[]
   effectiveTarget: Session | null
   targetKey: string
   waitingByKey: Record<string, WaitingEntry>
+  activities: Activity[]
   targetWaiting: WaitingEntry | null
   pinnedOffline: boolean
   picking: boolean
@@ -18,6 +19,10 @@ export function TargetBar({
   onPick: (key: string) => void
 }) {
   if (sessions.length === 0 && !effectiveTarget && !picking) return null
+
+  // Which sessions are mid-turn right now. A pill with no key came from a hook
+  // with no cwd, so it belongs to no row.
+  const workingKeys = new Set(activities.map(a => a.key).filter(Boolean))
 
   // The hint belongs to the session we'd send to, not to whichever one
   // happened to finish its turn last.
@@ -102,6 +107,16 @@ export function TargetBar({
                   style={{ backgroundColor: `hsl(${sHue} 70% 55%)` }}
                 />
                 <span className="font-semibold truncate">{s.label || shortKey(s.key)}</span>
+                {workingKeys.has(s.key) && (
+                  // Which session is busy — the whole point of Phase 10. More
+                  // than one row can carry it, next to the waiting dot below.
+                  <span
+                    title="working"
+                    aria-label="working"
+                    role="img"
+                    className="w-1.5 h-1.5 rounded-full bg-green shrink-0 animate-pulse"
+                  />
+                )}
                 {!!waitingByKey[s.key] && (
                   // Which session is waiting — the whole point of Phase 9. More
                   // than one row can carry this at the same time.

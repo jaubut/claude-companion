@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { appendFeedEvent } from "./feed"
 import { clampLong } from "./tool-format"
+import type { Activity } from "./activity"
 
 // Per-transcript state and the transcript reader. Each Claude session writes
 // its own JSONL transcript; hooks tell activity.ts *when* to read, this
@@ -35,6 +36,15 @@ export interface PathState {
   // its own text so iOS doesn't append a duplicate concat block. Reset on
   // each user prompt (turn boundary).
   streamedThisTurn: boolean
+  // The live pill for THIS session (PRJ-OR1T Phase 10). Written ONLY by
+  // activity.ts (shape, setter, listeners, eviction); this module just carries
+  // it so the pill rides the record getState() already migrates. The import is
+  // type-only — activity.ts takes runtime values from here, never the reverse.
+  activity: Activity | null
+  // When the last REAL event landed (tool start, user prompt, tool end). The
+  // 1.5s heartbeat refreshes activity.lastBeatAt and never this — the host
+  // rollup orders on lastEventAt, so a beat must not re-sort the sessions.
+  lastEventAt: number
 }
 
 const states = new Map<string, PathState>()
@@ -88,6 +98,8 @@ export function getState(meta: SessionMeta): PathState {
     seenAssistantText: new Set(),
     toolStarts: new Map(),
     streamedThisTurn: false,
+    activity: null,
+    lastEventAt: 0,
   }
   states.set(key, next)
   return next
@@ -107,15 +119,22 @@ export function activeStates(): Iterable<PathState> {
 }
 
 // Drop a session's state when its terminal closed, so the map doesn't grow
-// unbounded. Same match rule as the feed prune.
-export function forgetStates(meta: SessionMeta): void {
+// unbounded. Same match rule as the feed prune. Returns the records it
+// dropped so activity.ts can tell whether any of them held a pill WITHOUT
+// re-entering getState(), which creates on miss and would resurrect them.
+export function forgetStates(meta: SessionMeta): PathState[] {
+  const dropped: PathState[] = []
   for (const [k, s] of states) {
     const matches =
       (meta.transcriptPath && s.transcriptPath === meta.transcriptPath) ||
       (meta.tty && s.tty === meta.tty) ||
       (meta.sessionId && s.sessionId === meta.sessionId)
-    if (matches) states.delete(k)
+    if (matches) {
+      states.delete(k)
+      dropped.push(s)
+    }
   }
+  return dropped
 }
 
 export function readTranscriptDelta(

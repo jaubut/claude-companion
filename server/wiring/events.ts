@@ -1,7 +1,7 @@
 import { broadcast } from "../state"
 import { onApprovalRequest, onApprovalExpired } from "../lib/pty-manager"
 import { onQuestionRequest, onQuestionExpired } from "../lib/questions"
-import { onActivity } from "../lib/activity"
+import { onActivity, reconcileActivityLiveness, type Activity } from "../lib/activity"
 import { onFeed, onFeedReset, type FeedEvent } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
 import { apnsConfigured } from "../lib/apns"
@@ -95,13 +95,19 @@ onFeedReset((ids: string[]) => {
   broadcast({ type: "feed_pruned", ids })
 })
 
-onActivity((activity) => {
-  broadcast({ type: "activity", activity })
+// `activity` is the derived host rollup the shipped clients read; `activities`
+// is every live session's pill, most-recent-event first; `key` names the
+// session that changed ("" for a heartbeat tick or a clear).
+onActivity((activity: Activity | null, activities: Activity[], key: string) => {
+  broadcast({ type: "activity", activity, key, activities })
 })
 
 onSessions((sessions: Session[]) => {
   broadcast({ type: "sessions", sessions })
   reconcileDispatch(sessions)
+  // A SIGKILLed terminal fires no session-end hook — this is the only thing
+  // that retires its pill. Emits only when it actually clears one.
+  reconcileActivityLiveness(sessions)
 })
 
 // Sessions that arrive without a title (session-start hook, ps discovery,

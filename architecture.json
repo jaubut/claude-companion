@@ -62,12 +62,14 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 308,
+          "lines": 387,
           "kind": "lib",
           "exports": [
             "Activity",
             "onActivity",
+            "listActivities",
             "getActivity",
+            "reconcileActivityLiveness",
             "recordToolStart",
             "recordToolEnd",
             "recordUserPrompt",
@@ -75,7 +77,6 @@
             "forgetSession"
           ],
           "state": [
-            "let activity",
             "activityListeners: Set",
             "let pollTimer"
           ],
@@ -86,7 +87,8 @@
           "imports": [
             "lib/tool-format.ts",
             "lib/feed.ts",
-            "lib/transcript.ts"
+            "lib/transcript.ts",
+            "lib/sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -798,7 +800,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 180,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -819,7 +821,8 @@
           "apiCalls": [],
           "imports": [
             "lib/feed.ts",
-            "lib/tool-format.ts"
+            "lib/tool-format.ts",
+            "lib/activity.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -874,7 +877,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 322,
+          "lines": 324,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1023,7 +1026,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 577,
+          "lines": 579,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -1208,7 +1211,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 110,
+          "lines": 116,
           "kind": "lib",
           "exports": [],
           "state": [],
@@ -1296,7 +1299,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 137,
+          "lines": 138,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -1378,6 +1381,40 @@
           "module": "ws.ts",
           "callers": [
             "companion-server.ts#* /"
+          ]
+        },
+        "PathState": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "Session": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/activity.ts",
+            "lib/dialog-watch.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "recordSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/activity.ts",
+            "lib/discover.ts",
+            "lib/rehydrate.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
         "activeStates": {
@@ -1468,12 +1505,6 @@
             "lib/activity.ts"
           ]
         },
-        "PathState": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
         "ApnsEnv": {
           "module": "lib/push-tokens.ts",
           "callers": [
@@ -1519,18 +1550,6 @@
             "lib/codex-feed.ts"
           ]
         },
-        "Session": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "lib/dialog-watch.ts",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop",
-            "wiring/events.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
         "Dialog": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -1548,20 +1567,6 @@
           "module": "lib/dialogs.ts",
           "callers": [
             "lib/dialog-watch.ts"
-          ]
-        },
-        "recordSession": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "lib/discover.ts",
-            "lib/rehydrate.ts",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/post-tool-use",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
         "SpawnAgent": {
@@ -1664,6 +1669,21 @@
           "callers": [
             "lib/tool-format.ts",
             "routes/hooks.ts"
+          ]
+        },
+        "recordTurnEnd": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/transcript.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "Activity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/transcript.ts",
+            "wiring/events.ts"
           ]
         },
         "matchUnboundTaskById": {
@@ -1921,6 +1941,13 @@
             "ws.ts"
           ]
         },
+        "listActivities": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
         "getFeed": {
           "module": "lib/feed.ts",
           "callers": [
@@ -1983,15 +2010,6 @@
             "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
-        "onSessions": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/session-start",
-            "wiring/events.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
         "removeSessionByCwd": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -2047,13 +2065,6 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request"
-          ]
-        },
-        "recordTurnEnd": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "agentFromHeaders": {
@@ -2209,6 +2220,14 @@
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
             "routes/orchestrator.ts#POST /api/orchestrator/task/",
             "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
+          ]
+        },
+        "onSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/session-start",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "reconcileDispatch": {
@@ -2410,6 +2429,12 @@
             "wiring/events.ts"
           ]
         },
+        "reconcileActivityLiveness": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
         "resolveTitle": {
           "module": "lib/session-titles.ts",
           "callers": [
@@ -2499,7 +2524,7 @@
       "modules": [
         {
           "path": "app.tsx",
-          "lines": 99,
+          "lines": 103,
           "kind": "view",
           "exports": [
             "App"
@@ -2527,7 +2552,7 @@
         },
         {
           "path": "components/activity-pill.tsx",
-          "lines": 49,
+          "lines": 48,
           "kind": "view",
           "exports": [
             "ActivityPill"
@@ -2687,7 +2712,7 @@
         },
         {
           "path": "components/target-bar.tsx",
-          "lines": 129,
+          "lines": 144,
           "kind": "view",
           "exports": [
             "TargetBar"
@@ -2733,7 +2758,7 @@
         },
         {
           "path": "hooks/use-companion.ts",
-          "lines": 470,
+          "lines": 511,
           "kind": "lib",
           "exports": [
             "useCompanion"
