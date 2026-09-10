@@ -14,11 +14,16 @@ fi
 
 INPUT=$(cat)
 TTY=$(companion_find_tty)
+AGENT_PID=$(companion_find_agent_pid)
+companion_headers
 
+# Sends the full header block like every other hook: the tmux pane lets the
+# server drop just this session instead of every session sharing its cwd, which
+# is what kept killing a sibling worker's entry in the picker.
 curl -s --max-time 3 \
   -X POST "$COMPANION_URL/hooks/session-end" \
   -H "Content-Type: application/json" \
-  -H "X-Companion-Tty: ${TTY}" \
+  "${COMPANION_HDRS[@]}" \
   -d "$INPUT" > /dev/null 2>&1 &
 
 exit 0

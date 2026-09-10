@@ -22,6 +22,7 @@ import {
   onSessions,
   recordSession,
   removeSessionByCwd,
+  removeSessionByTmuxPane,
   removeSessionByTty,
   setSessionTitle,
 } from "../lib/sessions"
@@ -44,8 +45,8 @@ import {
   hookDecisionResponse,
   projectLabelFor,
 } from "../lib/hook-common"
-import { emitTask, orchEmit, workerQueue } from "../wiring/orchestrator"
-import { appendTurn as orchAppendTurn, findRunningTaskByCwd, setTaskStatus } from "../lib/orchestrator-chat"
+import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"
+import { appendTurn as orchAppendTurn, setTaskStatus } from "../lib/orchestrator-chat"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -446,11 +447,18 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       || await extractLastAssistantMessage(body.transcript_path)
 
     // Orchestrator (PRJ-OR1T): if this turn-end belongs to a dispatched
-    // worker (matched by cwd — stable across registration paths), capture its
-    // first reply back into the single thread tagged by task, and close the
-    // task so later turn-ends don't re-report.
+    // worker, capture its first reply back into the single thread tagged by
+    // task, and close the task so later turn-ends don't re-report. The worker
+    // names its own task (X-Companion-Task-Id, issued at dispatch); cwd is only
+    // the fallback, and when a cwd holds two running tasks the resolver refuses
+    // rather than closing the wrong one — a wrong close would post this reply
+    // under a sibling's task and free its WIP slot. It logs its own refusals.
     if (cwd) {
-      const task = findRunningTaskByCwd(cwd)
+      const task = await resolveWorkerTask("close", {
+        taskId: headerMeta.taskId,
+        tmuxPane: headerMeta.tmuxPane,
+        cwd,
+      })
       if (task) {
         setTaskStatus(task.taskId, "done")
         emitTask(task.taskId)
@@ -527,17 +535,22 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   }
 
   // ── Hook endpoint — SessionEnd — remove from registry immediately ──
-  // Prefer tty from the header when available so we don't nuke a sibling
-  // session that happens to share the same cwd. Cwd-wholesale removal is
-  // the last-resort fallback for hooks that couldn't resolve a tty.
+  // Prefer tty, then tmux pane, so we don't nuke a sibling session that happens
+  // to share the same cwd — the common shape for orchestrator workers, which
+  // often have a pane but no usable tty. Cwd-wholesale removal is the
+  // last-resort fallback for hooks that could resolve neither.
   if (url.pathname === "/hooks/session-end" && req.method === "POST") {
     const body = await req.json() as { cwd?: string; session_id?: string; reason?: string }
     const cwd = cwdFromPayload(body.cwd, req.headers)
     const headerMeta = metaFromHeaders(req.headers)
     const tty = headerMeta.tty ?? ""
+    const tmuxPane = headerMeta.tmuxPane ?? ""
     let removed = false
     if (tty) {
       removed = removeSessionByTty(tty)
+    }
+    if (!removed && tmuxPane) {
+      removed = removeSessionByTmuxPane(tmuxPane)
     }
     if (!removed && cwd) {
       removed = removeSessionByCwd(cwd)
@@ -545,7 +558,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     forgetSession({ tty, sessionId: body.session_id, cwd })
     if (removed) {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
-      const label = tty || (cwd ? cwd.split("/").pop() : "?")
+      const label = tty || tmuxPane || (cwd ? cwd.split("/").pop() : "?")
       process.stderr.write(`${dim}[companion]${reset} ${magenta}session end${reset} ${label} ${dim}(${body.reason ?? "-"})${reset}\n`)
     }
     return Response.json({ ok: true })
