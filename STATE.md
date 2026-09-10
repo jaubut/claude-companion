@@ -85,6 +85,7 @@ Last updated: 2026-09-07
 | `client/src/app.tsx` | pass `waitingByKey` + `targetWaiting` to `TargetBar`, `targetWaiting` to `Composer` | 100 → ~100 ✓ |
 | `client/src/components/target-bar.tsx` | `waitingMatches` → `!!targetWaiting`; NEW per-row waiting dot in the picker for every key in `waitingByKey` (the "which session is waiting" affordance) | 121 → ~142 ✓ |
 | `client/src/components/composer.tsx` | placeholder keys off `targetWaiting`, not the host rollup | 170 → ~172 ✓ |
+| `server/lib/dialog-watch.test.ts` | fixture only: its local `Session` literal gains `waitingSince: 0, waitingKind: ""` (required fields on `Session`; same mechanical edit Phase 8 made for `taskId`) — no assertion changes | 120 → 121 ✓ |
 | `server/lib/sessions.test.ts` | APPEND (never a second file importing `sessions` — Bun's shared module cache rule), reusing the two-call discovered/bound fixture pattern from the `taskId` test at :89-114: waiting survives the identity collapse and fires an emit (record with no tty → set waiting → re-record with a tty that collapses it); two sessions waiting independently; sticky merge survives a header-less discovery re-record; `waitingSummary()` picks the newest and lists both; `clearWaitingForTarget(null)` clears one waiter and **refuses** two; removal/prune drops waiting with the record; a waiting change fires `onSessions` | 134 → ~200 ✓ |
 
 **Fan-in paths to guard**
@@ -123,7 +124,7 @@ Last updated: 2026-09-07
 2. `bunx tsc --noEmit -p tsconfig.server.json` (the pre-existing `keyboard-inject.ts:385` error stays) + `bun run tools/archmap/cli.ts . --lint` clean, and the map shows `state.ts` with 4 exports and no `state:` column.
 3. Simulated hooks against a test port: POST `/hooks/stop` for session A, then `/hooks/pre-tool-use` for session B → `GET /api/status` still lists A in `waitingSessions[]`. Then `/hooks/pre-tool-use` for A → `waitingSessions[]` empty. Repeat with `POST /api/inject` for B while A waits → A survives; with no `key` and two waiters → neither clears and the log names the refusal.
 4. **REST inject with no key while two sessions wait** (the asymmetric path, reachable only over HTTP): `curl -X POST /api/inject -d '{"text":"hi"}'` → the text is delivered to the most-recently-active session, **neither** badge clears, and the refusal is logged. This is the one case the ws.ts path cannot exercise.
-5. WS check on prod :4245: connect a second client mid-flight and confirm the `init` frame carries both waiters in `waitingSessions[]` and the newest in the legacy scalars.
+5. **After rollout step 1** (needs the new server live; pre-merge evidence is the same check on an isolated port) — WS check on prod :4245: connect a second client mid-flight and confirm the `init` frame carries both waiters in `waitingSessions[]` and the newest in the legacy scalars.
 6. **Manual pass by Jeremie on the running build — per finding, what he should see:**
    - Two terminals, both finish a turn: the PWA picker shows a waiting dot on **both** rows, not one.
    - Type into terminal A directly: only A's dot clears; B stays lit.
