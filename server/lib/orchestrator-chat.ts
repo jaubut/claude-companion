@@ -276,6 +276,67 @@ export function findRunningTaskByCwd(cwd: string): Task | null {
   return row ? toTask(row) : null
 }
 
+// ---- worker identity matchers (PRJ-OR1T Phase 8) ---------------------------
+//
+// Correlating a hook event back to its task by cwd alone breaks the moment two
+// workers share a directory. These are the identity-first lookups the resolver
+// (lib/worker-identity.ts) walks before it ever falls back to cwd: the task id
+// the worker carries in its env, then the tmux session it lives in. Each one
+// filters on the status the event expects, so a task that is already bound (or
+// already closed) never matches a second time.
+
+// Tier 1, bind: the exact task this worker was dispatched as — only while it is
+// still waiting for a session. A bound task returns null so a re-emitted
+// session frame can't re-fire its prompt.
+export function matchUnboundTaskById(taskId: string): Task | null {
+  const row = db
+    .query("SELECT * FROM orchestrator_tasks WHERE task_id = ? AND session_key IS NULL AND status = 'dispatched'")
+    .get(taskId) as TaskRow | null
+  return row ? toTask(row) : null
+}
+
+// Tier 1, close: the exact task this turn-end belongs to, only while it runs.
+export function findRunningTaskById(taskId: string): Task | null {
+  const row = db
+    .query("SELECT * FROM orchestrator_tasks WHERE task_id = ? AND status = 'running'")
+    .get(taskId) as TaskRow | null
+  return row ? toTask(row) : null
+}
+
+// Tier 2, bind: we spawned every worker into a named tmux session, so the pane's
+// session name identifies it even when the hook carries no task id.
+export function matchUnboundTaskByTmuxSession(tmuxSession: string): Task | null {
+  const row = db
+    .query("SELECT * FROM orchestrator_tasks WHERE tmux_session = ? AND session_key IS NULL AND status = 'dispatched' ORDER BY created_at ASC LIMIT 1")
+    .get(tmuxSession) as TaskRow | null
+  return row ? toTask(row) : null
+}
+
+// Tier 2, close.
+export function findRunningTaskByTmuxSession(tmuxSession: string): Task | null {
+  const row = db
+    .query("SELECT * FROM orchestrator_tasks WHERE tmux_session = ? AND status = 'running' ORDER BY updated_at DESC LIMIT 1")
+    .get(tmuxSession) as TaskRow | null
+  return row ? toTask(row) : null
+}
+
+// The ambiguity gate: how many tasks in this cwd a cwd-only match would have to
+// choose between. 1 → the cwd is identity enough (today's behaviour); 2+ → the
+// resolver must find real identity or refuse.
+export function countUnboundTasksInCwd(cwd: string): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched'")
+    .get(cwd) as { n: number }
+  return row.n
+}
+
+export function countRunningTasksInCwd(cwd: string): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND status = 'running'")
+    .get(cwd) as { n: number }
+  return row.n
+}
+
 // List tasks, optionally scoped to one channel. threadId omitted → all channels
 // (the Tasks panel's global view); scoped → that channel's dispatched work.
 export function listTasks(threadId?: string): Task[] {

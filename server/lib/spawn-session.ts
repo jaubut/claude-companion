@@ -55,6 +55,37 @@ function agentLaunchCommand(agent: SpawnAgent): string {
   return agent
 }
 
+// Env the spawned agent (and every hook it spawns) inherits — today just the
+// orchestrator's COMPANION_TASK_ID, so a worker's hooks can name the task they
+// belong to (PRJ-OR1T Phase 8).
+//
+// Keys and values must be plain tokens. The charset excludes every shell
+// metacharacter, so the assignment needs no quoting and can't be escaped out of;
+// anything else throws rather than shipping an injectable command line.
+const ENV_TOKEN = /^[A-Za-z0-9_-]+$/
+
+// The form is load-bearing: `export K=V; cd '<cwd>' && <agent>`, export FIRST,
+// joined with `;`. The obvious `K=V cd … && claude` prefix is a *command*
+// assignment in POSIX sh — it scopes to `cd` alone and never reaches claude,
+// let alone the hook children that need to read it.
+function envPrefix(env?: Record<string, string>): string {
+  const entries = Object.entries(env ?? {})
+  if (entries.length === 0) return ""
+  const parts = entries.map(([key, value]) => {
+    if (!ENV_TOKEN.test(key)) throw new Error(`spawn env: unsafe key ${JSON.stringify(key)}`)
+    if (!ENV_TOKEN.test(value)) throw new Error(`spawn env: unsafe value for ${key}: ${JSON.stringify(value)}`)
+    return `export ${key}=${value}`
+  })
+  return `${parts.join("; ")}; `
+}
+
+// The command tmux runs inside the new session, shared by every spawn path
+// (Terminal, iTerm, headless tmux) so they can't drift apart. The env prefix
+// precedes the `cd`, and therefore also the kimi `. kimi.env` sourcing.
+export function buildInner(cwd: string, agent: SpawnAgent, env?: Record<string, string>): string {
+  return `${envPrefix(env)}cd '${escapeForShellSingleQuoted(cwd)}' && ${agentLaunchCommand(agent)}`
+}
+
 export interface SpawnResult {
   ok: boolean
   app?: "Terminal" | "iTerm" | "tmux"
@@ -120,11 +151,9 @@ async function isAppRunning(appName: string): Promise<boolean> {
 // switch to a sibling tmux session — a stray `cc-…` from a cmd+W'd window
 // or an unrelated long-lived session — which surfaces as "an emulation of
 // another tmux terminal" appearing right when the user expected a clean exit.
-function buildTmuxLaunch(cwd: string, sessionName: string, agent: SpawnAgent): string {
+function buildTmuxLaunch(cwd: string, sessionName: string, agent: SpawnAgent, env?: Record<string, string>): string {
   const sessEscaped = escapeForShellSingleQuoted(sessionName)
-  const cwdEscaped = escapeForShellSingleQuoted(cwd)
-  const inner = `cd '${cwdEscaped}' && ${agentLaunchCommand(agent)}`
-  const innerEscaped = escapeForShellSingleQuoted(inner)
+  const innerEscaped = escapeForShellSingleQuoted(buildInner(cwd, agent, env))
   return (
     `tmux new-session -s '${sessEscaped}' '${innerEscaped}'`
     + ` \\; set-option -t '${sessEscaped}' detach-on-destroy on`
@@ -165,9 +194,9 @@ async function uniqueTmuxSessionName(cwd: string, agent: SpawnAgent): Promise<st
   return `${base}-${Date.now()}`
 }
 
-async function spawnInTerminal(cwd: string, agent: SpawnAgent): Promise<SpawnResult> {
+async function spawnInTerminal(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
   const sessionName = await uniqueTmuxSessionName(cwd, agent)
-  const cmd = buildTmuxLaunch(cwd, sessionName, agent)
+  const cmd = buildTmuxLaunch(cwd, sessionName, agent, env)
   const cmdEscaped = escapeForAppleScript(cmd)
   const r = await runOsa(`
     tell application "Terminal"
@@ -190,10 +219,9 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent): Promise<SpawnRes
 // Attaching from a human shell (when you want to peek): ssh aubut@zettlab
 // then `tmux attach -t cc-<name>`. detach-on-destroy=on so claude exiting
 // cleanly drops you back to the shell instead of switching sessions.
-async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent): Promise<SpawnResult> {
+async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
   const sessionName = await uniqueTmuxSessionName(cwd, agent)
-  const cwdEscaped = escapeForShellSingleQuoted(cwd)
-  const inner = `cd '${cwdEscaped}' && ${agentLaunchCommand(agent)}`
+  const inner = buildInner(cwd, agent, env)
   // Create the session detached. Run the inner command via /bin/sh so the
   // single-quote escaping works. tmux passes through $TMUX/$TMUX_PANE so
   // the session-start hook fires the moment claude initializes.
@@ -225,9 +253,9 @@ async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent): Promise<Spaw
   return { ok: true, app: "tmux", sessionName }
 }
 
-async function spawnInIterm(cwd: string, agent: SpawnAgent): Promise<SpawnResult> {
+async function spawnInIterm(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
   const sessionName = await uniqueTmuxSessionName(cwd, agent)
-  const cmd = buildTmuxLaunch(cwd, sessionName, agent)
+  const cmd = buildTmuxLaunch(cwd, sessionName, agent, env)
   const cmdEscaped = escapeForAppleScript(cmd)
   // iTerm's AppleScript dictionary: create window with default profile, then
   // write text into its current session.
@@ -245,7 +273,14 @@ async function spawnInIterm(cwd: string, agent: SpawnAgent): Promise<SpawnResult
   return { ok: true, app: "iTerm", sessionName }
 }
 
-export async function spawnCompanionSession(opts: { cwd: string; app?: SpawnApp; agent?: SpawnAgent }): Promise<SpawnResult> {
+export async function spawnCompanionSession(opts: {
+  cwd: string
+  app?: SpawnApp
+  agent?: SpawnAgent
+  // Extra environment for the spawned agent, exported inside its tmux command
+  // so hooks launched by that agent inherit it (PRJ-OR1T Phase 8).
+  env?: Record<string, string>
+}): Promise<SpawnResult> {
   const cwd = opts.cwd.trim()
   if (!cwd) return { ok: false, error: "cwd required" }
   if (!cwd.startsWith("/") && !cwd.startsWith("~")) {
@@ -282,12 +317,12 @@ export async function spawnCompanionSession(opts: { cwd: string; app?: SpawnApp;
     if (app === "terminal" || app === "iterm") {
       return { ok: false, error: `app="${app}" is macOS-only; use "tmux" or "auto" on this server` }
     }
-    return spawnInTmuxDetached(resolved, agent)
+    return spawnInTmuxDetached(resolved, agent, opts.env)
   }
 
-  if (app === "tmux") return spawnInTmuxDetached(resolved, agent)
-  if (app === "iterm") return spawnInIterm(resolved, agent)
-  if (app === "terminal") return spawnInTerminal(resolved, agent)
+  if (app === "tmux") return spawnInTmuxDetached(resolved, agent, opts.env)
+  if (app === "iterm") return spawnInIterm(resolved, agent, opts.env)
+  if (app === "terminal") return spawnInTerminal(resolved, agent, opts.env)
 
   // macOS Auto: prefer the app that's already running. If both, prefer
   // Terminal (that's what today's sessions show); if neither, launch Terminal.
@@ -295,9 +330,9 @@ export async function spawnCompanionSession(opts: { cwd: string; app?: SpawnApp;
     isAppRunning("Terminal"),
     isAppRunning("iTerm2"),
   ])
-  if (terminalRunning) return spawnInTerminal(resolved, agent)
-  if (itermRunning) return spawnInIterm(resolved, agent)
-  return spawnInTerminal(resolved, agent)
+  if (terminalRunning) return spawnInTerminal(resolved, agent, opts.env)
+  if (itermRunning) return spawnInIterm(resolved, agent, opts.env)
+  return spawnInTerminal(resolved, agent, opts.env)
 }
 
 export async function spawnClaudeSession(opts: { cwd: string; app?: SpawnApp }): Promise<SpawnResult> {

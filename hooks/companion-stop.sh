@@ -12,15 +12,13 @@ fi
 
 INPUT=$(cat)
 TTY=$(companion_find_tty)
+AGENT_PID=$(companion_find_agent_pid)
+companion_headers
 
 curl -s --max-time 5 \
   -X POST "$COMPANION_URL/hooks/stop" \
   -H "Content-Type: application/json" \
-  -H "X-Companion-Tty: ${TTY}" \
-  -H "X-Companion-Term-Program: ${TERM_PROGRAM:-}" \
-  -H "X-Companion-Iterm-Session-Id: ${ITERM_SESSION_ID:-}" \
-  -H "X-Companion-Pid: ${PPID:-}" \
-    -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}" \
+  "${COMPANION_HDRS[@]}" \
   -d "$INPUT" > /dev/null 2>&1 &
 
 exit 0

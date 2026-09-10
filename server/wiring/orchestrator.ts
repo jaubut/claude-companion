@@ -11,6 +11,13 @@ import {
   countLiveTasks,
   listQueued,
   matchUnboundTaskByCwd,
+  findRunningTaskByCwd,
+  matchUnboundTaskById,
+  findRunningTaskById,
+  matchUnboundTaskByTmuxSession,
+  findRunningTaskByTmuxSession,
+  countUnboundTasksInCwd,
+  countRunningTasksInCwd,
   listTasks,
   getChannel,
   type Turn as OrchTurn,
@@ -20,7 +27,8 @@ import {
 import { decide as brainDecide } from "../lib/orchestrator-brain"
 import { createWorkerTailManager } from "../lib/worker-tail"
 import { createQueue, DEFAULT_WIP_CAP } from "../lib/orchestrator-queue"
-import { capturePane, paneInputReady, paneHasDialog } from "../lib/tmux-pane"
+import { capturePane, paneInputReady, paneHasDialog, tmuxSessionForPane } from "../lib/tmux-pane"
+import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
 
@@ -131,16 +139,59 @@ async function sendToTmux(sessionName: string, text: string): Promise<void> {
   } catch { /* worker session gone */ }
 }
 
+// Worker → task correlation (PRJ-OR1T Phase 8). The policy itself is a pure
+// module; this is the one wired instance, sharing the real sqlite matchers and
+// tmux lookup. Both consumers go through it: reconcileDispatch below ("bind")
+// and the stop hook in routes/hooks.ts ("close").
+const workerIdentity = createWorkerIdentityResolver({
+  matchUnboundTaskById,
+  findRunningTaskById,
+  getTask,
+  matchUnboundTaskByTmuxSession,
+  findRunningTaskByTmuxSession,
+  countUnboundTasksInCwd,
+  countRunningTasksInCwd,
+  matchUnboundTaskByCwd,
+  findRunningTaskByCwd,
+  tmuxSessionForPane,
+  now: Date.now,
+  log(msg) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}orchestrator identity${reset} ${msg}\n`)
+  },
+})
+
+export const resolveWorkerTask = workerIdentity.resolve
+
 // Orchestrator (PRJ-OR1T): when a worker session appears for a dispatched task's
 // cwd, bind it and fire the queued prompt into its tmux session. Driven off
 // onSessions so it catches the worker no matter how it registered — session-start
 // hook, ps discovery, or rehydrate (the session-start hook alone is unreliable; a
-// spawned worker often surfaces via ps-scan first). Idempotent: matchUnbound…
-// only returns still-dispatched, unbound tasks, so a bound task is never re-fired.
+// spawned worker often surfaces via ps-scan first). Idempotent: the resolver
+// only returns still-dispatched, unbound tasks, so a bound task is never
+// re-fired — and with N workers in one cwd each session binds the task it was
+// actually dispatched as, never a sibling's.
+// Resolution is async now (tier 2 may ask tmux), so passes are chained instead
+// of run concurrently: onSessions fires from ~10 call sites and two overlapping
+// passes could both resolve the same pending task before either bound it, and
+// fire its prompt twice. The exported signature stays fire-and-forget so the
+// onSessions listener is unchanged.
+let reconcileChain: Promise<void> = Promise.resolve()
+
 export function reconcileDispatch(sessions: Session[]): void {
+  reconcileChain = reconcileChain
+    .then(() => reconcileOnce(sessions))
+    .catch((err) => {
+      // Never wedge the chain — but never hide the failure either: a throw here
+      // leaves a task in 'dispatched' with no prompt delivered.
+      process.stderr.write(`\x1b[2m[companion]\x1b[0m \x1b[31mreconcileDispatch failed\x1b[0m ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`)
+    })
+}
+
+async function reconcileOnce(sessions: Session[]): Promise<void> {
   for (const s of sessions) {
     if (!s.cwd) continue
-    const pending = matchUnboundTaskByCwd(s.cwd)
+    const pending = await resolveWorkerTask("bind", { taskId: s.taskId, tmuxPane: s.tmuxPane, cwd: s.cwd })
     if (!pending) continue
     bindTaskSession(pending.taskId, s.key || s.cwd)
     emitTask(pending.taskId)
@@ -169,7 +220,13 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
   const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
   let result: SpawnResult
   try {
-    result = await spawnCompanionSession({ cwd: task.cwd, agent: "claude" })
+    // The worker carries its task id in its environment, so every hook it fires
+    // can name the task it belongs to instead of the server guessing from cwd.
+    result = await spawnCompanionSession({
+      cwd: task.cwd,
+      agent: "claude",
+      env: { COMPANION_TASK_ID: task.taskId },
+    })
   } catch (err) {
     setTaskStatus(task.taskId, "error")
     emitTask(task.taskId)

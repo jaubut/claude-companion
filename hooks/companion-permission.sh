@@ -15,16 +15,14 @@ fi
 
 INPUT=$(cat)
 TTY=$(companion_find_tty)
+AGENT_PID=$(companion_find_agent_pid)
+companion_headers
 
 call_server() {
   curl -s --max-time 300 \
     -X POST "$COMPANION_URL/hooks/permission-request" \
     -H "Content-Type: application/json" \
-    -H "X-Companion-Tty: ${TTY}" \
-    -H "X-Companion-Term-Program: ${TERM_PROGRAM:-}" \
-    -H "X-Companion-Iterm-Session-Id: ${ITERM_SESSION_ID:-}" \
-    -H "X-Companion-Pid: ${PPID:-}" \
-    -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}" \
+    "${COMPANION_HDRS[@]}" \
     -d "$INPUT" 2>/dev/null
 }
 

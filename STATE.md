@@ -31,6 +31,104 @@ Last updated: 2026-09-07
 
 ## Change Plans
 
+### Change Plan — phase8-worker-identity (2026-09-09)
+**Request:** PRJ-OR1T Phase 8 — per-worker task identity in hook headers, so N orchestrator workers sharing one cwd never cross-bind or cross-close each other's tasks.
+**Done when:**
+- Two workers dispatched into the SAME cwd each get their own prompt and close their own task (thread shows two replies under the right task ids).
+- A hook with no identity behaves exactly as today when its cwd holds one candidate; when it holds more than one, nothing binds or closes on a guess.
+- Both hosts run the new server AND the new hook scripts, and the repo's vendored `hooks/` matches them, so the next `bun cli.ts init` can't revert it.
+
+**Target shape & drift**
+- Reference = Temporal's dispatch API (the leader for "which worker produced this callback"): `RespondActivityTaskCompleted(taskToken)` — the server issues an opaque token at dispatch and the worker echoes it on every callback; the task queue is routing only and never correlates a completion. GitHub Actions is the same shape (`GITHUB_RUN_ID` in the runner's env, echoed back). Mapping: their `taskToken` → our `COMPANION_TASK_ID` env → `X-Companion-Task-Id`; their worker `identity` → our `tasks.tmux_session`; their task queue → our `cwd` (chooses WHERE to spawn, never WHICH task an event belongs to).
+- Reference for this intent: identity is a property issued at dispatch, never re-derived from ambient context (`cwd`, "oldest", "latest") — the frame-of-reference rule, since a derived identity turns one worker's turn-end into another worker's state change. One module owns the correlation policy and it is pure + injected, so it is testable without the wiring singletons. Correlation degrades in explicit tiers with an ambiguity gate. Hook transport stays additive both ways. Host-wide singletons are per-session state.
+- Deviations today: `matchUnboundTaskByCwd` / `findRunningTaskByCwd` correlate by cwd (STATE.md:286) · `state.ts` keeps ONE `waitingCwd`/`waitingKey` for the whole host · `/hooks/session-end` falls back to `removeSessionByCwd` (wholesale, drops a live sibling) · the 7 hook scripts hand-roll the same `-H` block, in TWO drifted copies · `wiring/orchestrator.ts` has import-time side effects and zero test coverage.
+- This change moves toward: identity at dispatch, a pure injected resolver, the pane-scoped session-end fallback, one header emitter, and the vendored-hooks reconcile. · Leaves for follow-up: per-session waiting state; `spawnClaudeSession()` (`spawn-session.ts:303-305`) has zero callers and should be deleted; an `.unref()` on `wiring/orchestrator.ts:73`.
+
+**State decisions**
+- Worker task identity: issued by `wiring/orchestrator.ts#executeDispatch` (it already holds `task.taskId` before spawn), carried as `COMPANION_TASK_ID` in the worker's tmux environment, mutated nowhere. Persistence: **none new** — `orchestrator_tasks.task_id` already is the identity. NO schema change.
+- Session-side copy: `Session.taskId`, owned by `lib/sessions.ts`, written only via `metaFromHeaders` (sticky merge), announced on the existing `sessions` frame.
+- Correlation policy: **pure module `lib/worker-identity.ts`**, not the wiring. `createWorkerIdentityResolver(deps)` takes the 6 matchers, `tmuxSessionForPane` and `now()` as injected deps (the `worker-tail.ts` `WorkerTailDeps` pattern). `wiring/orchestrator.ts` constructs the one wired instance and re-exports `resolveWorkerTask`; `routes/hooks.ts` and `reconcileDispatch` both call that. Tests import the lib with fakes and never touch the wiring's import-time `setInterval`/`resumeAll`/`drain`.
+- Tiers, for both `"bind"` and `"close"`:
+  1. `taskId` → exact row, must still be in the expected status (`dispatched`+unbound to bind, `running` to close). **Already-resolved → null is load-bearing**: `reconcileDispatch` re-runs on every session mutation, so a resolved task must never re-match.
+  2. else `tmuxPane` → `tmux display-message -p -t <pane> '#S'` → match `tasks.tmux_session`. **Only when the cwd is ambiguous** (≥2 candidates), so the common path pays no subprocess.
+  3. else exactly one candidate in that cwd → today's behaviour, unchanged.
+  4. else refuse. Bind logs and waits for the next emission; after 90 s it degrades to tier-3 FIFO with a warning so a dispatch can never wedge (clock anchor verified: `setTaskSpawn` and `bindTaskSession` both bump `updated_at`). **Close never degrades** — a wrong close posts a reply under the wrong task and frees the wrong WIP slot.
+- Hook-script sync rule (TWO copies, not one): repo `hooks/` is the **install source** (`scripts/install.ts:28-30,134-146` writes it to `~/.claude/hooks/` and `~/.codex/hooks/` on every `bun cli.ts init`); claude-config `~/.claude/hooks/` is the **deploy target**. Both edited in the same PR, repo copy reconciled to live FIRST.
+- `companion_headers()` emits the 6 common headers only and must NOT hardcode the agent: `hooks/companion-codex-hook.sh:34,38` adds `X-Companion-Agent: codex` and `X-Companion-Cwd` on top. Codex is never a dispatched worker (`executeDispatch` hardcodes `agent:"claude"`), so its task id is always empty and adopting the helper there is optional.
+
+**Contracts touched** (from architecture.md)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `X-Companion-Task-Id` | hook header | NEW on all 7 `POST /hooks/*` | readers: `lib/sessions.ts#metaFromHeaders` · senders: 7 scripts × 2 copies | additive; absent → tier 2/3 |
+| `X-Companion-Tmux-Pane` | hook header | now also sent by `companion-session-end.sh` (tty only today) | `routes/hooks.ts#POST /hooks/session-end` | additive |
+| `sessions` | frame | +field `taskId` (`""` when not a worker) | `client/hooks/use-companion.ts` (type-asserts, local iface at :26-36 needs no edit), `ios:ios/WSFrame.swift` → `CompanionSession` CodingKeys (`Models.swift:102`) is an explicit 12-key subset, unknown keys ignored. Same raw `listSessions()` shape also rides the `init` frame (`ws.ts:47-56`) and `GET /api/status` + `/api/feed` (`routes/api.ts:296-315`) — no whitelist anywhere | additive, safe for TestFlight build 4 |
+| `spawnCompanionSession()` | export | +optional `env?: Record<string,string>` | `routes/api.ts:280` (passes none, stays identity-less by design), `wiring/orchestrator.ts:172` (the edit site) | optional param |
+| `matchUnboundTaskByCwd` / `findRunningTaskByCwd` | export | kept as tier 3; joined by `…ById`, `…ByTmuxSession`, `count…InCwd` | `wiring/orchestrator.ts:143`, `routes/hooks.ts:453` | additive |
+| `orchestrator_task` frame · `orchestrator_tasks` table | frame / db | unchanged | ios | no change |
+
+**Files — one owner each** (owner = builder on every row; the repo column decides which deploy carries it)
+| file | repo | change | lines now → after cap check |
+|---|---|---|---|
+| `hooks/_lib.sh` + `hooks/companion-*.sh` (7) | **claude-companion (vendored)** | **Step 0, own commit: reconcile live → repo BEFORE adding anything.** All 8 have drifted — `_lib.sh` by 32 lines (missing `companion_find_agent_pid` AND the Linux `?` tty case), the 6 event scripts by 3-5 lines each, `companion-session-end.sh` alone identical. Then mirror the claude-config edits byte-identical | 8 files ✓ |
+| `hooks/_lib.sh` | claude-config | NEW `companion_headers()` emitting the 6 `-H` args so the next header is a one-file edit | 47 → ~65 ✓ |
+| `hooks/companion-{stop,session-start,user-prompt,post-tool-use,permission,approval}.sh` | claude-config | swap the hand-rolled block for `companion_headers()`; gains `X-Companion-Task-Id: ${COMPANION_TASK_ID:-}` | 6 files, −4/+2 each ✓ |
+| `hooks/companion-session-end.sh` | claude-config | same helper — gains pane + task id (it sends only tty today) | ~25 → ~25 ✓ |
+| `server/lib/orchestrator-chat.ts` | claude-companion | NEW: `matchUnboundTaskById`, `findRunningTaskById`, `matchUnboundTaskByTmuxSession`, `findRunningTaskByTmuxSession`, `countUnboundTasksInCwd`, `countRunningTasksInCwd`; both `ByCwd` fns untouched | 409 → ~460 ✓ |
+| `server/lib/worker-identity.ts` | claude-companion | NEW: `createWorkerIdentityResolver(deps)` → `resolve(kind, {taskId, tmuxPane, cwd})`, the 4 tiers + the 90 s degrade. Pure, all seams injected — no sqlite import, no wiring import | 0 → ~90 ✓ |
+| `server/lib/tmux-pane.ts` | claude-companion | NEW: `tmuxSessionForPane(pane)` — `tmux display-message -p -t <pane> '#S'`, 1 s timeout, null on any failure | 29 → ~55 ✓ |
+| `server/lib/spawn-session.ts` | claude-companion | `spawnCompanionSession({ env })`; one `buildInner(cwd, agent, env)` replacing the duplicated inline builds at :126 (Mac) and :196 (Linux). **Form is load-bearing: `export COMPANION_TASK_ID=<id>; cd '<cwd>' && <agentCmd>` — export FIRST, joined with `;`.** A `VAR=val cd … && claude` prefix scopes the assignment to `cd` in POSIX sh and never reaches claude or its hook children. Must also precede the kimi `source kimi.env` case. Validate key AND value `^[A-Za-z0-9_-]+$`, plus assert `task.taskId` satisfies it (it is now on a shell-out path) | 305 → ~325 ✓ |
+| `server/lib/sessions.ts` | claude-companion | `Session.taskId` + sticky merge (`meta.taskId \|\| prev?.taskId \|\| ""`) + `metaFromHeaders` reads `x-companion-task-id`; NEW `removeSessionByTmuxPane(pane)` mirroring `removeSessionByTty` (:390-401); **`meaningfulChange` (:255-268) gains `prev.taskId !== next.taskId` AND `prev.tmuxPane !== next.tmuxPane`** — it enumerates fields today and omits both | 434 → ~460 ✓ |
+| `server/wiring/orchestrator.ts` | claude-companion | `executeDispatch` (:172) passes `env: { COMPANION_TASK_ID: task.taskId }`; constructs + re-exports the wired `resolveWorkerTask`; `reconcileDispatch` (:143) swaps `matchUnboundTaskByCwd` for it | 244 → ~265 ✓ |
+| `server/routes/hooks.ts` | claude-companion | stop (:453): `findRunningTaskByCwd(cwd)` → `await resolveWorkerTask("close", …)` off `metaFromHeaders`; session-end (handler :533-551): insert a pane branch BETWEEN the tty branch (:540) and the cwd-wholesale fallback (:543) | 554 → ~570 ✓ (STATE.md:204 relief valve NOT needed) |
+| `server/lib/orchestrator-chat.test.ts` | claude-companion | APPEND the 6 new matcher cases here — never a new file that imports `orchestrator-chat`, which would take this file's already-initialized sqlite binding from Bun's shared module cache (STATE.md:285, reproduced live) | 241 → ~300 ✓ |
+| `server/lib/worker-identity.test.ts` | claude-companion | NEW: tiers 1-4, the ambiguity gate, already-resolved→null, and the 90 s degrade — all against fakes, zero sqlite | 0 → ~130 ✓ |
+| `server/lib/spawn-session.test.ts` | claude-companion | NEW: `buildInner` emits `export COMPANION_TASK_ID=abc123;` BEFORE `cd`, on both paths; a charset-violating value is rejected (injection fixture) | 0 → ~60 ✓ |
+| `server/lib/sessions.test.ts` | claude-companion | taskId sticky across a header-less `recordSession` AND fires an `onSessions` emit; two sessions same cwd different panes → `removeSessionByTmuxPane(paneA)` leaves paneB alive (the only coverage of that narrowing — no route harness exists for `/hooks/session-end`) | 85 → ~115 ✓ |
+
+**Fan-in paths to guard**
+- **The emit gate is on the bind path, not just the UI.** `wiring/events.ts:102-104` broadcasts the frame AND calls `reconcileDispatch(sessions)` in ONE `onSessions` callback, and `emit()` only fires when `meaningfulChange` is true. A worker that registers via discovery first and gains its identity from a later hook changes no enumerated field, so today it would update the map, never emit, never re-reconcile — tiers 1 and 2 would silently no-op on the discovery-first ordering (STATE.md:301, the common one) and every bind would fall to the 90 s degrade.
+- `reconcileDispatch` re-runs far more often than "on registration": `onSessions` fires from `recordSession` (6 hook routes + `discover.ts:238,250,262` + `rehydrate.ts:69`), `setSessionStatus` (:292), `setSessionTitle` (:301), `backfillStart` (:324), the 60 s prune timer (:106) and all three `removeSessionBy*` (:377,383,399). So the resolver must be idempotent and side-effect free (returns a task or null, never binds or closes), and tier 2's subprocess must be gated on ambiguity BEFORE the `tmux display-message` call — otherwise a title resolve or a prune tick shells out once per session.
+- The stop hook's null path skips `setTaskStatus`, `emitTask`, the thread reply AND `workerQueue.drain()` (`routes/hooks.ts:452-462`). Tier-4 refusal therefore holds a WIP slot with no automatic recovery except worker-tail's independent pane-vanish poll (`wiring/orchestrator.ts:81-95`). That is the accepted trade against a wrong close; it needs its own test.
+- `recordSession()` is reached from discovery and rehydrate, which never pass `taskId` — the sticky merge is the guard and a test asserts it.
+- `spawnCompanionSession()` is also called by `routes/api.ts:280` (phone "new session"), which passes no env by design → tier 3.
+
+**Analyst findings** (5 contracts, verified against source 2026-09-09, not the map alone)
+- **task-id header:** no reader exists anywhere today (`grep -rni` across this repo, `~/.claude/hooks/`, and the iOS sibling targets) — the header, the field and the reader are all still to be built. Server-first rollout is safe.
+- **`sessions` frame:** found the `meaningfulChange` emit gate — the one finding that changed the design (above). Producer spreads `listSessions()` raw, so the field also reaches the `init` frame and 2 REST routes. iOS `claude_companionTests.swift` is empty boilerplate: no decode-tolerance test exists anywhere.
+- **tmux-pane / session-end:** found the vendored `hooks/` blind spot and its drift. Pane format holds end to end (`TMUX_PANE` is `%N`; `discover.ts:154` extracts the same shape). Removal by pane has no task/WIP side effect. `~/.codex/config.toml` wires no session-end for Codex — not a consumer.
+- **spawn env:** confirmed the quoting chain on both paths and produced the export-first correctness requirement above. `-e` is available (tmux 3.6a Mac / 3.4 Zettlab) but embed-in-command still wins on the session-env-leak argument. Pane readiness gates key off rendered text, so a silent `export …;` cannot fool them.
+- **resolver:** confirmed both `ByCwd` call sites, the import-boundary (routes may import wiring), the 90 s clock anchor, and that all three spawn paths still return `sessionName`. Found the fixture gap that moved the resolver into `lib/` with a DI seam: `wiring/orchestrator.ts:73` is a bare `setInterval` with no `.unref()` (unlike `sessions.ts:105-111`), plus `resumeAll` + `drain` at import, with zero test coverage today.
+
+**Risks**
+- **Pre-existing latent bug this reconcile fixes:** `bun cli.ts init` on a fresh or reinstalled host today reverts the live hooks to their April versions — dropping `companion_find_agent_pid` (empty `X-Companion-Pid` → the server's opportunistic prune kills the session entry when the hook exits) and the Linux `?` tty case (Zettlab gets no tty at all). Not caused by Phase 8; Phase 8 is the first change that must touch these files, so it carries the fix.
+- kb offline — no external gotchas checked (`~/.claude/.kb_env` has no `dev` tenant token from this Mac). Independently, every touched module's `externals` is empty: no third-party package is in this blast radius.
+- Env is readable via `ps`/`/proc` by the same user. `COMPANION_TASK_ID` is an 8-char opaque id, no secret — never widen this channel to prompts or tokens.
+- A human running `claude` a second time inside a worker's tmux session inherits `COMPANION_TASK_ID` → tier 1's status check means a done/error task never re-matches; it falls to tier 3.
+- Tier-4 refusal holds a WIP slot until cancel or pane death. It only triggers on a host whose hook scripts are stale; rollout closes the window and the log line names the fix.
+- Map blind spot is on the SENDER side only: the hook scripts exist in two places — claude-config (deployed) and this repo's vendored `hooks/` (install source) — and archmap sees neither, since `archmap.json` has targets for `server` and `client/src` only. That is how 8 vendored scripts drifted unnoticed. File a `hooks/**` target or an explicit note against PRJ-LGDV at Close.
+
+**Rollout order** (server first — the header is inert until a server reads it)
+1. Merge + deploy the server to BOTH hosts: Mac restart; Zettlab `systemctl --user restart claude-companion` (user unit, confirmed). Tiers 2-4 go live with no hook change — that alone stops cross-binding for tmux workers.
+2. claude-config: commit `_lib.sh` + the 7 scripts, push, `git pull` on Zettlab. No restart — hooks are re-read per invocation. The claude-companion PR carries the byte-identical vendored copy in the same window, or the next `init` reverts it.
+3. Only then run the 2-worker same-cwd test. The reverse order is harmless (an old server ignores the extra header) but proves nothing.
+
+**Verify**
+1. `bun test` from `server/` — baseline before the change is **55 pass / 0 fail / 222 expects across 9 files** (measured 2026-09-09; the 50/51 figures in the older split-* plans are stale). New cases: the 6 matchers, the 4 tiers + ambiguity gate + already-resolved→null + 90 s degrade, `buildInner`'s export-first form + injection rejection, taskId stickiness + emit, pane-scoped removal.
+2. `bunx tsc --noEmit -p tsconfig.server.json` clean (the pre-existing `keyboard-inject.ts:385` error stays, STATE.md:299) + `bun run tools/archmap/cli.ts . --lint` clean.
+3. `diff -r <repo>/hooks ~/.claude/hooks` → differs only by `companion-codex-hook.sh` (installs to `~/.codex/hooks/`), proving install source and deploy target agree.
+4. Simulated-hook test: POST `/hooks/stop` twice for one cwd holding two `running` tasks, once per `X-Companion-Task-Id` → each closes its own task. Repeat with no header → neither closes, the log names the ambiguity, and the WIP count stays held (the tier-4 null path, the one failure mode with no automatic recovery).
+5. Real 2-worker e2e on prod :4245 (a dispatch e2e cannot run on a test port, STATE.md:298): dispatch two tasks into the same cwd from the phone.
+6. Manual pass by Jeremie on the running build — per finding, what he should see:
+   - Thread: two distinct worker replies, each under its own task id; no reply under the wrong task.
+   - Each tmux pane got its OWN prompt (`tmux attach -t cc-claude-companion`, then `-2`).
+   - Tasks panel: both go dispatched → running → done; the WIP count returns to 0.
+   - Companion log: tier-1 resolution on both stop hooks, no `ambiguous turn-end` line.
+   - Quit one worker while the other runs: the picker keeps the survivor (session-end no longer removes both).
+   - A worker that registers via ps-discovery before its hook fires still binds within a second or two — no 90 s stall (this is the `meaningfulChange` fix; it is invisible in tests that record with distinct ttys).
+   - Spawn a normal session from the phone in a cwd with no live task: unchanged behaviour, no new log noise.
+
+**Out of scope:** iOS decode-tolerance test (`claude_companionTests.swift` is empty boilerplate — file against the ios repo) · per-session waiting state in `state.ts` (host-wide singleton) · deleting the zero-caller `spawnClaudeSession()` · `.unref()` on `wiring/orchestrator.ts:73` · any `orchestrator_tasks` schema change · iOS app changes (the frame is additive, no rebuild needed) · Codex/kimi worker dispatch · replacing cwd as the dispatch routing hint.
+
 ### Change Plan — split-activity (2026-09-07) — ✅ shipped (PR #13, 3 moves + transcript.test.ts; long-answer regression PASS on every commit)
 **Request:** Split `server/lib/activity.ts` (681 lines: 200-cap event feed, live activity pill, 1.5 s transcript poll, token accounting, assistant-text streaming, the turn-end retry that catches late-flushed closing blocks, and the feed/activity/feed-reset listener sets) into modules under the 600 cap. Every contract unchanged — same export names/signatures for `routes/hooks.ts`, `routes/api.ts`, `wiring/events.ts`, `lib/codex-feed.ts`, `ws.ts`; same `event` / `activity` / `feed_pruned` frames; same feed shapes; same turn-end retry behaviour. Mechanical move, no redesign.
 **Done when:**

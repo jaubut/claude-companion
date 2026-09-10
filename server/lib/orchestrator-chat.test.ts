@@ -239,3 +239,78 @@ describe("backpressure queue", () => {
     expect(chat.countLiveTasks()).toBe(1)
   })
 })
+
+// ---- worker identity matchers (Phase 8) -------------------------------------
+// Same file, same module instance, for the reason spelled out above.
+
+describe("worker identity matchers", () => {
+  const W = "/w"
+
+  beforeEach(() => {
+    for (const t of chat.listTasks()) chat.setTaskStatus(t.taskId, "done")
+  })
+
+  test("matchUnboundTaskById returns the exact dispatched task and nothing else", () => {
+    const a = chat.createTask("a", W, "cc-w", "general")
+    const b = chat.createTask("b", W, "cc-w-2", "general")
+    expect(chat.matchUnboundTaskById(a.taskId)?.taskId).toBe(a.taskId)
+    expect(chat.matchUnboundTaskById(b.taskId)?.taskId).toBe(b.taskId)
+    expect(chat.matchUnboundTaskById("nope")).toBeNull()
+  })
+
+  test("a bound task stops matching by id — the guard against re-firing a prompt", () => {
+    const a = chat.createTask("a", W, "cc-w", "general")
+    chat.bindTaskSession(a.taskId, "claude:tty:/dev/ttys1")
+    expect(chat.matchUnboundTaskById(a.taskId)).toBeNull()
+    // …and is now the one findRunningTaskById answers with
+    expect(chat.findRunningTaskById(a.taskId)?.taskId).toBe(a.taskId)
+    chat.setTaskStatus(a.taskId, "done")
+    expect(chat.findRunningTaskById(a.taskId)).toBeNull()
+  })
+
+  test("tmux session matchers pick the worker's own task out of a shared cwd", () => {
+    const a = chat.createTask("a", W, "cc-w", "general")
+    const b = chat.createTask("b", W, "cc-w-2", "general")
+    expect(chat.matchUnboundTaskByTmuxSession("cc-w-2")?.taskId).toBe(b.taskId)
+    expect(chat.matchUnboundTaskByTmuxSession("cc-nothing")).toBeNull()
+    chat.bindTaskSession(a.taskId, "k-a")
+    chat.bindTaskSession(b.taskId, "k-b")
+    expect(chat.findRunningTaskByTmuxSession("cc-w")?.taskId).toBe(a.taskId)
+    expect(chat.findRunningTaskByTmuxSession("cc-w-2")?.taskId).toBe(b.taskId)
+  })
+
+  test("the cwd counts are the ambiguity gate, per status", () => {
+    expect(chat.countUnboundTasksInCwd(W)).toBe(0)
+    const a = chat.createTask("a", W, "cc-w", "general")
+    expect(chat.countUnboundTasksInCwd(W)).toBe(1)
+    const b = chat.createTask("b", W, "cc-w-2", "general")
+    expect(chat.countUnboundTasksInCwd(W)).toBe(2)
+    expect(chat.countRunningTasksInCwd(W)).toBe(0)
+    chat.bindTaskSession(a.taskId, "k-a") // dispatched+unbound → running
+    expect(chat.countUnboundTasksInCwd(W)).toBe(1)
+    expect(chat.countRunningTasksInCwd(W)).toBe(1)
+    chat.bindTaskSession(b.taskId, "k-b")
+    expect(chat.countRunningTasksInCwd(W)).toBe(2)
+    chat.setTaskStatus(a.taskId, "done")
+    expect(chat.countRunningTasksInCwd(W)).toBe(1)
+    // a different cwd is never counted
+    expect(chat.countUnboundTasksInCwd("/elsewhere")).toBe(0)
+  })
+
+  test("queued and proposed tasks are invisible to every matcher — nothing spawned yet", () => {
+    const q = chat.createQueuedTask("queued", W, "general")
+    const p = chat.createProposal("proposed", W, "why", "general")
+    expect(chat.matchUnboundTaskById(q.taskId)).toBeNull()
+    expect(chat.matchUnboundTaskById(p.taskId)).toBeNull()
+    expect(chat.countUnboundTasksInCwd(W)).toBe(0)
+    expect(chat.countRunningTasksInCwd(W)).toBe(0)
+  })
+
+  test("the cwd matchers are untouched and still answer FIFO / most-recent", () => {
+    const a = chat.createTask("a", W, "cc-w", "general")
+    chat.createTask("b", W, "cc-w-2", "general")
+    expect(chat.matchUnboundTaskByCwd(W)?.taskId).toBe(a.taskId) // oldest first
+    chat.bindTaskSession(a.taskId, "k-a")
+    expect(chat.findRunningTaskByCwd(W)?.taskId).toBe(a.taskId)
+  })
+})

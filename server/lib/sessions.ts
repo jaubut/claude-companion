@@ -42,6 +42,11 @@ export interface Session {
   // present, inject uses `tmux send-keys` (pane-id-keyed, no focus race)
   // instead of AppleScript (focus-bound, swap-prone with multiple windows).
   tmuxPane: string
+  // The orchestrator task this session is a worker for, from
+  // X-Companion-Task-Id (COMPANION_TASK_ID in the worker's env, issued at
+  // dispatch). Empty for every session a human started — identity is issued,
+  // never inferred (PRJ-OR1T Phase 8).
+  taskId: string
   pid: string
   firstSeenAt: number
   lastSeenAt: number
@@ -214,6 +219,9 @@ export function recordSession(
     tty: mergedTty,
     iTermSessionId: meta.iTermSessionId || prev?.iTermSessionId || "",
     tmuxPane: meta.tmuxPane || prev?.tmuxPane || "",
+    // Sticky: ps-discovery and rehydrate re-record a worker with no headers at
+    // all, and must not erase the identity a hook already established.
+    taskId: meta.taskId || prev?.taskId || "",
     pid: meta.pid || prev?.pid || "",
     // Creation time is the picker's sort key — keep the earliest we know
     // (a discovery pass may report the real process start after a hook
@@ -266,7 +274,15 @@ export function recordSession(
     prev.firstSeenAt !== next.firstSeenAt ||
     prev.tty !== next.tty ||
     prev.termProgram !== next.termProgram ||
-    prev.sessionId !== next.sessionId
+    prev.sessionId !== next.sessionId ||
+    // Both are load-bearing, not cosmetic: wiring/events.ts broadcasts the
+    // frame AND runs reconcileDispatch in the same onSessions callback, and
+    // that callback only fires on a meaningful change. A worker that registers
+    // via ps-discovery first and gains its identity from a later hook changes
+    // no other field here — without these two it would never re-reconcile, and
+    // every identity-first bind would silently wait out the 90s degrade.
+    prev.taskId !== next.taskId ||
+    prev.tmuxPane !== next.tmuxPane
 
   if (meaningfulChange) emit()
   return next
@@ -400,6 +416,23 @@ export function removeSessionByTty(tty: string): boolean {
   return removed
 }
 
+// Precise removal by tmux pane — the tmux equivalent of removeSessionByTty,
+// for workers whose hooks report a pane but no usable tty. Without it a
+// session-end from one worker falls through to removeSessionByCwd and takes
+// every sibling session in that directory with it.
+export function removeSessionByTmuxPane(pane: string): boolean {
+  if (!pane) return false
+  let removed = false
+  for (const [key, s] of sessions) {
+    if (s.tmuxPane === pane) {
+      sessions.delete(key)
+      removed = true
+    }
+  }
+  if (removed) emit()
+  return removed
+}
+
 export function listSessions(): Session[] {
   return Array.from(sessions.values()).sort((a, b) => b.lastSeenAt - a.lastSeenAt)
 }
@@ -429,6 +462,7 @@ export function metaFromHeaders(headers: Headers): Partial<Session> {
     tty: raw("x-companion-tty"),
     iTermSessionId: raw("x-companion-iterm-session-id"),
     tmuxPane: raw("x-companion-tmux-pane"),
+    taskId: raw("x-companion-task-id"),
     pid: raw("x-companion-pid"),
   }
 }

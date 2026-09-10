@@ -26,3 +26,35 @@ export function paneInputReady(pane: string): boolean {
 export function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
+
+// Which tmux session owns this pane? The worker-identity resolver's tier 2:
+// a hook carries $TMUX_PANE (%N), the orchestrator knows the session name it
+// spawned (cc-<project>), and this is the only bridge between them.
+//
+// Called only when a cwd holds two or more candidate tasks, so the common
+// single-worker path never pays for a subprocess. Null on anything unexpected
+// — a malformed pane id, a dead pane, a slow tmux — and the caller refuses to
+// guess rather than treating the failure as a match.
+const PANE_ID = /^%\d+$/
+
+export async function tmuxSessionForPane(pane: string): Promise<string | null> {
+  if (!PANE_ID.test(pane)) return null
+  try {
+    const p = Bun.spawn(["tmux", "display-message", "-p", "-t", pane, "#S"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      p.kill()
+    }, 1_000)
+    const out = await new Response(p.stdout).text()
+    const code = await p.exited
+    clearTimeout(timer)
+    if (timedOut || code !== 0) return null
+    return out.trim() || null
+  } catch {
+    return null
+  }
+}

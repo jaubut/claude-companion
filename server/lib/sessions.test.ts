@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions } from "./sessions"
+import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, metaFromHeaders, removeSessionByTmuxPane } from "./sessions"
 
 test("Linux pts ttys get a tag like macOS ttys do", () => {
   expect(ttyTag("/dev/ttys017")).toBe("s017")
@@ -82,4 +82,53 @@ test("a confirmed id that replaces a different confirmed id drops the stale titl
   await Bun.sleep(5)
   expect(listSessions().find((x) => x.key === s.key)?.title).toBe("title for sid-b")
   setTitleResolver(null)
+})
+
+// ---- worker identity (PRJ-OR1T Phase 8) ------------------------------------
+
+test("a worker's task id is sticky and its arrival fires an emit", () => {
+  const headers = new Headers({
+    "x-companion-tty": "/dev/pts/30",
+    "x-companion-tmux-pane": "%30",
+    "x-companion-task-id": "abc123ef",
+  })
+  // ps-discovery sees the worker first, with no headers at all
+  const discovered = recordSession({ cwd: "/home/aubut/lanes/build", tty: "/dev/pts/30" }, { provisional: true })!
+  expect(discovered.taskId).toBe("")
+
+  let emits = 0
+  const off = onSessions(() => { emits++ })
+  // then its hook lands and brings the identity
+  const bound = recordSession({ cwd: "/home/aubut/lanes/build", ...metaFromHeaders(headers) })!
+  expect(bound.key).toBe(discovered.key)
+  expect(bound.taskId).toBe("abc123ef")
+  // The emit is the whole point: wiring/events.ts runs reconcileDispatch inside
+  // the same onSessions callback, so a taskId that lands without an emit would
+  // never reach the resolver.
+  expect(emits).toBe(1)
+
+  // a later header-less record (discovery, rehydrate) must not erase it
+  const again = recordSession({ cwd: "/home/aubut/lanes/build", tty: "/dev/pts/30" })!
+  expect(again.taskId).toBe("abc123ef")
+  off()
+})
+
+test("a tmux pane arriving after registration also counts as a change", () => {
+  recordSession({ cwd: "/home/aubut/lanes/qa2", tty: "/dev/pts/31" })
+  let emits = 0
+  const off = onSessions(() => { emits++ })
+  recordSession({ cwd: "/home/aubut/lanes/qa2", tty: "/dev/pts/31", tmuxPane: "%31" })
+  expect(emits).toBe(1)
+  off()
+})
+
+test("removeSessionByTmuxPane drops one worker and leaves its cwd sibling alive", () => {
+  const a = recordSession({ cwd: "/home/aubut/shared", tty: "/dev/pts/40", tmuxPane: "%40" })!
+  const b = recordSession({ cwd: "/home/aubut/shared", tty: "/dev/pts/41", tmuxPane: "%41" })!
+  expect(removeSessionByTmuxPane("%40")).toBe(true)
+  const keys = listSessions().map((s) => s.key)
+  expect(keys).not.toContain(a.key)
+  expect(keys).toContain(b.key)
+  expect(removeSessionByTmuxPane("%40")).toBe(false) // already gone
+  expect(removeSessionByTmuxPane("")).toBe(false)
 })
