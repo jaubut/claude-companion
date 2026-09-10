@@ -19,6 +19,7 @@ fi
 
 INPUT=$(cat)
 TTY=$(companion_find_tty)
+AGENT_PID=$(companion_find_agent_pid)
 
 call_server() {
   curl -s --max-time 300 \
@@ -27,7 +28,7 @@ call_server() {
     -H "X-Companion-Tty: ${TTY}" \
     -H "X-Companion-Term-Program: ${TERM_PROGRAM:-}" \
     -H "X-Companion-Iterm-Session-Id: ${ITERM_SESSION_ID:-}" \
-    -H "X-Companion-Pid: ${PPID:-}" \
+    -H "X-Companion-Pid: ${AGENT_PID:-${PPID:-}}" \
     -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}" \
     -d "$INPUT" 2>/dev/null
 }
