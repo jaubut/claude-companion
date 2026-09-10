@@ -1,19 +1,17 @@
-import type { Session } from "@/hooks/use-companion"
+import type { Session, WaitingEntry } from "@/hooks/use-companion"
 import { SpawnSession } from "@/components/spawn-session"
 import { hashHue, shortKey, truncate } from "@/lib/format"
 import { CornerDownLeft, ChevronDown } from "lucide-react"
 
 export function TargetBar({
-  sessions, effectiveTarget, targetKey, waitingKey, waitingCwd, waitingForInput, waitingMessage,
+  sessions, effectiveTarget, targetKey, waitingByKey, targetWaiting,
   pinnedOffline, picking, onTogglePick, onPick,
 }: {
   sessions: Session[]
   effectiveTarget: Session | null
   targetKey: string
-  waitingKey: string
-  waitingCwd: string
-  waitingForInput: boolean
-  waitingMessage: string
+  waitingByKey: Record<string, WaitingEntry>
+  targetWaiting: WaitingEntry | null
   pinnedOffline: boolean
   picking: boolean
   onTogglePick: () => void
@@ -21,10 +19,9 @@ export function TargetBar({
 }) {
   if (sessions.length === 0 && !effectiveTarget && !picking) return null
 
-  const waitingMatches = effectiveTarget
-    ? waitingKey === effectiveTarget.key || waitingCwd === effectiveTarget.cwd
-    : false
-  const showHint = waitingForInput && waitingMessage && waitingMatches
+  // The hint belongs to the session we'd send to, not to whichever one
+  // happened to finish its turn last.
+  const hint = targetWaiting?.message ?? ""
   const hue = hashHue(effectiveTarget?.key ?? "")
   // `??` falls through only on null/undefined — an empty string label
   // (provisional session from discovery) would still render as "" and force
@@ -37,9 +34,9 @@ export function TargetBar({
 
   return (
     <div className="space-y-2">
-      {showHint && (
+      {hint && (
         <div className="text-[11px] text-muted/70 px-1 line-clamp-2 italic">
-          “{truncate(waitingMessage, 220)}”
+          “{truncate(hint, 220)}”
         </div>
       )}
       <div className="flex items-center gap-2 text-[11px]">
@@ -105,6 +102,16 @@ export function TargetBar({
                   style={{ backgroundColor: `hsl(${sHue} 70% 55%)` }}
                 />
                 <span className="font-semibold truncate">{s.label || shortKey(s.key)}</span>
+                {!!waitingByKey[s.key] && (
+                  // Which session is waiting — the whole point of Phase 9. More
+                  // than one row can carry this at the same time.
+                  <span
+                    title="waiting for input"
+                    aria-label="waiting for input"
+                    role="img"
+                    className="w-1.5 h-1.5 rounded-full bg-accent shrink-0 animate-pulse"
+                  />
+                )}
                 {idle && <span className="text-[10px] text-muted/60 italic shrink-0">idle</span>}
                 <span className="flex-1 text-muted/60 text-[10px] font-mono truncate text-right">
                   {term ? `${term} · ` : ""}{s.tty.replace(/^\/dev\//, "") || "no tty"}

@@ -47,6 +47,12 @@ export interface Session {
   // dispatch). Empty for every session a human started — identity is issued,
   // never inferred (PRJ-OR1T Phase 8).
   taskId: string
+  // "Waiting for input" as a property of the session, not of the host
+  // (PRJ-OR1T Phase 9). Set by the Stop hook, cleared when THIS session gets
+  // input; 0 means not waiting. The host-wide rollup every client used to read
+  // is derived at read time by waitingSummary(), never stored.
+  waitingSince: number
+  waitingKind: string
   pid: string
   firstSeenAt: number
   lastSeenAt: number
@@ -222,6 +228,11 @@ export function recordSession(
     // Sticky: ps-discovery and rehydrate re-record a worker with no headers at
     // all, and must not erase the identity a hook already established.
     taskId: meta.taskId || prev?.taskId || "",
+    // Same stickiness, and for the same reason: cli.ts re-runs discovery on an
+    // interval with no waiting fields at all, so a plain merge would blink
+    // every waiting badge off on the next tick.
+    waitingSince: meta.waitingSince ?? prev?.waitingSince ?? 0,
+    waitingKind: meta.waitingKind ?? prev?.waitingKind ?? "",
     pid: meta.pid || prev?.pid || "",
     // Creation time is the picker's sort key — keep the earliest we know
     // (a discovery pass may report the real process start after a hook
@@ -254,6 +265,14 @@ export function recordSession(
       const sameCwd = s.cwd === next.cwd
       const sameSid = next.sessionId && s.sessionId === next.sessionId
       if (sameCwd || sameSid) {
+        // Waiting is the only field with no re-derivation path: a Stop hook
+        // that fired without a tty (the Linux `?` case) set it on the weaker
+        // record, and deleting that record outright would lose it for good.
+        // Everything else here re-derives itself within one poll.
+        if (!next.waitingSince && s.waitingSince) {
+          next.waitingSince = s.waitingSince
+          next.waitingKind = s.waitingKind
+        }
         sessions.delete(otherKey)
         collapsed = true
       }
@@ -282,7 +301,10 @@ export function recordSession(
     // no other field here — without these two it would never re-reconcile, and
     // every identity-first bind would silently wait out the 90s degrade.
     prev.taskId !== next.taskId ||
-    prev.tmuxPane !== next.tmuxPane
+    prev.tmuxPane !== next.tmuxPane ||
+    // Shape completeness only: no caller puts waiting in `meta`, so the sticky
+    // merge always falls through to prev. The real emit path is the setters.
+    prev.waitingSince !== next.waitingSince
 
   if (meaningfulChange) emit()
   return next
@@ -314,6 +336,86 @@ export function setSessionTitle(key: string, title: string): void {
   if (!s || !t || s.title === t) return
   s.title = t
   emit()
+}
+
+// ---- waiting for input (PRJ-OR1T Phase 9) -----------------------------------
+//
+// tmux's model: the flag is per window (`window_activity_flag`), the
+// per-session aggregate (`session_activity_flag`) is documented as "1 if any
+// window has activity" and is computed on read. Same here — the map below is
+// private, and every rollup is derived.
+
+export interface WaitingSession {
+  key: string
+  cwd: string
+  kind: string
+  since: number
+}
+
+// Returns the epoch ms stamped on the record, or 0 if the key is unknown.
+export function setSessionWaiting(key: string, kind: string): number {
+  const s = sessions.get(key)
+  if (!s) return 0
+  s.waitingSince = Date.now()
+  s.waitingKind = kind
+  emit()
+  return s.waitingSince
+}
+
+// Idempotent: clearing a session that isn't waiting is a no-op with no emit,
+// because the phone can send an answer over both the WS and REST paths.
+export function clearSessionWaiting(key: string): boolean {
+  const s = sessions.get(key)
+  if (!s || !s.waitingSince) return false
+  s.waitingSince = 0
+  s.waitingKind = ""
+  emit()
+  return true
+}
+
+function waitingList(): WaitingSession[] {
+  const out: WaitingSession[] = []
+  for (const s of sessions.values()) {
+    if (s.waitingSince) out.push({ key: s.key, cwd: s.cwd, kind: s.waitingKind, since: s.waitingSince })
+  }
+  return out
+}
+
+// The three legacy scalars every shipped client still reads, derived from the
+// most recent waiter, plus the full list for clients that can address a
+// session. Replaces state.ts's host-wide singleton.
+export function waitingSummary(): {
+  waitingForInput: boolean
+  waitingCwd: string
+  waitingKey: string
+  waitingSessions: WaitingSession[]
+} {
+  const waitingSessions = waitingList()
+  const newest = waitingSessions.reduce<WaitingSession | null>(
+    (a, b) => (a && a.since >= b.since ? a : b),
+    null,
+  )
+  return {
+    waitingForInput: waitingSessions.length > 0,
+    waitingCwd: newest?.cwd ?? "",
+    waitingKey: newest?.key ?? "",
+    waitingSessions,
+  }
+}
+
+// Clear on behalf of an inject. With a target, clear exactly that target. With
+// none, clear the single waiter if there is exactly one — otherwise clear
+// nothing and report how many were waiting, so the caller can log a refusal.
+// Guessing here would blank the badge of a session that never got the text.
+export function clearWaitingForTarget(target: Session | null): { cleared: Session | null; refused: number } {
+  if (target) {
+    return { cleared: clearSessionWaiting(target.key) ? target : null, refused: 0 }
+  }
+  const waiting = waitingList()
+  const only = waiting.length === 1 ? sessions.get(waiting[0]!.key) ?? null : null
+  if (!only) return { cleared: null, refused: waiting.length }
+  clearSessionWaiting(only.key)
+  return { cleared: only, refused: 0 }
 }
 
 // `ps -o lstart=` for a pid → epoch ms, 0 if unknown.

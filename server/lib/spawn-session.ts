@@ -334,7 +334,3 @@ export async function spawnCompanionSession(opts: {
   if (itermRunning) return spawnInIterm(resolved, agent, opts.env)
   return spawnInTerminal(resolved, agent, opts.env)
 }
-
-export async function spawnClaudeSession(opts: { cwd: string; app?: SpawnApp }): Promise<SpawnResult> {
-  return spawnCompanionSession({ ...opts, agent: "claude" })
-}

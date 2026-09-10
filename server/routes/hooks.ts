@@ -18,6 +18,7 @@ import { isCatastrophic, isSuperAuto } from "../lib/super-auto"
 import { recordAllow } from "../lib/learned-allow"
 import {
   type Session,
+  clearSessionWaiting,
   metaFromHeaders,
   onSessions,
   recordSession,
@@ -25,6 +26,7 @@ import {
   removeSessionByTmuxPane,
   removeSessionByTty,
   setSessionTitle,
+  setSessionWaiting,
 } from "../lib/sessions"
 import {
   forgetSession,
@@ -37,7 +39,7 @@ import { type Verdict } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import { broadcast, clearWaiting, getWaiting, setWaiting } from "../state"
+import { broadcast } from "../state"
 import {
   agentFromHeaders,
   agentTitle,
@@ -212,9 +214,11 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       session = recordSession({ cwd, sessionId, ...headerMeta })
     }
 
-    if (getWaiting().waitingForInput) {
-      clearWaiting()
-      broadcast({ type: "waiting_input", waiting: false })
+    // tmux's clear-on-visit: a tool call clears the waiting flag of the session
+    // that ran it, and nobody else's. `session` is null whenever the payload had
+    // no cwd (see just above), in which case there is nothing to clear.
+    if (session && clearSessionWaiting(session.key)) {
+      broadcast({ type: "waiting_input", waiting: false, key: session.key, cwd: session.cwd })
     }
 
     const dim = "\x1b[2m"
@@ -481,7 +485,10 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       tty: headerMeta.tty ?? "",
     })
 
-    setWaiting(cwd, session?.key ?? "")
+    // Waiting now lives on the Session record; the host rollup is derived on
+    // read. `session` is only assigned when cwd is truthy (see above), and a
+    // stop hook with no cwd still sends the legacy keyless frame.
+    const waitingSince = (session ? setSessionWaiting(session.key, "turn-end") : 0) || Date.now()
     const dim = "\x1b[2m"
     const reset = "\x1b[0m"
     const magenta = "\x1b[35m"
@@ -498,7 +505,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       // full reply. lastMessage is still used for the push body
       // below where a 220-char preview is what we want.
       cwd,
-      key: getWaiting().waitingKey,
+      key: session?.key ?? "",
+      since: waitingSince,
+      kind: "turn-end",
     })
     // Waiting = passive nudge, no sound. Client should suppress when the
     // PWA/app is already focused on this session (handled on-device).
@@ -511,7 +520,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
         body: lastMessage.trim().slice(0, 220) || "Tap to respond",
         category: "waiting_input",
         threadId: cwd || "waiting_input",
-        userInfo: { cwd, sessionId: body.session_id ?? "", key: getWaiting().waitingKey },
+        userInfo: { cwd, sessionId: body.session_id ?? "", key: session?.key ?? "" },
       }).catch(() => { /* silent */ })
     }
     return Response.json({})
