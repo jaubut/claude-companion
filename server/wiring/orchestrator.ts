@@ -179,7 +179,13 @@ export const resolveWorkerTask = workerIdentity.resolve
 let reconcileChain: Promise<void> = Promise.resolve()
 
 export function reconcileDispatch(sessions: Session[]): void {
-  reconcileChain = reconcileChain.then(() => reconcileOnce(sessions)).catch(() => { /* never wedge the chain */ })
+  reconcileChain = reconcileChain
+    .then(() => reconcileOnce(sessions))
+    .catch((err) => {
+      // Never wedge the chain — but never hide the failure either: a throw here
+      // leaves a task in 'dispatched' with no prompt delivered.
+      process.stderr.write(`\x1b[2m[companion]\x1b[0m \x1b[31mreconcileDispatch failed\x1b[0m ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`)
+    })
 }
 
 async function reconcileOnce(sessions: Session[]): Promise<void> {
