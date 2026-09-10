@@ -18,15 +18,13 @@ import { isCatastrophic, isSuperAuto } from "../lib/super-auto"
 import { recordAllow } from "../lib/learned-allow"
 import {
   type Session,
-  clearSessionWaiting,
-  metaFromHeaders,
   recordSession,
   removeSessionByCwd,
   removeSessionByTmuxPane,
   removeSessionByTty,
   setSessionTitle,
-  setSessionWaiting,
 } from "../lib/sessions"
+import { announceKeylessWaiting, markWaiting, unmarkWaiting } from "../wiring/waiting"
 import {
   forgetSession,
   recordToolEnd,
@@ -44,6 +42,7 @@ import {
   agentTitle,
   cwdFromPayload,
   hookDecisionResponse,
+  metaFromHeaders,
   projectLabelFor,
 } from "../lib/hook-common"
 import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"
@@ -170,7 +169,7 @@ async function questionFastPath(p: {
     }
     process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
     recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
-    const answers = await addQuestionRequest({ agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions })
+    const answers = await addQuestionRequest({ agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions, sessionKey: p.session?.key ?? "" })
 
     if (answers.length === 0) {
       // Expired or otherwise no answer — deny so Claude doesn't sit on an
@@ -213,12 +212,11 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       session = recordSession({ cwd, sessionId, ...headerMeta })
     }
 
-    // tmux's clear-on-visit: a tool call clears the waiting flag of the session
-    // that ran it, and nobody else's. `session` is null whenever the payload had
-    // no cwd (see just above), in which case there is nothing to clear.
-    if (session && clearSessionWaiting(session.key)) {
-      broadcast({ type: "waiting_input", waiting: false, key: session.key, cwd: session.cwd })
-    }
+    // tmux's clear-on-visit: a tool call clears the turn-end reason of the
+    // session that ran it, and nobody else's — and only that reason, since a
+    // tool call answers neither a pending approval nor an open dialog.
+    // `session` is null whenever the payload had no cwd (see just above).
+    if (session) unmarkWaiting(session.key, "turn-end")
 
     const dim = "\x1b[2m"
     const reset = "\x1b[0m"
@@ -264,7 +262,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       verdict = "pending"
       process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}\n`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
-      decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd })
+      decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "" })
       const decisionColor = decision === "allow" ? green : red
       process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← phone\n`)
       // Phone said yes — remember this shape so future identical prompts
@@ -409,7 +407,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
 
     recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty, sessionKey: session?.key ?? "" })
-    const decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd })
+    const decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "" })
 
     const green = "\x1b[32m"
     const red = "\x1b[31m"
@@ -487,30 +485,16 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       sessionKey: session?.key ?? "",
     })
 
-    // Waiting now lives on the Session record; the host rollup is derived on
-    // read. `session` is only assigned when cwd is truthy (see above), and a
-    // stop hook with no cwd still sends the legacy keyless frame.
-    const waitingSince = (session ? setSessionWaiting(session.key, "turn-end") : 0) || Date.now()
+    // Waiting now lives on the Session record as one reason among four; the
+    // scalars are its projection and wiring/waiting.ts owns the frame. `session`
+    // is only assigned when cwd is truthy (see above), and a stop hook with no
+    // cwd still sends the legacy keyless frame.
+    if (session) markWaiting(session.key, "turn-end")
+    else announceKeylessWaiting()
     const dim = "\x1b[2m"
     const reset = "\x1b[0m"
     const magenta = "\x1b[35m"
     process.stderr.write(`${dim}[companion]${reset} ${magenta}waiting for input${reset} — phone can respond\n`)
-
-    broadcast({
-      type: "waiting_input",
-      waiting: true,
-      // Intentionally NOT broadcasting `lastMessage` here — the full
-      // assistant text already streamed via assistant_text events
-      // during the turn (and via the just-fired recordTurnEnd's
-      // transcript delta read). Including a truncated tail used to
-      // produce a duplicate, chopped copy in the iOS feed beside the
-      // full reply. lastMessage is still used for the push body
-      // below where a 220-char preview is what we want.
-      cwd,
-      key: session?.key ?? "",
-      since: waitingSince,
-      kind: "turn-end",
-    })
     // Waiting = passive nudge, no sound. Client should suppress when the
     // PWA/app is already focused on this session (handled on-device).
     if (apnsConfigured()) {

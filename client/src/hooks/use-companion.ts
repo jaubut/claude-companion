@@ -68,10 +68,24 @@ export interface FeedEvent {
 // but an older one does, and it belongs to the session that produced it.
 export interface WaitingEntry {
   cwd: string
+  // "turn-end" | "approval" | "question" | "dialog", or "" from a server that
+  // predates Phase 11.
   kind: string
+  // What is blocking: the approval/question id, the dialog's session key, ""
+  // for a turn-end. Lets a future row deep-link to the detail card.
+  ref: string
   since: number
   message: string
 }
+
+// Only a turn-end is answered by typing into the composer, so only a turn-end
+// may speak for the whole app. Defined once, read by all three rollups that
+// used to drift apart: the header text, the auto-follow target, and the alert.
+// A question or a dialog still lights its own row via waitingByKey — the PWA
+// has no pending list for either, so letting one flip the header to "Done" or
+// move the send target would be a frame of reference recomputed from whichever
+// session most recently gained a reason.
+const ANSWERS_TURN = (kind: string): boolean => kind === "turn-end" || kind === ""
 
 interface CompanionState {
   connected: boolean
@@ -126,6 +140,7 @@ function waitingFromInit(msg: Record<string, unknown>): Record<string, WaitingEn
       out[typeof w.key === "string" ? w.key : ""] = {
         cwd: typeof w.cwd === "string" ? w.cwd : "",
         kind: typeof w.kind === "string" ? w.kind : "",
+        ref: typeof w.ref === "string" ? w.ref : "",
         since: typeof w.since === "number" ? w.since : 0,
         message: "",
       }
@@ -136,6 +151,7 @@ function waitingFromInit(msg: Record<string, unknown>): Record<string, WaitingEn
     out[typeof msg.waitingKey === "string" ? msg.waitingKey : ""] = {
       cwd: typeof msg.waitingCwd === "string" ? msg.waitingCwd : "",
       kind: "",
+      ref: "",
       since: 0,
       message: "",
     }
@@ -301,6 +317,7 @@ export function useCompanion(): CompanionState & {
                     [key]: {
                       cwd: typeof msg.cwd === "string" ? msg.cwd : "",
                       kind: typeof msg.kind === "string" ? msg.kind : "",
+                      ref: typeof msg.ref === "string" ? msg.ref : "",
                       since: typeof msg.since === "number" ? msg.since : Date.now(),
                       message: typeof msg.message === "string" ? msg.message : "",
                     },
@@ -316,7 +333,10 @@ export function useCompanion(): CompanionState & {
               delete next[key]
               return { ...s, waitingByKey: next }
             })
-            if (msg.waiting) {
+            // An approval already alerted on its own `approval` frame; a
+            // question or dialog on a background session is not this app's
+            // turn to answer. Only a turn-end interrupts.
+            if (msg.waiting && ANSWERS_TURN(typeof msg.kind === "string" ? msg.kind : "")) {
               if (navigator.vibrate) navigator.vibrate([200, 100, 200])
               if (soundRef.current) playAlert("waiting")
             }
@@ -438,6 +458,7 @@ export function useCompanion(): CompanionState & {
   const newestWaiting = useMemo<(WaitingEntry & { key: string }) | null>(() => {
     let newest: (WaitingEntry & { key: string }) | null = null
     for (const [key, w] of Object.entries(state.waitingByKey)) {
+      if (!ANSWERS_TURN(w.kind)) continue
       if (!newest || w.since >= newest.since) newest = { key, ...w }
     }
     return newest

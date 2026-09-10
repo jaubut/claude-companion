@@ -95,6 +95,26 @@
           "externals": []
         },
         {
+          "path": "lib/agent-pid.ts",
+          "lines": 37,
+          "kind": "lib",
+          "exports": [
+            "isAgentPidAlive",
+            "processStartMs"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/apns.ts",
           "lines": 242,
           "kind": "lib",
@@ -323,7 +343,7 @@
         },
         {
           "path": "lib/hook-common.ts",
-          "lines": 73,
+          "lines": 95,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
@@ -331,7 +351,8 @@
             "cwdFromPayload",
             "hookDecisionResponse",
             "projectLabelFor",
-            "subtitleFor"
+            "subtitleFor",
+            "metaFromHeaders"
           ],
           "state": [],
           "emits": [],
@@ -339,7 +360,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/spawn-session.ts"
+            "lib/spawn-session.ts",
+            "lib/sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -493,7 +515,7 @@
         },
         {
           "path": "lib/pty-manager.ts",
-          "lines": 91,
+          "lines": 120,
           "kind": "lib",
           "exports": [
             "ApprovalRequest",
@@ -501,13 +523,15 @@
             "resolveApproval",
             "getPending",
             "onApprovalRequest",
-            "onApprovalExpired"
+            "onApprovalExpired",
+            "onApprovalResolved"
           ],
           "state": [
             "pending: Map",
             "expiryTimers: Map",
             "handlers: Set",
-            "expiryHandlers: Set"
+            "expiryHandlers: Set",
+            "resolvedHandlers: Set"
           ],
           "emits": [],
           "consumes": [],
@@ -590,7 +614,7 @@
         },
         {
           "path": "lib/questions.ts",
-          "lines": 202,
+          "lines": 229,
           "kind": "lib",
           "exports": [
             "QuestionOption",
@@ -602,6 +626,7 @@
             "getPendingQuestions",
             "onQuestionRequest",
             "onQuestionExpired",
+            "onQuestionResolved",
             "isQuestionTool",
             "parseQuestionInput",
             "questionDedupeKey",
@@ -613,6 +638,7 @@
             "expiryTimers: Map",
             "handlers: Set",
             "expiryHandlers: Set",
+            "resolvedHandlers: Set",
             "recentlyAnswered: Map"
           ],
           "emits": [],
@@ -670,7 +696,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 571,
+          "lines": 589,
           "kind": "lib",
           "exports": [
             "Session",
@@ -683,9 +709,9 @@
             "WaitingSession",
             "setSessionWaiting",
             "clearSessionWaiting",
+            "clearSessionWaitingByRef",
             "waitingSummary",
             "clearWaitingForTarget",
-            "processStartMs",
             "getSessionByKey",
             "resolveSession",
             "removeSessionByCwd",
@@ -693,8 +719,7 @@
             "removeSessionByTty",
             "removeSessionByTmuxPane",
             "listSessions",
-            "onSessions",
-            "metaFromHeaders"
+            "onSessions"
           ],
           "state": [
             "sessions: Map",
@@ -707,7 +732,10 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/agent-pid.ts",
+            "lib/waiting.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -829,6 +857,28 @@
           "externals": []
         },
         {
+          "path": "lib/waiting.ts",
+          "lines": 66,
+          "kind": "lib",
+          "exports": [
+            "WaitingKind",
+            "WaitingReason",
+            "WAITING_PRECEDENCE",
+            "resolveWaiting",
+            "upsertReason",
+            "removeReason"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-identity.ts",
           "lines": 127,
           "kind": "lib",
@@ -877,7 +927,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 324,
+          "lines": 326,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -885,7 +935,6 @@
           "state": [],
           "emits": [
             "resolved",
-            "waiting_input",
             "super_auto"
           ],
           "consumes": [],
@@ -986,7 +1035,8 @@
             "lib/apns.ts",
             "lib/push.ts",
             "state.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "wiring/waiting.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1026,14 +1076,13 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 579,
+          "lines": 563,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
           ],
           "state": [],
           "emits": [
-            "waiting_input",
             "user_prompt"
           ],
           "consumes": [],
@@ -1086,6 +1135,7 @@
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
             "lib/sessions.ts",
+            "wiring/waiting.ts",
             "lib/activity.ts",
             "lib/feed.ts",
             "lib/tool-format.ts",
@@ -1183,7 +1233,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 38,
+          "lines": 46,
           "kind": "lib",
           "exports": [
             "dialogWatcher"
@@ -1201,7 +1251,8 @@
             "lib/dialog-watch.ts",
             "lib/sessions.ts",
             "lib/questions.ts",
-            "lib/tmux-pane.ts"
+            "lib/tmux-pane.ts",
+            "wiring/waiting.ts"
           ],
           "listeners": [
             "dialogWatcher.start"
@@ -1211,7 +1262,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 116,
+          "lines": 136,
           "kind": "lib",
           "exports": [],
           "state": [],
@@ -1239,13 +1290,16 @@
             "lib/sessions.ts",
             "lib/session-titles.ts",
             "lib/hook-common.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/waiting.ts"
           ],
           "listeners": [
             "onApprovalRequest",
             "onApprovalExpired",
+            "onApprovalResolved",
             "onQuestionRequest",
             "onQuestionExpired",
+            "onQuestionResolved",
             "onFeed",
             "onFeedReset",
             "onActivity",
@@ -1298,6 +1352,32 @@
           "externals": []
         },
         {
+          "path": "wiring/waiting.ts",
+          "lines": 78,
+          "kind": "lib",
+          "exports": [
+            "announceWaiting",
+            "announceKeylessWaiting",
+            "markWaiting",
+            "unmarkWaiting"
+          ],
+          "state": [],
+          "emits": [
+            "waiting_input"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "state.ts",
+            "lib/sessions.ts",
+            "lib/waiting.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "ws.ts",
           "lines": 138,
           "kind": "lib",
@@ -1311,7 +1391,6 @@
             "init",
             "resolved",
             "inject_error",
-            "waiting_input",
             "pong"
           ],
           "consumes": [],
@@ -1326,7 +1405,8 @@
             "lib/activity.ts",
             "lib/feed.ts",
             "state.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "wiring/waiting.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1393,13 +1473,16 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/activity.ts",
+            "lib/agent-pid.ts",
             "lib/dialog-watch.ts",
+            "lib/hook-common.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/events.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/waiting.ts"
           ]
         },
         "recordSession": {
@@ -1664,6 +1747,49 @@
             "ws.ts"
           ]
         },
+        "WaitingKind": {
+          "module": "lib/waiting.ts",
+          "callers": [
+            "lib/sessions.ts",
+            "wiring/waiting.ts"
+          ]
+        },
+        "WaitingReason": {
+          "module": "lib/waiting.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "removeReason": {
+          "module": "lib/waiting.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "resolveWaiting": {
+          "module": "lib/waiting.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "upsertReason": {
+          "module": "lib/waiting.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "isAgentPidAlive": {
+          "module": "lib/agent-pid.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "processStartMs": {
+          "module": "lib/agent-pid.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
         "isQuestionTool": {
           "module": "lib/questions.ts",
           "callers": [
@@ -1789,14 +1915,13 @@
             "routes/api.ts#POST /api/answer",
             "routes/api.ts#POST /api/push/test",
             "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#POST /api/inject",
             "routes/api.ts#POST /api/super-auto",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/dialogs.ts",
             "wiring/events.ts",
             "wiring/orchestrator.ts",
+            "wiring/waiting.ts",
             "ws.ts"
           ]
         },
@@ -1852,6 +1977,14 @@
         },
         "clearWaitingForTarget": {
           "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "wiring/waiting.ts",
+            "ws.ts"
+          ]
+        },
+        "announceWaiting": {
+          "module": "wiring/waiting.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
             "ws.ts"
@@ -1991,25 +2124,6 @@
             "routes/hooks.ts"
           ]
         },
-        "clearSessionWaiting": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use"
-          ]
-        },
-        "metaFromHeaders": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/post-tool-use",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
         "removeSessionByCwd": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -2036,13 +2150,6 @@
           "callers": [
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "setSessionWaiting": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "forgetSession": {
@@ -2105,6 +2212,18 @@
             "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
+        "metaFromHeaders": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
         "projectLabelFor": {
           "module": "lib/hook-common.ts",
           "callers": [
@@ -2135,6 +2254,14 @@
           "module": "lib/question-driver.ts",
           "callers": [
             "routes/hooks.ts"
+          ]
+        },
+        "unmarkWaiting": {
+          "module": "wiring/waiting.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "wiring/dialogs.ts",
+            "wiring/events.ts"
           ]
         },
         "isCatastrophic": {
@@ -2220,6 +2347,20 @@
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
             "routes/orchestrator.ts#POST /api/orchestrator/task/",
             "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
+          ]
+        },
+        "markWaiting": {
+          "module": "wiring/waiting.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/dialogs.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "announceKeylessWaiting": {
+          "module": "wiring/waiting.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "onSessions": {
@@ -2399,6 +2540,12 @@
             "wiring/events.ts"
           ]
         },
+        "onApprovalResolved": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
         "onQuestionRequest": {
           "module": "lib/questions.ts",
           "callers": [
@@ -2406,6 +2553,12 @@
           ]
         },
         "onQuestionExpired": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onQuestionResolved": {
           "module": "lib/questions.ts",
           "callers": [
             "wiring/events.ts"
@@ -2511,6 +2664,30 @@
           "module": "lib/orchestrator-brain.ts",
           "callers": [
             "wiring/orchestrator.ts"
+          ]
+        },
+        "clearSessionWaiting": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/waiting.ts"
+          ]
+        },
+        "clearSessionWaitingByRef": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/waiting.ts"
+          ]
+        },
+        "getSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/waiting.ts"
+          ]
+        },
+        "setSessionWaiting": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/waiting.ts"
           ]
         }
       },
@@ -2712,7 +2889,7 @@
         },
         {
           "path": "components/target-bar.tsx",
-          "lines": 144,
+          "lines": 152,
           "kind": "view",
           "exports": [
             "TargetBar"
@@ -2758,7 +2935,7 @@
         },
         {
           "path": "hooks/use-companion.ts",
-          "lines": 511,
+          "lines": 532,
           "kind": "lib",
           "exports": [
             "useCompanion"
