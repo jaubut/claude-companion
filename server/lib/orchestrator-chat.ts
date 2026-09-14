@@ -171,7 +171,7 @@ export function appendTurn(role: TurnRole, text: string, taskId: string | null =
 //
 // It used to select the OLDEST `limit` (ORDER BY created_at ASC LIMIT ?), so a
 // channel past the limit froze: every new turn — worker replies included — was
-// written, logged, and then invisible to both callers. Confirmed on Zettlab
+// written, logged, and then invisible to both callers. Confirmed on the Linux host
 // #General at 200 turns during the Phase 8 e2e (2026-09-09).
 //
 // Two callers, and the bug hurt each differently: routes/orchestrator.ts's

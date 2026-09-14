@@ -58,7 +58,7 @@ export interface ArchMap {
 }
 
 // --- Fleet: many repos' committed maps, aggregated by external package -------
-// The roster lists repos with candidate paths (Mac and Zettlab differ); the
+// The roster lists repos with candidate paths (Mac and Linux differ); the
 // first existing path with an architecture.json wins. The aggregation reads
 // committed maps only — it never scans a sibling.
 export interface RosterEntry {

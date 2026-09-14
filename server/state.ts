@@ -19,6 +19,6 @@ export function broadcast(data: Record<string, unknown>): void {
 }
 
 // Who this companion is — the phone shows it as a per-session host badge
-// (Mac vs Zettlab) instead of guessing from URLs. Hostname's first label,
+// (Mac vs Linux host) instead of guessing from URLs. Hostname's first label,
 // platform for the icon.
 export const HOST_INFO = { name: hostname().split(".")[0] ?? "", platform: process.platform }

@@ -216,7 +216,7 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent, env?: Record<stri
 // subsequent phone messages route via tmux send-keys exactly like the Mac
 // path.
 //
-// Attaching from a human shell (when you want to peek): ssh aubut@zettlab
+// Attaching from a human shell (when you want to peek): ssh aubut@<linux-host>
 // then `tmux attach -t cc-<name>`. detach-on-destroy=on so claude exiting
 // cleanly drops you back to the shell instead of switching sessions.
 async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {

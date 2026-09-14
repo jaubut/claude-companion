@@ -194,7 +194,7 @@ export function parseQuestionInput(input: unknown): QuestionItem[] | null {
 // ---- hook dedupe ------------------------------------------------------------
 //
 // Claude Code can fire BOTH PreToolUse and PermissionRequest for one
-// AskUserQuestion call (Zettlab wires both hooks with matcher "*"). Without
+// AskUserQuestion call (the Linux host wires both hooks with matcher "*"). Without
 // this, the phone gets two cards and two drivers type into one picker (seen
 // live 2026-09-05: "answered ← phone" + "key-seq delivered" twice per
 // question, picker left half-filled, never submitted). The first hook to see
