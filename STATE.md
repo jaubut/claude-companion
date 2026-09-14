@@ -31,6 +31,23 @@ Last updated: 2026-09-13
 
 ## Change Plans
 
+### Change Plan — phase16-command-suggest (2026-09-14) — ✅ shipped #31 + #32, both hosts deployed + prod-verified
+**Request:** Jeremie, using build 5 on his phone: *"the interactive /command doesnt work."* There was no slash UI at all — typing `/model` injected the literal text and the terminal ran it, but nothing listed or completed a command. This phase jumped the signed queue ahead of effort control, because one session of real use outranked the order the table was written in.
+
+**State decision — Claude Code does the filtering, we mirror it.** Three sources were considered: a list bundled in the app or server (rots the moment a command, skill or plugin is added, and this account has 100+, most of them his own — the same reasoning that killed a hardcoded model list); paging the menu with Down to enumerate it (dozens of round trips through a live terminal, and the pane only shows a window); and `/help` (opens a tabbed dialog, worse to drive than the menu). So the prefix is typed into the session's own input box and the menu it renders is read back.
+
+**What the build discovered that the plan had wrong:** Claude Code's command matching is **fuzzy and ranked**, not prefix-only — `/eff` returns `/effort`, then `/caveman:caveman`, then `/marketing-psychology`. That ranking is passed through untouched rather than re-sorted.
+
+**The menu is not a dialog.** No cursor marker, no hint footer, so `parseDialog` ignores it by construction and `lib/command-menu.ts` reads it instead, folding wrapped description lines back into their row and refusing to fold the startup header into the last one.
+
+**Contracts:** `POST /api/command/suggest {key, prefix}` → `{commands:[{name, description}]}`. New. Consumers: the iOS composer (separate repo).
+
+**Guards, because this types into a live input box:** refuses `input_busy` when the user has their own text there rather than destroying it with the `C-u` used to clear; `C-u` before AND after (Escape does not clear the line — it closes the menu and keeps the text, which is how an early attempt typed `//`); refuses mid-turn, on an open dialog, or with no pane; serialised per session; polls for the menu instead of sleeping a fixed amount.
+
+**Verified 2026-09-14 on prod, both hosts.** `/mo` → `/model, /mobile, /mood-board`; `/eff` → `/effort, /caveman:caveman, /marketing-psychology`; `/git` → `/git-commit, /canary, /install-github-app`; bare `/` lists the menu head. Input box left as found. A line holding the user's own text ("deploy the thing") refuses and the text survives.
+
+**#32, and the reason prod verify keeps earning its place:** the first prod run refused EVERY query with `input_busy`. An empty input box is not blank on screen — Claude Code renders a rotating hint in it, `Try "write a test for <filepath>"`, and `inputLine()` read that as the user's typing. The isolated run had passed because that session had already been typed into. `lib/dialogs.ts` already carried the same shape; this is the second module to learn it.
+
 ### Change Plan — phase14a-model-control-server (2026-09-13) — ✅ shipped #28 + #29, both hosts deployed + prod-verified
 **Request:** PRJ-OR1T Phase 14, rows A1·A2·A3 of the signed gap table. Native model control on the phone: the list, the current selection, and setting it — at both scopes rc has (this session only, or also the new-session default).
 
@@ -865,3 +882,6 @@ Leaves first, composites after; each step is cut → import back → `bun run bu
 
 - **A fixed sleep after a synthetic keystroke is always a guess** (2026-09-13, Phase 14a). Three bugs in two days were the same shape: inject reading the pane before the redraw (Phase 13's accepted race), `/api/model/cancel` reporting `closed:false` on a cancel that worked, and `/api/model/open` returning `not_a_picker` with the picker on screen. The last one only appeared in **prod** — the isolated run passed — because `dialog-watch.ts` gates its pane capture on Claude Code's `~/.claude/sessions/<pid>.json` saying status `waiting`, and that file has its own cadence independent of the pane. Poll until the pane agrees (`settle()`, 250ms × 3s, both directions) and return what the last read actually saw. Never assert success from a timer.
 - **`"<synthetic>"` is not a model** (2026-09-13). Claude Code writes it as `message.model` on messages it generated itself — a usage-limit notice, an interrupted turn. Found live on a session that had hit its Fable limit, where it was flowing into `Session.model` as if it were a real model id. Any reader of `message.model` must filter it.
+- **An empty Claude Code input box is not blank** (2026-09-14): it renders a rotating placeholder, `Try "write a test for <filepath>"`. Anything reading the prompt line must treat that as empty — `lib/dialogs.ts` and now `lib/command-menu.ts` both do. Caught in prod after an isolated run passed, because the isolated session had already been typed into and a fresh one had not.
+- **Escape does not clear Claude Code's input line** (2026-09-14): it closes whatever menu is open and leaves the text. `C-u` is the kill-line. An early attempt at command suggestions typed `/` on top of an existing `/` and got `//`, which matches nothing.
+- **Claude Code's slash matching is fuzzy and ranked, not prefix-only** (2026-09-14): `/eff` → `/effort`, `/caveman:caveman`, `/marketing-psychology`. Mirror the ranking, never re-sort it — the ranking is the product.
