@@ -1,6 +1,6 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-09-07
+Last updated: 2026-09-13
 
 ## Active Decisions
 
@@ -709,6 +709,15 @@ Leaves first, composites after; each step is cut → import back → `bun run bu
 - [x] Server (PR #6): `orchestrator-queue.ts` admission + FIFO drain (on worker exit, boot, 30s tick); `auto_dispatch` on channels + `channelTrust`; `POST /task/<id>/cancel` (kills tmux, flips auto off); `POST /channels/<id>/auto`; `/thread` returns `queue {cap, live, queued}`; statuses `queued` + `cancelled`. 22 bun tests, route smoke, two real e2e on Zettlab: 4 dispatches at cap 3 → 1 queued → cancel freed the slot and the queued task started in <5s; natural finish → drain → all 4 DONE with log tails; dead-pane backstop had flipped the killed workers to `error` — 2026-09-05
 - [x] iOS (iOS repo PR #3, merged): control-room Tasks panel (queue summary, Auto-dispatch toggle + trust line, rows live → queued #N → finished, stop/remove behind a confirmation, watch), live worker tail cards + collapsed `logTail`, ramp hint, `auto` header badge. xcodebuild green; mobile-ux-auditor 5.5 → 9.5 after fixes, residual closed. Not yet on a device — needs a TestFlight build — 2026-09-05
 
+### Phase 12 — /rc parity (gate: teardown + signed gap table)
+- [x] **Gating experiment GREEN** — `/model <id>` injected as plain text through `tmux send-keys` (the `injectText` path) sets the model with **no picker**, on Claude Code 2.1.270. `/model bogus-model-xyz` → `Model 'bogus-model-xyz' not found`, refused not stored. Model parity is UI work, not a screen-scrape problem — 2026-09-13
+- [x] `docs/rc-teardown.md` — desk half, from the official docs (code.claude.com/docs/en/remote-control, fetched 2026-09-13, quoted verbatim) plus the live experiment. Device half left explicitly open as 7 named items — 2026-09-13
+- [x] `docs/rc-gap-table.md` — 14 grounded rows (adopt/skip/already-ours) + 7 rows blocked on the device half + a proposed Phase 13-15. **UNSIGNED** — 2026-09-13
+- [ ] Jeremie signs the adopt column → Phase 12 closes
+- [ ] Device half: 7 items, needs the Claude app on a real phone
+- **Note correction:** the project note claimed this doc was written and committed on 2026-09-12. It was not — no file, branch, or commit existed on either host. This is its first version.
+
+
 
 - [x] Phase 0: memory-proof gate (kb-memory-proof suite, 5/5) — 2026-06-22
 - [x] Phase 1: orchestrator-chat.ts (SQLite thread + tasks) — 2026-06-22
@@ -773,3 +782,7 @@ Leaves first, composites after; each step is cut → import back → `bun run bu
   - The mobile-ux gate (frontend-mobile.md) applies to native SwiftUI too (STATIC mode). Found + fixed: input bar needs `.safeAreaInset(edge:.bottom)` not fixed padding; bar buttons need 44pt hit area even if visually smaller (`.frame(44).contentShape(Rectangle())`); TextField ≥16pt to avoid iOS auto-zoom; never `focused=true` during sheet entrance animation.
 - **Phase 6a channels** (2026-07-19): `thread_id` was designed non-breaking (default `'main'`) so activating it was mostly plumbing the existing param through callers + a one-time `main→general` backfill. The one real bug class: a task's status/worker turns silently defaulted to General because `appendTurn`'s `threadId` defaults — every `orchAppendTurn` carrying a `taskId` must pass `task.threadId`. Test the real sqlite via `COMPANION_DB_PATH` (isolated file), never a mock. Channels are USER-CREATED (not auto-from-cwd) per Jeremie; dispatch falls back to the channel's bound cwd.
 - **Phase 6b channels (iOS)** (2026-07-19): keep the flat `orchestratorTurns`/`orchestratorTasks` stores global and filter by `activeChannelId` in computed slices — but `loadOrchestratorThread` must MERGE (upsert by id), not replace, or switching channels drops the other channels' already-loaded history (the thread response only carries the active channel). Menu row selection: use `Toggle`, not `Button`+SF-symbol — the symbol swap is invisible to VoiceOver; Toggle gives the native checkmark + spoken "selected" for free (mobile-ux HIGH). SourceKit still cross-file-blind ("Cannot find type AppState/Theme…") — xcodebuild is the only real check, compiled clean.
+
+- **`/model <id>` as text is picker-free, but always writes the new-session default** (2026-09-13, Claude Code 2.1.270, measured not recalled). Every successful set replies "and saved as your default for new sessions". Session-only scope lives exclusively behind the picker's `s to use this session only` hint — which `/api/dialog/key` already supports (it takes one literal char). So a phone model control has two branches, not one, and choosing the text form silently rewrites Jeremie's default. Model IDs accept both `opus` and `claude-opus-5[1m]`/`opus[1m]`; the `[1m]` suffix survives the short form.
+- **`/effort <level>` is NOT unconditionally picker-free** (2026-09-13): when the conversation is cached for the current level it opens a "Change effort level?" yes/no confirm. Effort parity needs the dialog mirror as a fallback; model parity does not.
+- **An open dialog eats the next injected line** (2026-09-13, found by accident during the Phase 12 experiment): with that effort confirm on screen, an injected `/model opus` landed in the picker and Enter confirmed the cursor row — the command never ran. `/api/inject` (`server/routes/api.ts:159`) checks registration and tty, clears the turn-end reason, and injects blind; `dialogWatcher.current()` already knows a dialog is open for that session key and is never consulted. Every phone-sent prompt arriving during a dialog silently answers the dialog. Filed on PRJ-OR1T; must land before Phase 12 sends more commands.
