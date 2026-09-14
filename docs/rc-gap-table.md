@@ -36,13 +36,24 @@ The one thing parity still can't be scoped from: **table B is still unknown.** C
 - **A11** — rc expires a forwarded dialog because the host may be unattended. Ours is watched live, and since A5 an inject refuses while a dialog is open rather than answering it. Turning expiry on means a dialog on your own machine can answer itself with a default you never chose. Default off; turn it on only if an unattended host becomes a real shape.
 - **A12** — rc pushes whenever Claude decides. The auto-judge exists precisely to not do that. Relay mode is there for parity and for judging the difference side by side; curated stays the default.
 
-## B. Blocked rows — need the device half of the teardown
+## B. The device half — PARTIALLY ANSWERED 2026-09-13, from real use
 
-Do not fill these from memory of the Claude app. Each needs a real session on a real phone (teardown §4).
+Build 5 landed on Jeremie's phone and he used it. That is the device half starting to report, and it did not report what this table expected. Verbatim: *"im seeing the model switcher but the interactive /command doesnt work, its not a floating chat bar, the voice command doesnt work, etc. its not like claude.ai app."*
+
+Model control (A1–A3) **works on the phone** — first confirmation from a device. Everything else he reached for was the composer, and the composer is where the gap actually lives:
+
+| # | Reported | Reality in the code | Status |
+|---|---|---|---|
+| B1a | voice command doesn't work | the mic button was a **stub** — `// v2: SFSpeechRecognizer`, empty action, shipped since build 1. A control that looked real and did nothing | **fixed, build 6** — real `SFSpeechRecognizer` dictation, on-device where supported, live partials |
+| B1b | not a floating chat bar | composer was a full-width slab welded to the bottom edge | **fixed, build 6** — inset floating bar |
+| B1c | interactive `/command` doesn't work | no slash UI at all. Typing `/model` injects the literal text; the terminal runs it, but there is no command list, no autocomplete, no picker | **open — needs its own phase** |
+
+**This reorders the table.** The signed order had 15 (effort) → 16 (commands) → … with composer work nowhere, because nobody had used the app. One session with it says the composer outranks all of it. The `/command` picker should be the next phase after this build, and the design is already proven: parse Claude Code's own command list off the pane exactly the way `/api/model/open` parses the model picker — never a hardcoded command list (same reasoning as A3).
+
+**Still unasked, and still not to be written from memory:**
 
 | # | Capability | Blocked on |
 |---|---|---|
-| B1 | Chat composer fidelity (multi-line, markdown, edit/resend, stop) | device item 1 |
 | B2 | History depth + pagination in a long thread | device item 2 — also gated by our own `getThread` bug (task `f65d35e7`) |
 | B3 | Model/effort controls as UI — is scope visible to the user? | device item 3 |
 | B4 | Permission + question card shape on the phone | device item 4 |
