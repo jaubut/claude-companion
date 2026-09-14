@@ -31,7 +31,7 @@ Last updated: 2026-09-13
 
 ## Change Plans
 
-### Change Plan — phase13-inject-dialog-guard (2026-09-13) — ✅ built, PR #26 open
+### Change Plan — phase13-inject-dialog-guard (2026-09-13) — ✅ shipped #26 (c4da73a), both hosts deployed 2026-09-13
 **Request:** PRJ-OR1T Phase 13, task `71bb6b71`. Refuse an inject when a Claude Code dialog is open on the target session, instead of typing into the dialog. Found live 2026-09-13 during the Phase 12 experiment (PR #24, `docs/rc-teardown.md` Finding 3c): with a "Change effort level?" confirm on screen, an injected `/model opus` landed in the picker and Enter confirmed the cursor row — the prompt was lost and an unrelated dialog got an answer the user never chose.
 
 **State decision:** the dialog state already exists and is authoritative — `dialogWatcher.current()` is keyed by session key and already excludes question pickers (`dialog-watch.ts` closes `kind === "question"` before it reaches `current()`, because the hooks own those end-to-end). No new state. The only staleness risk is the 2s poll, handled by calling `dialogWatcher.refresh(key)` once on a suspected hit and re-reading before refusing — which also closes a stale badge as a side effect.
@@ -58,6 +58,10 @@ Last updated: 2026-09-13
 **Verified 2026-09-13** — isolated server (`COMPANION_PORT=4299`, own `COMPANION_DB_PATH`), real `claude` in a real tmux pane, discovered by ps, real `/model` picker parsed by the live watcher. 5 passes: **V1** no dialog → `200 {ok:true}`, text delivered. **V2** picker open → `409 {error:"dialog_open"}` carrying the 5-row dialog; pane untouched (cursor still on row 2, model unchanged); `waitingKind` stayed `dialog` with the same `since` — the badge was NOT cleared. **V3** refuse, Escape, settle → `200`, text delivered, log names the session. **V4** WS `input` with the picker open → `inject_error` frame, `error:"dialog_open"`, dialog carried. **V5** WS `input`, no dialog → injected, no error frame. Across 400 lines of scrollback the two refused strings appear **0 times** — neither refused inject reached the pane. `bun test` 125 pass / 0 fail (7 new), `tsc -p tsconfig.server.json` clean, client build clean.
 
 **Known race (accepted, not fixed):** sending Escape and the inject in the same instant still refuses — the recheck's `capture-pane` can beat the pane redraw. The badge clears on the next poll and a resend works. Closing that would need an event-driven pane, not a poll.
+
+**Prod verify after deploy (2026-09-13)** — both hosts on `c4da73a`, PWA rebuilt, Mac via `launchctl kickstart`, Zettlab via `systemctl --user restart`. Each host: a scratch `claude` in a real tmux pane, `/model` open, `POST /api/inject` → **409 `dialog_open`** carrying the 5-row picker; Escape → **200**, text delivered; the refused string appears **0 times** in either pane.
+
+**Incident during that verify (my own, not the code's):** the first Zettlab attempt failed to start its scratch session, so the key resolved empty — and the script POSTed anyway. With no key, `/api/inject` takes its documented frontmost fallback (`listSessions().find(s => !!s.tty)`) and delivered the test string into a real session, the fleet-archmap one on pane `%31`. It hit that account's Fable usage limit on arrival, so the turn ended in 0s with no tools run and nothing touched; one stray user line remains in that transcript. Lesson for any future prod verify script: **abort when the target key is empty — never let a verify fall through to the frontmost fallback.** Worth knowing the fallback exists and is reachable by any keyless caller; the iOS app and PWA always send a key.
 
 **Out of scope:** iOS message copy for `dialog_open` (separate repo + TestFlight build; it already degrades to the raw reason string). The dispatch/spawn delivery path keeps its own readiness + Escape-the-dialog handling — untouched.
 
