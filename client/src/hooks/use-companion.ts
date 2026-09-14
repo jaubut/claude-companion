@@ -96,7 +96,9 @@ interface CompanionState {
   activities: Activity[]
   feed: FeedEvent[]
   sessions: Session[]
-  injectError: { error: string; key?: string; cwd?: string; at: number } | null
+  // `dialogTitle` is set only for error "dialog_open": the target has a Claude
+  // Code dialog up, so nothing can be typed into it until it is answered.
+  injectError: { error: string; key?: string; cwd?: string; dialogTitle?: string; at: number } | null
 }
 
 const SOUND_KEY = "companion.sound"
@@ -377,7 +379,13 @@ export function useCompanion(): CompanionState & {
           case "inject_error":
             setState(s => ({
               ...s,
-              injectError: { error: String(msg.error ?? "unknown"), key: msg.key, cwd: msg.cwd, at: Date.now() },
+              injectError: {
+                error: String(msg.error ?? "unknown"),
+                key: msg.key,
+                cwd: msg.cwd,
+                dialogTitle: (msg.dialog as { title?: string } | undefined)?.title,
+                at: Date.now(),
+              },
             }))
             if (navigator.vibrate) navigator.vibrate([300, 100, 300])
             break
