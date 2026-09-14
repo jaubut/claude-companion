@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs"
 import { appendFeedEvent } from "./feed"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
@@ -45,6 +45,16 @@ export interface PathState {
   // 1.5s heartbeat refreshes activity.lastBeatAt and never this — the host
   // rollup orders on lastEventAt, so a beat must not re-sort the sessions.
   lastEventAt: number
+  // The model id off the last assistant message ("claude-opus-5"). Claude Code
+  // has no other cheap source: ~/.claude/sessions/<pid>.json carries no model
+  // field, and the `/model` picker only speaks while it is open. Read from the
+  // same `entry.message` this module already parses for usage, so it costs
+  // nothing extra (PRJ-OR1T Phase 14).
+  //
+  // It is the model that ANSWERED, not the one currently selected: empty until
+  // the first assistant turn, and stale between a switch and the next turn.
+  // The picker is authoritative whenever it is open.
+  lastModel: string
 }
 
 const states = new Map<string, PathState>()
@@ -100,9 +110,69 @@ export function getState(meta: SessionMeta): PathState {
     streamedThisTurn: false,
     activity: null,
     lastEventAt: 0,
+    lastModel: "",
   }
   states.set(key, next)
   return next
+}
+
+// Claude Code writes "<synthetic>" as the model on messages it generated
+// itself rather than the API — a usage-limit notice, an interrupted turn. It is
+// a marker, not a model, and must never reach a client as one. Seen live
+// 2026-09-13 on a session that had hit its Fable limit.
+function isRealModel(model: unknown): model is string {
+  return typeof model === "string" && model.length > 0 && !model.startsWith("<")
+}
+
+// The last-answered model for a session, matched the way the rest of this
+// module matches: transcript path first, then sessionId, then tty, then cwd.
+// Returns "" when nothing has answered yet — callers must render absence, not
+// guess a default.
+export function modelForIdentity(meta: { transcriptPath?: string; sessionId?: string; tty?: string; cwd?: string }): string {
+  for (const key of [meta.transcriptPath, meta.sessionId, meta.tty, meta.cwd]) {
+    if (!key) continue
+    const hit = states.get(key)
+    if (hit?.lastModel) return hit.lastModel
+  }
+  // Fall back to a scan: a state can be keyed by its transcript path while the
+  // caller only knows the tty (the record migrates as identity strengthens).
+  for (const st of states.values()) {
+    if (!st.lastModel) continue
+    if (meta.sessionId && st.sessionId === meta.sessionId) return st.lastModel
+    if (meta.tty && st.tty === meta.tty) return st.lastModel
+  }
+  return ""
+}
+
+// The model off the newest assistant message in a transcript on disk, read
+// straight from the file. `lastModel` above only fills in once this process has
+// read a delta for that session, so on a freshly started server — every deploy —
+// an idle session would have no model until it next answered. This is the
+// one-shot backfill for that case; the delta reader keeps it current after.
+//
+// Bounded tail read: transcripts run to megabytes and we only need the last
+// assistant line. A truncated first line just fails JSON.parse and is skipped.
+export function modelFromTranscript(path: string, tailBytes = 131_072): string {
+  try {
+    const size = statSync(path).size
+    const start = Math.max(0, size - tailBytes)
+    const len = size - start
+    if (len <= 0) return ""
+    const fd = openSync(path, "r")
+    const buf = Buffer.alloc(len)
+    try { readSync(fd, buf, 0, len, start) } finally { closeSync(fd) }
+    const lines = buf.toString("utf8").split("\n")
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
+      if (!line?.trim()) continue
+      try {
+        const entry = JSON.parse(line) as { message?: { model?: string } }
+        const model = entry.message?.model
+        if (isRealModel(model)) return model
+      } catch { /* partial or non-JSON line */ }
+    }
+  } catch { /* no transcript on disk */ }
+  return ""
 }
 
 export function identityFor(s: PathState): { cwd: string; tty?: string; sessionId?: string } {
@@ -163,6 +233,10 @@ export function readTranscriptDelta(
         (usage.output_tokens ?? 0)
       if (total > s.lastTokens) s.lastTokens = total
     }
+
+    // Model id rides the same assistant message as usage above.
+    const model = (entry.message as { model?: string } | undefined)?.model
+    if (isRealModel(model)) s.lastModel = model
 
     if (entry.type !== "assistant") continue
     const content = (entry.message as { content?: unknown })?.content

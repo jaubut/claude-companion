@@ -6,8 +6,9 @@ import { onFeed, onFeedReset, type FeedEvent } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import { onSessions, setTitleResolver, type Session } from "../lib/sessions"
-import { resolveTitle } from "../lib/session-titles"
+import { onSessions, setSessionModel, setTitleResolver, type Session } from "../lib/sessions"
+import { resolveTitle, transcriptPath } from "../lib/session-titles"
+import { modelForIdentity, modelFromTranscript } from "../lib/transcript"
 import { projectLabelFor, agentTitle, subtitleFor } from "../lib/hook-common"
 import { reconcileDispatch } from "./orchestrator"
 import { markWaiting, unmarkWaiting } from "./waiting"
@@ -122,7 +123,25 @@ onActivity((activity: Activity | null, activities: Activity[], key: string) => {
   broadcast({ type: "activity", activity, key, activities })
 })
 
+// Session keys whose transcript has already been read once for a model.
+const modelProbed = new Set<string>()
+
 onSessions((sessions: Session[]) => {
+  // Stamp each session with the model off its last assistant message BEFORE
+  // the frame goes out (PRJ-OR1T Phase 14). setSessionModel mutates the live
+  // record and deliberately does not emit — we are already inside one.
+  for (const s of sessions) {
+    let model = modelForIdentity({ sessionId: s.sessionId, tty: s.tty, cwd: s.cwd })
+    // Nothing in memory: this process has not read a turn for that session, the
+    // normal case for every session on a freshly started server. Read the
+    // transcript tail once. A session that has genuinely never answered stays
+    // blank and is not probed again — the delta reader stamps it when it does.
+    if (!model && s.sessionId && !modelProbed.has(s.key)) {
+      modelProbed.add(s.key)
+      model = modelFromTranscript(transcriptPath(s.cwd, s.sessionId))
+    }
+    if (model) setSessionModel(s.key, model)
+  }
   broadcast({ type: "sessions", sessions })
   reconcileDispatch(sessions)
   // A SIGKILLed terminal fires no session-end hook — this is the only thing

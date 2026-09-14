@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test"
+import { test, expect, describe } from "bun:test"
 import { mkdtempSync, writeFileSync, appendFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { getState, readTranscriptDelta, hashText } from "./transcript"
+import { getState, modelFromTranscript, readTranscriptDelta, hashText } from "./transcript"
 import { onFeed, type FeedEvent } from "./feed"
 
 // Pins the contract recordTurnEnd's retry depends on: the delta reader
@@ -62,4 +62,49 @@ test("getState migrates a weak-keyed record when the transcript path arrives", (
   expect(strong).toBe(weak)
   expect(strong.transcriptPath).toBe(join(dir, "d.jsonl"))
   expect(strong.turnStartedAt).toBe(42)
+})
+
+describe("model capture (PRJ-OR1T Phase 14)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cc-model-"))
+
+  function write(name: string, lines: object[]): string {
+    const p = join(dir, name)
+    writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n")
+    return p
+  }
+
+  test("reads the model off the newest assistant message", () => {
+    const p = write("a.jsonl", [
+      { type: "assistant", message: { model: "claude-sonnet-5", content: [] } },
+      { type: "user", message: { content: [] } },
+      { type: "assistant", message: { model: "claude-opus-5", content: [] } },
+    ])
+    expect(modelFromTranscript(p)).toBe("claude-opus-5")
+  })
+
+  test("skips Claude Code's <synthetic> marker — a limit notice is not a model", () => {
+    const p = write("b.jsonl", [
+      { type: "assistant", message: { model: "claude-fable-5-1", content: [] } },
+      { type: "assistant", message: { model: "<synthetic>", content: [] } },
+    ])
+    expect(modelFromTranscript(p)).toBe("claude-fable-5-1")
+  })
+
+  test("a transcript with no assistant turn yields '' — never a guessed default", () => {
+    const p = write("c.jsonl", [{ type: "user", message: { content: [] } }])
+    expect(modelFromTranscript(p)).toBe("")
+  })
+
+  test("a missing file yields '' rather than throwing", () => {
+    expect(modelFromTranscript(join(dir, "nope.jsonl"))).toBe("")
+  })
+
+  test("a truncated first line from the bounded tail read is skipped, not fatal", () => {
+    const p = write("d.jsonl", [
+      { type: "assistant", message: { model: "claude-haiku-4-5", content: [] } },
+    ])
+    // Tail smaller than the line forces a partial leading line.
+    expect(modelFromTranscript(p, 20)).toBe("")
+    expect(modelFromTranscript(p)).toBe("claude-haiku-4-5")
+  })
 })

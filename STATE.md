@@ -31,6 +31,46 @@ Last updated: 2026-09-13
 
 ## Change Plans
 
+### Change Plan — phase14a-model-control-server (2026-09-13) — ✅ built, PR #28
+**Request:** PRJ-OR1T Phase 14, rows A1·A2·A3 of the signed gap table. Native model control on the phone: the list, the current selection, and setting it — at both scopes rc has (this session only, or also the new-session default).
+
+**State decision — the picker is the source of truth, not a table we maintain.** A3 says never hardcode the model list, and the only thing that knows this account's real entitlements is Claude Code's own `/model` picker (here: Default · Opus 1M · Fable · Sonnet · Haiku, with a ✔ on the current one). Two candidate sources were rejected: `~/.claude/sessions/<pid>.json` has no model field (checked), and a hardcoded id list rots the day Anthropic ships a model.
+
+**Design decision — drive the picker, don't emit `/model <id>`.** The teardown proved the text form works and is picker-free, and the gap table signed A1 on that basis. Building it out changed the answer: **the text form needs a model id, and the picker only gives display labels** ("Opus (1M context)"), so a label→id map would be exactly the hardcoding A3 forbids. And since the list has to be read off the picker anyway, opening it is not an extra cost. So one path, built on primitives that already exist and already work:
+
+  open `/model` → `parseDialog` gives rows + ✔ → `/api/dialog/pick` arrows to the chosen row → `/api/dialog/key` confirms with **Enter** (also sets the new-session default) or **`s`** (this session only)
+
+That is A1, A2 and A3 in one mechanism, with no id mapping and no hardcoded list. `/model <id>` stays documented in the teardown as a future one-round-trip optimization; it is not needed to ship parity, and the scope distinction it *cannot* express (`s`) is the one rc exposes natively.
+
+**Second source, cheap:** the always-visible per-session model label comes from the transcript, not the picker. `lib/transcript.ts` already parses every line and already reads `entry.message.usage`; `entry.message.model` sits beside it (verified: `claude-opus-5`). Three lines in the existing loop, no new I/O, no dialog. Caveat to carry: it is the model that **answered last**, so a session with no assistant turn yet has none, and a switch made after the last turn shows stale until the next one. The picker is authoritative whenever it is open.
+
+**Contracts touched:**
+| Contract | Change | Real consumers | Compat |
+|---|---|---|---|
+| `Session` (in `sessions` frame, `/api/status`, `init`) | new `model` field | iOS `Models.swift` Session (explicit CodingKeys, ignores unknown), PWA `Session` type | additive |
+| `POST /api/model/open` | new — ensure the picker is open on a session, return parsed rows + current | none yet (14b PWA, 14c iOS) | new |
+| `POST /api/model/set` | new — `{key, index, scope:"session"\|"default"}` → pick + confirm, return the new selection | none yet | new |
+
+**Files (one owner each):** `server/lib/transcript.ts` (model capture), `server/lib/sessions.ts` (field), `server/routes/model.ts` (new), `server/companion-server.ts` (route chain), `server/lib/model-control.ts` (new — the pure decide/verify half, testable), `server/lib/model-control.test.ts` (new), `STATE.md`.
+
+**Fan-in to guard:** `/api/dialog/*` is the shared driver — the new routes must go through it rather than growing a second `tmux send-keys` site (there are already two inject sites, which is how the Phase 13 bug survived in both). The A5 inject guard is unaffected: this flow never calls `/api/inject`.
+
+**Risks:** (1) opening a picker on a session the user is mid-turn in is intrusive — refuse unless the session is idle/waiting and no other dialog is open. (2) Two phones driving one picker at once — serialize per session key. (3) A picker left open if the client disappears mid-flow — `set` always lands on a terminal key (Enter/`s`/Escape), and dialog-watch reports what is actually on screen either way.
+
+**Done when:**
+- `open` on an idle session returns the real rows and marks the current one; on a busy session or one with another dialog up, refuses with a distinct error.
+- `set` with `scope:"session"` lands on `s`, `scope:"default"` on Enter, and the returned selection reflects the pane.
+- `Session.model` shows the last-answered model and is absent, not wrong, before the first turn.
+- `bun test` green, tsc clean, archmap regenerated + lint clean, PR to main.
+
+**Verified 2026-09-13 on an isolated server against a real `claude` pane and the real picker.** V1 `open` → the five real rows with ✔ on the current one and the picker's own hints (`Enter=set as default`, `s=use this session only`, `Escape=cancel`). **V2 the scope proof:** `set index=3 scope=session` moved ✔ to Sonnet and the statusline to `Sonnet 5`, while row 1 still read *"Default (recommended) — Opus 5 with 1M context"* — the saved default untouched, which is the one thing `/model <id>` cannot express. V3 `scope=default` back to Opus 1M landed via Enter. V4 `cancel` closed the picker and reported `closed:true`. V5 `/mcp` open → `409 other_dialog`. V6 `set` with no picker → `409 not_a_picker`. 146 tests, tsc clean, archmap lint clean.
+
+**Two bugs found by the verify, both fixed here:** `cancel` waited `KEY_GAP_MS` before re-reading and reported `closed:false` on a cancel that had worked (the Phase 13 redraw race again — it now waits for the redraw). And the transcript carried `"<synthetic>"` as a model on a session that had hit its Fable usage limit; that marker was reaching `Session.model` as if it were a model. Filtered, with a test.
+
+**Freshness, honestly:** `Session.model` is the last-ANSWERED model. `lastModel` only fills once this process reads a delta, so on a freshly started server every idle session would have shown blank — after a deploy, all of them. Added a one-shot bounded tail read of the transcript (128 KB from the end) per session, which took a cold server from 0/16 sessions labelled to 13/16. The three blanks are sessions that have genuinely never answered, and they render as absence. The picker stays authoritative: `/api/model/open` reads the pane, never this field.
+
+**Out of scope (14b/14c):** PWA sheet, iOS sheet, and the `/model <id>` fast path.
+
 ### Change Plan — phase13-inject-dialog-guard (2026-09-13) — ✅ shipped #26 (c4da73a), both hosts deployed 2026-09-13
 **Request:** PRJ-OR1T Phase 13, task `71bb6b71`. Refuse an inject when a Claude Code dialog is open on the target session, instead of typing into the dialog. Found live 2026-09-13 during the Phase 12 experiment (PR #24, `docs/rc-teardown.md` Finding 3c): with a "Change effort level?" confirm on screen, an injected `/model opus` landed in the picker and Enter confirmed the cursor row — the prompt was lost and an unrelated dialog got an answer the user never chose.
 

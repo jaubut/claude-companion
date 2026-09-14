@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 86,
+          "lines": 87,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -54,6 +54,7 @@
             "routes/api.ts",
             "routes/orchestrator.ts",
             "routes/dialogs.ts",
+            "routes/model.ts",
             "ws.ts"
           ],
           "listeners": [],
@@ -441,6 +442,34 @@
           "externals": []
         },
         {
+          "path": "lib/model-control.ts",
+          "lines": 115,
+          "kind": "lib",
+          "exports": [
+            "ModelChoice",
+            "ModelScope",
+            "ModelRefusalCode",
+            "ModelRefusal",
+            "isModelPicker",
+            "choicesFrom",
+            "confirmKeyFor",
+            "openRefusal",
+            "setKeys"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dialogs.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/orchestrator-brain.ts",
           "lines": 211,
           "kind": "lib",
@@ -719,7 +748,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 589,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "Session",
@@ -728,6 +757,7 @@
             "recordSession",
             "setTitleResolver",
             "setSessionStatus",
+            "setSessionModel",
             "setSessionTitle",
             "WaitingSession",
             "setSessionWaiting",
@@ -851,12 +881,14 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 199,
+          "lines": 273,
           "kind": "lib",
           "exports": [
             "SessionMeta",
             "PathState",
             "getState",
+            "modelForIdentity",
+            "modelFromTranscript",
             "identityFor",
             "activeStates",
             "forgetStates",
@@ -1175,6 +1207,45 @@
           "externals": []
         },
         {
+          "path": "routes/model.ts",
+          "lines": 170,
+          "kind": "route-host",
+          "exports": [
+            "handleModelRoute"
+          ],
+          "state": [
+            "inFlight: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/api/model/open",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/model/set",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/model/cancel",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/model-control.ts",
+            "lib/sessions.ts",
+            "wiring/dialogs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/orchestrator.ts",
           "lines": 173,
           "kind": "route-host",
@@ -1288,10 +1359,12 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 136,
+          "lines": 155,
           "kind": "lib",
           "exports": [],
-          "state": [],
+          "state": [
+            "modelProbed: Set"
+          ],
           "emits": [
             "approval",
             "resolved",
@@ -1315,6 +1388,7 @@
             "lib/push.ts",
             "lib/sessions.ts",
             "lib/session-titles.ts",
+            "lib/transcript.ts",
             "lib/hook-common.ts",
             "wiring/orchestrator.ts",
             "wiring/waiting.ts"
@@ -1478,6 +1552,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleModelRoute": {
+          "module": "routes/model.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleOrchestratorRoute": {
           "module": "routes/orchestrator.ts",
           "callers": [
@@ -1504,6 +1584,7 @@
             "lib/dialog-watch.ts",
             "lib/hook-common.ts",
             "lib/inject-guard.ts",
+            "lib/model-control.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
@@ -1666,6 +1747,7 @@
           "callers": [
             "lib/dialog-watch.ts",
             "lib/inject-guard.ts",
+            "lib/model-control.ts",
             "routes/dialogs.ts",
             "wiring/dialogs.ts"
           ]
@@ -1673,7 +1755,8 @@
         "parseDialog": {
           "module": "lib/dialogs.ts",
           "callers": [
-            "lib/dialog-watch.ts"
+            "lib/dialog-watch.ts",
+            "lib/model-control.ts"
           ]
         },
         "dialogSignature": {
@@ -1694,6 +1777,19 @@
           "module": "lib/question-driver.ts",
           "callers": [
             "lib/keyboard-inject.ts"
+          ]
+        },
+        "DialogItem": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "lib/model-control.ts"
+          ]
+        },
+        "pickKeys": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "lib/model-control.ts",
+            "routes/dialogs.ts#POST /api/dialog/pick"
           ]
         },
         "Task": {
@@ -1995,6 +2091,9 @@
             "routes/api.ts#POST /api/inject",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel",
             "ws.ts"
           ]
         },
@@ -2101,6 +2200,9 @@
             "routes/api.ts#* /api/status",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel",
             "ws.ts"
           ]
         },
@@ -2130,12 +2232,6 @@
           "callers": [
             "routes/api.ts#* /api/feed",
             "ws.ts"
-          ]
-        },
-        "pickKeys": {
-          "module": "lib/dialogs.ts",
-          "callers": [
-            "routes/dialogs.ts#POST /api/dialog/pick"
           ]
         },
         "addQuestionRequest": {
@@ -2279,7 +2375,8 @@
         "transcriptPath": {
           "module": "lib/session-titles.ts",
           "callers": [
-            "routes/hooks.ts"
+            "routes/hooks.ts",
+            "wiring/events.ts"
           ]
         },
         "InjectTarget": {
@@ -2420,6 +2517,39 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/session-start",
             "wiring/events.ts"
+          ]
+        },
+        "openRefusal": {
+          "module": "lib/model-control.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/open"
+          ]
+        },
+        "isModelPicker": {
+          "module": "lib/model-control.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel"
+          ]
+        },
+        "choicesFrom": {
+          "module": "lib/model-control.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "ModelScope": {
+          "module": "lib/model-control.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "setKeys": {
+          "module": "lib/model-control.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/set"
           ]
         },
         "WIP_CAP": {
@@ -2622,6 +2752,24 @@
         },
         "onActivity": {
           "module": "lib/activity.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "setSessionModel": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "modelForIdentity": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "modelFromTranscript": {
+          "module": "lib/transcript.ts",
           "callers": [
             "wiring/events.ts"
           ]
