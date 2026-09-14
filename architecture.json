@@ -1208,7 +1208,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 170,
+          "lines": 190,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -1237,6 +1237,7 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/dialogs.ts",
             "lib/model-control.ts",
             "lib/sessions.ts",
             "wiring/dialogs.ts"
@@ -1749,6 +1750,7 @@
             "lib/inject-guard.ts",
             "lib/model-control.ts",
             "routes/dialogs.ts",
+            "routes/model.ts",
             "wiring/dialogs.ts"
           ]
         },
@@ -2200,6 +2202,7 @@
             "routes/api.ts#* /api/status",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts",
             "routes/model.ts#POST /api/model/open",
             "routes/model.ts#POST /api/model/set",
             "routes/model.ts#POST /api/model/cancel",
@@ -2519,18 +2522,19 @@
             "wiring/events.ts"
           ]
         },
+        "isModelPicker": {
+          "module": "lib/model-control.ts",
+          "callers": [
+            "routes/model.ts",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel"
+          ]
+        },
         "openRefusal": {
           "module": "lib/model-control.ts",
           "callers": [
             "routes/model.ts#POST /api/model/open"
-          ]
-        },
-        "isModelPicker": {
-          "module": "lib/model-control.ts",
-          "callers": [
-            "routes/model.ts#POST /api/model/open",
-            "routes/model.ts#POST /api/model/set",
-            "routes/model.ts#POST /api/model/cancel"
           ]
         },
         "choicesFrom": {

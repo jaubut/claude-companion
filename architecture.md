@@ -25,11 +25,11 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `lib/questions.ts` | 229 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
 | `lib/auto-judge.ts` | 199 | lib | 1 | state: ALWAYS_SAFE_TOOLS: Set |
+| `routes/model.ts` | 190 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 181 | lib | 7 |  |
 | `lib/dialogs.ts` | 175 | lib | 7 |  |
 | `routes/orchestrator.ts` | 173 | route-host | 1 | routes: 8 |
-| `routes/model.ts` | 170 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/events.ts` | 155 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onFeed, onFeedReset, onActivity, onSessions |
 | `ws.ts` | 146 | lib | 1 | emits: approval, question, init, resolved, inject_error, pong |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
@@ -173,17 +173,17 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `Session()` | `lib/sessions.ts` | `lib/activity.ts`, `lib/agent-pid.ts`, `lib/dialog-watch.ts`, `lib/hook-common.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts`, `wiring/orchestrator.ts`, `wiring/waiting.ts` |
 | `broadcast()` | `state.ts` | `routes/api.ts`, `routes/api.ts#POST /api/resolve`, `routes/api.ts#POST /api/answer`, `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#POST /api/super-auto`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/orchestrator.ts`, `wiring/waiting.ts`, `ws.ts` |
 | `recordSession()` | `lib/sessions.ts` | `lib/activity.ts`, `lib/discover.ts`, `lib/rehydrate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start` |
+| `dialogWatcher()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/status`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
 | `cwdFromPayload()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `listSessions()` | `lib/sessions.ts` | `lib/codex-feed.ts`, `routes/api.ts#POST /api/inject`, `routes/api.ts#* /api/status`, `routes/api.ts#* /api/feed`, `wiring/dialogs.ts`, `wiring/orchestrator.ts`, `ws.ts` |
 | `resolveSession()` | `lib/sessions.ts` | `routes/api.ts#POST /api/inject`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
-| `dialogWatcher()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/status`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
 | `metaFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-end` |
 | `orchEmit()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
 | `summarize()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/codex-feed.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `wiring/events.ts` |
+| `Dialog()` | `lib/dialogs.ts` | `lib/dialog-watch.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `routes/dialogs.ts`, `routes/model.ts`, `wiring/dialogs.ts` |
 | `Task()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-brain.ts`, `lib/orchestrator-queue.ts`, `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/orchestrator.ts` |
 | `getTask()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/`, `wiring/orchestrator.ts` |
 | `clients()` | `state.ts` | `routes/api.ts`, `routes/api.ts#* /api/status`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/orchestrator.ts`, `ws.ts` |
-| `Dialog()` | `lib/dialogs.ts` | `lib/dialog-watch.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `routes/dialogs.ts`, `wiring/dialogs.ts` |
 | `apnsConfigured()` | `lib/apns.ts` | `lib/push.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#GET /api/push/tokens`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
 | `setTaskStatus()` | `lib/orchestrator-chat.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/`, `wiring/orchestrator.ts` |
 | `workerQueue()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
@@ -192,6 +192,7 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `pushToAll()` | `lib/push.ts` | `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
 | `agentFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop` |
 | `emitTask()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
+| `isModelPicker()` | `lib/model-control.ts` | `routes/model.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel` |
 | `emitChannel()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/task/` |
 | `appendFeedEvent()` | `lib/feed.ts` | `lib/activity.ts`, `lib/codex-feed.ts`, `lib/transcript.ts` |
 | `clampLong()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/codex-feed.ts`, `lib/transcript.ts` |
@@ -211,7 +212,6 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `unmarkWaiting()` | `wiring/waiting.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `wiring/dialogs.ts`, `wiring/events.ts` |
 | `markWaiting()` | `wiring/waiting.ts` | `routes/hooks.ts#POST /hooks/stop`, `wiring/dialogs.ts`, `wiring/events.ts` |
 | `onSessions()` | `lib/sessions.ts` | `routes/hooks.ts#POST /hooks/session-start`, `wiring/events.ts`, `wiring/orchestrator.ts` |
-| `isModelPicker()` | `lib/model-control.ts` | `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel` |
 | `countLiveTasks()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
 | `getChannel()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `wiring/orchestrator.ts` |
 | `getThread()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
