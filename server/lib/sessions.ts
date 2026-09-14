@@ -72,6 +72,8 @@ export interface Session {
   pid: string
   firstSeenAt: number
   lastSeenAt: number
+  // Last answered turn's model id (Phase 14). "" = unknown; render absence.
+  model: string
 }
 
 type Listener = (sessions: Session[]) => void
@@ -248,6 +250,7 @@ export function recordSession(
     // registered the session as "now").
     firstSeenAt: Math.min(prev?.firstSeenAt ?? now, meta.firstSeenAt ?? now),
     lastSeenAt: now,
+    model: prev?.model ?? "",  // sticky like taskId: discovery carries none
   }
   sessions.set(key, next)
 
@@ -341,6 +344,14 @@ export function setSessionStatus(key: string, status: string, waitingFor: string
   s.agentStatus = status
   s.waitingFor = waitingFor
   emit()
+}
+
+// Does NOT emit: the onSessions listener is its only caller, already inside one.
+export function setSessionModel(key: string, model: string): boolean {
+  const s = sessions.get(key)
+  if (!s || !model || s.model === model) return false
+  s.model = model
+  return true
 }
 
 export function setSessionTitle(key: string, title: string): void {

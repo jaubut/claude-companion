@@ -1,0 +1,169 @@
+import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
+import { resolveSession } from "../lib/sessions"
+import { dialogWatcher } from "../wiring/dialogs"
+
+// Model control routes (PRJ-OR1T Phase 14, gap-table A1·A2·A3).
+//
+// Two calls: `open` puts the picker up and hands back the real list, `set`
+// drives it. Both go through the tmux pane the same way lib/dialogs.ts already
+// does; see lib/model-control.ts for why the picker is driven rather than
+// `/model <id>` sent as text.
+
+const OPEN_SETTLE_MS = 450   // Claude Code renders the picker well inside this
+const KEY_GAP_MS = 40        // same gap /api/dialog/pick uses between keys
+
+// One flow per session at a time. Two phones (or a phone and a retry) driving
+// one picker would interleave arrow keys and land on the wrong row — the keys
+// are relative to wherever the cursor currently sits.
+const inFlight = new Set<string>()
+
+async function sendKey(pane: string, key: string): Promise<boolean> {
+  // A named key goes as-is; a single character goes literal, so "s" is typed
+  // rather than interpreted. Same split as /api/dialog/key.
+  const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(key)
+  const args = named ? ["send-keys", "-t", pane, key] : ["send-keys", "-t", pane, "-l", key]
+  try {
+    await Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited
+    return true
+  } catch {
+    return false
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function log(msg: string): void {
+  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+  process.stderr.write(`${dim}[companion]${reset} ${cyan}model${reset} ${msg}\n`)
+}
+
+export async function handleModelRoute(req: Request, url: URL): Promise<Response | null> {
+  // ── Open the picker and return the real model list ──
+  // Body: { key }. The list is never cached and never hardcoded: it is
+  // whatever Claude Code shows for this account right now (gap-table A3).
+  if (url.pathname === "/api/model/open" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: string }
+    const key = (body.key ?? "").trim()
+    const session = key ? resolveSession(key) : null
+    if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
+
+    const refusal = openRefusal(session, dialogWatcher.current()[session?.key ?? ""])
+    if (refusal) {
+      log(`open refused — ${refusal.error} (${session?.label || session?.key || key})`)
+      return Response.json({ ok: false, ...refusal }, { status: 409 })
+    }
+    const pane = session!.tmuxPane
+
+    if (inFlight.has(session!.key)) {
+      return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
+    }
+    inFlight.add(session!.key)
+    try {
+      // Already open (the user opened it, or a previous call left it up):
+      // don't send /model again, that would type into the picker.
+      let dialog = dialogWatcher.current()[session!.key]
+      if (!isModelPicker(dialog)) {
+        await sendKey(pane, "/model")  // literal, then Enter
+        await sendKey(pane, "Enter")
+        await sleep(OPEN_SETTLE_MS)
+        await dialogWatcher.refresh(session!.key)
+        dialog = dialogWatcher.current()[session!.key]
+      }
+      if (!isModelPicker(dialog)) {
+        log(`open failed — no picker on ${session!.label || session!.key}`)
+        return Response.json({ ok: false, error: "not_a_picker" }, { status: 409 })
+      }
+      const choices = choicesFrom(dialog!)
+      log(`open → ${choices.length} models on ${session!.label || session!.key}`)
+      return Response.json({ ok: true, key: session!.key, choices, hints: dialog!.hints })
+    } finally {
+      inFlight.delete(session!.key)
+    }
+  }
+
+  // ── Pick a model ──
+  // Body: { key, index, scope }. scope "session" confirms with the picker's
+  // "s to use this session only" hint; "default" confirms with Enter, which
+  // Claude Code also saves as the new-session default. That distinction is the
+  // whole reason this drives the picker instead of sending `/model <id>`.
+  if (url.pathname === "/api/model/set" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: string; index?: number; scope?: string }
+    const key = (body.key ?? "").trim()
+    const index = body.index
+    const scope: ModelScope = body.scope === "session" ? "session" : "default"
+    if (typeof index !== "number") return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
+
+    const session = key ? resolveSession(key) : null
+    if (!session?.tmuxPane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
+
+    if (inFlight.has(session.key)) {
+      return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
+    }
+    inFlight.add(session.key)
+    try {
+      // Re-read the pane rather than trusting the list the client was handed:
+      // the user may have moved the cursor, or closed and reopened the picker,
+      // since /open. The arrow count is relative to where the cursor IS.
+      await dialogWatcher.refresh(session.key)
+      const dialog = dialogWatcher.current()[session.key]
+      if (!isModelPicker(dialog)) {
+        log(`set refused — picker not open on ${session.label || session.key}`)
+        return Response.json({ ok: false, error: "not_a_picker" }, { status: 409 })
+      }
+
+      const keys = setKeys(dialog!, index, scope)
+      if (!Array.isArray(keys)) {
+        return Response.json({ ok: false, ...keys }, { status: 400 })
+      }
+      const chosen = choicesFrom(dialog!)[index]
+      for (const k of keys) {
+        if (!await sendKey(session.tmuxPane, k)) {
+          return Response.json({ ok: false, error: "send_failed" }, { status: 500 })
+        }
+        await sleep(KEY_GAP_MS)
+      }
+      await sleep(OPEN_SETTLE_MS)
+      await dialogWatcher.refresh(session.key)
+
+      // The picker should be gone now. If it is still up, the confirm did not
+      // take — report that instead of claiming a set that did not happen.
+      const after = dialogWatcher.current()[session.key]
+      const settled = !isModelPicker(after)
+      log(`set → "${chosen?.text ?? index}" scope=${scope} on ${session.label || session.key}${settled ? "" : " (picker still open)"}`)
+      return Response.json({
+        ok: settled,
+        error: settled ? undefined : "not_settled",
+        key: session.key,
+        scope,
+        chosen: chosen ?? null,
+        // What the pane shows now. The session's `model` field only catches up
+        // on the next answered turn, so this is the immediate confirmation.
+        dialog: settled ? undefined : after,
+      }, { status: settled ? 200 : 409 })
+    } finally {
+      inFlight.delete(session.key)
+    }
+  }
+
+  // ── Close the picker without choosing ──
+  // The phone dismissing its sheet must not leave a modal on the pane: while
+  // one is up, inject refuses (Phase 13) and the session looks stuck.
+  if (url.pathname === "/api/model/cancel" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: string }
+    const key = (body.key ?? "").trim()
+    const session = key ? resolveSession(key) : null
+    if (!session?.tmuxPane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
+    const dialog = dialogWatcher.current()[session.key]
+    if (!isModelPicker(dialog)) return Response.json({ ok: true, closed: false })
+    await sendKey(session.tmuxPane, "Escape")
+    // Wait for the redraw, not just for tmux to accept the key: at KEY_GAP_MS
+    // the pane still showed the picker and this reported closed:false on a
+    // cancel that had in fact worked.
+    await sleep(OPEN_SETTLE_MS)
+    await dialogWatcher.refresh(session.key)
+    log(`cancel on ${session.label || session.key}`)
+    return Response.json({ ok: true, closed: !isModelPicker(dialogWatcher.current()[session.key]) })
+  }
+
+  return null
+}
