@@ -747,8 +747,8 @@ Leaves first, composites after; each step is cut → import back → `bun run bu
 - [x] **Gating experiment GREEN** — `/model <id>` injected as plain text through `tmux send-keys` (the `injectText` path) sets the model with **no picker**, on Claude Code 2.1.270. `/model bogus-model-xyz` → `Model 'bogus-model-xyz' not found`, refused not stored. Model parity is UI work, not a screen-scrape problem — 2026-09-13
 - [x] `docs/rc-teardown.md` — desk half, from the official docs (code.claude.com/docs/en/remote-control, fetched 2026-09-13, quoted verbatim) plus the live experiment. Device half left explicitly open as 7 named items — 2026-09-13
 - [x] `docs/rc-gap-table.md` — 14 grounded rows (adopt/skip/already-ours) + 7 rows blocked on the device half + a proposed Phase 13-15. **UNSIGNED** — 2026-09-13
-- [ ] Jeremie signs the adopt column → Phase 12 closes
-- [ ] Device half: 7 items, needs the Claude app on a real phone
+- [x] **Jeremie signed 2026-09-13 — ADOPT ALL.** Goal restated by him: "I want the same experience as on claude.ai rc." The draft's `skip` default was scoped to pain already felt, which is the wrong test for a parity goal. All 14 rows adopt; A11 (dialog expiry) and A12 (push relay) ship **behind a toggle, default off**, so "reverse it if unnecessary" is a switch rather than a revert. Phase order 13→21 in `docs/rc-gap-table.md` §C. **Phase 12 CLOSED**
+- [ ] Device half: 7 items, needs the Claude app on a real phone — **now ordered BEFORE phase 14**, since it is the cheapest input and the only one that can reorder the rest (composer + history gaps, if real, outrank model control)
 - **Note correction:** the project note claimed this doc was written and committed on 2026-09-12. It was not — no file, branch, or commit existed on either host. This is its first version.
 
 
