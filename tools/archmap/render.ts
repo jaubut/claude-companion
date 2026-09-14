@@ -139,7 +139,7 @@ export function renderMarkdown(map: ArchMap, refs: RefTarget[] = [], unresolved:
     const multi = Object.entries(t.fanIn).filter(([, v]) => v.callers.length >= 2).sort((a, b) => b[1].callers.length - a[1].callers.length)
     if (!multi.length) continue
     out.push(`## Fan-in — ${t.name} (exports reached from 2+ modules)`, "", "| export | owner | callers |", "|---|---|---|")
-    for (const [name, v] of multi) out.push(`| \`${name}${name.includes(":") ? "" : "()"}\` | \`${v.module}\` | ${v.callers.map((c) => `\`${c}\``).join(", ")} |`)
+    for (const [name, v] of multi) out.push(`| \`${name}${/[.:]/.test(name) ? "" : "()"}\` | \`${v.module}\` | ${v.callers.map((c) => `\`${c}\``).join(", ")} |`)
     out.push("")
   }
   return out.join("\n")

@@ -121,6 +121,15 @@ export interface FanInOpts {
   requireImport?: (owner: ModuleInfo) => boolean
   // drop "…" string literals and // comments from each line before matching
   stripLiterals?: boolean
+  // substrings that gate the regex. Default: the name and its lower-camel /
+  // kebab forms. An adapter whose fan-in KEY is not the text a caller writes
+  // overrides it — Swift keys a property `Layer.activeEffects`, read `.activeEffects`.
+  needles?: (name: string) => string[]
+  // last gate before a caller is recorded, after the regex hit. Qualified keys
+  // use it to demand more than a matching line (Swift: the declaring type has
+  // to appear in the caller's file, or on the line itself when the property
+  // name is not unique in the target).
+  accept?: (name: string, caller: ModuleInfo, line: string) => boolean
 }
 
 export function stripLiterals(line: string): string {
@@ -150,7 +159,7 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
   const res = new Map([...owners.keys()].map((n) => [n, mk(n)]))
   // the regex is the slow path; `includes` (or the kebab/lowercase forms a
   // template tag may use) gates it
-  const needles = new Map([...owners.keys()].map((n) => [n, uniq([n, n[0]!.toLowerCase() + n.slice(1), n.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()])]))
+  const needles = new Map([...owners.keys()].map((n) => [n, opts.needles ? opts.needles(n) : uniq([n, n[0]!.toLowerCase() + n.slice(1), n.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()])]))
   const fanIn: Target["fanIn"] = {}
   for (const m of modules) {
     const lines = sources.get(m.path) ?? []
@@ -163,6 +172,7 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
         if (owner === m.path) continue
         if (opts.requireImport?.(byPath.get(owner)!) && !m.imports.includes(owner)) continue
         if (!needles.get(name)!.some((n) => l.includes(n)) || !re.test(l)) continue
+        if (opts.accept && !opts.accept(name, m, l)) continue
         const entry = (fanIn[name] ??= { module: owner, callers: [] })
         if (!entry.callers.includes(caller)) entry.callers.push(caller)
       }

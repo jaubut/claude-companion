@@ -10,6 +10,7 @@
 //          <out.json> (see fleet.ts). Needs no repo argument; scans nothing.
 // Unknown flags exit 2 — a typo must not fall through to a full regenerate.
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
 import type { ArchMap, RepoConfig, Target } from "./types"
 import { scanBunServer } from "./adapters/bun-server"
@@ -99,10 +100,29 @@ if (check) {
 }
 if (doLint) {
   // baseline = --baseline <path> (CI: the base branch's architecture.json),
-  // else the committed map, so a local run ratchets against what is checked in.
-  const basePath = flagValue("--baseline") ?? jsonPath
+  // else the COMMITTED map, so a local run ratchets against what is checked in.
+  //
+  // Read it out of git, not off disk. The usual order of operations is
+  // regenerate -> lint, which leaves architecture.json on disk already
+  // describing the change being linted; using that as the baseline compares
+  // the change against itself, so a file this change just pushed OVER the cap
+  // reads as "legacy" and does not block. That is the one thing the ratchet
+  // exists to catch. Falls back to the working tree when there is no git, no
+  // commit yet, or the map is untracked.
+  const basePathFlag = flagValue("--baseline")
+  let baselineText: string | null = null
+  if (basePathFlag) {
+    try { baselineText = readFileSync(basePathFlag, "utf-8") } catch { /* handled below */ }
+  } else {
+    try {
+      baselineText = execFileSync("git", ["-C", repo, "show", "HEAD:architecture.json"],
+                                  { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    } catch {
+      try { baselineText = readFileSync(jsonPath, "utf-8") } catch { /* handled below */ }
+    }
+  }
   let baseline: ArchMap | null = null
-  try { baseline = JSON.parse(readFileSync(basePath, "utf-8")) as ArchMap } catch { /* no baseline → every over-cap module blocks */ }
+  try { baseline = baselineText ? (JSON.parse(baselineText) as ArchMap) : null } catch { /* no baseline → every over-cap module blocks */ }
   const issues = lint(map, cfg, baseline)
   const blocking = issues.filter((i) => i.blocking)
   if (issues.length) console[blocking.length ? "error" : "log"](`archmap: ${blocking.length} blocking, ${issues.length - blocking.length} legacy\n${formatIssues(issues)}`)
