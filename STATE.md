@@ -31,7 +31,7 @@ Last updated: 2026-09-07
 
 ## Change Plans
 
-### Change Plan — phase13-inject-dialog-guard (2026-09-13) — ✅ shipped (PR #25)
+### Change Plan — phase13-inject-dialog-guard (2026-09-13) — ✅ built, PR #26 open
 **Request:** PRJ-OR1T Phase 13, task `71bb6b71`. Refuse an inject when a Claude Code dialog is open on the target session, instead of typing into the dialog. Found live 2026-09-13 during the Phase 12 experiment (PR #24, `docs/rc-teardown.md` Finding 3c): with a "Change effort level?" confirm on screen, an injected `/model opus` landed in the picker and Enter confirmed the cursor row — the prompt was lost and an unrelated dialog got an answer the user never chose.
 
 **State decision:** the dialog state already exists and is authoritative — `dialogWatcher.current()` is keyed by session key and already excludes question pickers (`dialog-watch.ts` closes `kind === "question"` before it reaches `current()`, because the hooks own those end-to-end). No new state. The only staleness risk is the 2s poll, handled by calling `dialogWatcher.refresh(key)` once on a suspected hit and re-reading before refusing — which also closes a stale badge as a side effect.
