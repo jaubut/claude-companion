@@ -1,6 +1,7 @@
 import { getPending, resolveApproval } from "../lib/pty-manager"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
 import { injectText } from "../lib/keyboard-inject"
+import { injectRefusal } from "../lib/inject-guard"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -17,7 +18,7 @@ import {
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clients } from "../state"
-import { dialogWatcher } from "../wiring/dialogs"
+import { dialogWatcher, openDialogFor } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
@@ -181,28 +182,32 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       if (recent) target = recent
     }
 
-    // If the caller asked for a specific target and we don't have it
-    // registered, refuse rather than silently pasting into the frontmost
-    // macOS app.
-    if (lookup && !target) {
+    // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
+    // target not registered, no live tty, or a dialog in the way. A dialog is
+    // modal in the pane — typing into one answers it instead of reaching the
+    // input box — so it is a refusal, not a delivery problem.
+    const refusal = injectRefusal({ lookup, target, dialog: await openDialogFor(target) })
+    if (refusal) {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-      process.stderr.write(`${dim}[companion]${reset} ${red}inject refused${reset} — target ${lookup} not registered\n`)
-      return Response.json({ ok: false, error: "target_gone", key, cwd }, { status: 410 })
-    }
-    // A resolved session without a tty (e.g. rehydrated from a transcript
-    // but nothing live has fired a hook) can't be focused, so paste would
-    // land on whatever macOS app is frontmost. Reject with the same signal
-    // the phone already knows how to render.
-    if (target && !target.tty) {
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-      process.stderr.write(`${dim}[companion]${reset} ${red}inject refused${reset} — target ${target.label} has no live tty\n`)
-      return Response.json({ ok: false, error: "target_idle", key, cwd }, { status: 410 })
+      // label is often empty (a session with no resolved title), so fall back
+      // to the key — an unnamed refusal reads as "inject refused — has a
+      // dialog open", which names nothing.
+      const who = target?.label || target?.key || lookup
+      const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
+        : refusal.error === "target_idle" ? `target ${who} has no live tty`
+        : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
+      process.stderr.write(`${dim}[companion]${reset} ${red}inject refused${reset} — ${why}\n`)
+      // 409 for the dialog: the request is fine and the target is alive, it
+      // just can't accept text yet. 410 stays the "this target is gone" code
+      // the phone already maps to a re-pin prompt.
+      const status = refusal.error === "dialog_open" ? 409 : 410
+      return Response.json({ ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog }, { status })
     }
 
     const dim = "\x1b[2m"
     const reset = "\x1b[0m"
     const cyan = "\x1b[36m"
-    const tag = target?.label ? ` → ${target.label}` : " → frontmost"
+    const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
     process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"\n`)
 
     // Clear only what the caller named, and only its turn-end reason: typed

@@ -1,5 +1,6 @@
 import { broadcast } from "../state"
 import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
+import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
 import { capturePane } from "../lib/tmux-pane"
@@ -43,3 +44,19 @@ export const dialogWatcher = createDialogWatcher({
   },
 })
 dialogWatcher.start()
+
+// The dialog currently in the way on `target`, or null. Used by both inject
+// paths (POST /api/inject and the WS "input" message) to refuse rather than
+// type into an open dialog.
+//
+// The watcher polls every 2s, so a dialog the user answered a moment ago can
+// still be in the map. Re-check that one session before refusing on it: a
+// false refusal is user-visible ("I typed and nothing happened"), and the
+// re-check is one capture-pane. It also closes the stale entry and broadcasts
+// `dialog_closed`, so the phone's badge clears as a side effect.
+export async function openDialogFor(target: { key: string } | null | undefined): Promise<Dialog | null> {
+  if (!target) return null
+  if (!dialogWatcher.current()[target.key]) return null
+  await dialogWatcher.refresh(target.key)
+  return dialogWatcher.current()[target.key] ?? null
+}

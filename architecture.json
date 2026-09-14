@@ -368,6 +368,29 @@
           "externals": []
         },
         {
+          "path": "lib/inject-guard.ts",
+          "lines": 67,
+          "kind": "lib",
+          "exports": [
+            "InjectRefusalCode",
+            "InjectRefusal",
+            "InjectAttempt",
+            "injectRefusal"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dialogs.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/keyboard-inject.ts",
           "lines": 563,
           "kind": "lib",
@@ -927,7 +950,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 326,
+          "lines": 331,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1025,6 +1048,7 @@
             "lib/pty-manager.ts",
             "lib/questions.ts",
             "lib/keyboard-inject.ts",
+            "lib/inject-guard.ts",
             "lib/spawn-session.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
@@ -1233,10 +1257,11 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 46,
+          "lines": 63,
           "kind": "lib",
           "exports": [
-            "dialogWatcher"
+            "dialogWatcher",
+            "openDialogFor"
           ],
           "state": [],
           "emits": [
@@ -1249,6 +1274,7 @@
           "imports": [
             "state.ts",
             "lib/dialog-watch.ts",
+            "lib/dialogs.ts",
             "lib/sessions.ts",
             "lib/questions.ts",
             "lib/tmux-pane.ts",
@@ -1379,7 +1405,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 138,
+          "lines": 146,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -1400,6 +1426,7 @@
             "lib/pty-manager.ts",
             "lib/questions.ts",
             "lib/keyboard-inject.ts",
+            "lib/inject-guard.ts",
             "lib/super-auto.ts",
             "lib/sessions.ts",
             "lib/activity.ts",
@@ -1476,6 +1503,7 @@
             "lib/agent-pid.ts",
             "lib/dialog-watch.ts",
             "lib/hook-common.ts",
+            "lib/inject-guard.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
@@ -1637,7 +1665,9 @@
           "module": "lib/dialogs.ts",
           "callers": [
             "lib/dialog-watch.ts",
-            "routes/dialogs.ts"
+            "lib/inject-guard.ts",
+            "routes/dialogs.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "parseDialog": {
@@ -1970,6 +2000,20 @@
         },
         "injectText": {
           "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
+        "injectRefusal": {
+          "module": "lib/inject-guard.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
+        "openDialogFor": {
+          "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
             "ws.ts"
@@ -2701,7 +2745,7 @@
       "modules": [
         {
           "path": "app.tsx",
-          "lines": 103,
+          "lines": 107,
           "kind": "view",
           "exports": [
             "App"
@@ -2935,7 +2979,7 @@
         },
         {
           "path": "hooks/use-companion.ts",
-          "lines": 532,
+          "lines": 540,
           "kind": "lib",
           "exports": [
             "useCompanion"

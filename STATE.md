@@ -31,6 +31,36 @@ Last updated: 2026-09-13
 
 ## Change Plans
 
+### Change Plan — phase13-inject-dialog-guard (2026-09-13) — ✅ built, PR #26 open
+**Request:** PRJ-OR1T Phase 13, task `71bb6b71`. Refuse an inject when a Claude Code dialog is open on the target session, instead of typing into the dialog. Found live 2026-09-13 during the Phase 12 experiment (PR #24, `docs/rc-teardown.md` Finding 3c): with a "Change effort level?" confirm on screen, an injected `/model opus` landed in the picker and Enter confirmed the cursor row — the prompt was lost and an unrelated dialog got an answer the user never chose.
+
+**State decision:** the dialog state already exists and is authoritative — `dialogWatcher.current()` is keyed by session key and already excludes question pickers (`dialog-watch.ts` closes `kind === "question"` before it reaches `current()`, because the hooks own those end-to-end). No new state. The only staleness risk is the 2s poll, handled by calling `dialogWatcher.refresh(key)` once on a suspected hit and re-reading before refusing — which also closes a stale badge as a side effect.
+
+**Contracts touched:**
+| Contract | Change | Real consumers | Compat |
+|---|---|---|---|
+| `POST /api/inject` response | new `409 {ok:false, error:"dialog_open", key, cwd, dialog}` | iOS `CompanionClient.inject` (`claude companion/CompanionClient.swift:227`) — reads `json["error"]` on any non-2xx → `.failed(reason:"dialog_open")`; returns non-nil so `withFailover` does NOT retry the other host | additive, degrades cleanly |
+| WS `inject_error` frame | new `error` value `dialog_open`, new optional `dialog` field | PWA `use-companion.ts:377` + `app.tsx:68` (new branch, this PR); iOS `WSFrame.InjectErrorPayload` decodes `error`/`key`/`cwd` and ignores unknown keys | additive, no iOS rebuild required |
+
+**Files (one owner each):** `server/lib/inject-guard.ts` (new — the decision), `server/lib/inject-guard.test.ts` (new), `server/routes/api.ts` (`/api/inject`), `server/ws.ts` (`"input"`), `client/src/app.tsx` (message), `STATE.md`.
+
+**Fan-in to guard:** both call sites duplicated the `target_gone` / `target_idle` checks inline, in the same order, and both call `clearWaitingForTarget(target, "turn-end")` immediately before injecting. The guard MUST run before that clear — a refused inject answered nothing, so blanking the badge would tell the phone the session is unblocked while it still sits on a dialog. Collapsing both sites onto one `injectRefusal()` is what stops the two paths drifting again (they already had, by omission: neither had the dialog check, and only the HTTP one logs a refusal reason).
+
+**Risks:** (1) false refusal from a dialog that closed inside the poll window — mitigated by the refresh-and-recheck. (2) `kind === "question"` must keep flowing through, or answering a question by typing breaks — covered by a test and by `current()` already excluding it. (3) `target === null` (frontmost fallback, no lookup) has no session to check: unchanged behaviour, still injects.
+
+**Done when:**
+- A dialog open on the target → `POST /api/inject` returns 409 `dialog_open` carrying the dialog, the pane is untouched, and the waiting badge is NOT cleared.
+- Same for the WS `input` path, answered with an `inject_error` frame.
+- No dialog → both paths inject and clear the turn-end badge exactly as before.
+- A question-kind dialog never refuses.
+- `bun test` green, `tsc` clean on touched files, manual verify against a real tmux session.
+
+**Verified 2026-09-13** — isolated server (`COMPANION_PORT=4299`, own `COMPANION_DB_PATH`), real `claude` in a real tmux pane, discovered by ps, real `/model` picker parsed by the live watcher. 5 passes: **V1** no dialog → `200 {ok:true}`, text delivered. **V2** picker open → `409 {error:"dialog_open"}` carrying the 5-row dialog; pane untouched (cursor still on row 2, model unchanged); `waitingKind` stayed `dialog` with the same `since` — the badge was NOT cleared. **V3** refuse, Escape, settle → `200`, text delivered, log names the session. **V4** WS `input` with the picker open → `inject_error` frame, `error:"dialog_open"`, dialog carried. **V5** WS `input`, no dialog → injected, no error frame. Across 400 lines of scrollback the two refused strings appear **0 times** — neither refused inject reached the pane. `bun test` 125 pass / 0 fail (7 new), `tsc -p tsconfig.server.json` clean, client build clean.
+
+**Known race (accepted, not fixed):** sending Escape and the inject in the same instant still refuses — the recheck's `capture-pane` can beat the pane redraw. The badge clears on the next poll and a resend works. Closing that would need an event-driven pane, not a poll.
+
+**Out of scope:** iOS message copy for `dialog_open` (separate repo + TestFlight build; it already degrades to the raw reason string). The dispatch/spawn delivery path keeps its own readiness + Escape-the-dialog handling — untouched.
+
 ### Change Plan — phase11-waiting-kind (2026-09-10) — ✅ shipped #23 (46e3feb), both hosts + PWA rebuilt 2026-09-10
 **Shipped notes:** drift CLEAN first pass (19/19 files, 13 contracts, `waiting_input` producers collapsed 4 → 1 per archmap); adversarial review 7/8 clean, 1 rejected (the turn-end by-ref fallback is deliberately skipped: `ref:""` is shared by every session). Verify 5 on prod: **Zettlab** — a worker's AskUserQuestion showed `kind:"question"` with the UUID ref; `POST /api/answer` cleared it; `turn-end` followed the reply; a `dialog` reason lit for ~20 s in between while the picker was still on screen being driven (pre-existing dialog-watch false positive, now a badge — filed). **Mac** — a headless `codex exec` turn showed a pill on `codex:tty:/dev/ttys012` (Thinking → Running Bash, agent=codex) for the whole run; its turn-end badge was not sampled because `codex exec` dies at its Stop hook and is pruned within the second — the Stop route is agent-agnostic, so an interactive Codex badge is covered by the manual pass. **Incident:** `lib/learned-allow.ts` ignores `COMPANION_DB_PATH` and wrote one row to the prod db during the isolated verify (reverted, count 27, filed). Jeremie's manual pass (Verify 6) remains. Follow-ups filed on PRJ-OR1T: iOS `waitingKind`/`waitingRef` reader + deep link, Codex dialog status source, dialog-watch grace after a question answer, `COMPANION_DB_PATH` seam.
 **Request:** PRJ-OR1T Phase 11 — one "needs you" state per session, with a kind. Four mechanisms (Stop hook turn-end, pending approval, pending AskUserQuestion, open Claude Code dialog) each tell the phone something different; make `Session.waitingKind` the single rollup, with precedence, set and cleared by each mechanism's own lifecycle. Keep the approval/question/dialog frames as the detail channels. Second question settled in the same plan: what a Codex session shows today, and whether `lib/codex-feed.ts` owes it a pill.

@@ -2,12 +2,13 @@ import type { WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
 import { injectText } from "./lib/keyboard-inject"
+import { injectRefusal } from "./lib/inject-guard"
 import { isSuperAuto } from "./lib/super-auto"
 import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, HOST_INFO, type WsData } from "./state"
-import { dialogWatcher } from "./wiring/dialogs"
+import { dialogWatcher, openDialogFor } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 
 // WebSocket handlers: on open, replay pending approvals/questions and send the
@@ -101,17 +102,24 @@ export const websocket: WebSocketHandler<WsData> = {
           const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
           const tag = target?.tty ? ` → ${target.label || target.key} (${target.tty})` : lookup ? ` → ${lookup} [unresolved]` : " → frontmost"
           process.stderr.write(`${dim}[companion]${reset} ${cyan}ws inject${reset}${tag} "${msg.text.slice(0, 60)}"\n`)
-          if (lookup && !target) {
-            process.stderr.write(`${dim}[companion]${reset} ${red}ws inject refused${reset} — ${lookup} not registered\n`)
+          // Same three refusals as POST /api/inject, same order, one decision
+          // (see lib/inject-guard.ts) — including the dialog check both paths
+          // were missing: with a dialog open, send-keys answers the dialog
+          // instead of reaching the input box.
+          const refusal = injectRefusal({ lookup, target, dialog: await openDialogFor(target) })
+          if (refusal) {
+            const why = refusal.error === "target_gone" ? `${lookup} not registered`
+              : refusal.error === "target_idle" ? `${target?.label || target?.key} has no tty`
+              : `${target?.label || target?.key} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
+            process.stderr.write(`${dim}[companion]${reset} ${red}ws inject refused${reset} — ${why}\n`)
             try {
-              ws.send(JSON.stringify({ type: "inject_error", error: "target_gone", key: msg.key, cwd: msg.cwd }))
-            } catch { /* ignore */ }
-            break
-          }
-          if (target && !target.tty) {
-            process.stderr.write(`${dim}[companion]${reset} ${red}ws inject refused${reset} — ${target.label || target.key} has no tty\n`)
-            try {
-              ws.send(JSON.stringify({ type: "inject_error", error: "target_idle", key: msg.key, cwd: msg.cwd }))
+              ws.send(JSON.stringify({
+                type: "inject_error",
+                error: refusal.error,
+                key: msg.key,
+                cwd: msg.cwd,
+                dialog: refusal.dialog,
+              }))
             } catch { /* ignore */ }
             break
           }

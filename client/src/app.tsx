@@ -69,6 +69,10 @@ export function App() {
               ? `⚠ pinned terminal isn't running — pick another session or unpin`
               : injectError.error === "target_idle"
               ? `⚠ that terminal is idle — open it and run any command so it re-registers`
+              : injectError.error === "dialog_open"
+              // Nothing was typed: a dialog is modal in the pane, so the text
+              // would have answered it instead of reaching the input box.
+              ? `⚠ nothing sent — that session has a dialog open${injectError.dialogTitle ? ` (“${injectError.dialogTitle}”)` : ""}. Answer it in the terminal or from the iOS app, then resend.`
               : `⚠ inject failed (${injectError.error}) — check Accessibility permission for Terminal/iTerm`}
             <span className="float-right opacity-60">tap to dismiss</span>
           </div>
