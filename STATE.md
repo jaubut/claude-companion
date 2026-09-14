@@ -69,6 +69,8 @@ That is A1, A2 and A3 in one mechanism, with no id mapping and no hardcoded list
 
 **Freshness, honestly:** `Session.model` is the last-ANSWERED model. `lastModel` only fills once this process reads a delta, so on a freshly started server every idle session would have shown blank — after a deploy, all of them. Added a one-shot bounded tail read of the transcript (128 KB from the end) per session, which took a cold server from 0/16 sessions labelled to 13/16. The three blanks are sessions that have genuinely never answered, and they render as absence. The picker stays authoritative: `/api/model/open` reads the pane, never this field.
 
+**Prod verify caught what the isolated run could not (2026-09-13).** After deploying 14a to both hosts, `/api/model/open` on a real Mac session returned `409 not_a_picker` while the picker was plainly on screen. Cause: `dialog-watch.ts` only captures a pane when Claude Code's `~/.claude/sessions/<pid>.json` says status `waiting`, and that file has its own update cadence — a single 450 ms check can land before it flips, so the watcher reports no dialog at all. Keys were never the problem (replaying the exact `send-keys -l "/model"` + `Enter` by hand opened it every time). Replaced every fixed sleep with a bounded poll (`settle()`, 250 ms × 3 s, for both "picker appeared" and "picker gone"). Re-verified against the same live session the prod server was serving: 3/3 opens and 2 full open→set(session)→open→set(default) cycles green, statusline following each switch, no picker left on the pane. Fixed in #29.
+
 **Out of scope (14b/14c):** PWA sheet, iOS sheet, and the `/model <id>` fast path.
 
 ### Change Plan — phase13-inject-dialog-guard (2026-09-13) — ✅ shipped #26 (c4da73a), both hosts deployed 2026-09-13

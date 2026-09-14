@@ -1,3 +1,4 @@
+import type { Dialog } from "../lib/dialogs"
 import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -9,7 +10,18 @@ import { dialogWatcher } from "../wiring/dialogs"
 // does; see lib/model-control.ts for why the picker is driven rather than
 // `/model <id>` sent as text.
 
-const OPEN_SETTLE_MS = 450   // Claude Code renders the picker well inside this
+// How long to wait for the pane to reach the state we asked for, and how often
+// to re-read while waiting.
+//
+// A single fixed sleep was not enough, and prod verify is what caught it: at
+// 450ms /api/model/open returned not_a_picker against a session whose picker
+// was in fact on screen. The reason is dialog-watch's cheap gate — it only
+// captures a pane when Claude Code's ~/.claude/sessions/<pid>.json says
+// status "waiting", and that file has its own update cadence. Land the check
+// before the file flips and the watcher reports no dialog at all. Polling
+// removes the guess: we ask repeatedly until the pane agrees or we give up.
+const SETTLE_TIMEOUT_MS = 3_000
+const SETTLE_POLL_MS = 250
 const KEY_GAP_MS = 40        // same gap /api/dialog/pick uses between keys
 
 // One flow per session at a time. Two phones (or a phone and a retry) driving
@@ -31,6 +43,20 @@ async function sendKey(pane: string, key: string): Promise<boolean> {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Re-read one session's pane until the model picker is present (want=true) or
+// gone (want=false), or the timeout runs out. Returns whatever the last read
+// saw, so callers report the real state rather than assuming the wait worked.
+async function settle(key: string, want: boolean): Promise<Dialog | undefined> {
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS
+  for (;;) {
+    await dialogWatcher.refresh(key)
+    const dialog = dialogWatcher.current()[key]
+    if (isModelPicker(dialog) === want) return dialog
+    if (Date.now() >= deadline) return dialog
+    await sleep(SETTLE_POLL_MS)
+  }
+}
 
 function log(msg: string): void {
   const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
@@ -65,9 +91,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
       if (!isModelPicker(dialog)) {
         await sendKey(pane, "/model")  // literal, then Enter
         await sendKey(pane, "Enter")
-        await sleep(OPEN_SETTLE_MS)
-        await dialogWatcher.refresh(session!.key)
-        dialog = dialogWatcher.current()[session!.key]
+        dialog = await settle(session!.key, true)
       }
       if (!isModelPicker(dialog)) {
         log(`open failed — no picker on ${session!.label || session!.key}`)
@@ -122,12 +146,10 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
         }
         await sleep(KEY_GAP_MS)
       }
-      await sleep(OPEN_SETTLE_MS)
-      await dialogWatcher.refresh(session.key)
-
-      // The picker should be gone now. If it is still up, the confirm did not
-      // take — report that instead of claiming a set that did not happen.
-      const after = dialogWatcher.current()[session.key]
+      // The picker should be gone now. If it is still up after the wait, the
+      // confirm did not take — report that instead of claiming a set that did
+      // not happen.
+      const after = await settle(session.key, false)
       const settled = !isModelPicker(after)
       log(`set → "${chosen?.text ?? index}" scope=${scope} on ${session.label || session.key}${settled ? "" : " (picker still open)"}`)
       return Response.json({
@@ -156,13 +178,11 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const dialog = dialogWatcher.current()[session.key]
     if (!isModelPicker(dialog)) return Response.json({ ok: true, closed: false })
     await sendKey(session.tmuxPane, "Escape")
-    // Wait for the redraw, not just for tmux to accept the key: at KEY_GAP_MS
-    // the pane still showed the picker and this reported closed:false on a
-    // cancel that had in fact worked.
-    await sleep(OPEN_SETTLE_MS)
-    await dialogWatcher.refresh(session.key)
+    // Wait for the redraw, not just for tmux to accept the key: a fixed 40ms
+    // gap reported closed:false on a cancel that had in fact worked.
+    const after = await settle(session.key, false)
     log(`cancel on ${session.label || session.key}`)
-    return Response.json({ ok: true, closed: !isModelPicker(dialogWatcher.current()[session.key]) })
+    return Response.json({ ok: true, closed: !isModelPicker(after) })
   }
 
   return null
