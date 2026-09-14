@@ -66,6 +66,8 @@ Value first, cost second, and everything below the line reorders once table B is
 | 20 | A8 | diff pane. Biggest build in the table |
 | 21 | A11 · A12 | the two toggles, default off |
 
+**The PWA is retired (Jeremie, 2026-09-13): "PWA is not used anymore."** Every row's client half means the **iOS app only**. `client/` still builds and ships with the server — nothing here removes it — but no phase below plans work in it, and a row is done when iOS has it. The Phase 14 split was 14a server / 14b PWA / 14c iOS; **14b is dropped**, not deferred.
+
 Two ordering rules stand:
 1. The `getThread` oldest-N-turns fix (task `f65d35e7`) lands **before** phase 14 — it corrupts the thread surface every phase above builds on.
 2. **The device half (table B) should run before phase 14, not after.** It is the cheapest thing on this page and it is the only input that can reorder the rest. Composer and history gaps, if they are real, outrank model control.
