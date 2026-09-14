@@ -44,13 +44,13 @@ Mouse-native multiplexer (panes/tabs/workspaces), a **4-state rollup per pane/ta
 
 ## The two herdr ideas genuinely worth stealing
 
-1. **Multi-agent rollup on the phone.** Companion shows one pill ("most recently active session") — fine for one terminal, weak as Zettlab lanes/agents grow ([[RES-AFEB]]). herdr's per-pane idle/working/blocked/done rollup is the right glance for a fleet. A "lanes" summary view in the PWA/iOS app (N sessions, their current verb + waiting/blocked flag) would be the high-value borrow.
+1. **Multi-agent rollup on the phone.** Companion shows one pill ("most recently active session") — fine for one terminal, weak as Linux-host lanes/agents grow ([[RES-AFEB]]). herdr's per-pane idle/working/blocked/done rollup is the right glance for a fleet. A "lanes" summary view in the PWA/iOS app (N sessions, their current verb + waiting/blocked flag) would be the high-value borrow.
 2. **Hook-independent liveness.** Companion's activity feed depends on hooks firing to know *when* to read; if a session is killed/detached with no Stop hook, the pill can go stale (the [[companion_linux_hook_bugs]] class). herdr's process inspection sidesteps that. Companion could add a process/PTY liveness check as a robustness backstop (it already has `pty-manager.ts` — likely a small addition, but confirm by reading it first).
 
 ## Options
 
 - **A. Replace with herdr — NO.** Loses APNs/native/Live Activity/approvals/phone-steer; mobile becomes SSH TUI.
-- **B. Adopt herdr as Zettlab substrate — weak.** Duplicates session spawn/discover Companion already has, adds a Rust dep + churn risk, and its value (pane UI) is desktop, not phone. Only attractive if *you personally* want a mouse multiplexer at the Zettlab terminal.
+- **B. Adopt herdr as a Linux-host substrate — weak.** Duplicates session spawn/discover Companion already has, adds a Rust dep + churn risk, and its value (pane UI) is desktop, not phone. Only attractive if *you personally* want a mouse multiplexer at the Linux host terminal.
 - **C. Cherry-pick — RECOMMENDED.** Build a fleet-rollup view in Companion's clients + a process/PTY liveness backstop. Skip the binary and the socket API.
 
 ## Recommendation

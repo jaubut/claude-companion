@@ -492,7 +492,7 @@ async function injectTextLocked(text: string, target?: InjectTarget): Promise<bo
 //
 // The picker is driven by question-driver.ts, which only needs a way to read
 // the pane and press keys. tmux gives both (capture-pane + send-keys) and is
-// the path every Zettlab session and every Mac cc-tmux session takes. A plain
+// the path every Linux-host session and every Mac cc-tmux session takes. A plain
 // iTerm/Terminal tty gets keys via System Events but no readable pane, so the
 // driver runs blind there.
 

@@ -147,7 +147,7 @@ function basename(cwd: string): string {
 // Tail of the tty for disambiguation when two sessions share a cwd.
 // macOS `/dev/ttys017` → `s017`; Linux `/dev/pts/8` → `pts8`. Empty if we
 // don't have a tty yet. (Linux ttys used to fall through untagged, which is
-// why every Zettlab session launched from $HOME was labelled "aubut".)
+// why every Linux-host session launched from $HOME was labelled "aubut".)
 export function ttyTag(tty: string): string {
   const mac = tty.match(/ttys?(\d+)$/)
   if (mac) return `s${mac[1]}`

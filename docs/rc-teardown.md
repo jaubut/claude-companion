@@ -6,7 +6,7 @@ Date: 2026-09-13. Phase 12 step 1 (PRJ-OR1T). Subject: Claude Code **Remote Cont
 1. **Official docs**, fetched 2026-09-13 from <https://code.claude.com/docs/en/remote-control> (the old `docs.claude.com/en/docs/claude-code/remote-control` 301s here). Everything in a `>` block below is a verbatim quote from that page.
 2. **Live experiment on this machine**, Claude Code **2.1.270**, macOS, in a throwaway tmux pane driven by `tmux send-keys` — the same delivery path `injectText` uses. Section 3 is our own observed output, pasted, not summarized from docs.
 
-> **Correction to the project note.** `projects/2026-06-22-companion-orchestrator` claimed this doc was "✅ desk half done 2026-09-12 (committed on branch `docs/rc-teardown`)". It was not. No such file, branch, or commit existed on the Mac or on Zettlab on 2026-09-13. This file is the first version of it. Treat the note's other unverified ✅ marks with the same suspicion.
+> **Correction to the project note.** `projects/2026-06-22-companion-orchestrator` claimed this doc was "✅ desk half done 2026-09-12 (committed on branch `docs/rc-teardown`)". It was not. No such file, branch, or commit existed on the Mac or on the Linux host on 2026-09-13. This file is the first version of it. Treat the note's other unverified ✅ marks with the same suspicion.
 
 ---
 

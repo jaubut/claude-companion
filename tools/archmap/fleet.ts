@@ -5,7 +5,7 @@ import type { ArchMap, FleetMap, FleetPackage, RosterEntry } from "./types"
 
 // Fleet = every roster repo's COMMITTED architecture.json, aggregated by
 // external package. Reads only; never scans or regenerates a sibling. The
-// roster carries candidate paths per repo so Mac and Zettlab share one file;
+// roster carries candidate paths per repo so Mac and Linux share one file;
 // entries with no map on this machine land in `skipped`.
 
 export function expandHome(p: string): string {
