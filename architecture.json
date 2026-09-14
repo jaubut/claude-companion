@@ -462,7 +462,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 471,
+          "lines": 490,
           "kind": "lib",
           "exports": [
             "GENERAL_CHANNEL",

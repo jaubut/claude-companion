@@ -13,7 +13,7 @@ Claude Companion server: an always-on Bun service on each host (Mac, Zettlab) th
 | `lib/sessions.ts` | 589 | lib | 21 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/keyboard-inject.ts` | 563 | lib | 3 | state: let injectQueue |
 | `routes/hooks.ts` | 563 | route-host | 1 | emits: user_prompt · routes: 7 |
-| `lib/orchestrator-chat.ts` | 471 | lib | 35 | state: db: Database |
+| `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
 | `lib/activity.ts` | 387 | lib | 10 | state: activityListeners: Set, let pollTimer |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/spawn-session.ts` | 337 | lib | 5 |  |

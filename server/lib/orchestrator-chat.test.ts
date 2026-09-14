@@ -314,3 +314,42 @@ describe("worker identity matchers", () => {
     expect(chat.findRunningTaskByCwd(W)?.taskId).toBe(a.taskId)
   })
 })
+
+describe("getThread returns the NEWEST turns, not the oldest", () => {
+  test("a channel past the limit still shows the turn just appended", () => {
+    const c = chat.createChannel("Overflow")
+    const limit = 10
+    // limit + 5, appended in a tight loop so most share a created_at
+    // millisecond — which is exactly the tie the rowid tiebreak has to settle.
+    for (let i = 1; i <= limit + 5; i++) chat.appendTurn("user", `turn ${i}`, null, c.id)
+
+    const turns = chat.getThread(c.id, limit)
+    expect(turns).toHaveLength(limit)
+    // The regression: before the fix this was "turn 1".."turn 10" and the last
+    // five were invisible no matter how many more arrived.
+    expect(turns.at(-1)?.text).toBe(`turn ${limit + 5}`)
+    expect(turns[0]?.text).toBe("turn 6")
+    // Callers still get ascending order.
+    expect(turns.map((t) => t.text)).toEqual(
+      Array.from({ length: limit }, (_, i) => `turn ${i + 6}`),
+    )
+  })
+
+  test("a worker reply appended to a full channel is visible", () => {
+    const c = chat.createChannel("Overflow Worker")
+    for (let i = 1; i <= 12; i++) chat.appendTurn("user", `noise ${i}`, null, c.id)
+    chat.appendTurn("worker", "PONG from the worker", "task-1", c.id)
+
+    const turns = chat.getThread(c.id, 5)
+    expect(turns.at(-1)?.text).toBe("PONG from the worker")
+    expect(turns.at(-1)?.role).toBe("worker")
+    expect(turns.at(-1)?.taskId).toBe("task-1")
+  })
+
+  test("under the limit, the whole thread comes back ascending", () => {
+    const c = chat.createChannel("Short")
+    chat.appendTurn("user", "one", null, c.id)
+    chat.appendTurn("orchestrator", "two", null, c.id)
+    expect(chat.getThread(c.id, 200).map((t) => t.text)).toEqual(["one", "two"])
+  })
+})

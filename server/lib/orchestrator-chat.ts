@@ -167,11 +167,30 @@ export function appendTurn(role: TurnRole, text: string, taskId: string | null =
   return turn
 }
 
+// The most recent `limit` turns, oldest-first.
+//
+// It used to select the OLDEST `limit` (ORDER BY created_at ASC LIMIT ?), so a
+// channel past the limit froze: every new turn — worker replies included — was
+// written, logged, and then invisible to both callers. Confirmed on Zettlab
+// #General at 200 turns during the Phase 8 e2e (2026-09-09).
+//
+// Two callers, and the bug hurt each differently: routes/orchestrator.ts's
+// /thread stopped showing the phone anything new, and wiring/orchestrator.ts
+// fed brainDecide the channel's oldest 200 turns as "context" — so the brain
+// was reasoning off frozen history on exactly the busy channels where context
+// matters most.
+//
+// `rowid` breaks ties: created_at is Date.now(), so turns appended in the same
+// millisecond are indistinguishable by it, and a tie straddling the LIMIT
+// boundary would drop an arbitrary one of them. The table has an implicit
+// rowid (id is TEXT PRIMARY KEY, not WITHOUT ROWID), monotonic in insert
+// order. Select newest-first, then reverse in memory so callers keep the
+// ascending order they have always been given.
 export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn[] {
   const rows = db
-    .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? ORDER BY created_at ASC LIMIT ?")
+    .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
     .all(threadId, limit) as TurnRow[]
-  return rows.map(toTurn)
+  return rows.reverse().map(toTurn)
 }
 
 // ---- dispatch tasks -------------------------------------------------------
