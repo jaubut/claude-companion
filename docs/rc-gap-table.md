@@ -46,9 +46,11 @@ Model control (A1–A3) **works on the phone** — first confirmation from a dev
 |---|---|---|---|
 | B1a | voice command doesn't work | the mic button was a **stub** — `// v2: SFSpeechRecognizer`, empty action, shipped since build 1. A control that looked real and did nothing | **fixed, build 6** — real `SFSpeechRecognizer` dictation, on-device where supported, live partials |
 | B1b | not a floating chat bar | composer was a full-width slab welded to the bottom edge | **fixed, build 6** — inset floating bar |
-| B1c | interactive `/command` doesn't work | no slash UI at all. Typing `/model` injects the literal text; the terminal runs it, but there is no command list, no autocomplete, no picker | **open — needs its own phase** |
+| B1c | interactive `/command` doesn't work | no slash UI at all. Typing `/model` injects the literal text; the terminal runs it, but there is no command list, no autocomplete, no picker | **built, Phase 16** — server #31, iOS to follow. Typing `/` queries Claude Code's own menu and lists what it matches |
 
-**This reorders the table.** The signed order had 15 (effort) → 16 (commands) → … with composer work nowhere, because nobody had used the app. One session with it says the composer outranks all of it. The `/command` picker should be the next phase after this build, and the design is already proven: parse Claude Code's own command list off the pane exactly the way `/api/model/open` parses the model picker — never a hardcoded command list (same reasoning as A3).
+**This reordered the table, and the work followed.** The signed order had 15 (effort) → 16 (commands) with composer work nowhere, because nobody had used the app. One session with it said the composer outranks all of it, so the composer went first: dictation and the floating bar in build 6, `/command` autocomplete as Phase 16 immediately after — ahead of effort control, which is still unbuilt.
+
+The command list is read exactly the way the model list is: Claude Code does the filtering and we mirror it (server PR #31). One thing the build discovered that this table had assumed wrong — **Claude Code's command matching is fuzzy and ranked, not prefix-only.** `/eff` returns `/effort`, then `/caveman:caveman`, then `/marketing-psychology`. The phone passes that ranking through untouched rather than re-sorting it.
 
 **Still unasked, and still not to be written from memory:**
 
