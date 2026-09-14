@@ -33,9 +33,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/events.ts` | 155 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onFeed, onFeedReset, onActivity, onSessions |
 | `ws.ts` | 146 | lib | 1 | emits: approval, question, init, resolved, inject_error, pong |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
+| `lib/command-menu.ts` | 135 | lib | 7 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/worker-identity.ts` | 127 | lib | 6 |  |
-| `lib/command-menu.ts` | 125 | lib | 7 |  |
 | `lib/pty-manager.ts` | 120 | lib | 7 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set |
 | `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/model-control.ts` | 115 | lib | 9 |  |

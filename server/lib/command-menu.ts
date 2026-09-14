@@ -39,6 +39,13 @@ const DIVIDER_RE = /^[\s▔─━═]{8,}$/
 // Claude Code separates the prompt marker from the text with a non-breaking
 // space, so a plain \s class is not enough.
 const PROMPT_RE = /^❯[\s ]*(.*)$/
+// An EMPTY input box is not blank on screen: Claude Code renders a rotating
+// hint there, `Try "write a test for <filepath>"`. Reading that as the user's
+// own text made every suggestion refuse with input_busy on a fresh session —
+// exactly what prod did on the first try, where the isolated run had passed
+// because that session had already been typed into. lib/dialogs.ts carries
+// the same shape for the same reason.
+const PLACEHOLDER_RE = /^Try\s+".*"$/
 // "  /model                    Set the AI model for Claude Code (…)"
 const ROW_RE = /^ {1,3}(\/[A-Za-z0-9:_.-]+)( {2,})(.*)$/
 
@@ -48,7 +55,10 @@ export function inputLine(pane: string): string | null {
   const lines = pane.split("\n")
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = lines[i]?.match(PROMPT_RE)
-    if (m) return (m[1] ?? "").trim()
+    if (m) {
+      const typed = (m[1] ?? "").trim()
+      return PLACEHOLDER_RE.test(typed) ? "" : typed
+    }
   }
   return null
 }
