@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 87,
+          "lines": 88,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -55,6 +55,7 @@
             "routes/orchestrator.ts",
             "routes/dialogs.ts",
             "routes/model.ts",
+            "routes/command.ts",
             "ws.ts"
           ],
           "listeners": [],
@@ -227,6 +228,32 @@
             "lib/feed.ts",
             "lib/tool-format.ts",
             "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/command-menu.ts",
+          "lines": 125,
+          "kind": "lib",
+          "exports": [
+            "CommandSuggestion",
+            "SuggestRefusalCode",
+            "SuggestRefusal",
+            "inputLine",
+            "parseCommandMenu",
+            "suggestRefusal",
+            "CLEAR_LINE_KEY"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts",
+            "lib/dialogs.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1099,6 +1126,36 @@
           "externals": []
         },
         {
+          "path": "routes/command.ts",
+          "lines": 100,
+          "kind": "route-host",
+          "exports": [
+            "handleCommandRoute"
+          ],
+          "state": [
+            "inFlight: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/api/command/suggest",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-menu.ts",
+            "lib/sessions.ts",
+            "lib/tmux-pane.ts",
+            "wiring/dialogs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/dialogs.ts",
           "lines": 57,
           "kind": "route-host",
@@ -1541,6 +1598,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleCommandRoute": {
+          "module": "routes/command.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleDialogRoute": {
           "module": "routes/dialogs.ts",
           "callers": [
@@ -1582,6 +1645,7 @@
           "callers": [
             "lib/activity.ts",
             "lib/agent-pid.ts",
+            "lib/command-menu.ts",
             "lib/dialog-watch.ts",
             "lib/hook-common.ts",
             "lib/inject-guard.ts",
@@ -1743,22 +1807,24 @@
             "lib/codex-feed.ts"
           ]
         },
+        "parseDialog": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "lib/command-menu.ts",
+            "lib/dialog-watch.ts",
+            "lib/model-control.ts"
+          ]
+        },
         "Dialog": {
           "module": "lib/dialogs.ts",
           "callers": [
+            "lib/command-menu.ts",
             "lib/dialog-watch.ts",
             "lib/inject-guard.ts",
             "lib/model-control.ts",
             "routes/dialogs.ts",
             "routes/model.ts",
             "wiring/dialogs.ts"
-          ]
-        },
-        "parseDialog": {
-          "module": "lib/dialogs.ts",
-          "callers": [
-            "lib/dialog-watch.ts",
-            "lib/model-control.ts"
           ]
         },
         "dialogSignature": {
@@ -2091,6 +2157,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
+            "routes/command.ts#POST /api/command/suggest",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts#POST /api/model/open",
@@ -2200,6 +2267,7 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/status",
+            "routes/command.ts#POST /api/command/suggest",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts",
@@ -2235,6 +2303,38 @@
           "callers": [
             "routes/api.ts#* /api/feed",
             "ws.ts"
+          ]
+        },
+        "inputLine": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
+        "capturePane": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest",
+            "wiring/dialogs.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "suggestRefusal": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
+        "CLEAR_LINE_KEY": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
+        "parseCommandMenu": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest"
           ]
         },
         "addQuestionRequest": {
@@ -2678,13 +2778,6 @@
           "module": "lib/dialog-watch.ts",
           "callers": [
             "wiring/dialogs.ts"
-          ]
-        },
-        "capturePane": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "wiring/dialogs.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "getPendingQuestions": {
