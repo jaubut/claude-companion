@@ -235,7 +235,7 @@
         },
         {
           "path": "lib/command-menu.ts",
-          "lines": 125,
+          "lines": 135,
           "kind": "lib",
           "exports": [
             "CommandSuggestion",

@@ -92,3 +92,17 @@ describe("suggestRefusal protects the user's own input line", () => {
     expect(suggestRefusal(null, null, "", "")).toEqual({ error: "no_pane" })
   })
 })
+
+describe("the empty box is not blank on screen", () => {
+  // Found by prod verify: a fresh session renders a rotating hint in the
+  // input box. Reading it as the user's text made every suggestion refuse.
+  test("Claude Code's placeholder reads as empty, not as user text", () => {
+    expect(inputLine('❯ Try "write a test for <filepath>"')).toBe("")
+    expect(inputLine('❯ Try "how do I log an error?"')).toBe("")
+    expect(suggestRefusal(session(), null, inputLine('❯ Try "anything"'), "")).toBeNull()
+  })
+
+  test("real text that merely starts with Try is still the user's", () => {
+    expect(inputLine("❯ Try the other approach")).toBe("Try the other approach")
+  })
+})
