@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-14",
+  "generatedAt": "2026-09-16",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (primary), the React PWA (desktop), and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 88,
+          "lines": 89,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -56,6 +56,7 @@
             "routes/dialogs.ts",
             "routes/model.ts",
             "routes/command.ts",
+            "routes/attach.ts",
             "ws.ts"
           ],
           "listeners": [],
@@ -229,6 +230,28 @@
             "lib/tool-format.ts",
             "lib/sessions.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/command-list.ts",
+          "lines": 84,
+          "kind": "lib",
+          "exports": [
+            "CommandEntry",
+            "HelpTab",
+            "helpTab",
+            "parseHelpPage",
+            "mergePages",
+            "filterCommands"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1126,14 +1149,40 @@
           "externals": []
         },
         {
+          "path": "routes/attach.ts",
+          "lines": 66,
+          "kind": "route-host",
+          "exports": [
+            "handleAttachRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/api/attach",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/command.ts",
-          "lines": 100,
+          "lines": 183,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
           ],
           "state": [
-            "inFlight: Set"
+            "inFlight: Set",
+            "listCache: Map"
           ],
           "emits": [],
           "consumes": [],
@@ -1142,11 +1191,17 @@
               "method": "POST",
               "path": "/api/command/suggest",
               "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/command/list",
+              "prefix": false
             }
           ],
           "apiCalls": [],
           "imports": [
             "lib/command-menu.ts",
+            "lib/command-list.ts",
             "lib/sessions.ts",
             "lib/tmux-pane.ts",
             "wiring/dialogs.ts"
@@ -1594,6 +1649,12 @@
         },
         "handleApiRoute": {
           "module": "routes/api.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleAttachRoute": {
+          "module": "routes/attach.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -2157,7 +2218,9 @@
           "module": "lib/sessions.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
+            "routes/attach.ts#POST /api/attach",
             "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts#POST /api/model/open",
@@ -2268,6 +2331,7 @@
           "callers": [
             "routes/api.ts#* /api/status",
             "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts",
@@ -2305,16 +2369,25 @@
             "ws.ts"
           ]
         },
+        "CommandEntry": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
         "inputLine": {
           "module": "lib/command-menu.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest"
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list"
           ]
         },
         "capturePane": {
           "module": "lib/tmux-pane.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts"
           ]
@@ -2322,19 +2395,39 @@
         "suggestRefusal": {
           "module": "lib/command-menu.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest"
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list"
           ]
         },
         "CLEAR_LINE_KEY": {
           "module": "lib/command-menu.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest"
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list"
           ]
         },
         "parseCommandMenu": {
           "module": "lib/command-menu.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
+        "HelpTab": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "parseHelpPage": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "helpTab": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/list"
           ]
         },
         "addQuestionRequest": {

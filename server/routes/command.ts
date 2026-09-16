@@ -1,4 +1,5 @@
 import { CLEAR_LINE_KEY, inputLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
+import { type CommandEntry, type HelpTab, helpTab, mergePages, parseHelpPage } from "../lib/command-list"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -16,6 +17,22 @@ import { dialogWatcher } from "../wiring/dialogs"
 const SETTLE_POLL_MS = 120
 const SETTLE_TIMEOUT_MS = 1_500
 const inFlight = new Set<string>()
+
+// Full list cache (Phase 16b). Keyed by cwd: built-ins are per host, but the
+// custom tab includes project-level skills and commands, so two sessions in
+// different projects can legitimately see different lists. An hour is long
+// enough that the phone's `/` is instant all session, short enough that a
+// skill added today shows up today. `force` bypasses it.
+const LIST_TTL_MS = 60 * 60 * 1000
+const listCache = new Map<string, { at: number; commands: CommandEntry[] }>()
+// Help pages hold ~17 rows; the cursor must walk to the bottom before the
+// list scrolls, so the first batch may not change the page — that is why the
+// end condition is TWO unchanged pages, not one. Keys go one at a time: a
+// single send-keys carrying 17 Downs was seen to drop most of them mid-repaint.
+const PAGE_ROWS = 17
+const KEY_MS = 45
+const PAGE_SETTLE_MS = 600
+const MAX_PAGES = 40
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -92,6 +109,72 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       return Response.json({ ok: true, key: session!.key, prefix, commands })
     } finally {
       inFlight.delete(session!.key)
+    }
+  }
+
+  // ── Every command the session knows about ──
+  // Body: { key, force? }. Drives /help twice (default tab, custom tab), pages
+  // each with Down until nothing new appears, Escapes, and caches per cwd.
+  // Slow the first time — several seconds — so the phone calls it in the
+  // background when a session becomes active, not when the user types "/".
+  if (url.pathname === "/api/command/list" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: string; force?: boolean }
+    const key = (body.key ?? "").trim()
+    const session = key ? resolveSession(key) : null
+    if (!session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
+
+    const cached = listCache.get(session.cwd)
+    if (cached && !body.force && Date.now() - cached.at < LIST_TTL_MS) {
+      return Response.json({ ok: true, key: session.key, cached: true, commands: cached.commands })
+    }
+
+    const typedNow = session.tmuxPane ? inputLine(await capturePane(session.tmuxPane) ?? "") : null
+    const refusal = suggestRefusal(session, dialogWatcher.current()[session.key], typedNow, "")
+    if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
+    if (inFlight.has(session.key)) return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
+
+    const pane = session.tmuxPane
+    inFlight.add(session.key)
+    const t0 = Date.now()
+    try {
+      const all: CommandEntry[] = []
+      for (const tab of ["default", "custom"] as HelpTab[]) {
+        // A fresh /help per tab: once the list has taken focus, Tab no longer
+        // switches tabs (measured — it silently stays put).
+        await sendKey(pane, CLEAR_LINE_KEY)
+        await sendLiteral(pane, "/help")
+        await sendKey(pane, "Enter")
+        await sleep(1_800)
+        for (let i = 0; i < (tab === "default" ? 1 : 2); i++) { await sendKey(pane, "Tab"); await sleep(700) }
+
+        const pages: ReturnType<typeof parseHelpPage>[] = []
+        const seen = new Set<string>()
+        let stale = 0
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const text = await capturePane(pane) ?? ""
+          if (page === 0 && helpTab(text) !== tab) break   // wrong tab — bail rather than mislabel
+          const rows = parseHelpPage(text)
+          const before = seen.size
+          for (const r of rows) seen.add(r.name)
+          pages.push(rows)
+          stale = seen.size === before ? stale + 1 : 0
+          if (stale >= 2) break
+          for (let k = 0; k < PAGE_ROWS; k++) { await sendKey(pane, "Down"); await sleep(KEY_MS) }
+          await sleep(PAGE_SETTLE_MS)
+        }
+        all.push(...mergePages(pages, tab))
+        await sendKey(pane, "Escape")
+        await sleep(500)
+      }
+      // Leave the box exactly as found: empty.
+      await sendKey(pane, CLEAR_LINE_KEY)
+
+      if (all.length) listCache.set(session.cwd, { at: Date.now(), commands: all })
+      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+      process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list → ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s on ${session.label || session.key}\n`)
+      return Response.json({ ok: true, key: session.key, cached: false, commands: all })
+    } finally {
+      inFlight.delete(session.key)
     }
   }
 
