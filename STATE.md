@@ -40,6 +40,8 @@ Last updated: 2026-09-13
 
 **Contracts (new, additive):** `POST /api/command/list {key, force?}` → `{commands:[{name, description, kind}], cached}`; `POST /api/attach` multipart → `{path, name, size, type}`. Consumer: the iOS composer (`feat/full-commands-attachments`).
 
+**Prod verify, Mac, fresh session (2026-09-16):** 271 commands, same 102/169 split, `/model` and `/mood-board` present, input box left empty, upload landed at `~/.claude-companion/attachments/2026-09-16/…-red.png`. **Cold enumeration took 91 s on prod** against 37 s isolated — the prod server is polling every live session's pane between our key presses. Acceptable only because the phone warms it in the background on session activation and never on a keystroke; if it ever matters, `KEY_MS` 45→30 and `PAGE_SETTLE_MS` 600→400 are the first knobs, re-verified against a real session.
+
 **Known:** `/voice` appeared in one flaky manual enumeration and not in the real one — either a misparse then or a row the scroll skipped; worth a look if a command is ever reported missing. 37 s cold is fine for a background warm and could drop with a shorter key gap.
 
 ### Change Plan — phase16-command-suggest (2026-09-14) — ✅ shipped #31 + #32, both hosts deployed + prod-verified
