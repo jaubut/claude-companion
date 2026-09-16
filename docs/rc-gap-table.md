@@ -56,8 +56,8 @@ The command list is read exactly the way the model list is: Claude Code does the
 
 | # | Reported | Reality | Status |
 |---|---|---|---|
-| B1c′ | `/` in the Claude app opens a dropdown of **all** commands | ours lists only what fits in the pane's `/` menu window — 2–5 rows — until you type a prefix. Phase 16 solved filtering, not enumeration | **Phase 16b** — enumerate via `/help`'s two command tabs (~17 rows/page, scrollable, cursor renders `❯ /name`), cache per host+cwd, filter locally on the phone. Live prefix query stays as fallback |
-| B5 | `+` → camera / photo / files | **answered: rc has attachments.** We have nothing — no way to get an image or file from the phone into a session | **Phase 17** — upload to the session's host, reference it from the prompt |
+| B1c′ | `/` in the Claude app opens a dropdown of **all** commands | ours lists only what fits in the pane's `/` menu window — 2–5 rows — until you type a prefix. Phase 16 solved filtering, not enumeration | **✅ shipped, build 8** — server #33 enumerates `/help`'s two command tabs (271 on this account, cached per cwd); iOS #12 shows the full dropdown sectioned Built-in / Custom, filtered locally. Live prefix query stays as fallback before the warm |
+| B5 | `+` → camera / photo / files | **answered: rc has attachments.** We have nothing — no way to get an image or file from the phone into a session | **✅ shipped, build 8** — `+` → Camera / Photo Library / Files; upload to the session's origin host (server #33), `@path` prepended on send. Mechanism measured first: `@/abs/red.png` → Claude Code Read the image |
 | A13 | session origination | **confirmed by Jeremie as the one thing we have that rc doesn't** | already-ours, now evidenced from the device |
 
 **Still unasked, and still not to be written from memory:**
