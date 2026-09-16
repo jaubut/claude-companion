@@ -52,6 +52,14 @@ Model control (A1–A3) **works on the phone** — first confirmation from a dev
 
 The command list is read exactly the way the model list is: Claude Code does the filtering and we mirror it (server PR #31). One thing the build discovered that this table had assumed wrong — **Claude Code's command matching is fuzzy and ranked, not prefix-only.** `/eff` returns `/effort`, then `/caveman:caveman`, then `/marketing-psychology`. The phone passes that ranking through untouched rather than re-sorting it.
 
+**Second report, build 7 in hand (2026-09-16), verbatim:** *"Claude ios app still have a better ux. the / open a dropdown with all the available commands. there's a + button that open a menu with a camera, photo and files button to add context. the only thing we have they don't is the ability to spawn session from here."*
+
+| # | Reported | Reality | Status |
+|---|---|---|---|
+| B1c′ | `/` in the Claude app opens a dropdown of **all** commands | ours lists only what fits in the pane's `/` menu window — 2–5 rows — until you type a prefix. Phase 16 solved filtering, not enumeration | **Phase 16b** — enumerate via `/help`'s two command tabs (~17 rows/page, scrollable, cursor renders `❯ /name`), cache per host+cwd, filter locally on the phone. Live prefix query stays as fallback |
+| B5 | `+` → camera / photo / files | **answered: rc has attachments.** We have nothing — no way to get an image or file from the phone into a session | **Phase 17** — upload to the session's host, reference it from the prompt |
+| A13 | session origination | **confirmed by Jeremie as the one thing we have that rc doesn't** | already-ours, now evidenced from the device |
+
 **Still unasked, and still not to be written from memory:**
 
 | # | Capability | Blocked on |
@@ -59,7 +67,6 @@ The command list is read exactly the way the model list is: Claude Code does the
 | B2 | History depth + pagination in a long thread | device item 2 — also gated by our own `getThread` bug (task `f65d35e7`) |
 | B3 | Model/effort controls as UI — is scope visible to the user? | device item 3 |
 | B4 | Permission + question card shape on the phone | device item 4 |
-| B5 | Attachments from the phone into a session | device item 5 — undocumented, unknown, not "no" |
 | B6 | Session list / switching / online-dot latency | device item 6 |
 | B7 | What a reconnect looks like in the hand | device item 7 |
 
