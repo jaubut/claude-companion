@@ -1,6 +1,7 @@
 import { test, expect, afterEach } from "bun:test"
 import {
-  abortScrape, beginFlow, endFlow, isFlowActive, isScraping, resetFlows, scrapeAbortRequested, waitForFlow, yieldPane,
+  abortScrape, beginFlow, DIRTY_TTL_MS, endFlow, isFlowActive, isPaneDirty, isScraping, resetFlows,
+  scrapeAbortRequested, waitForFlow, yieldPane,
 } from "./command-scrape"
 
 const KEY = "claude:tty:/dev/pts/8"
@@ -134,4 +135,105 @@ test("a release with no verdict is clean — the suggest probe ends with a C-u",
   const waited = waitForFlow(KEY, 1_000)
   setTimeout(() => endFlow(KEY), 10)
   expect(await waited).toBe(true)
+})
+
+// R1 — the verdict has to outlive the flow.
+//
+// A dirty release DELETES the flow, so it only ever reached the waiters that
+// were already parked on it. The first inject was refused (`freed:false`), and
+// the retry a millisecond later found no flow at all: yieldPane answered
+// freed:true, openDialogFor answered null (the watcher had been skipping that
+// session for the whole scrape, and its next sweep is up to 2s away), and the
+// user's text went into the /help modal that was still on screen — the hole the
+// verdict was added to close, reopened by pressing send twice.
+test("R1: a dirty release keeps refusing until a capture proves the pane is clean", async () => {
+  const verify = { calls: 0, clean: false }
+  const check = async () => { verify.calls++; return verify.clean }
+
+  // Inject 1 — parked on the flow, woken by the dirty release.
+  beginFlow(KEY, "list")
+  const first = yieldPane(KEY, { abortMs: 1_000, verify: check })
+  expect(scrapeAbortRequested(KEY)).toBe(true)
+  setTimeout(() => endFlow(KEY, { clean: false }), 10)
+  expect(await first).toEqual({ held: "list", freed: false })
+  expect(isFlowActive(KEY)).toBe(false)
+  expect(isPaneDirty(KEY)).toBe(true)
+
+  // Inject 2 — the retry. No flow left, but the pane is still dirty and the
+  // capture says so: refused, NOT waved through.
+  expect(await yieldPane(KEY, { verify: check })).toEqual({ held: "list", freed: false })
+  expect(verify.calls).toBe(1)
+
+  // Inject 3 — the overlay is gone and the prompt is empty. Delivered.
+  verify.clean = true
+  expect(await yieldPane(KEY, { verify: check })).toEqual({ held: "list", freed: true })
+  expect(verify.calls).toBe(2)
+  expect(isPaneDirty(KEY)).toBe(false)
+
+  // …and the mark is spent: the next inject costs no capture at all.
+  expect(await yieldPane(KEY, { verify: async () => { throw new Error("re-checked a clean pane") } }))
+    .toEqual({ held: null, freed: true })
+  expect(verify.calls).toBe(2)
+})
+
+test("R1: a dirty pane with no way to look at it is a busy pane", async () => {
+  beginFlow(KEY, "list")
+  endFlow(KEY, { clean: false })
+  // No verifier (no tmux pane on the target, say): unverifiable is unusable.
+  expect(await yieldPane(KEY)).toEqual({ held: "list", freed: false })
+  // A verifier that blows up counts the same way.
+  expect(await yieldPane(KEY, { verify: async () => { throw new Error("tmux gone") } }))
+    .toEqual({ held: "list", freed: false })
+})
+
+test("R1: a flow that ends clean clears an earlier dirty mark", async () => {
+  beginFlow(KEY, "list")
+  endFlow(KEY, { clean: false })
+  expect(isPaneDirty(KEY)).toBe(true)
+  // A later scrape drives the pane again and closes properly.
+  beginFlow(KEY, "list")
+  endFlow(KEY, { clean: true })
+  expect(isPaneDirty(KEY)).toBe(false)
+  expect(await yieldPane(KEY)).toEqual({ held: null, freed: true })
+})
+
+test("R1: a verdict-less release says nothing about a mark somebody else left", async () => {
+  beginFlow(KEY, "list")
+  endFlow(KEY, { clean: false })
+  // The `/` suggest probe ends with a C-u and no opinion on overlays: it must
+  // not launder a dirty pane clean.
+  beginFlow(KEY, "suggest")
+  endFlow(KEY)
+  expect(isPaneDirty(KEY)).toBe(true)
+  expect(await yieldPane(KEY)).toEqual({ held: "list", freed: false })
+})
+
+// The mark covers the gap until the dialog watcher notices the leftover
+// overlay (it stopped skipping the session the moment the flow went away).
+// Past that it could only wedge a session whose pane is fine — a user who
+// typed a line of their own makes "is it clean" answer no forever.
+test("R1: the dirty mark expires rather than refusing a healthy pane forever", async () => {
+  expect(DIRTY_TTL_MS).toBeGreaterThan(2_000 * 2)   // more than a watcher tick or two
+  beginFlow(KEY, "list")
+  endFlow(KEY, { clean: false })
+  expect(isPaneDirty(KEY, 0)).toBe(false)
+  expect(await yieldPane(KEY, { dirtyTtlMs: 0 })).toEqual({ held: null, freed: true })
+  // Spent: the pane is not dirty under the real TTL either any more.
+  expect(isPaneDirty(KEY)).toBe(false)
+})
+
+test("R1: a scrape that releases clean never marks the pane", async () => {
+  beginFlow(KEY, "list")
+  const y = yieldPane(KEY, { abortMs: 1_000, verify: async () => false })
+  setTimeout(() => endFlow(KEY, { clean: true }), 10)
+  expect(await y).toEqual({ held: "list", freed: true })
+  expect(isPaneDirty(KEY)).toBe(false)
+  expect(await yieldPane(KEY)).toEqual({ held: null, freed: true })
+})
+
+test("R1: a wedged scrape is a timeout, not a mark — the flow still holds the pane", async () => {
+  beginFlow(KEY, "list")
+  expect(await yieldPane(KEY, { abortMs: 30 })).toEqual({ held: "list", freed: false })
+  expect(isScraping(KEY)).toBe(true)
+  expect(isPaneDirty(KEY)).toBe(false)
 })
