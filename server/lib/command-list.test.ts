@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test"
-import { closeHelpOverlay, filterCommands, helpOverlayVisible, helpTab, listIncomplete, mergePages, pageBudget, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
+import { closeHelpOverlay, filterCommands, HELP_CLOSE_OPEN_WAIT_MS, HELP_PAINT_MS, helpOverlayVisible, helpTab, listIncomplete, mergePages, pageBudget, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
+import { SCRAPE_ABORT_WAIT_MS } from "./command-scrape"
 
 // Shapes captured off real /help pages, 2026-09-16, Claude Code 2.1.270:
 // cursor row renders "❯ /name", the last visible row of a page that has more
@@ -414,6 +415,97 @@ describe("closeHelpOverlay", () => {
     expect(res).toEqual({ sawOverlay: true, clean: true })
     expect(r.captures).toBeGreaterThanOrEqual(5)
     expect(cleanAtCapture).toBeGreaterThan(0)
+  })
+
+  // R2 — the open wait was SHORTER than the paint.
+  //
+  // The route waited 1.5s for the overlay against an 1.8s paint. An abort
+  // landing at ~300ms found a pane with no overlay and — because the Enter had
+  // already submitted /help and emptied the input line — a perfectly clean
+  // prompt. It polled that, gave up, Escaped a dialog that did not exist yet,
+  // read the same clean prompt and released the flow CLEAN. The dialog painted
+  // 300ms later onto a pane nobody was holding, and the phone's next message
+  // went into the help list.
+  //
+  // Fixture throughout: Enter at t=0, abort at t=300, Claude Code paints at
+  // t=1800. Virtual clock, so the 1.8s costs the suite nothing.
+  function paintingPane(paintAt = 1_800) {
+    let t = 300
+    let state: "pending" | "open" | "closed" = "pending"
+    const r = { captures: 0, escapes: 0, clears: 0, escapedAt: -1 }
+    const advance = (ms: number): void => {
+      t += ms
+      if (state === "pending" && t >= paintAt) state = "open"
+    }
+    return {
+      r,
+      advance,
+      state: () => state,
+      deps: {
+        capture: async () => { r.captures++; return state === "open" ? GENERAL : IDLE },
+        // An Escape sent before the dialog exists hits nothing — and does not
+        // stop it from opening a moment later. That is the whole bug.
+        escape: async () => { r.escapes++; r.escapedAt = t; if (state === "open") state = "closed" },
+        clearLine: async () => { r.clears++ },   // the Enter already emptied the line
+        sleep: async (ms: number) => { advance(ms) },
+        now: () => t,
+        enterAt: 0,
+        paintMs: 1_800,
+        pollMs: 120,
+      },
+    }
+  }
+
+  test("R2: an abort inside the paint window waits the dialog out instead of calling the pane clean", async () => {
+    const f = paintingPane()
+    const res = await closeHelpOverlay({ ...f.deps, openWaitMs: HELP_CLOSE_OPEN_WAIT_MS, clearWaitMs: 1_500 })
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    // The Escape hit a dialog that had actually painted, and the pane handed
+    // over is the one that was looked at AFTER it closed.
+    expect(f.r.escapedAt).toBeGreaterThanOrEqual(1_800)
+    expect(f.state()).toBe("closed")
+  })
+
+  test("R2: an open wait that expires before the paint is UNVERIFIED, so the pane is released dirty", async () => {
+    const f = paintingPane()
+    // The old shape: give up at t=1500 on a dialog that paints at t=1800.
+    const res = await closeHelpOverlay({ ...f.deps, openWaitMs: 1_200, clearWaitMs: 200 })
+    // No overlay ever seen and the paint window never waited out: "clean" here
+    // would be an absence of evidence. clean:false → endFlow(key,{clean:false})
+    // → both inject paths answer busy_flow.
+    expect(res).toEqual({ sawOverlay: false, clean: false })
+    // And refusing was right: the dialog lands a moment after the release.
+    f.advance(300)
+    expect(f.state()).toBe("open")
+  })
+
+  test("R2: past the paint window a clean prompt is taken at its word — no extra second per close", async () => {
+    let t = 5_000
+    const r = { captures: 0, escapes: 0 }
+    const res = await closeHelpOverlay({
+      capture: async () => { r.captures++; return IDLE },
+      escape: async () => { r.escapes++ },
+      clearLine: async () => { /* nothing to clear */ },
+      sleep: async (ms: number) => { t += ms },
+      now: () => t,
+      enterAt: 0,
+      paintMs: HELP_PAINT_MS,
+      openWaitMs: HELP_CLOSE_OPEN_WAIT_MS,
+      clearWaitMs: 1_500,
+      pollMs: 120,
+    })
+    expect(res).toEqual({ sawOverlay: false, clean: true })
+    // One capture to leave the open wait, one to confirm the pane after the
+    // Escape: the longer wait costs nothing when the overlay is already gone.
+    expect(r.captures).toBe(2)
+    expect(t).toBe(5_000)
+  })
+
+  test("R2: the open wait outlasts the paint, and both waits fit the abort budget", () => {
+    expect(HELP_CLOSE_OPEN_WAIT_MS).toBeGreaterThan(HELP_PAINT_MS)
+    // The route's clear wait is 1.5s; an inject aborting the scrape gives up
+    // at SCRAPE_ABORT_WAIT_MS, and must be answered before it does.
+    expect(HELP_CLOSE_OPEN_WAIT_MS + 1_500).toBeLessThan(SCRAPE_ABORT_WAIT_MS)
   })
 })
 

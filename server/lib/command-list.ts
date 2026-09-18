@@ -243,6 +243,26 @@ export function listIncomplete(
 // overlay AND a prompt line AND that line empty. A capture taken mid-repaint
 // shows neither an overlay nor a prompt; reading that as clean is how a pane
 // with a modal one frame away gets handed to an inject.
+//
+// R2 — "no overlay" is itself an absence of evidence until Claude Code has
+// had its paint window. The open wait was 1.5s against a 1.8s paint: an abort
+// landing at 300ms polled a pane with no overlay (the Enter had already
+// cleared the input line, so it even read as a clean prompt), gave up at 1.5s,
+// Escaped nothing, confirmed "clean", released the flow — and the dialog
+// painted 300ms later onto a pane nobody was holding. So an expired open wait
+// with no overlay seen is UNVERIFIED, not clean: it only counts once
+// `paintMs` has passed since the Enter that opened /help.
+
+// Claude Code's worst case between the Enter that submits `/help` and the
+// dialog being on the pane (measured on the Linux host, 2.1.270). The route
+// sleeps exactly this long before it starts paging.
+export const HELP_PAINT_MS = 1_800
+// What the close path must be willing to wait for the overlay, so that not
+// seeing one MEANS there is none: the paint window plus margin for a slow
+// capture. Kept under SCRAPE_ABORT_WAIT_MS (5s) together with the clear wait,
+// so an inject aborting the scrape is refused late rather than timed out.
+export const HELP_CLOSE_OPEN_WAIT_MS = HELP_PAINT_MS + 700
+
 export interface CloseHelpDeps {
   capture: () => Promise<string | null>
   escape: () => Promise<void>
@@ -253,6 +273,13 @@ export interface CloseHelpDeps {
   // Bounded wait for the pane to come back clean after it.
   clearWaitMs?: number
   pollMs?: number
+  // When the Enter that opened /help was sent. An empty pane before
+  // `enterAt + paintMs` proves nothing — the dialog may simply not have
+  // painted yet. Defaults to "now", i.e. the whole paint window is waited out
+  // from here, which is the conservative reading.
+  enterAt?: number
+  paintMs?: number
+  now?: () => number
 }
 
 export interface CloseHelpResult {
@@ -264,23 +291,42 @@ export interface CloseHelpResult {
 
 export async function closeHelpOverlay(deps: CloseHelpDeps): Promise<CloseHelpResult> {
   const poll = deps.pollMs ?? 120
-  const openDeadline = Date.now() + (deps.openWaitMs ?? 2_000)
+  const now = deps.now ?? Date.now
+  const paintMs = deps.paintMs ?? HELP_PAINT_MS
+  const enterAt = deps.enterAt ?? now()
+  const openDeadline = now() + (deps.openWaitMs ?? HELP_CLOSE_OPEN_WAIT_MS)
   let sawOverlay = false
+  // An empty pane is only believable once the dialog has had its window to
+  // paint from the Enter that asked for it.
+  const paintWindowPassed = (): boolean => now() - enterAt >= paintMs
   for (;;) {
     const text = await deps.capture()
     if (text !== null && helpOverlayVisible(text)) { sawOverlay = true; break }
-    if (Date.now() >= openDeadline) break
+    // Past the paint window with a prompt sitting there: nothing is coming.
+    // Leaving early here is what keeps the longer open wait from costing a
+    // second on every normal close.
+    if (text !== null && isPaneClean(text) && paintWindowPassed()) break
+    if (now() >= openDeadline) break
     await deps.sleep(poll)
   }
 
   await deps.escape()
   await deps.clearLine()
 
-  const clearDeadline = Date.now() + (deps.clearWaitMs ?? 2_000)
+  const clearDeadline = now() + (deps.clearWaitMs ?? 2_000)
   for (;;) {
     const text = await deps.capture()
-    if (text !== null && isPaneClean(text)) return { sawOverlay, clean: true }
-    if (Date.now() >= clearDeadline) return { sawOverlay, clean: false }
+    // An overlay that shows up late is still an overlay we saw: it turns the
+    // guess into evidence, and it gets Escaped below like any other.
+    if (text !== null && helpOverlayVisible(text)) sawOverlay = true
+    // `clean` needs the pane AND the proof: a clean-looking pane inside the
+    // paint window, with no overlay ever seen, is the race — report it dirty
+    // (the flow is released `clean:false`, both inject paths answer
+    // `busy_flow`) rather than hand over a pane a modal is about to land on.
+    if (text !== null && isPaneClean(text) && (sawOverlay || paintWindowPassed())) {
+      return { sawOverlay, clean: true }
+    }
+    if (now() >= clearDeadline) return { sawOverlay, clean: false }
     await deps.sleep(poll)
     // Whatever is still there gets the matching key again: an overlay that
     // outlived the first Escape, or text C-u did not reach. A capture that
