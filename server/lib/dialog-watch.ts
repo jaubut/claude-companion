@@ -20,6 +20,9 @@ export interface DialogWatchDeps {
   capture(pane: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
+  // True while the companion itself is driving that session's pane through
+  // /help (lib/command-scrape.ts). The overlay on screen is ours.
+  isScraping(key: string): boolean
   onDialog(key: string, dialog: Dialog): void
   onDialogClosed(key: string): void
   onStatus(key: string, status: SessionStatus): void
@@ -48,9 +51,30 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     deps.onDialogClosed(key)
   }
 
+  // Our own /help scrape is not a dialog the user has to deal with. Mirroring
+  // it put "Help  General  Commands  Custom commands" on the phone, marked
+  // the session waiting-on-a-dialog, and made every inject refuse with "has a
+  // dialog open" for the ~2 minutes the scrape ran on a cramped pane — which
+  // reads, from the phone, as a session that cannot be spawned.
+  //
+  // Checking once at the top of `check` was not enough: `check` awaits twice
+  // (the status file, then the capture) and a scrape that CLAIMS the pane
+  // during either await still published one Help card. Every later tick then
+  // skipped the session, so nothing ever closed that card — it stuck for the
+  // whole scrape. So the test is repeated after each await, and it closes any
+  // entry already open for that key rather than leaving it to a later tick
+  // that will not come.
+  function ours(key: string): boolean {
+    if (!deps.isScraping(key)) return false
+    close(key)
+    return true
+  }
+
   async function check(s: Session): Promise<void> {
     if (!s.tmuxPane) { close(s.key); return }
+    if (ours(s.key)) return
     const st = s.pid ? await deps.sessionStatus(s.pid) : null
+    if (ours(s.key)) return
     if (st) {
       const sig = `${st.status}|${st.waitingFor}`
       if (lastStatus.get(s.key) !== sig) {
@@ -61,6 +85,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     }
     if (deps.hasPendingQuestion(s)) { close(s.key); return }
     const pane = await deps.capture(s.tmuxPane)
+    if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)
     // Question pickers are the hooks' business (structured card + driver);
     // mirroring one — e.g. for the second the driver is still typing after

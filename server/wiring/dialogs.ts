@@ -1,5 +1,6 @@
 import { broadcast } from "../state"
 import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
+import { isScraping, yieldPane } from "../lib/command-scrape"
 import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
@@ -24,6 +25,7 @@ export const dialogWatcher = createDialogWatcher({
   capture: capturePane,
   sessionStatus: readSessionStatus,
   hasPendingQuestion: (s) => getPendingQuestions().some((q) => (q.sessionId && q.sessionId === s.sessionId) || q.cwd === s.cwd),
+  isScraping,
   onDialog(key, dialog) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"
     process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}dialog${reset} ${dim}${dialog.title || "(untitled)"} · ${dialog.items.length} rows · ${key}${reset}\n`)
@@ -54,6 +56,37 @@ dialogWatcher.start()
 // false refusal is user-visible ("I typed and nothing happened"), and the
 // re-check is one capture-pane. It also closes the stale entry and broadcasts
 // `dialog_closed`, so the phone's badge clears as a side effect.
+// Hand the pane back before an inject looks at it.
+//
+// The companion's own /help scrape holds the input box for tens of seconds and
+// puts a modal on screen. A user's message arriving mid-scrape must never be
+// refused because of it: ask the scrape to stop (it Escapes the dialog and
+// clears the line itself) and wait, bounded, then deliver. Call this BEFORE
+// `openDialogFor` — otherwise the check races our own overlay.
+//
+// Returns TRUE only when the pane is actually free. The first cut returned
+// void, and a timed-out abort then fell through to the normal checks with the
+// flow still held: the watcher was still skipping that session, so
+// `openDialogFor` answered null, the dialog refusal passed, and the user's
+// text was typed straight into the open /help modal. A pane we could not take
+// back is a refusal (`busy_flow`, 409) — the phone can retry a second later,
+// which is strictly better than answering someone else's dialog.
+//
+// "Could not take back" now covers two shapes, and they are one answer here:
+// the flow never let go (timeout), or it let go with the /help overlay still
+// on screen (`endFlow(key, {clean:false})` — see lib/command-scrape.ts). The
+// pane is equally unusable either way.
+export async function yieldPaneForInject(target: { key: string } | null | undefined): Promise<boolean> {
+  if (!target) return true
+  const { held, freed } = await yieldPane(target.key)
+  if (held === "list") {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
+    const why = freed ? "" : isScraping(target.key) ? " (timed out — pane still held)" : " (released dirty — overlay may still be up)"
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}command scrape aborted${reset} ${dim}for inject → ${target.key}${why}${reset}\n`)
+  }
+  return freed
+}
+
 export async function openDialogFor(target: { key: string } | null | undefined): Promise<Dialog | null> {
   if (!target) return null
   if (!dialogWatcher.current()[target.key]) return null

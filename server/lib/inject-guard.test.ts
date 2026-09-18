@@ -83,6 +83,26 @@ test("the frontmost fallback (no lookup, no target) is unchanged — it injects"
   expect(injectRefusal({ lookup: "", target: null, dialog: dialog() })).toBeNull()
 })
 
+// F1 — a pane the companion's own flow would not hand back.
+test("a pane we could not take back refuses with busy_flow", () => {
+  const r = injectRefusal({ lookup: "tty:/dev/ttys004", target: session(), paneFree: false, dialog: null })
+  expect(r?.error).toBe("busy_flow")
+})
+
+test("busy_flow outranks the dialog check — with the flow held, `dialog` is a lie", () => {
+  // While the /help scrape holds the pane, dialog-watch deliberately skips
+  // that session, so `current()` has no entry even though our modal is on
+  // screen. If busy_flow fell through to dialog_open's `dialog == null`, the
+  // inject would proceed and type into the help list.
+  const r = injectRefusal({ lookup: "tty:/dev/ttys004", target: session(), paneFree: false, dialog: null })
+  expect(r?.error).not.toBe("dialog_open")
+  expect(r?.error).toBe("busy_flow")
+  // A freed pane is business as usual.
+  expect(injectRefusal({ lookup: "tty:/dev/ttys004", target: session(), paneFree: true, dialog: null })).toBeNull()
+  // And an unregistered target still refuses first.
+  expect(injectRefusal({ lookup: "tty:/dev/ttys999", target: null, paneFree: false })?.error).toBe("target_gone")
+})
+
 test("a dialog on a session the caller did not address does not refuse", () => {
   // The caller passes the dialog for `target` only; a bystander's dialog never
   // reaches here. Guards the call sites against passing the wrong map entry.

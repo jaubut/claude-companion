@@ -18,7 +18,7 @@ import {
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clients } from "../state"
-import { dialogWatcher, openDialogFor } from "../wiring/dialogs"
+import { dialogWatcher, openDialogFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
@@ -182,11 +182,22 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       if (recent) target = recent
     }
 
+    // A dialog the COMPANION opened (the /help command scrape) is ours to
+    // close, not the user's problem — stop it and take the pane back before
+    // the refusal check even looks. If we could NOT take it back, the pane is
+    // in an unknown state (the scrape may still have its modal up and the
+    // watcher is still skipping that session, so the dialog check below would
+    // pass on a stale null): it is a `busy_flow` refusal below, not a blind
+    // send-keys.
+    const paneFree = await yieldPaneForInject(target)
+
     // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
     // target not registered, no live tty, or a dialog in the way. A dialog is
     // modal in the pane — typing into one answers it instead of reaching the
     // input box — so it is a refusal, not a delivery problem.
-    const refusal = injectRefusal({ lookup, target, dialog: await openDialogFor(target) })
+    // With the pane still held there is nothing to learn from the watcher —
+    // it is skipping that session for the duration of the flow.
+    const refusal = injectRefusal({ lookup, target, paneFree, dialog: paneFree ? await openDialogFor(target) : null })
     if (refusal) {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
       // label is often empty (a session with no resolved title), so fall back
@@ -195,12 +206,14 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       const who = target?.label || target?.key || lookup
       const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
         : refusal.error === "target_idle" ? `target ${who} has no live tty`
+        : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
         : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
       process.stderr.write(`${dim}[companion]${reset} ${red}inject refused${reset} — ${why}\n`)
-      // 409 for the dialog: the request is fine and the target is alive, it
-      // just can't accept text yet. 410 stays the "this target is gone" code
-      // the phone already maps to a re-pin prompt.
-      const status = refusal.error === "dialog_open" ? 409 : 410
+      // 409 for the dialog and for a pane we could not take back: the request
+      // is fine and the target is alive, it just can't accept text yet. 410
+      // stays the "this target is gone" code the phone already maps to a
+      // re-pin prompt.
+      const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" ? 409 : 410
       return Response.json({ ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog }, { status })
     }
 

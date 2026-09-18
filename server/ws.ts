@@ -8,7 +8,7 @@ import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } f
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, HOST_INFO, type WsData } from "./state"
-import { dialogWatcher, openDialogFor } from "./wiring/dialogs"
+import { dialogWatcher, openDialogFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 
 // WebSocket handlers: on open, replay pending approvals/questions and send the
@@ -102,14 +102,21 @@ export const websocket: WebSocketHandler<WsData> = {
           const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
           const tag = target?.tty ? ` → ${target.label || target.key} (${target.tty})` : lookup ? ` → ${lookup} [unresolved]` : " → frontmost"
           process.stderr.write(`${dim}[companion]${reset} ${cyan}ws inject${reset}${tag} "${msg.text.slice(0, 60)}"\n`)
+          // Our own /help scrape never refuses a user's message: abort it and
+          // take the pane back first (same as POST /api/inject). A pane we
+          // could not take back is `busy_flow`, not a blind send-keys — the
+          // scrape's modal may still be up and the watcher is still skipping
+          // that session, so the dialog check below would wave it through.
+          const paneFree = await yieldPaneForInject(target)
           // Same three refusals as POST /api/inject, same order, one decision
           // (see lib/inject-guard.ts) — including the dialog check both paths
           // were missing: with a dialog open, send-keys answers the dialog
           // instead of reaching the input box.
-          const refusal = injectRefusal({ lookup, target, dialog: await openDialogFor(target) })
+          const refusal = injectRefusal({ lookup, target, paneFree, dialog: paneFree ? await openDialogFor(target) : null })
           if (refusal) {
             const why = refusal.error === "target_gone" ? `${lookup} not registered`
               : refusal.error === "target_idle" ? `${target?.label || target?.key} has no tty`
+              : refusal.error === "busy_flow" ? `${target?.label || target?.key} pane still held by a companion flow`
               : `${target?.label || target?.key} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
             process.stderr.write(`${dim}[companion]${reset} ${red}ws inject refused${reset} — ${why}\n`)
             try {
