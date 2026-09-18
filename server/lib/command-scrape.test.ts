@@ -93,3 +93,45 @@ test("yieldPane: a suggest probe that outlasts the wait also reports NOT freed",
   expect(await yieldPane(KEY, { waitMs: 30 })).toEqual({ held: "suggest", freed: false })
   expect(isFlowActive(KEY)).toBe(true)
 })
+
+// G1 — a release carries a VERDICT, and the waiters get it.
+//
+// The scrape's own cleanup can fail: closeHelpOverlay polls for a pane with no
+// overlay and an empty input line, and answers clean:false when it never came.
+// The route still has to release the claim (its `finally`), and before this
+// the release said nothing — every waiter resolved freed:true, yieldPane
+// reported the pane free, and the inject typed into the /help modal that was
+// demonstrably still up. The verdict is what turns that into a `busy_flow`
+// refusal.
+test("a DIRTY release wakes the waiter with freed:false — the overlay is still up", async () => {
+  beginFlow(KEY, "list")
+  const y = yieldPane(KEY, { abortMs: 1_000 })
+  expect(scrapeAbortRequested(KEY)).toBe(true)
+  // closeHelpOverlay could not get the pane back to an empty prompt.
+  setTimeout(() => endFlow(KEY, { clean: false }), 10)
+  expect(await y).toEqual({ held: "list", freed: false })
+  // The claim IS gone — this is not a timeout, it is a bad hand-off, and the
+  // caller must be able to tell them apart only by acting the same way.
+  expect(isFlowActive(KEY)).toBe(false)
+})
+
+test("a CLEAN release wakes the waiter with freed:true", async () => {
+  beginFlow(KEY, "list")
+  const y = yieldPane(KEY, { abortMs: 1_000 })
+  setTimeout(() => endFlow(KEY, { clean: true }), 10)
+  expect(await y).toEqual({ held: "list", freed: true })
+})
+
+test("waitForFlow relays the verdict too, and every waiter gets the same one", async () => {
+  beginFlow(KEY, "list")
+  const both = Promise.all([waitForFlow(KEY, 1_000), abortScrape(KEY, 1_000)])
+  setTimeout(() => endFlow(KEY, { clean: false }), 10)
+  expect(await both).toEqual([false, false])
+})
+
+test("a release with no verdict is clean — the suggest probe ends with a C-u", async () => {
+  beginFlow(KEY, "suggest")
+  const waited = waitForFlow(KEY, 1_000)
+  setTimeout(() => endFlow(KEY), 10)
+  expect(await waited).toBe(true)
+})

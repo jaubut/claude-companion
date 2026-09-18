@@ -71,12 +71,18 @@ dialogWatcher.start()
 // text was typed straight into the open /help modal. A pane we could not take
 // back is a refusal (`busy_flow`, 409) — the phone can retry a second later,
 // which is strictly better than answering someone else's dialog.
+//
+// "Could not take back" now covers two shapes, and they are one answer here:
+// the flow never let go (timeout), or it let go with the /help overlay still
+// on screen (`endFlow(key, {clean:false})` — see lib/command-scrape.ts). The
+// pane is equally unusable either way.
 export async function yieldPaneForInject(target: { key: string } | null | undefined): Promise<boolean> {
   if (!target) return true
   const { held, freed } = await yieldPane(target.key)
   if (held === "list") {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}command scrape aborted${reset} ${dim}for inject → ${target.key}${freed ? "" : " (timed out — pane still held)"}${reset}\n`)
+    const why = freed ? "" : isScraping(target.key) ? " (timed out — pane still held)" : " (released dirty — overlay may still be up)"
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}command scrape aborted${reset} ${dim}for inject → ${target.key}${why}${reset}\n`)
   }
   return freed
 }

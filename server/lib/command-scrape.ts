@@ -26,7 +26,7 @@ interface FlowState {
   kind: PaneFlow
   since: number
   abort: boolean
-  waiters: Array<() => void>
+  waiters: Array<(clean: boolean) => void>
 }
 
 const flows = new Map<string, FlowState>()
@@ -45,12 +45,27 @@ export function beginFlow(key: string, kind: PaneFlow): boolean {
   return true
 }
 
-export function endFlow(key: string): void {
+// Release the claim, and say in what STATE the pane is being handed back.
+//
+// `clean` is the verdict of the flow's own cleanup — for the scrape, whether
+// `closeHelpOverlay` actually saw the pane come back with no overlay and an
+// empty input line. It has to travel to the waiters: the first cut had no
+// verdict at all, so `closeHelpOverlay` could answer `clean:false` and the
+// route's `finally { endFlow(key) }` would release anyway, every waiter would
+// resolve `freed:true`, and the inject that had asked for the pane typed
+// straight into the still-open /help modal. A dirty release is a `busy_flow`
+// refusal on both inject paths instead — recoverable, unlike answering
+// somebody else's dialog.
+//
+// Defaults to clean: the `/` suggest probe ends with a C-u and has nothing to
+// leave behind, and `resetFlows()` in tests is not a statement about a pane.
+export function endFlow(key: string, opts: { clean?: boolean } = {}): void {
   const st = flows.get(key)
   if (!st) return
   flows.delete(key)
+  const clean = opts.clean !== false
   for (const w of st.waiters) {
-    try { w() } catch { /* a waiter that throws must not strand the others */ }
+    try { w(clean) } catch { /* a waiter that throws must not strand the others */ }
   }
 }
 
@@ -68,9 +83,11 @@ export function scrapeAbortRequested(key: string): boolean {
   return flows.get(key)?.abort === true
 }
 
-// Wait, bounded, for whoever holds the pane to release it. True when it is
-// free, false on timeout — a caller that times out must fall back to its
-// normal checks rather than typing into an unknown screen.
+// Wait, bounded, for whoever holds the pane to release it AND to release it
+// clean. True only when the pane is usable now: no flow (or one that released
+// with `clean`). False on timeout, and false on a dirty release — the flow let
+// go but left an overlay or typed text on screen, which for the caller is the
+// same problem as never getting the pane at all.
 export function waitForFlow(key: string, timeoutMs: number = SCRAPE_ABORT_WAIT_MS): Promise<boolean> {
   const st = flows.get(key)
   if (!st) return Promise.resolve(true)
@@ -83,15 +100,16 @@ export function waitForFlow(key: string, timeoutMs: number = SCRAPE_ABORT_WAIT_M
       resolve(ok)
     }
     const timer = setTimeout(() => finish(false), timeoutMs)
-    st.waiters.push(() => finish(true))
+    st.waiters.push((clean) => finish(clean))
   })
 }
 
 // Ask the scrape to stop, then wait for it. The scrape does its own cleanup
 // (Escape closes the help dialog, C-u clears the line) before it releases, so
 // the caller that wakes up here finds the input box exactly as the user left
-// it. A no-op on a session with no flow, or on the short suggest probe — which
-// has no abort points and is simply waited out.
+// it — and if it could NOT, it says so through `endFlow(key, {clean:false})`
+// and this resolves false. A no-op on a session with no flow, or on the short
+// suggest probe — which has no abort points and is simply waited out.
 export function abortScrape(key: string, timeoutMs: number = SCRAPE_ABORT_WAIT_MS): Promise<boolean> {
   const st = flows.get(key)
   if (!st) return Promise.resolve(true)
@@ -107,10 +125,11 @@ export const SUGGEST_WAIT_MS = 3_000
 export interface PaneYield {
   // Which flow was holding the pane when we asked, if any.
   held: PaneFlow | null
-  // The pane is free NOW. False means the flow is still holding it and the
-  // caller must refuse (`busy_flow`) rather than type into an unknown screen:
-  // the scrape's modal may still be up, and while the flow is held the dialog
-  // watcher is skipping that session, so the dialog check cannot see it.
+  // The pane is free NOW, and clean. False means either the flow is still
+  // holding it, or it let go with our /help overlay still on screen. Either
+  // way the caller must refuse (`busy_flow`) rather than type into an unknown
+  // screen: while the flow was held the dialog watcher was skipping that
+  // session, so the dialog check cannot see the modal that may still be up.
   freed: boolean
 }
 

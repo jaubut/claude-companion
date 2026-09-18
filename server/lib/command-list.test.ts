@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test"
-import { closeHelpOverlay, filterCommands, helpTab, mergePages, pageBudget, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
+import { closeHelpOverlay, filterCommands, helpOverlayVisible, helpTab, listIncomplete, mergePages, pageBudget, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
 
 // Shapes captured off real /help pages, 2026-09-16, Claude Code 2.1.270:
 // cursor row renders "❯ /name", the last visible row of a page that has more
@@ -252,6 +252,24 @@ describe("closeHelpOverlay", () => {
   ].join("\n")
   const IDLE = ["────────────", "❯ ", "────────────"].join("\n")
   const TYPED = ["────────────", "❯ /help", "────────────"].join("\n")
+  // What /help ACTUALLY opens on: the General tab. No "Browse … commands"
+  // line anywhere on it — captured 2026-09-18, Claude Code 2.1.270.
+  const GENERAL = [
+    "   Help  General   Commands   Custom commands",
+    "",
+    "   Claude Code v2.1.270",
+    "",
+    "   Shortcuts:",
+    "     Ctrl+C          Cancel the current generation",
+    "     Ctrl+D          Exit Claude Code",
+    "     Shift+Tab       Cycle permission modes",
+    "",
+    "   For more help: https://code.claude.com/docs/en/overview",
+    "   Esc to cancel",
+  ].join("\n")
+  // tmux read the pane between two frames: the overlay is gone from the
+  // capture and the prompt has not been drawn back yet.
+  const BLANK = ["", "", ""].join("\n")
 
   interface Rig {
     pane: string
@@ -332,6 +350,96 @@ describe("closeHelpOverlay", () => {
     expect(res.clean).toBe(false)
     // It kept trying the matching key rather than giving up after one.
     expect(r.escapes).toBeGreaterThan(1)
+  })
+
+  // G2 — the overlay was detected with helpTab(), which only matches
+  // "Browse default|custom commands". /help opens on the GENERAL tab, which
+  // has no such line: an abort landing in the open window saw no overlay to
+  // Escape, and the clean-check `!helpTab(text)` then passed with Help still
+  // on screen. The title line is on every tab, so that is what to look for.
+  test("the General tab IS the overlay — the tab matcher cannot see it", () => {
+    expect(helpTab(GENERAL)).toBeNull()          // the old detector: blind
+    expect(helpOverlayVisible(GENERAL)).toBe(true)
+    // Still true for the tabs that do have a Browse line.
+    expect(helpOverlayVisible(HELP)).toBe(true)
+    expect(helpOverlayVisible(IDLE)).toBe(false)
+  })
+
+  test("a /help sitting on General is waited for, Escaped, and confirmed gone", async () => {
+    const r: Rig = { pane: TYPED, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    const res = await closeHelpOverlay({
+      // The abort beat the paint: the General tab appears on the 3rd poll.
+      capture: async () => { r.captures++; if (r.captures === 3 && !r.escapes) r.pane = GENERAL; return r.pane },
+      escape: async () => { r.escapes++; r.pane = TYPED },
+      clearLine: async () => { r.clears++; if (r.pane === TYPED) r.pane = IDLE },
+      sleep: async () => { r.slept++ },
+      openWaitMs: 2_000, clearWaitMs: 2_000, pollMs: 1,
+    })
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    expect(r.escapes).toBe(1)
+  })
+
+  test("a blank capture is NOT clean — no prompt line is no evidence", async () => {
+    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    const res = await closeHelpOverlay({
+      capture: async () => { r.captures++; return r.pane },
+      // Escape closes the overlay; the pane is then mid-repaint forever.
+      escape: async () => { r.escapes++; r.pane = BLANK },
+      clearLine: async () => { r.clears++ },
+      sleep: async () => { r.slept++; await new Promise((x) => setTimeout(x, 5)) },
+      openWaitMs: 50, clearWaitMs: 60, pollMs: 5,
+    })
+    expect(res).toEqual({ sawOverlay: true, clean: false })
+    // It polled the blank pane instead of calling the first one clean — the
+    // old check only asked "is there text on the prompt line", which a missing
+    // prompt answers "no".
+    expect(r.captures).toBeGreaterThan(2)
+  })
+
+  test("repaint then prompt: the blank frames are polled through, the end is clean", async () => {
+    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    let cleanAtCapture = -1
+    const res = await closeHelpOverlay({
+      capture: async () => {
+        r.captures++
+        // 1: HELP (open-wait). 2-4: blank, still repainting. 5: prompt back.
+        if (r.escapes && r.captures >= 5) r.pane = IDLE
+        return r.pane
+      },
+      escape: async () => { r.escapes++; r.pane = BLANK },
+      clearLine: async () => { r.clears++; cleanAtCapture = r.captures },
+      sleep: async () => { r.slept++ },
+      openWaitMs: 2_000, clearWaitMs: 2_000, pollMs: 1,
+    })
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    expect(r.captures).toBeGreaterThanOrEqual(5)
+    expect(cleanAtCapture).toBeGreaterThan(0)
+  })
+})
+
+// G3 — a tab that bailed on `wrongTab` returned zero commands and was left OUT
+// of the incomplete test, so a run where the custom tab never opened cached a
+// default-only list: no skills, no project commands, for an hour, on every
+// phone pointed at that host.
+describe("listIncomplete", () => {
+  const ok = { aborted: false, wrongTab: false, incomplete: false }
+
+  test("both tabs read to the end → cacheable", () => {
+    expect(listIncomplete([ok, ok])).toBe(false)
+  })
+
+  test("a tab that bailed on the wrong tab is incomplete, so it is not cached", () => {
+    expect(listIncomplete([ok, { aborted: false, wrongTab: true, incomplete: false }])).toBe(true)
+    // …even when it is the FIRST tab that bailed.
+    expect(listIncomplete([{ aborted: false, wrongTab: true, incomplete: false }, ok])).toBe(true)
+  })
+
+  test("a budget-exhausted tab is incomplete too", () => {
+    expect(listIncomplete([ok, { aborted: false, wrongTab: false, incomplete: true }])).toBe(true)
+  })
+
+  test("an aborted tab is the route's 409, not a caching decision", () => {
+    expect(listIncomplete([{ aborted: true, wrongTab: false, incomplete: true }])).toBe(false)
   })
 })
 

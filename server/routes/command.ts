@@ -1,5 +1,5 @@
 import { CLEAR_LINE_KEY, inputLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
-import { closeHelpOverlay, type CommandEntry, type HelpTab, scrapeHelpTab } from "../lib/command-list"
+import { closeHelpOverlay, type CommandEntry, type HelpTab, listIncomplete, scrapeHelpTab } from "../lib/command-list"
 import { beginFlow, endFlow, scrapeAbortRequested } from "../lib/command-scrape"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
@@ -183,12 +183,18 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       clearWaitMs: HELP_CLOSE_WAIT_MS,
       pollMs: SETTLE_POLL_MS,
     })
+    // What we will tell the waiters when the flow is released (see
+    // lib/command-scrape.ts). Pessimistic until a close says otherwise: a
+    // throw anywhere below leaves the pane in a state nobody has looked at,
+    // and an inject must not be handed that.
+    let releaseClean = false
     try {
       const all: CommandEntry[] = []
+      const outcomes: Array<{ aborted: boolean; wrongTab: boolean; incomplete: boolean }> = []
       let rowsPerPage = 0
       let gaveUp = false
-      let incomplete = false
       let dirty = false
+      let wrongTab = false
       for (const tab of ["default", "custom"] as HelpTab[]) {
         // A fresh /help per tab: once the list has taken focus, Tab no longer
         // switches tabs (measured — it silently stays put).
@@ -218,16 +224,21 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
           all.push(...scrape.commands)
           rowsPerPage = rowsPerPage || scrape.rowsPerPage
           gaveUp = gaveUp || scrape.aborted
-          incomplete = incomplete || (!scrape.aborted && !scrape.wrongTab && scrape.incomplete)
+          wrongTab = wrongTab || scrape.wrongTab
+          outcomes.push({ aborted: scrape.aborted, wrongTab: scrape.wrongTab, incomplete: scrape.incomplete })
         }
 
         // Close the help dialog whatever happened — an abandoned scrape must
         // not leave a modal on the pane for the next inject to hit — and only
-        // report it done once the pane says so.
+        // report it done once the pane says so. The LAST close is what decides
+        // how the flow is released: it is the one that describes the pane as
+        // it will be handed over.
         const closed = await closeHelp()
+        releaseClean = closed.clean
         dirty = dirty || !closed.clean
         if (gaveUp) break
       }
+      const incomplete = listIncomplete(outcomes)
 
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
       const who = session.label || session.key
@@ -244,20 +255,26 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       }
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       if (incomplete) {
-        // The page budget ran out before the list did. What came back is a
+        // Either the page budget ran out before the list did, or a tab bailed
+        // on the wrong tab and contributed nothing. What came back is a
         // prefix — serving it is fine for this one call, caching it would
         // hand out a truncated list for an hour (exactly what MAX_PAGES=40
-        // did on a 5-row pane: 196 of 356, reported as success).
-        process.stderr.write(`${dim}[companion]${reset} ${red}commands${reset} full list INCOMPLETE — ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}; not cached\n`)
+        // did on a 5-row pane: 196 of 356, reported as success; and what a
+        // custom-tab bail did: default commands only, no skills at all).
+        const why = wrongTab ? "a tab bailed (wrong tab on its first page)" : "page budget exhausted"
+        process.stderr.write(`${dim}[companion]${reset} ${red}commands${reset} full list INCOMPLETE — ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}; ${why}; not cached\n`)
         return Response.json({ ok: true, key: session.key, cached: false, incomplete: true, commands: all })
       }
       if (all.length) listCache.set(session.cwd, { at: Date.now(), commands: all })
       process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list → ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}\n`)
       return Response.json({ ok: true, key: session.key, cached: false, commands: all })
     } finally {
-      // Released only after Escape + C-u above, so whoever was waiting on the
-      // abort finds a clean input box.
-      endFlow(session.key)
+      // Released only after Escape + C-u above — and the release carries the
+      // VERDICT of that close. Releasing unconditionally (the first cut) meant
+      // a `clean:false` from closeHelpOverlay was logged and then thrown away:
+      // the waiting inject was told the pane was free and typed into the still
+      // open /help modal. False here answers `busy_flow` on both inject paths.
+      endFlow(session.key, { clean: releaseClean })
     }
   }
 

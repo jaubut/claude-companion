@@ -34,9 +34,27 @@ const NAME_RE = /^\s*(?:[❯›↓]\s+)?(\/[A-Za-z0-9:_.-]+(?: [a-z][a-z-]*)?)\s
 // Footer lines that follow the list and must not be read as descriptions.
 const FOOTER_RE = /^\s*(For more help:|Something else\?|Esc to |Tab to |↑\/↓)/
 
+// The dialog's own title line, present on EVERY tab: "Help  General
+// Commands   Custom commands". This is the one that matters for "is the
+// overlay up", because /help OPENS ON THE GENERAL TAB — a page of Shortcuts
+// text with no "Browse … commands" line anywhere on it. Detecting the overlay
+// with `helpTab()` therefore missed the first ~2s of every scrape: an abort
+// landing in the open window never saw a dialog to Escape, and the close
+// path's `!helpTab(text)` check then declared the pane clean with Help still
+// on screen.
+const TITLE_RE = /Help\s+General\s+Commands\s+Custom commands/
+
 export function helpTab(pane: string): HelpTab | null {
   const m = pane.match(TAB_RE)
   return m ? (m[1] as HelpTab) : null
+}
+
+// Is the /help overlay on screen at all — General, Commands or Custom
+// commands? The tab line counts too: a capture can clip the title row while
+// still clearly showing the list, and for "is it safe to release the pane"
+// the answer has to be the pessimistic one.
+export function helpOverlayVisible(pane: string): boolean {
+  return TITLE_RE.test(pane) || TAB_RE.test(pane)
 }
 
 // One rendered page of a help tab → its rows. A row is a name line followed by
@@ -186,6 +204,24 @@ export async function scrapeHelpTab(deps: HelpTabScrapeDeps): Promise<HelpTabScr
   }
 }
 
+// Is what came back from the tabs the WHOLE list — i.e. may the route cache it
+// for an hour? Only if every tab that ran read its list to the end.
+//
+// `wrongTab` counts as incomplete, and that is the fix: a tab that bailed
+// because the first page was not the tab we asked for contributed ZERO of its
+// commands, yet it used to be excluded from the incomplete test. A custom-tab
+// bail (Tab didn't land, the dialog reopened on General) therefore cached a
+// default-only list, and every phone on that host saw no skills or project
+// commands for the next hour.
+//
+// `aborted` is not folded in here: the route answers 409 for those and never
+// reaches a caching decision.
+export function listIncomplete(
+  tabs: Array<Pick<HelpTabScrape, "aborted" | "wrongTab" | "incomplete">>,
+): boolean {
+  return tabs.some((t) => !t.aborted && (t.wrongTab || t.incomplete))
+}
+
 // ── Closing the overlay we opened ──────────────────────────────────────────
 //
 // An abort (an inject wants the pane) can land in the window between typing
@@ -198,6 +234,15 @@ export async function scrapeHelpTab(deps: HelpTabScrapeDeps): Promise<HelpTabScr
 // on screen, Escape it, then confirm the input line really is empty before
 // handing the pane back. Escape does not clear typed text — C-u does — so the
 // two are separate steps.
+//
+// Both halves ask `helpOverlayVisible`, not `helpTab`: /help opens on the
+// GENERAL tab, which has no "Browse … commands" line, so the tab matcher was
+// blind for exactly the window an abort is most likely to land in.
+//
+// And "clean" is a positive statement, never an absence of evidence: no
+// overlay AND a prompt line AND that line empty. A capture taken mid-repaint
+// shows neither an overlay nor a prompt; reading that as clean is how a pane
+// with a modal one frame away gets handed to an inject.
 export interface CloseHelpDeps {
   capture: () => Promise<string | null>
   escape: () => Promise<void>
@@ -223,7 +268,7 @@ export async function closeHelpOverlay(deps: CloseHelpDeps): Promise<CloseHelpRe
   let sawOverlay = false
   for (;;) {
     const text = await deps.capture()
-    if (text !== null && helpTab(text)) { sawOverlay = true; break }
+    if (text !== null && helpOverlayVisible(text)) { sawOverlay = true; break }
     if (Date.now() >= openDeadline) break
     await deps.sleep(poll)
   }
@@ -234,22 +279,28 @@ export async function closeHelpOverlay(deps: CloseHelpDeps): Promise<CloseHelpRe
   const clearDeadline = Date.now() + (deps.clearWaitMs ?? 2_000)
   for (;;) {
     const text = await deps.capture()
-    if (text !== null && !helpTab(text) && !isDirtyInput(text)) return { sawOverlay, clean: true }
+    if (text !== null && isPaneClean(text)) return { sawOverlay, clean: true }
     if (Date.now() >= clearDeadline) return { sawOverlay, clean: false }
     await deps.sleep(poll)
     // Whatever is still there gets the matching key again: an overlay that
-    // outlived the first Escape, or text C-u did not reach.
-    if (text !== null && helpTab(text)) await deps.escape()
+    // outlived the first Escape, or text C-u did not reach. A capture that
+    // showed neither (a repaint) gets the harmless one and is polled again.
+    if (text !== null && helpOverlayVisible(text)) await deps.escape()
     else await deps.clearLine()
   }
 }
 
-// True when the prompt line still holds text. A pane with no prompt line at
-// all (capture raced a repaint) is not called dirty — the overlay check above
-// is the one that matters for releasing the pane.
-function isDirtyInput(pane: string): boolean {
-  const typed = inputLine(pane)
-  return typed !== null && typed !== ""
+// The pane is safe to hand to someone else: no /help overlay, and a prompt
+// line that is there and empty.
+//
+// A pane with NO prompt line is deliberately not clean. The first cut only
+// asked "is there text on the prompt line", which a missing prompt answers
+// "no" — so a blank capture (tmux read the pane mid-repaint, which is exactly
+// what happens right after an Escape) passed as clean and released the flow a
+// frame before the dialog finished painting.
+export function isPaneClean(pane: string): boolean {
+  if (helpOverlayVisible(pane)) return false
+  return inputLine(pane) === ""
 }
 
 // Local filter for the phone, mirroring what matters about Claude Code's own
