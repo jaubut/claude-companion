@@ -99,6 +99,34 @@ export function abortScrape(key: string, timeoutMs: number = SCRAPE_ABORT_WAIT_M
   return waitForFlow(key, timeoutMs)
 }
 
+// The `/` suggestion probe holds the pane for ~1.5s and has no abort points
+// (it ends with a C-u that would eat a message injected mid-probe), so it is
+// simply waited out.
+export const SUGGEST_WAIT_MS = 3_000
+
+export interface PaneYield {
+  // Which flow was holding the pane when we asked, if any.
+  held: PaneFlow | null
+  // The pane is free NOW. False means the flow is still holding it and the
+  // caller must refuse (`busy_flow`) rather than type into an unknown screen:
+  // the scrape's modal may still be up, and while the flow is held the dialog
+  // watcher is skipping that session, so the dialog check cannot see it.
+  freed: boolean
+}
+
+// Take the pane back for someone else (an inject). Aborts a scrape, waits out
+// a suggest probe, both bounded. The decision is here rather than in the
+// wiring so it can be tested without booting the watcher.
+export async function yieldPane(
+  key: string,
+  opts: { abortMs?: number; waitMs?: number } = {},
+): Promise<PaneYield> {
+  const held = flows.get(key)?.kind ?? null
+  if (!held) return { held: null, freed: true }
+  if (held === "list") return { held, freed: await abortScrape(key, opts.abortMs ?? SCRAPE_ABORT_WAIT_MS) }
+  return { held, freed: await waitForFlow(key, opts.waitMs ?? SUGGEST_WAIT_MS) }
+}
+
 // Tests only: drop every claim.
 export function resetFlows(): void {
   for (const key of [...flows.keys()]) endFlow(key)

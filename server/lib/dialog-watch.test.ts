@@ -49,17 +49,21 @@ interface H {
   opened: [string, Dialog][]
   closed: string[]
   statuses: [string, SessionStatus][]
+  // Seams for the race in F3: run something INSIDE one of check()'s awaits.
+  duringStatus: (() => Promise<void>) | null
+  duringCapture: (() => Promise<void>) | null
 }
 
 function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
   const h: H = {
     sessions: [session()], pane: IDLE_PANE, status: { status: "idle", waitingFor: "" },
     pendingQuestion: false, scraping: false, captures: 0, opened: [], closed: [], statuses: [],
+    duringStatus: null, duringCapture: null,
   }
   const w = createDialogWatcher({
     sessions: () => h.sessions,
-    capture: async () => { h.captures++; return h.pane },
-    sessionStatus: async () => h.status,
+    capture: async () => { h.captures++; if (h.duringCapture) await h.duringCapture(); return h.pane },
+    sessionStatus: async () => { if (h.duringStatus) await h.duringStatus(); return h.status },
     hasPendingQuestion: () => h.pendingQuestion,
     isScraping: () => h.scraping,
     onDialog: (k, d) => h.opened.push([k, d]),
@@ -155,6 +159,49 @@ test("a real dialog opened while scraping is picked up as soon as the scrape rel
   await w.tick()
   expect(h.opened).toHaveLength(1)
   expect(h.opened[0]![1].title).toBe("Select model")
+})
+
+// F3 — isScraping() was only tested at the TOP of check(), before the two
+// awaits. A scrape claiming the pane during either of them still got one Help
+// card published; every later tick then skipped the session, so nothing ever
+// closed that card and the false "dialog open" stuck for the whole scrape
+// (and kept every inject refusing).
+test("a scrape that starts during the capture await publishes nothing", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = HELP_PANE
+  // The claim lands after the status check, while the capture is in flight.
+  h.duringCapture = async () => { h.scraping = true }
+  await w.tick()
+  expect(h.opened).toEqual([])
+  expect(w.current()).toEqual({})
+})
+
+test("a scrape that starts during the status await publishes neither status nor dialog", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = HELP_PANE
+  h.duringStatus = async () => { h.scraping = true }
+  await w.tick()
+  expect(h.opened).toEqual([])
+  // "waiting / dialog open" here is OUR overlay: reporting it marks the
+  // session blocked on the phone for the length of the scrape.
+  expect(h.statuses).toEqual([])
+  expect(w.current()).toEqual({})
+})
+
+test("a card already on screen is closed when the scrape claims the pane, not left to stick", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = MODEL_PANE
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+  // The scrape starts mid-tick; without the re-check the entry would survive
+  // every subsequent (skipped) tick.
+  h.duringCapture = async () => { h.scraping = true }
+  await w.tick()
+  expect(h.closed).toEqual(["claude:tty:/dev/pts/8"])
+  expect(w.current()).toEqual({})
 })
 
 test("cursor movement re-emits (signature changes); session vanishing closes", async () => {

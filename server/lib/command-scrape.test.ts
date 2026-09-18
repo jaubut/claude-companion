@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test"
 import {
-  abortScrape, beginFlow, endFlow, isFlowActive, isScraping, resetFlows, scrapeAbortRequested, waitForFlow,
+  abortScrape, beginFlow, endFlow, isFlowActive, isScraping, resetFlows, scrapeAbortRequested, waitForFlow, yieldPane,
 } from "./command-scrape"
 
 const KEY = "claude:tty:/dev/pts/8"
@@ -59,4 +59,37 @@ test("several waiters on one abort all wake up", async () => {
   const all = Promise.all([abortScrape(KEY, 1_000), abortScrape(KEY, 1_000)])
   setTimeout(() => endFlow(KEY), 10)
   expect(await all).toEqual([true, true])
+})
+
+// F1 — yieldPane reports whether the pane is ACTUALLY free. The first cut of
+// yieldPaneForInject returned void: a timed-out abort logged "(timed out)"
+// and fell straight through to the refusal checks with the flow still held.
+// The watcher skips a scraping session, so openDialogFor() answered null, the
+// dialog_open check passed, and the user's text was typed into the open /help
+// modal. The boolean is what makes that a `busy_flow` refusal instead.
+test("yieldPane: a free pane needs no yielding", async () => {
+  expect(await yieldPane(KEY)).toEqual({ held: null, freed: true })
+})
+
+test("yieldPane: a scrape that lets go reports freed", async () => {
+  beginFlow(KEY, "list")
+  const y = yieldPane(KEY, { abortMs: 1_000 })
+  expect(scrapeAbortRequested(KEY)).toBe(true)
+  setTimeout(() => endFlow(KEY), 10)
+  expect(await y).toEqual({ held: "list", freed: true })
+})
+
+test("yieldPane: a wedged scrape reports NOT freed, and the flow is still held", async () => {
+  beginFlow(KEY, "list")
+  const y = await yieldPane(KEY, { abortMs: 30 })
+  expect(y).toEqual({ held: "list", freed: false })
+  // The caller must be able to tell this apart from a clean hand-off: the
+  // modal is still on screen and the watcher is still skipping this session.
+  expect(isScraping(KEY)).toBe(true)
+})
+
+test("yieldPane: a suggest probe that outlasts the wait also reports NOT freed", async () => {
+  beginFlow(KEY, "suggest")
+  expect(await yieldPane(KEY, { waitMs: 30 })).toEqual({ held: "suggest", freed: false })
+  expect(isFlowActive(KEY)).toBe(true)
 })

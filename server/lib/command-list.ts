@@ -16,6 +16,8 @@
 // mixes skills, commands and plugins from several roots. Reading the same
 // dialog a person would read is the one thing that stays correct.
 
+import { inputLine } from "./command-menu"
+
 export interface CommandEntry {
   name: string          // "/model"
   description: string   // one line, possibly ending in "…" where Claude Code truncated it
@@ -93,6 +95,11 @@ export interface HelpTabScrapeDeps {
   pageDown: (rows: number) => Promise<void>
   // True once something else needs the pane (see lib/command-scrape.ts).
   aborted?: () => boolean
+  // Largest list we are willing to page through. The PAGE budget is derived
+  // from this and the rows the pane actually shows — see `pageBudget`.
+  maxCommands?: number
+  // Explicit page cap, tests and callers that know better. Overrides the
+  // derived budget.
   maxPages?: number
 }
 
@@ -105,13 +112,35 @@ export interface HelpTabScrape {
   // The first page was not the tab we asked for: bail rather than mislabel.
   wrongTab: boolean
   aborted: boolean
+  // The page budget ran out before the list stopped producing new rows, so
+  // what came back is a PREFIX of the real list. Never cache one of these:
+  // a truncated list served for an hour is worse than no list at all.
+  incomplete: boolean
 }
 
 // Help pages repeat once the list has hit the bottom; the end condition is TWO
 // unchanged pages, not one, because the FIRST page's Downs only walk the
 // cursor to the bottom row and scroll by one, so an early page can legitimately
 // add nothing new.
-const MAX_PAGES = 40
+//
+// The page cap was also a constant (40) and had the same bug as the 17-row
+// step: 40 pages is ten screens on a Mac terminal and a third of the list on
+// an 80x24 pane, where 356 commands at 5 rows/page need 72. It reported
+// success with 196 commands and the route cached that for an hour. A cap has
+// to be expressed in COMMANDS, then divided by the rows this pane can show.
+const MAX_COMMANDS = 1_000
+// Slack for the pages that legitimately add nothing: the first page's Downs
+// only walk the cursor to the bottom, and the two stale pages that end the
+// loop are also spent.
+const PAGE_SLACK = 8
+// Backstop for a pane that parses one row per page (or none): even derived,
+// the budget must not let a broken pane page forever.
+const HARD_PAGE_CEILING = 400
+
+export function pageBudget(rowsPerPage: number, maxCommands = MAX_COMMANDS): number {
+  if (rowsPerPage <= 0) return PAGE_SLACK
+  return Math.min(HARD_PAGE_CEILING, Math.ceil(maxCommands / rowsPerPage) + PAGE_SLACK)
+}
 
 export async function scrapeHelpTab(deps: HelpTabScrapeDeps): Promise<HelpTabScrape> {
   const empty = { commands: [], pages: 0, rowsPerPage: 0 }
@@ -119,26 +148,108 @@ export async function scrapeHelpTab(deps: HelpTabScrapeDeps): Promise<HelpTabScr
   const seen = new Set<string>()
   let rowsPerPage = 0
   let stale = 0
+  // Until page 0 has been read we do not know the pane's height, so start at
+  // the ceiling and tighten it as soon as the rows have been counted.
+  let budget = deps.maxPages ?? HARD_PAGE_CEILING
+  let reachedEnd = false
 
-  for (let page = 0; page < (deps.maxPages ?? MAX_PAGES); page++) {
+  for (let page = 0; page < budget; page++) {
     if (deps.aborted?.()) {
-      return { commands: mergePages(pages, deps.tab), pages: pages.length, rowsPerPage, wrongTab: false, aborted: true }
+      return { commands: mergePages(pages, deps.tab), pages: pages.length, rowsPerPage, wrongTab: false, aborted: true, incomplete: true }
     }
     const text = await deps.capture()
-    if (page === 0 && helpTab(text) !== deps.tab) return { ...empty, wrongTab: true, aborted: false }
+    if (page === 0 && helpTab(text) !== deps.tab) return { ...empty, wrongTab: true, aborted: false, incomplete: false }
     const rows = parseHelpPage(text)
-    if (page === 0) rowsPerPage = rows.length
+    if (page === 0) {
+      rowsPerPage = rows.length
+      if (deps.maxPages === undefined) budget = pageBudget(rowsPerPage, deps.maxCommands)
+    }
     const before = seen.size
     for (const r of rows) seen.add(r.name)
     pages.push(rows)
     stale = seen.size === before ? stale + 1 : 0
-    if (stale >= 2) break
+    if (stale >= 2) { reachedEnd = true; break }
     // Never zero: a pane that parsed no rows still has to be nudged, or the
-    // loop spins on the same screen until MAX_PAGES.
+    // loop spins on the same screen until the budget runs out.
     await deps.pageDown(Math.max(1, rows.length))
   }
 
-  return { commands: mergePages(pages, deps.tab), pages: pages.length, rowsPerPage, wrongTab: false, aborted: false }
+  return {
+    commands: mergePages(pages, deps.tab),
+    pages: pages.length,
+    rowsPerPage,
+    wrongTab: false,
+    aborted: false,
+    // Fell out of the loop on the budget, not on two stale pages: the tail of
+    // the list was never rendered.
+    incomplete: !reachedEnd,
+  }
+}
+
+// ── Closing the overlay we opened ──────────────────────────────────────────
+//
+// An abort (an inject wants the pane) can land in the window between typing
+// `/help`+Enter and Claude Code painting the dialog. An Escape sent THEN hits
+// nothing, the dialog paints a moment later, and the flow releases the pane
+// with a modal up — precisely the state the abort existed to avoid, and the
+// user's next line gets typed into the help list.
+//
+// So closing is a loop, not a keystroke: wait (bounded) for the overlay to be
+// on screen, Escape it, then confirm the input line really is empty before
+// handing the pane back. Escape does not clear typed text — C-u does — so the
+// two are separate steps.
+export interface CloseHelpDeps {
+  capture: () => Promise<string | null>
+  escape: () => Promise<void>
+  clearLine: () => Promise<void>
+  sleep: (ms: number) => Promise<void>
+  // Bounded wait for the overlay to paint before the first Escape.
+  openWaitMs?: number
+  // Bounded wait for the pane to come back clean after it.
+  clearWaitMs?: number
+  pollMs?: number
+}
+
+export interface CloseHelpResult {
+  // The overlay was seen on screen (so the Escape had something to close).
+  sawOverlay: boolean
+  // The pane is back to an empty input box with no overlay: safe to release.
+  clean: boolean
+}
+
+export async function closeHelpOverlay(deps: CloseHelpDeps): Promise<CloseHelpResult> {
+  const poll = deps.pollMs ?? 120
+  const openDeadline = Date.now() + (deps.openWaitMs ?? 2_000)
+  let sawOverlay = false
+  for (;;) {
+    const text = await deps.capture()
+    if (text !== null && helpTab(text)) { sawOverlay = true; break }
+    if (Date.now() >= openDeadline) break
+    await deps.sleep(poll)
+  }
+
+  await deps.escape()
+  await deps.clearLine()
+
+  const clearDeadline = Date.now() + (deps.clearWaitMs ?? 2_000)
+  for (;;) {
+    const text = await deps.capture()
+    if (text !== null && !helpTab(text) && !isDirtyInput(text)) return { sawOverlay, clean: true }
+    if (Date.now() >= clearDeadline) return { sawOverlay, clean: false }
+    await deps.sleep(poll)
+    // Whatever is still there gets the matching key again: an overlay that
+    // outlived the first Escape, or text C-u did not reach.
+    if (text !== null && helpTab(text)) await deps.escape()
+    else await deps.clearLine()
+  }
+}
+
+// True when the prompt line still holds text. A pane with no prompt line at
+// all (capture raced a repaint) is not called dirty — the overlay check above
+// is the one that matters for releasing the pane.
+function isDirtyInput(pane: string): boolean {
+  const typed = inputLine(pane)
+  return typed !== null && typed !== ""
 }
 
 // Local filter for the phone, mirroring what matters about Claude Code's own

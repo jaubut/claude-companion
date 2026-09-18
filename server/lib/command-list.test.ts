@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test"
-import { filterCommands, helpTab, mergePages, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
+import { closeHelpOverlay, filterCommands, helpTab, mergePages, pageBudget, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
 
 // Shapes captured off real /help pages, 2026-09-16, Claude Code 2.1.270:
 // cursor row renders "❯ /name", the last visible row of a page that has more
@@ -171,8 +171,167 @@ describe("scrapeHelpTab", () => {
     abort = true
     const stopped = await scrape(5, { aborted: () => abort })
     expect(stopped.res.aborted).toBe(true)
+    expect(stopped.res.incomplete).toBe(true)
     expect(stopped.pane.downs).toBe(0)
     expect(pane.downs).toBeGreaterThan(0)
+  })
+})
+
+// F2 — the page CAP had the same bug as the row STEP: a constant read off one
+// terminal. MAX_PAGES = 40 is ten screens on a Mac and a third of the list on
+// an 80x24 pane, where the real 356 commands need 72 pages at 5 rows. The
+// scrape returned 196 and reported success, so routes/command.ts cached a
+// truncated list for an hour. The cap is now expressed in COMMANDS and
+// divided by the rows this pane can actually show.
+describe("scrapeHelpTab page budget", () => {
+  // The real count measured on the Zettlab host, 2026-09-18.
+  const names356 = Array.from({ length: 356 }, (_, i) => `/cmd-${String(i).padStart(3, "0")}`)
+
+  async function scrape356(rows: number, over: { maxPages?: number; maxCommands?: number } = {}) {
+    const pane = new FakeHelpPane(names356, rows, "default")
+    const res = await scrapeHelpTab({
+      tab: "default",
+      capture: async () => pane.render(),
+      pageDown: async (n) => pane.down(n),
+      ...over,
+    })
+    return { res, pane }
+  }
+
+  test("the budget scales with the pane: 356 commands come back whole at 5 AND at 17 rows", async () => {
+    const small = await scrape356(5)
+    const large = await scrape356(17)
+    expect(small.res.commands.map((c) => c.name)).toEqual(names356)
+    expect(large.res.commands.map((c) => c.name)).toEqual(names356)
+    expect(small.res.incomplete).toBe(false)
+    expect(large.res.incomplete).toBe(false)
+    // The old constant: 40 pages could never have reached the end at 5 rows.
+    expect(small.res.pages).toBeGreaterThan(40)
+    expect(large.res.pages).toBeLessThan(40)
+  })
+
+  test("pageBudget: enough pages for the whole list at any height, always capped", () => {
+    expect(pageBudget(5, 356)).toBeGreaterThanOrEqual(72)
+    expect(pageBudget(17, 356)).toBeGreaterThanOrEqual(21)
+    expect(pageBudget(17, 356)).toBeLessThan(pageBudget(5, 356))
+    // A pane that parses nothing must not page forever.
+    expect(pageBudget(0, 356)).toBeGreaterThan(0)
+    expect(pageBudget(1, 1_000_000)).toBeLessThanOrEqual(400)
+  })
+
+  test("a budget that runs out reports incomplete instead of reporting success", async () => {
+    // Exactly the old behaviour, forced: 40 pages against a 5-row pane.
+    const { res } = await scrape356(5, { maxPages: 40 })
+    expect(res.pages).toBe(40)
+    expect(res.commands.length).toBeLessThan(names356.length)
+    // The bit routes/command.ts keys the "do not cache this" decision on.
+    expect(res.incomplete).toBe(true)
+    expect(res.aborted).toBe(false)
+  })
+
+  test("a complete scrape is never flagged incomplete", async () => {
+    const { res } = await scrape356(17)
+    expect(res.incomplete).toBe(false)
+    expect(res.commands).toHaveLength(356)
+  })
+})
+
+// F4 — an abort can land between typing /help+Enter and Claude Code painting
+// the dialog. An Escape sent THEN hits nothing, the dialog paints a moment
+// later, and endFlow hands the pane back with a modal up: the inject that
+// asked for the pane types straight into the help list. Closing is a bounded
+// poll for the overlay, then Escape, then a check that the input line really
+// is empty.
+describe("closeHelpOverlay", () => {
+  const HELP = [
+    "   Help  General   Commands   Custom commands",
+    "   Browse default commands",
+    "   ❯ /add-dir",
+    "       Add a new working directory",
+    "   Esc to cancel",
+  ].join("\n")
+  const IDLE = ["────────────", "❯ ", "────────────"].join("\n")
+  const TYPED = ["────────────", "❯ /help", "────────────"].join("\n")
+
+  interface Rig {
+    pane: string
+    escapes: number
+    clears: number
+    captures: number
+    slept: number
+  }
+
+  function rig(script: (r: Rig) => void): { r: Rig; run: () => ReturnType<typeof closeHelpOverlay> } {
+    const r: Rig = { pane: IDLE, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    const run = () => closeHelpOverlay({
+      capture: async () => { r.captures++; return r.pane },
+      escape: async () => { r.escapes++; script(r) },
+      clearLine: async () => { r.clears++; script(r) },
+      // Virtual time: the deadlines are real Date.now() deadlines, so keep
+      // the polls instant and let the loop run to its bound.
+      sleep: async () => { r.slept++ },
+      openWaitMs: 200,
+      clearWaitMs: 200,
+      pollMs: 1,
+    })
+    return { r, run }
+  }
+
+  test("waits for the overlay to paint before Escaping it", async () => {
+    // The abort beat the redraw: /help has been typed and entered, the dialog
+    // is still three polls away.
+    const r: Rig = { pane: TYPED, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    let escapedAtPoll = -1
+    const res = await closeHelpOverlay({
+      capture: async () => { r.captures++; if (r.captures === 4 && !r.escapes) r.pane = HELP; return r.pane },
+      escape: async () => { r.escapes++; escapedAtPoll = r.captures; r.pane = TYPED },
+      clearLine: async () => { r.clears++; if (r.pane === TYPED) r.pane = IDLE },
+      sleep: async () => { r.slept++ },
+      openWaitMs: 2_000, clearWaitMs: 2_000, pollMs: 1,
+    })
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    // The Escape waited for the dialog instead of firing at a pane that had
+    // not painted it yet — the bug: an early Escape does nothing and the
+    // modal then opens behind the released flow.
+    expect(escapedAtPoll).toBe(4)
+    expect(r.escapes).toBe(1)
+  })
+
+  test("Escapes an overlay that is already up, then confirms the line is empty", async () => {
+    const { r, run } = rig((rr) => { rr.pane = IDLE })
+    r.pane = HELP
+    const res = await run()
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    expect(r.escapes).toBe(1)
+  })
+
+  test("text Escape left behind is cleared before the pane is released", async () => {
+    // Escape closes the menu and KEEPS the typed text; only C-u kills it.
+    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    const res = await closeHelpOverlay({
+      capture: async () => { r.captures++; return r.pane },
+      escape: async () => { r.escapes++; r.pane = TYPED },
+      clearLine: async () => { r.clears++; if (r.pane === TYPED) r.pane = IDLE },
+      sleep: async () => { r.slept++ },
+      openWaitMs: 200, clearWaitMs: 200, pollMs: 1,
+    })
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    expect(r.pane).toBe(IDLE)
+  })
+
+  test("a pane that never comes clean is reported, not assumed", async () => {
+    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    const res = await closeHelpOverlay({
+      capture: async () => { r.captures++; return r.pane },   // stuck on the overlay
+      escape: async () => { r.escapes++ },
+      clearLine: async () => { r.clears++ },
+      sleep: async () => { r.slept++; await new Promise((x) => setTimeout(x, 5)) },
+      openWaitMs: 50, clearWaitMs: 50, pollMs: 5,
+    })
+    expect(res.sawOverlay).toBe(true)
+    expect(res.clean).toBe(false)
+    // It kept trying the matching key rather than giving up after one.
+    expect(r.escapes).toBeGreaterThan(1)
   })
 })
 

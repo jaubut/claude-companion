@@ -21,7 +21,7 @@ import type { Session } from "./sessions"
 // (`dialog-watch.ts` closes question-kind before it lands in `current()`), and
 // are excluded explicitly in case that ever changes.
 
-export type InjectRefusalCode = "target_gone" | "target_idle" | "dialog_open"
+export type InjectRefusalCode = "target_gone" | "target_idle" | "busy_flow" | "dialog_open"
 
 export interface InjectRefusal {
   error: InjectRefusalCode
@@ -41,6 +41,10 @@ export interface InjectAttempt {
   // The dialog currently open on `target`, from `dialogWatcher.current()`.
   // Undefined/null when none is.
   dialog?: Dialog | null
+  // False when a companion flow (the /help scrape, the `/` suggest probe) is
+  // still holding that pane after being asked to let go. Undefined means "not
+  // applicable / free". See `busy_flow` below.
+  paneFree?: boolean
 }
 
 // Returns the reason to refuse, or null to proceed with the inject.
@@ -50,7 +54,7 @@ export interface InjectAttempt {
 // dialog in the way. Callers must run this BEFORE clearing any waiting reason
 // — a refused inject answered nothing, so blanking the badge would tell the
 // phone the session is unblocked when it is still sitting on a dialog.
-export function injectRefusal({ lookup, target, dialog }: InjectAttempt): InjectRefusal | null {
+export function injectRefusal({ lookup, target, dialog, paneFree }: InjectAttempt): InjectRefusal | null {
   // The caller asked for a specific target and we don't have it registered.
   // Refuse rather than silently pasting into whatever is frontmost.
   if (lookup && !target) return { error: "target_gone" }
@@ -59,6 +63,15 @@ export function injectRefusal({ lookup, target, dialog }: InjectAttempt): Inject
   // nothing live has fired a hook) can't be focused, so a paste would land on
   // whatever macOS app is frontmost.
   if (target && !target.tty) return { error: "target_idle" }
+
+  // A companion flow that would not let go of the pane. This MUST outrank the
+  // dialog check, not fall through it: while the /help scrape holds the flow,
+  // `dialog-watch` deliberately skips that session, so `dialog` is null even
+  // with our modal on screen. Fall through and the text is typed into the
+  // help list — the exact bug the abort was added to prevent. Refusing is
+  // recoverable (the phone retries a second later); typing into a modal is
+  // not.
+  if (target && paneFree === false) return { error: "busy_flow" }
 
   if (target && dialog && dialog.kind !== "question") return { error: "dialog_open", dialog }
 

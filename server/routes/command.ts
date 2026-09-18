@@ -1,5 +1,5 @@
 import { CLEAR_LINE_KEY, inputLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
-import { type CommandEntry, type HelpTab, scrapeHelpTab } from "../lib/command-list"
+import { closeHelpOverlay, type CommandEntry, type HelpTab, scrapeHelpTab } from "../lib/command-list"
 import { beginFlow, endFlow, scrapeAbortRequested } from "../lib/command-scrape"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
@@ -34,9 +34,18 @@ const KEY_MS = 45
 const PAGE_SETTLE_MS = 600
 const HELP_OPEN_MS = 1_800
 const TAB_SWITCH_MS = 700
-const ESCAPE_SETTLE_MS = 500
+// How long the close path waits for the /help overlay to actually be on
+// screen before Escaping it, and for the pane to come back clean after. An
+// abort landing inside HELP_OPEN_MS used to Escape a dialog that had not
+// painted yet: the dialog opened right after, and the flow released the pane
+// with a modal up — the inject that asked for the pane then typed into it.
+//
+// Sized against SCRAPE_ABORT_WAIT_MS (5s): the worst case here is one wait
+// for the paint plus one for the pane to come back clean, so 2×1.5s leaves
+// the aborting inject 2s of headroom rather than timing it out.
+const HELP_CLOSE_WAIT_MS = 1_500
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 // Sleep in slices so an inject waiting on us (lib/command-scrape.ts) isn't
 // stuck behind a fixed 1.8s wait. Returns false when the abort fired.
@@ -162,10 +171,24 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const pane = session.tmuxPane
     const aborted = () => scrapeAbortRequested(session.key)
     const t0 = Date.now()
+    // Give the pane back the way we found it: no overlay, empty input line.
+    // Bounded polling, not a fixed sleep — an abort can land before Claude
+    // Code has even painted the dialog we are about to close.
+    const closeHelp = () => closeHelpOverlay({
+      capture: () => capturePane(pane),
+      escape: async () => { await sendKey(pane, "Escape") },
+      clearLine: async () => { await sendKey(pane, CLEAR_LINE_KEY) },
+      sleep,
+      openWaitMs: HELP_CLOSE_WAIT_MS,
+      clearWaitMs: HELP_CLOSE_WAIT_MS,
+      pollMs: SETTLE_POLL_MS,
+    })
     try {
       const all: CommandEntry[] = []
       let rowsPerPage = 0
       let gaveUp = false
+      let incomplete = false
+      let dirty = false
       for (const tab of ["default", "custom"] as HelpTab[]) {
         // A fresh /help per tab: once the list has taken focus, Tab no longer
         // switches tabs (measured — it silently stays put).
@@ -195,27 +218,41 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
           all.push(...scrape.commands)
           rowsPerPage = rowsPerPage || scrape.rowsPerPage
           gaveUp = gaveUp || scrape.aborted
+          incomplete = incomplete || (!scrape.aborted && !scrape.wrongTab && scrape.incomplete)
         }
 
         // Close the help dialog whatever happened — an abandoned scrape must
-        // not leave a modal on the pane for the next inject to hit.
-        await sendKey(pane, "Escape")
-        await sleep(ESCAPE_SETTLE_MS)
+        // not leave a modal on the pane for the next inject to hit — and only
+        // report it done once the pane says so.
+        const closed = await closeHelp()
+        dirty = dirty || !closed.clean
         if (gaveUp) break
       }
-      // Leave the box exactly as found: empty.
-      await sendKey(pane, CLEAR_LINE_KEY)
 
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
       const who = session.label || session.key
+      if (dirty) {
+        // Said out loud rather than swallowed: the next inject will see
+        // whatever is still on that pane.
+        process.stderr.write(`${dim}[companion]${reset} ${red}commands${reset} /help overlay did not close cleanly on ${who}\n`)
+      }
       if (gaveUp) {
         // Partial by construction — never cached, or one interrupted warm
         // would serve a truncated list for an hour.
         process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list aborted after ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s on ${who}\n`)
         return Response.json({ ok: false, error: "aborted", key: session.key, partial: all.length }, { status: 409 })
       }
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+      if (incomplete) {
+        // The page budget ran out before the list did. What came back is a
+        // prefix — serving it is fine for this one call, caching it would
+        // hand out a truncated list for an hour (exactly what MAX_PAGES=40
+        // did on a 5-row pane: 196 of 356, reported as success).
+        process.stderr.write(`${dim}[companion]${reset} ${red}commands${reset} full list INCOMPLETE — ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}; not cached\n`)
+        return Response.json({ ok: true, key: session.key, cached: false, incomplete: true, commands: all })
+      }
       if (all.length) listCache.set(session.cwd, { at: Date.now(), commands: all })
-      process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list → ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s (${rowsPerPage} rows/page) on ${who}\n`)
+      process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list → ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}\n`)
       return Response.json({ ok: true, key: session.key, cached: false, commands: all })
     } finally {
       // Released only after Escape + C-u above, so whoever was waiting on the

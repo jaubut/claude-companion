@@ -1,6 +1,6 @@
 import { broadcast } from "../state"
 import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
-import { abortScrape, isFlowActive, isScraping, waitForFlow } from "../lib/command-scrape"
+import { isScraping, yieldPane } from "../lib/command-scrape"
 import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
@@ -63,18 +63,22 @@ dialogWatcher.start()
 // refused because of it: ask the scrape to stop (it Escapes the dialog and
 // clears the line itself) and wait, bounded, then deliver. Call this BEFORE
 // `openDialogFor` — otherwise the check races our own overlay.
-export async function yieldPaneForInject(target: { key: string } | null | undefined): Promise<void> {
-  if (!target) return
-  if (isScraping(target.key)) {
+//
+// Returns TRUE only when the pane is actually free. The first cut returned
+// void, and a timed-out abort then fell through to the normal checks with the
+// flow still held: the watcher was still skipping that session, so
+// `openDialogFor` answered null, the dialog refusal passed, and the user's
+// text was typed straight into the open /help modal. A pane we could not take
+// back is a refusal (`busy_flow`, 409) — the phone can retry a second later,
+// which is strictly better than answering someone else's dialog.
+export async function yieldPaneForInject(target: { key: string } | null | undefined): Promise<boolean> {
+  if (!target) return true
+  const { held, freed } = await yieldPane(target.key)
+  if (held === "list") {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    const freed = await abortScrape(target.key)
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}command scrape aborted${reset} ${dim}for inject → ${target.key}${freed ? "" : " (timed out)"}${reset}\n`)
-    return
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}command scrape aborted${reset} ${dim}for inject → ${target.key}${freed ? "" : " (timed out — pane still held)"}${reset}\n`)
   }
-  // The `/` suggestion probe holds the pane for ~1.5s and ends with a C-u that
-  // would eat a message injected mid-probe. It has no dialog and no abort
-  // points — just wait it out.
-  if (isFlowActive(target.key)) await waitForFlow(target.key, 3_000)
+  return freed
 }
 
 export async function openDialogFor(target: { key: string } | null | undefined): Promise<Dialog | null> {
