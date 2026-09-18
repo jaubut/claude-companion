@@ -27,11 +27,25 @@ function session(over: Partial<Session> = {}): Session {
   }
 }
 
+// What the companion's own /help scrape puts on the pane (routes/command.ts).
+// It parses as a perfectly good dialog — which is exactly why the watcher has
+// to be told it is ours.
+const HELP_PANE = `
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Help  General   Commands   Custom commands
+   Browse default commands
+   ❯ /add-dir
+       Add a new working directory
+   Esc to cancel
+`
+
 interface H {
   sessions: Session[]
   pane: string | null
   status: SessionStatus | null
   pendingQuestion: boolean
+  scraping: boolean
+  captures: number
   opened: [string, Dialog][]
   closed: string[]
   statuses: [string, SessionStatus][]
@@ -40,13 +54,14 @@ interface H {
 function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
   const h: H = {
     sessions: [session()], pane: IDLE_PANE, status: { status: "idle", waitingFor: "" },
-    pendingQuestion: false, opened: [], closed: [], statuses: [],
+    pendingQuestion: false, scraping: false, captures: 0, opened: [], closed: [], statuses: [],
   }
   const w = createDialogWatcher({
     sessions: () => h.sessions,
-    capture: async () => h.pane,
+    capture: async () => { h.captures++; return h.pane },
     sessionStatus: async () => h.status,
     hasPendingQuestion: () => h.pendingQuestion,
+    isScraping: () => h.scraping,
     onDialog: (k, d) => h.opened.push([k, d]),
     onDialogClosed: (k) => h.closed.push(k),
     onStatus: (k, st) => h.statuses.push([k, st]),
@@ -105,6 +120,41 @@ test("a question the hooks already routed is not mirrored", async () => {
   h.pendingQuestion = true
   await w.tick()
   expect(h.opened).toEqual([])
+})
+
+// The bug this fixes: the companion's /help scrape drives the session's own
+// pane, the watcher mirrored the resulting overlay to the phone as a dialog,
+// marked the session waiting-on-a-dialog, and every inject then refused with
+// "has a dialog open" — for a dialog the companion itself had opened. On an
+// 80x24 pane the scrape ran ~2 minutes, so from the phone the session looked
+// unusable.
+test("the companion's own /help scrape is never mirrored as a dialog", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = HELP_PANE
+  h.scraping = true
+  const capturesBefore = h.captures
+  await w.tick()
+  await w.tick()
+  expect(h.opened).toEqual([])
+  expect(w.current()).toEqual({})
+  // Skipped before the capture: a scraping pane is read tens of times a second
+  // by the scrape itself, no reason to add to it.
+  expect(h.captures).toBe(capturesBefore)
+})
+
+test("a real dialog opened while scraping is picked up as soon as the scrape releases the pane", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = HELP_PANE
+  h.scraping = true
+  await w.tick()
+  expect(h.opened).toEqual([])
+  h.scraping = false
+  h.pane = MODEL_PANE
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+  expect(h.opened[0]![1].title).toBe("Select model")
 })
 
 test("cursor movement re-emits (signature changes); session vanishing closes", async () => {

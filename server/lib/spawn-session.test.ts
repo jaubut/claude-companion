@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { buildInner } from "./spawn-session"
+import { DETACHED_COLS, DETACHED_ROWS, buildInner, detachedNewSessionArgs } from "./spawn-session"
 
 // The inner command tmux runs. Both spawn paths build it here — the Mac one
 // wraps it in `tmux new-session -s <sess> '<inner>'` for AppleScript, the Linux
@@ -40,6 +40,27 @@ test("a value carrying shell metacharacters throws instead of shipping a command
   expect(() => buildInner(CWD, "claude", { COMPANION_TASK_ID: "`id`" })).toThrow(/unsafe value/)
   expect(() => buildInner(CWD, "claude", { COMPANION_TASK_ID: "" })).toThrow(/unsafe value/)
   expect(() => buildInner(CWD, "claude", { "BAD KEY": "ok" })).toThrow(/unsafe key/)
+})
+
+// A detached session has no client, so tmux would size it from the host's
+// `default-size` — 80x24 by default. Claude Code sizes its dialogs to the pane,
+// and at 24 rows /help lists 5 commands per page instead of ~17: the full-list
+// scrape took 111s and still truncated on the Linux host. The size belongs in
+// the spawn, not in a machine's ~/.tmux.conf.
+test("the headless spawn creates the session at an explicit size", () => {
+  const args = detachedNewSessionArgs("cc-repo", "cd '/x' && claude")
+  expect(args).toEqual([
+    "new-session", "-d",
+    "-x", "220", "-y", "60",
+    "-s", "cc-repo",
+    "/bin/sh", "-c", "cd '/x' && claude",
+  ])
+  expect(DETACHED_ROWS).toBeGreaterThan(24)
+  expect(DETACHED_COLS).toBeGreaterThan(80)
+  // -d must stay ahead of -x/-y/-s, and the command last: tmux reads the shell
+  // command as the trailing operand.
+  expect(args.indexOf("-d")).toBe(1)
+  expect(args.at(-2)).toBe("-c")
 })
 
 test("a real dispatch id passes the charset", () => {

@@ -8,7 +8,7 @@ import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } f
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, HOST_INFO, type WsData } from "./state"
-import { dialogWatcher, openDialogFor } from "./wiring/dialogs"
+import { dialogWatcher, openDialogFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 
 // WebSocket handlers: on open, replay pending approvals/questions and send the
@@ -102,6 +102,9 @@ export const websocket: WebSocketHandler<WsData> = {
           const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
           const tag = target?.tty ? ` → ${target.label || target.key} (${target.tty})` : lookup ? ` → ${lookup} [unresolved]` : " → frontmost"
           process.stderr.write(`${dim}[companion]${reset} ${cyan}ws inject${reset}${tag} "${msg.text.slice(0, 60)}"\n`)
+          // Our own /help scrape never refuses a user's message: abort it and
+          // take the pane back first (same as POST /api/inject).
+          await yieldPaneForInject(target)
           // Same three refusals as POST /api/inject, same order, one decision
           // (see lib/inject-guard.ts) — including the dialog check both paths
           // were missing: with a dialog open, send-keys answers the dialog

@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test"
-import { filterCommands, helpTab, mergePages, parseHelpPage } from "./command-list"
+import { filterCommands, helpTab, mergePages, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
 
 // Shapes captured off real /help pages, 2026-09-16, Claude Code 2.1.270:
 // cursor row renders "❯ /name", the last visible row of a page that has more
@@ -66,6 +66,113 @@ describe("mergePages", () => {
     // An empty description from a later page never overwrites a real one.
     expect(merged.find((c) => c.name === "/model")?.description).toContain("Set the AI model")
     expect(merged.every((c) => c.kind === "default")).toBe(true)
+  })
+})
+
+// A /help list as the pane renders it, for a terminal that can show `rows`
+// command rows at once. Scrolling matches what was measured on a real dialog:
+// the cursor walks down inside the window, and only once it is on the last
+// visible row does a further Down scroll the list by one.
+class FakeHelpPane {
+  top = 0
+  cursor = 0
+  downs = 0
+  constructor(readonly names: string[], readonly rows: number, readonly tab: HelpTab) {}
+
+  render(): string {
+    const out = [
+      "   Help  General   Commands   Custom commands",
+      `   Browse ${this.tab} commands`,
+    ]
+    const last = Math.min(this.top + this.rows, this.names.length)
+    for (let i = this.top; i < last; i++) {
+      const marker = i === this.cursor ? "❯" : i === last - 1 && last < this.names.length ? "↓" : " "
+      out.push(`   ${marker} ${this.names[i]}`)
+      out.push(`       Description number ${i}`)
+    }
+    out.push("   For more help: https://code.claude.com/docs/en/overview", "   Esc to cancel")
+    return out.join("\n")
+  }
+
+  down(n: number): void {
+    for (let k = 0; k < n; k++) {
+      this.downs++
+      if (this.cursor < this.names.length - 1) this.cursor++
+      if (this.cursor > this.top + this.rows - 1) this.top = this.cursor - this.rows + 1
+    }
+  }
+}
+
+describe("scrapeHelpTab", () => {
+  const names = Array.from({ length: 73 }, (_, i) => `/cmd-${String(i).padStart(3, "0")}`)
+
+  async function scrape(rows: number, opts: { aborted?: () => boolean } = {}) {
+    const pane = new FakeHelpPane(names, rows, "default")
+    const res = await scrapeHelpTab({
+      tab: "default",
+      capture: async () => pane.render(),
+      pageDown: async (n) => pane.down(n),
+      aborted: opts.aborted,
+    })
+    return { res, pane }
+  }
+
+  // The bug: PAGE_ROWS was a constant 17, so a detached 80x24 tmux pane (5
+  // rows of /help) was stepped 17 rows at a time and 12 of every 17 commands
+  // were never rendered — 208 of 356 found on the Linux host. Stepping by the
+  // rows actually on screen has to give the same list at any pane size.
+  test("finds every command at 80x24 (5 rows) and at 220x60 (17 rows)", async () => {
+    const small = await scrape(5)
+    const large = await scrape(17)
+    expect(small.res.commands.map((c) => c.name)).toEqual(names)
+    expect(large.res.commands.map((c) => c.name)).toEqual(names)
+    expect(small.res.rowsPerPage).toBe(5)
+    expect(large.res.rowsPerPage).toBe(17)
+    // Same list, more round trips on the cramped pane — that cost is the
+    // reason spawn-session now sizes detached panes at 220x60.
+    expect(small.res.pages).toBeGreaterThan(large.res.pages)
+  })
+
+  test("descriptions survive the paging, and nothing is duplicated", async () => {
+    const { res } = await scrape(5)
+    expect(res.commands).toHaveLength(names.length)
+    expect(res.commands[0]).toEqual({ name: "/cmd-000", description: "Description number 0", kind: "default" })
+    expect(res.commands.at(-1)?.description).toBe(`Description number ${names.length - 1}`)
+  })
+
+  test("a list shorter than one page still terminates", async () => {
+    const pane = new FakeHelpPane(names.slice(0, 3), 17, "default")
+    const res = await scrapeHelpTab({
+      tab: "default",
+      capture: async () => pane.render(),
+      pageDown: async (n) => pane.down(n),
+    })
+    expect(res.commands.map((c) => c.name)).toEqual(names.slice(0, 3))
+    expect(res.pages).toBeLessThanOrEqual(3)
+  })
+
+  test("the wrong tab bails instead of mislabelling rows", async () => {
+    const pane = new FakeHelpPane(names, 17, "custom")
+    const res = await scrapeHelpTab({
+      tab: "default",
+      capture: async () => pane.render(),
+      pageDown: async (n) => pane.down(n),
+    })
+    expect(res.wrongTab).toBe(true)
+    expect(res.commands).toEqual([])
+    expect(pane.downs).toBe(0)
+  })
+
+  test("an abort stops the paging and reports what it had", async () => {
+    let abort = false
+    const { res, pane } = await scrape(5, { aborted: () => abort })
+    expect(res.commands).toHaveLength(names.length)
+
+    abort = true
+    const stopped = await scrape(5, { aborted: () => abort })
+    expect(stopped.res.aborted).toBe(true)
+    expect(stopped.pane.downs).toBe(0)
+    expect(pane.downs).toBeGreaterThan(0)
   })
 })
 

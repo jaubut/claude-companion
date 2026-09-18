@@ -160,6 +160,32 @@ function buildTmuxLaunch(cwd: string, sessionName: string, agent: SpawnAgent, en
   )
 }
 
+// A detached tmux session has no client, so tmux sizes it from `default-size`
+// — 80x24 unless the host's tmux.conf says otherwise. That is not a cosmetic
+// detail: Claude Code sizes its dialogs to the pane, so at 24 rows `/help`
+// renders ~5 command rows per page instead of ~17, and the companion's own
+// /help scrape (routes/command.ts) pays ~7x the round trips for the same list
+// — measured on the Linux host as "208 in 111.5s" (truncated) vs "356 in
+// 42.4s" once the pane was 220x60. Pass the size explicitly at creation so
+// this does not depend on a host's ~/.tmux.conf.
+//
+// `-x/-y` are honoured only while no client is attached, which is exactly the
+// detached case; a human attaching later resizes the pane to their terminal
+// as usual.
+export const DETACHED_COLS = 220
+export const DETACHED_ROWS = 60
+
+// Exported for the test: the argv of the headless spawn, size included.
+export function detachedNewSessionArgs(sessionName: string, inner: string): string[] {
+  return [
+    "new-session", "-d",
+    "-x", String(DETACHED_COLS),
+    "-y", String(DETACHED_ROWS),
+    "-s", sessionName,
+    "/bin/sh", "-c", inner,
+  ]
+}
+
 function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
   const prefix = agent === "codex" ? "cx" : agent === "kimi" ? "km" : "cc"
   const base = cwd.split("/").filter(Boolean).pop() ?? "session"
@@ -222,11 +248,13 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent, env?: Record<stri
 async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
   const sessionName = await uniqueTmuxSessionName(cwd, agent)
   const inner = buildInner(cwd, agent, env)
-  // Create the session detached. Run the inner command via /bin/sh so the
-  // single-quote escaping works. tmux passes through $TMUX/$TMUX_PANE so
-  // the session-start hook fires the moment claude initializes.
+  // Create the session detached, at an explicit size (see
+  // detachedNewSessionArgs — an 80x24 pane cripples every dialog we read).
+  // Run the inner command via /bin/sh so the single-quote escaping works.
+  // tmux passes through $TMUX/$TMUX_PANE so the session-start hook fires the
+  // moment claude initializes.
   const create = Bun.spawn(
-    ["tmux", "new-session", "-d", "-s", sessionName, "/bin/sh", "-c", inner],
+    ["tmux", ...detachedNewSessionArgs(sessionName, inner)],
     { stdout: "pipe", stderr: "pipe" },
   )
   let timedOut = false
