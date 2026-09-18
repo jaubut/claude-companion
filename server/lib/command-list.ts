@@ -4,8 +4,10 @@
 // autocomplete, wrong for the thing Jeremie compared against: the Claude app's
 // `/` opens a dropdown of EVERY command. The `/` menu only ever renders a 2–5
 // row window, so it cannot enumerate. `/help` can: its "Commands" and "Custom
-// commands" tabs list ~17 rows per page with descriptions, alphabetical, and
-// scroll one row per Down once the cursor reaches the bottom. Two fresh
+// commands" tabs list a paneful of rows with descriptions (~17 on a Mac
+// terminal, 5 in an 80x24 detached tmux pane — count them, never assume),
+// alphabetical, and scroll one row per Down once the cursor reaches the
+// bottom. Two fresh
 // `/help` opens (Tab does not switch tabs once the list has focus), ~10 pages,
 // a few seconds — fine for a cache warmed in the background, never on a
 // keystroke.
@@ -64,6 +66,79 @@ export function mergePages(pages: Array<Array<Pick<CommandEntry, "name" | "descr
     }
   }
   return [...seen.values()]
+}
+
+// ── Paging a help tab ──────────────────────────────────────────────────────
+//
+// How the dialog scrolls: the cursor starts on the first row and walks down.
+// Until it reaches the last VISIBLE row the list does not move; after that
+// every Down scrolls it by exactly one row. So the number of Downs that
+// advances the window by one full page is "however many rows this pane is
+// currently showing" — which is a property of the terminal, not a constant.
+//
+// It was a constant (17, read off a Mac terminal) and that silently truncated
+// the list everywhere else: a phone-spawned session on the Linux host runs in a
+// detached tmux pane, 80x24 unless told otherwise, where /help shows 5 rows
+// per page. 17 Downs there skipped 12 commands per page — measured, 208 of 356
+// found in 111s. Counting the rows we can actually see can never skip: worst
+// case we under-count and re-read rows we already have, which mergePages
+// dedupes.
+//
+// Pure except for the two seams (read the pane, press Down N times) so the
+// paging can be tested against a simulated pane of any height.
+export interface HelpTabScrapeDeps {
+  tab: HelpTab
+  capture: () => Promise<string>
+  // Press Down `rows` times and let the pane settle.
+  pageDown: (rows: number) => Promise<void>
+  // True once something else needs the pane (see lib/command-scrape.ts).
+  aborted?: () => boolean
+  maxPages?: number
+}
+
+export interface HelpTabScrape {
+  commands: CommandEntry[]
+  pages: number
+  // Rows the first page showed — the step size, logged so a cramped pane is
+  // visible in the companion log instead of only in the elapsed time.
+  rowsPerPage: number
+  // The first page was not the tab we asked for: bail rather than mislabel.
+  wrongTab: boolean
+  aborted: boolean
+}
+
+// Help pages repeat once the list has hit the bottom; the end condition is TWO
+// unchanged pages, not one, because the FIRST page's Downs only walk the
+// cursor to the bottom row and scroll by one, so an early page can legitimately
+// add nothing new.
+const MAX_PAGES = 40
+
+export async function scrapeHelpTab(deps: HelpTabScrapeDeps): Promise<HelpTabScrape> {
+  const empty = { commands: [], pages: 0, rowsPerPage: 0 }
+  const pages: Array<Array<Pick<CommandEntry, "name" | "description">>> = []
+  const seen = new Set<string>()
+  let rowsPerPage = 0
+  let stale = 0
+
+  for (let page = 0; page < (deps.maxPages ?? MAX_PAGES); page++) {
+    if (deps.aborted?.()) {
+      return { commands: mergePages(pages, deps.tab), pages: pages.length, rowsPerPage, wrongTab: false, aborted: true }
+    }
+    const text = await deps.capture()
+    if (page === 0 && helpTab(text) !== deps.tab) return { ...empty, wrongTab: true, aborted: false }
+    const rows = parseHelpPage(text)
+    if (page === 0) rowsPerPage = rows.length
+    const before = seen.size
+    for (const r of rows) seen.add(r.name)
+    pages.push(rows)
+    stale = seen.size === before ? stale + 1 : 0
+    if (stale >= 2) break
+    // Never zero: a pane that parsed no rows still has to be nudged, or the
+    // loop spins on the same screen until MAX_PAGES.
+    await deps.pageDown(Math.max(1, rows.length))
+  }
+
+  return { commands: mergePages(pages, deps.tab), pages: pages.length, rowsPerPage, wrongTab: false, aborted: false }
 }
 
 // Local filter for the phone, mirroring what matters about Claude Code's own

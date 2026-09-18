@@ -1,5 +1,6 @@
 import { CLEAR_LINE_KEY, inputLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
-import { type CommandEntry, type HelpTab, helpTab, mergePages, parseHelpPage } from "../lib/command-list"
+import { type CommandEntry, type HelpTab, scrapeHelpTab } from "../lib/command-list"
+import { beginFlow, endFlow, scrapeAbortRequested } from "../lib/command-scrape"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -16,7 +17,6 @@ import { dialogWatcher } from "../wiring/dialogs"
 
 const SETTLE_POLL_MS = 120
 const SETTLE_TIMEOUT_MS = 1_500
-const inFlight = new Set<string>()
 
 // Full list cache (Phase 16b). Keyed by cwd: built-ins are per host, but the
 // custom tab includes project-level skills and commands, so two sessions in
@@ -25,16 +25,29 @@ const inFlight = new Set<string>()
 // skill added today shows up today. `force` bypasses it.
 const LIST_TTL_MS = 60 * 60 * 1000
 const listCache = new Map<string, { at: number; commands: CommandEntry[] }>()
-// Help pages hold ~17 rows; the cursor must walk to the bottom before the
-// list scrolls, so the first batch may not change the page — that is why the
-// end condition is TWO unchanged pages, not one. Keys go one at a time: a
-// single send-keys carrying 17 Downs was seen to drop most of them mid-repaint.
-const PAGE_ROWS = 17
+// How many Downs advance one page is NOT a constant — it is the number of rows
+// the pane is showing, which `lib/command-list.ts` counts per page (a detached
+// 80x24 tmux pane shows 5 where a Mac terminal shows 17). Keys still go one at
+// a time: a single send-keys carrying a page of Downs was seen to drop most of
+// them mid-repaint.
 const KEY_MS = 45
 const PAGE_SETTLE_MS = 600
-const MAX_PAGES = 40
+const HELP_OPEN_MS = 1_800
+const TAB_SWITCH_MS = 700
+const ESCAPE_SETTLE_MS = 500
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Sleep in slices so an inject waiting on us (lib/command-scrape.ts) isn't
+// stuck behind a fixed 1.8s wait. Returns false when the abort fired.
+async function sleepUnlessAborted(ms: number, aborted: () => boolean): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (aborted()) return false
+    await sleep(Math.min(100, deadline - Date.now()))
+  }
+  return !aborted()
+}
 
 async function tmux(args: string[]): Promise<boolean> {
   try {
@@ -75,10 +88,9 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
 
     const pane = session!.tmuxPane
-    if (inFlight.has(session!.key)) {
+    if (!beginFlow(session!.key, "suggest")) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
     }
-    inFlight.add(session!.key)
     try {
       // Always start from a known-empty line: the previous suggestion left its
       // own prefix there, and Escape does not clear it (it closes the menu and
@@ -108,7 +120,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} "/${prefix}" → ${commands.length} on ${session!.label || session!.key}\n`)
       return Response.json({ ok: true, key: session!.key, prefix, commands })
     } finally {
-      inFlight.delete(session!.key)
+      endFlow(session!.key)
     }
   }
 
@@ -117,6 +129,16 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
   // each with Down until nothing new appears, Escapes, and caches per cwd.
   // Slow the first time — several seconds — so the phone calls it in the
   // background when a session becomes active, not when the user types "/".
+  //
+  // CLIENT CONTRACT: this is a long request. ~40s for 356 commands on a
+  // healthy pane; a slow host or a busy agent can take longer. A client whose
+  // HTTP timeout is shorter than the server's worst case doesn't just miss the
+  // list — it retries the warm on every session activation, and each retry
+  // drives the pane again. The iOS app's 60s modelPost timeout is the current
+  // ceiling; the fix on that side (separate ship) is either a timeout above the
+  // server's worst case, or `{warming:true}` returned immediately with the list
+  // pushed over the WS when it lands. Until then, keep this endpoint's cost
+  // down rather than assuming the caller will wait.
   if (url.pathname === "/api/command/list" && req.method === "POST") {
     const body = await req.json().catch(() => ({})) as { key?: string; force?: boolean }
     const key = (body.key ?? "").trim()
@@ -131,50 +153,74 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const typedNow = session.tmuxPane ? inputLine(await capturePane(session.tmuxPane) ?? "") : null
     const refusal = suggestRefusal(session, dialogWatcher.current()[session.key], typedNow, "")
     if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
-    if (inFlight.has(session.key)) return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
+    // The claim is what makes the scrape visible to the rest of the process:
+    // while it is held, the dialog watcher skips this session (the /help
+    // overlay is ours, not something the user opened) and an inject aborts us
+    // instead of refusing with "has a dialog open".
+    if (!beginFlow(session.key, "list")) return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
 
     const pane = session.tmuxPane
-    inFlight.add(session.key)
+    const aborted = () => scrapeAbortRequested(session.key)
     const t0 = Date.now()
     try {
       const all: CommandEntry[] = []
+      let rowsPerPage = 0
+      let gaveUp = false
       for (const tab of ["default", "custom"] as HelpTab[]) {
         // A fresh /help per tab: once the list has taken focus, Tab no longer
         // switches tabs (measured — it silently stays put).
         await sendKey(pane, CLEAR_LINE_KEY)
         await sendLiteral(pane, "/help")
         await sendKey(pane, "Enter")
-        await sleep(1_800)
-        for (let i = 0; i < (tab === "default" ? 1 : 2); i++) { await sendKey(pane, "Tab"); await sleep(700) }
-
-        const pages: ReturnType<typeof parseHelpPage>[] = []
-        const seen = new Set<string>()
-        let stale = 0
-        for (let page = 0; page < MAX_PAGES; page++) {
-          const text = await capturePane(pane) ?? ""
-          if (page === 0 && helpTab(text) !== tab) break   // wrong tab — bail rather than mislabel
-          const rows = parseHelpPage(text)
-          const before = seen.size
-          for (const r of rows) seen.add(r.name)
-          pages.push(rows)
-          stale = seen.size === before ? stale + 1 : 0
-          if (stale >= 2) break
-          for (let k = 0; k < PAGE_ROWS; k++) { await sendKey(pane, "Down"); await sleep(KEY_MS) }
-          await sleep(PAGE_SETTLE_MS)
+        gaveUp = !(await sleepUnlessAborted(HELP_OPEN_MS, aborted))
+        for (let i = 0; !gaveUp && i < (tab === "default" ? 1 : 2); i++) {
+          await sendKey(pane, "Tab")
+          gaveUp = !(await sleepUnlessAborted(TAB_SWITCH_MS, aborted))
         }
-        all.push(...mergePages(pages, tab))
+
+        const scrape = gaveUp ? null : await scrapeHelpTab({
+          tab,
+          capture: async () => await capturePane(pane) ?? "",
+          pageDown: async (rows) => {
+            for (let k = 0; k < rows; k++) {
+              if (aborted()) return
+              await sendKey(pane, "Down")
+              await sleep(KEY_MS)
+            }
+            await sleepUnlessAborted(PAGE_SETTLE_MS, aborted)
+          },
+          aborted,
+        })
+        if (scrape) {
+          all.push(...scrape.commands)
+          rowsPerPage = rowsPerPage || scrape.rowsPerPage
+          gaveUp = gaveUp || scrape.aborted
+        }
+
+        // Close the help dialog whatever happened — an abandoned scrape must
+        // not leave a modal on the pane for the next inject to hit.
         await sendKey(pane, "Escape")
-        await sleep(500)
+        await sleep(ESCAPE_SETTLE_MS)
+        if (gaveUp) break
       }
       // Leave the box exactly as found: empty.
       await sendKey(pane, CLEAR_LINE_KEY)
 
-      if (all.length) listCache.set(session.cwd, { at: Date.now(), commands: all })
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-      process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list → ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s on ${session.label || session.key}\n`)
+      const who = session.label || session.key
+      if (gaveUp) {
+        // Partial by construction — never cached, or one interrupted warm
+        // would serve a truncated list for an hour.
+        process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list aborted after ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s on ${who}\n`)
+        return Response.json({ ok: false, error: "aborted", key: session.key, partial: all.length }, { status: 409 })
+      }
+      if (all.length) listCache.set(session.cwd, { at: Date.now(), commands: all })
+      process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list → ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s (${rowsPerPage} rows/page) on ${who}\n`)
       return Response.json({ ok: true, key: session.key, cached: false, commands: all })
     } finally {
-      inFlight.delete(session.key)
+      // Released only after Escape + C-u above, so whoever was waiting on the
+      // abort finds a clean input box.
+      endFlow(session.key)
     }
   }
 

@@ -20,6 +20,9 @@ export interface DialogWatchDeps {
   capture(pane: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
+  // True while the companion itself is driving that session's pane through
+  // /help (lib/command-scrape.ts). The overlay on screen is ours.
+  isScraping(key: string): boolean
   onDialog(key: string, dialog: Dialog): void
   onDialogClosed(key: string): void
   onStatus(key: string, status: SessionStatus): void
@@ -50,6 +53,14 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
 
   async function check(s: Session): Promise<void> {
     if (!s.tmuxPane) { close(s.key); return }
+    // Our own /help scrape is not a dialog the user has to deal with. Mirroring
+    // it put "Help  General  Commands  Custom commands" on the phone, marked
+    // the session waiting-on-a-dialog, and made every inject refuse with "has a
+    // dialog open" for the ~2 minutes the scrape ran on a cramped pane — which
+    // reads, from the phone, as a session that cannot be spawned. Skip without
+    // touching state: whatever was (or wasn't) open before the scrape is
+    // re-evaluated on the first tick after it releases the pane.
+    if (deps.isScraping(s.key)) return
     const st = s.pid ? await deps.sessionStatus(s.pid) : null
     if (st) {
       const sig = `${st.status}|${st.waitingFor}`

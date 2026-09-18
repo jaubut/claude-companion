@@ -18,7 +18,7 @@ import {
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clients } from "../state"
-import { dialogWatcher, openDialogFor } from "../wiring/dialogs"
+import { dialogWatcher, openDialogFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
@@ -181,6 +181,11 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       const recent = listSessions().find(s => !!s.tty)
       if (recent) target = recent
     }
+
+    // A dialog the COMPANION opened (the /help command scrape) is ours to
+    // close, not the user's problem — stop it and take the pane back before
+    // the refusal check even looks.
+    await yieldPaneForInject(target)
 
     // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
     // target not registered, no live tty, or a dialog in the way. A dialog is
