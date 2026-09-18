@@ -1,6 +1,9 @@
+import { ESC_SETTLE_MS } from "../lib/command-list"
 import { pickKeys } from "../lib/dialogs"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 // Dialog mirror routes: keys and row picks from the phone into an open
 // Claude Code dialog (see wiring/dialogs.ts for the watcher).
@@ -24,6 +27,13 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     } catch {
       return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
     }
+    // Escape is a meta-chord PREFIX (see ESC_SETTLE_MS in lib/command-list.ts):
+    // a key arriving within a few ms of it is read as opt+<key>, so the Escape
+    // never fires and the second key is swallowed. Two fast taps on the phone
+    // (Escape then Enter) are exactly that shape. Holding the response for the
+    // settle serialises them, because the phone waits for it before sending the
+    // next key.
+    if (name === "Escape") await sleep(ESC_SETTLE_MS)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     process.stderr.write(`${dim}[companion]${reset} ${cyan}dialog key${reset} ${name} → ${session.tmuxPane}\n`)
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)

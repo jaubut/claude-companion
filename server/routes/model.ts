@@ -1,3 +1,4 @@
+import { ESC_SETTLE_MS } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
 import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
 import { resolveSession } from "../lib/sessions"
@@ -178,8 +179,12 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const dialog = dialogWatcher.current()[session.key]
     if (!isModelPicker(dialog)) return Response.json({ ok: true, closed: false })
     await sendKey(session.tmuxPane, "Escape")
-    // Wait for the redraw, not just for tmux to accept the key: a fixed 40ms
-    // gap reported closed:false on a cancel that had in fact worked.
+    // Escape is a meta-chord prefix (ESC_SETTLE_MS, lib/command-list.ts): the
+    // next byte inside this window is read as opt+<byte>, the Escape never
+    // fires, and the picker the caller thinks it just closed is still up. The
+    // settle also buys the redraw `settle()` is about to look for — a fixed
+    // 40ms gap once reported closed:false on a cancel that had in fact worked.
+    await sleep(ESC_SETTLE_MS)
     const after = await settle(session.key, false)
     log(`cancel on ${session.label || session.key}`)
     return Response.json({ ok: true, closed: !isModelPicker(after) })
