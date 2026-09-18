@@ -1,5 +1,8 @@
 import { CLEAR_LINE_KEY, inputLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
-import { closeHelpOverlay, type CommandEntry, type HelpTab, listIncomplete, scrapeHelpTab } from "../lib/command-list"
+import {
+  CLEAR_SETTLE_MS, closeHelpOverlay, type CommandEntry, ESC_SETTLE_MS, HELP_CLOSE_OPEN_WAIT_MS, HELP_PAINT_MS,
+  type HelpTab, listIncomplete, scrapeHelpTab,
+} from "../lib/command-list"
 import { beginFlow, endFlow, scrapeAbortRequested } from "../lib/command-scrape"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
@@ -32,17 +35,22 @@ const listCache = new Map<string, { at: number; commands: CommandEntry[] }>()
 // them mid-repaint.
 const KEY_MS = 45
 const PAGE_SETTLE_MS = 600
-const HELP_OPEN_MS = 1_800
+// How long /help takes to paint after the Enter. One number, shared with the
+// close path (lib/command-list.ts), because the two have to agree: the close
+// path's whole job on an abort is to outlast this.
+const HELP_OPEN_MS = HELP_PAINT_MS
 const TAB_SWITCH_MS = 700
-// How long the close path waits for the /help overlay to actually be on
-// screen before Escaping it, and for the pane to come back clean after. An
-// abort landing inside HELP_OPEN_MS used to Escape a dialog that had not
-// painted yet: the dialog opened right after, and the flow released the pane
-// with a modal up — the inject that asked for the pane then typed into it.
+// How long the close path waits for the pane to come back clean after the
+// Escape. The wait for the overlay to be on screen in the first place is
+// HELP_CLOSE_OPEN_WAIT_MS (2.5s = paint window + margin), and it has to be the
+// longer of the two: at 1.5s it expired BEFORE the 1.8s paint, so an abort at
+// ~300ms Escaped nothing, saw an empty prompt, called the pane clean and
+// released it — and the dialog painted onto it 300ms later with no flow held.
 //
-// Sized against SCRAPE_ABORT_WAIT_MS (5s): the worst case here is one wait
-// for the paint plus one for the pane to come back clean, so 2×1.5s leaves
-// the aborting inject 2s of headroom rather than timing it out.
+// Sized against SCRAPE_ABORT_WAIT_MS (5s): 2.5s open wait + one Escape settle
+// (250ms) + one C-u settle (50ms) + 1.5s clear wait = 4.3s worst case, so the
+// aborting inject is answered (`busy_flow` or delivery) with room to spare
+// rather than timing out on its own deadline.
 const HELP_CLOSE_WAIT_MS = 1_500
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -123,7 +131,15 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
 
       // Leave the box exactly as we found it: empty. The phone composes the
       // command on its own screen; the terminal is only being consulted.
+      //
+      // The settle is the same rule the close path follows (see ESC_SETTLE_MS
+      // in lib/command-list.ts): an inject can be parked on this flow's
+      // release, and the pane needs a frame after the C-u before anyone else
+      // types into it. No Escape is ever sent here — the probe closes the menu
+      // by emptying the line, because Escape keeps the typed text — so the
+      // short redraw gap is enough.
       await sendKey(pane, CLEAR_LINE_KEY)
+      await sleep(CLEAR_SETTLE_MS)
 
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} "/${prefix}" → ${commands.length} on ${session!.label || session!.key}\n`)
@@ -174,14 +190,21 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     // Give the pane back the way we found it: no overlay, empty input line.
     // Bounded polling, not a fixed sleep — an abort can land before Claude
     // Code has even painted the dialog we are about to close.
+    //
+    // `enterAt` is when we pressed Enter on /help: an empty pane before that
+    // plus the paint window is not evidence of anything, and the close says so
+    // (clean:false → dirty release → `busy_flow`) instead of guessing.
+    let enterAt = Date.now()
     const closeHelp = () => closeHelpOverlay({
       capture: () => capturePane(pane),
       escape: async () => { await sendKey(pane, "Escape") },
       clearLine: async () => { await sendKey(pane, CLEAR_LINE_KEY) },
       sleep,
-      openWaitMs: HELP_CLOSE_WAIT_MS,
+      openWaitMs: HELP_CLOSE_OPEN_WAIT_MS,
       clearWaitMs: HELP_CLOSE_WAIT_MS,
       pollMs: SETTLE_POLL_MS,
+      enterAt,
+      paintMs: HELP_OPEN_MS,
     })
     // What we will tell the waiters when the flow is released (see
     // lib/command-scrape.ts). Pessimistic until a close says otherwise: a
@@ -201,6 +224,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
         await sendKey(pane, CLEAR_LINE_KEY)
         await sendLiteral(pane, "/help")
         await sendKey(pane, "Enter")
+        enterAt = Date.now()
         gaveUp = !(await sleepUnlessAborted(HELP_OPEN_MS, aborted))
         for (let i = 0; !gaveUp && i < (tab === "default" ? 1 : 2); i++) {
           await sendKey(pane, "Tab")
@@ -236,6 +260,11 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
         const closed = await closeHelp()
         releaseClean = closed.clean
         dirty = dirty || !closed.clean
+        // A clean close already ends on a quiet pane — closeHelpOverlay will
+        // not say clean until ESC_SETTLE_MS after its last key. A DIRTY one can
+        // return right after a retry Escape, and the very next thing either the
+        // second tab or the release does is send a key into that chord window.
+        if (!closed.clean) await sleep(ESC_SETTLE_MS)
         if (gaveUp) break
       }
       const incomplete = listIncomplete(outcomes)

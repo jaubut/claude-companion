@@ -1,6 +1,7 @@
 import { broadcast } from "../state"
 import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
-import { isScraping, yieldPane } from "../lib/command-scrape"
+import { isPaneDirty, isScraping, yieldPane } from "../lib/command-scrape"
+import { isPaneClean } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
@@ -76,13 +77,41 @@ dialogWatcher.start()
 // the flow never let go (timeout), or it let go with the /help overlay still
 // on screen (`endFlow(key, {clean:false})` — see lib/command-scrape.ts). The
 // pane is equally unusable either way.
-export async function yieldPaneForInject(target: { key: string } | null | undefined): Promise<boolean> {
+//
+// The dirty one outlives the flow, and this is where it is settled. A dirty
+// release deletes the flow, so a RETRY a moment later finds nothing holding
+// the pane; before this it was waved straight through (the watcher had been
+// skipping that session all scrape, so `openDialogFor` answered a stale null)
+// and typed into the overlay the previous inject had just been refused for.
+// Now the mark survives, and the only thing that clears it is the capture
+// below saying the pane really is back to an empty prompt.
+async function paneLooksClean(target: { key: string; tmuxPane?: string }): Promise<boolean> {
+  // Refresh first: the watcher skipped this session for the whole scrape, so
+  // its map is stale by construction, and if what is left on the pane IS a
+  // modal this publishes it — the phone gets the card, the inject path gets a
+  // real `dialog_open` refusal, and the user can Escape it from the phone
+  // instead of waiting on a mark to expire.
+  await dialogWatcher.refresh(target.key)
+  if (!target.tmuxPane) return false
+  const text = await capturePane(target.tmuxPane)
+  return text !== null && isPaneClean(text)
+}
+
+export async function yieldPaneForInject(
+  target: { key: string; tmuxPane?: string } | null | undefined,
+): Promise<boolean> {
   if (!target) return true
-  const { held, freed } = await yieldPane(target.key)
+  const wasDirty = isPaneDirty(target.key)
+  const { held, freed } = await yieldPane(target.key, { verify: () => paneLooksClean(target) })
   if (held === "list") {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    const why = freed ? "" : isScraping(target.key) ? " (timed out — pane still held)" : " (released dirty — overlay may still be up)"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}command scrape aborted${reset} ${dim}for inject → ${target.key}${why}${reset}\n`)
+    const what = wasDirty ? "command scrape residue" : "command scrape aborted"
+    const why = freed
+      ? wasDirty ? " (pane re-checked: clean)" : ""
+      : wasDirty ? " (pane re-checked: still not clean)"
+      : isScraping(target.key) ? " (timed out — pane still held)"
+      : " (released dirty — overlay may still be up)"
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}${what}${reset} ${dim}for inject → ${target.key}${why}${reset}\n`)
   }
   return freed
 }
