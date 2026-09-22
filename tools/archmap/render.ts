@@ -56,7 +56,10 @@ export function pathMatches(e: Endpoint, call: string): boolean {
   if (e.prefix) return call.startsWith(e.path)
   const a = e.path.split("/"), b = call.split("/")
   if (a.length !== b.length) return false
-  return a.every((seg, i) => seg.startsWith(":") || seg === "*" || b[i]!.startsWith(":") || seg === b[i])
+  // A dynamic call segment (`${id}` → `:p`) targets the parametrized route,
+  // never a literal sibling: `/api/invoice/${n}` calls `/api/invoice/:number`,
+  // not `/api/invoice/public` (that misattributed the public page's callers).
+  return a.every((seg, i) => seg.startsWith(":") || seg === "*" || seg === b[i])
 }
 
 function allTargets(map: ArchMap, refs: RefTarget[]): Target[] {

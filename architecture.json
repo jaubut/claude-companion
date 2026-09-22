@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16",
+  "generatedAt": "2026-09-22",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (primary), the React PWA (desktop), and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -236,14 +236,24 @@
         },
         {
           "path": "lib/command-list.ts",
-          "lines": 84,
+          "lines": 321,
           "kind": "lib",
           "exports": [
             "CommandEntry",
             "HelpTab",
             "helpTab",
+            "helpOverlayVisible",
             "parseHelpPage",
             "mergePages",
+            "HelpTabScrapeDeps",
+            "HelpTabScrape",
+            "pageBudget",
+            "scrapeHelpTab",
+            "listIncomplete",
+            "CloseHelpDeps",
+            "CloseHelpResult",
+            "closeHelpOverlay",
+            "isPaneClean",
             "filterCommands"
           ],
           "state": [],
@@ -251,7 +261,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/command-menu.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -283,8 +295,39 @@
           "externals": []
         },
         {
+          "path": "lib/command-scrape.ts",
+          "lines": 153,
+          "kind": "lib",
+          "exports": [
+            "PaneFlow",
+            "SCRAPE_ABORT_WAIT_MS",
+            "beginFlow",
+            "endFlow",
+            "isFlowActive",
+            "isScraping",
+            "scrapeAbortRequested",
+            "waitForFlow",
+            "abortScrape",
+            "SUGGEST_WAIT_MS",
+            "PaneYield",
+            "yieldPane",
+            "resetFlows"
+          ],
+          "state": [
+            "flows: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dialog-watch.ts",
-          "lines": 113,
+          "lines": 138,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -420,7 +463,7 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 67,
+          "lines": 80,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
@@ -845,13 +888,16 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 337,
+          "lines": 365,
           "kind": "lib",
           "exports": [
             "SpawnApp",
             "SpawnAgent",
             "buildInner",
             "SpawnResult",
+            "DETACHED_COLS",
+            "DETACHED_ROWS",
+            "detachedNewSessionArgs",
             "spawnCompanionSession"
           ],
           "state": [],
@@ -1032,7 +1078,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 331,
+          "lines": 344,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1175,13 +1221,12 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 183,
+          "lines": 283,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
           ],
           "state": [
-            "inFlight: Set",
             "listCache: Map"
           ],
           "emits": [],
@@ -1202,6 +1247,7 @@
           "imports": [
             "lib/command-menu.ts",
             "lib/command-list.ts",
+            "lib/command-scrape.ts",
             "lib/sessions.ts",
             "lib/tmux-pane.ts",
             "wiring/dialogs.ts"
@@ -1441,10 +1487,11 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 63,
+          "lines": 96,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
+            "yieldPaneForInject",
             "openDialogFor"
           ],
           "state": [],
@@ -1458,6 +1505,7 @@
           "imports": [
             "state.ts",
             "lib/dialog-watch.ts",
+            "lib/command-scrape.ts",
             "lib/dialogs.ts",
             "lib/sessions.ts",
             "lib/questions.ts",
@@ -1592,7 +1640,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 146,
+          "lines": 153,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -1866,6 +1914,14 @@
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/codex-feed.ts"
+          ]
+        },
+        "inputLine": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/command-list.ts",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list"
           ]
         },
         "parseDialog": {
@@ -2236,6 +2292,13 @@
             "ws.ts"
           ]
         },
+        "yieldPaneForInject": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
         "injectRefusal": {
           "module": "lib/inject-guard.ts",
           "callers": [
@@ -2376,11 +2439,10 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
-        "inputLine": {
-          "module": "lib/command-menu.ts",
+        "SCRAPE_ABORT_WAIT_MS": {
+          "module": "lib/command-scrape.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list"
+            "routes/command.ts"
           ]
         },
         "capturePane": {
@@ -2399,6 +2461,13 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
+        "beginFlow": {
+          "module": "lib/command-scrape.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
         "CLEAR_LINE_KEY": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -2412,19 +2481,39 @@
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
+        "endFlow": {
+          "module": "lib/command-scrape.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "scrapeAbortRequested": {
+          "module": "lib/command-scrape.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "closeHelpOverlay": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
         "HelpTab": {
           "module": "lib/command-list.ts",
           "callers": [
             "routes/command.ts#POST /api/command/list"
           ]
         },
-        "parseHelpPage": {
+        "scrapeHelpTab": {
           "module": "lib/command-list.ts",
           "callers": [
             "routes/command.ts#POST /api/command/list"
           ]
         },
-        "helpTab": {
+        "listIncomplete": {
           "module": "lib/command-list.ts",
           "callers": [
             "routes/command.ts#POST /api/command/list"
@@ -2880,8 +2969,20 @@
             "ws.ts"
           ]
         },
+        "isScraping": {
+          "module": "lib/command-scrape.ts",
+          "callers": [
+            "wiring/dialogs.ts"
+          ]
+        },
         "setSessionStatus": {
           "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/dialogs.ts"
+          ]
+        },
+        "yieldPane": {
+          "module": "lib/command-scrape.ts",
           "callers": [
             "wiring/dialogs.ts"
           ]
