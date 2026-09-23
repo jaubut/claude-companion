@@ -245,7 +245,7 @@
         },
         {
           "path": "lib/command-list.ts",
-          "lines": 321,
+          "lines": 455,
           "kind": "lib",
           "exports": [
             "CommandEntry",
@@ -259,6 +259,11 @@
             "pageBudget",
             "scrapeHelpTab",
             "listIncomplete",
+            "HELP_PAINT_MS",
+            "ESC_SETTLE_MS",
+            "CLEAR_SETTLE_MS",
+            "CLEAN_CONFIRM_GAP_MS",
+            "HELP_CLOSE_OPEN_WAIT_MS",
             "CloseHelpDeps",
             "CloseHelpResult",
             "closeHelpOverlay",
@@ -305,13 +310,14 @@
         },
         {
           "path": "lib/command-scrape.ts",
-          "lines": 153,
+          "lines": 402,
           "kind": "lib",
           "exports": [
             "PaneFlow",
             "SCRAPE_ABORT_WAIT_MS",
             "beginFlow",
             "endFlow",
+            "isPaneDirty",
             "isFlowActive",
             "isScraping",
             "scrapeAbortRequested",
@@ -319,17 +325,25 @@
             "abortScrape",
             "SUGGEST_WAIT_MS",
             "PaneYield",
+            "YieldOpts",
+            "VERIFY_TIMEOUT_MS",
             "yieldPane",
             "resetFlows"
           ],
           "state": [
-            "flows: Map"
+            "flows: Map",
+            "releasedAt: Map",
+            "dirty: Map",
+            "let markSeq"
           ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/command-list.ts",
+            "lib/key-gate.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -419,7 +433,7 @@
         },
         {
           "path": "lib/feed.ts",
-          "lines": 128,
+          "lines": 131,
           "kind": "lib",
           "exports": [
             "EventKind",
@@ -496,12 +510,44 @@
           "externals": []
         },
         {
+          "path": "lib/key-gate.ts",
+          "lines": 207,
+          "kind": "lib",
+          "exports": [
+            "SEND_TIMEOUT_MS",
+            "KeyGateTimeout",
+            "KeyGateDeps",
+            "SendOpts",
+            "KeyGate",
+            "opensChordWindow",
+            "createKeyGate",
+            "keyGate",
+            "runTmux"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-list.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/keyboard-inject.ts",
-          "lines": 563,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "InjectTarget",
+            "INJECT_QUEUE_MS",
+            "INJECT_SEND_MS",
+            "InjectOpts",
             "injectText",
+            "TmuxResult",
+            "deliverViaTmux",
             "withPickerIO"
           ],
           "state": [
@@ -512,6 +558,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/key-gate.ts",
             "lib/question-driver.ts"
           ],
           "listeners": [],
@@ -547,14 +594,16 @@
         },
         {
           "path": "lib/media.ts",
-          "lines": 211,
+          "lines": 235,
           "kind": "lib",
           "exports": [
             "MediaRef",
+            "MAX_PENDING",
             "isMediaId",
             "mediaPath",
             "enforceMediaCap",
             "releaseMedia",
+            "StoreResult",
             "storeImageBase64",
             "storeImageFile"
           ],
@@ -974,7 +1023,7 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 61,
+          "lines": 70,
           "kind": "lib",
           "exports": [
             "capturePane",
@@ -1018,7 +1067,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 410,
+          "lines": 472,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -1030,6 +1079,7 @@
             "activeStates",
             "forgetStates",
             "readTranscriptDelta",
+            "queueImage",
             "hashText"
           ],
           "state": [
@@ -1263,7 +1313,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 283,
+          "lines": 318,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -1290,6 +1340,7 @@
             "lib/command-menu.ts",
             "lib/command-list.ts",
             "lib/command-scrape.ts",
+            "lib/key-gate.ts",
             "lib/sessions.ts",
             "lib/tmux-pane.ts",
             "wiring/dialogs.ts"
@@ -1300,7 +1351,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 57,
+          "lines": 71,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -1322,7 +1373,9 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/command-list.ts",
             "lib/dialogs.ts",
+            "lib/key-gate.ts",
             "lib/sessions.ts",
             "wiring/dialogs.ts"
           ],
@@ -1433,7 +1486,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 190,
+          "lines": 199,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -1462,7 +1515,9 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/command-list.ts",
             "lib/dialogs.ts",
+            "lib/key-gate.ts",
             "lib/model-control.ts",
             "lib/sessions.ts",
             "wiring/dialogs.ts"
@@ -1554,7 +1609,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 96,
+          "lines": 131,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
@@ -1573,6 +1628,7 @@
             "state.ts",
             "lib/dialog-watch.ts",
             "lib/command-scrape.ts",
+            "lib/command-list.ts",
             "lib/dialogs.ts",
             "lib/sessions.ts",
             "lib/questions.ts",
@@ -2042,6 +2098,49 @@
             "wiring/dialogs.ts"
           ]
         },
+        "ESC_SETTLE_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-scrape.ts",
+            "lib/key-gate.ts",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/model.ts#POST /api/model/cancel"
+          ]
+        },
+        "closeHelpOverlay": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-scrape.ts",
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "isPaneClean": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-scrape.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "KeyGate": {
+          "module": "lib/key-gate.ts",
+          "callers": [
+            "lib/command-scrape.ts"
+          ]
+        },
+        "keyGate": {
+          "module": "lib/key-gate.ts",
+          "callers": [
+            "lib/command-scrape.ts",
+            "lib/keyboard-inject.ts",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts"
+          ]
+        },
         "dialogSignature": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -2054,6 +2153,12 @@
             "lib/hook-common.ts",
             "routes/api.ts#POST /api/spawn-session",
             "routes/hooks.ts"
+          ]
+        },
+        "KeyGateTimeout": {
+          "module": "lib/key-gate.ts",
+          "callers": [
+            "lib/keyboard-inject.ts"
           ]
         },
         "PickerIO": {
@@ -2221,7 +2326,7 @@
             "wiring/events.ts"
           ]
         },
-        "MediaRef": {
+        "StoreResult": {
           "module": "lib/media.ts",
           "callers": [
             "lib/transcript.ts"
@@ -2556,10 +2661,61 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
+        "HELP_PAINT_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts"
+          ]
+        },
+        "CLEAR_SETTLE_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
+        "HELP_CLOSE_OPEN_WAIT_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "HelpTab": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "scrapeHelpTab": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "listIncomplete": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
         "SCRAPE_ABORT_WAIT_MS": {
           "module": "lib/command-scrape.ts",
           "callers": [
-            "routes/command.ts"
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
+        "runTmux": {
+          "module": "lib/key-gate.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts"
           ]
         },
         "capturePane": {
@@ -2612,28 +2768,10 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
-        "closeHelpOverlay": {
-          "module": "lib/command-list.ts",
+        "opensChordWindow": {
+          "module": "lib/key-gate.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "HelpTab": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "scrapeHelpTab": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "listIncomplete": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/list"
+            "routes/dialogs.ts#POST /api/dialog/key"
           ]
         },
         "addQuestionRequest": {
@@ -3106,6 +3244,18 @@
         },
         "setSessionStatus": {
           "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/dialogs.ts"
+          ]
+        },
+        "VERIFY_TIMEOUT_MS": {
+          "module": "lib/command-scrape.ts",
+          "callers": [
+            "wiring/dialogs.ts"
+          ]
+        },
+        "isPaneDirty": {
+          "module": "lib/command-scrape.ts",
           "callers": [
             "wiring/dialogs.ts"
           ]

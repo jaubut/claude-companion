@@ -12,7 +12,8 @@ import type { Activity } from "./activity"
 // blocks it emitted — recordTurnEnd's retry depends on that count and on
 // streamedThisTurn being flipped here. It also queues tool_result images and
 // `![alt](path)` refs into lib/media.ts and emits `image` events once encoded;
-// those are never counted and never flip streamedThisTurn.
+// those are never counted and never flip streamedThisTurn. Thinking blocks
+// become `assistant_thinking` events under the same rule (RES-L5NG step 4).
 
 export interface SessionMeta {
   transcriptPath?: string
@@ -228,14 +229,12 @@ export function readTranscriptDelta(
   let raw: string
   try { raw = readFileSync(path, "utf8") } catch { return emitted }
 
-  const lines = raw.split("\n")
+  const entries = parseEntries(raw)
   // tool_use id → name/input, built in the same pass; a tool_result always
   // follows its tool_use in the file, so it is known by the time we need it.
   const toolUses: ToolUses = new Map()
-  for (const line of lines) {
-    if (!line.trim()) continue
-    let entry: Record<string, unknown>
-    try { entry = JSON.parse(line) } catch { continue }
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i] as Record<string, unknown>
 
     // Token accounting — pull usage from the latest assistant message.
     const usage = (entry.message as { usage?: Record<string, number> } | undefined)?.usage
@@ -270,6 +269,10 @@ export function readTranscriptDelta(
         toolUses.set(block.id, { name: String(block.name ?? ""), input: block.input })
         continue
       }
+      if (block.type === "thinking") {
+        emitThinking(s, block, entry, entries[i + 1], opts)
+        continue
+      }
       if (block.type !== "text") continue
       const text = (block.text as string | undefined)?.trim()
       if (!text) continue
@@ -290,6 +293,62 @@ export function readTranscriptDelta(
     }
   }
   return emitted
+}
+
+function parseEntries(raw: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue
+    try {
+      const entry: unknown = JSON.parse(line)
+      if (entry && typeof entry === "object") out.push(entry as Record<string, unknown>)
+    } catch { /* skip malformed line */ }
+  }
+  return out
+}
+
+// ── Thinking in the feed (RES-L5NG step 4) ──
+
+const THINKING_MAX = 4000
+
+// One `assistant_thinking` event per distinct thinking block. Like images it
+// is not counted and never sets streamedThisTurn — turn-end policy stays
+// text-only. `redacted_thinking` blocks never reach here (type differs).
+function emitThinking(
+  s: PathState,
+  block: Record<string, unknown>,
+  entry: Record<string, unknown>,
+  next: Record<string, unknown> | undefined,
+  opts: { silent?: boolean },
+): void {
+  const text = typeof block.thinking === "string" ? block.thinking.trim() : ""
+  if (!text) return
+  const key = `think:${hashText(text)}`
+  if (s.seenAssistantText.has(key)) return
+  s.seenAssistantText.add(key)
+  if (opts.silent) return
+  const durationMs = gapMs(entry, next)
+  appendFeedEvent({
+    id: crypto.randomUUID(),
+    ts: Date.now(),
+    kind: "assistant_thinking",
+    text: clampLong(text, THINKING_MAX),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...identityFor(s),
+  })
+}
+
+// Gap between two transcript entries' ISO timestamps; undefined unless both
+// parse and the gap is non-negative.
+function gapMs(
+  a: Record<string, unknown>,
+  b: Record<string, unknown> | undefined,
+): number | undefined {
+  if (!b || typeof a.timestamp !== "string" || typeof b.timestamp !== "string") return undefined
+  const from = Date.parse(a.timestamp)
+  const to = Date.parse(b.timestamp)
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return undefined
+  return to - from
 }
 
 // ── Images in the feed (RES-L5NG step 3) ──

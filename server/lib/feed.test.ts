@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test"
-import { appendFeedEvent, getFeed, onFeedEvict, onFeedReset, pruneFeedForSession, type FeedEvent } from "./feed"
+import { appendFeedEvent, getFeed, onFeed, onFeedEvict, onFeedReset, pruneFeedForSession, type FeedEvent } from "./feed"
 
 // The evict signal: fires on the 200-cap trim and on session prune, once,
 // after the splice, with a copy. The feed store is module-global and shared
@@ -13,6 +13,20 @@ const ev = (over: Partial<FeedEvent> = {}): FeedEvent => ({
   ts: Date.now(),
   kind: "tool_start",
   ...over,
+})
+
+describe("assistant_thinking kind (RES-L5NG step 4)", () => {
+  test("round-trips through append → listener → getFeed", () => {
+    const e = ev({ kind: "assistant_thinking", text: "hmm", durationMs: 1200, tty: "/dev/feedtest-think" })
+    const seen: FeedEvent[] = []
+    const off = onFeed((x) => { seen.push(x) })
+    appendFeedEvent(e)
+    off()
+    expect(seen).toEqual([e])
+    const stored = getFeed().find((x) => x.id === e.id)
+    expect(stored).toEqual(e)
+    expect(JSON.parse(JSON.stringify(stored))).toEqual(e) // survives the WS frame
+  })
 })
 
 describe("onFeedEvict", () => {

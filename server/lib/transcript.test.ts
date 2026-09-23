@@ -65,6 +65,77 @@ test("getState migrates a weak-keyed record when the transcript path arrives", (
   expect(strong.turnStartedAt).toBe(42)
 })
 
+describe("thinking in the feed (RES-L5NG step 4)", () => {
+  const thinking = (text: string, ts?: string, extra: object[] = []) =>
+    line({
+      type: "assistant",
+      ...(ts ? { timestamp: ts } : {}),
+      message: { role: "assistant", content: [{ type: "thinking", thinking: text, signature: "sig" }, ...extra] },
+    })
+  const stamped = (text: string, ts: string) =>
+    line({ type: "assistant", timestamp: ts, message: { role: "assistant", content: [{ type: "text", text }] } })
+
+  test("one event, clamped, with durationMs to the next entry; uncounted; re-read emits nothing", () => {
+    const path = join(dir, "think-a.jsonl")
+    const long = "x".repeat(5000)
+    writeFileSync(path, thinking(long, "2026-09-23T10:00:00.000Z") + stamped("answer", "2026-09-23T10:00:03.500Z"))
+    const s = getState({ transcriptPath: path, tty: "/dev/think1", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(1) // only the text block counts
+    const th = events.filter((e) => e.kind === "assistant_thinking")
+    expect(th).toHaveLength(1)
+    expect(th[0]!.text!.startsWith("x".repeat(4000) + "\n\n…[truncated")).toBe(true)
+    expect(th[0]!.durationMs).toBe(3500)
+    expect(th[0]!.tty).toBe("/dev/think1")
+    expect(s.seenAssistantText.has(`think:${hashText(long)}`)).toBe(true)
+    expect(readTranscriptDelta(s)).toBe(0)
+    expect(events.filter((e) => e.kind === "assistant_thinking")).toHaveLength(1)
+    off()
+  })
+
+  test("does not set streamedThisTurn and is not counted", () => {
+    const path = join(dir, "think-b.jsonl")
+    writeFileSync(path, thinking("pondering", "2026-09-23T10:00:00.000Z"))
+    const s = getState({ transcriptPath: path, tty: "/dev/think2", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(0)
+    expect(s.streamedThisTurn).toBe(false)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.kind).toBe("assistant_thinking")
+    expect(events[0]!.durationMs).toBeUndefined() // no following entry
+    expect("durationMs" in events[0]!).toBe(false)
+    off()
+  })
+
+  test("silent read marks seen without emitting", () => {
+    const path = join(dir, "think-c.jsonl")
+    writeFileSync(path, thinking("quiet thought") + assistant("reply"))
+    const s = getState({ transcriptPath: path, tty: "/dev/think3", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s, { silent: true })).toBe(0)
+    expect(events).toHaveLength(0)
+    expect(s.seenAssistantText.has(`think:${hashText("quiet thought")}`)).toBe(true)
+    expect(readTranscriptDelta(s)).toBe(0)
+    expect(events).toHaveLength(0)
+    off()
+  })
+
+  test("redacted_thinking and missing timestamps are tolerated", () => {
+    const path = join(dir, "think-d.jsonl")
+    writeFileSync(
+      path,
+      line({ type: "assistant", message: { content: [{ type: "redacted_thinking", data: "opaque" }] } }) +
+        thinking("no clock") + assistant("after"),
+    )
+    const s = getState({ transcriptPath: path, tty: "/dev/think4", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(1)
+    expect(events.map((e) => e.kind)).toEqual(["assistant_thinking", "assistant_text"])
+    expect(events[0]!.durationMs).toBeUndefined()
+    off()
+  })
+})
+
 describe("model capture (PRJ-OR1T Phase 14)", () => {
   const dir = mkdtempSync(join(tmpdir(), "cc-model-"))
 

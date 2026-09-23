@@ -12,6 +12,9 @@ export type EventKind =
   | "tool_end"
   | "turn_end"
   | "image"
+  // RES-L5NG step 4 — Claude's thinking block. Reuses `text`; `durationMs`
+  // is the transcript gap to the next entry when known.
+  | "assistant_thinking"
 
 export type Verdict = "auto-allow" | "auto-deny" | "approved" | "denied" | "pending"
 
