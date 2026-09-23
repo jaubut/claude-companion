@@ -3,7 +3,7 @@ import sharp from "sharp"
 import { mkdtempSync, writeFileSync, appendFileSync, existsSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { getState, modelFromTranscript, readTranscriptDelta, hashText } from "./transcript"
+import { getState, modelFromTranscript, readTranscriptDelta, hashText, reloadToolResultImage, toolResultImageData } from "./transcript"
 import { onFeed, type FeedEvent } from "./feed"
 
 // Pins the contract recordTurnEnd's retry depends on: the delta reader
@@ -413,6 +413,51 @@ describe("incremental reader (byte offset per transcript)", () => {
     readTranscriptDelta(s)
     off()
     expect(events.filter((e) => e.kind === "artifact")[0]).toMatchObject({ ref: "RES-L5NG", tool: "Bash" })
+  })
+
+  test("a same-size rewrite between two polls is read, not skipped (Codex on PR #46)", () => {
+    const path = join(incDir, "samesize.jsonl")
+    writeFileSync(path, assistant("one two"))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc5", cwd: "/x" })
+    expect(readTranscriptDelta(s)).toBe(1)
+    const { events, off } = capture()
+    writeFileSync(path, assistant("two one")) // same byte length, same inode, new content
+    expect(readTranscriptDelta(s)).toBe(1)
+    off()
+    expect(events.map((e) => (e as { text?: string }).text)).toEqual(["two one"])
+    expect(readTranscriptDelta(s)).toBe(0)
+  })
+
+  test("a parked busy image holds no payload: the retry reloads the line from disk", async () => {
+    const path = join(incDir, "reload.jsonl")
+    const b64 = Buffer.from("not really a png").toString("base64")
+    const entry = { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_r1", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }] }] } }
+    const text = line(entry)
+    writeFileSync(path, text)
+    // the recipe re-reads the line by its location …
+    const store = reloadToolResultImage({ path, offset: 0, length: text.length - 1 }, "toolu_r1", 0)
+    expect(typeof store).toBe("function")
+    expect(toolResultImageData(JSON.parse(text.trim()), "toolu_r1", 0)).toBe(b64)
+    expect(toolResultImageData(JSON.parse(text.trim()), "toolu_r1", 1)).toBeNull()
+    // … and gives up cleanly once the transcript moved on
+    writeFileSync(path, "")
+    expect(reloadToolResultImage({ path, offset: 0, length: text.length - 1 }, "toolu_r1", 0)).toBeNull()
+
+    // end to end: busy → parked reload → retried through the reload, not the original store
+    const s = getState({ transcriptPath: join(incDir, "reload-empty.jsonl"), tty: "/dev/inc6", cwd: "/x" })
+    writeFileSync(s.transcriptPath, "")
+    let originalCalls = 0
+    let reloaded = 0
+    let reloadedStoreCalls = 0
+    s.seenImages.add("tu:reload:0")
+    queueImage(s, "tu:reload:0", () => { originalCalls++; return Promise.resolve("busy" as const) }, { caption: "x" },
+      () => { reloaded++; return () => { reloadedStoreCalls++; return Promise.resolve(null) } })
+    await Bun.sleep(10)
+    expect(s.seenImages.has("tu:reload:0")).toBe(false)
+    readTranscriptDelta(s)
+    await Bun.sleep(10)
+    expect([originalCalls, reloaded, reloadedStoreCalls]).toEqual([1, 1, 1])
+    expect(s.seenImages.has("tu:reload:0")).toBe(true)
   })
 
   test("a busy image is retried on the next read without re-parsing", async () => {

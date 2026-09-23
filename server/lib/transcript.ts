@@ -1,8 +1,9 @@
-import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs"
+import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs"
 import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
 import { artifactKey, detectArtifacts } from "./artifacts"
 import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
+import { readAppended, readLineAt, type ToolUses } from "./transcript-cursor"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
 
@@ -226,53 +227,9 @@ export function forgetStates(meta: SessionMeta): PathState[] {
   return dropped
 }
 
-// Where the reader left off in a session's transcript (like codex-feed.ts's
-// offsets): only appended bytes are parsed on each tick, so a screenshot-heavy
-// transcript carrying MBs of base64 isn't re-parsed every 1.5 s. Keyed by the
-// state object so forgetStates() drops it for free. `toolUses` survives
-// between reads because a tool_result may land in a later chunk than its
-// tool_use. A shrunk file or a new inode (truncation/rotation) resets it.
-interface Cursor {
-  path: string
-  ino: number
-  offset: number
-  toolUses: ToolUses
-}
-const cursors = new WeakMap<PathState, Cursor>()
-
-// Complete lines appended since the last read. A trailing line without its
-// newline is consumed only if it already parses (the old whole-file reader
-// did the same); otherwise it waits for the next tick.
-function readAppended(s: PathState, path: string): { entries: Array<Record<string, unknown>>; cursor: Cursor } | null {
-  let fd: number
-  try { fd = openSync(path, "r") } catch { return null }
-  try {
-    const st = fstatSync(fd)
-    let c = cursors.get(s)
-    if (!c || c.path !== path || c.ino !== st.ino || st.size < c.offset) {
-      c = { path, ino: st.ino, offset: 0, toolUses: new Map() }
-      cursors.set(s, c)
-    }
-    const len = st.size - c.offset
-    if (len <= 0) return { entries: [], cursor: c }
-    const buf = Buffer.alloc(len)
-    const got = readSync(fd, buf, 0, len, c.offset)
-    const data = buf.subarray(0, got)
-    const nl = data.lastIndexOf(0x0a)
-    let used = nl + 1
-    const entries = parseEntries(data.toString("utf8", 0, used))
-    if (used < data.length) {
-      const tail = parseEntries(data.toString("utf8", used))
-      if (tail.length) { entries.push(...tail); used = data.length }
-    }
-    c.offset += used
-    return { entries, cursor: c }
-  } catch {
-    return null
-  } finally {
-    closeSync(fd)
-  }
-}
+// The byte cursor (offset, checkpoint, tool_use map) lives in
+// transcript-cursor.ts; entries come back with their file location so an
+// image payload can be re-read on retry instead of being pinned in memory.
 
 export function readTranscriptDelta(
   s: PathState,
@@ -291,7 +248,7 @@ export function readTranscriptDelta(
   // chunk — hence it lives on the cursor).
   const toolUses = read.cursor.toolUses
   for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i] as Record<string, unknown>
+    const { entry, offset, length } = entries[i]!
 
     // Token accounting — pull usage from the latest assistant message.
     const usage = (entry.message as { usage?: Record<string, number> } | undefined)?.usage
@@ -316,7 +273,7 @@ export function readTranscriptDelta(
     // return value and never set streamedThisTurn — the turn-end retry and
     // wrap-up policy stay text-only.
     if (entry.type === "user") {
-      scanToolResultImages(s, blocks, toolUses, opts)
+      scanToolResultImages(s, blocks, toolUses, opts, { path, offset, length })
       scanToolResultArtifacts(s, blocks, toolUses, opts)
       continue
     }
@@ -331,7 +288,7 @@ export function readTranscriptDelta(
         continue
       }
       if (block.type === "thinking") {
-        emitThinking(s, block, entry, entries[i + 1], opts)
+        emitThinking(s, block, entry, entries[i + 1]?.entry, opts)
         continue
       }
       if (block.type !== "text") continue
@@ -358,18 +315,6 @@ export function readTranscriptDelta(
     }
   }
   return emitted
-}
-
-function parseEntries(raw: string): Array<Record<string, unknown>> {
-  const out: Array<Record<string, unknown>> = []
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue
-    try {
-      const entry: unknown = JSON.parse(line)
-      if (entry && typeof entry === "object") out.push(entry as Record<string, unknown>)
-    } catch { /* skip malformed line */ }
-  }
-  return out
 }
 
 // ── Thinking in the feed (RES-L5NG step 4) ──
@@ -477,25 +422,56 @@ function scanToolResultArtifacts(
 
 // ── Images in the feed (RES-L5NG step 3) ──
 
-type ToolUses = Map<string, { name: string; input: unknown }>
-
 const CAPTION_MAX = 140
 const MD_IMAGE = /!\[([^\]]*)\]\(([^)\s]+)\)/g
 const MD_IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i
 const MD_MAX_BYTES = 20 * 1024 * 1024
 
+type Store = () => Promise<StoreResult>
+// Rebuilds the store closure for a retry — from the transcript line's location
+// for tool_result images, so a parked job never holds the screenshot's base64
+// (Codex on PR #46). null = the line is gone (rotation, truncation).
+type Reload = () => Store | null
+type ImageFields = { tool?: string; caption: string }
+
 // Images whose encode came back "busy", retried at the top of the next read.
-const busyImages = new WeakMap<PathState, Map<string, () => void>>()
+// Only the reload recipe and the caption are parked, never the payload.
+const busyImages = new WeakMap<PathState, Map<string, { reload: Reload; fields: ImageFields }>>()
 
 function retryBusyImages(s: PathState): void {
   const parked = busyImages.get(s)
   if (!parked?.size) return
   busyImages.delete(s)
-  for (const [seenKey, retry] of parked) {
+  for (const [seenKey, { reload, fields }] of parked) {
     if (s.seenImages.has(seenKey)) continue
     s.seenImages.add(seenKey)
-    retry()
+    const store = reload()
+    if (!store) continue // the transcript moved on; the mark stays so it is not retried forever
+    queueImage(s, seenKey, store, fields, reload)
   }
+}
+
+// Where a tool_result entry sits in the transcript file.
+type LineAt = { path: string; offset: number; length: number }
+
+// The base64 of tool_result image block `idx` for `toolUseId` in `entry`.
+export function toolResultImageData(entry: Record<string, unknown> | null, toolUseId: string, idx: number): string | null {
+  const content = (entry?.message as { content?: unknown } | undefined)?.content
+  if (!Array.isArray(content)) return null
+  for (const block of content as Array<Record<string, unknown>>) {
+    if (block?.type !== "tool_result" || block.tool_use_id !== toolUseId || !Array.isArray(block.content)) continue
+    const item = (block.content as Array<Record<string, unknown>>)[idx]
+    const source = item?.type === "image" ? (item.source as Record<string, unknown> | undefined) : undefined
+    return source?.type === "base64" && typeof source.data === "string" ? source.data : null
+  }
+  return null
+}
+
+// Reload recipe for a tool_result image: re-read its line, pull the base64 out
+// again. Holds only the location.
+export function reloadToolResultImage(at: LineAt, toolUseId: string, idx: number): Store | null {
+  const data = toolResultImageData(readLineAt(at.path, at.offset, at.length), toolUseId, idx)
+  return data ? () => storeImageBase64(data) : null
 }
 
 // Queue one image: the seen key is already marked, `ts` is the detection time
@@ -504,8 +480,11 @@ function retryBusyImages(s: PathState): void {
 export function queueImage(
   s: PathState,
   seenKey: string,
-  store: () => Promise<StoreResult>,
-  fields: { tool?: string; caption: string },
+  store: Store,
+  fields: ImageFields,
+  // Default: the store itself holds no payload (a file path), so it can be
+  // reused as-is. Tool-result images pass a disk reload instead.
+  reload: Reload = () => store,
 ): void {
   const ts = Date.now()
   const ident = identityFor(s)
@@ -513,12 +492,13 @@ export function queueImage(
     .then((ref) => {
       // Saturated encode queue: forget the mark and park the job so the next
       // tick retries it. The reader no longer re-parses old lines, so the
-      // image would not be re-detected on its own.
+      // image would not be re-detected on its own. `store` (and any base64 it
+      // closes over) is released with this callback; only `reload` is kept.
       if (ref === "busy") {
         s.seenImages.delete(seenKey)
         let parked = busyImages.get(s)
         if (!parked) busyImages.set(s, (parked = new Map()))
-        parked.set(seenKey, () => queueImage(s, seenKey, store, fields))
+        parked.set(seenKey, { reload, fields })
         return
       }
       if (!ref) return
@@ -559,6 +539,7 @@ function scanToolResultImages(
   blocks: Array<Record<string, unknown>>,
   toolUses: ToolUses,
   opts: { silent?: boolean },
+  at: LineAt,
 ): void {
   for (const block of blocks) {
     if (block.type !== "tool_result" || !Array.isArray(block.content)) continue
@@ -574,10 +555,13 @@ function scanToolResultImages(
       if (opts.silent) return
       const tool = toolUses.get(toolUseId)
       const data = source.data
-      queueImage(s, seenKey, () => storeImageBase64(data), {
-        tool: tool?.name || undefined,
-        caption: captionFor(tool, inner),
-      })
+      queueImage(
+        s,
+        seenKey,
+        () => storeImageBase64(data),
+        { tool: tool?.name || undefined, caption: captionFor(tool, inner) },
+        () => reloadToolResultImage(at, toolUseId, idx),
+      )
     })
   }
 }

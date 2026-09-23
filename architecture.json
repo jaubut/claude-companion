@@ -1091,8 +1091,32 @@
           "externals": []
         },
         {
+          "path": "lib/transcript-cursor.ts",
+          "lines": 125,
+          "kind": "lib",
+          "exports": [
+            "ToolUses",
+            "Cursor",
+            "CHECK_BYTES",
+            "Located",
+            "readAppended",
+            "readLineAt"
+          ],
+          "state": [
+            "cursors: WeakMap"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/transcript.ts",
-          "lines": 617,
+          "lines": 601,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -1104,12 +1128,13 @@
             "activeStates",
             "forgetStates",
             "readTranscriptDelta",
+            "toolResultImageData",
+            "reloadToolResultImage",
             "queueImage",
             "hashText"
           ],
           "state": [
             "states: Map",
-            "cursors: WeakMap",
             "busyImages: WeakMap"
           ],
           "emits": [],
@@ -1120,6 +1145,7 @@
             "lib/feed.ts",
             "lib/artifacts.ts",
             "lib/media.ts",
+            "lib/transcript-cursor.ts",
             "lib/tool-format.ts",
             "lib/activity.ts"
           ],
@@ -2422,6 +2448,12 @@
             "wiring/events.ts"
           ]
         },
+        "readAppended": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
         "detectArtifacts": {
           "module": "lib/artifacts.ts",
           "callers": [
@@ -2434,8 +2466,20 @@
             "lib/transcript.ts"
           ]
         },
+        "ToolUses": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
         "StoreResult": {
           "module": "lib/media.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "readLineAt": {
+          "module": "lib/transcript-cursor.ts",
           "callers": [
             "lib/transcript.ts"
           ]
