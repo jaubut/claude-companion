@@ -64,3 +64,27 @@ describe("detectArtifacts", () => {
     expect(detectArtifacts("")).toEqual([])
   })
 })
+
+
+describe("Codex round on PR #43", () => {
+  test("pathological input is linear: 30k slashes and 40k '/a' finish fast and yield nothing", () => {
+    for (const text of ["/".repeat(30_000), "/a".repeat(20_000), " /".repeat(20_000)]) {
+      const t0 = performance.now()
+      const out = detectArtifacts(text, () => true)
+      expect(performance.now() - t0).toBeLessThan(200)
+      expect(out).toEqual([])
+    }
+  })
+
+  test("quoted and backticked paths with spaces are found; bare paths still stop at whitespace", () => {
+    const exists = (p: string) => p === "/Users/j/My Edits/final cut.xml" || p === "/tmp/a.png"
+    const out = detectArtifacts('saved to "/Users/j/My Edits/final cut.xml" and `/Users/j/My Edits/final cut.xml` plus /tmp/a.png.', exists)
+    expect(out.map((a) => a.path)).toEqual(["/Users/j/My Edits/final cut.xml", "/tmp/a.png"])
+  })
+
+  test("PR identity is case-insensitive across blocks", () => {
+    const a = detectArtifacts("see https://github.com/Owner/Repo/pull/42")[0]!
+    const b = detectArtifacts("see https://github.com/owner/repo/pull/42")[0]!
+    expect(artifactKey(a)).toBe(artifactKey(b))
+  })
+})
