@@ -3,7 +3,7 @@ import sharp from "sharp"
 import { mkdtempSync, writeFileSync, appendFileSync, existsSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { getState, modelFromTranscript, readTranscriptDelta, hashText } from "./transcript"
+import { getState, modelFromTranscript, readTranscriptDelta, hashText, reloadToolResultImage, toolResultImageData } from "./transcript"
 import { onFeed, type FeedEvent } from "./feed"
 
 // Pins the contract recordTurnEnd's retry depends on: the delta reader
@@ -376,5 +376,102 @@ describe("artifacts in the feed (RES-B9CL)", () => {
     expect(readTranscriptDelta(s)).toBe(1)
     off()
     expect(arts(events)).toHaveLength(0)
+  })
+})
+
+describe("incremental reader (byte offset per transcript)", () => {
+  const incDir = mkdtempSync(join(tmpdir(), "cc-transcript-inc-"))
+  afterAll(() => { rmSync(incDir, { recursive: true, force: true }) })
+
+  test("a half-written line waits for its newline, then counts once", () => {
+    const path = join(incDir, "partial.jsonl")
+    const full = assistant("finished line")
+    writeFileSync(path, full.slice(0, 20))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc1", cwd: "/x" })
+    expect(readTranscriptDelta(s)).toBe(0)
+    appendFileSync(path, full.slice(20))
+    expect(readTranscriptDelta(s)).toBe(1)
+    expect(readTranscriptDelta(s)).toBe(0)
+  })
+
+  test("truncation / rewrite resets the offset and reads the new content", () => {
+    const path = join(incDir, "trunc.jsonl")
+    writeFileSync(path, assistant("old one") + assistant("old two"))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc2", cwd: "/x" })
+    expect(readTranscriptDelta(s)).toBe(2)
+    writeFileSync(path, assistant("fresh"))
+    expect(readTranscriptDelta(s)).toBe(1)
+  })
+
+  test("a tool_result in a later chunk still resolves its tool_use name", () => {
+    const path = join(incDir, "split.jsonl")
+    writeFileSync(path, line({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_s1", name: "Bash", input: {} }] } }))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc3", cwd: "/x" })
+    readTranscriptDelta(s)
+    const { events, off } = capture()
+    appendFileSync(path, line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_s1", content: "RES-L5NG" }] } }))
+    readTranscriptDelta(s)
+    off()
+    expect(events.filter((e) => e.kind === "artifact")[0]).toMatchObject({ ref: "RES-L5NG", tool: "Bash" })
+  })
+
+  test("a same-size rewrite between two polls is read, not skipped (Codex on PR #46)", () => {
+    const path = join(incDir, "samesize.jsonl")
+    writeFileSync(path, assistant("one two"))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc5", cwd: "/x" })
+    expect(readTranscriptDelta(s)).toBe(1)
+    const { events, off } = capture()
+    writeFileSync(path, assistant("two one")) // same byte length, same inode, new content
+    expect(readTranscriptDelta(s)).toBe(1)
+    off()
+    expect(events.map((e) => (e as { text?: string }).text)).toEqual(["two one"])
+    expect(readTranscriptDelta(s)).toBe(0)
+  })
+
+  test("a parked busy image holds no payload: the retry reloads the line from disk", async () => {
+    const path = join(incDir, "reload.jsonl")
+    const b64 = Buffer.from("not really a png").toString("base64")
+    const entry = { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_r1", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }] }] } }
+    const text = line(entry)
+    writeFileSync(path, text)
+    // the recipe re-reads the line by its location …
+    const store = reloadToolResultImage({ path, offset: 0, length: text.length - 1 }, "toolu_r1", 0)
+    expect(typeof store).toBe("function")
+    expect(toolResultImageData(JSON.parse(text.trim()), "toolu_r1", 0)).toBe(b64)
+    expect(toolResultImageData(JSON.parse(text.trim()), "toolu_r1", 1)).toBeNull()
+    // … and gives up cleanly once the transcript moved on
+    writeFileSync(path, "")
+    expect(reloadToolResultImage({ path, offset: 0, length: text.length - 1 }, "toolu_r1", 0)).toBeNull()
+
+    // end to end: busy → parked reload → retried through the reload, not the original store
+    const s = getState({ transcriptPath: join(incDir, "reload-empty.jsonl"), tty: "/dev/inc6", cwd: "/x" })
+    writeFileSync(s.transcriptPath, "")
+    let originalCalls = 0
+    let reloaded = 0
+    let reloadedStoreCalls = 0
+    s.seenImages.add("tu:reload:0")
+    queueImage(s, "tu:reload:0", () => { originalCalls++; return Promise.resolve("busy" as const) }, { caption: "x" },
+      () => { reloaded++; return () => { reloadedStoreCalls++; return Promise.resolve(null) } })
+    await Bun.sleep(10)
+    expect(s.seenImages.has("tu:reload:0")).toBe(false)
+    readTranscriptDelta(s)
+    await Bun.sleep(10)
+    expect([originalCalls, reloaded, reloadedStoreCalls]).toEqual([1, 1, 1])
+    expect(s.seenImages.has("tu:reload:0")).toBe(true)
+  })
+
+  test("a busy image is retried on the next read without re-parsing", async () => {
+    const path = join(incDir, "busy.jsonl")
+    writeFileSync(path, "")
+    const s = getState({ transcriptPath: path, tty: "/dev/inc4", cwd: "/x" })
+    let calls = 0
+    s.seenImages.add("tu:busy:0")
+    queueImage(s, "tu:busy:0", () => Promise.resolve(++calls === 1 ? ("busy" as const) : null), { caption: "x" })
+    await Bun.sleep(10)
+    expect(s.seenImages.has("tu:busy:0")).toBe(false)
+    readTranscriptDelta(s)
+    expect(s.seenImages.has("tu:busy:0")).toBe(true)
+    await Bun.sleep(10)
+    expect(calls).toBe(2)
   })
 })
