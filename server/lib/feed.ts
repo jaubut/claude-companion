@@ -3,7 +3,8 @@
 // (poll-fed), codex-feed.ts (rollout-fed, brings its own stable ids — the
 // id-dedupe in appendFeedEvent is what makes its re-reads idempotent).
 // Announced by wiring/events.ts as `event` / `feed_pruned`. Removals also fire
-// onFeedEvict, which wiring/media.ts uses to free image files.
+// onFeedEvict (no in-tree listener today; media files are age/byte-capped
+// independently of the feed — see wiring/media.ts).
 
 export type EventKind =
   | "user_prompt"
@@ -80,7 +81,7 @@ export function onFeedReset(fn: FeedResetListener): () => void {
 }
 
 // Fires whenever events leave the feed: the 200-cap trim and the session
-// prune. The only resource-freeing signal (wiring/media.ts unlinks images).
+// prune. Not used to free media (see wiring/media.ts for why).
 // Listeners are READ-ONLY observers: unlink / release only, never append to
 // or prune the feed from inside one. They run once per removal, after the
 // splice is complete, each with its own copy of the removed events.
