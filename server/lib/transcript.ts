@@ -1,5 +1,7 @@
-import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs"
+import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs"
+import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
+import { storeImageBase64, storeImageFile, type MediaRef } from "./media"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
 
@@ -8,7 +10,9 @@ import type { Activity } from "./activity"
 // module reads *what* changed: new assistant text blocks (emitted once, deduped
 // by hash) and the token high-water mark. readTranscriptDelta returns how many
 // blocks it emitted — recordTurnEnd's retry depends on that count and on
-// streamedThisTurn being flipped here.
+// streamedThisTurn being flipped here. It also queues tool_result images and
+// `![alt](path)` refs into lib/media.ts and emits `image` events once encoded;
+// those are never counted and never flip streamedThisTurn.
 
 export interface SessionMeta {
   transcriptPath?: string
@@ -55,6 +59,12 @@ export interface PathState {
   // the first assistant turn, and stale between a switch and the next turn.
   // The picker is authoritative whenever it is open.
   lastModel: string
+  // Images already queued for the feed (RES-L5NG step 3). Keys:
+  // `tu:<tool_use_id>:<blockIdx>` for tool_result image blocks and
+  // `md:<realpath>:<mtimeMs>` for `![alt](path)` refs in assistant text.
+  // Marked synchronously BEFORE the async encode, so the turn-end retry loop
+  // (up to 16 reads in 4 s) never queues the same image twice.
+  seenImages: Set<string>
 }
 
 const states = new Map<string, PathState>()
@@ -111,6 +121,7 @@ export function getState(meta: SessionMeta): PathState {
     activity: null,
     lastEventAt: 0,
     lastModel: "",
+    seenImages: new Set(),
   }
   states.set(key, next)
   return next
@@ -218,6 +229,9 @@ export function readTranscriptDelta(
   try { raw = readFileSync(path, "utf8") } catch { return emitted }
 
   const lines = raw.split("\n")
+  // tool_use id → name/input, built in the same pass; a tool_result always
+  // follows its tool_use in the file, so it is known by the time we need it.
+  const toolUses: ToolUses = new Map()
   for (const line of lines) {
     if (!line.trim()) continue
     let entry: Record<string, unknown>
@@ -238,11 +252,24 @@ export function readTranscriptDelta(
     const model = (entry.message as { model?: string } | undefined)?.model
     if (isRealModel(model)) s.lastModel = model
 
-    if (entry.type !== "assistant") continue
     const content = (entry.message as { content?: unknown })?.content
     if (!Array.isArray(content)) continue
+    const blocks = content as Array<Record<string, unknown>>
 
-    for (const block of content as Array<Record<string, unknown>>) {
+    // Images ride tool_result blocks inside `user` entries. Not counted in the
+    // return value and never set streamedThisTurn — the turn-end retry and
+    // wrap-up policy stay text-only.
+    if (entry.type === "user") {
+      scanToolResultImages(s, blocks, toolUses, opts)
+      continue
+    }
+    if (entry.type !== "assistant") continue
+
+    for (const block of blocks) {
+      if (block.type === "tool_use" && typeof block.id === "string") {
+        toolUses.set(block.id, { name: String(block.name ?? ""), input: block.input })
+        continue
+      }
       if (block.type !== "text") continue
       const text = (block.text as string | undefined)?.trim()
       if (!text) continue
@@ -259,9 +286,119 @@ export function readTranscriptDelta(
       })
       s.streamedThisTurn = true
       emitted++
+      scanMarkdownImages(s, text)
     }
   }
   return emitted
+}
+
+// ── Images in the feed (RES-L5NG step 3) ──
+
+type ToolUses = Map<string, { name: string; input: unknown }>
+
+const CAPTION_MAX = 140
+const MD_IMAGE = /!\[([^\]]*)\]\(([^)\s]+)\)/g
+const MD_IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i
+const MD_MAX_BYTES = 20 * 1024 * 1024
+
+// Queue one image: the seen key is already marked, `ts` is the detection time
+// (the event sorts by when the tool returned, not when the encode finished),
+// and the id `img:<seenKey>` makes a re-append an idempotent no-op.
+function queueImage(
+  s: PathState,
+  seenKey: string,
+  store: () => Promise<MediaRef | null>,
+  fields: { tool?: string; caption: string },
+): void {
+  const ts = Date.now()
+  const ident = identityFor(s)
+  void store()
+    .then((ref) => {
+      if (!ref) return
+      appendFeedEvent({
+        id: `img:${seenKey}`,
+        ts,
+        kind: "image",
+        mediaId: ref.mediaId,
+        width: ref.width,
+        height: ref.height,
+        ...(fields.tool ? { tool: fields.tool } : {}),
+        caption: fields.caption,
+        ...ident,
+      })
+    })
+    .catch(() => { /* store logs its own failures */ })
+}
+
+function clampCaption(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim()
+  return flat.length <= CAPTION_MAX ? flat : flat.slice(0, CAPTION_MAX - 1) + "…"
+}
+
+// Caption: the Read input's basename, else the first sibling text block,
+// else the tool name.
+function captionFor(tool: { name: string; input: unknown } | undefined, siblings: Array<Record<string, unknown>>): string {
+  const filePath = (tool?.input as { file_path?: unknown } | undefined)?.file_path
+  if (tool?.name === "Read" && typeof filePath === "string" && filePath) return basename(filePath)
+  for (const b of siblings) {
+    const text = b.type === "text" && typeof b.text === "string" ? b.text.trim() : ""
+    if (text) return clampCaption(text)
+  }
+  return tool?.name || "image"
+}
+
+function scanToolResultImages(
+  s: PathState,
+  blocks: Array<Record<string, unknown>>,
+  toolUses: ToolUses,
+  opts: { silent?: boolean },
+): void {
+  for (const block of blocks) {
+    if (block.type !== "tool_result" || !Array.isArray(block.content)) continue
+    const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : ""
+    if (!toolUseId) continue
+    const inner = block.content as Array<Record<string, unknown>>
+    inner.forEach((item, idx) => {
+      const source = item?.type === "image" ? (item.source as Record<string, unknown> | undefined) : undefined
+      if (source?.type !== "base64" || typeof source.data !== "string") return
+      const seenKey = `tu:${toolUseId}:${idx}`
+      if (s.seenImages.has(seenKey)) return
+      s.seenImages.add(seenKey)
+      if (opts.silent) return
+      const tool = toolUses.get(toolUseId)
+      const data = source.data
+      queueImage(s, seenKey, () => storeImageBase64(data), {
+        tool: tool?.name || undefined,
+        caption: captionFor(tool, inner),
+      })
+    })
+  }
+}
+
+// `![alt](path)` in a freshly emitted assistant text block. Absolute or
+// cwd-relative, image extensions only, must exist, 20 MB max.
+function scanMarkdownImages(s: PathState, text: string): void {
+  if (!text.includes("![")) return
+  for (const m of text.matchAll(MD_IMAGE)) {
+    const alt = (m[1] ?? "").trim()
+    const ref = m[2] ?? ""
+    if (!MD_IMAGE_EXT.test(ref) || ref.includes("://")) continue
+    if (!isAbsolute(ref) && !s.cwd) continue
+    let real: string
+    let mtimeMs: number
+    try {
+      real = realpathSync(isAbsolute(ref) ? ref : join(s.cwd, ref))
+      const st = statSync(real)
+      if (!st.isFile() || st.size > MD_MAX_BYTES) continue
+      mtimeMs = st.mtimeMs
+    } catch { continue }
+    const seenKey = `md:${real}:${mtimeMs}`
+    if (s.seenImages.has(seenKey)) continue
+    s.seenImages.add(seenKey)
+    queueImage(s, seenKey, () => storeImageFile(real), {
+      caption: clampCaption(alt || basename(real)),
+    })
+  }
 }
 
 export function hashText(s: string): string {

@@ -1,5 +1,6 @@
-import { test, expect, describe } from "bun:test"
-import { mkdtempSync, writeFileSync, appendFileSync } from "node:fs"
+import { test, expect, describe, beforeAll, afterAll } from "bun:test"
+import sharp from "sharp"
+import { mkdtempSync, writeFileSync, appendFileSync, existsSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { getState, modelFromTranscript, readTranscriptDelta, hashText } from "./transcript"
@@ -106,5 +107,131 @@ describe("model capture (PRJ-OR1T Phase 14)", () => {
     // Tail smaller than the line forces a partial leading line.
     expect(modelFromTranscript(p, 20)).toBe("")
     expect(modelFromTranscript(p)).toBe("claude-haiku-4-5")
+  })
+})
+
+describe("images in the feed (RES-L5NG step 3)", () => {
+  const imgDir = mkdtempSync(join(tmpdir(), "cc-transcript-img-"))
+  const mediaDir = mkdtempSync(join(tmpdir(), "cc-transcript-media-"))
+  beforeAll(() => { process.env.COMPANION_MEDIA_DIR = mediaDir })
+  afterAll(() => {
+    rmSync(imgDir, { recursive: true, force: true })
+    rmSync(mediaDir, { recursive: true, force: true })
+  })
+
+  const pngB64 = (color: string) =>
+    sharp({ create: { width: 64, height: 32, channels: 3, background: color } }).png().toBuffer().then((b) => b.toString("base64"))
+  const toolUse = (id: string, name: string, input: unknown) =>
+    line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } })
+  const toolResult = (id: string, content: unknown[]) =>
+    line({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] } })
+  const image = (data: string) => ({ type: "image", source: { type: "base64", media_type: "image/png", data } })
+
+  // The encode is async; give it a bounded window, then report what landed.
+  async function settle(events: FeedEvent[], want: number, ms = 3000): Promise<FeedEvent[]> {
+    const deadline = Date.now() + ms
+    while (Date.now() < deadline) {
+      if (events.filter((e) => e.kind === "image").length >= want) break
+      await Bun.sleep(20)
+    }
+    await Bun.sleep(80) // room for any stray duplicate to show up
+    return events.filter((e) => e.kind === "image")
+  }
+
+  test("Read + tool_result image → one image event; not counted; streamedThisTurn untouched", async () => {
+    const path = join(imgDir, "read.jsonl")
+    const data = await pngB64("#ff0000")
+    writeFileSync(path, toolUse("toolu_r1", "Read", { file_path: "/tmp/shots/red.png" }) + toolResult("toolu_r1", [image(data)]))
+    const s = getState({ transcriptPath: path, tty: "/dev/img1", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(0)
+    expect(s.streamedThisTurn).toBe(false)
+    expect(s.seenImages.has("tu:toolu_r1:0")).toBe(true) // marked before the encode resolves
+    const imgs = await settle(events, 1)
+    off()
+    expect(imgs).toHaveLength(1)
+    const ev = imgs[0]!
+    expect(ev.id).toBe("img:tu:toolu_r1:0")
+    expect(ev.tool).toBe("Read")
+    expect(ev.caption).toBe("red.png")
+    expect([ev.width, ev.height]).toEqual([64, 32])
+    expect(ev.mediaId).toMatch(/^[a-f0-9]{32}$/)
+    expect(ev.tty).toBe("/dev/img1")
+    expect(ev.key).toBeUndefined()
+    expect(existsSync(join(mediaDir, `${ev.mediaId}.jpg`))).toBe(true)
+  })
+
+  test("re-reads (the turn-end retry loop) never emit a second event", async () => {
+    const path = join(imgDir, "reread.jsonl")
+    writeFileSync(path, toolUse("toolu_r2", "Read", { file_path: "/a/b.png" }) + toolResult("toolu_r2", [image(await pngB64("#00ff00"))]))
+    const s = getState({ transcriptPath: path, tty: "/dev/img2", cwd: "/x" })
+    const { events, off } = capture()
+    for (let i = 0; i < 16; i++) readTranscriptDelta(s)
+    const imgs = await settle(events, 1)
+    readTranscriptDelta(s)
+    await Bun.sleep(80)
+    off()
+    expect(imgs).toHaveLength(1)
+    expect(events.filter((e) => e.kind === "image")).toHaveLength(1)
+  })
+
+  test("a silent read marks the image without emitting, and later reads stay quiet", async () => {
+    const path = join(imgDir, "silent.jsonl")
+    writeFileSync(path, toolUse("toolu_r3", "Read", { file_path: "/a/c.png" }) + toolResult("toolu_r3", [image(await pngB64("#0000ff"))]))
+    const s = getState({ transcriptPath: path, tty: "/dev/img3", cwd: "/x" })
+    const { events, off } = capture()
+    readTranscriptDelta(s, { silent: true })
+    expect(s.seenImages.has("tu:toolu_r3:0")).toBe(true)
+    readTranscriptDelta(s)
+    await Bun.sleep(150)
+    off()
+    expect(events.filter((e) => e.kind === "image")).toHaveLength(0)
+  })
+
+  test("an MCP screenshot captions from its sibling text, else the tool name", async () => {
+    const path = join(imgDir, "mcp.jsonl")
+    const [a, b] = await Promise.all([pngB64("#101010"), pngB64("#202020")])
+    writeFileSync(
+      path,
+      toolUse("toolu_m1", "mcp__computer-use__screenshot", {}) +
+        toolResult("toolu_m1", [{ type: "text", text: "Screenshot of the display" }, image(a)]) +
+        toolUse("toolu_m2", "mcp__computer-use__screenshot", {}) +
+        toolResult("toolu_m2", [image(b)]),
+    )
+    const s = getState({ transcriptPath: path, tty: "/dev/img4", cwd: "/x" })
+    const { events, off } = capture()
+    readTranscriptDelta(s)
+    const imgs = await settle(events, 2)
+    off()
+    const byId = new Map(imgs.map((e) => [e.id, e]))
+    expect(byId.get("img:tu:toolu_m1:1")?.caption).toBe("Screenshot of the display")
+    expect(byId.get("img:tu:toolu_m2:0")?.caption).toBe("mcp__computer-use__screenshot")
+    expect(byId.get("img:tu:toolu_m2:0")?.tool).toBe("mcp__computer-use__screenshot")
+  })
+
+  test("![alt](path) in assistant text → image event captioned by alt; the text still counts once", async () => {
+    const png = join(imgDir, "chart.png")
+    await sharp({ create: { width: 30, height: 30, channels: 3, background: "#abcdef" } }).png().toFile(png)
+    const path = join(imgDir, "md.jsonl")
+    writeFileSync(path, assistant("Here it is: ![the chart](chart.png) and ![gone](missing.png) and ![x](notes.txt)"))
+    const s = getState({ transcriptPath: path, tty: "/dev/img5", cwd: imgDir })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(1) // the text block only
+    const imgs = await settle(events, 1)
+    off()
+    expect(imgs).toHaveLength(1)
+    expect(imgs[0]!.caption).toBe("the chart")
+    expect(imgs[0]!.id.startsWith("img:md:")).toBe(true)
+  })
+
+  test("corrupt image data → no event, no throw", async () => {
+    const path = join(imgDir, "corrupt.jsonl")
+    writeFileSync(path, toolUse("toolu_c1", "Read", { file_path: "/a/bad.png" }) + toolResult("toolu_c1", [image(Buffer.from("nope").toString("base64"))]))
+    const s = getState({ transcriptPath: path, tty: "/dev/img6", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(0)
+    await Bun.sleep(200)
+    off()
+    expect(events.filter((e) => e.kind === "image")).toHaveLength(0)
   })
 })

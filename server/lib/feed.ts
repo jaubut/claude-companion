@@ -2,7 +2,8 @@
 // end, 200-cap, in memory. Producers: activity.ts (hook-fed), transcript.ts
 // (poll-fed), codex-feed.ts (rollout-fed, brings its own stable ids — the
 // id-dedupe in appendFeedEvent is what makes its re-reads idempotent).
-// Announced by wiring/events.ts as `event` / `feed_pruned`.
+// Announced by wiring/events.ts as `event` / `feed_pruned`. Removals also fire
+// onFeedEvict, which wiring/media.ts uses to free image files.
 
 export type EventKind =
   | "user_prompt"
@@ -10,6 +11,7 @@ export type EventKind =
   | "tool_start"
   | "tool_end"
   | "turn_end"
+  | "image"
 
 export type Verdict = "auto-allow" | "auto-deny" | "approved" | "denied" | "pending"
 
@@ -36,6 +38,12 @@ export interface FeedEvent {
   // True when the tool wrote to stderr (not necessarily a non-zero
   // exit, but a useful "something went sideways" signal for the badge).
   errored?: boolean
+  // kind "image" (RES-L5NG step 3) — a reference into lib/media.ts, never
+  // bytes. Fetched via GET /api/media/:id. width/height are the stored JPEG's.
+  mediaId?: string
+  width?: number
+  height?: number
+  caption?: string
 }
 
 const feed: FeedEvent[] = []
@@ -43,8 +51,10 @@ const FEED_CAP = 200
 
 type Listener = (ev: FeedEvent) => void
 type FeedResetListener = (removedIds: string[]) => void
+type FeedEvictListener = (evicted: FeedEvent[]) => void
 const feedListeners = new Set<Listener>()
 const feedResetListeners = new Set<FeedResetListener>()
+const feedEvictListeners = new Set<FeedEvictListener>()
 
 export function onFeed(fn: Listener): () => void {
   feedListeners.add(fn)
@@ -56,6 +66,23 @@ export function onFeedReset(fn: FeedResetListener): () => void {
   return () => feedResetListeners.delete(fn)
 }
 
+// Fires whenever events leave the feed: the 200-cap trim and the session
+// prune. The only resource-freeing signal (wiring/media.ts unlinks images).
+// Listeners are READ-ONLY observers: unlink / release only, never append to
+// or prune the feed from inside one. They run once per removal, after the
+// splice is complete, each with its own copy of the removed events.
+export function onFeedEvict(fn: FeedEvictListener): () => void {
+  feedEvictListeners.add(fn)
+  return () => feedEvictListeners.delete(fn)
+}
+
+function fireEvict(evicted: FeedEvent[]): void {
+  if (evicted.length === 0) return
+  for (const fn of [...feedEvictListeners]) {
+    try { fn(evicted.slice()) } catch { /* ignore */ }
+  }
+}
+
 export function getFeed(): FeedEvent[] {
   return feed.slice()
 }
@@ -63,10 +90,11 @@ export function getFeed(): FeedEvent[] {
 export function appendFeedEvent(ev: FeedEvent): void {
   if (feed.some((existing) => existing.id === ev.id)) return
   feed.push(ev)
-  if (feed.length > FEED_CAP) feed.splice(0, feed.length - FEED_CAP)
+  const evicted = feed.length > FEED_CAP ? feed.splice(0, feed.length - FEED_CAP) : []
   for (const fn of feedListeners) {
     try { fn(ev) } catch { /* ignore */ }
   }
+  fireEvict(evicted)
 }
 
 // Drop every feed event that originated from a session, and tell clients
@@ -76,6 +104,7 @@ export function appendFeedEvent(ev: FeedEvent): void {
 export function pruneFeedForSession(meta: { tty?: string; sessionId?: string }): void {
 if (meta.tty || meta.sessionId) {
   const removed: string[] = []
+  const removedEvents: FeedEvent[] = []
   for (let i = feed.length - 1; i >= 0; i--) {
     const ev = feed[i]
     if (!ev) continue
@@ -84,6 +113,7 @@ if (meta.tty || meta.sessionId) {
       (meta.sessionId && ev.sessionId === meta.sessionId)
     if (hit) {
       removed.push(ev.id)
+      removedEvents.push(ev)
       feed.splice(i, 1)
     }
   }
@@ -92,5 +122,6 @@ if (meta.tty || meta.sessionId) {
       try { fn(removed) } catch { /* ignore */ }
     }
   }
+  fireEvict(removedEvents)
 }
 }
