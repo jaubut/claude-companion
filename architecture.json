@@ -1122,7 +1122,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 602,
+          "lines": 598,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -2439,54 +2439,6 @@
             "routes/hooks.ts"
           ]
         },
-        "readAppended": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "imageBlockData": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "readLineAt": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "lineExpectation": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "lineMatches": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "lastPastedUserIdx": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "ToolUses": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "LineAt": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
         "recordTurnEnd": {
           "module": "lib/activity.ts",
           "callers": [
@@ -2502,6 +2454,30 @@
             "wiring/events.ts"
           ]
         },
+        "readAppended": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "lastPastedUserIdx": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "LineAt": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "lineExpectation": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
         "detectArtifacts": {
           "module": "lib/artifacts.ts",
           "callers": [
@@ -2514,8 +2490,32 @@
             "lib/transcript.ts"
           ]
         },
+        "ToolUses": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
         "StoreResult": {
           "module": "lib/media.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "readLineAt": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "lineMatches": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "imageBlockData": {
+          "module": "lib/transcript-cursor.ts",
           "callers": [
             "lib/transcript.ts"
           ]
@@ -3785,7 +3785,7 @@
         },
         {
           "path": "components/feed-line.tsx",
-          "lines": 117,
+          "lines": 186,
           "kind": "view",
           "exports": [
             "FeedLine"
@@ -3799,12 +3799,14 @@
             "hooks/use-companion.ts",
             "components/session-badge.tsx",
             "lib/format.ts",
-            "lib/tool-summary.ts"
+            "lib/tool-summary.ts",
+            "lib/media.ts"
           ],
           "listeners": [],
           "sheets": 0,
           "externals": [
-            "lucide-react"
+            "lucide-react",
+            "react"
           ]
         },
         {
@@ -3921,7 +3923,7 @@
         },
         {
           "path": "hooks/use-companion.ts",
-          "lines": 540,
+          "lines": 556,
           "kind": "lib",
           "exports": [
             "useCompanion"
@@ -3943,6 +3945,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/media.ts",
             "lib/alert-sound.ts"
           ],
           "listeners": [],
@@ -3987,6 +3990,26 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/media.ts",
+          "lines": 44,
+          "kind": "lib",
+          "exports": [
+            "readAuthToken",
+            "fetchMedia"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [
+            "/api/media/:p"
+          ],
           "imports": [],
           "listeners": [],
           "sheets": 0,
@@ -4141,6 +4164,19 @@
             "components/feed-line.tsx"
           ]
         },
+        "readAuthToken": {
+          "module": "lib/media.ts",
+          "callers": [
+            "components/feed-line.tsx",
+            "hooks/use-companion.ts"
+          ]
+        },
+        "fetchMedia": {
+          "module": "lib/media.ts",
+          "callers": [
+            "components/feed-line.tsx"
+          ]
+        },
         "hashHue": {
           "module": "lib/format.ts",
           "callers": [
@@ -4200,6 +4236,7 @@
             "app.tsx",
             "components/activity-pill.tsx",
             "components/composer.tsx",
+            "components/feed-line.tsx",
             "components/spawn-session.tsx",
             "components/terminal-feed.tsx",
             "hooks/use-companion.ts"

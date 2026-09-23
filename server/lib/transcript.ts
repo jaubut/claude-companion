@@ -3,10 +3,7 @@ import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
 import { artifactKey, detectArtifacts } from "./artifacts"
 import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
-import {
-  imageBlockData, lastPastedUserIdx, lineExpectation, lineMatches, readAppended, readLineAt,
-  type LineAt, type ToolUses,
-} from "./transcript-cursor"
+import { imageBlockData, lastPastedUserIdx, lineExpectation, lineMatches, readAppended, readLineAt, type LineAt, type ToolUses } from "./transcript-cursor"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
 
@@ -462,7 +459,6 @@ function retryBusyImages(s: PathState): void {
     queueImage(s, seenKey, store, fields, reload)
   }
 }
-
 
 export { imageBlockData as toolResultImageData } from "./transcript-cursor"
 

@@ -8,13 +8,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 61 modules, cap 600)
 
-⚠ over cap: `lib/transcript.ts` (602)
-
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/transcript.ts` | 602 ⚠ 602 > cap 600 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/keyboard-inject.ts` | 599 | lib | 8 | state: let injectQueue |
+| `lib/transcript.ts` | 598 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `routes/hooks.ts` | 563 | route-host | 1 | emits: user_prompt · routes: 7 |
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
@@ -74,14 +72,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/push.ts` | 28 | lib | 2 |  |
 | `state.ts` | 25 | lib | 4 |  |
 
-## client (react-client, `client/src/`, 15 modules, cap 600)
+## client (react-client, `client/src/`, 16 modules, cap 600)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `hooks/use-companion.ts` | 540 | lib | 1 |  |
+| `hooks/use-companion.ts` | 556 | lib | 1 |  |
+| `components/feed-line.tsx` | 186 | view | 1 |  |
 | `components/composer.tsx` | 173 | view | 1 |  |
 | `components/target-bar.tsx` | 152 | view | 1 |  |
-| `components/feed-line.tsx` | 117 | view | 1 |  |
 | `app.tsx` | 107 | view | 1 |  |
 | `components/spawn-session.tsx` | 96 | view | 1 | calls: /api/spawn-session |
 | `components/session-badge.tsx` | 78 | view | 2 |  |
@@ -91,6 +89,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `components/activity-pill.tsx` | 48 | view | 1 |  |
 | `lib/format.ts` | 47 | lib | 7 |  |
 | `components/status-bar.tsx` | 46 | view | 1 |  |
+| `lib/media.ts` | 44 | lib | 2 | calls: /api/media/:p |
 | `lib/tool-summary.ts` | 44 | lib | 2 |  |
 | `main.tsx` | 6 | view | 0 |  |
 
@@ -99,7 +98,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | package | version | modules | targets |
 |---|---|---|---|
 | `lucide-react` | 1.8.0 | 8 | client |
-| `react` | 19.2.5 | 6 | client |
+| `react` | 19.2.5 | 7 | client |
 | `react-dom` | 19.2.5 | 1 | client |
 | `sharp` | 0.34.5 | 1 | server |
 
@@ -136,7 +135,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | route | handler | called by |
 |---|---|---|
 | `* /` | server/companion-server.ts | — |
-| `* /api/…` | server/companion-server.ts | client/components/spawn-session.tsx, ios:ios/CompanionClient.swift |
+| `* /api/…` | server/companion-server.ts | client/components/spawn-session.tsx, client/lib/media.ts, ios:ios/CompanionClient.swift |
 | `* /api/feed` | server/routes/api.ts | — |
 | `* /api/status` | server/routes/api.ts | — |
 | `* /health` | server/companion-server.ts | — |
@@ -146,7 +145,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `DELETE /api/register-token` | server/routes/api.ts | ios:ios/CompanionClient.swift |
 | `GET /api/goals` | server/routes/goals.ts | — |
 | `GET /api/learned` | server/routes/api.ts | — |
-| `GET /api/media/…` | server/routes/media.ts | — |
+| `GET /api/media/…` | server/routes/media.ts | client/lib/media.ts |
 | `GET /api/orchestrator/channels` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
 | `GET /api/orchestrator/thread` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
 | `GET /api/push/tokens` | server/routes/api.ts | — |
@@ -318,6 +317,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `SessionBadge()` | `components/session-badge.tsx` | `components/activity-pill.tsx`, `components/approval-card.tsx`, `components/feed-line.tsx` |
 | `truncate()` | `lib/format.ts` | `components/activity-pill.tsx`, `components/target-bar.tsx` |
 | `TOOL_ICONS()` | `lib/tool-summary.ts` | `components/approval-card.tsx`, `components/feed-line.tsx` |
+| `readAuthToken()` | `lib/media.ts` | `components/feed-line.tsx`, `hooks/use-companion.ts` |
 | `hashHue()` | `lib/format.ts` | `components/session-badge.tsx`, `components/target-bar.tsx` |
 | `shortKey()` | `lib/format.ts` | `components/session-badge.tsx`, `components/target-bar.tsx` |
 
