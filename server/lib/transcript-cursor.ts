@@ -105,6 +105,22 @@ function parseLocated(data: Buffer, start: number, end: number, base: number): L
   return out
 }
 
+// The base64 of image block `idx` in `entry`: inside the tool_result for
+// `toolUseId`, or — toolUseId null — a user-pasted image sitting directly in
+// the message content.
+export function imageBlockData(entry: Record<string, unknown> | null, toolUseId: string | null, idx: number): string | null {
+  let content = (entry?.message as { content?: unknown } | undefined)?.content
+  if (!Array.isArray(content)) return null
+  if (toolUseId !== null) {
+    const tr = (content as Array<Record<string, unknown>>).find((b) => b?.type === "tool_result" && b.tool_use_id === toolUseId)
+    content = tr?.content
+    if (!Array.isArray(content)) return null
+  }
+  const item = (content as Array<Record<string, unknown>>)[idx]
+  const source = item?.type === "image" ? (item.source as Record<string, unknown> | undefined) : undefined
+  return source?.type === "base64" && typeof source.data === "string" ? source.data : null
+}
+
 // Re-read one line by location. null when the file moved on (rotated,
 // truncated) or the bytes no longer parse — the caller drops the job.
 export function readLineAt(path: string, offset: number, length: number): Record<string, unknown> | null {

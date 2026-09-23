@@ -295,6 +295,28 @@ describe("images in the feed (RES-L5NG step 3)", () => {
     expect(imgs[0]!.id.startsWith("img:md:")).toBe(true)
   })
 
+  test("a pasted image directly in a user entry → one image event, captioned by the prompt, reloadable by location", async () => {
+    const path = join(imgDir, "pasted.jsonl")
+    const data = await pngB64("#336699")
+    const entry = { type: "user", uuid: "u-paste-1", message: { role: "user", content: [{ type: "text", text: "what is this?" }, image(data)] } }
+    writeFileSync(path, line(entry))
+    const s = getState({ transcriptPath: path, tty: "/dev/img7", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(0)
+    expect(s.streamedThisTurn).toBe(false)
+    expect(s.seenImages.has("up:u-paste-1:1")).toBe(true)
+    for (let i = 0; i < 4; i++) readTranscriptDelta(s)
+    const imgs = await settle(events, 1)
+    off()
+    expect(imgs).toHaveLength(1)
+    expect(imgs[0]!.id).toBe("img:up:u-paste-1:1")
+    expect(imgs[0]!.caption).toBe("what is this?")
+    expect(imgs[0]!.tool).toBeUndefined()
+    expect(toolResultImageData(entry, null, 1)).toBe(data)
+    expect(toolResultImageData(entry, null, 0)).toBeNull()
+    expect(reloadToolResultImage({ path, offset: 0, length: line(entry).length - 1 }, null, 1)).not.toBeNull()
+  })
+
   test("corrupt image data → no event, no throw", async () => {
     const path = join(imgDir, "corrupt.jsonl")
     writeFileSync(path, toolUse("toolu_c1", "Read", { file_path: "/a/bad.png" }) + toolResult("toolu_c1", [image(Buffer.from("nope").toString("base64"))]))
