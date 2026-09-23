@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { readAuthToken } from "@/lib/media"
 import { playAlert } from "@/lib/alert-sound"
 
 export interface ApprovalRequest {
@@ -46,6 +47,11 @@ export type EventKind =
   | "tool_start"
   | "tool_end"
   | "turn_end"
+  // Rendered by FeedLine: "image" only. The other two arrive from the server
+  // today and fall through to `null` until they get a renderer.
+  | "image"
+  | "assistant_thinking"
+  | "artifact"
 
 export type Verdict = "auto-allow" | "auto-deny" | "approved" | "denied" | "pending"
 
@@ -61,6 +67,12 @@ export interface FeedEvent {
   cwd?: string
   tty?: string
   sessionId?: string
+  // kind "image" — a reference, never bytes. Fetch via GET /api/media/:id
+  // (bearer-gated; 404 = expired). width/height are the stored JPEG's.
+  mediaId?: string
+  width?: number
+  height?: number
+  caption?: string
 }
 
 // One waiting session, keyed by session key in `waitingByKey`. `message` is
@@ -244,7 +256,11 @@ export function useCompanion(): CompanionState & {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`)
+    // /ws sits behind the same bearer gate as /api/*; a browser WebSocket can't
+    // set headers, so the pairing token rides the query (the server accepts
+    // both). Open the PWA once via the pairing link (?token=…) and it sticks.
+    const token = readAuthToken()
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`)
 
     ws.onopen = () => {
       retriesRef.current = 0
