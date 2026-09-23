@@ -31,6 +31,7 @@ onApprovalRequest((req) => {
     input: req.input,
     sessionId: req.sessionId,
     cwd: req.cwd,
+    ...(req.reason ? { reason: req.reason } : {}),
   })
   markWaiting(req.sessionKey, "approval", req.id)
   // Approval = interruptive, time-sensitive. Blocks Claude until answered.

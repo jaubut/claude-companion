@@ -4,6 +4,7 @@ import {
   addApprovalRequest,
   getPending,
   onApprovalExpired,
+  onApprovalRequest,
   onApprovalResolved,
   resolveApproval,
 } from "./pty-manager"
@@ -69,5 +70,25 @@ test("the expiry exit fires the handler with the request and resolves allow", as
   // Expiry is a real exit: nothing is left to resolve, so no second listener.
   expect(getPending().some((r) => r.id === id)).toBe(false)
   expect(resolveApproval(id, "allow")).toBe(false)
+  off()
+})
+
+test("reason rides the pending record and the request handler; absent stays absent", async () => {
+  const seen: ApprovalRequest[] = []
+  const off = onApprovalRequest((r) => seen.push(r))
+  const withReason = addApprovalRequest({
+    agent: "claude", sessionId: "pm-4", tool: "Bash", input: { command: "terraform apply" },
+    cwd: "/home/aubut", sessionKey: "claude:tty:/dev/pts/83", reason: "not on the Bash allowlist",
+  })
+  const without = addApprovalRequest({
+    agent: "codex", sessionId: "pm-5", tool: "Bash", input: {},
+    cwd: "/home/aubut", sessionKey: "codex:tty:/dev/pts/84",
+  })
+  expect(pendingFor("pm-4").reason).toBe("not on the Bash allowlist")
+  expect(pendingFor("pm-5").reason).toBeUndefined()
+  expect(seen.find((r) => r.sessionId === "pm-4")?.reason).toBe("not on the Bash allowlist")
+  resolveApproval(pendingFor("pm-4").id, "allow")
+  resolveApproval(pendingFor("pm-5").id, "deny")
+  await Promise.all([withReason, without])
   off()
 })

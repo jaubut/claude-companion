@@ -10,7 +10,7 @@ import {
   questionDedupeKey,
   wasQuestionAnswered,
 } from "../lib/questions"
-import { judgeWithBranchContext } from "../lib/branch-guard"
+import { judgeWithBranchContextAndReason } from "../lib/branch-guard"
 import { type InjectTarget, withPickerIO } from "../lib/keyboard-inject"
 import { driveQuestionPicker } from "../lib/question-driver"
 import { rememberTitle, titleFromPrompt } from "../lib/session-titles"
@@ -246,7 +246,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       return hookDecisionResponse(agent, "PreToolUse", decision, "Approved via Claude Companion (SUPER)")
     }
 
-    const verdictJudge = await judgeWithBranchContext(tool, input, cwd)
+    const { verdict: verdictJudge, reason: judgeReason } = await judgeWithBranchContextAndReason(tool, input, cwd)
 
     if (verdictJudge === "allow") {
       decision = "allow"
@@ -262,7 +262,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       verdict = "pending"
       process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}\n`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
-      decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "" })
+      decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "", reason: judgeReason })
       const decisionColor = decision === "allow" ? green : red
       process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← phone\n`)
       // Phone said yes — remember this shape so future identical prompts
