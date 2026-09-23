@@ -138,3 +138,35 @@ export function readLineAt(path: string, offset: number, length: number): Record
     closeSync(fd)
   }
 }
+
+// Where a user entry sits in the transcript file, plus what the line must
+// still be when it is re-read: a same-length rewrite could otherwise put
+// another image under the original id and caption (Codex on PR #49).
+export type LineExpectation = { uuid?: string; timestamp?: string }
+export type LineAt = { path: string; offset: number; length: number; expect?: LineExpectation }
+
+export function lineExpectation(entry: Record<string, unknown>): LineExpectation {
+  const out: LineExpectation = {}
+  if (typeof entry.uuid === "string" && entry.uuid) out.uuid = entry.uuid
+  if (typeof entry.timestamp === "string" && entry.timestamp) out.timestamp = entry.timestamp
+  return out
+}
+
+export function lineMatches(entry: Record<string, unknown>, expect: LineExpectation | undefined): boolean {
+  if (!expect) return true
+  if (expect.uuid !== undefined) return entry.uuid === expect.uuid
+  if (expect.timestamp !== undefined) return entry.timestamp === expect.timestamp
+  return true
+}
+
+// Index of the last `user` entry with an image pasted directly into its
+// content (the prompt that just started), or -1.
+export function lastPastedUserIdx(entries: Located[]): number {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!.entry
+    if (e.type !== "user") continue
+    const content = (e.message as { content?: unknown } | undefined)?.content
+    if (Array.isArray(content) && (content as Array<Record<string, unknown>>).some((b) => b?.type === "image")) return i
+  }
+  return -1
+}

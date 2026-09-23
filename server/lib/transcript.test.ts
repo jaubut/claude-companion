@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, appendFileSync, existsSync, rmSync } from "
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { getState, modelFromTranscript, readTranscriptDelta, hashText, reloadToolResultImage, toolResultImageData } from "./transcript"
+import { recordUserPrompt } from "./activity"
 import { onFeed, type FeedEvent } from "./feed"
 
 // Pins the contract recordTurnEnd's retry depends on: the delta reader
@@ -293,6 +294,42 @@ describe("images in the feed (RES-L5NG step 3)", () => {
     expect(imgs).toHaveLength(1)
     expect(imgs[0]!.caption).toBe("the chart")
     expect(imgs[0]!.id.startsWith("img:md:")).toBe(true)
+  })
+
+  test("prompt start shows the prompt's own pasted image and only that one (Codex HIGH on PR #49)", async () => {
+    const path = join(imgDir, "pasted-prime.jsonl")
+    const older = await pngB64("#101010")
+    const current = await pngB64("#202020")
+    writeFileSync(path,
+      line({ type: "user", uuid: "u-old", message: { role: "user", content: [{ type: "text", text: "earlier" }, image(older)] } }) +
+      line({ type: "assistant", uuid: "a-old", message: { role: "assistant", content: [{ type: "text", text: "earlier answer" }] } }) +
+      line({ type: "user", uuid: "u-now", message: { role: "user", content: [{ type: "text", text: "and this one?" }, image(current)] } }))
+    const { events, off } = capture()
+    // the hook that runs right after Claude Code wrote the prompt entry
+    recordUserPrompt({ text: "and this one?", transcriptPath: path, cwd: "/x", tty: "/dev/img8", sessionKey: "k8" })
+    const s = getState({ transcriptPath: path, tty: "/dev/img8", cwd: "/x" })
+    expect(s.seenImages.has("up:u-old:1") && s.seenImages.has("up:u-now:1")).toBe(true)
+    for (let i = 0; i < 4; i++) readTranscriptDelta(s)
+    const imgs = await settle(events, 1)
+    off()
+    expect(imgs.map((e) => e.id)).toEqual(["img:up:u-now:1"])
+    expect(imgs[0]!.caption).toBe("and this one?")
+    expect(events.some((e) => e.kind === "assistant_text")).toBe(false) // history stayed silent
+  })
+
+  test("a busy retry refuses a same-length rewrite that swapped the entry (Codex MEDIUM on PR #49)", async () => {
+    const path = join(imgDir, "pasted-swap.jsonl")
+    const data = await pngB64("#303030")
+    const a = { type: "user", uuid: "u-swap-a", timestamp: "2026-09-23T15:00:00.000Z", message: { role: "user", content: [image(data)] } }
+    const b = { ...a, uuid: "u-swap-b" } // same byte length, different entry
+    writeFileSync(path, line(a))
+    const at = { path, offset: 0, length: line(a).length - 1 }
+    expect(reloadToolResultImage({ ...at, expect: { uuid: "u-swap-a" } }, null, 0)).not.toBeNull()
+    writeFileSync(path, line(b))
+    expect(reloadToolResultImage({ ...at, expect: { uuid: "u-swap-a" } }, null, 0)).toBeNull()
+    expect(reloadToolResultImage({ ...at, expect: { timestamp: "2026-09-23T15:00:00.000Z" } }, null, 0)).not.toBeNull()
+    expect(reloadToolResultImage({ ...at, expect: { timestamp: "2026-09-23T15:00:01.000Z" } }, null, 0)).toBeNull()
+    expect(reloadToolResultImage(at, null, 0)).not.toBeNull() // no expectation → accepted (legacy callers)
   })
 
   test("a pasted image directly in a user entry → one image event, captioned by the prompt, reloadable by location", async () => {

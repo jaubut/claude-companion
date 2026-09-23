@@ -3,7 +3,10 @@ import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
 import { artifactKey, detectArtifacts } from "./artifacts"
 import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
-import { imageBlockData, readAppended, readLineAt, type ToolUses } from "./transcript-cursor"
+import {
+  imageBlockData, lastPastedUserIdx, lineExpectation, lineMatches, readAppended, readLineAt,
+  type LineAt, type ToolUses,
+} from "./transcript-cursor"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
 
@@ -228,12 +231,18 @@ export function forgetStates(meta: SessionMeta): PathState[] {
   return dropped
 }
 
-// The byte cursor (offset, checkpoint, tool_use map) lives in transcript-cursor.ts;
-// entries carry their file location so an image payload can be re-read on retry.
+// Byte cursor + line locations live in transcript-cursor.ts (payloads re-read on retry).
+
+export interface ReadOpts {
+  silent?: boolean // mark everything seen without emitting (server start, prompt start)
+  // With `silent`: still emit the images pasted into the LAST user entry — the prompt
+  // that just started (the hook fires after Claude Code wrote it; Codex on PR #49).
+  primePastedFromLastPrompt?: boolean
+}
 
 export function readTranscriptDelta(
   s: PathState,
-  opts: { silent?: boolean } = {},
+  opts: ReadOpts = {},
 ): number {
   let emitted = 0
   const path = s.transcriptPath
@@ -247,6 +256,7 @@ export function readTranscriptDelta(
   // the file, so it is known by the time we need it (possibly from a prior
   // chunk — hence it lives on the cursor).
   const toolUses = read.cursor.toolUses
+  const primeIdx = opts.silent && opts.primePastedFromLastPrompt ? lastPastedUserIdx(entries) : -1
   for (let i = 0; i < entries.length; i++) {
     const { entry, offset, length } = entries[i]!
 
@@ -274,7 +284,8 @@ export function readTranscriptDelta(
     // streamedThisTurn — the turn-end retry and wrap-up policy stay text-only.
     if (entry.type === "user") {
       const lineId = typeof entry.uuid === "string" && entry.uuid ? entry.uuid : `@${offset}`
-      scanToolResultImages(s, blocks, toolUses, opts, { path, offset, length }, lineId)
+      const at: LineAt = { path, offset, length, expect: lineExpectation(entry) }
+      scanToolResultImages(s, blocks, toolUses, { silent: opts.silent && i !== primeIdx }, at, lineId)
       scanToolResultArtifacts(s, blocks, toolUses, opts)
       continue
     }
@@ -452,15 +463,17 @@ function retryBusyImages(s: PathState): void {
   }
 }
 
-// Where a user entry sits in the transcript file.
-type LineAt = { path: string; offset: number; length: number }
 
 export { imageBlockData as toolResultImageData } from "./transcript-cursor"
 
 // Reload recipe for a transcript image (tool_result, or pasted when toolUseId
 // is null): re-read its line, pull the base64 out again. Holds only the location.
+export { lineExpectation, type LineAt, type LineExpectation } from "./transcript-cursor"
+
 export function reloadToolResultImage(at: LineAt, toolUseId: string | null, idx: number): Store | null {
-  const data = imageBlockData(readLineAt(at.path, at.offset, at.length), toolUseId, idx)
+  const entry = readLineAt(at.path, at.offset, at.length)
+  if (!entry || !lineMatches(entry, at.expect)) return null
+  const data = imageBlockData(entry, toolUseId, idx)
   return data ? () => storeImageBase64(data) : null
 }
 
