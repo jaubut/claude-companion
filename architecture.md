@@ -8,16 +8,18 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 61 modules, cap 600)
 
+⚠ over cap: `lib/transcript.ts` (602)
+
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
+| `lib/transcript.ts` | 602 ⚠ 602 > cap 600 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
-| `lib/transcript.ts` | 600 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `lib/keyboard-inject.ts` | 599 | lib | 8 | state: let injectQueue |
 | `routes/hooks.ts` | 563 | route-host | 1 | emits: user_prompt · routes: 7 |
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `lib/command-scrape.ts` | 402 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
-| `lib/activity.ts` | 387 | lib | 10 | state: activityListeners: Set, let pollTimer |
+| `lib/activity.ts` | 388 | lib | 10 | state: activityListeners: Set, let pollTimer |
 | `lib/spawn-session.ts` | 365 | lib | 8 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `routes/api.ts` | 344 | route-host | 1 | emits: resolved, super_auto · routes: 16 |
@@ -35,6 +37,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 181 | lib | 7 |  |
 | `lib/dialogs.ts` | 175 | lib | 7 |  |
+| `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `routes/orchestrator.ts` | 173 | route-host | 1 | routes: 8 |
 | `wiring/events.ts` | 156 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onFeed, onFeedReset, onActivity, onSessions |
 | `ws.ts` | 154 | lib | 1 | emits: approval, question, init, resolved, inject_error, pong |
@@ -46,7 +49,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `wiring/dialogs.ts` | 131 | lib | 3 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/worker-identity.ts` | 127 | lib | 6 |  |
-| `lib/transcript-cursor.ts` | 125 | lib | 6 | state: cursors: WeakMap |
 | `lib/pty-manager.ts` | 123 | lib | 7 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set |
 | `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/model-control.ts` | 115 | lib | 9 |  |

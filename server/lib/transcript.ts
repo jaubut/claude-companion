@@ -3,7 +3,10 @@ import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
 import { artifactKey, detectArtifacts } from "./artifacts"
 import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
-import { readAppended, readLineAt, type ToolUses } from "./transcript-cursor"
+import {
+  imageBlockData, lastPastedUserIdx, lineExpectation, lineMatches, readAppended, readLineAt,
+  type LineAt, type ToolUses,
+} from "./transcript-cursor"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
 
@@ -64,8 +67,9 @@ export interface PathState {
   // The picker is authoritative whenever it is open.
   lastModel: string
   // Images already queued for the feed (RES-L5NG step 3). Keys:
-  // `tu:<tool_use_id>:<blockIdx>` for tool_result image blocks and
-  // `md:<realpath>:<mtimeMs>` for `![alt](path)` refs in assistant text.
+  // `tu:<tool_use_id>:<blockIdx>` for tool_result image blocks,
+  // `up:<entry uuid | @offset>:<blockIdx>` for images pasted into a user entry,
+  // and `md:<realpath>:<mtimeMs>` for `![alt](path)` refs in assistant text.
   // Marked synchronously BEFORE the async encode, so the turn-end retry loop
   // (up to 16 reads in 4 s) never queues the same image twice.
   seenImages: Set<string>
@@ -227,12 +231,18 @@ export function forgetStates(meta: SessionMeta): PathState[] {
   return dropped
 }
 
-// The byte cursor (offset, checkpoint, tool_use map) lives in transcript-cursor.ts;
-// entries carry their file location so an image payload can be re-read on retry.
+// Byte cursor + line locations live in transcript-cursor.ts (payloads re-read on retry).
+
+export interface ReadOpts {
+  silent?: boolean // mark everything seen without emitting (server start, prompt start)
+  // With `silent`: still emit the images pasted into the LAST user entry — the prompt
+  // that just started (the hook fires after Claude Code wrote it; Codex on PR #49).
+  primePastedFromLastPrompt?: boolean
+}
 
 export function readTranscriptDelta(
   s: PathState,
-  opts: { silent?: boolean } = {},
+  opts: ReadOpts = {},
 ): number {
   let emitted = 0
   const path = s.transcriptPath
@@ -246,6 +256,7 @@ export function readTranscriptDelta(
   // the file, so it is known by the time we need it (possibly from a prior
   // chunk — hence it lives on the cursor).
   const toolUses = read.cursor.toolUses
+  const primeIdx = opts.silent && opts.primePastedFromLastPrompt ? lastPastedUserIdx(entries) : -1
   for (let i = 0; i < entries.length; i++) {
     const { entry, offset, length } = entries[i]!
 
@@ -268,11 +279,13 @@ export function readTranscriptDelta(
     if (!Array.isArray(content)) continue
     const blocks = content as Array<Record<string, unknown>>
 
-    // Images ride tool_result blocks inside `user` entries. Not counted in the
-    // return value and never set streamedThisTurn — the turn-end retry and
-    // wrap-up policy stay text-only.
+    // Images ride tool_result blocks (or sit directly, when pasted) inside
+    // `user` entries. Not counted in the return value and never set
+    // streamedThisTurn — the turn-end retry and wrap-up policy stay text-only.
     if (entry.type === "user") {
-      scanToolResultImages(s, blocks, toolUses, opts, { path, offset, length })
+      const lineId = typeof entry.uuid === "string" && entry.uuid ? entry.uuid : `@${offset}`
+      const at: LineAt = { path, offset, length, expect: lineExpectation(entry) }
+      scanToolResultImages(s, blocks, toolUses, { silent: opts.silent && i !== primeIdx }, at, lineId)
       scanToolResultArtifacts(s, blocks, toolUses, opts)
       continue
     }
@@ -450,26 +463,17 @@ function retryBusyImages(s: PathState): void {
   }
 }
 
-// Where a tool_result entry sits in the transcript file.
-type LineAt = { path: string; offset: number; length: number }
 
-// The base64 of tool_result image block `idx` for `toolUseId` in `entry`.
-export function toolResultImageData(entry: Record<string, unknown> | null, toolUseId: string, idx: number): string | null {
-  const content = (entry?.message as { content?: unknown } | undefined)?.content
-  if (!Array.isArray(content)) return null
-  for (const block of content as Array<Record<string, unknown>>) {
-    if (block?.type !== "tool_result" || block.tool_use_id !== toolUseId || !Array.isArray(block.content)) continue
-    const item = (block.content as Array<Record<string, unknown>>)[idx]
-    const source = item?.type === "image" ? (item.source as Record<string, unknown> | undefined) : undefined
-    return source?.type === "base64" && typeof source.data === "string" ? source.data : null
-  }
-  return null
-}
+export { imageBlockData as toolResultImageData } from "./transcript-cursor"
 
-// Reload recipe for a tool_result image: re-read its line, pull the base64 out
-// again. Holds only the location.
-export function reloadToolResultImage(at: LineAt, toolUseId: string, idx: number): Store | null {
-  const data = toolResultImageData(readLineAt(at.path, at.offset, at.length), toolUseId, idx)
+// Reload recipe for a transcript image (tool_result, or pasted when toolUseId
+// is null): re-read its line, pull the base64 out again. Holds only the location.
+export { lineExpectation, type LineAt, type LineExpectation } from "./transcript-cursor"
+
+export function reloadToolResultImage(at: LineAt, toolUseId: string | null, idx: number): Store | null {
+  const entry = readLineAt(at.path, at.offset, at.length)
+  if (!entry || !lineMatches(entry, at.expect)) return null
+  const data = imageBlockData(entry, toolUseId, idx)
   return data ? () => storeImageBase64(data) : null
 }
 
@@ -539,30 +543,28 @@ function scanToolResultImages(
   toolUses: ToolUses,
   opts: { silent?: boolean },
   at: LineAt,
+  lineId: string,
 ): void {
-  for (const block of blocks) {
-    if (block.type !== "tool_result" || !Array.isArray(block.content)) continue
-    const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : ""
-    if (!toolUseId) continue
-    const inner = block.content as Array<Record<string, unknown>>
-    inner.forEach((item, idx) => {
-      const source = item?.type === "image" ? (item.source as Record<string, unknown> | undefined) : undefined
-      if (source?.type !== "base64" || typeof source.data !== "string") return
-      const seenKey = `tu:${toolUseId}:${idx}`
-      if (s.seenImages.has(seenKey)) return
-      s.seenImages.add(seenKey)
-      if (opts.silent) return
-      const tool = toolUses.get(toolUseId)
-      const data = source.data
-      queueImage(
-        s,
-        seenKey,
-        () => storeImageBase64(data),
-        { tool: tool?.name || undefined, caption: captionFor(tool, inner) },
-        () => reloadToolResultImage(at, toolUseId, idx),
-      )
-    })
+  // One base64 image block → seen key, then the shared queue/reload path.
+  const queueBlock = (item: Record<string, unknown>, seenKey: string, toolUseId: string | null, idx: number, fields: () => ImageFields) => {
+    const source = item?.type === "image" ? (item.source as Record<string, unknown> | undefined) : undefined
+    if (source?.type !== "base64" || typeof source.data !== "string") return
+    if (s.seenImages.has(seenKey)) return
+    s.seenImages.add(seenKey)
+    if (opts.silent) return
+    const data = source.data
+    queueImage(s, seenKey, () => storeImageBase64(data), fields(), () => reloadToolResultImage(at, toolUseId, idx))
   }
+  blocks.forEach((block, i) => {
+    // User-pasted image (the phone's Phase 17 attachments): a direct block.
+    if (block.type === "image") return queueBlock(block, `up:${lineId}:${i}`, null, i, () => ({ caption: captionFor(undefined, blocks) }))
+    if (block.type !== "tool_result" || !Array.isArray(block.content)) return
+    const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : ""
+    if (!toolUseId) return
+    const inner = block.content as Array<Record<string, unknown>>
+    const tool = toolUses.get(toolUseId)
+    inner.forEach((item, idx) => queueBlock(item, `tu:${toolUseId}:${idx}`, toolUseId, idx, () => ({ tool: tool?.name || undefined, caption: captionFor(tool, inner) })))
+  })
 }
 
 // `![alt](path)` in a freshly emitted assistant text block. Absolute or

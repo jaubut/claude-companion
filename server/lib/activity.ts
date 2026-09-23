@@ -296,7 +296,8 @@ export function recordUserPrompt(args: {
 
   // Transcript may already contain this prompt — prime the seen set so we
   // don't echo it back as assistant text.
-  if (args.transcriptPath) readTranscriptDelta(s, { silent: true })
+  // Mark what came before as seen — but the prompt's own pasted images are new.
+  if (args.transcriptPath) readTranscriptDelta(s, { silent: true, primePastedFromLastPrompt: true })
 
   startPoll()
 }

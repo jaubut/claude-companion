@@ -67,7 +67,7 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 387,
+          "lines": 388,
           "kind": "lib",
           "exports": [
             "Activity",
@@ -1092,7 +1092,7 @@
         },
         {
           "path": "lib/transcript-cursor.ts",
-          "lines": 125,
+          "lines": 173,
           "kind": "lib",
           "exports": [
             "ToolUses",
@@ -1100,7 +1100,13 @@
             "CHECK_BYTES",
             "Located",
             "readAppended",
-            "readLineAt"
+            "imageBlockData",
+            "readLineAt",
+            "LineExpectation",
+            "LineAt",
+            "lineExpectation",
+            "lineMatches",
+            "lastPastedUserIdx"
           ],
           "state": [
             "cursors: WeakMap"
@@ -1116,7 +1122,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 600,
+          "lines": 602,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -1127,8 +1133,8 @@
             "identityFor",
             "activeStates",
             "forgetStates",
+            "ReadOpts",
             "readTranscriptDelta",
-            "toolResultImageData",
             "reloadToolResultImage",
             "queueImage",
             "hashText"
@@ -2433,6 +2439,54 @@
             "routes/hooks.ts"
           ]
         },
+        "readAppended": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "imageBlockData": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "readLineAt": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "lineExpectation": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "lineMatches": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "lastPastedUserIdx": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "ToolUses": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "LineAt": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
         "recordTurnEnd": {
           "module": "lib/activity.ts",
           "callers": [
@@ -2448,12 +2502,6 @@
             "wiring/events.ts"
           ]
         },
-        "readAppended": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
         "detectArtifacts": {
           "module": "lib/artifacts.ts",
           "callers": [
@@ -2466,20 +2514,8 @@
             "lib/transcript.ts"
           ]
         },
-        "ToolUses": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
         "StoreResult": {
           "module": "lib/media.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "readLineAt": {
-          "module": "lib/transcript-cursor.ts",
           "callers": [
             "lib/transcript.ts"
           ]
