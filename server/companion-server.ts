@@ -10,6 +10,7 @@ import { handleModelRoute } from "./routes/model"
 import { handleCommandRoute } from "./routes/command"
 import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
+import { handleGoalsRoute } from "./routes/goals"
 import { websocket } from "./ws"
 
 
@@ -53,7 +54,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the static/SPA fallback is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }

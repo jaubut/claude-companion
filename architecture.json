@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 91,
+          "lines": 92,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -58,6 +58,7 @@
             "routes/command.ts",
             "routes/attach.ts",
             "routes/media.ts",
+            "routes/goals.ts",
             "ws.ts"
           ],
           "listeners": [],
@@ -148,7 +149,7 @@
         },
         {
           "path": "lib/artifacts.ts",
-          "lines": 99,
+          "lines": 151,
           "kind": "lib",
           "exports": [
             "ArtifactKind",
@@ -157,7 +158,9 @@
             "detectArtifacts",
             "artifactKey"
           ],
-          "state": [],
+          "state": [
+            "BARE_STOP: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -1122,6 +1125,31 @@
           "externals": []
         },
         {
+          "path": "lib/turso.ts",
+          "lines": 94,
+          "kind": "lib",
+          "exports": [
+            "SqlArg",
+            "Row",
+            "QueryFn",
+            "TursoUnreachable",
+            "tursoQuery"
+          ],
+          "state": [
+            "let agentEnvLoaded"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dotenv.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/waiting.ts",
           "lines": 66,
           "kind": "lib",
@@ -1400,6 +1428,41 @@
             "lib/key-gate.ts",
             "lib/sessions.ts",
             "wiring/dialogs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/goals.ts",
+          "lines": 193,
+          "kind": "route-host",
+          "exports": [
+            "GoalTask",
+            "GoalProject",
+            "GoalsResponse",
+            "PROJECT_CAP",
+            "TASKS_PER_PROJECT",
+            "CACHE_TTL_MS",
+            "extractStatusParagraph",
+            "buildGoals",
+            "GoalsDeps",
+            "createGoalsHandler",
+            "handleGoalsRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "GET",
+              "path": "/api/goals",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1880,6 +1943,12 @@
         },
         "handleDialogRoute": {
           "module": "routes/dialogs.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleGoalsRoute": {
+          "module": "routes/goals.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -2378,6 +2447,12 @@
             "lib/transcript.ts"
           ]
         },
+        "loadDotEnv": {
+          "module": "lib/dotenv.ts",
+          "callers": [
+            "lib/turso.ts"
+          ]
+        },
         "matchUnboundTaskById": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -2806,6 +2881,30 @@
           "module": "lib/key-gate.ts",
           "callers": [
             "routes/dialogs.ts#POST /api/dialog/key"
+          ]
+        },
+        "Row": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "routes/goals.ts"
+          ]
+        },
+        "QueryFn": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "routes/goals.ts"
+          ]
+        },
+        "tursoQuery": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "routes/goals.ts"
+          ]
+        },
+        "TursoUnreachable": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "routes/goals.ts#GET /api/goals"
           ]
         },
         "addQuestionRequest": {
