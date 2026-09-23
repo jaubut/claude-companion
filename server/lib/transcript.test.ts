@@ -322,3 +322,59 @@ describe("busy store retries next tick", () => {
     expect(feedNow().length).toBe(before)
   })
 })
+
+describe("artifacts in the feed (RES-B9CL)", () => {
+  const artDir = mkdtempSync(join(tmpdir(), "cc-transcript-art-"))
+  afterAll(() => { rmSync(artDir, { recursive: true, force: true }) })
+  const pr = "https://github.com/jaubut/claude-companion/pull/42"
+  const toolUse = (id: string, name: string) =>
+    line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input: {} }] } })
+  const toolResult = (id: string, content: unknown) =>
+    line({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] } })
+  const arts = (events: FeedEvent[]) => events.filter((e) => e.kind === "artifact")
+
+  test("one artifact event per distinct PR across re-reads; the count is unchanged", () => {
+    const path = join(artDir, "a.jsonl")
+    writeFileSync(path, assistant(`Opened ${pr}`) + toolUse("toolu_g1", "Bash") + toolResult("toolu_g1", `${pr}\n`))
+    const s = getState({ transcriptPath: path, tty: "/dev/art1", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(1) // the text block only
+    expect(readTranscriptDelta(s)).toBe(0)
+    appendFileSync(path, assistant(`Still ${pr}, see RES-B9CL`))
+    expect(readTranscriptDelta(s)).toBe(1)
+    off()
+    const got = arts(events)
+    expect(got.map((e) => e.artifactKind)).toEqual(["pr", "note"])
+    expect(got[0]).toMatchObject({ title: "PR #42 · claude-companion", url: pr, tty: "/dev/art1", cwd: "/x" })
+    expect(got[1]).toMatchObject({ ref: "RES-B9CL", title: "RES-B9CL" })
+  })
+
+  test("tool_result text → artifact carrying the tool name; streamedThisTurn untouched", () => {
+    const path = join(artDir, "b.jsonl")
+    const file = join(artDir, "out.pdf")
+    writeFileSync(file, "x")
+    writeFileSync(path, toolUse("toolu_g2", "Write") + toolResult("toolu_g2", [{ type: "text", text: `wrote ${file}` }]))
+    const s = getState({ transcriptPath: path, tty: "/dev/art2", cwd: "/x" })
+    const { events, off } = capture()
+    expect(readTranscriptDelta(s)).toBe(0)
+    expect(s.streamedThisTurn).toBe(false)
+    off()
+    expect(arts(events)).toHaveLength(1)
+    expect(arts(events)[0]).toMatchObject({ artifactKind: "file", path: file, title: "out.pdf", tool: "Write" })
+  })
+
+  test("a silent read marks artifacts without emitting, and later reads stay quiet", () => {
+    const path = join(artDir, "c.jsonl")
+    writeFileSync(path, assistant(`See ${pr}`) + toolUse("toolu_g3", "Bash") + toolResult("toolu_g3", "PRJ-OR1T"))
+    const s = getState({ transcriptPath: path, tty: "/dev/art3", cwd: "/x" })
+    const { events, off } = capture()
+    readTranscriptDelta(s, { silent: true })
+    expect(events).toHaveLength(0)
+    expect(s.seenArtifacts.has(`art:pr:${pr}`)).toBe(true)
+    expect(s.seenArtifacts.has("art:note:PRJ-OR1T")).toBe(true)
+    appendFileSync(path, assistant(`Again ${pr}`))
+    expect(readTranscriptDelta(s)).toBe(1)
+    off()
+    expect(arts(events)).toHaveLength(0)
+  })
+})

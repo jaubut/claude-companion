@@ -15,6 +15,9 @@ export type EventKind =
   // RES-L5NG step 4 — Claude's thinking block. Reuses `text`; `durationMs`
   // is the transcript gap to the next entry when known.
   | "assistant_thinking"
+  // Phase 19 step 3 (RES-B9CL) — a PR / note ref / file spotted in assistant
+  // text or a tool_result. Fields: artifactKind, title, url | ref | path.
+  | "artifact"
 
 export type Verdict = "auto-allow" | "auto-deny" | "approved" | "denied" | "pending"
 
@@ -47,6 +50,13 @@ export interface FeedEvent {
   width?: number
   height?: number
   caption?: string
+  // kind "artifact" (RES-B9CL) — see lib/artifacts.ts. `url` for a PR, `ref`
+  // for a TLS note, `path` for a file on this host.
+  artifactKind?: "pr" | "note" | "file" | "url"
+  title?: string
+  url?: string
+  path?: string
+  ref?: string
 }
 
 const feed: FeedEvent[] = []
