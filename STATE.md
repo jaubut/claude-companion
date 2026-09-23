@@ -31,6 +31,122 @@ Last updated: 2026-09-13
 
 ## Change Plans
 
+### Change Plan — images-in-feed-server (2026-09-23)
+**Request:** RES-L5NG step 3, server half. Forward `tool_result` image blocks (base64: Read on a PNG, MCP screenshots) to the feed as a new `FeedEvent` kind `"image"`. Downscale to 1024px long edge JPEG q80 into `~/.claude-companion/media/<sha>.jpg`. Serve via `GET /api/media/:id`. Prune with the 200-event feed cap plus a 200 MB dir cap. Replay on reconnect. Older clients ignore the kind. `![alt](path)` refs in assistant text if cheap.
+**Done when:**
+- A Read of a PNG or a computer-use screenshot in a live session produces one `event` frame `{kind:"image", mediaId, width, height, tool, caption}` and the same event is in the `init.feed` replay.
+- `GET /api/media/<id>` with the bearer token returns the JPEG (`image/jpeg`, immutable cache). Without the token it returns 401. An unknown or malformed id returns 404.
+- Files leave the media dir when their last feed event is evicted, and the dir never exceeds 200 MB. `bun test` is green.
+
+**Target shape & drift**
+- Reference (Slack Web API file object, from its public reference): `file.id` maps to `mediaId`. `thumb_1024` + `thumb_1024_w/h` maps to our single 1024px JPEG + `width/height`. `url_private` (Bearer auth required) maps to `GET /api/media/:id`. The message carries a file *reference*, never bytes.
+- Target: content-addressed media store in one leaf lib that does fs + encode only. Feed events carry references. Feed lifecycle (append/evict) is the only thing that frees resources. Routes stay thin. Clients switch on `kind` with a default.
+- Target: transcript reader is incremental by byte offset, as `codex-feed.ts` already is with `offsets: Map`.
+- Deviations today:
+  - `readTranscriptDelta` does `readFileSync` + `JSON.parse` of the WHOLE transcript every 1.5 s tick. Screenshot sessions carry MBs of base64 per file.
+  - The feed cap trim in `appendFeedEvent` is silent: no evict signal, so nothing can free resources tied to an event.
+  - `FeedEvent` is hand-copied in three places: server `lib/feed.ts`, PWA `hooks/use-companion.ts:43-64`, iOS `WSFrame.swift:308`. No contract test.
+  - `sharp` sits in devDependencies, unused by server code.
+- Moves toward: a content-addressed store in a leaf lib (`lib/media.ts`), an explicit evict signal in `feed.ts`, and reference-not-bytes on the wire.
+- Leaves for follow-up (to file on PRJ-WCLS/Companion, `agent:builder`):
+  1. Offset-based incremental transcript reader.
+  2. A cross-repo FeedEvent contract test (fixture JSON decoded by the PWA type and by iOS `FeedEventPayload`).
+  3. PWA rendering of `image` (the PWA returns null today, which is safe).
+  4. User-pasted images (direct `image` blocks in `user` entries). The survey of 37 recent image-bearing transcripts found 0; all 906 were inside `tool_result`.
+
+**State decisions**
+- **Media files** live in `lib/media.ts`. The dir is `COMPANION_MEDIA_DIR ?? ~/.claude-companion/media`, which lets tests use a temp dir, same pattern as `COMPANION_DB_PATH`.
+  - Mutated only by `storeImageBase64()`, `storeImageFile()`, `releaseMedia()` and `enforceMediaCap()`. Persistence is plain files `<id>.jpg`.
+  - `mediaId` = first 32 hex of sha256 of the source bytes. The same image read twice gives one file.
+  - If `<id>.jpg` already exists, skip the encode, read dims via `sharp(path).metadata()` (header only), and `utimes` the file so the byte cap sees it as fresh.
+- **Encode queue** is module-level in `lib/media.ts`: at most 2 concurrent sharp jobs, plus `sharp.concurrency(1)`. A burst of 50 screenshots must not starve the hook path.
+- **Byte total** (`let mediaBytes`) is in `lib/media.ts`. It is seeded by one dir scan on first use and updated per write/unlink. When above 200 MB (`COMPANION_MEDIA_MAX_BYTES`), unlink oldest-by-mtime until under. There is no announcement: a phone fetching a pruned id gets 404 and shows a placeholder.
+- **Seen images** use a new `PathState.seenImages: Set<string>` in `lib/transcript.ts`. Its keys are `tu:<tool_use_id>:<blockIdx>` and `md:<realpath>:<mtimeMs>`. The set is marked BEFORE the async encode, so the next 1.5 s tick never double-queues. A silent read marks the set without encoding.
+- **Image events** use a stable id `img:<seen-key>`, so the feed id-dedupe makes re-reads idempotent and iOS can dedupe. `ts` is captured at detection, not after the encode, so the event sorts by when the tool returned.
+  - Image events are NOT counted in `readTranscriptDelta`'s return value and do NOT set `streamedThisTurn`. `recordTurnEnd`'s retry and wrap-up policy (`activity.ts:332-358`) stay text-only.
+- **Evict signal**: `feed.ts` gains `onFeedEvict(fn(evicted: FeedEvent[]))`. It fires on the cap trim and inside `pruneFeedForSession`. `feed_pruned` stays byte-identical: same ids, still session-prune only.
+- **Media release** is wired in NEW `wiring/media.ts`: `onFeedEvict` → collect evicted `mediaId`s → drop those still referenced by `getFeed()` → `releaseMedia(ids)`. It is registered at import, like `wiring/events.ts`.
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `event` | WS frame | new `event.kind:"image"` + fields `mediaId,width,height,caption` (`tool` reused; identity = `cwd/tty/sessionId`) | client/hooks/use-companion.ts:351-353; ref: ios WSFrame.swift:57-62, CompanionSocket.swift:332, AppState+SocketEvents.swift:144-145 → 200-248 | additive. iOS decodes `kind` as String (WSFrame.swift:333) and hits `default: break` (AppState+SocketEvents.swift:245). Unknown keys are ignored by explicit CodingKeys (WSFrame.swift:324). PWA `feed-line.tsx:92` returns null. Safe |
+| `init.feed` | WS frame | may contain `image` events | ws.ts:56 (emit); client use-companion.ts:375; ref: ios WSFrame.swift:136/155, CompanionSocket.swift:292-295 | additive, same decode path |
+| `GET /api/feed` | endpoint | may contain `image` events | routes/api.ts:334-341; map lists no caller | additive |
+| `FeedEvent` / `EventKind` | TS type | `+ "image"`, `+ mediaId?, width?, height?, caption?` | server: feed.ts:7-39, wiring/events.ts:5,112-113, codex-feed.ts:13,64,103,140,149,236, activity.ts:26 + appendFeedEvent at 198/239/277/361, transcript.ts:2,253. client: use-companion.ts:43-64,97,182, feed-line.tsx:1,7,96-104, terminal-feed.tsx:2,6. ref ios: WSFrame.swift:308-345, CompanionSocket.swift:37-77 | optional fields only |
+| `GET /api/media/:id` | endpoint | NEW | none yet; the iOS client half will call it pinned to the event's origin host, like `POST /api/attach` | new |
+| `feed_pruned` | WS frame | unchanged | client use-companion.ts | n/a |
+
+The key is not set on image events. `transcript.ts` has no exact public key, same as `assistant_text` at transcript.ts:253. Clients resolve it via `ev.key ?? sessionKey(forTty:…)` at AppState+SocketEvents.swift:201. The request listed `key`; this plan deliberately omits it.
+
+**Files — one owner each (all: builder)**
+| file | change | lines now → after (cap 600) |
+|---|---|---|
+| `server/lib/media.ts` | NEW: `storeImageBase64`, `storeImageFile`, `releaseMedia`, `enforceMediaCap`, `mediaPath`, `isMediaId`, `MediaRef`. sharp `.rotate().resize({width:1024,height:1024,fit:"inside",withoutEnlargement:true}).jpeg({quality:80})`. Refuse sources over 20 MB decoded. Keep `limitInputPixels` at its default. A decode failure returns null and logs one line | 0 → ~150 ✓ |
+| `server/lib/media.test.ts` | NEW: real temp dir via env; see Verify | 0 → ~120 |
+| `server/lib/transcript.ts` | Build `toolUses: Map<id,{name,input}>` from assistant `tool_use` blocks in the same pass. Walk `user` entries' `tool_result.content[]` for `image`/base64. Caption is the Read input's `basename(file_path)`, else the first sibling `text` block clamped to 140, else the tool name. `![alt](path)` in text blocks: absolute or `s.cwd`-relative, ext png/jpe?g/gif/webp, `realpath` exists, 20 MB max, caption = alt. `void` the async ingest then `appendFeedEvent`. Add `seenImages` to PathState + `getState` init | 273 → ~350 ✓ |
+| `server/lib/transcript.test.ts` | add image cases; existing assertions untouched | +~70 |
+| `server/lib/feed.ts` | `EventKind + "image"`, 4 optional fields, `onFeedEvict`. Collect evicted events during the splice, then fire listeners once AFTER the loop with a copied array. Listeners are read-only observers (doc comment: unlink only, never append) | 97 → ~130 ✓ |
+| `server/lib/feed.test.ts` | NEW: evict fires on cap trim and on session prune with a copied array, after the splice; `feed_pruned` payload unchanged; a listener that calls `appendFeedEvent` from inside evict does not corrupt the prune loop (all matching events still removed, feed length consistent) | 0 → ~80 |
+| `server/wiring/media.ts` | NEW: `onFeedEvict` → `releaseMedia` minus live refs. Exports nothing | 0 → ~30 |
+| `server/routes/media.ts` | NEW: `handleMediaRoute`. `GET /api/media/:id`, id must match `^[a-f0-9]{32}$` (blocks traversal), `Bun.file`. Headers: `Content-Type: image/jpeg`, `Cache-Control: private, max-age=31536000, immutable`, `ETag: "<id>"`. `If-None-Match` → 304. Missing → 404 | 0 → ~40 ✓ |
+| `server/routes/media.test.ts` | NEW: calls `handleMediaRoute` directly with a temp `COMPANION_MEDIA_DIR`: 200 + headers, unknown id 404, `..%2Fauth.token` and non-hex ids 404, matching `If-None-Match` 304, non-GET → null. The 401 lives in the server gate and is verified by curl (Verify 3), not by this test | 0 → ~60 |
+| `server/companion-server.ts` | `import "./wiring/media"`; add `handleMediaRoute` to the route chain. Auth is already enforced by the `/api/` gate (Bearer or `?token=`) | 89 → ~92 ✓ |
+| `package.json` + `bun.lock` | move `sharp ^0.34.5` from devDependencies to dependencies (already locked, linux-x64 + darwin-arm64 binaries present) | — |
+
+**Dependency choice:** `sharp` 0.34.5 is already in the lockfile. It was checked today under Bun 1.3.11 on the Mac: a 2000x1000 input came out 1024x512 JPEG. Bun has no native image API (`Bun.Image` is undefined). `jimp` would add a new pure-JS dependency that is about 10x slower on 1080p screenshots. `sips` is macOS-only and Zettlab is Linux.
+
+**Fan-in paths to guard**
+- `readTranscriptDelta()` is reached from the 1.5 s poll (`activity.ts:74`), tool-end (`:251`), prompt priming, which is silent (`:299`), and the turn-end retry loop (`:350,355`, up to 16 reads in 4 s). The dedupe must be synchronous: mark `seenImages` before `void ingest`. Otherwise the retry loop queues the same image up to 16 times.
+- `appendFeedEvent()` is reached from activity.ts, codex-feed.ts and transcript.ts. The evict hook runs inside it, so `releaseMedia` must be sync-cheap: `unlinkSync` in try/catch, never throwing into the producer.
+- `pruneFeedForSession()` runs from session-end. Evict must fire after the splice, with the same removed set as `feed_pruned`.
+
+**Risks**
+- **Full-file reparse per tick** scales with base64 volume. The encode is skipped via seen-set and file-exists, but the parse cost stays. The mitigation is follow-up 1; measure tick time on a 50-screenshot transcript in Verify.
+- **Restart re-emission**: a restarted server re-reads history like it does for text today. The file-exists shortcut plus the 2-slot queue bound the cost to header reads.
+- **Feed crowding**: computer-use sessions emit dozens of screenshots and the 200 cap evicts text sooner. Accept for now. If Jeremie's pass shows it, add a per-session image sub-cap as a follow-up.
+- **iOS local cache**: a file freed by eviction or the byte cap can 404 while an old conversation still shows the row. The iOS half must cache bytes (URLCache honours `immutable`) and render a placeholder on 404.
+- **Token in URL**: `?token=` works for `<img src>` but lands in logs. iOS must send the `Authorization` header.
+- **Markdown refs** let assistant text surface any local image file the server user can read, over an authed route to the owner's phone. That is acceptable. Allow-listing extensions keeps non-images out, since sharp refuses to decode anything else.
+- **Map blind spot**: the frames table lists iOS as `ios:ios/WSFrame.swift` only. It does not list `CompanionSocket.swift` or `AppState+SocketEvents.swift` as `event` consumers, and the sibling map is dated 2026-09-16. Regenerate it before the iOS half.
+- kb offline: no external gotchas checked (`~/.claude/.kb_env` has an empty `KB_DEV_TOKEN`).
+
+**Verify**
+1. `bun test` → all green, including:
+   - media: base64 PNG 3000x1500 → 1024x512 JPEG on disk. The same bytes twice → one file, same id. Corrupt base64 → null and no file. The cap with a tiny `COMPANION_MEDIA_MAX_BYTES` unlinks oldest first.
+   - transcript: a tool_use Read + tool_result image → exactly one `image` event with `tool:"Read"`, caption = basename, and `readTranscriptDelta` returns 0. A re-read → no second event. A silent read → none. The existing count tests are unchanged.
+   - feed: 201 appends → evict fires with 1 event. Session prune → evict and `feed_pruned` carry the same ids. A re-entrant append from an evict listener leaves no matching event behind and no duplicate.
+   - route: `bun test server/routes/media.test.ts` → 200/404/traversal-404/304 cases pass.
+   - wiring: an evicted image whose mediaId is still in the feed is not unlinked.
+2. `bunx tsc -p tsconfig.server.json --noEmit` → clean.
+3. `curl -H "Authorization: Bearer $(cat ~/.claude-companion/auth.token)" -D- localhost:<port>/api/media/<id> -o /tmp/x.jpg` → 200, `image/jpeg`, `immutable`. Without the header → 401. `/api/media/..%2Fauth.token` → 404.
+4. On Zettlab after `bun install` → `bun -e 'import s from "sharp"; console.log(s.versions)'` prints, and the same curl works against the Zettlab host.
+5. `bun run tools/archmap/cli.ts . --lint` → clean. Regenerate the map; `/api/media/:id` appears.
+6. **Manual pass by Jeremie** on the running build, with the *current* TestFlight iOS build (no image UI yet):
+   - In a session, Read a PNG and take a computer-use screenshot. The conversation shows the tool rows as before, with no blank rows, no crash, and no duplicated rows.
+   - Kill and reopen the app. Reconnect replays cleanly and the conversation is unchanged.
+   - `ls ~/.claude-companion/media` shows one JPEG per distinct image, each at most 1024px on its long edge (check with `sips -g pixelWidth -g pixelHeight`).
+   - The inline images themselves are checked in the iOS half's pass.
+
+**Analyst findings** (5 reports, reconciled 2026-09-23)
+- **Wire compat confirmed.** `event`, `init.feed` and `GET /api/feed` are additive and safe for every shipped consumer. The PWA returns null for unknown kinds, iOS falls to `default: break`, and iOS `FeedEventPayload`'s explicit CodingKeys drop the new fields. No consumers exist outside the map: the iOS NCE and LiveActivity targets and the `~/.claude` hooks/tools were checked. `GET /api/feed` has no callers; it is a debug dump. No safety edits needed.
+- **Evict reentrancy.** `appendFeedEvent` and `pruneFeedForSession`'s reverse-index splice both mutate `feed` in place. Decision: evict listeners are read-only observers that only unlink. Listeners fire once, AFTER the splice loop, with a copied array. `feed.test.ts` gains a re-entrant-append case. Files and Verify are updated.
+- **Media route.** The `/api/*` gate already covers auth: Bearer or `?token=`, constant-time compare. Id validation lives in the handler because nothing upstream sanitizes paths. No request logger prints URLs, and the handler must keep it that way by never logging `url.search`. Test decision: `routes/media.test.ts` calls the handler directly for 200/404/traversal/304. The 401 stays curl-verified, because booting `createCompanionServer` in a test pulls in every wiring side effect.
+- **Multi-host pinning: option (a).** Keep `key` off image events and have the iOS socket group stamp `origin` on feed events. Why:
+  - The media store is host-local and content-addressed. The socket that delivered an image frame is by construction the host holding the file.
+  - A server-side `key` would still need key → session → origin resolution on the phone. Session keys repeat across hosts, as `CompanionSocketGroup.swift`'s activity comment notes, so that lookup can pick the wrong host.
+  - The client change is one case in `handleChildEvent` (`CompanionSocketGroup.swift:130-144`), mirroring approval/question/dialog at `:81-94`. It is additive, and older servers are unaffected.
+- **Follow-ups, updated.** The iOS client half of RES-L5NG step 3 is now an explicit follow-up, filed with `agent:builder`:
+  - `FeedEventPayload`/`FeedEvent` gain `mediaId, width, height, caption, origin`.
+  - `CompanionSocketGroup` stamps `origin` on `.feedEvent`.
+  - `applyFeedEvent` gets `case "image"`, deduped by event id.
+  - The media GET is pinned to `origin` with an `Authorization` header, never `?token=`. Bytes are cached, and a 404 renders a placeholder.
+
+  Follow-up #2, the FeedEvent contract test, is motivated by the hand-copied PWA type at `use-companion.ts:43-61`, which already lacks `key`, `outputExcerpt` and `errored`.
+
+**Out of scope:** the iOS client half of RES-L5NG step 3 (decode, render, origin stamping; see Analyst findings). PWA rendering. User-pasted images. The incremental transcript reader. The FeedEvent contract test. APNs for images.
+
+
 ### Change Plan — phase16b-full-command-list + phase17-attachments (2026-09-16) — ✅ shipped #33, both hosts deployed
 **Request:** Jeremie with build 7 in hand: *"Claude ios app still have a better ux. the / open a dropdown with all the available commands. there's a + button that open a menu with a camera, photo and files button to add context. the only thing we have they don't is the ability to spawn session from here."* Third device report; session origination confirmed from the device as the one edge rc lacks.
 
