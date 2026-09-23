@@ -12,9 +12,7 @@
  */
 
 import { spawn } from "bun"
-import { autoJudge } from "./auto-judge"
-
-type Verdict = "allow" | "deny" | "ask"
+import { autoJudgeWithReason, type Judgement, type Verdict } from "./auto-judge"
 
 function isShellTool(tool: string): boolean {
   return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
@@ -54,23 +52,37 @@ function isNonForcePush(cmd: string): boolean {
   return true
 }
 
-export async function judgeWithBranchContext(
+export async function judgeWithBranchContextAndReason(
   tool: string,
   input: Record<string, unknown>,
   cwd: string,
-): Promise<Verdict> {
+): Promise<Judgement> {
   if (isShellTool(tool)) {
     const cmd = String(input.command ?? input.cmd ?? "").trim()
     if (isNonForcePush(cmd)) {
       const branch = await currentBranch(cwd)
       if (branch && !PROTECTED_BRANCHES.has(branch)) {
         // Feature branch — auto-allow regular pushes.
-        return "allow"
+        return { verdict: "allow", reason: `git push to feature branch ${branch}` }
       }
       // Protected branch OR unknown — fall through to autoJudge.
       // autoJudge will typically return "ask" (unlisted git write), or "deny"
       // if the command explicitly mentions main/master.
+      const judged = autoJudgeWithReason(tool, input)
+      if (judged.verdict === "ask" && branch) {
+        return { verdict: "ask", reason: `git push to protected branch ${branch}` }
+      }
+      return judged
     }
   }
-  return autoJudge(tool, input)
+  return autoJudgeWithReason(tool, input)
+}
+
+// Verdict-only wrapper — kept for callers that don't need the reason.
+export async function judgeWithBranchContext(
+  tool: string,
+  input: Record<string, unknown>,
+  cwd: string,
+): Promise<Verdict> {
+  return (await judgeWithBranchContextAndReason(tool, input, cwd)).verdict
 }

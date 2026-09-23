@@ -14,7 +14,7 @@
 
 import { isLearned } from "./learned-allow"
 
-type Verdict = "allow" | "deny" | "ask"
+export type Verdict = "allow" | "deny" | "ask"
 
 function isShellTool(tool: string): boolean {
   return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
@@ -150,49 +150,67 @@ const ALWAYS_SAFE_TOOLS = new Set([
   "TaskGet",
 ])
 
-export function autoJudge(tool: string, input: Record<string, unknown>): Verdict {
-  if (ALWAYS_SAFE_TOOLS.has(tool)) return "allow"
+export interface Judgement {
+  verdict: Verdict
+  // Short human-readable why. Shown on the phone under the approval intent
+  // line ("why · <reason>") when the verdict is "ask".
+  reason: string
+}
+
+export const REASON_NOT_ALLOWLISTED = "not on the Bash allowlist"
+export const REASON_SECRETS_FILE = "writes a secrets/env file"
+export const REASON_CLAUDE_SETTINGS = "edits Claude settings"
+export const reasonNotAutoApproved = (tool: string): string => `${tool} not auto-approved`
+
+// Verdict + reason. First match wins, same layering as described above.
+export function autoJudgeWithReason(tool: string, input: Record<string, unknown>): Judgement {
+  if (ALWAYS_SAFE_TOOLS.has(tool)) return { verdict: "allow", reason: `${tool} is always safe` }
 
   if (isShellTool(tool)) {
     const cmd = commandFromInput(input)
 
     for (const pattern of DANGEROUS_BASH) {
-      if (pattern.test(cmd)) return "deny"
+      if (pattern.test(cmd)) return { verdict: "deny", reason: "matches the destructive-command denylist" }
     }
 
     for (const pattern of SAFE_BASH) {
-      if (pattern.test(cmd)) return "allow"
+      if (pattern.test(cmd)) return { verdict: "allow", reason: "on the Bash allowlist" }
     }
 
     // Piped / chained commands — judge by the first segment.
     const firstCmd = cmd.split(/[|;&]/)[0]?.trim() ?? ""
     if (firstCmd && firstCmd !== cmd) {
       for (const pattern of SAFE_BASH) {
-        if (pattern.test(firstCmd)) return "allow"
+        if (pattern.test(firstCmd)) return { verdict: "allow", reason: "on the Bash allowlist" }
       }
     }
 
     // Learned-allow: check AFTER the static DANGEROUS list so a one-time
     // "yes" can never override the catastrophe denylist.
-    if (isLearned(tool, input)) return "allow"
+    if (isLearned(tool, input)) return { verdict: "allow", reason: "previously approved on phone" }
 
-    return "ask"
+    return { verdict: "ask", reason: REASON_NOT_ALLOWLISTED }
   }
 
   if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
     const filePath = (input.file_path as string) ?? ""
 
-    if (/\.(env|pem|key|secret|credentials)(\b|\.)/.test(filePath)) return "ask"
-    if (/settings\.json|settings\.local\.json/.test(filePath)) return "ask"
-    if (/password|token|secret/i.test(filePath)) return "ask"
+    if (/\.(env|pem|key|secret|credentials)(\b|\.)/.test(filePath)) return { verdict: "ask", reason: REASON_SECRETS_FILE }
+    if (/settings\.json|settings\.local\.json/.test(filePath)) return { verdict: "ask", reason: REASON_CLAUDE_SETTINGS }
+    if (/password|token|secret/i.test(filePath)) return { verdict: "ask", reason: REASON_SECRETS_FILE }
 
-    return "allow"
+    return { verdict: "allow", reason: "routine file edit" }
   }
 
   // Other tools (e.g. Web*, MCP tools): consult the learned table before
   // bouncing to phone. Tools with no derivable pattern (see learned-allow.ts)
   // fall through to "ask".
-  if (isLearned(tool, input)) return "allow"
+  if (isLearned(tool, input)) return { verdict: "allow", reason: "previously approved on phone" }
 
-  return "ask"
+  return { verdict: "ask", reason: reasonNotAutoApproved(tool) }
+}
+
+// Verdict-only wrapper — kept for callers that don't need the reason.
+export function autoJudge(tool: string, input: Record<string, unknown>): Verdict {
+  return autoJudgeWithReason(tool, input).verdict
 }

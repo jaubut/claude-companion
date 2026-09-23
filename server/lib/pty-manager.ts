@@ -11,6 +11,9 @@ export interface ApprovalRequest {
   // the record (PRJ-OR1T Phase 11). Never reaches the wire: wiring/events.ts
   // builds the `approval` frame as a literal, never `...req`.
   sessionKey: string
+  // Why the auto-judge escalated this to the phone (e.g. "not on the Bash
+  // allowlist"). Optional: absent for paths that never ran the judge.
+  reason?: string
   timestamp: number
   resolve: (decision: "allow" | "deny") => void
 }

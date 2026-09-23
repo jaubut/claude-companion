@@ -28,6 +28,7 @@ export const websocket: WebSocketHandler<WsData> = {
         input: req.input,
         sessionId: req.sessionId,
         cwd: req.cwd,
+        ...(req.reason ? { reason: req.reason } : {}),
       }))
     }
 
