@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { loadDotEnv } from "./dotenv"
+import { readFileSync } from "node:fs"
 
 // Minimal Turso (libSQL Hrana-over-HTTP) client for read-only proxy routes.
 // The phone never holds the Turso token; the server does. Token source is
@@ -23,14 +23,28 @@ export class TursoUnreachable extends Error {
 const DEFAULT_URL = "https://tls-dashboard-jaubut.aws-us-east-1.turso.io"
 const TIMEOUT_MS = 8000
 
-let agentEnvLoaded = false
+let agentToken: string | undefined
+let agentEnvRead = false
+
+// Only TURSO_AUTH_TOKEN is read from the agent env file — never the whole
+// file into process.env, which every spawned tmux/inject child would inherit.
+function readAgentToken(): string | undefined {
+  if (agentEnvRead) return agentToken
+  agentEnvRead = true
+  try {
+    const raw = readFileSync(join(homedir(), ".config", "tls-agent", "env"), "utf8")
+    for (const line of raw.split("\n")) {
+      const m = /^\s*(?:export\s+)?TURSO_AUTH_TOKEN\s*=\s*(.*)\s*$/.exec(line)
+      if (!m) continue
+      const v = m[1]!.trim().replace(/^["']|["']$/g, "")
+      if (v) agentToken = v
+    }
+  } catch { /* no agent env on this host */ }
+  return agentToken
+}
 
 function token(): string | undefined {
-  if (!process.env.TURSO_AUTH_TOKEN && !agentEnvLoaded) {
-    agentEnvLoaded = true
-    loadDotEnv(join(homedir(), ".config", "tls-agent", "env"))
-  }
-  return process.env.TURSO_AUTH_TOKEN || undefined
+  return process.env.TURSO_AUTH_TOKEN || readAgentToken()
 }
 
 function baseUrl(): string {

@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test"
 import { type QueryFn, type Row, type SqlArg, TursoUnreachable } from "../lib/turso"
-import { CACHE_TTL_MS, type GoalsResponse, PROJECT_CAP, createGoalsHandler, extractStatusParagraph } from "./goals"
+import { CACHE_TTL_MS, type GoalsResponse, PROJECT_CAP, createGoalsHandler, extractStatusParagraph, isoDate } from "./goals"
 
 // Handler tests with an injected query function — no network, no token. The
 // 401 lives in the server's /api/* gate and is verified by curl.
@@ -58,7 +58,7 @@ describe("GET /api/goals", () => {
     const p = body.projects[0]
     expect(p).toEqual({
       id: String(n.id), refCode: "PRJ-1", title: "Project 1", status: "active", statusParagraph: "Shipping phase 2.",
-      updatedAt: String(n.updated_at), openCount: 4,
+      updatedAt: isoDate(String(n.updated_at)), openCount: 4,
       nextTasks: [
         { id: "2", text: "first", dueDate: "2026-09-30", assignee: "agent:builder", dispatchStatus: "queued" },
         { id: "4", text: "second", dueDate: null, assignee: null, dispatchStatus: null },
@@ -154,5 +154,45 @@ describe("extractStatusParagraph", () => {
     expect(extractStatusParagraph("# P\n\nIntro.\n\n## Status\n\n## Next\n\nlater")).toBe("Intro.")
     expect(extractStatusParagraph(null)).toBe("")
     expect(extractStatusParagraph("# Only a heading")).toBe("")
+  })
+})
+
+
+describe("review fixes on PR #44", () => {
+  test("wire shape: empty due_date → null; updated_at normalised to ISO for both stored formats", async () => {
+    const notes: Row[] = [
+      { ...note(1), updated_at: "2026-09-14 01:52:57" },
+      { ...note(2), updated_at: "2026-09-11T00:09:59.238273Z" },
+    ]
+    const { query } = fakeDb(notes, [{ id: 1, note_id: String(notes[0]!.id), text: "t", position: 1, done: 0, due_date: "" }])
+    const body = (await (await get(createGoalsHandler({ query })))!.json()) as GoalsResponse
+    expect(body.projects[0]!.nextTasks[0]!.dueDate).toBeNull()
+    expect(body.projects[0]!.updatedAt).toBe("2026-09-14T01:52:57.000Z")
+    expect(body.projects[1]!.updatedAt).toBe("2026-09-11T00:09:59.238Z")
+    expect(isoDate(null)).toBeNull(); expect(isoDate("")).toBeNull(); expect(isoDate("garbage")).toBe("garbage")
+  })
+
+  test("cache: an older in-flight fetch never overwrites a newer ?fresh=1 result", async () => {
+    let call = 0
+    const gates: Array<() => void> = []
+    const query: QueryFn = async (sql) => {
+      if (sql.includes("FROM notes")) {
+        const mine = ++call
+        await new Promise<void>((r) => gates.push(r))          // resolve in test-controlled order
+        return [{ ...note(1), title: mine === 1 ? "old" : "new" }]
+      }
+      return []
+    }
+    const h = createGoalsHandler({ query, now: () => 0 })
+    const first = get(h)                 // starts fetch #1 ("old")
+    await Promise.resolve()
+    const second = get(h, "?fresh=1")    // starts fetch #2 ("new")
+    await Promise.resolve()
+    gates[1]!(); const r2 = (await (await second)!.json()) as GoalsResponse
+    gates[0]!(); const r1 = (await (await first)!.json()) as GoalsResponse
+    expect(r2.projects[0]!.title).toBe("new"); expect(r1.projects[0]!.title).toBe("old")
+    // the cache must hold the NEWER result even though the older fetch finished last
+    const cachedNow = (await (await get(h))!.json()) as GoalsResponse
+    expect(cachedNow.projects[0]!.title).toBe("new")
   })
 })

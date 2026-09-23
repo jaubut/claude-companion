@@ -118,11 +118,26 @@ export function extractStatusParagraph(body: string | null): string {
 
 const str = (v: Row[string] | undefined): string | null => (v == null ? null : String(v))
 
+// Schema default is '' for due_date: the wire shape is null, never "".
+function emptyToNull(v: string | null): string | null {
+  return v == null || v.trim() === "" ? null : v
+}
+
+// updated_at mixes "2026-09-14 01:52:57" (UTC, dashboard writes) and ISO
+// "2026-09-11T00:09:59.238Z". The wire shape is ISO 8601 UTC, always.
+export function isoDate(v: string | null): string | null {
+  if (v == null || v.trim() === "") return null
+  const t = v.trim()
+  const sql = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/.exec(t)
+  const d = new Date(sql ? `${sql[1]}T${sql[2]}Z` : t)
+  return Number.isNaN(d.getTime()) ? t : d.toISOString()
+}
+
 function toTask(r: Row): GoalTask {
   return {
     id: String(r.id),
     text: str(r.text) ?? "",
-    dueDate: str(r.due_date),
+    dueDate: emptyToNull(str(r.due_date)),
     assignee: str(r.assignee),
     dispatchStatus: str(r.dispatch_status),
   }
@@ -151,7 +166,7 @@ export async function buildGoals(query: QueryFn, now: () => number = Date.now): 
       title: str(n.title) ?? id,
       status: str(n.status) ?? "",
       statusParagraph: extractStatusParagraph(str(n.body)),
-      updatedAt: str(n.updated_at),
+      updatedAt: isoDate(str(n.updated_at)),
       nextTasks: t?.tasks ?? [],
       openCount: t?.open ?? 0,
     }
@@ -171,19 +186,25 @@ export function createGoalsHandler(deps: GoalsDeps = {}) {
   const query = deps.query ?? tursoQuery
   const now = deps.now ?? Date.now
   const ttl = deps.ttlMs ?? CACHE_TTL_MS
-  let cached: { at: number; body: GoalsResponse } | null = null
+  let cached: { at: number; body: GoalsResponse; gen: number } | null = null
+  // Requests are numbered when they START; a slower, older fetch must never
+  // overwrite the cache written by a newer one (e.g. a ?fresh=1 refresh).
+  let nextGen = 0
 
   return async function handleGoalsRoute(req: Request, url: URL): Promise<Response | null> {
     if (!(url.pathname === "/api/goals" && req.method === "GET")) return null
     const fresh = url.searchParams.get("fresh") === "1"
     if (!fresh && cached && now() - cached.at < ttl) return Response.json(cached.body)
+    const gen = ++nextGen
     try {
       const body = await buildGoals(query, now)
-      cached = { at: now(), body }
+      if (!cached || gen > cached.gen) cached = { at: now(), body, gen }
       return Response.json(body)
     } catch (err) {
-      // TursoUnreachable messages are fixed strings (no SQL, no token).
-      console.error(`[goals] ${err instanceof TursoUnreachable ? err.message : "unexpected error"}`)
+      // TursoUnreachable messages are fixed strings (no SQL, no token). A
+      // code bug still maps to 503 but is distinguishable in the log.
+      const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`
+      console.error(`[goals] ${what}`)
       return Response.json({ error: "turso_unreachable" }, { status: 503 })
     }
   }
