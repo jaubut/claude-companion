@@ -31,7 +31,7 @@ Last updated: 2026-09-13
 
 ## Change Plans
 
-### Change Plan — images-in-feed-server (2026-09-23)
+### Change Plan — images-in-feed-server (2026-09-23) — ✅ shipped #41 (`321cab7`), both hosts deployed 2026-09-23 with sharp 0.34.5; Codex HIGH (unbounded pending buffers) fixed post-review in `05316b0`; drift CLEAN
 **Request:** RES-L5NG step 3, server half. Forward `tool_result` image blocks (base64: Read on a PNG, MCP screenshots) to the feed as a new `FeedEvent` kind `"image"`. Downscale to 1024px long edge JPEG q80 into `~/.claude-companion/media/<sha>.jpg`. Serve via `GET /api/media/:id`. Prune with the 200-event feed cap plus a 200 MB dir cap. Replay on reconnect. Older clients ignore the kind. `![alt](path)` refs in assistant text if cheap.
 **Done when:**
 - A Read of a PNG or a computer-use screenshot in a live session produces one `event` frame `{kind:"image", mediaId, width, height, tool, caption}` and the same event is in the `init.feed` replay.
