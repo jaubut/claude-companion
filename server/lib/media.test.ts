@@ -135,7 +135,9 @@ describe("byte cap + release", () => {
 
 describe("wiring/media — feed eviction never frees files", () => {
   test("images survive both the 200-cap trim and a session prune", async () => {
-    await import("../wiring/media") // after beforeEach: its import-time sweep hits the temp dir
+    const { startMediaSweeper, stopMediaSweeper } = await import("../wiring/media")
+    startMediaSweeper() // after beforeEach: the startup sweep hits the temp dir
+    stopMediaSweeper()
     const ref = await storeImageBase64((await png(50, 50, "#123456")).toString("base64"))
     const id = mref(ref).mediaId
     const base = { ts: Date.now(), kind: "image" as const, mediaId: id, width: 50, height: 50, caption: "x" }
@@ -152,6 +154,28 @@ describe("wiring/media — feed eviction never frees files", () => {
   })
 })
 
+
+describe("wiring/media — sweeper start honours the configured age cap (Codex HIGH on PR #45)", () => {
+  test("importing the module sweeps nothing; starting it after .env applies the configured cap", async () => {
+    const { startMediaSweeper, stopMediaSweeper } = await import("../wiring/media")
+    const ref = await storeImageBase64((await png(32, 32, "#0a0b0c")).toString("base64"))
+    const id = mref(ref).mediaId
+    const now = Date.now() / 1000
+    utimesSync(mediaPath(id), now - 10 * 86_400, now - 10 * 86_400) // 10 days old
+    expect(existsSync(mediaPath(id))).toBe(true) // the import above removed nothing
+    process.env.COMPANION_MEDIA_MAX_AGE = String(30 * 86_400) // as a .env would set it
+    try {
+      expect(startMediaSweeper()).toEqual([])
+      expect(existsSync(mediaPath(id))).toBe(true) // 10 d < 30 d: kept
+      expect(startMediaSweeper()).toEqual([]) // idempotent: no second timer, no second sweep
+    } finally {
+      stopMediaSweeper()
+    }
+    delete process.env.COMPANION_MEDIA_MAX_AGE
+    expect(startMediaSweeper()).toEqual([id]) // default 7 d: gone
+    stopMediaSweeper()
+  })
+})
 
 describe("bounded encode queue (Codex HIGH on PR #41)", () => {
   test("a burst beyond the wait queue is refused with busy, nothing is decoded early, and a retry succeeds", async () => {

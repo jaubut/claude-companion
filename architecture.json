@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 92,
+          "lines": 91,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -1780,10 +1780,15 @@
         },
         {
           "path": "wiring/media.ts",
-          "lines": 16,
+          "lines": 35,
           "kind": "lib",
-          "exports": [],
-          "state": [],
+          "exports": [
+            "startMediaSweeper",
+            "stopMediaSweeper"
+          ],
+          "state": [
+            "let timer"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -1791,9 +1796,7 @@
           "imports": [
             "lib/media.ts"
           ],
-          "listeners": [
-            "setInterval"
-          ],
+          "listeners": [],
           "sheets": 0,
           "externals": []
         },
