@@ -19,13 +19,13 @@ import { scanReactClient } from "./adapters/react-client"
 import { scanSwiftUI } from "./adapters/swiftui"
 import { scanNuxt } from "./adapters/nuxt"
 import { resolveRoot } from "./adapters/shared"
-import { renderMarkdown, type RefTarget } from "./render"
+import { refRegressions, renderMarkdown, type RefTarget } from "./render"
 import { lint, formatIssues } from "./lint"
 import { findLockfile, resolvePackages } from "./packages"
 import { aggregateFleet, loadRoster, writeFleet } from "./fleet"
 
 const FLAGS_WITH_VALUE = new Set(["--baseline", "--fleet", "--fleet-from"])
-const FLAGS = new Set([...FLAGS_WITH_VALUE, "--check", "--lint", "--quiet"])
+const FLAGS = new Set([...FLAGS_WITH_VALUE, "--check", "--lint", "--quiet", "--allow-unresolved"])
 const args = process.argv.slice(2)
 const flagValue = (name: string): string | undefined => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined }
 const positional: string[] = []
@@ -140,6 +140,14 @@ for (const r of map.refs) {
   if (!existsSync(p)) { unresolved.push(`${r.name} (${r.repo})`); continue }
   const sub = JSON.parse(readFileSync(p, "utf-8")) as ArchMap
   for (const t of sub.targets) refs.push({ ...t, ref: r.name, repo: r.repo, generatedAt: sub.generatedAt })
+}
+// A ref the committed map had joined but this host cannot see (the sibling
+// repo is not checked out here) must not silently drop that sibling's
+// consumers: refuse to write unless told otherwise.
+const regressions = refRegressions(existsSync(mdPath) ? readFileSync(mdPath, "utf-8") : "", unresolved)
+if (regressions.length && !args.includes("--allow-unresolved")) {
+  console.error(`archmap: refusing to write — ${regressions.join(", ")} joined the committed map but cannot be resolved on this host. Regenerate where the sibling repo is checked out, or pass --allow-unresolved.`)
+  process.exit(2)
 }
 writeFileSync(jsonPath, JSON.stringify(map, null, 2) + "\n")
 writeFileSync(mdPath, renderMarkdown(map, refs, unresolved) + "\n")

@@ -56,7 +56,10 @@ export function pathMatches(e: Endpoint, call: string): boolean {
   if (e.prefix) return call.startsWith(e.path)
   const a = e.path.split("/"), b = call.split("/")
   if (a.length !== b.length) return false
-  return a.every((seg, i) => seg.startsWith(":") || seg === "*" || b[i]!.startsWith(":") || seg === b[i])
+  // A dynamic call segment (`${id}` → `:p`) targets the parametrized route,
+  // never a literal sibling: `/api/invoice/${n}` calls `/api/invoice/:number`,
+  // not `/api/invoice/public` (that misattributed the public page's callers).
+  return a.every((seg, i) => seg.startsWith(":") || seg === "*" || seg === b[i])
 }
 
 function allTargets(map: ArchMap, refs: RefTarget[]): Target[] {
@@ -86,6 +89,16 @@ export function endpointIndex(map: ArchMap, refs: RefTarget[] = []): { key: stri
     out.push({ key: `${e.method} ${e.path}${e.prefix ? "…" : ""}`, handler: `${t.name}/${m.path}`, callers: [...new Set(matches)], hook: e.path.startsWith("/hooks/"), page: e.method === "PAGE" })
   }
   return out.sort((a, b) => a.key.localeCompare(b.key))
+}
+
+// Refs that the committed map had joined but this run cannot resolve: writing
+// the map now would silently drop every consumer that sibling contributes
+// (seen 2026-09-23 — a builder on a host without the iOS repo regenerated the
+// Companion map and wiped the iOS consumers from the contract tables).
+// `unresolved` entries are "name (repo)" as cli.ts builds them.
+export function refRegressions(previousMd: string, unresolved: string[]): string[] {
+  if (!previousMd.includes("## Referenced maps")) return []
+  return unresolved.filter((u) => !previousMd.includes(`⚠ ${u} — not found`))
 }
 
 export function renderMarkdown(map: ArchMap, refs: RefTarget[] = [], unresolved: string[] = []): string {
