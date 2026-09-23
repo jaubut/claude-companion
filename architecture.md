@@ -24,14 +24,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/command.ts` | 318 | route-host | 1 | state: listCache: Map · routes: 2 |
 | `wiring/orchestrator.ts` | 306 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/discover.ts` | 274 | lib | 1 |  |
+| `lib/media.ts` | 254 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/apns.ts` | 242 | lib | 6 | state: let keyPromise, let cachedJwt, sessions: Map |
-| `lib/media.ts` | 235 | lib | 9 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/questions.ts` | 229 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map |
 | `lib/auto-judge.ts` | 217 | lib | 8 | state: ALWAYS_SAFE_TOOLS: Set |
+| `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
 | `lib/key-gate.ts` | 207 | lib | 9 |  |
 | `routes/model.ts` | 199 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `routes/goals.ts` | 193 | route-host | 11 | route: GET /api/goals |
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 181 | lib | 7 |  |
 | `lib/dialogs.ts` | 175 | lib | 7 |  |
@@ -40,7 +40,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `ws.ts` | 154 | lib | 1 | emits: approval, question, init, resolved, inject_error, pong |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
-| `lib/feed.ts` | 141 | lib | 9 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
+| `lib/feed.ts` | 142 | lib | 9 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `lib/dialog-watch.ts` | 138 | lib | 4 |  |
 | `lib/command-menu.ts` | 135 | lib | 7 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
@@ -49,8 +49,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pty-manager.ts` | 123 | lib | 7 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set |
 | `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
+| `lib/turso.ts` | 108 | lib | 5 | state: let agentToken, let agentEnvRead |
 | `lib/hook-common.ts` | 95 | lib | 7 |  |
-| `lib/turso.ts` | 94 | lib | 5 | state: let agentEnvLoaded |
 | `companion-server.ts` | 92 | route-host | 1 | routes: 5 |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/auth.ts` | 84 | lib | 3 | state: let cached |
@@ -69,7 +69,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dotenv.ts` | 34 | lib | 2 |  |
 | `lib/push.ts` | 28 | lib | 2 |  |
 | `state.ts` | 25 | lib | 4 |  |
-| `wiring/media.ts` | 18 | lib | 0 | listens: onFeedEvict |
+| `wiring/media.ts` | 16 | lib | 0 | listens: setInterval |
 
 ## client (react-client, `client/src/`, 15 modules, cap 600)
 
@@ -102,74 +102,74 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## Referenced maps (joined by reference — regenerate the sibling to refresh)
 
-- `ios:ios` — `~/apps/claude companion/architecture.json` generated 2026-09-16, 56 modules
+- ⚠ ios (~/apps/claude companion) — not found on this machine; its consumers are missing below
 
 ## Contracts — WS frames
 
 | frame | emitted by | consumed by |
 |---|---|---|
-| `activity` | server/wiring/events.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
-| `approval` | server/wiring/events.ts, server/ws.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
-| `dialog` | server/wiring/dialogs.ts | ios:ios/WSFrame.swift |
-| `dialog_closed` | server/wiring/dialogs.ts | ios:ios/WSFrame.swift |
-| `event` | server/wiring/events.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
+| `activity` | server/wiring/events.ts | client/hooks/use-companion.ts |
+| `approval` | server/wiring/events.ts, server/ws.ts | client/hooks/use-companion.ts |
+| `dialog` | server/wiring/dialogs.ts | — (no consumer found) |
+| `dialog_closed` | server/wiring/dialogs.ts | — (no consumer found) |
+| `event` | server/wiring/events.ts | client/hooks/use-companion.ts |
 | `feed_pruned` | server/wiring/events.ts | client/hooks/use-companion.ts |
-| `init` | server/ws.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
-| `inject_error` | server/ws.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
-| `orchestrator` | server/wiring/orchestrator.ts | ios:ios/WSFrame.swift |
-| `orchestrator_channel` | server/wiring/orchestrator.ts | ios:ios/WSFrame.swift |
-| `orchestrator_task` | server/wiring/orchestrator.ts | ios:ios/WSFrame.swift |
-| `orchestrator_worker_output` | server/wiring/orchestrator.ts | ios:ios/WSFrame.swift |
-| `pong` | server/ws.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
-| `question` | server/wiring/events.ts, server/ws.ts | ios:ios/WSFrame.swift |
-| `resolved` | server/routes/api.ts, server/wiring/events.ts, server/ws.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
-| `sessions` | server/wiring/events.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
-| `super_auto` | server/routes/api.ts | ios:ios/WSFrame.swift |
-| `user_prompt` | server/routes/hooks.ts | ios:ios/AppState+SocketEvents.swift, ios:ios/WSFrame.swift |
-| `waiting_input` | server/wiring/waiting.ts | client/hooks/use-companion.ts, ios:ios/WSFrame.swift |
+| `init` | server/ws.ts | client/hooks/use-companion.ts |
+| `inject_error` | server/ws.ts | client/hooks/use-companion.ts |
+| `orchestrator` | server/wiring/orchestrator.ts | — (no consumer found) |
+| `orchestrator_channel` | server/wiring/orchestrator.ts | — (no consumer found) |
+| `orchestrator_task` | server/wiring/orchestrator.ts | — (no consumer found) |
+| `orchestrator_worker_output` | server/wiring/orchestrator.ts | — (no consumer found) |
+| `pong` | server/ws.ts | client/hooks/use-companion.ts |
+| `question` | server/wiring/events.ts, server/ws.ts | — (no consumer found) |
+| `resolved` | server/routes/api.ts, server/wiring/events.ts, server/ws.ts | client/hooks/use-companion.ts |
+| `sessions` | server/wiring/events.ts | client/hooks/use-companion.ts |
+| `super_auto` | server/routes/api.ts | — (no consumer found) |
+| `user_prompt` | server/routes/hooks.ts | — (no consumer found) |
+| `waiting_input` | server/wiring/waiting.ts | client/hooks/use-companion.ts |
 
 ## Contracts — endpoints
 
 | route | handler | called by |
 |---|---|---|
 | `* /` | server/companion-server.ts | — |
-| `* /api/…` | server/companion-server.ts | client/components/spawn-session.tsx, ios:ios/CompanionClient.swift |
+| `* /api/…` | server/companion-server.ts | client/components/spawn-session.tsx |
 | `* /api/feed` | server/routes/api.ts | — |
 | `* /api/status` | server/routes/api.ts | — |
 | `* /health` | server/companion-server.ts | — |
 | `* /ws` | server/companion-server.ts | — |
 | `DELETE /api/learned` | server/routes/api.ts | — |
 | `DELETE /api/learned/…` | server/routes/api.ts | — |
-| `DELETE /api/register-token` | server/routes/api.ts | ios:ios/CompanionClient.swift |
+| `DELETE /api/register-token` | server/routes/api.ts | — |
 | `GET /api/goals` | server/routes/goals.ts | — |
 | `GET /api/learned` | server/routes/api.ts | — |
 | `GET /api/media/…` | server/routes/media.ts | — |
-| `GET /api/orchestrator/channels` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
-| `GET /api/orchestrator/thread` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
+| `GET /api/orchestrator/channels` | server/routes/orchestrator.ts | — |
+| `GET /api/orchestrator/thread` | server/routes/orchestrator.ts | — |
 | `GET /api/push/tokens` | server/routes/api.ts | — |
-| `GET /api/super-auto` | server/routes/api.ts | ios:ios/CompanionClient.swift |
-| `POST /api/answer` | server/routes/api.ts | ios:ios/CompanionClient.swift |
+| `GET /api/super-auto` | server/routes/api.ts | — |
+| `POST /api/answer` | server/routes/api.ts | — |
 | `POST /api/attach` | server/routes/attach.ts | — |
-| `POST /api/command/list` | server/routes/command.ts | ios:ios/CompanionClient.swift |
-| `POST /api/command/suggest` | server/routes/command.ts | ios:ios/CompanionClient.swift |
-| `POST /api/dialog/key` | server/routes/dialogs.ts | ios:ios/CompanionClient.swift |
-| `POST /api/dialog/pick` | server/routes/dialogs.ts | ios:ios/CompanionClient.swift |
-| `POST /api/inject` | server/routes/api.ts | ios:ios/CompanionClient.swift |
-| `POST /api/model/cancel` | server/routes/model.ts | ios:ios/CompanionClient.swift |
-| `POST /api/model/open` | server/routes/model.ts | ios:ios/CompanionClient.swift |
-| `POST /api/model/set` | server/routes/model.ts | ios:ios/CompanionClient.swift |
-| `POST /api/orchestrator/channels` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
+| `POST /api/command/list` | server/routes/command.ts | — |
+| `POST /api/command/suggest` | server/routes/command.ts | — |
+| `POST /api/dialog/key` | server/routes/dialogs.ts | — |
+| `POST /api/dialog/pick` | server/routes/dialogs.ts | — |
+| `POST /api/inject` | server/routes/api.ts | — |
+| `POST /api/model/cancel` | server/routes/model.ts | — |
+| `POST /api/model/open` | server/routes/model.ts | — |
+| `POST /api/model/set` | server/routes/model.ts | — |
+| `POST /api/orchestrator/channels` | server/routes/orchestrator.ts | — |
 | `POST /api/orchestrator/channels/…` | server/routes/orchestrator.ts | — |
 | `POST /api/orchestrator/dispatch` | server/routes/orchestrator.ts | — |
-| `POST /api/orchestrator/proposal/…` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
-| `POST /api/orchestrator/send` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
-| `POST /api/orchestrator/task/…` | server/routes/orchestrator.ts | ios:ios/CompanionClient.swift |
+| `POST /api/orchestrator/proposal/…` | server/routes/orchestrator.ts | — |
+| `POST /api/orchestrator/send` | server/routes/orchestrator.ts | — |
+| `POST /api/orchestrator/task/…` | server/routes/orchestrator.ts | — |
 | `POST /api/push/broadcast` | server/routes/api.ts | — |
 | `POST /api/push/test` | server/routes/api.ts | — |
-| `POST /api/register-token` | server/routes/api.ts | ios:ios/CompanionClient.swift |
-| `POST /api/resolve` | server/routes/api.ts | ios:ios/CompanionClient.swift |
-| `POST /api/spawn-session` | server/routes/api.ts | client/components/spawn-session.tsx, ios:ios/CompanionClient.swift |
-| `POST /api/super-auto` | server/routes/api.ts | ios:ios/CompanionClient.swift |
+| `POST /api/register-token` | server/routes/api.ts | — |
+| `POST /api/resolve` | server/routes/api.ts | — |
+| `POST /api/spawn-session` | server/routes/api.ts | client/components/spawn-session.tsx |
+| `POST /api/super-auto` | server/routes/api.ts | — |
 
 ## Contracts — hook endpoints (Claude Code → server)
 
@@ -230,7 +230,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `clearWaitingForTarget()` | `lib/sessions.ts` | `routes/api.ts#POST /api/inject`, `wiring/waiting.ts`, `ws.ts` |
 | `recordUserPrompt()` | `lib/activity.ts` | `routes/api.ts#POST /api/inject`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/user-prompt-submit` |
 | `isSuperAuto()` | `lib/super-auto.ts` | `routes/api.ts#GET /api/super-auto`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `ws.ts` |
-| `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `wiring/media.ts`, `ws.ts` |
 | `endFlow()` | `lib/command-scrape.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `wiring/dialogs.ts` |
 | `recordToolStart()` | `lib/activity.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `agentTitle()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
@@ -277,6 +276,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `HOST_INFO()` | `state.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `getActivity()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `listActivities()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
+| `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `CommandEntry()` | `lib/command-list.ts` | `routes/command.ts`, `routes/command.ts#POST /api/command/list` |
 | `CLEAR_SETTLE_MS()` | `lib/command-list.ts` | `routes/command.ts`, `routes/command.ts#POST /api/command/suggest` |
 | `HELP_CLOSE_OPEN_WAIT_MS()` | `lib/command-list.ts` | `routes/command.ts`, `routes/command.ts#POST /api/command/list` |
