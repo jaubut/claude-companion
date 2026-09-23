@@ -378,3 +378,55 @@ describe("artifacts in the feed (RES-B9CL)", () => {
     expect(arts(events)).toHaveLength(0)
   })
 })
+
+describe("incremental reader (byte offset per transcript)", () => {
+  const incDir = mkdtempSync(join(tmpdir(), "cc-transcript-inc-"))
+  afterAll(() => { rmSync(incDir, { recursive: true, force: true }) })
+
+  test("a half-written line waits for its newline, then counts once", () => {
+    const path = join(incDir, "partial.jsonl")
+    const full = assistant("finished line")
+    writeFileSync(path, full.slice(0, 20))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc1", cwd: "/x" })
+    expect(readTranscriptDelta(s)).toBe(0)
+    appendFileSync(path, full.slice(20))
+    expect(readTranscriptDelta(s)).toBe(1)
+    expect(readTranscriptDelta(s)).toBe(0)
+  })
+
+  test("truncation / rewrite resets the offset and reads the new content", () => {
+    const path = join(incDir, "trunc.jsonl")
+    writeFileSync(path, assistant("old one") + assistant("old two"))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc2", cwd: "/x" })
+    expect(readTranscriptDelta(s)).toBe(2)
+    writeFileSync(path, assistant("fresh"))
+    expect(readTranscriptDelta(s)).toBe(1)
+  })
+
+  test("a tool_result in a later chunk still resolves its tool_use name", () => {
+    const path = join(incDir, "split.jsonl")
+    writeFileSync(path, line({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_s1", name: "Bash", input: {} }] } }))
+    const s = getState({ transcriptPath: path, tty: "/dev/inc3", cwd: "/x" })
+    readTranscriptDelta(s)
+    const { events, off } = capture()
+    appendFileSync(path, line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_s1", content: "RES-L5NG" }] } }))
+    readTranscriptDelta(s)
+    off()
+    expect(events.filter((e) => e.kind === "artifact")[0]).toMatchObject({ ref: "RES-L5NG", tool: "Bash" })
+  })
+
+  test("a busy image is retried on the next read without re-parsing", async () => {
+    const path = join(incDir, "busy.jsonl")
+    writeFileSync(path, "")
+    const s = getState({ transcriptPath: path, tty: "/dev/inc4", cwd: "/x" })
+    let calls = 0
+    s.seenImages.add("tu:busy:0")
+    queueImage(s, "tu:busy:0", () => Promise.resolve(++calls === 1 ? ("busy" as const) : null), { caption: "x" })
+    await Bun.sleep(10)
+    expect(s.seenImages.has("tu:busy:0")).toBe(false)
+    readTranscriptDelta(s)
+    expect(s.seenImages.has("tu:busy:0")).toBe(true)
+    await Bun.sleep(10)
+    expect(calls).toBe(2)
+  })
+})

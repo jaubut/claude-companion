@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs"
+import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs"
 import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
 import { artifactKey, detectArtifacts } from "./artifacts"
@@ -226,6 +226,54 @@ export function forgetStates(meta: SessionMeta): PathState[] {
   return dropped
 }
 
+// Where the reader left off in a session's transcript (like codex-feed.ts's
+// offsets): only appended bytes are parsed on each tick, so a screenshot-heavy
+// transcript carrying MBs of base64 isn't re-parsed every 1.5 s. Keyed by the
+// state object so forgetStates() drops it for free. `toolUses` survives
+// between reads because a tool_result may land in a later chunk than its
+// tool_use. A shrunk file or a new inode (truncation/rotation) resets it.
+interface Cursor {
+  path: string
+  ino: number
+  offset: number
+  toolUses: ToolUses
+}
+const cursors = new WeakMap<PathState, Cursor>()
+
+// Complete lines appended since the last read. A trailing line without its
+// newline is consumed only if it already parses (the old whole-file reader
+// did the same); otherwise it waits for the next tick.
+function readAppended(s: PathState, path: string): { entries: Array<Record<string, unknown>>; cursor: Cursor } | null {
+  let fd: number
+  try { fd = openSync(path, "r") } catch { return null }
+  try {
+    const st = fstatSync(fd)
+    let c = cursors.get(s)
+    if (!c || c.path !== path || c.ino !== st.ino || st.size < c.offset) {
+      c = { path, ino: st.ino, offset: 0, toolUses: new Map() }
+      cursors.set(s, c)
+    }
+    const len = st.size - c.offset
+    if (len <= 0) return { entries: [], cursor: c }
+    const buf = Buffer.alloc(len)
+    const got = readSync(fd, buf, 0, len, c.offset)
+    const data = buf.subarray(0, got)
+    const nl = data.lastIndexOf(0x0a)
+    let used = nl + 1
+    const entries = parseEntries(data.toString("utf8", 0, used))
+    if (used < data.length) {
+      const tail = parseEntries(data.toString("utf8", used))
+      if (tail.length) { entries.push(...tail); used = data.length }
+    }
+    c.offset += used
+    return { entries, cursor: c }
+  } catch {
+    return null
+  } finally {
+    closeSync(fd)
+  }
+}
+
 export function readTranscriptDelta(
   s: PathState,
   opts: { silent?: boolean } = {},
@@ -233,13 +281,15 @@ export function readTranscriptDelta(
   let emitted = 0
   const path = s.transcriptPath
   if (!path) return emitted
-  let raw: string
-  try { raw = readFileSync(path, "utf8") } catch { return emitted }
+  retryBusyImages(s)
+  const read = readAppended(s, path)
+  if (!read) return emitted
 
-  const entries = parseEntries(raw)
-  // tool_use id → name/input, built in the same pass; a tool_result always
-  // follows its tool_use in the file, so it is known by the time we need it.
-  const toolUses: ToolUses = new Map()
+  const { entries } = read
+  // tool_use id → name/input; a tool_result always follows its tool_use in
+  // the file, so it is known by the time we need it (possibly from a prior
+  // chunk — hence it lives on the cursor).
+  const toolUses = read.cursor.toolUses
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i] as Record<string, unknown>
 
@@ -274,7 +324,10 @@ export function readTranscriptDelta(
 
     for (const block of blocks) {
       if (block.type === "tool_use" && typeof block.id === "string") {
-        toolUses.set(block.id, { name: String(block.name ?? ""), input: block.input })
+        // Only file_path is ever read back (captionFor); don't pin a Write's
+        // whole content in memory for the session's lifetime.
+        const filePath = (block.input as { file_path?: unknown } | undefined)?.file_path
+        toolUses.set(block.id, { name: String(block.name ?? ""), input: { file_path: filePath } })
         continue
       }
       if (block.type === "thinking") {
@@ -431,6 +484,20 @@ const MD_IMAGE = /!\[([^\]]*)\]\(([^)\s]+)\)/g
 const MD_IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i
 const MD_MAX_BYTES = 20 * 1024 * 1024
 
+// Images whose encode came back "busy", retried at the top of the next read.
+const busyImages = new WeakMap<PathState, Map<string, () => void>>()
+
+function retryBusyImages(s: PathState): void {
+  const parked = busyImages.get(s)
+  if (!parked?.size) return
+  busyImages.delete(s)
+  for (const [seenKey, retry] of parked) {
+    if (s.seenImages.has(seenKey)) continue
+    s.seenImages.add(seenKey)
+    retry()
+  }
+}
+
 // Queue one image: the seen key is already marked, `ts` is the detection time
 // (the event sorts by when the tool returned, not when the encode finished),
 // and the id `img:<seenKey>` makes a re-append an idempotent no-op.
@@ -444,9 +511,16 @@ export function queueImage(
   const ident = identityFor(s)
   void store()
     .then((ref) => {
-      // Saturated encode queue: forget the mark so the next tick re-detects
-      // and retries the image instead of losing it.
-      if (ref === "busy") { s.seenImages.delete(seenKey); return }
+      // Saturated encode queue: forget the mark and park the job so the next
+      // tick retries it. The reader no longer re-parses old lines, so the
+      // image would not be re-detected on its own.
+      if (ref === "busy") {
+        s.seenImages.delete(seenKey)
+        let parked = busyImages.get(s)
+        if (!parked) busyImages.set(s, (parked = new Map()))
+        parked.set(seenKey, () => queueImage(s, seenKey, store, fields))
+        return
+      }
       if (!ref) return
       appendFeedEvent({
         id: `img:${seenKey}`,
