@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test"
-import { closeHelpOverlay, filterCommands, helpOverlayVisible, helpTab, listIncomplete, mergePages, pageBudget, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
+import { CLEAN_CONFIRM_GAP_MS, CLEAR_SETTLE_MS, closeHelpOverlay, ESC_SETTLE_MS, filterCommands, HELP_CLOSE_OPEN_WAIT_MS, HELP_PAINT_MS, helpOverlayVisible, helpTab, listIncomplete, mergePages, pageBudget, parseHelpPage, scrapeHelpTab, type HelpTab } from "./command-list"
+import { SCRAPE_ABORT_WAIT_MS } from "./command-scrape"
 
 // Shapes captured off real /help pages, 2026-09-16, Claude Code 2.1.270:
 // cursor row renders "❯ /name", the last visible row of a page that has more
@@ -272,41 +273,85 @@ describe("closeHelpOverlay", () => {
   const BLANK = ["", "", ""].join("\n")
 
   interface Rig {
+    // Virtual clock. Both the deadlines AND the chord-settle windows are real
+    // durations, so a test that ran on Date.now() with instant sleeps could
+    // only ever spin: the loop would poll millions of times waiting for 250ms
+    // of wall clock. Owning the clock makes the suite instant AND makes "no
+    // key inside the window" assertable at all.
+    t: number
     pane: string
     escapes: number
     clears: number
     captures: number
     slept: number
+    // Every key sent, with the virtual time it went out — the timeline the
+    // ESC_SETTLE_MS rule is checked against.
+    keys: Array<{ key: "Escape" | "C-u"; at: number }>
+    // Every capture, same clock: the verdict capture must also be outside the
+    // window, not just the next key.
+    captureAt: number[]
+  }
+
+  function newRig(pane = IDLE): Rig {
+    return { t: 0, pane, escapes: 0, clears: 0, captures: 0, slept: 0, keys: [], captureAt: [] }
+  }
+
+  // Full deps on the rig's clock. Overrides get the rig and run BEFORE the
+  // bookkeeping is read, exactly like the real pane reacting to the key.
+  function deps(r: Rig, o: {
+    capture?: () => string | null
+    onEscape?: () => void
+    onClear?: () => void
+    openWaitMs?: number
+    clearWaitMs?: number
+    pollMs?: number
+    enterAt?: number
+    paintMs?: number
+  } = {}): Parameters<typeof closeHelpOverlay>[0] {
+    return {
+      capture: async () => { r.captures++; r.captureAt.push(r.t); return o.capture ? o.capture() : r.pane },
+      escape: async () => { r.escapes++; r.keys.push({ key: "Escape", at: r.t }); o.onEscape?.() },
+      clearLine: async () => { r.clears++; r.keys.push({ key: "C-u", at: r.t }); o.onClear?.() },
+      sleep: async (ms: number) => { r.slept++; r.t += ms },
+      now: () => r.t,
+      openWaitMs: o.openWaitMs ?? 2_000,
+      clearWaitMs: o.clearWaitMs ?? 2_000,
+      pollMs: o.pollMs ?? 120,
+      enterAt: o.enterAt ?? -HELP_PAINT_MS,   // the paint window is already over unless a test says otherwise
+      paintMs: o.paintMs ?? HELP_PAINT_MS,
+    }
+  }
+
+  // The gap between every key and whatever came next — key or capture.
+  function shortestGapAfterEscape(r: Rig): number {
+    let worst = Infinity
+    for (const k of r.keys) {
+      if (k.key !== "Escape") continue
+      const nextEvent = [
+        ...r.keys.filter((x) => x.at > k.at).map((x) => x.at),
+        ...r.captureAt.filter((a) => a > k.at),
+      ].sort((a, b) => a - b)[0]
+      if (nextEvent !== undefined) worst = Math.min(worst, nextEvent - k.at)
+    }
+    return worst
   }
 
   function rig(script: (r: Rig) => void): { r: Rig; run: () => ReturnType<typeof closeHelpOverlay> } {
-    const r: Rig = { pane: IDLE, escapes: 0, clears: 0, captures: 0, slept: 0 }
-    const run = () => closeHelpOverlay({
-      capture: async () => { r.captures++; return r.pane },
-      escape: async () => { r.escapes++; script(r) },
-      clearLine: async () => { r.clears++; script(r) },
-      // Virtual time: the deadlines are real Date.now() deadlines, so keep
-      // the polls instant and let the loop run to its bound.
-      sleep: async () => { r.slept++ },
-      openWaitMs: 200,
-      clearWaitMs: 200,
-      pollMs: 1,
-    })
+    const r = newRig()
+    const run = () => closeHelpOverlay(deps(r, { onEscape: () => script(r), onClear: () => script(r) }))
     return { r, run }
   }
 
   test("waits for the overlay to paint before Escaping it", async () => {
     // The abort beat the redraw: /help has been typed and entered, the dialog
     // is still three polls away.
-    const r: Rig = { pane: TYPED, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    const r = newRig(TYPED)
     let escapedAtPoll = -1
-    const res = await closeHelpOverlay({
-      capture: async () => { r.captures++; if (r.captures === 4 && !r.escapes) r.pane = HELP; return r.pane },
-      escape: async () => { r.escapes++; escapedAtPoll = r.captures; r.pane = TYPED },
-      clearLine: async () => { r.clears++; if (r.pane === TYPED) r.pane = IDLE },
-      sleep: async () => { r.slept++ },
-      openWaitMs: 2_000, clearWaitMs: 2_000, pollMs: 1,
-    })
+    const res = await closeHelpOverlay(deps(r, {
+      capture: () => { if (r.captures === 4 && !r.escapes) r.pane = HELP; return r.pane },
+      onEscape: () => { escapedAtPoll = r.captures; r.pane = TYPED },
+      onClear: () => { if (r.pane === TYPED) r.pane = IDLE },
+    }))
     expect(res).toEqual({ sawOverlay: true, clean: true })
     // The Escape waited for the dialog instead of firing at a pane that had
     // not painted it yet — the bug: an early Escape does nothing and the
@@ -325,31 +370,32 @@ describe("closeHelpOverlay", () => {
 
   test("text Escape left behind is cleared before the pane is released", async () => {
     // Escape closes the menu and KEEPS the typed text; only C-u kills it.
-    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
-    const res = await closeHelpOverlay({
-      capture: async () => { r.captures++; return r.pane },
-      escape: async () => { r.escapes++; r.pane = TYPED },
-      clearLine: async () => { r.clears++; if (r.pane === TYPED) r.pane = IDLE },
-      sleep: async () => { r.slept++ },
-      openWaitMs: 200, clearWaitMs: 200, pollMs: 1,
-    })
+    const r = newRig(HELP)
+    const res = await closeHelpOverlay(deps(r, {
+      onEscape: () => { r.pane = TYPED },
+      onClear: () => { if (r.pane === TYPED) r.pane = IDLE },
+    }))
     expect(res).toEqual({ sawOverlay: true, clean: true })
     expect(r.pane).toBe(IDLE)
+    // …and the C-u did NOT ride the Escape's coat-tails. Sent back to back the
+    // terminal reads ESC+C-u as one meta chord: the Escape never fires, the
+    // overlay stays up, and the C-u is swallowed.
+    expect(r.keys.map((k) => k.key)).toEqual(["Escape", "C-u"])
+    expect(r.keys[1]!.at - r.keys[0]!.at).toBeGreaterThanOrEqual(ESC_SETTLE_MS)
   })
 
   test("a pane that never comes clean is reported, not assumed", async () => {
-    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
-    const res = await closeHelpOverlay({
-      capture: async () => { r.captures++; return r.pane },   // stuck on the overlay
-      escape: async () => { r.escapes++ },
-      clearLine: async () => { r.clears++ },
-      sleep: async () => { r.slept++; await new Promise((x) => setTimeout(x, 5)) },
-      openWaitMs: 50, clearWaitMs: 50, pollMs: 5,
-    })
+    const r = newRig(HELP)
+    const res = await closeHelpOverlay(deps(r, {
+      capture: () => r.pane,   // stuck on the overlay
+      openWaitMs: 300, clearWaitMs: 1_500,
+    }))
     expect(res.sawOverlay).toBe(true)
     expect(res.clean).toBe(false)
     // It kept trying the matching key rather than giving up after one.
     expect(r.escapes).toBeGreaterThan(1)
+    // Every retry Escape kept its own quiet window too.
+    expect(shortestGapAfterEscape(r)).toBeGreaterThanOrEqual(ESC_SETTLE_MS)
   })
 
   // G2 — the overlay was detected with helpTab(), which only matches
@@ -366,29 +412,24 @@ describe("closeHelpOverlay", () => {
   })
 
   test("a /help sitting on General is waited for, Escaped, and confirmed gone", async () => {
-    const r: Rig = { pane: TYPED, escapes: 0, clears: 0, captures: 0, slept: 0 }
-    const res = await closeHelpOverlay({
+    const r = newRig(TYPED)
+    const res = await closeHelpOverlay(deps(r, {
       // The abort beat the paint: the General tab appears on the 3rd poll.
-      capture: async () => { r.captures++; if (r.captures === 3 && !r.escapes) r.pane = GENERAL; return r.pane },
-      escape: async () => { r.escapes++; r.pane = TYPED },
-      clearLine: async () => { r.clears++; if (r.pane === TYPED) r.pane = IDLE },
-      sleep: async () => { r.slept++ },
-      openWaitMs: 2_000, clearWaitMs: 2_000, pollMs: 1,
-    })
+      capture: () => { if (r.captures === 3 && !r.escapes) r.pane = GENERAL; return r.pane },
+      onEscape: () => { r.pane = TYPED },
+      onClear: () => { if (r.pane === TYPED) r.pane = IDLE },
+    }))
     expect(res).toEqual({ sawOverlay: true, clean: true })
     expect(r.escapes).toBe(1)
   })
 
   test("a blank capture is NOT clean — no prompt line is no evidence", async () => {
-    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
-    const res = await closeHelpOverlay({
-      capture: async () => { r.captures++; return r.pane },
+    const r = newRig(HELP)
+    const res = await closeHelpOverlay(deps(r, {
       // Escape closes the overlay; the pane is then mid-repaint forever.
-      escape: async () => { r.escapes++; r.pane = BLANK },
-      clearLine: async () => { r.clears++ },
-      sleep: async () => { r.slept++; await new Promise((x) => setTimeout(x, 5)) },
-      openWaitMs: 50, clearWaitMs: 60, pollMs: 5,
-    })
+      onEscape: () => { r.pane = BLANK },
+      openWaitMs: 300, clearWaitMs: 600,
+    }))
     expect(res).toEqual({ sawOverlay: true, clean: false })
     // It polled the blank pane instead of calling the first one clean — the
     // old check only asked "is there text on the prompt line", which a missing
@@ -397,23 +438,173 @@ describe("closeHelpOverlay", () => {
   })
 
   test("repaint then prompt: the blank frames are polled through, the end is clean", async () => {
-    const r: Rig = { pane: HELP, escapes: 0, clears: 0, captures: 0, slept: 0 }
+    const r = newRig(HELP)
     let cleanAtCapture = -1
-    const res = await closeHelpOverlay({
-      capture: async () => {
-        r.captures++
-        // 1: HELP (open-wait). 2-4: blank, still repainting. 5: prompt back.
-        if (r.escapes && r.captures >= 5) r.pane = IDLE
-        return r.pane
-      },
-      escape: async () => { r.escapes++; r.pane = BLANK },
-      clearLine: async () => { r.clears++; cleanAtCapture = r.captures },
-      sleep: async () => { r.slept++ },
-      openWaitMs: 2_000, clearWaitMs: 2_000, pollMs: 1,
-    })
+    const res = await closeHelpOverlay(deps(r, {
+      // 1: HELP (open-wait). 2-4: blank, still repainting. 5: prompt back.
+      capture: () => { if (r.escapes && r.captures >= 5) r.pane = IDLE; return r.pane },
+      onEscape: () => { r.pane = BLANK },
+      onClear: () => { cleanAtCapture = r.captures },
+    }))
     expect(res).toEqual({ sawOverlay: true, clean: true })
     expect(r.captures).toBeGreaterThanOrEqual(5)
     expect(cleanAtCapture).toBeGreaterThan(0)
+  })
+
+  // ── R3 — Escape is a chord prefix, and the hand-off typed inside it ───────
+  //
+  // Post-deploy E2E, Zettlab 2026-09-18, 3/3: spawn → POST /api/command/list
+  // force → POST /api/inject "ping" at ~7s. The inject answered 200 "delivered
+  // (tmux)" and the pane showed "❯ ing" — the "p" AND the Enter gone, no
+  // UserPromptSubmit hook, and the next scrape refused with input_busy because
+  // "ing" was sitting in the box. Raw-tmux experiments on the same host found
+  // why: a byte arriving a few ms after ESC is a META CHORD (ESC p = opt+p,
+  // "switch model"; ESC C-u = an unknown chord), so the Escape does not act as
+  // Escape and the byte after it is swallowed. 100ms+ always delivered.
+  test("R3: no key is ever sent inside an Escape's chord window", async () => {
+    const r = newRig(HELP)
+    const res = await closeHelpOverlay(deps(r, {
+      // A stubborn overlay: the first Escape does nothing (it was a chord, in
+      // the world this guards against), the second closes it and leaves text.
+      onEscape: () => { r.pane = r.escapes >= 2 ? TYPED : HELP },
+      onClear: () => { if (r.pane === TYPED) r.pane = IDLE },
+    }))
+    expect(res.clean).toBe(true)
+    expect(r.escapes).toBeGreaterThan(1)
+    expect(shortestGapAfterEscape(r)).toBeGreaterThanOrEqual(ESC_SETTLE_MS)
+  })
+
+  test("R3: the clean verdict needs a quiet keyboard, not just a quiet pane", async () => {
+    const r = newRig(HELP)
+    const res = await closeHelpOverlay(deps(r, { onEscape: () => { r.pane = IDLE } }))
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    // The capture the verdict rests on was taken outside every key's window —
+    // this is the assertion the regression would have failed: the old code
+    // returned clean 10-40ms after its last Escape, endFlow released, and the
+    // inject typed into the tail of the chord.
+    const verdictAt = r.captureAt.at(-1)!
+    const lastKeyAt = r.keys.at(-1)!.at
+    expect(verdictAt - lastKeyAt).toBeGreaterThanOrEqual(ESC_SETTLE_MS)
+  })
+
+  test("R3: one good frame is not a settled pane — two, a gap apart, are", async () => {
+    const r = newRig(HELP)
+    // The pane flickers clean for exactly one capture, then the dialog is back:
+    // a repaint caught mid-flight. One capture would have released on it.
+    let cleanFrames = 0
+    const res = await closeHelpOverlay(deps(r, {
+      capture: () => {
+        if (r.escapes && cleanFrames < 1) { cleanFrames++; return IDLE }
+        return HELP
+      },
+      openWaitMs: 300, clearWaitMs: 900,
+    }))
+    expect(res.clean).toBe(false)
+  })
+
+  // R2 — the open wait was SHORTER than the paint.
+  //
+  // The route waited 1.5s for the overlay against an 1.8s paint. An abort
+  // landing at ~300ms found a pane with no overlay and — because the Enter had
+  // already submitted /help and emptied the input line — a perfectly clean
+  // prompt. It polled that, gave up, Escaped a dialog that did not exist yet,
+  // read the same clean prompt and released the flow CLEAN. The dialog painted
+  // 300ms later onto a pane nobody was holding, and the phone's next message
+  // went into the help list.
+  //
+  // Fixture throughout: Enter at t=0, abort at t=300, Claude Code paints at
+  // t=1800. Virtual clock, so the 1.8s costs the suite nothing.
+  function paintingPane(paintAt = 1_800) {
+    let t = 300
+    let state: "pending" | "open" | "closed" = "pending"
+    const r = { captures: 0, escapes: 0, clears: 0, escapedAt: -1 }
+    const advance = (ms: number): void => {
+      t += ms
+      if (state === "pending" && t >= paintAt) state = "open"
+    }
+    return {
+      r,
+      advance,
+      state: () => state,
+      deps: {
+        capture: async () => { r.captures++; return state === "open" ? GENERAL : IDLE },
+        // An Escape sent before the dialog exists hits nothing — and does not
+        // stop it from opening a moment later. That is the whole bug.
+        escape: async () => { r.escapes++; r.escapedAt = t; if (state === "open") state = "closed" },
+        clearLine: async () => { r.clears++ },   // the Enter already emptied the line
+        sleep: async (ms: number) => { advance(ms) },
+        now: () => t,
+        enterAt: 0,
+        paintMs: 1_800,
+        pollMs: 120,
+      },
+    }
+  }
+
+  test("R2: an abort inside the paint window waits the dialog out instead of calling the pane clean", async () => {
+    const f = paintingPane()
+    const res = await closeHelpOverlay({ ...f.deps, openWaitMs: HELP_CLOSE_OPEN_WAIT_MS, clearWaitMs: 1_500 })
+    expect(res).toEqual({ sawOverlay: true, clean: true })
+    // The Escape hit a dialog that had actually painted, and the pane handed
+    // over is the one that was looked at AFTER it closed.
+    expect(f.r.escapedAt).toBeGreaterThanOrEqual(1_800)
+    expect(f.state()).toBe("closed")
+  })
+
+  test("R2: an open wait that expires before the paint is UNVERIFIED, so the pane is released dirty", async () => {
+    const f = paintingPane()
+    // The old shape: give up before a dialog that paints at t=1800. The wait is
+    // sized so that even the Escape's settle does not carry us past the paint —
+    // the point of the test is the pane nobody has evidence about.
+    const res = await closeHelpOverlay({ ...f.deps, openWaitMs: 800, clearWaitMs: 200 })
+    // No overlay ever seen and the paint window never waited out: "clean" here
+    // would be an absence of evidence. clean:false → endFlow(key,{clean:false})
+    // → both inject paths answer busy_flow.
+    expect(res).toEqual({ sawOverlay: false, clean: false })
+    // And refusing was right: the dialog lands a moment after the release.
+    f.advance(300)
+    expect(f.state()).toBe("open")
+  })
+
+  test("R2: past the paint window a clean prompt is taken at its word — no extra second per close", async () => {
+    let t = 5_000
+    const r = { captures: 0, escapes: 0 }
+    const res = await closeHelpOverlay({
+      capture: async () => { r.captures++; return IDLE },
+      escape: async () => { r.escapes++ },
+      clearLine: async () => { /* nothing to clear */ },
+      sleep: async (ms: number) => { t += ms },
+      now: () => t,
+      enterAt: 0,
+      paintMs: HELP_PAINT_MS,
+      openWaitMs: HELP_CLOSE_OPEN_WAIT_MS,
+      clearWaitMs: 1_500,
+      pollMs: 120,
+    })
+    expect(res).toEqual({ sawOverlay: false, clean: true })
+    // One capture leaves the open wait immediately — the longer wait still
+    // costs nothing when the overlay is already gone. What it now costs is the
+    // chord window: the Escape's 250ms settle, the C-u's 50ms, then polls until
+    // the keyboard has been quiet for ESC_SETTLE_MS and two captures a gap
+    // apart agree. Sub-second, and it is the price of not eating the first
+    // character of the message the phone is about to send.
+    expect(r.captures).toBe(5)
+    expect(t - 5_000).toBe(660)
+    expect(t - 5_000).toBeLessThan(1_000)
+  })
+
+  test("R2/R3: the open wait outlasts the paint, and the whole close fits the abort budget", () => {
+    expect(HELP_CLOSE_OPEN_WAIT_MS).toBeGreaterThan(HELP_PAINT_MS)
+    // The route's clear wait is 1.5s; an inject aborting the scrape gives up at
+    // SCRAPE_ABORT_WAIT_MS, and must be answered before it does. The settles
+    // are part of that budget now: open wait + one Escape + one C-u + clear
+    // wait, and then yieldPane's own settle after the release.
+    const worstClose = HELP_CLOSE_OPEN_WAIT_MS + ESC_SETTLE_MS + CLEAR_SETTLE_MS + 1_500
+    expect(worstClose + ESC_SETTLE_MS).toBeLessThan(SCRAPE_ABORT_WAIT_MS)
+    // The chord floor measured on the host was 100ms; the settle has to clear
+    // it with room for a loaded box, and the confirm gap is a whole frame.
+    expect(ESC_SETTLE_MS).toBeGreaterThanOrEqual(100)
+    expect(CLEAN_CONFIRM_GAP_MS).toBeGreaterThanOrEqual(100)
   })
 })
 

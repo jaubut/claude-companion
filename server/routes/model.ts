@@ -1,4 +1,6 @@
+import { ESC_SETTLE_MS } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
+import { keyGate, runTmux } from "../lib/key-gate"
 import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -35,7 +37,10 @@ async function sendKey(pane: string, key: string): Promise<boolean> {
   const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(key)
   const args = named ? ["send-keys", "-t", pane, key] : ["send-keys", "-t", pane, "-l", key]
   try {
-    await Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited
+    // Through the shared per-pane gate (lib/key-gate.ts): /api/model/cancel's
+    // Escape holds off every other sender for its chord window, and a cancel
+    // arriving just after a phone's Escape waits its turn too.
+    await keyGate.send(pane, key, (signal) => runTmux(args, signal))
     return true
   } catch {
     return false
@@ -178,8 +183,12 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const dialog = dialogWatcher.current()[session.key]
     if (!isModelPicker(dialog)) return Response.json({ ok: true, closed: false })
     await sendKey(session.tmuxPane, "Escape")
-    // Wait for the redraw, not just for tmux to accept the key: a fixed 40ms
-    // gap reported closed:false on a cancel that had in fact worked.
+    // Escape is a meta-chord prefix (ESC_SETTLE_MS, lib/command-list.ts): the
+    // next byte inside this window is read as opt+<byte>, the Escape never
+    // fires, and the picker the caller thinks it just closed is still up. The
+    // settle also buys the redraw `settle()` is about to look for — a fixed
+    // 40ms gap once reported closed:false on a cancel that had in fact worked.
+    await sleep(ESC_SETTLE_MS)
     const after = await settle(session.key, false)
     log(`cancel on ${session.label || session.key}`)
     return Response.json({ ok: true, closed: !isModelPicker(after) })

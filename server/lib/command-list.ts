@@ -243,6 +243,66 @@ export function listIncomplete(
 // overlay AND a prompt line AND that line empty. A capture taken mid-repaint
 // shows neither an overlay nor a prompt; reading that as clean is how a pane
 // with a modal one frame away gets handed to an inject.
+//
+// R2 — "no overlay" is itself an absence of evidence until Claude Code has
+// had its paint window. The open wait was 1.5s against a 1.8s paint: an abort
+// landing at 300ms polled a pane with no overlay (the Enter had already
+// cleared the input line, so it even read as a clean prompt), gave up at 1.5s,
+// Escaped nothing, confirmed "clean", released the flow — and the dialog
+// painted 300ms later onto a pane nobody was holding. So an expired open wait
+// with no overlay seen is UNVERIFIED, not clean: it only counts once
+// `paintMs` has passed since the Enter that opened /help.
+
+// Claude Code's worst case between the Enter that submits `/help` and the
+// dialog being on the pane (measured on the Linux host, 2.1.270). The route
+// sleeps exactly this long before it starts paging.
+//
+// R4d — LOAD-BEARING ON BOTH ENDS, and they pull in opposite directions:
+//   - the route waits it out after the Enter before the first capture, so
+//     shrinking it starts the paging on a half-painted dialog (wrongTab, an
+//     empty first page, a truncated list);
+//   - the close path uses it as the proof that "no overlay on the pane" MEANS
+//     no overlay (`paintWindowPassed`) and as its early exit, so shrinking it
+//     re-opens R2 — an abort inside the paint window releases a pane the
+//     dialog lands on a moment later — while growing it costs every normal
+//     close the difference.
+// Re-measure on a real pane before touching it, and re-read both call sites.
+export const HELP_PAINT_MS = 1_800
+
+// ── Escape is a chord PREFIX, not just a key ───────────────────────────────
+//
+// Measured on the Linux host with raw tmux (Claude Code 2.1.270): a byte that
+// arrives within a few ms of an ESC is read as a META chord rather than as two
+// keystrokes. `Escape` then `p` is opt+p — "switch model", a shortcut the Help
+// page itself lists; `Escape` then `C-u` is an unknown chord. Either way the
+// Escape does NOT act as Escape and the byte that followed it is SWALLOWED.
+//
+// That is what ate the first character of an inject handed the pane by an
+// aborted scrape (post-deploy E2E, 2026-09-18, reproduced 3/3): this function
+// sent Escape and C-u back to back (a chord — the overlay stayed up), its
+// retry loop sent another Escape and captured 10-40ms later, called the pane
+// clean, `endFlow` released, and the waiting inject typed "ping"+Enter into
+// the chord window. The pane showed "❯ ing", no UserPromptSubmit hook fired,
+// and the next scrape refused with input_busy because "ing" sat in the box.
+//
+// Any gap of 100ms or more delivers correctly (tested 0.1 / 0.15 / 0.3 / 0.6s,
+// with and without a C-u in between). 250ms is that floor with room for a
+// loaded host, and it is the quiet period EVERY escape below opens: no other
+// key, and no capture that feeds the clean verdict, inside it.
+export const ESC_SETTLE_MS = 250
+// A C-u is not a chord prefix, but the pane still needs a frame to redraw
+// before a capture of it means anything.
+export const CLEAR_SETTLE_MS = 50
+// Two clean captures at least this far apart before the pane is called clean.
+// One capture can land on a single good frame while a repaint is still in
+// flight; two cannot, and 100ms is a whole frame on the slowest pane measured.
+export const CLEAN_CONFIRM_GAP_MS = 100
+// What the close path must be willing to wait for the overlay, so that not
+// seeing one MEANS there is none: the paint window plus margin for a slow
+// capture. Kept under SCRAPE_ABORT_WAIT_MS (5s) together with the clear wait,
+// so an inject aborting the scrape is refused late rather than timed out.
+export const HELP_CLOSE_OPEN_WAIT_MS = HELP_PAINT_MS + 700
+
 export interface CloseHelpDeps {
   capture: () => Promise<string | null>
   escape: () => Promise<void>
@@ -253,6 +313,19 @@ export interface CloseHelpDeps {
   // Bounded wait for the pane to come back clean after it.
   clearWaitMs?: number
   pollMs?: number
+  // When the Enter that opened /help was sent. An empty pane before
+  // `enterAt + paintMs` proves nothing — the dialog may simply not have
+  // painted yet. Defaults to "now", i.e. the whole paint window is waited out
+  // from here, which is the conservative reading.
+  enterAt?: number
+  paintMs?: number
+  now?: () => number
+  // The quiet period every Escape opens (see ESC_SETTLE_MS). Injectable so a
+  // test can assert the RULE — no key, no verdict capture, inside the window —
+  // rather than the number.
+  escSettleMs?: number
+  clearSettleMs?: number
+  cleanGapMs?: number
 }
 
 export interface CloseHelpResult {
@@ -264,29 +337,90 @@ export interface CloseHelpResult {
 
 export async function closeHelpOverlay(deps: CloseHelpDeps): Promise<CloseHelpResult> {
   const poll = deps.pollMs ?? 120
-  const openDeadline = Date.now() + (deps.openWaitMs ?? 2_000)
+  const now = deps.now ?? Date.now
+  const paintMs = deps.paintMs ?? HELP_PAINT_MS
+  const escSettleMs = deps.escSettleMs ?? ESC_SETTLE_MS
+  const clearSettleMs = deps.clearSettleMs ?? CLEAR_SETTLE_MS
+  const cleanGapMs = deps.cleanGapMs ?? CLEAN_CONFIRM_GAP_MS
+  const enterAt = deps.enterAt ?? now()
+  const openDeadline = now() + (deps.openWaitMs ?? HELP_CLOSE_OPEN_WAIT_MS)
   let sawOverlay = false
+  // When the last key went out. Everything downstream — the next key, and the
+  // capture the clean verdict rests on — has to be at least `escSettleMs`
+  // after it, or it lands inside Claude Code's meta-chord window.
+  let lastKeyAt = Number.NEGATIVE_INFINITY
+  const quiet = (): boolean => now() - lastKeyAt >= escSettleMs
+  // Every Escape in this function goes through here, so the settle cannot be
+  // forgotten on the retry path the way it was on the first cut.
+  const escape = async (): Promise<void> => {
+    await deps.escape()
+    lastKeyAt = now()
+    await deps.sleep(escSettleMs)
+  }
+  const clearLine = async (): Promise<void> => {
+    await deps.clearLine()
+    lastKeyAt = now()
+    await deps.sleep(clearSettleMs)
+  }
+  // An empty pane is only believable once the dialog has had its window to
+  // paint from the Enter that asked for it.
+  const paintWindowPassed = (): boolean => now() - enterAt >= paintMs
   for (;;) {
     const text = await deps.capture()
     if (text !== null && helpOverlayVisible(text)) { sawOverlay = true; break }
-    if (Date.now() >= openDeadline) break
+    // Past the paint window with a prompt sitting there: nothing is coming.
+    // Leaving early here is what keeps the longer open wait from costing a
+    // second on every normal close.
+    if (text !== null && isPaneClean(text) && paintWindowPassed()) break
+    if (now() >= openDeadline) break
     await deps.sleep(poll)
   }
 
-  await deps.escape()
-  await deps.clearLine()
+  // Escape closes the overlay; C-u kills whatever text it left on the line.
+  // They are two keystrokes with a quiet period between them, NOT a pair: sent
+  // back to back the terminal reads ESC+C-u as one meta chord, the Escape
+  // never fires, and the overlay is still up when the flow releases.
+  await escape()
+  await clearLine()
 
-  const clearDeadline = Date.now() + (deps.clearWaitMs ?? 2_000)
+  const clearDeadline = now() + (deps.clearWaitMs ?? 2_000)
+  // When the first of the two confirming captures was taken. Reset by anything
+  // that is not a quiet, clean pane.
+  let firstCleanAt: number | null = null
   for (;;) {
     const text = await deps.capture()
-    if (text !== null && isPaneClean(text)) return { sawOverlay, clean: true }
-    if (Date.now() >= clearDeadline) return { sawOverlay, clean: false }
+    // An overlay that shows up late is still an overlay we saw: it turns the
+    // guess into evidence, and it gets Escaped below like any other.
+    if (text !== null && helpOverlayVisible(text)) sawOverlay = true
+    const looksClean = text !== null && isPaneClean(text)
+    // `clean` needs the pane AND the proof: a clean-looking pane inside the
+    // paint window, with no overlay ever seen, is the race — report it dirty
+    // (the flow is released `clean:false`, both inject paths answer
+    // `busy_flow`) rather than hand over a pane a modal is about to land on.
+    //
+    // …and the pane has to have been QUIET for the whole chord window. A
+    // capture taken 10-40ms after an Escape described a pane that was still
+    // inside opt-chord territory: the verdict was right about the pixels and
+    // wrong about the keyboard, and the inject that acted on it lost its first
+    // character.
+    const believable = looksClean && (sawOverlay || paintWindowPassed()) && quiet()
+    if (believable) {
+      // One good frame is not a settled pane. Two, `cleanGapMs` apart, with no
+      // key sent between them, is.
+      if (firstCleanAt === null) firstCleanAt = now()
+      else if (now() - firstCleanAt >= cleanGapMs) return { sawOverlay, clean: true }
+    } else if (!looksClean) {
+      firstCleanAt = null
+    }
+    if (now() >= clearDeadline) return { sawOverlay, clean: false }
     await deps.sleep(poll)
     // Whatever is still there gets the matching key again: an overlay that
     // outlived the first Escape, or text C-u did not reach. A capture that
     // showed neither (a repaint) gets the harmless one and is polled again.
-    if (text !== null && helpOverlayVisible(text)) await deps.escape()
-    else await deps.clearLine()
+    // A pane that already looks clean gets NOTHING — the second confirming
+    // capture has to see a keyboard nobody has touched.
+    if (text !== null && helpOverlayVisible(text)) await escape()
+    else if (!looksClean) await clearLine()
   }
 }
 

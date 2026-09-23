@@ -5,6 +5,8 @@
 // (iTerm or macOS Terminal, matched by tty) so multi-session users can pick
 // which instance their reply lands in.
 
+import { KeyGateTimeout, keyGate } from "./key-gate"
+
 export interface InjectTarget {
   tty?: string
   termProgram?: string
@@ -336,23 +338,61 @@ function withInjectLock<T>(fn: () => Promise<T>): Promise<T> {
   return next
 }
 
-export async function injectText(text: string, target?: InjectTarget): Promise<boolean> {
-  return withInjectLock(() => injectTextLocked(text, target))
+// An inject's key-gate turn must START within INJECT_QUEUE_MS of the call or
+// it is refused, never typed late (Codex round 3: a wedged sender held it, and
+// the global lock, forever); once started it is bounded by INJECT_SEND_MS.
+export const INJECT_QUEUE_MS = 2_000
+export const INJECT_SEND_MS = 4_000
+
+// Tests only: an absolute start deadline (Date.now clock) and a fake sender.
+export interface InjectOpts { deadline?: number; sendKeys?: TmuxSender }
+
+export async function injectText(text: string, target?: InjectTarget, opts: InjectOpts = {}): Promise<boolean> {
+  const deadline = opts.deadline ?? Date.now() + INJECT_QUEUE_MS
+  const sendKeys = opts.sendKeys ?? tmuxSendKeys
+  // A tmux pane is addressed explicitly and serialised per pane by the key
+  // gate: no global lock (that is for the AppleScript focus race), so one
+  // wedged pane cannot stall injects into every other session.
+  if (target?.tmuxPane) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const green = "\x1b[32m"
+    const result = await deliverViaTmux(target.tmuxPane, text, sendKeys, deadline)
+    if (result.ok) {
+      process.stderr.write(`${dim}[companion]${reset} ${green}delivered (tmux)${reset} → ${target.tmuxPane}\n`)
+      return true
+    }
+    // tmux failed (stale pane, no tmux, timed out, queue wedged past the
+    // deadline). Fall back to AppleScript only with a tty (targeted,
+    // focus-safe); without one the only fallback is a frontmost paste — refuse.
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}tmux send-keys failed${reset} pane=${target.tmuxPane} — ${result.reason}\n`)
+    if (!target.tty) {
+      process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — no tty fallback for pane ${target.tmuxPane}\n`)
+      return false
+    }
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}retrying via osascript${reset} → ${target.tty}\n`)
+    const { tmuxPane: _dropped, ...rest } = target
+    return withInjectLock(() => injectTextLocked(text, rest, deadline, sendKeys))
+  }
+  return withInjectLock(() => injectTextLocked(text, target, deadline, sendKeys))
 }
 
 // $TMUX_PANE is always "%N" (pane id). Reject anything else — stale targets,
 // session names, or accidentally-shell-quoted strings — before we spawn tmux.
 const TMUX_PANE_RE = /^%\d+$/
 
-interface TmuxResult {
+export interface TmuxResult {
   ok: boolean
   reason: string
 }
 
-async function tmuxSendKeys(args: readonly string[], timeoutMs: number): Promise<TmuxResult> {
+type TmuxSender = (args: readonly string[], timeoutMs: number, signal?: AbortSignal) => Promise<TmuxResult>
+async function tmuxSendKeys(args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<TmuxResult> {
   try {
     const proc = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "pipe" })
-    const timer = setTimeout(() => { try { proc.kill() } catch { /* already exited */ } }, timeoutMs)
+    // Killed on its own timeout AND when the key gate aborts the turn.
+    const kill = () => { try { proc.kill() } catch { /* already exited */ } }
+    const timer = setTimeout(kill, timeoutMs)
+    if (signal?.aborted) kill()
+    signal?.addEventListener("abort", kill, { once: true })
     try {
       const stderr = (await new Response(proc.stderr).text()).trim()
       await proc.exited
@@ -361,6 +401,7 @@ async function tmuxSendKeys(args: readonly string[], timeoutMs: number): Promise
       return { ok: false, reason: stderr || `exit ${code}` }
     } finally {
       clearTimeout(timer)
+      signal?.removeEventListener("abort", kill)
     }
   } catch (err) {
     return { ok: false, reason: String(err) }
@@ -390,47 +431,42 @@ async function resolveTmuxPaneFromTty(tty: string): Promise<string | null> {
   }
 }
 
-async function deliverViaTmux(paneId: string, text: string): Promise<TmuxResult> {
+// Exported with an injectable sender for the tests only.
+export async function deliverViaTmux(
+  paneId: string,
+  text: string,
+  sendKeys: TmuxSender = tmuxSendKeys,
+  deadline: number = Date.now() + INJECT_QUEUE_MS,
+): Promise<TmuxResult> {
   // Two send-keys calls — first with `-l` (literal) so the text is typed
   // exactly as-is regardless of contents, second to send Enter as a real
   // key event. tmux holds the pty master, so the Enter byte sequence
   // arrives as a key event that Ink's onSubmit fires on (a raw \n in
   // stdin does not — see claude-code issue #15553).
+  // Both run as ONE turn of the per-pane key gate (lib/key-gate.ts): the text
+  // waits out any open Escape window ("do both" arrived as "o both"), nothing
+  // lands between text and Enter, the turn must START by `deadline` (else it
+  // is cancelled, never typed late) and is bounded by INJECT_SEND_MS.
   if (!TMUX_PANE_RE.test(paneId)) return { ok: false, reason: `invalid pane id "${paneId}"` }
-  const literal = await tmuxSendKeys(["send-keys", "-t", paneId, "-l", text], 2000)
-  if (!literal.ok) return { ok: false, reason: `send-keys -l: ${literal.reason}` }
-  const enter = await tmuxSendKeys(["send-keys", "-t", paneId, "Enter"], 2000)
-  if (!enter.ok) return { ok: false, reason: `send-keys Enter: ${enter.reason}` }
-  return { ok: true, reason: "" }
+  try {
+    return await keyGate.send(paneId, "Enter", async (signal): Promise<TmuxResult> => {
+      const literal = await sendKeys(["send-keys", "-t", paneId, "-l", text], 2000, signal)
+      if (!literal.ok) return { ok: false, reason: `send-keys -l: ${literal.reason}` }
+      if (signal.aborted) return { ok: false, reason: "send-keys -l: timed out" }
+      const enter = await sendKeys(["send-keys", "-t", paneId, "Enter"], 2000, signal)
+      if (!enter.ok) return { ok: false, reason: `send-keys Enter: ${enter.reason}` }
+      return { ok: true, reason: "" }
+    }, { startBy: deadline, timeoutMs: INJECT_SEND_MS })
+  } catch (err) {
+    return { ok: false, reason: err instanceof KeyGateTimeout ? `key gate: ${err.message}` : String(err) }
+  }
 }
 
-async function injectTextLocked(text: string, target?: InjectTarget): Promise<boolean> {
+async function injectTextLocked(text: string, target: InjectTarget | undefined, deadline: number, sendKeys: TmuxSender): Promise<boolean> {
   const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"; const green = "\x1b[32m"
   try {
-    // Preferred path: tmux send-keys when the target is inside a tmux
-    // pane. This bypasses AppleScript entirely — no focus race, no
-    // window-raise dance, no swap bug regardless of how many sessions
-    // are open or which Mac window is frontmost.
-    if (target?.tmuxPane) {
-      const result = await deliverViaTmux(target.tmuxPane, text)
-      if (result.ok) {
-        process.stderr.write(`${dim}[companion]${reset} ${green}delivered (tmux)${reset} → ${target.tmuxPane}\n`)
-        return true
-      }
-      // tmux failed — pane id stale, tmux not installed, session exited,
-      // or send-keys timed out. Fall through to AppleScript only if we
-      // also have a tty (the targeted, focus-safe path). Without a tty
-      // the only fallback would be the untargeted clipboard paste into
-      // whatever is frontmost — refuse loudly instead.
-      process.stderr.write(`${dim}[companion]${reset} ${yellow}tmux send-keys failed${reset} pane=${target.tmuxPane} — ${result.reason}\n`)
-      if (!target.tty) {
-        process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — no tty fallback for pane ${target.tmuxPane}\n`)
-        return false
-      }
-      process.stderr.write(`${dim}[companion]${reset} ${yellow}retrying via osascript${reset} → ${target.tty}\n`)
-    }
-    // Targeted path: deliver directly to the tab's pty. Doesn't steal focus,
-    // doesn't touch the clipboard, doesn't race with the window manager.
+    // (A target with a tmux pane was handled in injectText, outside the lock.)
+    // Targeted path: the tab's pty. No focus steal, clipboard, or WM race.
     if (target?.tty) {
       // Linux path: tty but no tmuxPane (hook race during server-spawn or
       // bare-pts session). tmux knows the pty→pane mapping — resolve via
@@ -442,7 +478,7 @@ async function injectTextLocked(text: string, target?: InjectTarget): Promise<bo
       if (process.platform === "linux") {
         const pane = await resolveTmuxPaneFromTty(target.tty)
         if (pane) {
-          const result = await deliverViaTmux(pane, text)
+          const result = await deliverViaTmux(pane, text, sendKeys, deadline)
           if (result.ok) {
             process.stderr.write(`${dim}[companion]${reset} ${green}delivered (tmux)${reset} → ${pane} (resolved from ${target.tty})\n`)
             return true

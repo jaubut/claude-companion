@@ -1,6 +1,10 @@
+import { ESC_SETTLE_MS } from "../lib/command-list"
 import { pickKeys } from "../lib/dialogs"
+import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 // Dialog mirror routes: keys and row picks from the phone into an open
 // Claude Code dialog (see wiring/dialogs.ts for the watcher).
@@ -20,10 +24,20 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     if (!named && [...name].length !== 1) return Response.json({ ok: false, error: "name must be a key name or one character" }, { status: 400 })
     const args = named ? ["send-keys", "-t", session.tmuxPane, name] : ["send-keys", "-t", session.tmuxPane, "-l", name]
     try {
-      await Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited
+      // Through the shared per-pane gate (lib/key-gate.ts). Escape is a
+      // meta-chord PREFIX (ESC_SETTLE_MS, lib/command-list.ts): a key arriving
+      // within a few ms of it is read as opt+<key> and swallowed. Holding this
+      // response only serialised one client's taps; the gate spaces EVERY
+      // sender on the pane — a second phone, /api/model/cancel, the /help
+      // close path — behind the Escape's window.
+      await keyGate.send(session.tmuxPane, name, (signal) => runTmux(args, signal))
     } catch {
       return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
     }
+    // Still hold the response over the window. Every tmux sender waits on the
+    // gate now, injects included; this covers the one that cannot — an inject
+    // with no tmux pane, typed through osascript on the Mac.
+    if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     process.stderr.write(`${dim}[companion]${reset} ${cyan}dialog key${reset} ${name} → ${session.tmuxPane}\n`)
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)
@@ -43,7 +57,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     if (!keys) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
     try {
       for (const k of keys) {
-        await Bun.spawn(["tmux", "send-keys", "-t", session.tmuxPane, k], { stdout: "ignore", stderr: "ignore" }).exited
+        await keyGate.send(session.tmuxPane, k, (signal) => runTmux(["send-keys", "-t", session.tmuxPane!, k], signal))
         await new Promise((r) => setTimeout(r, 40))
       }
     } catch {

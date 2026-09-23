@@ -2,11 +2,20 @@
 // Used by the dialog watcher (mirror what's on screen) and the orchestrator
 // wiring (don't type into a worker until its input box is up).
 
-export async function capturePane(sessionName: string): Promise<string | null> {
+// `signal` (optional) kills the capture: a stalled tmux must not hold up a
+// caller that has a deadline (command-scrape's dirty-pane verification).
+export async function capturePane(sessionName: string, signal?: AbortSignal): Promise<string | null> {
   try {
     const p = Bun.spawn(["tmux", "capture-pane", "-t", sessionName, "-p"], { stdout: "pipe", stderr: "ignore" })
-    const out = await new Response(p.stdout).text()
-    return (await p.exited) === 0 ? out : null
+    const kill = () => { try { p.kill() } catch { /* already gone */ } }
+    if (signal?.aborted) kill()
+    signal?.addEventListener("abort", kill, { once: true })
+    try {
+      const out = await new Response(p.stdout).text()
+      return (await p.exited) === 0 && !signal?.aborted ? out : null
+    } finally {
+      signal?.removeEventListener("abort", kill)
+    }
   } catch {
     return null
   }
