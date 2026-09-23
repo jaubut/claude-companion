@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test"
 import { ESC_SETTLE_MS } from "./command-list"
-import { createKeyGate, keyGate, opensChordWindow } from "./key-gate"
+import { createKeyGate, KeyGateTimeout, keyGate, opensChordWindow } from "./key-gate"
 
 // A virtual clock: sleep advances it, so spacing is asserted on timestamps
 // without the suite waiting 250ms per case.
@@ -123,4 +123,62 @@ test("cleanup: forget() drops a retired pane", async () => {
   gate.forget("%9")
   expect(gate.size()).toEqual({ windows: 0, queues: 0 })
   expect(gate.remainingMs("%9")).toBe(0)
+})
+
+// ── Codex HIGH round 3: a stalled sender must never wedge the pane ─────────
+const never = <T>() => new Promise<T>(() => {})
+
+test("deadline: a sender that never resolves does not block the next sender past the deadline", async () => {
+  const logs: string[] = []
+  const gate = createKeyGate({ sendTimeoutMs: 50, log: (l) => logs.push(l) })
+  let abortedSignal = false
+  const t0 = performance.now()
+  const wedged = gate.send("%1", "Down", (signal) => {
+    signal.addEventListener("abort", () => { abortedSignal = true })  // runTmux kills tmux here
+    return never<void>()
+  })
+  let nextAt = 0
+  const next = gate.send("%1", "Enter", async () => { nextAt = performance.now() })
+  await expect(wedged).rejects.toBeInstanceOf(KeyGateTimeout)
+  await next
+  expect(nextAt - t0).toBeGreaterThanOrEqual(45)
+  expect(nextAt - t0).toBeLessThan(500)
+  expect(abortedSignal).toBe(true)
+  // Logged once, for the send that timed out, not once per waiter.
+  expect(logs.length).toBe(1)
+  expect(logs[0]).toContain("timed out")
+})
+
+test("deadline: a wedged Escape still opens its chord window for the next sender", async () => {
+  const gate = createKeyGate({ sendTimeoutMs: 20, log: () => {} })
+  const wedged = gate.send("%1", "Escape", () => never<void>())
+  await expect(wedged).rejects.toBeInstanceOf(KeyGateTimeout)
+  expect(gate.remainingMs("%1")).toBeGreaterThan(0)
+})
+
+test("startBy: a queued send past its deadline is rejected and NEVER runs; the queue continues", async () => {
+  const gate = createKeyGate({ sendTimeoutMs: 150, log: () => {} })
+  const wedged = gate.send("%1", "Down", () => never<void>())
+  let lateRan = false
+  const t0 = performance.now()
+  const late = gate.send("%1", "Enter", async () => { lateRan = true }, { startBy: Date.now() + 30 })
+  await expect(late).rejects.toBeInstanceOf(KeyGateTimeout)
+  // Rejected at its own deadline, not when the wedged sender timed out.
+  expect(performance.now() - t0).toBeLessThan(120)
+  let afterRan = false
+  const after = gate.send("%1", "Up", async () => { afterRan = true })
+  await expect(wedged).rejects.toBeInstanceOf(KeyGateTimeout)
+  await after
+  expect(afterRan).toBe(true)
+  // The cancelled turn did not type late into the pane.
+  expect(lateRan).toBe(false)
+})
+
+test("startBy: a deadline that an open Escape window would overrun is refused up front", async () => {
+  const gate = createKeyGate({ settleMs: 200, log: () => {} })
+  await gate.send("%1", "Escape", async () => {})
+  let ran = false
+  const late = gate.send("%1", "x", async () => { ran = true }, { startBy: Date.now() + 20 })
+  await expect(late).rejects.toBeInstanceOf(KeyGateTimeout)
+  expect(ran).toBe(false)
 })

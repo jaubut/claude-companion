@@ -85,16 +85,18 @@ dialogWatcher.start()
 // and typed into the overlay the previous inject had just been refused for.
 // Now the mark survives, and the only thing that clears it is the capture
 // below saying the pane really is back to an empty prompt.
-async function paneLooksClean(target: { key: string; tmuxPane?: string }): Promise<boolean> {
+// Bounded by the caller (VERIFY_TIMEOUT_MS in lib/command-scrape.ts): on
+// abort the capture is killed and the answer is "not clean" — the mark stays.
+async function paneLooksClean(target: { key: string; tmuxPane?: string }, signal: AbortSignal): Promise<boolean> {
   // Refresh first: the watcher skipped this session for the whole scrape, so
   // its map is stale by construction, and if what is left on the pane IS a
   // modal this publishes it — the phone gets the card, the inject path gets a
   // real `dialog_open` refusal, and the user can Escape it from the phone
   // instead of waiting on a mark to expire.
   await dialogWatcher.refresh(target.key)
-  if (!target.tmuxPane) return false
-  const text = await capturePane(target.tmuxPane)
-  return text !== null && isPaneClean(text)
+  if (!target.tmuxPane || signal.aborted) return false
+  const text = await capturePane(target.tmuxPane, signal)
+  return text !== null && !signal.aborted && isPaneClean(text)
 }
 
 export async function yieldPaneForInject(
@@ -106,7 +108,7 @@ export async function yieldPaneForInject(
   // this pane (lib/key-gate.ts). The delivery itself goes through the same
   // gate; this keeps the verdict honest, so freed never means "free, but a
   // chord window is still open".
-  const { held, freed } = await yieldPane(target.key, { pane: target.tmuxPane, verify: () => paneLooksClean(target) })
+  const { held, freed } = await yieldPane(target.key, { pane: target.tmuxPane, verify: (signal) => paneLooksClean(target, signal) })
   if (held === "list") {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     const what = wasDirty ? "command scrape residue" : "command scrape aborted"

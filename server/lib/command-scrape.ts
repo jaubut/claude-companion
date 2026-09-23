@@ -220,7 +220,11 @@ export interface PaneYield {
 export interface YieldOpts {
   abortMs?: number
   waitMs?: number
-  verify?: () => Promise<boolean>
+  // Gets an AbortSignal that fires at the verify deadline: pass it to the
+  // capture so a stalled tmux is killed, not orphaned.
+  verify?: (signal: AbortSignal) => Promise<boolean>
+  // Tests only; production uses VERIFY_TIMEOUT_MS.
+  verifyTimeoutMs?: number
   // The tmux pane behind `key`. With it, the hand-over also waits out any
   // Escape window still open on that pane in the shared key gate — an Escape
   // from /api/dialog/key or /api/model/cancel, not only our own close path.
@@ -230,6 +234,27 @@ export interface YieldOpts {
   settleMs?: number
   sleep?: (ms: number) => Promise<void>
   gate?: Pick<KeyGate, "earliestNextSend">
+}
+
+// How long the dirty-pane verification (watcher refresh + capture) may take.
+// Past it the pane counts as NOT verified: the mark stays and the inject gets
+// `busy_flow` (Codex MEDIUM round 3: a stalled capture hung the retry, and
+// `abortMs` does not cover this path).
+export const VERIFY_TIMEOUT_MS = 2_000
+
+// A bounded look at the pane. False on timeout or on a throw — fail safe.
+async function verifyBounded(opts: YieldOpts): Promise<boolean> {
+  if (!opts.verify) return false
+  const ac = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => { ac.abort(); resolve(false) }, opts.verifyTimeoutMs ?? VERIFY_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([opts.verify(ac.signal).catch(() => false), expired])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // How many times the hand-over re-waits a window that keeps re-opening
@@ -280,13 +305,20 @@ async function settleWindows(key: string, opts: YieldOpts, waited: Waited): Prom
   return claimedBy(key) ?? { held: null, freed: false }
 }
 
+// RULE (Codex HIGH rounds 1-3): no result computed before an `await` is
+// returned after it. Every return that follows an await goes through
+// `recheck`, which reads ownership in the same synchronous step as the return.
+// Each await is a turn of the event loop in which the route can beginFlow.
 export async function yieldPane(key: string, opts: YieldOpts = {}): Promise<PaneYield> {
   const held = flows.get(key)?.kind ?? null
-  if (!held) return yieldDirty(key, opts)
+  if (!held) {
+    const r = await yieldDirty(key, opts)
+    return recheck(key, r)
+  }
   const ok = held === "list"
     ? await abortScrape(key, opts.abortMs ?? SCRAPE_ABORT_WAIT_MS)
     : await waitForFlow(key, opts.waitMs ?? SUGGEST_WAIT_MS)
-  if (!ok) return { held, freed: false }
+  if (!ok) return recheck(key, { held, freed: false })
   // The flow let go and said the pane is clean. That is a statement about ITS
   // OWN work (R4a): a suggest probe releases clean-by-default (a C-u and no
   // opinion), so an inject parked on a probe that started over a dirty pane
@@ -297,9 +329,7 @@ export async function yieldPane(key: string, opts: YieldOpts = {}): Promise<Pane
   // between its last check and this line. `freed` is recomputed from what is
   // true NOW, never carried over (Codex HIGH round 2: {held:"suggest",
   // freed:true} while a probe owned the pane).
-  const now = claimedBy(key)
-  if (now) return now
-  return { held, freed: verified.freed }
+  return recheck(key, { held, freed: verified.freed })
 }
 
 // Someone claimed the pane while we were awaiting. Every await in the hand-off
@@ -312,6 +342,11 @@ function claimedBy(key: string): PaneYield | null {
   return holder ? { held: holder.kind, freed: false } : null
 }
 
+// The result to return NOW: a flow that owns the pane at this instant wins.
+function recheck(key: string, r: PaneYield): PaneYield {
+  return claimedBy(key) ?? r
+}
+
 // Nobody held the pane when we asked (or the holder just let go). Free, unless
 // the last flow said otherwise and nothing has looked at the pane since.
 //
@@ -322,13 +357,13 @@ async function yieldDirty(key: string, opts: YieldOpts): Promise<PaneYield> {
   // asks, and its last key may have been an Escape a few ms ago.
   const waited: Waited = { until: Number.NEGATIVE_INFINITY }
   const early = await settleWindows(key, opts, waited)
-  if (early) return early
+  if (early) return recheck(key, early)
 
   // `held` on success: the flow whose mark we cleared, if we cleared one.
   let heldKind: PaneFlow | null = null
   const mark = dirty.get(key)
   if (mark) {
-    const clean = opts.verify ? await opts.verify().catch(() => false) : false
+    const clean = await verifyBounded(opts)
     // (2) R4c — `verify()` is a real capture against a real pane: it takes
     // time, and the world moves under it. A scrape that began while we were
     // looking holds the keyboard now, and our verdict describes a screen from
@@ -338,9 +373,9 @@ async function yieldDirty(key: string, opts: YieldOpts): Promise<PaneYield> {
     const after = dirty.get(key)
     // A DIFFERENT mark — a flow ran and released dirty while we looked. Our
     // capture says nothing about what it left behind.
-    if (after && after.seq !== mark.seq) return { held: after.kind, freed: false }
+    if (after && after.seq !== mark.seq) return recheck(key, { held: after.kind, freed: false })
     if (after) {
-      if (!clean) return { held: mark.kind, freed: false }
+      if (!clean) return recheck(key, { held: mark.kind, freed: false })
       dirty.delete(key)
       heldKind = mark.kind
     }
@@ -352,10 +387,10 @@ async function yieldDirty(key: string, opts: YieldOpts): Promise<PaneYield> {
   // Escape; a phone may have sent one) opened a new window. Settle it and
   // look at ownership one last time before saying yes.
   const last = await settleWindows(key, opts, waited)
-  if (last) return last
+  if (last) return recheck(key, last)
   const remarked = dirty.get(key)
-  if (remarked) return { held: remarked.kind, freed: false }
-  return { held: heldKind, freed: true }
+  if (remarked) return recheck(key, { held: remarked.kind, freed: false })
+  return recheck(key, { held: heldKind, freed: true })
 }
 
 // Tests only: drop every claim, and every memory of a bad hand-off.

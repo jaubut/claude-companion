@@ -1,6 +1,6 @@
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import { pickKeys } from "../lib/dialogs"
-import { keyGate, opensChordWindow } from "../lib/key-gate"
+import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
 
@@ -30,12 +30,13 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
       // response only serialised one client's taps; the gate spaces EVERY
       // sender on the pane — a second phone, /api/model/cancel, the /help
       // close path — behind the Escape's window.
-      await keyGate.send(session.tmuxPane, name, () => Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited)
+      await keyGate.send(session.tmuxPane, name, (signal) => runTmux(args, signal))
     } catch {
       return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
     }
-    // Still hold the response over the window: the phone's next action may be
-    // an inject, which types through its own path, not through the gate.
+    // Still hold the response over the window. Every tmux sender waits on the
+    // gate now, injects included; this covers the one that cannot — an inject
+    // with no tmux pane, typed through osascript on the Mac.
     if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     process.stderr.write(`${dim}[companion]${reset} ${cyan}dialog key${reset} ${name} → ${session.tmuxPane}\n`)
@@ -56,7 +57,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     if (!keys) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
     try {
       for (const k of keys) {
-        await keyGate.send(session.tmuxPane, k, () => Bun.spawn(["tmux", "send-keys", "-t", session.tmuxPane!, k], { stdout: "ignore", stderr: "ignore" }).exited)
+        await keyGate.send(session.tmuxPane, k, (signal) => runTmux(["send-keys", "-t", session.tmuxPane!, k], signal))
         await new Promise((r) => setTimeout(r, 40))
       }
     } catch {

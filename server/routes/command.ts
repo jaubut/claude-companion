@@ -4,7 +4,7 @@ import {
   type HelpTab, listIncomplete, scrapeHelpTab,
 } from "../lib/command-list"
 import { beginFlow, endFlow, scrapeAbortRequested } from "../lib/command-scrape"
-import { keyGate } from "../lib/key-gate"
+import { keyGate, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -67,21 +67,22 @@ async function sleepUnlessAborted(ms: number, aborted: () => boolean): Promise<b
   return !aborted()
 }
 
-async function tmux(args: string[]): Promise<boolean> {
+// Every key and every literal goes through the shared per-pane gate
+// (lib/key-gate.ts): the /help close path's Escape and C-u included, so a
+// phone's /api/dialog/key cannot land inside their chord window, and nothing
+// here can land inside one of the phone's. A send that wedges is killed at the
+// gate's deadline and reads as a failed send (false), never a stuck scrape.
+async function gatedSend(pane: string, key: string, args: string[]): Promise<boolean> {
   try {
-    await Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited
+    await keyGate.send(pane, key, (signal) => runTmux(args, signal))
     return true
   } catch {
     return false
   }
 }
 
-// Every key and every literal goes through the shared per-pane gate
-// (lib/key-gate.ts): the /help close path's Escape and C-u included, so a
-// phone's /api/dialog/key cannot land inside their chord window, and nothing
-// here can land inside one of the phone's.
-const sendKey = (pane: string, key: string) => keyGate.send(pane, key, () => tmux(["send-keys", "-t", pane, key]))
-const sendLiteral = (pane: string, text: string) => keyGate.send(pane, text, () => tmux(["send-keys", "-t", pane, "-l", text]))
+const sendKey = (pane: string, key: string) => gatedSend(pane, key, ["send-keys", "-t", pane, key])
+const sendLiteral = (pane: string, text: string) => gatedSend(pane, text, ["send-keys", "-t", pane, "-l", text])
 
 export async function handleCommandRoute(req: Request, url: URL): Promise<Response | null> {
   // ── Suggestions for a slash prefix ──

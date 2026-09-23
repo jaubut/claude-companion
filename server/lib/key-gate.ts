@@ -19,21 +19,55 @@
 // Other keys add no cooldown: only Escape opens a chord window, and the
 // dialog arrows would crawl if every key cost 250ms.
 //
+// A queue must never wedge (Codex HIGH round 3): a tmux that hangs inside one
+// send used to block every later send on that pane forever. So every turn
+// runs under a deadline (SEND_TIMEOUT_MS). On expiry the callback's
+// AbortSignal fires (runTmux kills its subprocess on it), the send rejects
+// with KeyGateTimeout, one line is logged, and the next sender proceeds.
+// A caller that must answer by a fixed time (an inject) passes `startBy`:
+// if its turn has not STARTED by then it is rejected, and its queued turn is
+// cancelled — it will not type late into a pane the caller already gave up on.
+//
 // Module state on purpose, like command-scrape's flow map: a per-process fact
 // about a pane that every consumer must see the same way.
 
 import { ESC_SETTLE_MS } from "./command-list"
 
+// How long one turn (normally a single send-keys) may hold a pane's queue.
+// A healthy send-keys returns in a few ms; this is only for a wedged tmux.
+export const SEND_TIMEOUT_MS = 3_000
+
+export class KeyGateTimeout extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "KeyGateTimeout"
+  }
+}
+
 export interface KeyGateDeps {
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   settleMs?: number
+  sendTimeoutMs?: number
+  log?: (line: string) => void
+}
+
+export interface SendOpts {
+  // Per-turn deadline override, ms (default SEND_TIMEOUT_MS).
+  timeoutMs?: number
+  // Absolute time (gate clock) by which this turn must have STARTED. Past it,
+  // the send rejects with KeyGateTimeout and never runs. Once started, the
+  // turn is bounded by timeoutMs, so the caller's worst case is
+  // startBy + timeoutMs.
+  startBy?: number
 }
 
 export interface KeyGate {
   // Run `doSend` (one tmux send-keys) when it is this pane's turn. `key` is
   // what is being sent, used only to decide whether it opens a chord window.
-  send<T>(pane: string, key: string, doSend: () => Promise<T>): Promise<T>
+  // `doSend` gets an AbortSignal that fires when its deadline passes; pass it
+  // to runTmux so a hung subprocess is killed rather than orphaned.
+  send<T>(pane: string, key: string, doSend: (signal: AbortSignal) => Promise<T>, opts?: SendOpts): Promise<T>
   // Earliest time the next key may go to this pane (0 = now).
   earliestNextSend(pane: string): number
   // How long until that is (0 when no window is open). Read by
@@ -58,6 +92,8 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
   const now = deps.now ?? Date.now
   const sleep = deps.sleep ?? realSleep
   const settleMs = deps.settleMs ?? ESC_SETTLE_MS
+  const sendTimeoutMs = deps.sendTimeoutMs ?? SEND_TIMEOUT_MS
+  const log = deps.log ?? ((line: string) => { process.stderr.write(`${line}\n`) })
   const earliest = new Map<string, number>()
   const tails = new Map<string, Promise<void>>()
 
@@ -80,24 +116,63 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
     return Math.max(0, left)
   }
 
-  function send<T>(pane: string, key: string, doSend: () => Promise<T>): Promise<T> {
-    const prev = tails.get(pane) ?? Promise.resolve()
-    const run = prev.then(async () => {
-      const wait = remainingMs(pane)
-      if (wait > 0) await sleep(wait)
-      try {
-        return await doSend()
-      } finally {
-        // Set even when the send threw: the Escape may well have reached the
-        // pane before tmux reported the failure.
-        if (opensChordWindow(key)) openWindow(pane, now() + settleMs)
-      }
+  // Run one turn under its deadline. The race lets the queue move on even if
+  // `doSend` never settles; the abort tells it to stop (and kill tmux).
+  async function runBounded<T>(pane: string, key: string, doSend: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+    const ac = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        ac.abort()
+        log(`[companion] key gate: send "${key}" to ${pane} timed out after ${timeoutMs}ms — skipped, queue continues`)
+        reject(new KeyGateTimeout(`send to ${pane} timed out after ${timeoutMs}ms`))
+      }, Math.max(0, timeoutMs))
     })
-    const tail = run.then(() => undefined, () => undefined)
+    try {
+      return await Promise.race([doSend(ac.signal), expired])
+    } finally {
+      clearTimeout(timer)
+      // Set even when the send threw or timed out: the Escape may well have
+      // reached the pane before tmux reported the failure.
+      if (opensChordWindow(key)) openWindow(pane, now() + settleMs)
+    }
+  }
+
+  function send<T>(pane: string, key: string, doSend: (signal: AbortSignal) => Promise<T>, opts: SendOpts = {}): Promise<T> {
+    const prev = tails.get(pane) ?? Promise.resolve()
+    const startBy = opts.startBy
+    let cancelled = false
+    let started = false
+    const tooLate = () => new KeyGateTimeout(`no turn on ${pane} before the caller's deadline`)
+    const work = prev.then(async () => {
+      if (cancelled) throw tooLate()
+      const wait = remainingMs(pane)
+      // Do not sleep into a deadline we already know we will miss.
+      if (startBy !== undefined && now() + wait >= startBy) throw tooLate()
+      if (wait > 0) await sleep(wait)
+      if (cancelled) throw tooLate()
+      started = true
+      return runBounded(pane, key, doSend, opts.timeoutMs ?? sendTimeoutMs)
+    })
+    const tail = work.then(() => undefined, () => undefined)
     tails.set(pane, tail)
     // Drop the chain once idle so the map does not grow with every pane ever seen.
     void tail.then(() => { if (tails.get(pane) === tail) tails.delete(pane) })
-    return run
+    if (startBy === undefined) return work
+
+    // The caller's deadline counts while it is still QUEUED behind a slow
+    // sender: reject at startBy, and cancel the queued turn so it never runs.
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (started) return
+        cancelled = true
+        reject(tooLate())
+      }, Math.max(0, startBy - now()))
+      work.then(
+        (v) => { clearTimeout(timer); resolve(v) },
+        (e) => { clearTimeout(timer); reject(e) },
+      )
+    })
   }
 
   return {
@@ -111,3 +186,18 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
 }
 
 export const keyGate = createKeyGate()
+
+// One tmux invocation that dies with its turn: when the gate's deadline
+// fires, the subprocess is killed instead of left holding the pane's queue.
+// Resolves to the exit code; rejects only if tmux could not be spawned.
+export async function runTmux(args: readonly string[], signal?: AbortSignal): Promise<number> {
+  const proc = Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" })
+  const kill = () => { try { proc.kill() } catch { /* already gone */ } }
+  if (signal?.aborted) kill()
+  signal?.addEventListener("abort", kill, { once: true })
+  try {
+    return await proc.exited
+  } finally {
+    signal?.removeEventListener("abort", kill)
+  }
+}
