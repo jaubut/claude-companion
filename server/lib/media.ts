@@ -7,8 +7,10 @@ import { join } from "node:path"
 // Content-addressed media store for images in the feed (RES-L5NG step 3).
 //
 // A leaf lib: fs + encode only. Feed events carry a reference (`mediaId`),
-// never bytes; `GET /api/media/:id` serves the file. The feed lifecycle frees
-// files (wiring/media.ts → releaseMedia) and a byte cap bounds the dir.
+// never bytes; `GET /api/media/:id` serves the file. File lifetime is NOT tied
+// to the feed: the phone caches whole conversations well past the 200-event
+// feed window, so a file lives until the byte cap (oldest-by-mtime) or the age
+// cap removes it — sweepMedia(), run on every write and hourly (wiring/media.ts).
 //
 // mediaId = first 32 hex of sha256 of the SOURCE bytes, so the same image read
 // twice lands in one file. Every source is downscaled to a 1024px long edge
@@ -22,6 +24,7 @@ export interface MediaRef {
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024
 const DEFAULT_MAX_DIR_BYTES = 200 * 1024 * 1024
+const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_CONCURRENT = 2
 // Waiting jobs beyond the active slots. A queued job holds its source (the
 // base64 string, or a path) — not a decoded buffer — but even so a burst of
@@ -49,6 +52,12 @@ export function mediaPath(id: string): string {
 function maxDirBytes(): number {
   const n = Number(process.env.COMPANION_MEDIA_MAX_BYTES)
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_DIR_BYTES
+}
+
+// COMPANION_MEDIA_MAX_AGE: seconds since last write/re-reference (mtime).
+function maxAgeMs(): number {
+  const n = Number(process.env.COMPANION_MEDIA_MAX_AGE)
+  return Number.isFinite(n) && n > 0 ? n * 1000 : DEFAULT_MAX_AGE_MS
 }
 
 function log(msg: string): void {
@@ -105,18 +114,28 @@ export function enforceMediaCap(maxBytes = maxDirBytes()): string[] {
   return removed
 }
 
-// Called from the feed evict hook, inside appendFeedEvent — must be cheap and
-// must never throw into the producer.
-export function releaseMedia(ids: Iterable<string>): void {
+// Unlink every file whose mtime is older than maxAgeMs. mtime is refreshed
+// when the same source is stored again, so the age is "since last seen".
+export function expireMedia(maxAge = maxAgeMs(), now = Date.now()): string[] {
   ensureSeeded()
-  for (const id of ids) {
-    if (!isMediaId(id)) continue
-    const path = mediaPath(id)
+  const removed: string[] = []
+  for (const f of listJpegs(mediaDir())) {
+    if (now - f.mtimeMs <= maxAge) continue
     try {
-      const size = statSync(path).size
-      unlinkSync(path)
-      mediaBytes = Math.max(0, mediaBytes - size)
-    } catch { /* not on disk */ }
+      unlinkSync(f.path)
+      mediaBytes = Math.max(0, mediaBytes - f.size)
+      removed.push(f.path.slice(f.path.lastIndexOf("/") + 1, -".jpg".length))
+    } catch { /* already gone */ }
+  }
+  return removed
+}
+
+// The only way files leave the store: age cap, then byte cap. Never throws.
+export function sweepMedia(): string[] {
+  try {
+    return [...expireMedia(), ...enforceMediaCap()]
+  } catch {
+    return []
   }
 }
 
@@ -186,7 +205,7 @@ async function encode(id: string, load: () => Buffer | null): Promise<MediaRef |
     writeFileSync(tmp, data)
     renameSync(tmp, out)
     mediaBytes += data.length - prevSize
-    enforceMediaCap()
+    sweepMedia()
     return { mediaId: id, width: info.width, height: info.height }
   } catch (err) {
     log(`decode failed for ${id}: ${err instanceof Error ? err.message.split("\n")[0] : "unknown"}`)

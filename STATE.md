@@ -56,7 +56,7 @@ Last updated: 2026-09-13
 
 **State decisions**
 - **Media files** live in `lib/media.ts`. The dir is `COMPANION_MEDIA_DIR ?? ~/.claude-companion/media`, which lets tests use a temp dir, same pattern as `COMPANION_DB_PATH`.
-  - Mutated only by `storeImageBase64()`, `storeImageFile()`, `releaseMedia()` and `enforceMediaCap()`. Persistence is plain files `<id>.jpg`.
+  - Mutated only by `storeImageBase64()`, `storeImageFile()`, `expireMedia()` and `enforceMediaCap()` (both via `sweepMedia()`). Persistence is plain files `<id>.jpg`.
   - `mediaId` = first 32 hex of sha256 of the source bytes. The same image read twice gives one file.
   - If `<id>.jpg` already exists, skip the encode, read dims via `sharp(path).metadata()` (header only), and `utimes` the file so the byte cap sees it as fresh.
 - **Encode queue** is module-level in `lib/media.ts`: at most 2 concurrent sharp jobs, plus `sharp.concurrency(1)`. A burst of 50 screenshots must not starve the hook path.
@@ -65,7 +65,7 @@ Last updated: 2026-09-13
 - **Image events** use a stable id `img:<seen-key>`, so the feed id-dedupe makes re-reads idempotent and iOS can dedupe. `ts` is captured at detection, not after the encode, so the event sorts by when the tool returned.
   - Image events are NOT counted in `readTranscriptDelta`'s return value and do NOT set `streamedThisTurn`. `recordTurnEnd`'s retry and wrap-up policy (`activity.ts:332-358`) stay text-only.
 - **Evict signal**: `feed.ts` gains `onFeedEvict(fn(evicted: FeedEvent[]))`. It fires on the cap trim and inside `pruneFeedForSession`. `feed_pruned` stays byte-identical: same ids, still session-prune only.
-- **Media release** is wired in NEW `wiring/media.ts`: `onFeedEvict` → collect evicted `mediaId`s → drop those still referenced by `getFeed()` → `releaseMedia(ids)`. It is registered at import, like `wiring/events.ts`.
+- **Media lifetime** is decoupled from the feed (2026-09-23). Files are never freed on feed eviction or session prune, because the phone's cached conversation outlives the 200-event feed and files are content-addressed and shared across sessions. `sweepMedia()` = age cap (`COMPANION_MEDIA_MAX_AGE` seconds, default 7 d, by mtime) + byte cap. It runs on every write, and `wiring/media.ts` also runs it at import and on a 1 h unref'd timer.
 
 **Contracts touched**
 | contract | kind | change | consumers / callers | compat |
@@ -82,13 +82,13 @@ The key is not set on image events. `transcript.ts` has no exact public key, sam
 **Files — one owner each (all: builder)**
 | file | change | lines now → after (cap 600) |
 |---|---|---|
-| `server/lib/media.ts` | NEW: `storeImageBase64`, `storeImageFile`, `releaseMedia`, `enforceMediaCap`, `mediaPath`, `isMediaId`, `MediaRef`. sharp `.rotate().resize({width:1024,height:1024,fit:"inside",withoutEnlargement:true}).jpeg({quality:80})`. Refuse sources over 20 MB decoded. Keep `limitInputPixels` at its default. A decode failure returns null and logs one line | 0 → ~150 ✓ |
+| `server/lib/media.ts` | NEW: `storeImageBase64`, `storeImageFile`, `sweepMedia`, `expireMedia`, `enforceMediaCap`, `mediaPath`, `isMediaId`, `MediaRef`. sharp `.rotate().resize({width:1024,height:1024,fit:"inside",withoutEnlargement:true}).jpeg({quality:80})`. Refuse sources over 20 MB decoded. Keep `limitInputPixels` at its default. A decode failure returns null and logs one line | 0 → ~150 ✓ |
 | `server/lib/media.test.ts` | NEW: real temp dir via env; see Verify | 0 → ~120 |
 | `server/lib/transcript.ts` | Build `toolUses: Map<id,{name,input}>` from assistant `tool_use` blocks in the same pass. Walk `user` entries' `tool_result.content[]` for `image`/base64. Caption is the Read input's `basename(file_path)`, else the first sibling `text` block clamped to 140, else the tool name. `![alt](path)` in text blocks: absolute or `s.cwd`-relative, ext png/jpe?g/gif/webp, `realpath` exists, 20 MB max, caption = alt. `void` the async ingest then `appendFeedEvent`. Add `seenImages` to PathState + `getState` init | 273 → ~350 ✓ |
 | `server/lib/transcript.test.ts` | add image cases; existing assertions untouched | +~70 |
 | `server/lib/feed.ts` | `EventKind + "image"`, 4 optional fields, `onFeedEvict`. Collect evicted events during the splice, then fire listeners once AFTER the loop with a copied array. Listeners are read-only observers (doc comment: unlink only, never append) | 97 → ~130 ✓ |
 | `server/lib/feed.test.ts` | NEW: evict fires on cap trim and on session prune with a copied array, after the splice; `feed_pruned` payload unchanged; a listener that calls `appendFeedEvent` from inside evict does not corrupt the prune loop (all matching events still removed, feed length consistent) | 0 → ~80 |
-| `server/wiring/media.ts` | NEW: `onFeedEvict` → `releaseMedia` minus live refs. Exports nothing | 0 → ~30 |
+| `server/wiring/media.ts` | `sweepMedia()` at import + hourly timer. No feed listener. Exports nothing | ~15 |
 | `server/routes/media.ts` | NEW: `handleMediaRoute`. `GET /api/media/:id`, id must match `^[a-f0-9]{32}$` (blocks traversal), `Bun.file`. Headers: `Content-Type: image/jpeg`, `Cache-Control: private, max-age=31536000, immutable`, `ETag: "<id>"`. `If-None-Match` → 304. Missing → 404 | 0 → ~40 ✓ |
 | `server/routes/media.test.ts` | NEW: calls `handleMediaRoute` directly with a temp `COMPANION_MEDIA_DIR`: 200 + headers, unknown id 404, `..%2Fauth.token` and non-hex ids 404, matching `If-None-Match` 304, non-GET → null. The 401 lives in the server gate and is verified by curl (Verify 3), not by this test | 0 → ~60 |
 | `server/companion-server.ts` | `import "./wiring/media"`; add `handleMediaRoute` to the route chain. Auth is already enforced by the `/api/` gate (Bearer or `?token=`) | 89 → ~92 ✓ |
@@ -98,7 +98,7 @@ The key is not set on image events. `transcript.ts` has no exact public key, sam
 
 **Fan-in paths to guard**
 - `readTranscriptDelta()` is reached from the 1.5 s poll (`activity.ts:74`), tool-end (`:251`), prompt priming, which is silent (`:299`), and the turn-end retry loop (`:350,355`, up to 16 reads in 4 s). The dedupe must be synchronous: mark `seenImages` before `void ingest`. Otherwise the retry loop queues the same image up to 16 times.
-- `appendFeedEvent()` is reached from activity.ts, codex-feed.ts and transcript.ts. The evict hook runs inside it, so `releaseMedia` must be sync-cheap: `unlinkSync` in try/catch, never throwing into the producer.
+- `appendFeedEvent()` is reached from activity.ts, codex-feed.ts and transcript.ts. No media listener is on its evict hook any more.
 - `pruneFeedForSession()` runs from session-end. Evict must fire after the splice, with the same removed set as `feed_pruned`.
 
 **Risks**

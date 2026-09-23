@@ -122,10 +122,13 @@ import { rehydrateSessions } from "./server/lib/rehydrate"
 import { discoverLiveClaudes } from "./server/lib/discover"
 import { startCodexFeedMonitor } from "./server/lib/codex-feed"
 import { getAuthToken } from "./server/lib/auth"
+import { startMediaSweeper } from "./server/wiring/media"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
 const server = createCompanionServer(PORT)
+// After loadDefaultDotEnv() above: the age cap must come from the configured value.
+startMediaSweeper()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"

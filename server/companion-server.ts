@@ -1,7 +1,6 @@
 import { checkBearer, unauthorized } from "./lib/auth"
 import { type WsData } from "./state"
 import "./wiring/events"
-import "./wiring/media"
 import { handleHookRoute } from "./routes/hooks"
 import { handleApiRoute } from "./routes/api"
 import { handleOrchestratorRoute } from "./routes/orchestrator"

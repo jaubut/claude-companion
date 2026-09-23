@@ -3,9 +3,8 @@ import sharp from "sharp"
 import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type MediaRef, type StoreResult, MAX_PENDING, enforceMediaCap, isMediaId, mediaPath, releaseMedia, storeImageBase64, storeImageFile } from "./media"
+import { type MediaRef, type StoreResult, MAX_PENDING, enforceMediaCap, expireMedia, isMediaId, mediaPath, storeImageBase64, storeImageFile } from "./media"
 import { appendFeedEvent, getFeed, pruneFeedForSession } from "./feed"
-import "../wiring/media"
 
 // A store result that must be a ref: narrows away null and "busy".
 const mref = (r: StoreResult): MediaRef => {
@@ -22,9 +21,10 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "cc-media-"))
   process.env.COMPANION_MEDIA_DIR = dir
   delete process.env.COMPANION_MEDIA_MAX_BYTES
+  delete process.env.COMPANION_MEDIA_MAX_AGE
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
-afterAll(() => { delete process.env.COMPANION_MEDIA_MAX_BYTES })
+afterAll(() => { delete process.env.COMPANION_MEDIA_MAX_BYTES; delete process.env.COMPANION_MEDIA_MAX_AGE })
 
 async function png(width: number, height: number, color = "#ff0000"): Promise<Buffer> {
   return sharp({ create: { width, height, channels: 3, background: color } }).png().toBuffer()
@@ -107,30 +107,75 @@ describe("byte cap + release", () => {
     expect(jpegs()).toEqual([])
   })
 
-  test("releaseMedia unlinks valid ids, ignores junk, never throws", async () => {
-    const ref = await storeImageBase64((await png(32, 32)).toString("base64"))
-    expect(() => releaseMedia(["../auth.token", "0".repeat(32), mref(ref).mediaId])).not.toThrow()
-    expect(existsSync(mediaPath(mref(ref).mediaId))).toBe(false)
+  test("expireMedia unlinks only files older than the age cap", async () => {
+    const old = await storeImageBase64((await png(32, 32, "#0b0b0b")).toString("base64"))
+    const fresh = await storeImageBase64((await png(32, 32, "#0c0c0c")).toString("base64"))
+    const now = Date.now() / 1000
+    utimesSync(mediaPath(mref(old).mediaId), now - 3600, now - 3600)
+    expect(expireMedia(60_000)).toEqual([mref(old).mediaId])
+    expect(existsSync(mediaPath(mref(fresh).mediaId))).toBe(true)
+  })
+
+  test("the age cap is swept on write via COMPANION_MEDIA_MAX_AGE (seconds)", async () => {
+    const old = await storeImageBase64((await png(32, 32, "#0d0d0d")).toString("base64"))
+    const now = Date.now() / 1000
+    utimesSync(mediaPath(mref(old).mediaId), now - 120, now - 120)
+    process.env.COMPANION_MEDIA_MAX_AGE = "60"
+    const fresh = await storeImageBase64((await png(32, 32, "#0e0e0e")).toString("base64"))
+    expect(jpegs()).toEqual([`${mref(fresh).mediaId}.jpg`])
+  })
+
+  test("default age cap (7 days) keeps a day-old file", async () => {
+    const ref = await storeImageBase64((await png(32, 32, "#0f0f0f")).toString("base64"))
+    const now = Date.now() / 1000
+    utimesSync(mediaPath(mref(ref).mediaId), now - 86_400, now - 86_400)
+    expect(expireMedia()).toEqual([])
   })
 })
 
-describe("wiring/media — feed eviction frees files", () => {
-  test("an evicted image whose mediaId is still in the feed is not unlinked", async () => {
+describe("wiring/media — feed eviction never frees files", () => {
+  test("images survive both the 200-cap trim and a session prune", async () => {
+    const { startMediaSweeper, stopMediaSweeper } = await import("../wiring/media")
+    startMediaSweeper() // after beforeEach: the startup sweep hits the temp dir
+    stopMediaSweeper()
     const ref = await storeImageBase64((await png(50, 50, "#123456")).toString("base64"))
     const id = mref(ref).mediaId
     const base = { ts: Date.now(), kind: "image" as const, mediaId: id, width: 50, height: 50, caption: "x" }
     appendFeedEvent({ ...base, id: "img:wiring-a", tty: "/dev/wiring-a" })
-    appendFeedEvent({ ...base, id: "img:wiring-b", tty: "/dev/wiring-b" })
-
     pruneFeedForSession({ tty: "/dev/wiring-a" })
-    expect(getFeed().some((e) => e.id === "img:wiring-b")).toBe(true)
-    expect(existsSync(mediaPath(id))).toBe(true) // still referenced by b
+    expect(getFeed().some((e) => e.id === "img:wiring-a")).toBe(false)
+    expect(existsSync(mediaPath(id))).toBe(true)
 
-    pruneFeedForSession({ tty: "/dev/wiring-b" })
-    expect(existsSync(mediaPath(id))).toBe(false) // last reference gone
+    appendFeedEvent({ ...base, id: "img:wiring-b", tty: "/dev/wiring-b" })
+    for (let i = 0; i < 200; i++) appendFeedEvent({ id: `wiring-fill-${i}`, ts: Date.now(), kind: "tool_start", tty: "/dev/wiring-fill" })
+    expect(getFeed().some((e) => e.id === "img:wiring-b")).toBe(false)
+    expect(existsSync(mediaPath(id))).toBe(true)
+    pruneFeedForSession({ tty: "/dev/wiring-fill" })
   })
 })
 
+
+describe("wiring/media — sweeper start honours the configured age cap (Codex HIGH on PR #45)", () => {
+  test("importing the module sweeps nothing; starting it after .env applies the configured cap", async () => {
+    const { startMediaSweeper, stopMediaSweeper } = await import("../wiring/media")
+    const ref = await storeImageBase64((await png(32, 32, "#0a0b0c")).toString("base64"))
+    const id = mref(ref).mediaId
+    const now = Date.now() / 1000
+    utimesSync(mediaPath(id), now - 10 * 86_400, now - 10 * 86_400) // 10 days old
+    expect(existsSync(mediaPath(id))).toBe(true) // the import above removed nothing
+    process.env.COMPANION_MEDIA_MAX_AGE = String(30 * 86_400) // as a .env would set it
+    try {
+      expect(startMediaSweeper()).toEqual([])
+      expect(existsSync(mediaPath(id))).toBe(true) // 10 d < 30 d: kept
+      expect(startMediaSweeper()).toEqual([]) // idempotent: no second timer, no second sweep
+    } finally {
+      stopMediaSweeper()
+    }
+    delete process.env.COMPANION_MEDIA_MAX_AGE
+    expect(startMediaSweeper()).toEqual([id]) // default 7 d: gone
+    stopMediaSweeper()
+  })
+})
 
 describe("bounded encode queue (Codex HIGH on PR #41)", () => {
   test("a burst beyond the wait queue is refused with busy, nothing is decoded early, and a retry succeeds", async () => {

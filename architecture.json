@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 92,
+          "lines": 91,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -457,7 +457,7 @@
         },
         {
           "path": "lib/feed.ts",
-          "lines": 141,
+          "lines": 142,
           "kind": "lib",
           "exports": [
             "EventKind",
@@ -618,7 +618,7 @@
         },
         {
           "path": "lib/media.ts",
-          "lines": 235,
+          "lines": 254,
           "kind": "lib",
           "exports": [
             "MediaRef",
@@ -626,7 +626,8 @@
             "isMediaId",
             "mediaPath",
             "enforceMediaCap",
-            "releaseMedia",
+            "expireMedia",
+            "sweepMedia",
             "StoreResult",
             "storeImageBase64",
             "storeImageFile"
@@ -1126,7 +1127,7 @@
         },
         {
           "path": "lib/turso.ts",
-          "lines": 94,
+          "lines": 108,
           "kind": "lib",
           "exports": [
             "SqlArg",
@@ -1136,15 +1137,14 @@
             "tursoQuery"
           ],
           "state": [
-            "let agentEnvLoaded"
+            "let agentToken",
+            "let agentEnvRead"
           ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [
-            "lib/dotenv.ts"
-          ],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1435,7 +1435,7 @@
         },
         {
           "path": "routes/goals.ts",
-          "lines": 193,
+          "lines": 214,
           "kind": "route-host",
           "exports": [
             "GoalTask",
@@ -1445,6 +1445,7 @@
             "TASKS_PER_PROJECT",
             "CACHE_TTL_MS",
             "extractStatusParagraph",
+            "isoDate",
             "buildGoals",
             "GoalsDeps",
             "createGoalsHandler",
@@ -1779,21 +1780,23 @@
         },
         {
           "path": "wiring/media.ts",
-          "lines": 18,
+          "lines": 35,
           "kind": "lib",
-          "exports": [],
-          "state": [],
+          "exports": [
+            "startMediaSweeper",
+            "stopMediaSweeper"
+          ],
+          "state": [
+            "let timer"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/feed.ts",
             "lib/media.ts"
           ],
-          "listeners": [
-            "onFeedEvict"
-          ],
+          "listeners": [],
           "sheets": 0,
           "externals": []
         },
@@ -2447,12 +2450,6 @@
             "lib/transcript.ts"
           ]
         },
-        "loadDotEnv": {
-          "module": "lib/dotenv.ts",
-          "callers": [
-            "lib/turso.ts"
-          ]
-        },
         "matchUnboundTaskById": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -2759,7 +2756,6 @@
           "module": "lib/feed.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "wiring/media.ts",
             "ws.ts"
           ]
         },
@@ -3495,13 +3491,7 @@
             "wiring/events.ts"
           ]
         },
-        "onFeedEvict": {
-          "module": "lib/feed.ts",
-          "callers": [
-            "wiring/media.ts"
-          ]
-        },
-        "releaseMedia": {
+        "sweepMedia": {
           "module": "lib/media.ts",
           "callers": [
             "wiring/media.ts"

@@ -24,14 +24,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/command.ts` | 318 | route-host | 1 | state: listCache: Map · routes: 2 |
 | `wiring/orchestrator.ts` | 306 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/discover.ts` | 274 | lib | 1 |  |
+| `lib/media.ts` | 254 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/apns.ts` | 242 | lib | 6 | state: let keyPromise, let cachedJwt, sessions: Map |
-| `lib/media.ts` | 235 | lib | 9 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/questions.ts` | 229 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map |
 | `lib/auto-judge.ts` | 217 | lib | 8 | state: ALWAYS_SAFE_TOOLS: Set |
+| `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
 | `lib/key-gate.ts` | 207 | lib | 9 |  |
 | `routes/model.ts` | 199 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `routes/goals.ts` | 193 | route-host | 11 | route: GET /api/goals |
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 181 | lib | 7 |  |
 | `lib/dialogs.ts` | 175 | lib | 7 |  |
@@ -40,7 +40,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `ws.ts` | 154 | lib | 1 | emits: approval, question, init, resolved, inject_error, pong |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
-| `lib/feed.ts` | 141 | lib | 9 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
+| `lib/feed.ts` | 142 | lib | 9 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `lib/dialog-watch.ts` | 138 | lib | 4 |  |
 | `lib/command-menu.ts` | 135 | lib | 7 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
@@ -49,9 +49,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pty-manager.ts` | 123 | lib | 7 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set |
 | `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
+| `lib/turso.ts` | 108 | lib | 5 | state: let agentToken, let agentEnvRead |
 | `lib/hook-common.ts` | 95 | lib | 7 |  |
-| `lib/turso.ts` | 94 | lib | 5 | state: let agentEnvLoaded |
-| `companion-server.ts` | 92 | route-host | 1 | routes: 5 |
+| `companion-server.ts` | 91 | route-host | 1 | routes: 5 |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/auth.ts` | 84 | lib | 3 | state: let cached |
 | `lib/inject-guard.ts` | 80 | lib | 4 |  |
@@ -66,10 +66,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/push-tokens.ts` | 48 | lib | 6 | state: db: Database |
 | `lib/agent-pid.ts` | 37 | lib | 2 |  |
 | `routes/media.ts` | 36 | route-host | 1 | route: GET /api/media/ |
+| `wiring/media.ts` | 35 | lib | 2 | state: let timer |
 | `lib/dotenv.ts` | 34 | lib | 2 |  |
 | `lib/push.ts` | 28 | lib | 2 |  |
 | `state.ts` | 25 | lib | 4 |  |
-| `wiring/media.ts` | 18 | lib | 0 | listens: onFeedEvict |
 
 ## client (react-client, `client/src/`, 15 modules, cap 600)
 
@@ -230,7 +230,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `clearWaitingForTarget()` | `lib/sessions.ts` | `routes/api.ts#POST /api/inject`, `wiring/waiting.ts`, `ws.ts` |
 | `recordUserPrompt()` | `lib/activity.ts` | `routes/api.ts#POST /api/inject`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/user-prompt-submit` |
 | `isSuperAuto()` | `lib/super-auto.ts` | `routes/api.ts#GET /api/super-auto`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `ws.ts` |
-| `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `wiring/media.ts`, `ws.ts` |
 | `endFlow()` | `lib/command-scrape.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `wiring/dialogs.ts` |
 | `recordToolStart()` | `lib/activity.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `agentTitle()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
@@ -277,6 +276,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `HOST_INFO()` | `state.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `getActivity()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `listActivities()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
+| `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `CommandEntry()` | `lib/command-list.ts` | `routes/command.ts`, `routes/command.ts#POST /api/command/list` |
 | `CLEAR_SETTLE_MS()` | `lib/command-list.ts` | `routes/command.ts`, `routes/command.ts#POST /api/command/suggest` |
 | `HELP_CLOSE_OPEN_WAIT_MS()` | `lib/command-list.ts` | `routes/command.ts`, `routes/command.ts#POST /api/command/list` |
