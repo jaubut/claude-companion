@@ -133,19 +133,19 @@ function FeedImage({ mediaId, width, height, caption }: { mediaId: string; width
     return () => window.removeEventListener("keydown", onKey)
   }, [open])
 
-  // Reserve the box from the event's dimensions so the feed doesn't jump
-  // when the bytes land.
+  // Placeholder and thumbnail share width + aspect ratio so the feed doesn't
+  // jump when the bytes land (TerminalFeed only scrolls on feed changes).
   const aspect = width && height ? `${width} / ${height}` : undefined
   const alt = caption || "image"
 
   return (
     <figure className="flex flex-col gap-1 flex-1 min-w-0">
       {state.status === "ok" ? (
-        <button type="button" onClick={() => setOpen(true)} className="self-start max-w-[240px]" aria-label={`Open ${alt} full size`}>
+        <button type="button" onClick={() => setOpen(true)} className="self-start w-[240px] max-w-full min-h-11" aria-label={`Open ${alt} full size`}>
           <img src={state.url} alt={alt} width={width} height={height} style={{ aspectRatio: aspect }} className="block w-full h-auto max-h-48 object-contain rounded-lg border border-outline-variant/30" />
         </button>
       ) : state.status === "loading" ? (
-        <div data-media-state="loading" style={{ aspectRatio: aspect ?? "4 / 3" }} className="w-[160px] max-h-48 rounded-lg bg-fg/[0.05] animate-pulse" />
+        <div data-media-state="loading" style={{ aspectRatio: aspect ?? "4 / 3" }} className="w-[240px] max-w-full max-h-48 rounded-lg bg-fg/[0.05] animate-pulse" />
       ) : (
         <div data-media-state={state.status} className="flex items-center gap-1.5 text-muted/60 text-[11px] italic">
           <ImageOff className="w-3.5 h-3.5" />
@@ -154,7 +154,7 @@ function FeedImage({ mediaId, width, height, caption }: { mediaId: string; width
       )}
       {caption && <figcaption className="text-muted text-[11px] break-words">{caption}</figcaption>}
       {open && state.status === "ok" && (
-        <div role="dialog" aria-label={alt} onClick={() => setOpen(false)} className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4 cursor-zoom-out">
+        <div role="dialog" aria-modal="true" aria-label={alt} onClick={() => setOpen(false)} className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] cursor-zoom-out">
           <img src={state.url} alt={alt} className="max-w-full max-h-full object-contain" />
         </div>
       )}

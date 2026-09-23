@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { readAuthToken } from "@/lib/media"
 import { playAlert } from "@/lib/alert-sound"
 
 export interface ApprovalRequest {
@@ -255,7 +256,11 @@ export function useCompanion(): CompanionState & {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`)
+    // /ws sits behind the same bearer gate as /api/*; a browser WebSocket can't
+    // set headers, so the pairing token rides the query (the server accepts
+    // both). Open the PWA once via the pairing link (?token=…) and it sticks.
+    const token = readAuthToken()
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`)
 
     ws.onopen = () => {
       retriesRef.current = 0

@@ -2,13 +2,14 @@ import { describe, expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { FeedLine } from "@/components/feed-line"
 import type { FeedEvent } from "@/hooks/use-companion"
-import { fetchMedia } from "@/lib/media"
+import { fetchMedia, readAuthToken } from "@/lib/media"
 
 const noop = (): void => {}
 const render = (ev: FeedEvent): string =>
   renderToStaticMarkup(<FeedLine ev={ev} sessions={[]} onPickKey={noop} />)
 
-// Typed as FeedEvent: fails `tsc` if the widened kind/fields regress.
+// Typed as FeedEvent: tests are part of tsconfig.app.json, so `tsc` fails if
+// the widened kind/fields regress.
 const image: FeedEvent = {
   id: "e1",
   ts: 0,
@@ -63,5 +64,24 @@ describe("fetchMedia", () => {
     expect(await fetchMedia("id", "t", status(401), blobUrl)).toEqual({ status: "error", message: "HTTP 401" })
     const boom = (async () => { throw new Error("offline") }) as unknown as typeof fetch
     expect(await fetchMedia("id", "t", boom, blobUrl)).toEqual({ status: "error", message: "offline" })
+  })
+})
+
+describe("readAuthToken", () => {
+  const mem = (): Pick<Storage, "getItem" | "setItem"> & { m: Map<string, string> } => {
+    const m = new Map<string, string>()
+    return { m, getItem: (k) => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v) } }
+  }
+  test("the pairing link's ?token= wins and is remembered", () => {
+    const store = mem()
+    expect(readAuthToken("?token=abc123", store)).toBe("abc123")
+    expect(store.m.get("companion.token")).toBe("abc123")
+    expect(readAuthToken("", store)).toBe("abc123")
+  })
+  test("nothing paired → empty, and a throwing storage is survived", () => {
+    expect(readAuthToken("", mem())).toBe("")
+    const broken = { getItem: () => { throw new Error("private") }, setItem: () => { throw new Error("private") } }
+    expect(readAuthToken("?token=x", broken)).toBe("x")
+    expect(readAuthToken("", broken)).toBe("")
   })
 })

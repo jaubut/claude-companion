@@ -60,6 +60,8 @@ The server prints the pairing **URL** + **token** on every boot. Open
 the Settings screen, and you're connected. Works great over
 [Tailscale](https://tailscale.com) for remote access.
 
+For the browser PWA, open the URL once with the token in the query — `http://<your-mac>:4245/?token=<token>` — and it is remembered in that browser (the WebSocket and `/api/media` calls carry it from then on).
+
 ### One-tap pairing via QR
 
 ```bash

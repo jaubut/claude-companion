@@ -6,14 +6,17 @@ const TOKEN_KEY = "companion.token"
 
 // The pairing token. A `?token=` on the page URL (the pairing link) wins and
 // is persisted so later loads without it still authenticate.
-export function readAuthToken(): string {
-  if (typeof window === "undefined") return ""
-  const fromUrl = new URLSearchParams(window.location.search).get("token")?.trim()
+// Injectable for tests; the browser defaults read the page URL + localStorage.
+export function readAuthToken(
+  search: string = typeof window === "undefined" ? "" : window.location.search,
+  storage: Pick<Storage, "getItem" | "setItem"> | null = typeof window === "undefined" ? null : window.localStorage,
+): string {
+  const fromUrl = new URLSearchParams(search).get("token")?.trim()
   if (fromUrl) {
-    window.localStorage.setItem(TOKEN_KEY, fromUrl)
+    try { storage?.setItem(TOKEN_KEY, fromUrl) } catch { /* private mode: still usable this load */ }
     return fromUrl
   }
-  return window.localStorage.getItem(TOKEN_KEY) ?? ""
+  try { return storage?.getItem(TOKEN_KEY) ?? "" } catch { return "" }
 }
 
 export type MediaResult =
