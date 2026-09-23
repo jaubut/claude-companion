@@ -33,12 +33,12 @@ interface FlowState {
 
 const flows = new Map<string, FlowState>()
 
-// When each key last had a flow released on it. The `/help` close path ends in
-// an Escape, and Escape is a chord prefix (see ESC_SETTLE_MS in
+// When each key last had a `/help` scrape released on it. The close path ends
+// in an Escape, and Escape is a chord prefix (see ESC_SETTLE_MS in
 // lib/command-list.ts): a key arriving inside that window is swallowed. The
 // close path already settles, so this is the backstop for everything else that
-// can shorten the gap — a throw on the route's path, a release from a flow
-// that never ran a close at all.
+// can shorten the gap — a throw on the route's path, say. The suggest probe is
+// not recorded: it ends on a C-u, which opens no window.
 const releasedAt = new Map<string, number>()
 
 // Panes handed back DIRTY, and by which flow (R1).
@@ -124,7 +124,9 @@ export function endFlow(key: string, opts: { clean?: boolean } = {}): void {
   if (!st) return
   flows.delete(key)
   const clean = opts.clean !== false
-  releasedAt.set(key, Date.now())
+  // Only the /help scrape ends on an Escape; the suggest probe ends on a C-u,
+  // which opens no chord window and must not cost the next inject a settle.
+  if (st.kind === "list") releasedAt.set(key, Date.now())
   if (!clean) dirty.set(key, { kind: st.kind, at: Date.now(), seq: ++markSeq })
   else if (opts.clean === true) dirty.delete(key)
   for (const w of st.waiters) {
@@ -247,42 +249,63 @@ export async function yieldPane(key: string, opts: YieldOpts = {}): Promise<Pane
     ? await abortScrape(key, opts.abortMs ?? SCRAPE_ABORT_WAIT_MS)
     : await waitForFlow(key, opts.waitMs ?? SUGGEST_WAIT_MS)
   if (!ok) return { held, freed: false }
-  // The flow let go and said the pane is clean. Two things still stand between
-  // that and handing the keyboard over:
-  if (held === "list") {
-    // (1) the close path's last keystroke was an Escape. Anything typed inside
-    // its chord window is read as opt+<char> and swallowed — measured as the
-    // inject that arrived as "❯ ing".
-    await settleAfterRelease(key, opts)
-  }
-  // (2) R4a — a HELD flow's verdict is about ITS OWN work, not about a mark an
-  // earlier flow left on the key. The suggest probe is the case that bit: it
-  // releases clean-by-default (a C-u and no opinion), so an inject parked on a
-  // suggest probe that started over a dirty pane used to be handed `freed:true`
-  // without a single capture, straight into the /help overlay the mark was
-  // warning about. Keep `held` from the flow, take `freed` from the mark.
+  // The flow let go and said the pane is clean. That is a statement about ITS
+  // OWN work (R4a): a suggest probe releases clean-by-default (a C-u and no
+  // opinion), so an inject parked on a probe that started over a dirty pane
+  // must still clear the mark before the keyboard changes hands. yieldDirty
+  // also waits out the release's chord window and re-checks ownership.
   const verified = await yieldDirty(key, opts)
-  return { held, freed: verified.freed }
+  // If somebody else claimed the pane while we were settling or looking, say
+  // who: that flow, not the one we waited out, is why the answer is "no".
+  return { held: flows.get(key)?.kind ?? held, freed: verified.freed }
 }
 
-// No flow holds the pane. Free — unless the last flow said otherwise and
-// nothing has looked at the pane since.
+// Someone claimed the pane while we were awaiting. Every await in the hand-off
+// (the flow wait, the chord settle, the verify capture) is a window in which
+// the route can `beginFlow` on this key, and a hand-over after that is two
+// writers on one keyboard (Codex HIGH on PR #38: the settle shortcut answered
+// freed:true while a freshly started scrape owned the pane).
+function claimedBy(key: string): PaneYield | null {
+  const holder = flows.get(key)
+  return holder ? { held: holder.kind, freed: false } : null
+}
+
+// Nobody held the pane when we asked (or the holder just let go). Free, unless
+// the last flow said otherwise and nothing has looked at the pane since.
+//
+// Ownership is re-read after EVERY await below, never carried across one.
 async function yieldDirty(key: string, opts: YieldOpts): Promise<PaneYield> {
+  // (1) The chord window. Also on the no-flow path: a scrape released from the
+  // route's `finally` after a throw is already gone by the time an inject
+  // asks, and its last key may have been an Escape a few ms ago — the exact
+  // case this backstop exists for.
+  await settleAfterRelease(key, opts)
+  const early = claimedBy(key)
+  if (early) return early
+
   const mark = dirty.get(key)
   if (!mark) return { held: null, freed: true }
   const clean = opts.verify ? await opts.verify().catch(() => false) : false
 
-  // R4c — `verify()` is a real capture against a real pane: it takes time, and
-  // the world moves under it. A scrape that began while we were looking now
-  // holds the keyboard, and our verdict describes a screen from before it
-  // started typing. Clearing the mark on that and reporting `freed:true` hands
-  // an inject a pane somebody else is driving.
-  const holder = flows.get(key)
-  if (holder) return { held: holder.kind, freed: false }
+  // (2) R4c — `verify()` is a real capture against a real pane: it takes time,
+  // and the world moves under it. A scrape that began while we were looking
+  // holds the keyboard now, and our verdict describes a screen from before it
+  // started typing.
+  const late = claimedBy(key)
+  if (late) return late
   const after = dirty.get(key)
-  // The mark we verified is gone: only an explicit clean release does that, and
-  // that is a stronger statement about the pane than our capture.
-  if (after === undefined) return { held: null, freed: true }
+  if (after === undefined) {
+    // The mark we verified is gone: only an explicit clean release does that,
+    // and that is a stronger statement about the pane than our capture. But
+    // that release was a /help close, which ends on an Escape — settle its
+    // window too, then look at ownership one last time.
+    await settleAfterRelease(key, opts)
+    const last = claimedBy(key)
+    if (last) return last
+    const remarked = dirty.get(key)
+    if (remarked) return { held: remarked.kind, freed: false }
+    return { held: null, freed: true }
+  }
   // A DIFFERENT mark — a flow ran and released dirty while we looked. Our
   // capture says nothing about what it left behind.
   if (after.seq !== mark.seq) return { held: after.kind, freed: false }

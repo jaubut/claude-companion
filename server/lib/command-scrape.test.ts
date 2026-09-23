@@ -389,3 +389,66 @@ test("R4c: an explicit CLEAN release during verify() is stronger evidence than o
   expect(y).toEqual({ held: null, freed: true })
   expect(isPaneDirty(KEY)).toBe(false)
 })
+
+// ── Ownership across the hand-off's awaits (Codex HIGH, PR #38) ────────────
+//
+// Every await in yieldPane — the flow wait, the chord settle, the verify
+// capture — is a window in which the route can begin a new flow on the key.
+// The no-dirty-mark shortcut used to answer freed:true after the settle
+// without looking, so an inject was handed a pane a fresh scrape was driving.
+test("ownership: a flow that starts during the release settle is not handed over", async () => {
+  beginFlow(KEY, "list")
+  const y = yieldPane(KEY, {
+    abortMs: 1_000,
+    // The settle is where the new scrape arrives.
+    sleep: async () => { beginFlow(KEY, "list") },
+  })
+  setTimeout(() => endFlow(KEY, { clean: true }), 5)
+  expect(await y).toEqual({ held: "list", freed: false })
+  // The new flow still owns the pane; nothing released it on our behalf.
+  expect(isScraping(KEY)).toBe(true)
+  expect(isPaneDirty(KEY)).toBe(false)
+})
+
+test("ownership: the no-flow path settles a fresh list release, then re-checks", async () => {
+  // A scrape released from the route's `finally` after a throw: already gone
+  // when the inject asks, its Escape a few ms old.
+  beginFlow(KEY, "list")
+  endFlow(KEY, { clean: true })
+  const slept: number[] = []
+  const y = await yieldPane(KEY, {
+    sleep: async (ms) => { slept.push(ms); beginFlow(KEY, "suggest") },
+  })
+  // It waited out the window (Claude auto-review #3)…
+  expect(slept.length).toBe(1)
+  expect(slept[0]!).toBeGreaterThan(0)
+  // …and the probe that began during it keeps the pane.
+  expect(y).toEqual({ held: "suggest", freed: false })
+  expect(isFlowActive(KEY)).toBe(true)
+})
+
+test("ownership: a suggest release opens no chord window and costs no settle", async () => {
+  beginFlow(KEY, "suggest")
+  endFlow(KEY)
+  const f = fakeSleep()
+  expect(await yieldPane(KEY, { sleep: f.sleep })).toEqual({ held: null, freed: true })
+  expect(f.slept).toEqual([])
+})
+
+test("ownership: a clean release during verify() is settled, and a flow starting then keeps the pane", async () => {
+  beginFlow(KEY, "list")
+  endFlow(KEY, { clean: false })
+  await new Promise((r) => setTimeout(r, ESC_SETTLE_MS + 20))  // first window long gone
+  const slept: number[] = []
+  const y = await yieldPane(KEY, {
+    verify: async () => {
+      beginFlow(KEY, "list")
+      endFlow(KEY, { clean: true })   // a scrape closed properly: its Escape is fresh
+      return true
+    },
+    sleep: async (ms) => { slept.push(ms); beginFlow(KEY, "list") },
+  })
+  expect(slept.length).toBe(1)
+  expect(y).toEqual({ held: "list", freed: false })
+  expect(isScraping(KEY)).toBe(true)
+})

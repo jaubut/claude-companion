@@ -1,9 +1,10 @@
 import { CLEAR_LINE_KEY, inputLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
 import {
-  CLEAR_SETTLE_MS, closeHelpOverlay, type CommandEntry, ESC_SETTLE_MS, HELP_CLOSE_OPEN_WAIT_MS, HELP_PAINT_MS,
+  CLEAR_SETTLE_MS, closeHelpOverlay, type CommandEntry, HELP_CLOSE_OPEN_WAIT_MS, HELP_PAINT_MS,
   type HelpTab, listIncomplete, scrapeHelpTab,
 } from "../lib/command-list"
 import { beginFlow, endFlow, scrapeAbortRequested } from "../lib/command-scrape"
+import { keyGate } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -75,8 +76,12 @@ async function tmux(args: string[]): Promise<boolean> {
   }
 }
 
-const sendKey = (pane: string, key: string) => tmux(["send-keys", "-t", pane, key])
-const sendLiteral = (pane: string, text: string) => tmux(["send-keys", "-t", pane, "-l", text])
+// Every key and every literal goes through the shared per-pane gate
+// (lib/key-gate.ts): the /help close path's Escape and C-u included, so a
+// phone's /api/dialog/key cannot land inside their chord window, and nothing
+// here can land inside one of the phone's.
+const sendKey = (pane: string, key: string) => keyGate.send(pane, key, () => tmux(["send-keys", "-t", pane, key]))
+const sendLiteral = (pane: string, text: string) => keyGate.send(pane, text, () => tmux(["send-keys", "-t", pane, "-l", text]))
 
 export async function handleCommandRoute(req: Request, url: URL): Promise<Response | null> {
   // ── Suggestions for a slash prefix ──
@@ -260,11 +265,11 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
         const closed = await closeHelp()
         releaseClean = closed.clean
         dirty = dirty || !closed.clean
-        // A clean close already ends on a quiet pane — closeHelpOverlay will
-        // not say clean until ESC_SETTLE_MS after its last key. A DIRTY one can
-        // return right after a retry Escape, and the very next thing either the
-        // second tab or the release does is send a key into that chord window.
-        if (!closed.clean) await sleep(ESC_SETTLE_MS)
+        // No extra settle here, clean or dirty: closeHelpOverlay's escape()
+        // wrapper sleeps ESC_SETTLE_MS after every Escape before returning, and
+        // the key gate would hold the second tab's first key off the window
+        // anyway. The sleep that used to sit here only pushed the dirty-path
+        // abort past SCRAPE_ABORT_WAIT_MS (Claude auto-review #1/#2, PR #38).
         if (gaveUp) break
       }
       const incomplete = listIncomplete(outcomes)

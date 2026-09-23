@@ -1,5 +1,6 @@
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
+import { keyGate } from "../lib/key-gate"
 import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -36,7 +37,10 @@ async function sendKey(pane: string, key: string): Promise<boolean> {
   const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(key)
   const args = named ? ["send-keys", "-t", pane, key] : ["send-keys", "-t", pane, "-l", key]
   try {
-    await Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited
+    // Through the shared per-pane gate (lib/key-gate.ts): /api/model/cancel's
+    // Escape holds off every other sender for its chord window, and a cancel
+    // arriving just after a phone's Escape waits its turn too.
+    await keyGate.send(pane, key, () => Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" }).exited)
     return true
   } catch {
     return false
