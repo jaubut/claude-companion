@@ -46,6 +46,11 @@ export type EventKind =
   | "tool_start"
   | "tool_end"
   | "turn_end"
+  // Rendered by FeedLine: "image" only. The other two arrive from the server
+  // today and fall through to `null` until they get a renderer.
+  | "image"
+  | "assistant_thinking"
+  | "artifact"
 
 export type Verdict = "auto-allow" | "auto-deny" | "approved" | "denied" | "pending"
 
@@ -61,6 +66,12 @@ export interface FeedEvent {
   cwd?: string
   tty?: string
   sessionId?: string
+  // kind "image" — a reference, never bytes. Fetch via GET /api/media/:id
+  // (bearer-gated; 404 = expired). width/height are the stored JPEG's.
+  mediaId?: string
+  width?: number
+  height?: number
+  caption?: string
 }
 
 // One waiting session, keyed by session key in `waitingByKey`. `message` is
