@@ -3,9 +3,16 @@ import sharp from "sharp"
 import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { enforceMediaCap, isMediaId, mediaPath, releaseMedia, storeImageBase64, storeImageFile } from "./media"
+import { type MediaRef, type StoreResult, MAX_PENDING, enforceMediaCap, isMediaId, mediaPath, releaseMedia, storeImageBase64, storeImageFile } from "./media"
 import { appendFeedEvent, getFeed, pruneFeedForSession } from "./feed"
 import "../wiring/media"
+
+// A store result that must be a ref: narrows away null and "busy".
+const mref = (r: StoreResult): MediaRef => {
+  if (r === null || r === "busy") throw new Error(`expected a MediaRef, got ${String(r)}`)
+  return r
+}
+
 
 // Real temp dir via COMPANION_MEDIA_DIR, real sharp encodes. media.ts reads the
 // env on every call, so each test gets a fresh, empty dir.
@@ -29,26 +36,26 @@ describe("storeImageBase64", () => {
   test("a 3000x1500 PNG lands as a 1024x512 JPEG on disk", async () => {
     const ref = await storeImageBase64((await png(3000, 1500)).toString("base64"))
     expect(ref).not.toBeNull()
-    expect(isMediaId(ref!.mediaId)).toBe(true)
-    expect(ref!.width).toBe(1024)
-    expect(ref!.height).toBe(512)
-    const meta = await sharp(mediaPath(ref!.mediaId)).metadata()
+    expect(isMediaId(mref(ref).mediaId)).toBe(true)
+    expect(mref(ref).width).toBe(1024)
+    expect(mref(ref).height).toBe(512)
+    const meta = await sharp(mediaPath(mref(ref).mediaId)).metadata()
     expect(meta.format).toBe("jpeg")
     expect([meta.width, meta.height]).toEqual([1024, 512])
   })
 
   test("a small image is never enlarged", async () => {
     const ref = await storeImageBase64((await png(40, 20)).toString("base64"))
-    expect([ref!.width, ref!.height]).toEqual([40, 20])
+    expect([mref(ref).width, mref(ref).height]).toEqual([40, 20])
   })
 
   test("the same bytes twice → one file, same id", async () => {
     const b64 = (await png(200, 100)).toString("base64")
     const [a, b] = await Promise.all([storeImageBase64(b64), storeImageBase64(b64)])
     const c = await storeImageBase64(b64) // file-exists shortcut
-    expect(a!.mediaId).toBe(b!.mediaId)
+    expect(mref(a).mediaId).toBe(mref(b).mediaId)
     expect(c).toEqual(a)
-    expect(jpegs()).toEqual([`${a!.mediaId}.jpg`])
+    expect(jpegs()).toEqual([`${mref(a).mediaId}.jpg`])
   })
 
   test("corrupt base64 → null and no file", async () => {
@@ -70,7 +77,7 @@ describe("storeImageFile", () => {
     const src = join(dir, "shot.png")
     await sharp(await png(2048, 1024)).toFile(src)
     const ref = await storeImageFile(src)
-    expect([ref!.width, ref!.height]).toEqual([1024, 512])
+    expect([mref(ref).width, mref(ref).height]).toEqual([1024, 512])
     expect(await storeImageFile(join(dir, "nope.png"))).toBeNull()
   })
 })
@@ -82,16 +89,16 @@ describe("byte cap + release", () => {
     const c = await storeImageBase64((await png(64, 64, "#030303")).toString("base64"))
     // Pin mtimes so "oldest" is unambiguous: a < b < c.
     const now = Date.now() / 1000
-    utimesSync(mediaPath(a!.mediaId), now - 30, now - 30)
-    utimesSync(mediaPath(b!.mediaId), now - 20, now - 20)
-    utimesSync(mediaPath(c!.mediaId), now - 10, now - 10)
-    const sizes = [a, b, c].map((r) => Bun.file(mediaPath(r!.mediaId)).size)
+    utimesSync(mediaPath(mref(a).mediaId), now - 30, now - 30)
+    utimesSync(mediaPath(mref(b).mediaId), now - 20, now - 20)
+    utimesSync(mediaPath(mref(c).mediaId), now - 10, now - 10)
+    const sizes = [a, b, c].map((r) => Bun.file(mediaPath(mref(r).mediaId)).size)
     // Room for the newest two only.
     const removed = enforceMediaCap(sizes[1]! + sizes[2]!)
-    expect(removed).toEqual([a!.mediaId])
-    expect(existsSync(mediaPath(a!.mediaId))).toBe(false)
-    expect(existsSync(mediaPath(b!.mediaId))).toBe(true)
-    expect(existsSync(mediaPath(c!.mediaId))).toBe(true)
+    expect(removed).toEqual([mref(a).mediaId])
+    expect(existsSync(mediaPath(mref(a).mediaId))).toBe(false)
+    expect(existsSync(mediaPath(mref(b).mediaId))).toBe(true)
+    expect(existsSync(mediaPath(mref(c).mediaId))).toBe(true)
   })
 
   test("the cap is enforced on write via COMPANION_MEDIA_MAX_BYTES", async () => {
@@ -102,15 +109,15 @@ describe("byte cap + release", () => {
 
   test("releaseMedia unlinks valid ids, ignores junk, never throws", async () => {
     const ref = await storeImageBase64((await png(32, 32)).toString("base64"))
-    expect(() => releaseMedia(["../auth.token", "0".repeat(32), ref!.mediaId])).not.toThrow()
-    expect(existsSync(mediaPath(ref!.mediaId))).toBe(false)
+    expect(() => releaseMedia(["../auth.token", "0".repeat(32), mref(ref).mediaId])).not.toThrow()
+    expect(existsSync(mediaPath(mref(ref).mediaId))).toBe(false)
   })
 })
 
 describe("wiring/media — feed eviction frees files", () => {
   test("an evicted image whose mediaId is still in the feed is not unlinked", async () => {
     const ref = await storeImageBase64((await png(50, 50, "#123456")).toString("base64"))
-    const id = ref!.mediaId
+    const id = mref(ref).mediaId
     const base = { ts: Date.now(), kind: "image" as const, mediaId: id, width: 50, height: 50, caption: "x" }
     appendFeedEvent({ ...base, id: "img:wiring-a", tty: "/dev/wiring-a" })
     appendFeedEvent({ ...base, id: "img:wiring-b", tty: "/dev/wiring-b" })
@@ -121,5 +128,34 @@ describe("wiring/media — feed eviction frees files", () => {
 
     pruneFeedForSession({ tty: "/dev/wiring-b" })
     expect(existsSync(mediaPath(id))).toBe(false) // last reference gone
+  })
+})
+
+
+describe("bounded encode queue (Codex HIGH on PR #41)", () => {
+  test("a burst beyond the wait queue is refused with busy, nothing is decoded early, and a retry succeeds", async () => {
+    const total = 2 + MAX_PENDING + 3
+    const sources: string[] = []
+    for (let i = 0; i < total; i++) sources.push((await png(64 + i, 32)).toString("base64"))
+    // Fired synchronously: admission is decided before any encode finishes.
+    const results = await Promise.all(sources.map((b64) => storeImageBase64(b64)))
+    const busy = results.filter((r) => r === "busy").length
+    const refs = results.filter((r) => r !== "busy" && r !== null).length
+    expect(busy).toBe(3)
+    expect(refs).toBe(2 + MAX_PENDING)
+    expect(jpegs().length).toBe(2 + MAX_PENDING)
+    // Once the queue drained, the refused source stores fine.
+    const retry = await storeImageBase64(sources[total - 1]!)
+    expect(retry).not.toBe("busy")
+    expect(retry).not.toBeNull()
+    expect(jpegs().length).toBe(2 + MAX_PENDING + 1)
+  })
+
+  test("the same base64 twice shares one job and one file", async () => {
+    const b64 = (await png(120, 60)).toString("base64")
+    const [a, b] = await Promise.all([storeImageBase64(b64), storeImageBase64(b64)])
+    expect(a).not.toBeNull(); expect(a).not.toBe("busy")
+    expect(a).toEqual(b)
+    expect(jpegs().length).toBe(1)
   })
 })

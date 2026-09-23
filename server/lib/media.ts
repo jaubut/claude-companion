@@ -23,6 +23,11 @@ export interface MediaRef {
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024
 const DEFAULT_MAX_DIR_BYTES = 200 * 1024 * 1024
 const MAX_CONCURRENT = 2
+// Waiting jobs beyond the active slots. A queued job holds its source (the
+// base64 string, or a path) — not a decoded buffer — but even so a burst of
+// screenshots must not pile up without bound; the excess is refused with
+// "busy" and the transcript reader retries it on a later tick.
+export const MAX_PENDING = 6
 const ID_RE = /^[a-f0-9]{32}$/
 
 // One libvips thread per job and at most two jobs: a burst of screenshots must
@@ -120,6 +125,11 @@ export function releaseMedia(ids: Iterable<string>): void {
 let active = 0
 const waiters: Array<() => void> = []
 
+/// True when a new job would exceed the bounded wait queue.
+function saturated(): boolean {
+  return active >= MAX_CONCURRENT && waiters.length >= MAX_PENDING
+}
+
 async function acquire(): Promise<void> {
   if (active < MAX_CONCURRENT) { active++; return }
   await new Promise<void>((resolve) => waiters.push(resolve))
@@ -135,6 +145,10 @@ function release(): void {
 // same output file (and double-counting its bytes).
 const inflight = new Map<string, Promise<MediaRef | null>>()
 
+/// Result of a store call: a ref, `null` for corrupt/refused input, or
+/// `"busy"` when the encode queue is saturated (retry later).
+export type StoreResult = MediaRef | null | "busy"
+
 async function refForExisting(id: string, path: string): Promise<MediaRef | null> {
   try {
     const meta = await sharp(path).metadata() // header only
@@ -147,7 +161,7 @@ async function refForExisting(id: string, path: string): Promise<MediaRef | null
   }
 }
 
-async function encode(id: string, input: Buffer): Promise<MediaRef | null> {
+async function encode(id: string, load: () => Buffer | null): Promise<MediaRef | null> {
   const out = mediaPath(id)
   await acquire()
   try {
@@ -155,6 +169,9 @@ async function encode(id: string, input: Buffer): Promise<MediaRef | null> {
       const ref = await refForExisting(id, out)
       if (ref) return ref
     }
+    // Decoded only now, inside the slot: a waiting job never holds a buffer.
+    const input = load()
+    if (!input || input.length === 0 || input.length > MAX_SOURCE_BYTES) return null
     const { data, info } = await sharp(input)
       .rotate()
       .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
@@ -179,12 +196,17 @@ async function encode(id: string, input: Buffer): Promise<MediaRef | null> {
   }
 }
 
-function storeBuffer(input: Buffer): Promise<MediaRef | null> {
-  if (input.length === 0 || input.length > MAX_SOURCE_BYTES) return Promise.resolve(null)
-  const id = createHash("sha256").update(input).digest("hex").slice(0, 32)
+// The id is derived from the SOURCE (base64 text, or path + size + mtime),
+// never from decoded bytes, so nothing is decoded before a slot is granted.
+// Same source twice → same id → one job, one file.
+function storeSource(id: string, load: () => Buffer | null): Promise<StoreResult> {
   const pending = inflight.get(id)
   if (pending) return pending
-  const job = encode(id, input).finally(() => inflight.delete(id))
+  if (!existsSync(mediaPath(id)) && saturated()) {
+    log(`encode queue saturated (${MAX_CONCURRENT} active + ${MAX_PENDING} waiting) — ${id} deferred`)
+    return Promise.resolve("busy")
+  }
+  const job = encode(id, load).finally(() => inflight.delete(id))
   inflight.set(id, job)
   return job
 }
@@ -192,18 +214,20 @@ function storeBuffer(input: Buffer): Promise<MediaRef | null> {
 // A base64 image block (tool_result content). Refuses sources over 20 MB
 // decoded — checked on the encoded length first so a huge block is never
 // materialised. Corrupt data resolves null and writes nothing.
-export function storeImageBase64(data: string): Promise<MediaRef | null> {
+export function storeImageBase64(data: string): Promise<StoreResult> {
   if (typeof data !== "string" || data.length === 0) return Promise.resolve(null)
   if (Math.floor((data.length * 3) / 4) > MAX_SOURCE_BYTES + 3) return Promise.resolve(null)
-  return storeBuffer(Buffer.from(data, "base64"))
+  const id = createHash("sha256").update(data).digest("hex").slice(0, 32)
+  return storeSource(id, () => Buffer.from(data, "base64"))
 }
 
 // A local image file (`![alt](path)` in assistant text). Same 20 MB refusal.
-export function storeImageFile(path: string): Promise<MediaRef | null> {
+export function storeImageFile(path: string): Promise<StoreResult> {
   try {
     const st = statSync(path)
     if (!st.isFile() || st.size === 0 || st.size > MAX_SOURCE_BYTES) return Promise.resolve(null)
-    return storeBuffer(readFileSync(path))
+    const id = createHash("sha256").update(`${path}\0${st.size}\0${st.mtimeMs}`).digest("hex").slice(0, 32)
+    return storeSource(id, () => { try { return readFileSync(path) } catch { return null } })
   } catch {
     return Promise.resolve(null)
   }

@@ -1,7 +1,7 @@
 import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs"
 import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
-import { storeImageBase64, storeImageFile, type MediaRef } from "./media"
+import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
 
@@ -304,16 +304,19 @@ const MD_MAX_BYTES = 20 * 1024 * 1024
 // Queue one image: the seen key is already marked, `ts` is the detection time
 // (the event sorts by when the tool returned, not when the encode finished),
 // and the id `img:<seenKey>` makes a re-append an idempotent no-op.
-function queueImage(
+export function queueImage(
   s: PathState,
   seenKey: string,
-  store: () => Promise<MediaRef | null>,
+  store: () => Promise<StoreResult>,
   fields: { tool?: string; caption: string },
 ): void {
   const ts = Date.now()
   const ident = identityFor(s)
   void store()
     .then((ref) => {
+      // Saturated encode queue: forget the mark so the next tick re-detects
+      // and retries the image instead of losing it.
+      if (ref === "busy") { s.seenImages.delete(seenKey); return }
       if (!ref) return
       appendFeedEvent({
         id: `img:${seenKey}`,

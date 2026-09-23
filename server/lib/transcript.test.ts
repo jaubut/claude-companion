@@ -235,3 +235,19 @@ describe("images in the feed (RES-L5NG step 3)", () => {
     expect(events.filter((e) => e.kind === "image")).toHaveLength(0)
   })
 })
+
+
+import { queueImage } from "./transcript"
+import { getFeed as feedNow } from "./feed"
+
+describe("busy store retries next tick", () => {
+  test("a busy result unmarks the seen key and appends nothing", async () => {
+    const seen = new Set<string>(["tu:x:0"])
+    const state = { seenImages: seen, cwd: "/tmp", tty: undefined, sessionId: undefined } as unknown as Parameters<typeof queueImage>[0]
+    const before = feedNow().length
+    queueImage(state, "tu:x:0", () => Promise.resolve("busy" as const), { tool: "Read", caption: "x.png" })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(seen.has("tu:x:0")).toBe(false)
+    expect(feedNow().length).toBe(before)
+  })
+})
