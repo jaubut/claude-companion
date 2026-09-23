@@ -1,6 +1,7 @@
 import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs"
 import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
+import { artifactKey, detectArtifacts } from "./artifacts"
 import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
@@ -13,7 +14,8 @@ import type { Activity } from "./activity"
 // streamedThisTurn being flipped here. It also queues tool_result images and
 // `![alt](path)` refs into lib/media.ts and emits `image` events once encoded;
 // those are never counted and never flip streamedThisTurn. Thinking blocks
-// become `assistant_thinking` events under the same rule (RES-L5NG step 4).
+// become `assistant_thinking` events under the same rule (RES-L5NG step 4),
+// and so do `artifact` events — PRs, note refs, files (RES-B9CL).
 
 export interface SessionMeta {
   transcriptPath?: string
@@ -66,6 +68,10 @@ export interface PathState {
   // Marked synchronously BEFORE the async encode, so the turn-end retry loop
   // (up to 16 reads in 4 s) never queues the same image twice.
   seenImages: Set<string>
+  // Artifacts already announced (RES-B9CL). Keys: `art:<kind>:<url|ref|path>`
+  // so one PR is one event per session however often it is mentioned, plus
+  // `tr:<tool_use_id>` for tool_results already scanned (no rescan per tick).
+  seenArtifacts: Set<string>
 }
 
 const states = new Map<string, PathState>()
@@ -123,6 +129,7 @@ export function getState(meta: SessionMeta): PathState {
     lastEventAt: 0,
     lastModel: "",
     seenImages: new Set(),
+    seenArtifacts: new Set(),
   }
   states.set(key, next)
   return next
@@ -260,6 +267,7 @@ export function readTranscriptDelta(
     // wrap-up policy stay text-only.
     if (entry.type === "user") {
       scanToolResultImages(s, blocks, toolUses, opts)
+      scanToolResultArtifacts(s, blocks, toolUses, opts)
       continue
     }
     if (entry.type !== "assistant") continue
@@ -279,7 +287,10 @@ export function readTranscriptDelta(
       const key = hashText(text)
       if (s.seenAssistantText.has(key)) continue
       s.seenAssistantText.add(key)
-      if (opts.silent) continue
+      if (opts.silent) {
+        emitArtifacts(s, text, undefined, opts)
+        continue
+      }
       appendFeedEvent({
         id: crypto.randomUUID(),
         ts: Date.now(),
@@ -290,6 +301,7 @@ export function readTranscriptDelta(
       s.streamedThisTurn = true
       emitted++
       scanMarkdownImages(s, text)
+      emitArtifacts(s, text, undefined, opts)
     }
   }
   return emitted
@@ -349,6 +361,65 @@ function gapMs(
   const to = Date.parse(b.timestamp)
   if (Number.isNaN(from) || Number.isNaN(to) || to < from) return undefined
   return to - from
+}
+
+// ── Artifacts in the feed (Phase 19 step 3, RES-B9CL) ──
+
+// Bash output can be megabytes; artifacts worth a card sit near the top.
+const ARTIFACT_SCAN_MAX = 100_000
+
+// One `artifact` event per distinct artifact per session. Like images and
+// thinking: never counted, never sets streamedThisTurn; a silent read marks
+// the seen keys without emitting.
+function emitArtifacts(s: PathState, text: string, tool: string | undefined, opts: { silent?: boolean }): void {
+  for (const a of detectArtifacts(text.slice(0, ARTIFACT_SCAN_MAX))) {
+    const seenKey = artifactKey(a)
+    if (s.seenArtifacts.has(seenKey)) continue
+    s.seenArtifacts.add(seenKey)
+    if (opts.silent) continue
+    appendFeedEvent({
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      kind: "artifact",
+      artifactKind: a.kind,
+      title: a.title,
+      ...(a.url ? { url: a.url } : {}),
+      ...(a.path ? { path: a.path } : {}),
+      ...(a.ref ? { ref: a.ref } : {}),
+      ...(tool ? { tool } : {}),
+      ...identityFor(s),
+    })
+  }
+}
+
+// tool_result content is a string or an array of blocks; only text counts.
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  const parts: string[] = []
+  for (const item of content as Array<Record<string, unknown>>) {
+    if (item?.type === "text" && typeof item.text === "string") parts.push(item.text)
+  }
+  return parts.join("\n")
+}
+
+function scanToolResultArtifacts(
+  s: PathState,
+  blocks: Array<Record<string, unknown>>,
+  toolUses: ToolUses,
+  opts: { silent?: boolean },
+): void {
+  for (const block of blocks) {
+    if (block.type !== "tool_result") continue
+    const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : ""
+    if (!toolUseId) continue
+    const scannedKey = `tr:${toolUseId}`
+    if (s.seenArtifacts.has(scannedKey)) continue
+    s.seenArtifacts.add(scannedKey)
+    const text = toolResultText(block.content)
+    if (!text) continue
+    emitArtifacts(s, text, toolUses.get(toolUseId)?.name || undefined, opts)
+  }
 }
 
 // ── Images in the feed (RES-L5NG step 3) ──

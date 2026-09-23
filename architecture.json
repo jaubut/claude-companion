@@ -147,6 +147,27 @@
           "externals": []
         },
         {
+          "path": "lib/artifacts.ts",
+          "lines": 99,
+          "kind": "lib",
+          "exports": [
+            "ArtifactKind",
+            "Artifact",
+            "ARTIFACTS_PER_BLOCK",
+            "detectArtifacts",
+            "artifactKey"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/auth.ts",
           "lines": 84,
           "kind": "lib",
@@ -433,7 +454,7 @@
         },
         {
           "path": "lib/feed.ts",
-          "lines": 131,
+          "lines": 141,
           "kind": "lib",
           "exports": [
             "EventKind",
@@ -1067,7 +1088,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 472,
+          "lines": 543,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -1091,6 +1112,7 @@
           "apiCalls": [],
           "imports": [
             "lib/feed.ts",
+            "lib/artifacts.ts",
             "lib/media.ts",
             "lib/tool-format.ts",
             "lib/activity.ts"
@@ -2324,6 +2346,18 @@
           "callers": [
             "lib/transcript.ts",
             "wiring/events.ts"
+          ]
+        },
+        "detectArtifacts": {
+          "module": "lib/artifacts.ts",
+          "callers": [
+            "lib/transcript.ts"
+          ]
+        },
+        "artifactKey": {
+          "module": "lib/artifacts.ts",
+          "callers": [
+            "lib/transcript.ts"
           ]
         },
         "StoreResult": {
