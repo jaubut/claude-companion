@@ -3,8 +3,15 @@ import sharp from "sharp"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { storeImageBase64 } from "../lib/media"
+import { type MediaRef, type StoreResult, storeImageBase64 } from "../lib/media"
 import { handleMediaRoute } from "./media"
+
+// A store result that must be a ref: narrows away null and "busy".
+const mref = (r: StoreResult): MediaRef => {
+  if (r === null || r === "busy") throw new Error(`expected a MediaRef, got ${String(r)}`)
+  return r
+}
+
 
 // Calls the handler directly against a temp COMPANION_MEDIA_DIR. The 401 lives
 // in the server's /api/* gate and is verified by curl, not here — booting
@@ -23,7 +30,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "cc-media-route-"))
   process.env.COMPANION_MEDIA_DIR = dir
   const png = await sharp({ create: { width: 80, height: 40, channels: 3, background: "#00ff00" } }).png().toBuffer()
-  id = (await storeImageBase64(png.toString("base64")))!.mediaId
+  id = mref(await storeImageBase64(png.toString("base64"))).mediaId
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
