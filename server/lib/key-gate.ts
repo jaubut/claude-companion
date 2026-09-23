@@ -34,8 +34,15 @@ export interface KeyGate {
   // Run `doSend` (one tmux send-keys) when it is this pane's turn. `key` is
   // what is being sent, used only to decide whether it opens a chord window.
   send<T>(pane: string, key: string, doSend: () => Promise<T>): Promise<T>
-  // Earliest time the next key may go to this pane (0 = now). For tests/logs.
+  // Earliest time the next key may go to this pane (0 = now).
   earliestNextSend(pane: string): number
+  // How long until that is (0 when no window is open). Read by
+  // command-scrape's yieldPane, which must not call a pane free inside one.
+  remainingMs(pane: string): number
+  // Drop everything known about a pane (it was retired).
+  forget(pane: string): void
+  // Entries currently tracked. Tests only: the maps must not grow forever.
+  size(): { windows: number; queues: number }
   reset(): void
 }
 
@@ -54,17 +61,36 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
   const earliest = new Map<string, number>()
   const tails = new Map<string, Promise<void>>()
 
+  // A window is only worth remembering while it is open. Expire it once it
+  // has passed — guarded, so a NEWER Escape's window is never cut short — so
+  // a pane that is destroyed right after an Escape does not stay in the map.
+  function openWindow(pane: string, until: number): void {
+    earliest.set(pane, until)
+    const t = setTimeout(() => {
+      if (earliest.get(pane) === until && until <= now()) earliest.delete(pane)
+    }, Math.max(0, until - now()) + 1)
+    ;(t as { unref?: () => void }).unref?.()
+  }
+
+  function remainingMs(pane: string): number {
+    const until = earliest.get(pane)
+    if (until === undefined) return 0
+    const left = until - now()
+    if (left <= 0) earliest.delete(pane)
+    return Math.max(0, left)
+  }
+
   function send<T>(pane: string, key: string, doSend: () => Promise<T>): Promise<T> {
     const prev = tails.get(pane) ?? Promise.resolve()
     const run = prev.then(async () => {
-      const wait = (earliest.get(pane) ?? 0) - now()
+      const wait = remainingMs(pane)
       if (wait > 0) await sleep(wait)
       try {
         return await doSend()
       } finally {
         // Set even when the send threw: the Escape may well have reached the
         // pane before tmux reported the failure.
-        if (opensChordWindow(key)) earliest.set(pane, now() + settleMs)
+        if (opensChordWindow(key)) openWindow(pane, now() + settleMs)
       }
     })
     const tail = run.then(() => undefined, () => undefined)
@@ -77,6 +103,9 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
   return {
     send,
     earliestNextSend: (pane) => earliest.get(pane) ?? 0,
+    remainingMs,
+    forget: (pane) => { earliest.delete(pane); tails.delete(pane) },
+    size: () => ({ windows: earliest.size, queues: tails.size }),
     reset: () => { earliest.clear(); tails.clear() },
   }
 }

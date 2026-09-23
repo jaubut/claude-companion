@@ -452,3 +452,65 @@ test("ownership: a clean release during verify() is settled, and a flow starting
   expect(y).toEqual({ held: "list", freed: false })
   expect(isScraping(KEY)).toBe(true)
 })
+
+// ── Codex HIGH round 2 ──────────────────────────────────────────────────────
+//
+// (a) The key gate's Escape windows count too: an Escape the phone sent
+// through /api/dialog/key leaves the pane unusable for ESC_SETTLE_MS, and
+// yieldPane answered freed:true inside it.
+test("gate: yieldPane does not report freed while the pane's key gate has an Escape window open", async () => {
+  const until = Date.now() + 200
+  const slept: number[] = []
+  const y = await yieldPane(KEY, {
+    pane: "%7",
+    gate: { earliestNextSend: () => until },
+    sleep: async (ms) => { slept.push(ms) },
+  })
+  expect(slept.length).toBe(1)
+  expect(slept[0]!).toBeGreaterThan(150)
+  expect(y).toEqual({ held: null, freed: true })
+})
+
+test("gate: a flow that starts while the gate window is waited out keeps the pane", async () => {
+  const y = await yieldPane(KEY, {
+    pane: "%7",
+    gate: { earliestNextSend: () => Date.now() + 200 },
+    sleep: async () => { beginFlow(KEY, "suggest") },
+  })
+  expect(y).toEqual({ held: "suggest", freed: false })
+})
+
+test("gate: Escapes that keep re-opening the window end in a refusal, not a hand-over", async () => {
+  const y = await yieldPane(KEY, {
+    pane: "%7",
+    // A NEW Escape every look: each window ends later than the last.
+    gate: { earliestNextSend: (() => { let n = 0; return () => Date.now() + 200 + 10 * n++ })() },
+    sleep: async () => { /* instant */ },
+  })
+  expect(y.freed).toBe(false)
+})
+
+// (b) Ownership can change across the final `await yieldDirty()` itself. The
+// old code swapped `held` for the new holder's kind but kept that call's
+// freed:true — reproduced as {held:"suggest", freed:true}. The inject waits
+// on a /help scrape; a suggest probe begins N microtasks after the release.
+// Swept over N so one of them lands between yieldDirty's last check and the
+// outer continuation, whatever the exact await depth of the implementation.
+test("stale-freed: freed is recomputed after the last await — a new holder is never handed over", async () => {
+  let refused = 0
+  for (let depth = 0; depth < 60; depth++) {
+    resetFlows()
+    beginFlow(KEY, "list")
+    const y = yieldNow(KEY, { abortMs: 1_000 })
+    endFlow(KEY, { clean: true })
+    let p: Promise<void> = Promise.resolve()
+    for (let i = 0; i < depth; i++) p = p.then(() => {})
+    void p.then(() => { beginFlow(KEY, "suggest") })
+    const r = await y
+    // freed:true must come with the flow we waited out, never with a new one.
+    if (r.freed) expect(r.held).toBe("list")
+    else { refused++; expect(r).toEqual({ held: "suggest", freed: false }) }
+  }
+  // Some depth landed the probe inside the hand-over, or this proved nothing.
+  expect(refused).toBeGreaterThan(0)
+})

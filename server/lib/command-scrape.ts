@@ -21,6 +21,7 @@
 // need testing (`dialog-watch.ts`) take it as a dep.
 
 import { ESC_SETTLE_MS } from "./command-list"
+import { keyGate, type KeyGate } from "./key-gate"
 
 export type PaneFlow = "suggest" | "list"
 
@@ -220,10 +221,20 @@ export interface YieldOpts {
   abortMs?: number
   waitMs?: number
   verify?: () => Promise<boolean>
-  // The chord window a released Escape opens. Injectable for the tests only.
+  // The tmux pane behind `key`. With it, the hand-over also waits out any
+  // Escape window still open on that pane in the shared key gate — an Escape
+  // from /api/dialog/key or /api/model/cancel, not only our own close path.
+  pane?: string
+  // The chord window a released Escape opens, and the gate. Injectable for
+  // the tests only.
   settleMs?: number
   sleep?: (ms: number) => Promise<void>
+  gate?: Pick<KeyGate, "earliestNextSend">
 }
+
+// How many times the hand-over re-waits a window that keeps re-opening
+// (another Escape landed while we slept) before it gives up and refuses.
+const MAX_SETTLE_ROUNDS = 4
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -234,12 +245,39 @@ const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r
 // in a `finally`, so a throw between the last Escape and the release gets here
 // with a hot keyboard, and the inject waiting on that release is exactly the
 // caller whose first character disappears.
-async function settleAfterRelease(key: string, opts: YieldOpts): Promise<void> {
-  const settleMs = opts.settleMs ?? ESC_SETTLE_MS
+function releaseWindowEnd(key: string, opts: YieldOpts): number {
   const at = releasedAt.get(key)
-  if (at === undefined) return
-  const remaining = settleMs - (Date.now() - at)
-  if (remaining > 0) await (opts.sleep ?? realSleep)(remaining)
+  return at === undefined ? 0 : at + (opts.settleMs ?? ESC_SETTLE_MS)
+}
+
+// When the last open chord window on this pane closes: our own release's, or
+// the shared key gate's (Codex HIGH round 2: yieldPane answered freed:true
+// with 250ms still left on an Escape a phone had just sent through
+// /api/dialog/key). An absolute time, so a window that MOVED while we slept
+// (a new Escape) is told apart from the one we already waited out.
+function windowEnd(key: string, opts: YieldOpts): number {
+  const gate = opts.pane ? (opts.gate ?? keyGate).earliestNextSend(opts.pane) : 0
+  return Math.max(releaseWindowEnd(key, opts), gate)
+}
+
+// Wait until no window is open, re-reading ownership after every sleep. Null
+// means "settled, nobody else took the pane"; otherwise the refusal to return.
+// `waited` is shared by every settle in one hand-over, so the second settle
+// does not sleep a window the first one already slept out.
+interface Waited { until: number }
+async function settleWindows(key: string, opts: YieldOpts, waited: Waited): Promise<PaneYield | null> {
+  for (let round = 0; round < MAX_SETTLE_ROUNDS; round++) {
+    const end = windowEnd(key, opts)
+    const wait = end - Date.now()
+    // Settled: nothing open, or the window is the one we just slept out.
+    if (wait <= 0 || end <= waited.until) return claimedBy(key)
+    await (opts.sleep ?? realSleep)(wait)
+    waited.until = end
+    const claimed = claimedBy(key)
+    if (claimed) return claimed
+  }
+  // Escapes keep arriving: the pane is being driven. Not ours to type into.
+  return claimedBy(key) ?? { held: null, freed: false }
 }
 
 export async function yieldPane(key: string, opts: YieldOpts = {}): Promise<PaneYield> {
@@ -253,11 +291,15 @@ export async function yieldPane(key: string, opts: YieldOpts = {}): Promise<Pane
   // OWN work (R4a): a suggest probe releases clean-by-default (a C-u and no
   // opinion), so an inject parked on a probe that started over a dirty pane
   // must still clear the mark before the keyboard changes hands. yieldDirty
-  // also waits out the release's chord window and re-checks ownership.
+  // also waits out every open chord window and re-checks ownership.
   const verified = await yieldDirty(key, opts)
-  // If somebody else claimed the pane while we were settling or looking, say
-  // who: that flow, not the one we waited out, is why the answer is "no".
-  return { held: flows.get(key)?.kind ?? held, freed: verified.freed }
+  // Awaiting yieldDirty is itself a turn of the event loop: a flow can begin
+  // between its last check and this line. `freed` is recomputed from what is
+  // true NOW, never carried over (Codex HIGH round 2: {held:"suggest",
+  // freed:true} while a probe owned the pane).
+  const now = claimedBy(key)
+  if (now) return now
+  return { held, freed: verified.freed }
 }
 
 // Someone claimed the pane while we were awaiting. Every await in the hand-off
@@ -275,43 +317,45 @@ function claimedBy(key: string): PaneYield | null {
 //
 // Ownership is re-read after EVERY await below, never carried across one.
 async function yieldDirty(key: string, opts: YieldOpts): Promise<PaneYield> {
-  // (1) The chord window. Also on the no-flow path: a scrape released from the
-  // route's `finally` after a throw is already gone by the time an inject
-  // asks, and its last key may have been an Escape a few ms ago — the exact
-  // case this backstop exists for.
-  await settleAfterRelease(key, opts)
-  const early = claimedBy(key)
+  // (1) The chord windows, also on the no-flow path: a scrape released from
+  // the route's `finally` after a throw is already gone by the time an inject
+  // asks, and its last key may have been an Escape a few ms ago.
+  const waited: Waited = { until: Number.NEGATIVE_INFINITY }
+  const early = await settleWindows(key, opts, waited)
   if (early) return early
 
+  // `held` on success: the flow whose mark we cleared, if we cleared one.
+  let heldKind: PaneFlow | null = null
   const mark = dirty.get(key)
-  if (!mark) return { held: null, freed: true }
-  const clean = opts.verify ? await opts.verify().catch(() => false) : false
-
-  // (2) R4c — `verify()` is a real capture against a real pane: it takes time,
-  // and the world moves under it. A scrape that began while we were looking
-  // holds the keyboard now, and our verdict describes a screen from before it
-  // started typing.
-  const late = claimedBy(key)
-  if (late) return late
-  const after = dirty.get(key)
-  if (after === undefined) {
-    // The mark we verified is gone: only an explicit clean release does that,
-    // and that is a stronger statement about the pane than our capture. But
-    // that release was a /help close, which ends on an Escape — settle its
-    // window too, then look at ownership one last time.
-    await settleAfterRelease(key, opts)
-    const last = claimedBy(key)
-    if (last) return last
-    const remarked = dirty.get(key)
-    if (remarked) return { held: remarked.kind, freed: false }
-    return { held: null, freed: true }
+  if (mark) {
+    const clean = opts.verify ? await opts.verify().catch(() => false) : false
+    // (2) R4c — `verify()` is a real capture against a real pane: it takes
+    // time, and the world moves under it. A scrape that began while we were
+    // looking holds the keyboard now, and our verdict describes a screen from
+    // before it started typing.
+    const late = claimedBy(key)
+    if (late) return late
+    const after = dirty.get(key)
+    // A DIFFERENT mark — a flow ran and released dirty while we looked. Our
+    // capture says nothing about what it left behind.
+    if (after && after.seq !== mark.seq) return { held: after.kind, freed: false }
+    if (after) {
+      if (!clean) return { held: mark.kind, freed: false }
+      dirty.delete(key)
+      heldKind = mark.kind
+    }
+    // Mark gone without us: only an explicit clean release does that, and
+    // that is a stronger statement about the pane than our capture.
   }
-  // A DIFFERENT mark — a flow ran and released dirty while we looked. Our
-  // capture says nothing about what it left behind.
-  if (after.seq !== mark.seq) return { held: after.kind, freed: false }
 
-  if (clean) dirty.delete(key)
-  return { held: mark.kind, freed: clean }
+  // (3) Anything that ran during verify() (a clean /help release ends on an
+  // Escape; a phone may have sent one) opened a new window. Settle it and
+  // look at ownership one last time before saying yes.
+  const last = await settleWindows(key, opts, waited)
+  if (last) return last
+  const remarked = dirty.get(key)
+  if (remarked) return { held: remarked.kind, freed: false }
+  return { held: heldKind, freed: true }
 }
 
 // Tests only: drop every claim, and every memory of a bad hand-off.

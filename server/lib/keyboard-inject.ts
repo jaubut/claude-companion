@@ -5,6 +5,8 @@
 // (iTerm or macOS Terminal, matched by tty) so multi-session users can pick
 // which instance their reply lands in.
 
+import { keyGate } from "./key-gate"
+
 export interface InjectTarget {
   tty?: string
   termProgram?: string
@@ -344,7 +346,7 @@ export async function injectText(text: string, target?: InjectTarget): Promise<b
 // session names, or accidentally-shell-quoted strings — before we spawn tmux.
 const TMUX_PANE_RE = /^%\d+$/
 
-interface TmuxResult {
+export interface TmuxResult {
   ok: boolean
   reason: string
 }
@@ -390,18 +392,32 @@ async function resolveTmuxPaneFromTty(tty: string): Promise<string | null> {
   }
 }
 
-async function deliverViaTmux(paneId: string, text: string): Promise<TmuxResult> {
+// Exported with an injectable sender for the tests only; production always
+// uses the real tmux spawn.
+export async function deliverViaTmux(
+  paneId: string,
+  text: string,
+  sendKeys: (args: readonly string[], timeoutMs: number) => Promise<TmuxResult> = tmuxSendKeys,
+): Promise<TmuxResult> {
   // Two send-keys calls — first with `-l` (literal) so the text is typed
   // exactly as-is regardless of contents, second to send Enter as a real
   // key event. tmux holds the pty master, so the Enter byte sequence
   // arrives as a key event that Ink's onSubmit fires on (a raw \n in
   // stdin does not — see claude-code issue #15553).
+  //
+  // Both go through the shared per-pane key gate (lib/key-gate.ts), as ONE
+  // turn: the text waits out any Escape window still open on this pane (an
+  // Escape followed within ~100ms by a byte is read as opt+<byte> — the phone
+  // prompt "do both" that arrived as "o both"), and no other sender's key can
+  // land between the text and its Enter.
   if (!TMUX_PANE_RE.test(paneId)) return { ok: false, reason: `invalid pane id "${paneId}"` }
-  const literal = await tmuxSendKeys(["send-keys", "-t", paneId, "-l", text], 2000)
-  if (!literal.ok) return { ok: false, reason: `send-keys -l: ${literal.reason}` }
-  const enter = await tmuxSendKeys(["send-keys", "-t", paneId, "Enter"], 2000)
-  if (!enter.ok) return { ok: false, reason: `send-keys Enter: ${enter.reason}` }
-  return { ok: true, reason: "" }
+  return keyGate.send(paneId, "Enter", async (): Promise<TmuxResult> => {
+    const literal = await sendKeys(["send-keys", "-t", paneId, "-l", text], 2000)
+    if (!literal.ok) return { ok: false, reason: `send-keys -l: ${literal.reason}` }
+    const enter = await sendKeys(["send-keys", "-t", paneId, "Enter"], 2000)
+    if (!enter.ok) return { ok: false, reason: `send-keys Enter: ${enter.reason}` }
+    return { ok: true, reason: "" }
+  })
 }
 
 async function injectTextLocked(text: string, target?: InjectTarget): Promise<boolean> {

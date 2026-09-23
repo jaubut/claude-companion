@@ -102,7 +102,11 @@ export async function yieldPaneForInject(
 ): Promise<boolean> {
   if (!target) return true
   const wasDirty = isPaneDirty(target.key)
-  const { held, freed } = await yieldPane(target.key, { verify: () => paneLooksClean(target) })
+  // `pane` makes the hand-over wait out an Escape window any route left open on
+  // this pane (lib/key-gate.ts). The delivery itself goes through the same
+  // gate; this keeps the verdict honest, so freed never means "free, but a
+  // chord window is still open".
+  const { held, freed } = await yieldPane(target.key, { pane: target.tmuxPane, verify: () => paneLooksClean(target) })
   if (held === "list") {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     const what = wasDirty ? "command scrape residue" : "command scrape aborted"

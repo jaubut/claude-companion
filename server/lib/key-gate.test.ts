@@ -95,3 +95,32 @@ test("the shared gate, on the real clock, spaces two requests by >= ESC_SETTLE_M
   // 1ms slack for timer rounding on the real clock.
   expect(at[1]! - at[0]!).toBeGreaterThanOrEqual(ESC_SETTLE_MS - 1)
 })
+
+// ── Codex LOW round 2: the maps must not keep every pane ever seen ─────────
+test("cleanup: an Escape's window is forgotten once it has passed", async () => {
+  const gate = createKeyGate({ settleMs: 20 })
+  await gate.send("%gone", "Escape", async () => {})
+  expect(gate.size().windows).toBe(1)
+  await new Promise((r) => setTimeout(r, 60))
+  // The pane was destroyed right after its Escape: nothing about it remains.
+  expect(gate.size()).toEqual({ windows: 0, queues: 0 })
+})
+
+test("cleanup: an older window's expiry does not cut a NEWER Escape's window short", async () => {
+  const gate = createKeyGate({ settleMs: 40 })
+  await gate.send("%1", "Escape", async () => {})
+  await new Promise((r) => setTimeout(r, 20))
+  await gate.send("%1", "Escape", async () => {})  // waits out the first, opens a new window
+  const newer = gate.earliestNextSend("%1")
+  await new Promise((r) => setTimeout(r, 10))
+  expect(gate.earliestNextSend("%1")).toBe(newer)
+  expect(gate.remainingMs("%1")).toBeGreaterThan(0)
+})
+
+test("cleanup: forget() drops a retired pane", async () => {
+  const gate = createKeyGate({ settleMs: 1_000 })
+  await gate.send("%9", "Escape", async () => {})
+  gate.forget("%9")
+  expect(gate.size()).toEqual({ windows: 0, queues: 0 })
+  expect(gate.remainingMs("%9")).toBe(0)
+})
