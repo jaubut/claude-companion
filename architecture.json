@@ -1092,7 +1092,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 543,
+          "lines": 617,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -1108,7 +1108,9 @@
             "hashText"
           ],
           "state": [
-            "states: Map"
+            "states: Map",
+            "cursors: WeakMap",
+            "busyImages: WeakMap"
           ],
           "emits": [],
           "consumes": [],
