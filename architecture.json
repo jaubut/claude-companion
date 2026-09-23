@@ -1116,7 +1116,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 601,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "SessionMeta",

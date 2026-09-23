@@ -10,6 +10,9 @@ const EXPORT_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class
 const CASE_RE = /case\s+"([a-z_]+)"\s*:/g
 const TYPE_EQ_RE = /\.type\s*===\s*"([a-z_]+)"/g
 const FETCH_RE = /\bfetch\(\s*[`"']([^`"'?]+)/g
+// `/api/…` paths built outside fetch() — href, clipboard, window.open — are
+// callers too (invoices.tsx builds the public invoice link this way).
+const API_LIT_RE = /(\/api\/(?:[A-Za-z0-9_\-.\/]|\$\{[^}]*\})+)/g
 const IMPORT_RE = /from\s+"(\.{1,2}\/[^"]+|@\/[^"]+)"/
 
 export function scanReactClient(cfg: TargetConfig, repoRoot: string): Target {
@@ -26,7 +29,8 @@ export function scanReactClient(cfg: TargetConfig, repoRoot: string): Target {
     }
     scanExternals(m, lines)   // shared scanner: both quote styles, bare specifiers only
     m.consumes = uniq([...text.matchAll(CASE_RE), ...text.matchAll(TYPE_EQ_RE)].map((x) => x[1]!))
-    m.apiCalls = uniq([...text.matchAll(FETCH_RE)].map((x) => normalizeCall(x[1]!)).filter((p) => p.startsWith("/")))
+    m.apiCalls = uniq([...text.matchAll(FETCH_RE), ...text.matchAll(API_LIT_RE)]
+      .map((x) => normalizeCall(x[1]!)).filter((p) => p.startsWith("/") && !p.endsWith("/")))
     m.imports = uniq(m.imports)
     m.exports = uniq(m.exports)
     modules.push(m)

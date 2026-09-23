@@ -227,9 +227,8 @@ export function forgetStates(meta: SessionMeta): PathState[] {
   return dropped
 }
 
-// The byte cursor (offset, checkpoint, tool_use map) lives in
-// transcript-cursor.ts; entries come back with their file location so an
-// image payload can be re-read on retry instead of being pinned in memory.
+// The byte cursor (offset, checkpoint, tool_use map) lives in transcript-cursor.ts;
+// entries carry their file location so an image payload can be re-read on retry.
 
 export function readTranscriptDelta(
   s: PathState,

@@ -8,12 +8,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 61 modules, cap 600)
 
-⚠ over cap: `lib/transcript.ts` (601)
-
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/transcript.ts` | 601 ⚠ 601 > cap 600 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
+| `lib/transcript.ts` | 600 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `lib/keyboard-inject.ts` | 599 | lib | 8 | state: let injectQueue |
 | `routes/hooks.ts` | 563 | route-host | 1 | emits: user_prompt · routes: 7 |
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
