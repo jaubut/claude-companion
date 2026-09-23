@@ -151,6 +151,9 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
       if (startBy !== undefined && now() + wait >= startBy) throw tooLate()
       if (wait > 0) await sleep(wait)
       if (cancelled) throw tooLate()
+      // A stalled event loop can resume this continuation before the
+      // deadline timer fires: check the clock itself, not just the flag.
+      if (startBy !== undefined && now() >= startBy) throw tooLate()
       started = true
       return runBounded(pane, key, doSend, opts.timeoutMs ?? sendTimeoutMs)
     })

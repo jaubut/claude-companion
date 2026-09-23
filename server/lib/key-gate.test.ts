@@ -107,14 +107,16 @@ test("cleanup: an Escape's window is forgotten once it has passed", async () => 
 })
 
 test("cleanup: an older window's expiry does not cut a NEWER Escape's window short", async () => {
-  const gate = createKeyGate({ settleMs: 40 })
+  // Real clock: margins are wide (400 / 100 / 50 ms) so a scheduler stall
+  // of tens of ms cannot turn correct gate behaviour into a failure.
+  const gate = createKeyGate({ settleMs: 400 })
   await gate.send("%1", "Escape", async () => {})
-  await new Promise((r) => setTimeout(r, 20))
+  await new Promise((r) => setTimeout(r, 100))
   await gate.send("%1", "Escape", async () => {})  // waits out the first, opens a new window
   const newer = gate.earliestNextSend("%1")
-  await new Promise((r) => setTimeout(r, 10))
+  await new Promise((r) => setTimeout(r, 50))
   expect(gate.earliestNextSend("%1")).toBe(newer)
-  expect(gate.remainingMs("%1")).toBeGreaterThan(0)
+  expect(gate.remainingMs("%1")).toBeGreaterThan(200)
 })
 
 test("cleanup: forget() drops a retired pane", async () => {
