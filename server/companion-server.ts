@@ -10,6 +10,8 @@ import { handleCommandRoute } from "./routes/command"
 import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
+import { handleSecretRoute } from "./routes/secret"
+import { isTrustedSecretTransport } from "./lib/secrets"
 import { websocket } from "./ws"
 
 
@@ -50,9 +52,18 @@ export function createCompanionServer(port: number) {
         return new Response("WebSocket upgrade failed", { status: 500 })
       }
 
+      // ── Secret transport gate ──
+      // /api/secret carries raw tokens: loopback (Tailscale Serve → HTTPS) or
+      // a tailnet peer only. A plain-http LAN client gets 403 before the body
+      // is read.
+      if ((url.pathname === "/api/secret" || url.pathname.startsWith("/api/secret/"))
+        && !isTrustedSecretTransport(server.requestIP(req)?.address, req)) {
+        return Response.json({ ok: false, error: "insecure-transport" }, { status: 403 })
+      }
+
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleSecretRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }
