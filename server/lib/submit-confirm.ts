@@ -14,7 +14,9 @@
 // `not_submitted` with a short pane excerpt.
 
 import { keyGate } from "./key-gate"
-import { INJECT_SEND_MS, injectText, resolveTmuxPaneFromTty, tmuxCapture, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { INJECT_SEND_MS, injectText, resolveTmuxPaneFromTty, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { inputLine, unstyle } from "./command-menu"
+import { capturePane } from "./tmux-pane"
 
 export const SUBMIT_WINDOW_MS = 3_000
 
@@ -76,6 +78,9 @@ export function watchSubmit(id: SubmitIdentity): SubmitWatch {
   return {
     wait(ms, clock = realClock) {
       if (w.hits > 0) return Promise.resolve(true)
+      // A zero window is a synchronous peek, not a timer (the fake test clock
+      // would never fire it).
+      if (ms <= 0) return Promise.resolve(false)
       return new Promise<boolean>((resolve) => {
         const done = (seen: boolean) => {
           w.wake = null
@@ -100,41 +105,84 @@ export function activeWatchCount(): number {
 
 export type ConfirmResult =
   | { ok: true; confirmed: true; retried: boolean }
-  // No hook, but the pane shows Claude mid-turn: the prompt is queued behind
-  // the running turn and its hook fires when that turn ends. Not a failure.
+  // No hook, but the pane shows Claude mid-turn AND our text sitting in its
+  // queue: Claude Code queues a prompt typed during a turn and fires the hook
+  // when the turn ends. Both are read from a fresh capture — a cached "busy"
+  // status is not evidence (review of PR #51).
   | { ok: true; confirmed: false; queued: true }
   | { ok: false; error: "not_submitted"; excerpt: string }
 
 export interface ConfirmDeps {
   watch: SubmitWatch
+  // The injected text: the retry only fires while it is still in the box.
+  text: string
   pressEnter: () => Promise<boolean>
+  // A bounded `capture-pane -e` (null on failure/timeout).
   capture: () => Promise<string | null>
-  // Claude was busy at inject time (sessions.json said so).
-  busy?: boolean
   windowMs?: number
   clock?: SubmitClock
 }
 
 const BUSY_RE = /esc to interrupt/i
+// A numbered picker or a yes/no confirm. An Enter here answers it.
+const PICKER_RE = /^\s*❯\s*\d+\.|Do you want to/m
 
 // Last few non-blank lines of the pane, capped — enough for the phone to show
 // what ate the prompt (a modal, a picker) without shipping the scrollback.
 export function paneExcerpt(pane: string | null, lines = 8, maxChars = 600): string {
   if (!pane) return ""
-  const tail = pane.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim()).slice(-lines).join("\n")
+  const tail = unstyle(pane).split("\n").map((l) => l.trimEnd()).filter((l) => l.trim()).slice(-lines).join("\n")
   return tail.length > maxChars ? tail.slice(-maxChars) : tail
+}
+
+const norm = (s: string) => s.replace(/\s+/g, " ").trim()
+
+// The first characters of the injected text, whitespace-folded. Long text
+// wraps in the box, so only a prefix is compared.
+function textPrefix(text: string): string {
+  return norm(text).slice(0, 16)
+}
+
+// Our text is still typed (not dim) on the input line: the Enter was lost.
+function stillInBox(pane: string, prefix: string): boolean {
+  const typed = inputLine(pane)
+  return !!prefix && !!typed && norm(typed).startsWith(prefix)
+}
+
+// Claude is mid-turn and our text shows above the box (the queued-prompt
+// list), not only on the input line.
+function queuedBehindTurn(pane: string, prefix: string): boolean {
+  const plain = unstyle(pane)
+  if (!prefix || !BUSY_RE.test(plain)) return false
+  const lines = plain.split("\n")
+  let promptIdx = -1
+  for (let i = lines.length - 1; i >= 0; i--) if (/^❯/.test(lines[i] ?? "")) { promptIdx = i; break }
+  return lines.slice(0, promptIdx < 0 ? lines.length : promptIdx).some((l) => norm(l).includes(prefix))
 }
 
 export async function confirmSubmit(deps: ConfirmDeps): Promise<ConfirmResult> {
   const windowMs = deps.windowMs ?? SUBMIT_WINDOW_MS
+  const prefix = textPrefix(deps.text)
   if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: false }
-  // A busy Claude queues the prompt: no hook until its turn ends, and a second
-  // Enter would only submit an empty line. Don't call that lost.
+
   const before = await deps.capture()
-  if (deps.busy || (before && BUSY_RE.test(before))) return { ok: true, confirmed: false, queued: true }
-  await deps.pressEnter()
-  if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: true }
-  return { ok: false, error: "not_submitted", excerpt: paneExcerpt(await deps.capture()) }
+  if (before === null) return { ok: false, error: "not_submitted", excerpt: "" }
+  // The hook may have landed while we were capturing: never press a spurious
+  // Enter into an idle box.
+  if (await deps.watch.wait(0, deps.clock)) return { ok: true, confirmed: true, retried: false }
+
+  // Retry ONLY when our own text is visibly sitting unsent in the input box
+  // and nothing modal is on screen. Anything else — an empty box, a picker, a
+  // panel — means the text went somewhere else, and an Enter there would
+  // answer a prompt nobody chose (review of PR #51, item 1).
+  if (stillInBox(before, prefix) && !PICKER_RE.test(unstyle(before))) {
+    await deps.pressEnter()
+    if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: true }
+  }
+
+  const after = await deps.capture()
+  if (after !== null && queuedBehindTurn(after, prefix)) return { ok: true, confirmed: false, queued: true }
+  return { ok: false, error: "not_submitted", excerpt: paneExcerpt(after ?? before) }
 }
 
 // What the inject routes answer with.
@@ -173,28 +221,51 @@ function pressEnterIn(pane: string): () => Promise<boolean> {
 // injectText + submit confirmation. Only Claude sessions in a tmux pane are
 // confirmed: that is where the hook is guaranteed and the pane is readable.
 // Everything else keeps the old "delivered = sent" answer (confirmed: false).
+const CAPTURE_TIMEOUT_MS = 1_500
+
+// One send-and-confirm at a time per pane: a hook matches its watch by
+// session, so two overlapping injects into one pane could each be "confirmed"
+// by the other's hook. Serialising the whole lifecycle, and arming the watch
+// only once this inject holds the pane, gives every hook exactly one owner.
+// A hook from the user typing locally in that window can still confirm — the
+// hook carries no text to tell them apart.
+const paneLocks = new Map<string, Promise<unknown>>()
+function withPaneLock<T>(pane: string, fn: () => Promise<T>): Promise<T> {
+  const prev = paneLocks.get(pane) ?? Promise.resolve()
+  const next = prev.catch(() => undefined).then(fn)
+  const tail = next.catch(() => undefined)
+  paneLocks.set(pane, tail)
+  void tail.then(() => { if (paneLocks.get(pane) === tail) paneLocks.delete(pane) })
+  return next
+}
+
+// injectText + submit confirmation. Only Claude sessions in a tmux pane are
+// confirmed: that is where the hook is guaranteed and the pane is readable.
+// Everything else keeps the old "delivered = sent" answer (confirmed: false).
 export async function injectConfirmed(text: string, target: ConfirmTarget | undefined): Promise<InjectOutcome> {
   const pane = target && (target.agent ?? "claude") === "claude" ? await confirmPane(target) : ""
   if (!target || !pane) {
     return (await injectText(text, target)) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
   }
-  const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty })
-  try {
-    if (!(await injectText(text, { ...target, tmuxPane: pane }))) return { ok: false, error: "deliver_failed" }
-    const r = await confirmSubmit({
-      watch,
-      pressEnter: pressEnterIn(pane),
-      capture: () => tmuxCapture(pane),
-      busy: target.agentStatus === "busy",
-    })
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const green = "\x1b[32m"; const yellow = "\x1b[33m"
-    const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit after Enter + retry`
-      : r.confirmed ? `${green}submit confirmed${reset}${r.retried ? " (after Enter retry)" : ""}`
-      : `${yellow}submit queued${reset} — Claude busy, hook fires at turn end`
-    process.stderr.write(`${dim}[companion]${reset} ${line} → ${pane}\n`)
-    if (!r.ok) return r
-    return r.confirmed ? { ok: true, confirmed: true, retried: r.retried } : { ok: true, confirmed: false, queued: true }
-  } finally {
-    watch.close()
-  }
+  return withPaneLock(pane, async (): Promise<InjectOutcome> => {
+    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty })
+    try {
+      if (!(await injectText(text, { ...target, tmuxPane: pane }))) return { ok: false, error: "deliver_failed" }
+      const r = await confirmSubmit({
+        watch,
+        text,
+        pressEnter: pressEnterIn(pane),
+        capture: () => capturePane(pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true }),
+      })
+      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const green = "\x1b[32m"; const yellow = "\x1b[33m"
+      const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit hook`
+        : r.confirmed ? `${green}submit confirmed${reset}${r.retried ? " (after Enter retry)" : ""}`
+        : `${yellow}submit queued${reset} — Claude mid-turn, text in its queue`
+      process.stderr.write(`${dim}[companion]${reset} ${line} → ${pane}\n`)
+      if (!r.ok) return r
+      return r.confirmed ? { ok: true, confirmed: true, retried: r.retried } : { ok: true, confirmed: false, queued: true }
+    } finally {
+      watch.close()
+    }
+  })
 }

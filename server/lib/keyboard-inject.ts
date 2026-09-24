@@ -534,7 +534,7 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
 
 import type { PickerIO } from "./question-driver"
 
-export async function tmuxCapture(pane: string): Promise<string | null> {
+async function tmuxCapture(pane: string): Promise<string | null> {
   try {
     const p = Bun.spawn(["tmux", "capture-pane", "-p", "-t", pane], { stdout: "pipe", stderr: "ignore" })
     const out = await new Response(p.stdout).text()

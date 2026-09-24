@@ -11,7 +11,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
-| `lib/keyboard-inject.ts` | 599 | lib | 11 | state: let injectQueue |
+| `lib/keyboard-inject.ts` | 599 | lib | 10 | state: let injectQueue |
 | `lib/transcript.ts` | 598 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `routes/hooks.ts` | 566 | route-host | 1 | emits: user_prompt · routes: 7 |
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
@@ -24,6 +24,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/command.ts` | 318 | route-host | 1 | state: listCache: Map · routes: 2 |
 | `wiring/orchestrator.ts` | 306 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/discover.ts` | 274 | lib | 1 |  |
+| `lib/submit-confirm.ts` | 272 | lib | 14 | state: watches: Set, paneLocks: Map |
 | `lib/media.ts` | 254 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/apns.ts` | 242 | lib | 6 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/questions.ts` | 229 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map |
@@ -32,7 +33,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
 | `lib/key-gate.ts` | 207 | lib | 9 |  |
-| `lib/submit-confirm.ts` | 201 | lib | 14 | state: watches: Set |
 | `routes/model.ts` | 199 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 181 | lib | 7 |  |
@@ -207,15 +207,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `Task()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-brain.ts`, `lib/orchestrator-queue.ts`, `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/orchestrator.ts` |
 | `getTask()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/`, `wiring/orchestrator.ts` |
 | `clients()` | `state.ts` | `routes/api.ts`, `routes/api.ts#* /api/status`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/orchestrator.ts`, `ws.ts` |
+| `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list` |
 | `apnsConfigured()` | `lib/apns.ts` | `lib/push.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#GET /api/push/tokens`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
+| `capturePane()` | `lib/tmux-pane.ts` | `lib/submit-confirm.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `wiring/dialogs.ts`, `wiring/orchestrator.ts` |
 | `setTaskStatus()` | `lib/orchestrator-chat.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/`, `wiring/orchestrator.ts` |
 | `workerQueue()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
-| `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list` |
 | `listQueued()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-queue.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
 | `QuestionAnswer()` | `lib/questions.ts` | `lib/question-driver.ts`, `routes/api.ts#POST /api/answer`, `routes/hooks.ts`, `ws.ts` |
 | `pushToAll()` | `lib/push.ts` | `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
 | `runTmux()` | `lib/key-gate.ts` | `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts` |
-| `capturePane()` | `lib/tmux-pane.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `wiring/dialogs.ts`, `wiring/orchestrator.ts` |
 | `agentFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop` |
 | `emitTask()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
 | `isModelPicker()` | `lib/model-control.ts` | `routes/model.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel` |
@@ -250,6 +250,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `WsData()` | `state.ts` | `companion-server.ts`, `ws.ts` |
 | `FeedEvent()` | `lib/feed.ts` | `lib/codex-feed.ts`, `wiring/events.ts` |
 | `isPaneClean()` | `lib/command-list.ts` | `lib/command-scrape.ts`, `wiring/dialogs.ts` |
+| `unstyle()` | `lib/command-menu.ts` | `lib/inject-guard.ts`, `lib/submit-confirm.ts` |
 | `pickKeys()` | `lib/dialogs.ts` | `lib/model-control.ts`, `routes/dialogs.ts#POST /api/dialog/pick` |
 | `Turn()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-brain.ts`, `wiring/orchestrator.ts` |
 | `QuestionItem()` | `lib/questions.ts` | `lib/question-driver.ts`, `routes/hooks.ts` |

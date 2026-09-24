@@ -581,7 +581,6 @@
             "tmuxSendKeys",
             "resolveTmuxPaneFromTty",
             "deliverViaTmux",
-            "tmuxCapture",
             "withPickerIO"
           ],
           "state": [
@@ -1037,7 +1036,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 201,
+          "lines": 272,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -1056,7 +1055,8 @@
             "injectConfirmed"
           ],
           "state": [
-            "watches: Set"
+            "watches: Set",
+            "paneLocks: Map"
           ],
           "emits": [],
           "consumes": [],
@@ -1064,7 +1064,9 @@
           "apiCalls": [],
           "imports": [
             "lib/key-gate.ts",
-            "lib/keyboard-inject.ts"
+            "lib/keyboard-inject.ts",
+            "lib/command-menu.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2251,6 +2253,7 @@
           "callers": [
             "lib/command-list.ts",
             "lib/inject-guard.ts",
+            "lib/submit-confirm.ts",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list"
           ]
@@ -2336,7 +2339,8 @@
         "unstyle": {
           "module": "lib/command-menu.ts",
           "callers": [
-            "lib/inject-guard.ts"
+            "lib/inject-guard.ts",
+            "lib/submit-confirm.ts"
           ]
         },
         "helpOverlayVisible": {
@@ -2531,10 +2535,14 @@
             "lib/submit-confirm.ts"
           ]
         },
-        "tmuxCapture": {
-          "module": "lib/keyboard-inject.ts",
+        "capturePane": {
+          "module": "lib/tmux-pane.ts",
           "callers": [
-            "lib/submit-confirm.ts"
+            "lib/submit-confirm.ts",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "wiring/dialogs.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "isQuestionTool": {
@@ -3016,15 +3024,6 @@
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts"
-          ]
-        },
-        "capturePane": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
-            "wiring/dialogs.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "suggestRefusal": {
