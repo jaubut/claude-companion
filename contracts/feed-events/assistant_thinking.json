@@ -1,0 +1,11 @@
+{
+  "id": "d8a4c0e6-5b2f-4d9c-b3a7-4f6e8c0d2a35",
+  "ts": 1790000006000,
+  "kind": "assistant_thinking",
+  "key": "claude:tty:/dev/ttys004",
+  "durationMs": 4210,
+  "text": "The feed store is module-global, so the test must use its own ids.",
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47"
+}

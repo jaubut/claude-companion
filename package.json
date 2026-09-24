@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "bun cli.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "contracts:sync": "bun scripts/contracts-sync.ts"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

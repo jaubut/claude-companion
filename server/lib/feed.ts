@@ -6,19 +6,26 @@
 // onFeedEvict (no in-tree listener today; media files are age/byte-capped
 // independently of the feed — see wiring/media.ts).
 
-export type EventKind =
-  | "user_prompt"
-  | "assistant_text"
-  | "tool_start"
-  | "tool_end"
-  | "turn_end"
-  | "image"
+// The exhaustive kind list — the ONE place kinds are declared. `EventKind` is
+// derived from it so the runtime list cannot drift from the type; the
+// contract fixtures (contracts/feed-events/, synced to the iOS repo) are
+// checked against it by feed-contract.test.ts.
+export const FEED_EVENT_KINDS = [
+  "user_prompt",
+  "assistant_text",
+  "tool_start",
+  "tool_end",
+  "turn_end",
+  "image",
   // RES-L5NG step 4 — Claude's thinking block. Reuses `text`; `durationMs`
   // is the transcript gap to the next entry when known.
-  | "assistant_thinking"
+  "assistant_thinking",
   // Phase 19 step 3 (RES-B9CL) — a PR / note ref / file spotted in assistant
   // text or a tool_result. Fields: artifactKind, title, url | ref | path.
-  | "artifact"
+  "artifact",
+] as const
+
+export type EventKind = (typeof FEED_EVENT_KINDS)[number]
 
 export type Verdict = "auto-allow" | "auto-deny" | "approved" | "denied" | "pending"
 

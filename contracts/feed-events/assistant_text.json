@@ -1,0 +1,10 @@
+{
+  "id": "b2e8d4f1-0c3a-4d7e-9f15-2a6c8e0b4d91",
+  "ts": 1790000001000,
+  "kind": "assistant_text",
+  "key": "claude:tty:/dev/ttys004",
+  "text": "I'll add `FEED_EVENT_KINDS` to `lib/feed.ts` and derive the union from it.",
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47"
+}

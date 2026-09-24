@@ -1,0 +1,15 @@
+{
+  "id": "f1b5d9e3-6c0a-4e2d-8b4f-5a7c9e1f3b46",
+  "ts": 1790000007000,
+  "kind": "artifact",
+  "key": "claude:tty:/dev/ttys004",
+  "tool": "Bash",
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47",
+  "artifactKind": "pr",
+  "title": "PR #42 · jaubut/claude-companion",
+  "url": "https://github.com/jaubut/claude-companion/pull/42",
+  "path": "/Users/jeremieaubut/claude-companion/contracts/README.md",
+  "ref": "RES-B9CL"
+}
