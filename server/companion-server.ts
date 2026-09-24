@@ -24,9 +24,8 @@ export function createCompanionServer(port: number) {
       // Hooks endpoints are called by local Claude Code shell scripts on the
       // same machine, so we exempt them from auth (those scripts can't
       // easily carry credentials and the surface is loopback-only by
-      // convention). Static asset paths are also open so the PWA can load
-      // its bundle before authenticating. Everything else — /ws, /api/* —
-      // requires a valid Bearer token. Without this gate any device on the
+      // convention). `/` and `/health` are open plain-text probes. Everything
+      // else — /ws, /api/* — requires a valid Bearer token. Without this gate any device on the
       // LAN could hit /api/inject and paste arbitrary keystrokes.
       const isHookCall = url.pathname.startsWith("/hooks/")
       const isHealth = url.pathname === "/health"
@@ -52,34 +51,19 @@ export function createCompanionServer(port: number) {
       }
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
-      // returns null for paths it doesn't own; the static/SPA fallback is last.
+      // returns null for paths it doesn't own; the plain `/` page is last.
       for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }
 
-      // ── Serve static files ──
-      // Cache strategy:
-      //   - index.html → no-cache. WKWebView heuristically caches HTML
-      //     otherwise, which pins the page to a stale bundle hash and means
-      //     server fixes never reach the phone until the user manually
-      //     reinstalls. Always revalidate.
-      //   - /assets/* → immutable, 1 year. Vite content-hashes filenames so
-      //     a different bundle gets a different URL anyway.
-      const filePath = url.pathname === "/" ? "/index.html" : url.pathname
-      const file = Bun.file(`${import.meta.dir}/../client/dist${filePath}`)
-      if (await file.exists()) {
-        const isHtml = filePath.endsWith(".html") || filePath === "/index.html"
-        const isHashedAsset = filePath.startsWith("/assets/")
-        const headers: Record<string, string> = {}
-        if (isHtml) headers["Cache-Control"] = "no-cache"
-        else if (isHashedAsset) headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        return new Response(file, { headers })
-      }
-      // SPA fallback
-      const index = Bun.file(`${import.meta.dir}/../client/dist/index.html`)
-      if (await index.exists()) {
-        return new Response(index, { headers: { "Content-Type": "text/html", "Cache-Control": "no-cache" } })
+      // No browser client any more — the PWA was retired on 2026-09-24; the
+      // iOS app is the only client. `/` says so in plain text, the rest 404s.
+      if (url.pathname === "/") {
+        return new Response(
+          "Claude Companion server. Pair the iOS app with the host and the token printed at boot. GET /health for liveness.\n",
+          { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" } },
+        )
       }
       return new Response("Not found", { status: 404 })
     },

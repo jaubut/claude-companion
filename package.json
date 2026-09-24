@@ -7,10 +7,8 @@
     "claude-companion": "./cli.ts"
   },
   "scripts": {
-    "dev:client": "cd client && bun run dev",
-    "build": "cd client && bun run build",
     "start": "bun cli.ts",
-    "typecheck": "tsc --noEmit -p . && cd client && tsc -b"
+    "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
     "qrcode": "^1.5.4",
