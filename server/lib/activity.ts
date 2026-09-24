@@ -22,6 +22,7 @@
 // `activity` the shipped clients read is DERIVED at read time as the most
 // recently active session's pill. Nothing in here is a host singleton.
 
+import { statSync } from "node:fs"
 import { verbFor, summarize, extractToolResult, clampLong } from "./tool-format"
 import { appendFeedEvent, pruneFeedForSession, type Verdict } from "./feed"
 import { getState, identityFor, activeStates, forgetStates, readTranscriptDelta, hashText, type SessionMeta, type PathState } from "./transcript"
@@ -69,12 +70,17 @@ function startPoll(): void {
   if (pollTimer) return
   pollTimer = setInterval(() => {
     const now = Date.now()
-    let beat = false
     for (const s of activeStates()) {
       if (s.transcriptPath) readTranscriptDelta(s)
+    }
+    // Expire dead pills BEFORE the beat, so a stale pill is never re-stamped.
+    const cleared = expireStaleActivity(now, { emit: false })
+    let beat = false
+    for (const s of activeStates()) {
       // Heartbeat — keep every live "Claude is … 12s" pill counting between
       // tools. lastBeatAt ONLY: bumping lastEventAt would re-sort the rollup
       // on every tick and flip the shipped clients' pill between sessions.
+      // Liveness only: the beat is never evidence the turn is progressing.
       if (s.activity) {
         s.activity = { ...s.activity, lastBeatAt: now }
         beat = true
@@ -82,12 +88,93 @@ function startPoll(): void {
     }
     // One frame per tick, never one per session — WS volume stays at today's
     // rate whatever N is.
-    if (beat) emitActivity("")
+    if (beat || cleared) emitActivity("")
+    if (cleared) stopPollIfIdle()
   }, POLL_MS)
   // Don't keep the event loop alive just for the heartbeat.
   if (typeof (pollTimer as unknown as { unref?: () => void }).unref === "function") {
     (pollTimer as unknown as { unref: () => void }).unref()
   }
+}
+
+// ── Stale-pill expiry ────────────────────────────────────────────────────
+// A phone inject can log "delivered" while the keystrokes never became a
+// prompt: no UserPromptSubmit hook, nothing in the transcript. recordUserPrompt
+// has already put up "Thinking", and the heartbeat alone would keep it counting
+// forever (audit 2026-09-24: 8+ min of fake Thinking on an idle session). Two
+// clear paths, both suspended while a tool_start is still open:
+//
+//   1. TTL — no hook event and no transcript growth for ACTIVITY_TTL_MS, unless
+//      Claude Code's own status file says the session is busy (a long single
+//      generation writes nothing to the transcript until it completes).
+//   2. Idle — the status file reads "idle" and the transcript has not grown
+//      since the turn started. IDLE_GRACE_MS covers the status poll lagging a
+//      freshly submitted prompt.
+export const ACTIVITY_TTL_MS = 90_000
+export const IDLE_GRACE_MS = 10_000
+
+interface Progress {
+  size: number       // transcript bytes at the last check (-1 = no file)
+  grewAt: number     // when the transcript last grew
+  turnSize: number   // transcript bytes when the current turn started
+}
+const progress = new WeakMap<PathState, Progress>()
+
+// Claude Code's own view per Session.key ("busy" | "waiting" | "idle"), from
+// the last `sessions` emit. Only sessions with a status file appear here.
+const agentStatusByKey = new Map<string, string>()
+
+function transcriptSize(s: PathState): number {
+  if (!s.transcriptPath) return -1
+  try { return statSync(s.transcriptPath).size } catch { return -1 }
+}
+
+function progressFor(s: PathState, now: number): Progress {
+  let p = progress.get(s)
+  if (!p) {
+    const size = transcriptSize(s)
+    p = { size, grewAt: now, turnSize: size }
+    progress.set(s, p)
+  }
+  return p
+}
+
+function markTurnStart(s: PathState, now: number): void {
+  const size = transcriptSize(s)
+  progress.set(s, { size, grewAt: now, turnSize: size })
+}
+
+function isStale(s: PathState, now: number): boolean {
+  const pill = s.activity
+  if (!pill) return false
+  // A long-running tool (build, test suite) is legitimately silent.
+  if (s.toolStarts.size > 0) return false
+  const p = progressFor(s, now)
+  const size = transcriptSize(s)
+  if (size !== p.size) {
+    p.size = size
+    p.grewAt = now
+  }
+  const status = pill.key ? agentStatusByKey.get(pill.key) ?? "" : ""
+  const turnStart = pill.turnStartedAt || s.turnStartedAt
+  if (status === "idle" && size <= p.turnSize && now - turnStart >= IDLE_GRACE_MS) return true
+  if (status === "busy") return false
+  return now - Math.max(s.lastEventAt, p.grewAt) >= ACTIVITY_TTL_MS
+}
+
+// Drop every pill that went stale. Returns whether anything was cleared.
+export function expireStaleActivity(now = Date.now(), opts: { emit?: boolean } = {}): boolean {
+  let cleared = false
+  for (const s of activeStates()) {
+    if (!isStale(s, now)) continue
+    s.activity = null
+    cleared = true
+  }
+  if (cleared && opts.emit !== false) {
+    emitActivity("")
+    stopPollIfIdle()
+  }
+  return cleared
 }
 
 function stopPollIfIdle(): void {
@@ -133,6 +220,7 @@ function emitActivity(key: string): void {
 function setActivity(s: PathState, next: Omit<Activity, "key">, sessionKey: string): void {
   s.activity = { ...next, key: sessionKey }
   s.lastEventAt = Date.now()
+  progressFor(s, s.lastEventAt)
   emitActivity(sessionKey)
 }
 
@@ -152,8 +240,10 @@ function clearActivity(s: PathState, sessionKey: string): void {
 // map's key (path:/tty:/sid:/cwd:).
 export function reconcileActivityLiveness(sessions: Session[]): void {
   const now = Date.now()
+  agentStatusByKey.clear()
+  for (const sess of sessions) if (sess.agentStatus) agentStatusByKey.set(sess.key, sess.agentStatus)
   let live: Set<string> | null = null
-  let cleared = false
+  let cleared = expireStaleActivity(now, { emit: false })
   for (const s of activeStates()) {
     const pill = s.activity
     // No key = a hook with no cwd, so no Session exists to judge it against.
@@ -298,6 +388,8 @@ export function recordUserPrompt(args: {
   // don't echo it back as assistant text.
   // Mark what came before as seen — but the prompt's own pasted images are new.
   if (args.transcriptPath) readTranscriptDelta(s, { silent: true, primePastedFromLastPrompt: true })
+  // Baseline for the idle clear: growth past this point proves the prompt landed.
+  markTurnStart(s, now)
 
   startPoll()
 }
