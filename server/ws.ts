@@ -8,7 +8,7 @@ import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } f
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, HOST_INFO, type WsData } from "./state"
-import { dialogWatcher, openDialogFor, yieldPaneForInject } from "./wiring/dialogs"
+import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 
 // WebSocket handlers: on open, replay pending approvals/questions and send the
@@ -113,11 +113,16 @@ export const websocket: WebSocketHandler<WsData> = {
           // (see lib/inject-guard.ts) — including the dialog check both paths
           // were missing: with a dialog open, send-keys answers the dialog
           // instead of reaching the input box.
-          const refusal = injectRefusal({ lookup, target, paneFree, dialog: paneFree ? await openDialogFor(target) : null })
+          const refusal = injectRefusal({
+            lookup, target, paneFree,
+            dialog: paneFree ? await openDialogFor(target) : null,
+            pane: paneFree ? await paneSnapshotFor(target) : undefined,
+          })
           if (refusal) {
             const why = refusal.error === "target_gone" ? `${lookup} not registered`
               : refusal.error === "target_idle" ? `${target?.label || target?.key} has no tty`
               : refusal.error === "busy_flow" ? `${target?.label || target?.key} pane still held by a companion flow`
+              : refusal.error === "pane_not_ready" ? `${target?.label || target?.key} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
               : `${target?.label || target?.key} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
             process.stderr.write(`${dim}[companion]${reset} ${red}ws inject refused${reset} — ${why}\n`)
             try {
@@ -127,6 +132,8 @@ export const websocket: WebSocketHandler<WsData> = {
                 key: msg.key,
                 cwd: msg.cwd,
                 dialog: refusal.dialog,
+                reason: refusal.reason,
+                excerpt: refusal.excerpt,
               }))
             } catch { /* ignore */ }
             break

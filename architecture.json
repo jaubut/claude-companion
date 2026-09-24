@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-23",
+  "generatedAt": "2026-09-24",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (primary), the React PWA (desktop), and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -308,12 +308,14 @@
         },
         {
           "path": "lib/command-menu.ts",
-          "lines": 135,
+          "lines": 218,
           "kind": "lib",
           "exports": [
             "CommandSuggestion",
             "SuggestRefusalCode",
             "SuggestRefusal",
+            "unstyle",
+            "promptLineIndex",
             "inputLine",
             "parseCommandMenu",
             "suggestRefusal",
@@ -512,11 +514,14 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 80,
+          "lines": 169,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
             "InjectRefusal",
+            "PaneNotReadyReason",
+            "paneExcerpt",
+            "paneNotReady",
             "InjectAttempt",
             "injectRefusal"
           ],
@@ -526,6 +531,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/command-list.ts",
+            "lib/command-menu.ts",
             "lib/dialogs.ts",
             "lib/sessions.ts"
           ],
@@ -1048,7 +1055,7 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 70,
+          "lines": 77,
           "kind": "lib",
           "exports": [
             "capturePane",
@@ -1254,7 +1261,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 344,
+          "lines": 354,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1729,12 +1736,13 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 131,
+          "lines": 144,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
             "yieldPaneForInject",
-            "openDialogFor"
+            "openDialogFor",
+            "paneSnapshotFor"
           ],
           "state": [],
           "emits": [
@@ -1905,7 +1913,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 154,
+          "lines": 161,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -2202,6 +2210,7 @@
           "module": "lib/command-menu.ts",
           "callers": [
             "lib/command-list.ts",
+            "lib/inject-guard.ts",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list"
           ]
@@ -2281,6 +2290,24 @@
             "lib/hook-common.ts",
             "routes/api.ts#POST /api/spawn-session",
             "routes/hooks.ts"
+          ]
+        },
+        "unstyle": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/inject-guard.ts"
+          ]
+        },
+        "helpOverlayVisible": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/inject-guard.ts"
+          ]
+        },
+        "promptLineIndex": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/inject-guard.ts"
           ]
         },
         "KeyGateTimeout": {
@@ -2716,6 +2743,13 @@
           ]
         },
         "openDialogFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
+        "paneSnapshotFor": {
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",

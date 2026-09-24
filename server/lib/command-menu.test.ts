@@ -106,3 +106,48 @@ describe("the empty box is not blank on screen", () => {
     expect(inputLine("❯ Try the other approach")).toBe("Try the other approach")
   })
 })
+
+describe("inputLine on a styled capture (capture-pane -e)", () => {
+  // Claude Code paints a predicted next reply into the empty box as DIM text
+  // (SGR 2), cursor still at column 2. Plain capture-pane shows it as typed.
+  const DIM_PREDICTION = "\x1b[1m❯\x1b[22m \x1b[2mrun the tests again and fix whatever fails\x1b[0m"
+
+  test("dim-only input is an empty box", () => {
+    expect(inputLine(DIM_PREDICTION)).toBe("")
+    expect(inputLine(`────────────\n${DIM_PREDICTION}\n────────────`)).toBe("")
+  })
+
+  test("the same line captured without -e still reads as typed (why -e is needed)", () => {
+    expect(inputLine("❯ run the tests again and fix whatever fails")).toBe("run the tests again and fix whatever fails")
+  })
+
+  test("a combined SGR that turns dim on counts too", () => {
+    expect(inputLine("❯ \x1b[2;38;5;244mprediction\x1b[0m")).toBe("")
+  })
+
+  test("the 2 inside a truecolour/256-colour SGR is not dim", () => {
+    expect(inputLine("❯ \x1b[38;2;255;2;2mhello\x1b[39m")).toBe("hello")
+    expect(inputLine("❯ \x1b[38;5;2mhello\x1b[39m")).toBe("hello")
+  })
+
+  test("dim turned off again (SGR 22) is the user's text", () => {
+    expect(inputLine("❯ \x1b[2mghost\x1b[22m typed")).toBe("typed")
+  })
+
+  test("an inverse fake cursor on the prediction's first char is still empty", () => {
+    expect(inputLine("❯ \x1b[7mr\x1b[27m\x1b[2mun the tests\x1b[0m")).toBe("")
+  })
+
+  test("a real char under an inverse cursor, no ghost text, is typed", () => {
+    expect(inputLine("❯ \x1b[7mx\x1b[27m")).toBe("x")
+  })
+
+  test("typed text with a dim completion suffix returns only the typed part", () => {
+    expect(inputLine("❯ /mo\x1b[2mdel\x1b[0m")).toBe("/mo")
+  })
+
+  test("a dim placeholder is empty; a styled prompt marker still anchors", () => {
+    expect(inputLine('\x1b[38;5;244m❯\x1b[39m \x1b[2mTry "write a test"\x1b[0m')).toBe("")
+    expect(inputLine("\x1b[38;5;244m❯\x1b[39m ")).toBe("")
+  })
+})
