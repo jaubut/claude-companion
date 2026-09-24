@@ -166,6 +166,7 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
     for (const raw of lines) {
       const caller = opts.label ? opts.label(m, raw) : m.path
       if (IMPORT_LINE_RE.test(raw)) continue
+      if (/^\s*(?:\/\/|\/\*|\*)/.test(raw)) continue   // `// usage: bun run x.ts` is prose, not a call of run()
       const l = opts.stripLiterals ? stripLiterals(raw) : raw
       for (const [name, re] of res) {
         const owner = owners.get(name)!
