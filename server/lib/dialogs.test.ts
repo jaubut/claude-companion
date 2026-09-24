@@ -124,3 +124,41 @@ test("pickKeys moves the cursor with arrows from wherever it sits", () => {
   expect(pickKeys(d, 99)).toBeNull()
   expect(pickKeys(d, -1)).toBeNull()
 })
+
+
+// Live capture, Zettlab 2026-09-24: the sandbox network prompt has no hint
+// footer — its Esc hint is inside row 3 — and no hook fires for it.
+const SANDBOX_NET = `
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Network request outside of sandbox
+
+   Host: www.google.com
+
+   Do you want to allow this connection?
+   ❯ 1. Yes
+     2. Yes, and don't ask again for www.google.com
+     3. No, and tell Claude what to do differently (esc)
+`
+
+test("footerless sandbox network prompt is a dialog with Enter/Escape", () => {
+  const d = parseDialog(SANDBOX_NET)
+  expect(d).not.toBeNull()
+  expect(d!.kind).toBe("dialog")
+  expect(d!.items.map((i) => i.number)).toEqual([1, 2, 3])
+  expect(d!.items[0]!.cursor).toBe(true)
+  expect(d!.items[0]!.text).toBe("Yes")
+  expect(d!.hints.map((h) => h.key)).toEqual(["Enter", "Escape"])
+  expect(`${d!.title}\n${d!.body}`).toContain("Do you want to allow this connection?")
+})
+
+test("a numbered list in Claude's own prose is not a footerless dialog", () => {
+  const prose = `● Any of these gets me going:\n  1. Send the file.\n  2. Paste the caption.\n  3. Fix the connection and I'll retry.\n`
+  expect(parseDialog(prose)).toBeNull()
+  const q = `  Do you want me to do that?\n  1. Yes\n  2. No\n`
+  expect(parseDialog(q)).toBeNull()   // no cursor row: prose, not a picker
+})
+
+test("the idle prompt under a divider is still not a dialog", () => {
+  const idle = `${"─".repeat(40)}\n❯ \n${"─".repeat(40)}\n  ⏸ manual mode on · ? for shortcuts\n`
+  expect(parseDialog(idle)).toBeNull()
+})

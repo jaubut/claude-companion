@@ -86,6 +86,28 @@ function classify(line: string): Classified {
   return { marker, cursor, numbered: num ? num[1]! : null, col, text: num ? rest.slice(num[0].length) : rest }
 }
 
+const CONFIRM_Q_RE = /\bDo you want to\b.*\?\s*$/
+const NUMBERED_ROW_RE = /^\s*(?:❯|›|>)?\s*\d+\.\s+\S/
+
+// The last lines are a numbered picker (cursor on one row) under a
+// "Do you want to …?" line, below the last divider. The idle prompt, a
+// numbered list in Claude's own prose, or a picker with a footer never
+// match: prose has no cursor row directly under the question, and the idle
+// prompt is not numbered.
+function footerlessConfirm(all: string[], end: number): boolean {
+  const last = all[end - 1] ?? ""
+  if (!NUMBERED_ROW_RE.test(last)) return false
+  let sawCursor = false
+  for (let i = end - 1; i >= Math.max(0, end - 12); i--) {
+    const l = all[i]!
+    if (DIVIDER_RE.test(l)) return false
+    if (NUMBERED_ROW_RE.test(l)) { if (CURSOR_RE.test(l)) sawCursor = true; continue }
+    if (!l.trim()) continue
+    return sawCursor && CONFIRM_Q_RE.test(l)
+  }
+  return false
+}
+
 export function parseDialog(pane: string): Dialog | null {
   const all = pane.replace(/\r/g, "").split("\n")
   let end = all.length
@@ -94,8 +116,20 @@ export function parseDialog(pane: string): Dialog | null {
   for (let i = end - 1; i >= Math.max(0, end - 6); i--) {
     if (HINT_FOOTER_RE.test(all[i]!)) { footerIdx = i; break }
   }
-  if (footerIdx < 0) return null
-  const hints = parseHints(all[footerIdx]!)
+  let hints: DialogHint[]
+  if (footerIdx >= 0) {
+    hints = parseHints(all[footerIdx]!)
+  } else {
+    // Footerless confirm: Claude Code's sandbox network prompt ("Network
+    // request outside of sandbox … Do you want to allow this connection?
+    // ❯ 1. Yes …") ends on its last numbered row with the Esc hint INSIDE
+    // row 3. No PermissionRequest hook fires for it, so this watcher is the
+    // phone's only view of it — missed, Claude's request hangs until it
+    // times out and the session reads "idle" (bug report 2026-09-24).
+    if (!footerlessConfirm(all, end)) return null
+    footerIdx = end
+    hints = [{ key: "Enter", label: "select" }, { key: "Escape", label: "cancel" }]
+  }
   if (!hints.length) return null
 
   // Anchor on the cursor row (the idle prompt's "❯" doesn't count), then

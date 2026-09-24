@@ -406,7 +406,7 @@
         },
         {
           "path": "lib/dialogs.ts",
-          "lines": 175,
+          "lines": 209,
           "kind": "lib",
           "exports": [
             "DialogItem",

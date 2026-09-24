@@ -32,11 +32,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-judge.ts` | 217 | lib | 8 | state: ALWAYS_SAFE_TOOLS: Set |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
+| `lib/dialogs.ts` | 209 | lib | 7 |  |
 | `lib/key-gate.ts` | 208 | lib | 9 |  |
 | `routes/model.ts` | 200 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 181 | lib | 7 |  |
-| `lib/dialogs.ts` | 175 | lib | 7 |  |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `routes/orchestrator.ts` | 173 | route-host | 1 | routes: 8 |
 | `lib/inject-guard.ts` | 169 | lib | 7 |  |
