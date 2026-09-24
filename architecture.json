@@ -466,9 +466,10 @@
         },
         {
           "path": "lib/feed.ts",
-          "lines": 142,
+          "lines": 149,
           "kind": "lib",
           "exports": [
+            "FEED_EVENT_KINDS",
             "EventKind",
             "Verdict",
             "FeedEvent",
