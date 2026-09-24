@@ -1,4 +1,5 @@
 import { getPending, resolveApproval } from "../lib/pty-manager"
+import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
 import { echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
@@ -80,7 +81,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const env: ApnsEnv = body.environment === "production" ? "production" : "sandbox"
     registerToken(token, env, body.device_name)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    process.stderr.write(`${dim}[companion]${reset} ${cyan}push token registered${reset} env=${env}${body.device_name ? ` name=${body.device_name}` : ""} total=${tokenCount()}\n`)
+    companionLog(`${cyan}push token registered${reset} env=${env}${body.device_name ? ` name=${body.device_name}` : ""} total=${tokenCount()}`)
     return Response.json({ ok: true, configured: apnsConfigured(), total: tokenCount() })
   }
   if (url.pathname === "/api/register-token" && req.method === "DELETE") {
@@ -152,7 +153,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       userInfo: body.userInfo ?? {},
     })
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    process.stderr.write(`${dim}[companion]${reset} ${cyan}broadcast${reset} cat=${category} sent=${result.sent}/${result.total} title="${title.slice(0, 40)}"\n`)
+    companionLog(`${cyan}broadcast${reset} cat=${category} sent=${result.sent}/${result.total} title="${title.slice(0, 40)}"`)
     return Response.json({ ok: true, ...result })
   }
 
@@ -216,7 +217,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
         : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
         : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
         : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
-      process.stderr.write(`${dim}[companion]${reset} ${red}inject refused${reset} — ${why}\n`)
+      companionLog(`${red}inject refused${reset} — ${why}`)
       // 409 for the dialog and for a pane we could not take back: the request
       // is fine and the target is alive, it just can't accept text yet. 410
       // stays the "this target is gone" code the phone already maps to a
@@ -231,7 +232,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const reset = "\x1b[0m"
     const cyan = "\x1b[36m"
     const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
-    process.stderr.write(`${dim}[companion]${reset} ${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"\n`)
+    companionLog(`${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"`)
 
     // Clear only what the caller named, and only its turn-end reason: typed
     // text answers neither a pending approval nor an open dialog. With no
@@ -240,7 +241,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
     announceWaiting(cleared)
     if (!cleared && refused > 0) {
-      process.stderr.write(`${dim}[companion]${reset} \x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m\n`)
+      companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
     }
 
     const res = await injectConfirmed(text, target ?? undefined)
@@ -253,7 +254,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     }
     const ok = res.ok
     if (!ok) {
-      process.stderr.write(`${dim}[companion]${reset} \x1b[31minject failed\x1b[0m — delivery failed (tmux send-keys, or osascript: Accessibility permission?)\n`)
+      companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (tmux send-keys, or osascript: Accessibility permission?)`)
     } else if (target && echoPromptOnInject(res)) {
       // Unconfirmable delivery only (see echoPromptOnInject): the hook is
       // the source of truth everywhere it can be observed.
@@ -278,7 +279,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const body = await req.json().catch(() => ({})) as { tool?: string }
     const removed = clearLearned(body.tool)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}learned cleared${reset} ${body.tool ?? "all"} (${removed} entries)\n`)
+    companionLog(`${yellow}learned cleared${reset} ${body.tool ?? "all"} (${removed} entries)`)
     return Response.json({ ok: true, removed })
   }
   if (url.pathname.startsWith("/api/learned/") && req.method === "DELETE") {
@@ -295,7 +296,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const body = await req.json() as { enabled?: boolean }
     const next = setSuperAuto(!!body.enabled)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const purple = "\x1b[35m"
-    process.stderr.write(`${dim}[companion]${reset} ${purple}super-auto${reset} ${next ? "ON" : "off"}\n`)
+    companionLog(`${purple}super-auto${reset} ${next ? "ON" : "off"}`)
     broadcast({ type: "super_auto", enabled: next })
     return Response.json({ ok: true, enabled: next })
   }
@@ -309,18 +310,18 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       body.agent === "codex" || body.agent === "kimi" ? body.agent : "claude"
 
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
-    process.stderr.write(`${dim}[companion]${reset} ${cyan}spawn${reset} ${agent} in ${cwd}\n`)
+    companionLog(`${cyan}spawn${reset} ${agent} in ${cwd}`)
 
     let result: SpawnResult
     try {
       result = await spawnCompanionSession({ cwd, app: body.app, agent })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`${dim}[companion]${reset} ${red}spawn crashed${reset} — ${message}\n`)
+      companionLog(`${red}spawn crashed${reset} — ${message}`)
       return Response.json({ ok: false, error: message || "spawn crashed" }, { status: 500 })
     }
     if (!result.ok) {
-      process.stderr.write(`${dim}[companion]${reset} ${red}spawn failed${reset} — ${result.error}\n`)
+      companionLog(`${red}spawn failed${reset} — ${result.error}`)
       return Response.json({ ok: false, error: result.error }, { status: 400 })
     }
     return Response.json({ ok: true, app: result.app, cwd, agent })

@@ -31,6 +31,7 @@
 // Module state on purpose, like command-scrape's flow map: a per-process fact
 // about a pane that every consumer must see the same way.
 
+import { companionLog } from "./log"
 import { ESC_SETTLE_MS } from "./command-list"
 
 // How long one turn (normally a single send-keys) may hold a pane's queue.
@@ -93,7 +94,7 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
   const sleep = deps.sleep ?? realSleep
   const settleMs = deps.settleMs ?? ESC_SETTLE_MS
   const sendTimeoutMs = deps.sendTimeoutMs ?? SEND_TIMEOUT_MS
-  const log = deps.log ?? ((line: string) => { process.stderr.write(`${line}\n`) })
+  const log = deps.log ?? companionLog
   const earliest = new Map<string, number>()
   const tails = new Map<string, Promise<void>>()
 
@@ -124,7 +125,7 @@ export function createKeyGate(deps: KeyGateDeps = {}): KeyGate {
     const expired = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         ac.abort()
-        log(`[companion] key gate: send "${key}" to ${pane} timed out after ${timeoutMs}ms — skipped, queue continues`)
+        log(`key gate: send "${key}" to ${pane} timed out after ${timeoutMs}ms — skipped, queue continues`)
         reject(new KeyGateTimeout(`send to ${pane} timed out after ${timeoutMs}ms`))
       }, Math.max(0, timeoutMs))
     })

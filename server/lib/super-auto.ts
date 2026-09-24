@@ -7,6 +7,7 @@
 // so it survives server restarts. Toggle via /api/super-auto from the iOS
 // app or by `touch`/`rm`-ing the file from a shell.
 
+import { companionLog } from "./log"
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -29,7 +30,7 @@ export function setSuperAuto(enabled: boolean): boolean {
       unlinkSync(FLAG_PATH)
     }
   } catch (err) {
-    process.stderr.write(`[companion] super-auto persist failed: ${String(err)}\n`)
+    companionLog(`super-auto persist failed: ${String(err)}`)
   }
   return cached
 }

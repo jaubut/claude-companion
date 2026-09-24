@@ -1,3 +1,4 @@
+import { companionLog } from "./lib/log"
 import type { WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
@@ -100,9 +101,9 @@ export const websocket: WebSocketHandler<WsData> = {
         if (msg.text?.trim()) {
           const lookup = msg.key || msg.cwd || ""
           const target = lookup ? resolveSession(lookup) : null
-          const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
+          const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
           const tag = target?.tty ? ` → ${target.label || target.key} (${target.tty})` : lookup ? ` → ${lookup} [unresolved]` : " → frontmost"
-          process.stderr.write(`${dim}[companion]${reset} ${cyan}ws inject${reset}${tag} "${msg.text.slice(0, 60)}"\n`)
+          companionLog(`${cyan}ws inject${reset}${tag} "${msg.text.slice(0, 60)}"`)
           // Our own /help scrape never refuses a user's message: abort it and
           // take the pane back first (same as POST /api/inject). A pane we
           // could not take back is `busy_flow`, not a blind send-keys — the
@@ -124,7 +125,7 @@ export const websocket: WebSocketHandler<WsData> = {
               : refusal.error === "busy_flow" ? `${target?.label || target?.key} pane still held by a companion flow`
               : refusal.error === "pane_not_ready" ? `${target?.label || target?.key} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
               : `${target?.label || target?.key} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
-            process.stderr.write(`${dim}[companion]${reset} ${red}ws inject refused${reset} — ${why}\n`)
+            companionLog(`${red}ws inject refused${reset} — ${why}`)
             try {
               ws.send(JSON.stringify({
                 type: "inject_error",

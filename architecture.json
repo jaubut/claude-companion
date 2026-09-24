@@ -549,7 +549,7 @@
         },
         {
           "path": "lib/key-gate.ts",
-          "lines": 207,
+          "lines": 208,
           "kind": "lib",
           "exports": [
             "SEND_TIMEOUT_MS",
@@ -568,6 +568,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "lib/command-list.ts"
           ],
           "listeners": [],
@@ -576,7 +577,7 @@
         },
         {
           "path": "lib/keyboard-inject.ts",
-          "lines": 599,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "InjectTarget",
@@ -598,6 +599,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "lib/key-gate.ts",
             "lib/question-driver.ts"
           ],
@@ -633,8 +635,26 @@
           "externals": []
         },
         {
+          "path": "lib/log.ts",
+          "lines": 16,
+          "kind": "lib",
+          "exports": [
+            "logPrefix",
+            "companionLog"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/media.ts",
-          "lines": 254,
+          "lines": 255,
           "kind": "lib",
           "exports": [
             "MediaRef",
@@ -658,7 +678,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/log.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": [
@@ -1043,7 +1065,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 283,
+          "lines": 284,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -1072,6 +1094,7 @@
           "apiCalls": [],
           "imports": [
             "lib/key-gate.ts",
+            "lib/log.ts",
             "lib/keyboard-inject.ts",
             "lib/command-menu.ts",
             "lib/tmux-pane.ts"
@@ -1082,7 +1105,7 @@
         },
         {
           "path": "lib/super-auto.ts",
-          "lines": 75,
+          "lines": 76,
           "kind": "lib",
           "exports": [
             "isSuperAuto",
@@ -1096,7 +1119,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/log.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1309,7 +1334,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 354,
+          "lines": 355,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1406,6 +1431,7 @@
           "apiCalls": [],
           "imports": [
             "lib/pty-manager.ts",
+            "lib/log.ts",
             "lib/questions.ts",
             "lib/submit-confirm.ts",
             "lib/inject-guard.ts",
@@ -1428,7 +1454,7 @@
         },
         {
           "path": "routes/attach.ts",
-          "lines": 66,
+          "lines": 67,
           "kind": "route-host",
           "exports": [
             "handleAttachRoute"
@@ -1445,6 +1471,7 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "lib/sessions.ts"
           ],
           "listeners": [],
@@ -1453,7 +1480,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 345,
+          "lines": 346,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -1478,6 +1505,7 @@
           "apiCalls": [],
           "imports": [
             "lib/command-menu.ts",
+            "lib/log.ts",
             "lib/command-list.ts",
             "lib/command-scrape.ts",
             "lib/key-gate.ts",
@@ -1491,7 +1519,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 71,
+          "lines": 72,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -1513,6 +1541,7 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "lib/command-list.ts",
             "lib/dialogs.ts",
             "lib/key-gate.ts",
@@ -1610,6 +1639,7 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "lib/spawn-session.ts",
             "lib/pty-manager.ts",
             "lib/questions.ts",
@@ -1663,7 +1693,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 199,
+          "lines": 200,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -1692,6 +1722,7 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "lib/command-list.ts",
             "lib/dialogs.ts",
             "lib/key-gate.ts",
@@ -1786,7 +1817,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 144,
+          "lines": 145,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
@@ -1803,6 +1834,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "state.ts",
             "lib/dialog-watch.ts",
             "lib/command-scrape.ts",
@@ -1894,7 +1926,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 306,
+          "lines": 307,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -1921,6 +1953,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "state.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-brain.ts",
@@ -1963,7 +1996,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 164,
+          "lines": 165,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -1981,6 +2014,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/log.ts",
             "lib/pty-manager.ts",
             "lib/questions.ts",
             "lib/submit-confirm.ts",
@@ -2362,6 +2396,38 @@
           "module": "lib/command-menu.ts",
           "callers": [
             "lib/inject-guard.ts"
+          ]
+        },
+        "companionLog": {
+          "module": "lib/log.ts",
+          "callers": [
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/media.ts",
+            "lib/submit-confirm.ts",
+            "lib/super-auto.ts",
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#POST /api/inject",
+            "routes/api.ts#DELETE /api/learned",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/attach.ts",
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "routes/model.ts",
+            "wiring/dialogs.ts",
+            "wiring/orchestrator.ts",
+            "ws.ts"
           ]
         },
         "KeyGateTimeout": {

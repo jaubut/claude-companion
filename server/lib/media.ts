@@ -1,3 +1,4 @@
+import { companionLog } from "./log"
 import sharp from "sharp"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs"
@@ -61,8 +62,8 @@ function maxAgeMs(): number {
 }
 
 function log(msg: string): void {
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-  process.stderr.write(`${dim}[companion]${reset} ${cyan}media${reset} ${msg}\n`)
+  const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+  companionLog(`${cyan}media${reset} ${msg}`)
 }
 
 // ── Byte total ──
