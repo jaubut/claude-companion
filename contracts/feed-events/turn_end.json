@@ -1,0 +1,10 @@
+{
+  "id": "c7f3b9d5-4a1e-4c8b-a2f6-3e5d7b9c1f24",
+  "ts": 1790000004000,
+  "kind": "turn_end",
+  "key": "claude:tty:/dev/ttys004",
+  "text": "Done — fixtures added and the drift test is green.",
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47"
+}

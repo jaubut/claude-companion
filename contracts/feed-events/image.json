@@ -1,0 +1,14 @@
+{
+  "id": "img:screenshot-9e4b",
+  "ts": 1790000005000,
+  "kind": "image",
+  "key": "claude:tty:/dev/ttys004",
+  "tool": "Read",
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47",
+  "mediaId": "9e4b7c1a2f3d5e6b8a0c1d2e3f4a5b6c",
+  "width": 1179,
+  "height": 2556,
+  "caption": "simulator-feed.png"
+}

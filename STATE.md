@@ -945,6 +945,9 @@ Leaves first, composites after; each step is cut → import back → `bun run bu
 - [ ] Device half: 7 items, needs the Claude app on a real phone — **now ordered BEFORE phase 14**, since it is the cheapest input and the only one that can reorder the rest (composer + history gaps, if real, outrank model control)
 - **Note correction:** the project note claimed this doc was written and committed on 2026-09-12. It was not — no file, branch, or commit existed on either host. This is its first version.
 
+### FeedEvent wire contract
+- [x] Server half: `FEED_EVENT_KINDS` const tuple in `lib/feed.ts` (union derived from it), 17 fixtures in `contracts/feed-events/` (full + `.minimal` per kind + `unknown-kind`), `feed-contract.test.ts` (parse / kind list / feed round-trip / unknown rejected / byte drift vs iOS copy, skipped loudly when absent), `bun run contracts:sync` → synced into the iOS repo (uncommitted there, for the iOS task). 435 tests, tsc clean — 2026-09-24
+
 
 
 - [x] Phase 0: memory-proof gate (kb-memory-proof suite, 5/5) — 2026-06-22

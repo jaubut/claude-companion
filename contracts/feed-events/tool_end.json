@@ -1,0 +1,15 @@
+{
+  "id": "a4d2f6b8-1e3c-4b5a-9d07-8c2e4f6a0b13",
+  "ts": 1790000003000,
+  "kind": "tool_end",
+  "key": "claude:tty:/dev/ttys004",
+  "tool": "Bash",
+  "summary": "bun test server/lib/feed-contract.test.ts",
+  "durationMs": 1843,
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47",
+  "outputExcerpt": "error: expect(received).toEqual(expected)\n 1 fail",
+  "errored": true,
+  "verdict": "auto-allow"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "e5c1a7b3-2d9f-4a0e-8c64-1f3b5d7e9a02",
+  "ts": 1790000002000,
+  "kind": "tool_start",
+  "key": "claude:tty:/dev/ttys004",
+  "tool": "Bash",
+  "summary": "bun test server/lib/feed-contract.test.ts",
+  "verdict": "auto-allow",
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47"
+}

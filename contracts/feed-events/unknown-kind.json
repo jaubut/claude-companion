@@ -1,0 +1,10 @@
+{
+  "id": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  "ts": 1790000060000,
+  "kind": "hologram",
+  "key": "claude:tty:/dev/ttys004",
+  "text": "a kind from a future server",
+  "cwd": "/Users/jeremieaubut/claude-companion",
+  "tty": "/dev/ttys004",
+  "sessionId": "7c1e4f2a-9b3d-4e8a-b5c6-0d2f1a8e3b47"
+}
