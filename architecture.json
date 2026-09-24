@@ -1037,7 +1037,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 272,
+          "lines": 283,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -1052,6 +1052,7 @@
             "paneExcerpt",
             "confirmSubmit",
             "InjectOutcome",
+            "echoPromptOnInject",
             "ConfirmTarget",
             "injectConfirmed"
           ],
@@ -1302,7 +1303,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 362,
+          "lines": 354,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -2859,6 +2860,12 @@
           "callers": [
             "routes/api.ts#POST /api/inject",
             "ws.ts"
+          ]
+        },
+        "echoPromptOnInject": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject"
           ]
         },
         "recordUserPrompt": {
