@@ -11,6 +11,7 @@ import { join, basename } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
 import { recordSession } from "./sessions"
+import { socketFromTmuxEnv } from "./tmux-argv"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
@@ -150,6 +151,23 @@ async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | n
   }
 }
 
+// The pane's tmux server, from the process's own $TMUX. The session file names
+// the pane but not the server, and a %N without its server is an ambiguous
+// address. Linux only (/proc); elsewhere "" and a hook supplies it.
+// ponytail: macOS discovery can't see the socket — a cc-socket session there is
+// addressed on the default server until its first hook lands; read `ps eww` if
+// the cc socket is ever used on the Mac.
+async function tmuxSocketOfPid(pid: string): Promise<string> {
+  if (process.platform !== "linux") return ""
+  try {
+    const env = await readFile(`/proc/${pid}/environ`, "utf-8")
+    const tmux = env.split("\0").find((kv) => kv.startsWith("TMUX="))
+    return socketFromTmuxEnv(tmux?.slice(5))
+  } catch {
+    return ""
+  }
+}
+
 function tmuxPaneFromSessionFile(tmux: string | undefined): string {
   const m = (tmux ?? "").match(/(%\d+)$/)
   return m?.[1] ?? ""
@@ -251,6 +269,7 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
             {
               agent: p.agent, cwd, sessionId: file.sessionId!, tty: p.tty, pid: p.pid, termProgram,
               tmuxPane: tmuxPaneFromSessionFile(file.tmux),
+              tmuxSocket: file.tmux ? await tmuxSocketOfPid(p.pid) : "",
               firstSeenAt: file.startedAt || undefined,
               agentStatus: file.status ?? "",
               waitingFor: file.waitingFor ?? "",

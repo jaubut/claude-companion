@@ -34,7 +34,8 @@ export interface WorkerIdentityDeps {
   matchUnboundTaskByCwd(cwd: string): Task | null
   findRunningTaskByCwd(cwd: string): Task | null
   // %N pane id → tmux session name. Only called when the cwd is ambiguous.
-  tmuxSessionForPane(pane: string): Promise<string | null>
+  // Asked on the pane's own server (socket); empty socket = default server.
+  tmuxSessionForPane(pane: string, socket?: string): Promise<string | null>
   now(): number
   log(msg: string): void
 }
@@ -42,6 +43,7 @@ export interface WorkerIdentityDeps {
 export interface WorkerIdentityInput {
   taskId?: string
   tmuxPane?: string
+  tmuxSocket?: string
   cwd: string
 }
 
@@ -109,7 +111,7 @@ export function createWorkerIdentityResolver(deps: WorkerIdentityDeps): WorkerId
       if (candidates > 1) {
         const pane = (input.tmuxPane ?? "").trim()
         if (pane) {
-          const tmuxSession = await deps.tmuxSessionForPane(pane)
+          const tmuxSession = await deps.tmuxSessionForPane(pane, input.tmuxSocket || undefined)
           if (tmuxSession) {
             const match = byTmuxSession(kind, tmuxSession)
             if (match) return match

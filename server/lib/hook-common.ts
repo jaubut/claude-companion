@@ -1,5 +1,6 @@
 import type { SpawnAgent } from "./spawn-session"
 import type { Session } from "./sessions"
+import { validSocket } from "./tmux-argv"
 
 // Helpers shared by every hook endpoint and the event wiring: which agent a
 // hook came from, the cwd it reports, the decision envelope each hook event
@@ -88,6 +89,8 @@ export function metaFromHeaders(headers: Headers): Partial<Session> {
     tty: raw("x-companion-tty"),
     iTermSessionId: raw("x-companion-iterm-session-id"),
     tmuxPane: raw("x-companion-tmux-pane"),
+    // $TMUX's socket path. A malformed value is dropped (default server).
+    tmuxSocket: validSocket(raw("x-companion-tmux-socket")),
     taskId: raw("x-companion-task-id"),
     pid: raw("x-companion-pid"),
   }

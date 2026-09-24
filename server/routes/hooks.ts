@@ -128,7 +128,10 @@ function driveAnswer(target: InjectTarget, questions: QuestionItem[], answers: Q
 
 function questionInjectTarget(session: Session | null, headerMeta: Partial<Session>): InjectTarget {
   return {
-    tmuxPane: session?.tmuxPane || headerMeta.tmuxPane || "",
+    // Pane and socket come from the same source: they are one address.
+    ...(session?.tmuxPane
+      ? { tmuxPane: session.tmuxPane, tmuxSocket: session.tmuxSocket }
+      : { tmuxPane: headerMeta.tmuxPane || "", tmuxSocket: headerMeta.tmuxSocket || "" }),
     tty: session?.tty || headerMeta.tty || "",
     termProgram: session?.termProgram || headerMeta.termProgram || "",
     iTermSessionId: session?.iTermSessionId || headerMeta.iTermSessionId || "",
@@ -464,6 +467,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       const task = await resolveWorkerTask("close", {
         taskId: headerMeta.taskId,
         tmuxPane: headerMeta.tmuxPane,
+        tmuxSocket: headerMeta.tmuxSocket,
         cwd,
       })
       if (task) {
@@ -548,7 +552,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       removed = removeSessionByTty(tty)
     }
     if (!removed && tmuxPane) {
-      removed = removeSessionByTmuxPane(tmuxPane)
+      removed = removeSessionByTmuxPane(tmuxPane, headerMeta.tmuxSocket ?? "")
     }
     if (!removed && cwd) {
       removed = removeSessionByCwd(cwd)

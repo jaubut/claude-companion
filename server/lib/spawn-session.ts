@@ -14,6 +14,7 @@
 // from multiple clients in real time, which looked like a "copy" bug).
 
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs"
+import { tmuxArgv } from "./tmux-argv"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -193,10 +194,17 @@ function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
   return `${prefix}-${safe}`
 }
 
+// Phone-spawned sessions stay on the DEFAULT tmux server, by design (see the
+// comments in ~/.tmux/cc.conf): only terminal sessions started through the
+// shell's claude() wrapper live on the durable `cc` socket. Their hooks still
+// report the default socket path, so the rest of the companion addresses them
+// correctly either way.
+const DEFAULT_SOCKET = undefined
+
 // `=name` forces an exact match — without it, tmux treats the target as a
 // prefix and `cc-foo` would falsely report existing because `cc-foo-2` is.
 async function tmuxSessionExists(name: string): Promise<boolean> {
-  const proc = Bun.spawn(["tmux", "has-session", "-t", `=${name}`], {
+  const proc = Bun.spawn(tmuxArgv(DEFAULT_SOCKET, ["has-session", "-t", `=${name}`]), {
     stdout: "ignore",
     stderr: "ignore",
   })
@@ -254,7 +262,7 @@ async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<
   // tmux passes through $TMUX/$TMUX_PANE so the session-start hook fires the
   // moment claude initializes.
   const create = Bun.spawn(
-    ["tmux", ...detachedNewSessionArgs(sessionName, inner)],
+    tmuxArgv(DEFAULT_SOCKET, detachedNewSessionArgs(sessionName, inner)),
     { stdout: "pipe", stderr: "pipe" },
   )
   let timedOut = false
@@ -273,7 +281,7 @@ async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<
   // tmux switching them to some unrelated sibling session. Best-effort:
   // failure here is non-fatal, the session still works.
   const opt = Bun.spawn(
-    ["tmux", "set-option", "-t", sessionName, "detach-on-destroy", "on"],
+    tmuxArgv(DEFAULT_SOCKET, ["set-option", "-t", sessionName, "detach-on-destroy", "on"]),
     { stdout: "ignore", stderr: "ignore" },
   )
   await opt.exited

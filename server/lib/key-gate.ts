@@ -8,7 +8,8 @@
 // a second request (another phone, a retry, /api/model/cancel, the /help
 // close path) could still send inside the window and lose its key.
 //
-// So the cooldown lives here, keyed by tmux pane, and every sender goes
+// So the cooldown lives here, keyed by tmux pane — socket+pane, via paneKey()
+// in lib/tmux-argv.ts, since %N is only unique per tmux server — and every sender goes
 // through `send()`:
 //   - sends to one pane run strictly one after another (a promise chain), so
 //     two requests that arrive together cannot both pass the check and fire
@@ -33,6 +34,7 @@
 
 import { companionLog } from "./log"
 import { ESC_SETTLE_MS } from "./command-list"
+import { paneKey, tmuxArgv } from "./tmux-argv"
 
 // How long one turn (normally a single send-keys) may hold a pane's queue.
 // A healthy send-keys returns in a few ms; this is only for a wedged tmux.
@@ -194,8 +196,9 @@ export const keyGate = createKeyGate()
 // One tmux invocation that dies with its turn: when the gate's deadline
 // fires, the subprocess is killed instead of left holding the pane's queue.
 // Resolves to the exit code; rejects only if tmux could not be spawned.
-export async function runTmux(args: readonly string[], signal?: AbortSignal): Promise<number> {
-  const proc = Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" })
+// `socket` is the session's tmux server (lib/tmux-argv.ts); omit for default.
+export async function runTmux(args: readonly string[], signal?: AbortSignal, socket?: string): Promise<number> {
+  const proc = Bun.spawn(tmuxArgv(socket, args), { stdout: "ignore", stderr: "ignore" })
   const kill = () => { try { proc.kill() } catch { /* already gone */ } }
   if (signal?.aborted) kill()
   signal?.addEventListener("abort", kill, { once: true })
@@ -204,4 +207,11 @@ export async function runTmux(args: readonly string[], signal?: AbortSignal): Pr
   } finally {
     signal?.removeEventListener("abort", kill)
   }
+}
+
+// One tmux command for a session's pane, as one turn of that pane's gate, on
+// the pane's own server. What the routes that drive a pane go through.
+export interface PaneRef { tmuxPane: string; tmuxSocket?: string }
+export function gatedTmux(p: PaneRef, key: string, args: readonly string[]): Promise<number> {
+  return keyGate.send(paneKey(p.tmuxPane, p.tmuxSocket), key, (signal) => runTmux(args, signal, p.tmuxSocket))
 }
