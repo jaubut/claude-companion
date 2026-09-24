@@ -19,12 +19,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-scrape.ts` | 402 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/activity.ts` | 388 | lib | 10 | state: activityListeners: Set, let pollTimer |
 | `lib/spawn-session.ts` | 365 | lib | 8 |  |
-| `routes/api.ts` | 362 | route-host | 1 | emits: resolved, inject_error, super_auto · routes: 16 |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
+| `routes/api.ts` | 354 | route-host | 1 | emits: resolved, inject_error, super_auto · routes: 16 |
 | `routes/command.ts` | 345 | route-host | 1 | state: listCache: Map · routes: 2 |
 | `wiring/orchestrator.ts` | 306 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
+| `lib/submit-confirm.ts` | 283 | lib | 15 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 274 | lib | 1 |  |
-| `lib/submit-confirm.ts` | 272 | lib | 14 | state: watches: Set, paneLocks: Map |
 | `lib/media.ts` | 254 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/apns.ts` | 242 | lib | 6 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |

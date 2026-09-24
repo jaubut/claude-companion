@@ -1,6 +1,6 @@
 import { getPending, resolveApproval } from "../lib/pty-manager"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
-import { injectConfirmed } from "../lib/submit-confirm"
+import { echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
@@ -253,18 +253,10 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     }
     const ok = res.ok
     if (!ok) {
-      process.stderr.write(`${dim}[companion]${reset} \x1b[31minject failed\x1b[0m — osascript rejected (Accessibility permission?)\n`)
-    } else if (target) {
-      // Speculative fix for issue #8: phone-originated prompts weren't
-      // appearing in the iOS conversation feed. Hypothesis: synthetic
-      // keystrokes (tmux send-keys / osascript do script) don't always
-      // trigger Claude Code's UserPromptSubmit hook the same way a real
-      // keypress does, so the hook never POSTs to /hooks/user-prompt-submit.
-      //
-      // Record the user_prompt event ourselves on successful inject. If
-      // the Mac-side hook ALSO fires later, the iOS Snapshot.append
-      // dedup catches identical consecutive same-role text, so the
-      // double-record is harmless.
+      process.stderr.write(`${dim}[companion]${reset} \x1b[31minject failed\x1b[0m — delivery failed (tmux send-keys, or osascript: Accessibility permission?)\n`)
+    } else if (target && echoPromptOnInject(res)) {
+      // Unconfirmable delivery only (see echoPromptOnInject): the hook is
+      // the source of truth everywhere it can be observed.
       recordUserPrompt({
         text,
         cwd: target.cwd,
