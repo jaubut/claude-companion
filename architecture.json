@@ -578,7 +578,10 @@
             "InjectOpts",
             "injectText",
             "TmuxResult",
+            "tmuxSendKeys",
+            "resolveTmuxPaneFromTty",
             "deliverViaTmux",
+            "tmuxCapture",
             "withPickerIO"
           ],
           "state": [
@@ -1033,6 +1036,41 @@
           "externals": []
         },
         {
+          "path": "lib/submit-confirm.ts",
+          "lines": 201,
+          "kind": "lib",
+          "exports": [
+            "SUBMIT_WINDOW_MS",
+            "SubmitIdentity",
+            "SubmitClock",
+            "SubmitWatch",
+            "noteUserPromptSubmit",
+            "watchSubmit",
+            "activeWatchCount",
+            "ConfirmResult",
+            "ConfirmDeps",
+            "paneExcerpt",
+            "confirmSubmit",
+            "InjectOutcome",
+            "ConfirmTarget",
+            "injectConfirmed"
+          ],
+          "state": [
+            "watches: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/super-auto.ts",
           "lines": 75,
           "kind": "lib",
@@ -1261,7 +1299,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 354,
+          "lines": 362,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1269,6 +1307,7 @@
           "state": [],
           "emits": [
             "resolved",
+            "inject_error",
             "super_auto"
           ],
           "consumes": [],
@@ -1358,7 +1397,7 @@
           "imports": [
             "lib/pty-manager.ts",
             "lib/questions.ts",
-            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
             "lib/inject-guard.ts",
             "lib/spawn-session.ts",
             "lib/super-auto.ts",
@@ -1512,7 +1551,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 563,
+          "lines": 566,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -1568,6 +1607,7 @@
             "lib/keyboard-inject.ts",
             "lib/question-driver.ts",
             "lib/session-titles.ts",
+            "lib/submit-confirm.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
             "lib/sessions.ts",
@@ -1913,7 +1953,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 161,
+          "lines": 164,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -1933,7 +1973,7 @@
           "imports": [
             "lib/pty-manager.ts",
             "lib/questions.ts",
-            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
             "lib/inject-guard.ts",
             "lib/super-auto.ts",
             "lib/sessions.ts",
@@ -2272,6 +2312,7 @@
           "callers": [
             "lib/command-scrape.ts",
             "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
             "routes/command.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
@@ -2457,6 +2498,43 @@
           "module": "lib/agent-pid.ts",
           "callers": [
             "lib/sessions.ts"
+          ]
+        },
+        "InjectTarget": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts",
+            "routes/hooks.ts"
+          ]
+        },
+        "injectText": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "resolveTmuxPaneFromTty": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "INJECT_SEND_MS": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "tmuxSendKeys": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "tmuxCapture": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
           ]
         },
         "isQuestionTool": {
@@ -2662,6 +2740,7 @@
             "routes/api.ts#POST /api/answer",
             "routes/api.ts#POST /api/push/test",
             "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#POST /api/inject",
             "routes/api.ts#POST /api/super-auto",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
@@ -2721,13 +2800,6 @@
             "ws.ts"
           ]
         },
-        "injectText": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
         "yieldPaneForInject": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -2766,6 +2838,13 @@
         },
         "announceWaiting": {
           "module": "wiring/waiting.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
+        "injectConfirmed": {
+          "module": "lib/submit-confirm.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
             "ws.ts"
@@ -3164,12 +3243,6 @@
             "wiring/events.ts"
           ]
         },
-        "InjectTarget": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "routes/hooks.ts"
-          ]
-        },
         "withPickerIO": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -3214,6 +3287,12 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "noteUserPromptSubmit": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
         "titleFromPrompt": {

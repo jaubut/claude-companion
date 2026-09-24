@@ -385,7 +385,7 @@ export interface TmuxResult {
 }
 
 type TmuxSender = (args: readonly string[], timeoutMs: number, signal?: AbortSignal) => Promise<TmuxResult>
-async function tmuxSendKeys(args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<TmuxResult> {
+export async function tmuxSendKeys(args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<TmuxResult> {
   try {
     const proc = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "pipe" })
     // Killed on its own timeout AND when the key gate aborts the turn.
@@ -413,7 +413,7 @@ async function tmuxSendKeys(args: readonly string[], timeoutMs: number, signal?:
 // path: claude inherits $TMUX_PANE but the hook script may have raced the
 // initial registration, leaving the session with a tty but no pane). tmux
 // itself knows the mapping — ask it.
-async function resolveTmuxPaneFromTty(tty: string): Promise<string | null> {
+export async function resolveTmuxPaneFromTty(tty: string): Promise<string | null> {
   try {
     const proc = Bun.spawn(["tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"], {
       stdout: "pipe", stderr: "pipe",
@@ -534,7 +534,7 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
 
 import type { PickerIO } from "./question-driver"
 
-async function tmuxCapture(pane: string): Promise<string | null> {
+export async function tmuxCapture(pane: string): Promise<string | null> {
   try {
     const p = Bun.spawn(["tmux", "capture-pane", "-p", "-t", pane], { stdout: "pipe", stderr: "ignore" })
     const out = await new Response(p.stdout).text()
