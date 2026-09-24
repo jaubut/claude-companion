@@ -14,10 +14,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/keyboard-inject.ts` | 599 | lib | 10 | state: let injectQueue |
 | `lib/transcript.ts` | 598 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `routes/hooks.ts` | 566 | route-host | 1 | emits: user_prompt · routes: 7 |
+| `lib/activity.ts` | 492 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `lib/command-scrape.ts` | 402 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
-| `lib/activity.ts` | 388 | lib | 10 | state: activityListeners: Set, let pollTimer |
 | `lib/spawn-session.ts` | 365 | lib | 8 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `routes/api.ts` | 354 | route-host | 1 | emits: resolved, inject_error, super_auto · routes: 16 |

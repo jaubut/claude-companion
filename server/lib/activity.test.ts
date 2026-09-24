@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
+  ACTIVITY_TTL_MS,
+  BUSY_TTL_MS,
+  IDLE_GRACE_MS,
+  expireStaleActivity,
   forgetSession,
   getActivity,
   listActivities,
@@ -7,6 +14,7 @@ import {
   recordToolEnd,
   recordToolStart,
   recordTurnEnd,
+  recordUserPrompt,
   reconcileActivityLiveness,
   type Activity,
 } from "./activity"
@@ -58,6 +66,8 @@ function myOrder(): string[] {
 function cleanup(): void {
   forgetSession({ tty: A.tty })
   forgetSession({ tty: B.tty })
+  // No session is live between tests: empties the observed-status map too.
+  reconcileActivityLiveness([])
 }
 
 beforeEach(cleanup)
@@ -215,4 +225,130 @@ test("forgetSession clears only that session's pill, weak key included", () => {
   expect(pill(A.key)).toBeUndefined()
   expect(pill(B.key)?.tool).toBe("Read")
   expect(getActivity()?.key).toBe(B.key)
+})
+
+// ── Stale-pill expiry (audit 2026-09-24) ─────────────────────────────────
+// A phone inject that never became a prompt left "Thinking" up for minutes.
+
+function prompt(f: Fixture, transcriptPath?: string): void {
+  recordUserPrompt({ text: "hi", transcriptPath, cwd: f.cwd, sessionId: f.sessionId, tty: f.tty, sessionKey: f.key })
+}
+
+const withStatus = (key: string, agentStatus: string): Session[] => [{ key, agentStatus } as Session]
+
+function tmpTranscript(): { path: string; done: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "cc-act-ttl-"))
+  const path = join(dir, "session.jsonl")
+  writeFileSync(path, JSON.stringify({ type: "user", message: { content: "hi" } }) + "\n")
+  return { path, done: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
+test("TTL: a Thinking pill with no hook, tool or transcript event expires", () => {
+  prompt(A)
+  expect(pill(A.key)?.verb).toBe("Thinking")
+
+  // Just under the TTL: still up.
+  expireStaleActivity(Date.now() + ACTIVITY_TTL_MS - 1_000)
+  expect(pill(A.key)?.verb).toBe("Thinking")
+
+  expireStaleActivity(Date.now() + ACTIVITY_TTL_MS + 1_000)
+  expect(pill(A.key)).toBeUndefined()
+})
+
+test("TTL: transcript growth counts as progress", () => {
+  const t = tmpTranscript()
+  try {
+    prompt(A, t.path)
+    const later = Date.now() + ACTIVITY_TTL_MS - 1_000
+    appendFileSync(t.path, JSON.stringify({ type: "assistant", message: { content: [] } }) + "\n")
+    // The sweep at `later` sees the growth and restarts the clock from there.
+    expireStaleActivity(later)
+    expireStaleActivity(later + ACTIVITY_TTL_MS - 1_000)
+    expect(pill(A.key)?.verb).toBe("Thinking")
+    expireStaleActivity(later + ACTIVITY_TTL_MS + 1_000)
+    expect(pill(A.key)).toBeUndefined()
+  } finally {
+    t.done()
+  }
+})
+
+test("TTL: a long-running tool is never cleared while its tool_start is open", () => {
+  prompt(A)
+  toolStart(A, "Bash")
+  expireStaleActivity(Date.now() + 10 * ACTIVITY_TTL_MS)
+  expect(pill(A.key)?.tool).toBe("Bash")
+
+  // The tool ends, and silence after that does expire it.
+  recordToolEnd({ tool: "Bash", input: { command: "ls" }, cwd: A.cwd, sessionId: A.sessionId, tty: A.tty, sessionKey: A.key })
+  expireStaleActivity(Date.now() + ACTIVITY_TTL_MS + 1_000)
+  expect(pill(A.key)).toBeUndefined()
+})
+
+test("TTL: busy stretches the window but never disables it", () => {
+  prompt(A)
+  reconcileActivityLiveness(withStatus(A.key, "busy"))
+  // A long single generation writes nothing for minutes: spared.
+  expireStaleActivity(Date.now() + BUSY_TTL_MS - 1_000)
+  expect(pill(A.key)?.verb).toBe("Thinking")
+  // A stalled session whose cached status still says busy: cleared.
+  expireStaleActivity(Date.now() + BUSY_TTL_MS + 1_000)
+  expect(pill(A.key)).toBeUndefined()
+})
+
+test("idle: status idle and no transcript growth since the turn started clears the pill", () => {
+  const t = tmpTranscript()
+  try {
+    prompt(A, t.path)
+    getState({ transcriptPath: t.path, tty: A.tty, cwd: A.cwd }).activity!.turnStartedAt = Date.now() - IDLE_GRACE_MS - 1_000
+
+    reconcileActivityLiveness(withStatus(A.key, "idle"))
+
+    expect(pill(A.key)).toBeUndefined()
+  } finally {
+    t.done()
+  }
+})
+
+test("idle: a fresh prompt is spared for the grace window", () => {
+  prompt(A)
+  getState({ tty: A.tty, cwd: A.cwd }).activity!.turnStartedAt = Date.now() - 5
+  reconcileActivityLiveness(withStatus(A.key, "idle"))
+  expect(pill(A.key)?.verb).toBe("Thinking")
+  expireStaleActivity(Date.now() + IDLE_GRACE_MS + 1_000)
+  expect(pill(A.key)).toBeUndefined()
+})
+
+test("idle: a transcript that grew since the turn started keeps the pill", () => {
+  const t = tmpTranscript()
+  try {
+    prompt(A, t.path)
+    getState({ transcriptPath: t.path, tty: A.tty, cwd: A.cwd }).activity!.turnStartedAt = Date.now() - IDLE_GRACE_MS - 1_000
+    appendFileSync(t.path, JSON.stringify({ type: "assistant", message: { content: [] } }) + "\n")
+
+    reconcileActivityLiveness(withStatus(A.key, "idle"))
+
+    expect(pill(A.key)?.verb).toBe("Thinking")
+  } finally {
+    t.done()
+  }
+})
+
+test("idle: a status that already read idle BEFORE the prompt never clears the turn", () => {
+  const t = tmpTranscript()
+  try {
+    // Seen idle first (a non-tmux session refreshes its status only every 60 s)…
+    reconcileActivityLiveness(withStatus(A.key, "idle"))
+    prompt(A, t.path)
+    const st = getState({ transcriptPath: t.path, tty: A.tty, cwd: A.cwd })
+    st.activity!.turnStartedAt = Date.now() + 1
+    // …then the same cached "idle" again after the prompt: not fresh evidence.
+    reconcileActivityLiveness(withStatus(A.key, "idle"))
+    expireStaleActivity(Date.now() + IDLE_GRACE_MS + 1_000)
+    expect(pill(A.key)?.verb).toBe("Thinking")
+    // The inactivity TTL still applies.
+    expireStaleActivity(Date.now() + ACTIVITY_TTL_MS + 1_000)
+    expect(pill(A.key)).toBeUndefined()
+  } finally {
+    t.done()
+  }
 })
