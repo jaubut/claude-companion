@@ -1,3 +1,4 @@
+import { companionLog } from "../lib/log"
 import { broadcast } from "../state"
 import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
 import { isPaneDirty, isScraping, yieldPane } from "../lib/command-scrape"
@@ -29,7 +30,7 @@ export const dialogWatcher = createDialogWatcher({
   isScraping,
   onDialog(key, dialog) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}dialog${reset} ${dim}${dialog.title || "(untitled)"} · ${dialog.items.length} rows · ${key}${reset}\n`)
+    companionLog(`${yellow}→ phone${reset} ${cyan}dialog${reset} ${dim}${dialog.title || "(untitled)"} · ${dialog.items.length} rows · ${key}${reset}`)
     broadcast({ type: "dialog", key, dialog })
     // A dialog is modal in the terminal: nothing else can be driven while it is
     // up, so it outranks every other waiting reason. Edge-triggered and deduped
@@ -117,7 +118,7 @@ export async function yieldPaneForInject(
       : wasDirty ? " (pane re-checked: still not clean)"
       : isScraping(target.key) ? " (timed out — pane still held)"
       : " (released dirty — overlay may still be up)"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}${what}${reset} ${dim}for inject → ${target.key}${why}${reset}\n`)
+    companionLog(`${yellow}${what}${reset} ${dim}for inject → ${target.key}${why}${reset}`)
   }
   return freed
 }

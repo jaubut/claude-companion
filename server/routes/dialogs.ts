@@ -1,3 +1,4 @@
+import { companionLog } from "../lib/log"
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import { pickKeys } from "../lib/dialogs"
 import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
@@ -38,8 +39,8 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     // gate now, injects included; this covers the one that cannot — an inject
     // with no tmux pane, typed through osascript on the Mac.
     if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    process.stderr.write(`${dim}[companion]${reset} ${cyan}dialog key${reset} ${name} → ${session.tmuxPane}\n`)
+    const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+    companionLog(`${cyan}dialog key${reset} ${name} → ${session.tmuxPane}`)
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)
     return Response.json({ ok: true })
   }

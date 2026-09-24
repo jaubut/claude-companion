@@ -1,4 +1,5 @@
 import { CLEAR_LINE_KEY, inputLine, mayClearLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
+import { companionLog } from "../lib/log"
 import {
   CLEAR_SETTLE_MS, closeHelpOverlay, type CommandEntry, HELP_CLOSE_OPEN_WAIT_MS, HELP_PAINT_MS,
   type HelpTab, listIncomplete, scrapeHelpTab,
@@ -93,7 +94,7 @@ async function clearIfOurs(pane: string, owned: readonly string[], who: string):
   const typed = inputLine(await capturePane(pane, undefined, { escapes: true }) ?? "")
   if (!mayClearLine(typed, owned)) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}commands${reset} left the input line alone on ${who} — not ours: ${JSON.stringify((typed ?? "<unreadable>").slice(0, 40))}\n`)
+    companionLog(`${yellow}commands${reset} left the input line alone on ${who} — not ours: ${JSON.stringify((typed ?? "<unreadable>").slice(0, 40))}`)
     return false
   }
   if (typed === "") return true
@@ -167,7 +168,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       await sleep(CLEAR_SETTLE_MS)
 
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-      process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} "/${prefix}" → ${commands.length} on ${session!.label || session!.key}\n`)
+      companionLog(`${cyan}commands${reset} "/${prefix}" → ${commands.length} on ${session!.label || session!.key}`)
       return Response.json({ ok: true, key: session!.key, prefix, commands })
     } finally {
       endFlow(session!.key)
@@ -307,12 +308,12 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       if (dirty) {
         // Said out loud rather than swallowed: the next inject will see
         // whatever is still on that pane.
-        process.stderr.write(`${dim}[companion]${reset} ${red}commands${reset} /help overlay did not close cleanly on ${who}\n`)
+        companionLog(`${red}commands${reset} /help overlay did not close cleanly on ${who}`)
       }
       if (gaveUp) {
         // Partial by construction — never cached, or one interrupted warm
         // would serve a truncated list for an hour.
-        process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list aborted after ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s on ${who}\n`)
+        companionLog(`${cyan}commands${reset} full list aborted after ${all.length} in ${((Date.now() - t0) / 1000).toFixed(1)}s on ${who}`)
         return Response.json({ ok: false, error: "aborted", key: session.key, partial: all.length }, { status: 409 })
       }
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
@@ -324,11 +325,11 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
         // did on a 5-row pane: 196 of 356, reported as success; and what a
         // custom-tab bail did: default commands only, no skills at all).
         const why = wrongTab ? "a tab bailed (wrong tab on its first page)" : "page budget exhausted"
-        process.stderr.write(`${dim}[companion]${reset} ${red}commands${reset} full list INCOMPLETE — ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}; ${why}; not cached\n`)
+        companionLog(`${red}commands${reset} full list INCOMPLETE — ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}; ${why}; not cached`)
         return Response.json({ ok: true, key: session.key, cached: false, incomplete: true, commands: all })
       }
       if (all.length) listCache.set(session.cwd, { at: Date.now(), commands: all })
-      process.stderr.write(`${dim}[companion]${reset} ${cyan}commands${reset} full list → ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}\n`)
+      companionLog(`${cyan}commands${reset} full list → ${all.length} in ${elapsed}s (${rowsPerPage} rows/page) on ${who}`)
       return Response.json({ ok: true, key: session.key, cached: false, commands: all })
     } finally {
       // Released only after Escape + C-u above — and the release carries the

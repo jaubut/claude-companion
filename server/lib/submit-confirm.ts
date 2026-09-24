@@ -14,6 +14,7 @@
 // `not_submitted` with a short pane excerpt.
 
 import { keyGate } from "./key-gate"
+import { companionLog } from "./log"
 import { INJECT_SEND_MS, injectText, resolveTmuxPaneFromTty, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
 import { inputLine, unstyle } from "./command-menu"
 import { capturePane } from "./tmux-pane"
@@ -272,7 +273,7 @@ export async function injectConfirmed(text: string, target: ConfirmTarget | unde
       const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit hook`
         : r.confirmed ? `${green}submit confirmed${reset}${r.retried ? " (after Enter retry)" : ""}`
         : `${yellow}submit queued${reset} — Claude mid-turn, text in its queue`
-      process.stderr.write(`${dim}[companion]${reset} ${line} → ${pane}\n`)
+      companionLog(`${line} → ${pane}`)
       if (!r.ok) return r
       return r.confirmed ? { ok: true, confirmed: true, retried: r.retried } : { ok: true, confirmed: false, queued: true }
     } finally {

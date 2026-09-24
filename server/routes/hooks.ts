@@ -1,3 +1,4 @@
+import { companionLog } from "../lib/log"
 import type { SpawnAgent } from "../lib/spawn-session"
 import { addApprovalRequest } from "../lib/pty-manager"
 import {
@@ -113,14 +114,14 @@ function driveAnswer(target: InjectTarget, questions: QuestionItem[], answers: Q
   void withPickerIO(target, async (io, via) => {
     const r = await driveQuestionPicker(io, questions, answers)
     if (r.ok) {
-      process.stderr.write(`${dim}[companion]${reset} ${green}picker driven${reset} → ${cyan}${via}${reset} ${dim}(${questions.length} question${questions.length === 1 ? "" : "s"}${r.reason ? `, ${r.reason}` : ""})${reset}\n`)
+      companionLog(`${green}picker driven${reset} → ${cyan}${via}${reset} ${dim}(${questions.length} question${questions.length === 1 ? "" : "s"}${r.reason ? `, ${r.reason}` : ""})${reset}`)
     } else {
-      process.stderr.write(`${dim}[companion]${reset} ${red}picker drive failed${reset} → ${via} — ${r.reason}\n`)
+      companionLog(`${red}picker drive failed${reset} → ${via} — ${r.reason}`)
     }
     return r.ok
   }).then((res) => {
     if (res === null) {
-      process.stderr.write(`${dim}[companion]${reset} ${red}picker drive refused${reset} — no tmux pane or tty target\n`)
+      companionLog(`${red}picker drive refused${reset} — no tmux pane or tty target`)
     }
   }).catch(() => { /* logged above */ })
 }
@@ -165,28 +166,28 @@ async function questionFastPath(p: {
   if (questions && hasQuestionInjectTarget(answerTarget)) {
     const dedupeKey = questionDedupeKey(p.sessionId, p.cwd, questions)
     if (wasQuestionAnswered(dedupeKey)) {
-      process.stderr.write(`${dim}[companion]${reset} ${dim}question already answered — allow (${p.eventName})${reset}\n`)
+      companionLog(`${dim}question already answered — allow (${p.eventName})${reset}`)
       return hookDecisionResponse(p.agent, p.eventName, "allow", "Answered via Claude Companion")
     }
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}\n`)
+    companionLog(`${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}`)
     recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
     const answers = await addQuestionRequest({ agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions, sessionKey: p.session?.key ?? "" })
 
     if (answers.length === 0) {
       // Expired or otherwise no answer — deny so Claude doesn't sit on an
       // open picker that nobody is going to drive.
-      process.stderr.write(`${dim}[companion]${reset} ${red}question expired${reset} ← phone\n`)
+      companionLog(`${red}question expired${reset} ← phone`)
       return hookDecisionResponse(p.agent, p.eventName, "deny", "User did not answer in time")
     }
 
-    process.stderr.write(`${dim}[companion]${reset} ${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})\n`)
+    companionLog(`${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})`)
     markQuestionAnswered(dedupeKey)
     // The driver waits for the picker to mount, so it can start now even
     // though the harness only opens the picker after our allow.
     driveAnswer(answerTarget, questions, answers)
     return hookDecisionResponse(p.agent, p.eventName, "allow", "Answered via Claude Companion")
   }
-  process.stderr.write(`${dim}[companion]${reset} ${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}\n`)
+  companionLog(`${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}`)
   return null
 }
 
@@ -242,7 +243,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (isSuperAuto() && !isCatastrophic(tool, input)) {
       decision = "allow"
       verdict = "auto-allow"
-      process.stderr.write(`${dim}[companion]${reset} \x1b[35msuper-allow\x1b[0m ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
+      companionLog(`\x1b[35msuper-allow\x1b[0m ${tool} ${dim}${summarize(tool, input)}${reset}`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
       return hookDecisionResponse(agent, "PreToolUse", decision, "Approved via Claude Companion (SUPER)")
     }
@@ -252,20 +253,20 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (verdictJudge === "allow") {
       decision = "allow"
       verdict = "auto-allow"
-      process.stderr.write(`${dim}[companion]${reset} ${green}auto-allow${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
+      companionLog(`${green}auto-allow${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
     } else if (verdictJudge === "deny") {
       decision = "deny"
       verdict = "auto-deny"
-      process.stderr.write(`${dim}[companion]${reset} ${red}auto-deny${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
+      companionLog(`${red}auto-deny${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
     } else {
       verdict = "pending"
-      process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}\n`)
+      companionLog(`${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
       decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "", reason: judgeReason })
       const decisionColor = decision === "allow" ? green : red
-      process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← phone\n`)
+      companionLog(`${decisionColor}${decision}${reset} ← phone`)
       // Phone said yes — remember this shape so future identical prompts
       // skip the round-trip. Conservative pattern derivation lives in
       // learned-allow.ts; chained / dangerous shapes are filtered out
@@ -329,12 +330,12 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // "phone never sees my own message" bug can be triaged from logs
     // alone. Trim text to keep noise low.
     {
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const yellow = "\x1b[33m"
+      const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const yellow = "\x1b[33m"
       const promptText = (body.prompt ?? "").trim()
       const tag = promptText
         ? `${cyan}user-prompt${reset} "${promptText.slice(0, 60)}${promptText.length > 60 ? "…" : ""}"`
         : `${yellow}user-prompt EMPTY${reset}`
-      process.stderr.write(`${dim}[companion]${reset} ${tag} tty=${headerMeta.tty || "?"} sid=${(body.session_id ?? "").slice(0, 8) || "?"}\n`)
+      companionLog(`${tag} tty=${headerMeta.tty || "?"} sid=${(body.session_id ?? "").slice(0, 8) || "?"}`)
     }
     const session = cwd
       ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
@@ -407,7 +408,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       if (handled) return handled
     }
 
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}\n`)
+    companionLog(`${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
 
     recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty, sessionKey: session?.key ?? "" })
     const decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "" })
@@ -415,7 +416,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const green = "\x1b[32m"
     const red = "\x1b[31m"
     const decisionColor = decision === "allow" ? green : red
-    process.stderr.write(`${dim}[companion]${reset} ${decisionColor}${decision}${reset} ← permission\n`)
+    companionLog(`${decisionColor}${decision}${reset} ← permission`)
 
     // Same learning hook as the PreToolUse path — phone-allowed shapes
     // get remembered so the next ask doesn't roundtrip.
@@ -470,8 +471,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
         emitTask(task.taskId)
         orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId, task.threadId))
         void workerQueue.drain() // slot freed
-        const dim = "\x1b[2m"; const reset = "\x1b[0m"; const green = "\x1b[32m"
-        process.stderr.write(`${dim}[companion]${reset} ${green}orchestrator reply${reset} [${task.taskId}] → thread\n`)
+        const reset = "\x1b[0m"; const green = "\x1b[32m"
+        companionLog(`${green}orchestrator reply${reset} [${task.taskId}] → thread`)
       }
     }
 
@@ -494,10 +495,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // cwd still sends the legacy keyless frame.
     if (session) markWaiting(session.key, "turn-end")
     else announceKeylessWaiting()
-    const dim = "\x1b[2m"
     const reset = "\x1b[0m"
     const magenta = "\x1b[35m"
-    process.stderr.write(`${dim}[companion]${reset} ${magenta}waiting for input${reset} — phone can respond\n`)
+    companionLog(`${magenta}waiting for input${reset} — phone can respond`)
     // Waiting = passive nudge, no sound. Client should suppress when the
     // PWA/app is already focused on this session (handled on-device).
     if (apnsConfigured()) {
@@ -527,7 +527,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       // to its dispatch task and sends the prompt. No inline binding needed.
       recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-      process.stderr.write(`${dim}[companion]${reset} ${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}\n`)
+      companionLog(`${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}`)
     }
     return Response.json({ ok: true })
   }
@@ -557,7 +557,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (removed) {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
       const label = tty || tmuxPane || (cwd ? cwd.split("/").pop() : "?")
-      process.stderr.write(`${dim}[companion]${reset} ${magenta}session end${reset} ${label} ${dim}(${body.reason ?? "-"})${reset}\n`)
+      companionLog(`${magenta}session end${reset} ${label} ${dim}(${body.reason ?? "-"})${reset}`)
     }
     return Response.json({ ok: true })
   }

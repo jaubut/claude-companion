@@ -5,6 +5,7 @@
 // (iTerm or macOS Terminal, matched by tty) so multi-session users can pick
 // which instance their reply lands in.
 
+import { companionLog } from "./log"
 import { KeyGateTimeout, keyGate } from "./key-gate"
 
 export interface InjectTarget {
@@ -228,8 +229,8 @@ async function deliverToTty(target: InjectTarget, text: string): Promise<boolean
     `)
     if (!r.ok) return false
     if (r.stdout.startsWith("WRONG_WINDOW")) {
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-      process.stderr.write(`${dim}[companion]${reset} ${red}inject refused${reset} — front tty ${r.stdout.slice(13)} doesn't match target ${tty} (focus race; retry)\n`)
+      const reset = "\x1b[0m"; const red = "\x1b[31m"
+      companionLog(`${red}inject refused${reset} — front tty ${r.stdout.slice(13)} doesn't match target ${tty} (focus race; retry)`)
       return false
     }
     return r.stdout === "MATCH"
@@ -354,21 +355,21 @@ export async function injectText(text: string, target?: InjectTarget, opts: Inje
   // gate: no global lock (that is for the AppleScript focus race), so one
   // wedged pane cannot stall injects into every other session.
   if (target?.tmuxPane) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const green = "\x1b[32m"
+    const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const green = "\x1b[32m"
     const result = await deliverViaTmux(target.tmuxPane, text, sendKeys, deadline)
     if (result.ok) {
-      process.stderr.write(`${dim}[companion]${reset} ${green}delivered (tmux)${reset} → ${target.tmuxPane}\n`)
+      companionLog(`${green}delivered (tmux)${reset} → ${target.tmuxPane}`)
       return true
     }
     // tmux failed (stale pane, no tmux, timed out, queue wedged past the
     // deadline). Fall back to AppleScript only with a tty (targeted,
     // focus-safe); without one the only fallback is a frontmost paste — refuse.
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}tmux send-keys failed${reset} pane=${target.tmuxPane} — ${result.reason}\n`)
+    companionLog(`${yellow}tmux send-keys failed${reset} pane=${target.tmuxPane} — ${result.reason}`)
     if (!target.tty) {
-      process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — no tty fallback for pane ${target.tmuxPane}\n`)
+      companionLog(`${red}deliver failed${reset} — no tty fallback for pane ${target.tmuxPane}`)
       return false
     }
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}retrying via osascript${reset} → ${target.tty}\n`)
+    companionLog(`${yellow}retrying via osascript${reset} → ${target.tty}`)
     const { tmuxPane: _dropped, ...rest } = target
     return withInjectLock(() => injectTextLocked(text, rest, deadline, sendKeys))
   }
@@ -463,7 +464,7 @@ export async function deliverViaTmux(
 }
 
 async function injectTextLocked(text: string, target: InjectTarget | undefined, deadline: number, sendKeys: TmuxSender): Promise<boolean> {
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"; const green = "\x1b[32m"
+  const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"; const green = "\x1b[32m"
   try {
     // (A target with a tmux pane was handled in injectText, outside the lock.)
     // Targeted path: the tab's pty. No focus steal, clipboard, or WM race.
@@ -480,23 +481,23 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
         if (pane) {
           const result = await deliverViaTmux(pane, text, sendKeys, deadline)
           if (result.ok) {
-            process.stderr.write(`${dim}[companion]${reset} ${green}delivered (tmux)${reset} → ${pane} (resolved from ${target.tty})\n`)
+            companionLog(`${green}delivered (tmux)${reset} → ${pane} (resolved from ${target.tty})`)
             return true
           }
-          process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — tmux send-keys to ${pane}: ${result.reason}\n`)
+          companionLog(`${red}deliver failed${reset} — tmux send-keys to ${pane}: ${result.reason}`)
           return false
         }
-        process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — no tmux pane backs ${target.tty}\n`)
+        companionLog(`${red}deliver failed${reset} — no tmux pane backs ${target.tty}`)
         return false
       }
       const delivered = await deliverToTty(target, text)
       if (delivered) {
-        process.stderr.write(`${dim}[companion]${reset} ${cyan}delivered${reset} → ${target.tty}\n`)
+        companionLog(`${cyan}delivered${reset} → ${target.tty}`)
         return true
       }
       // Fall-through: no tab currently backs that tty. Refuse rather than
       // silently landing in the frontmost window.
-      process.stderr.write(`${dim}[companion]${reset} ${red}deliver failed${reset} — no tab for tty ${target.tty}\n`)
+      companionLog(`${red}deliver failed${reset} — no tab for tty ${target.tty}`)
       return false
     }
 
@@ -514,12 +515,12 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
       end tell
     `)
     if (!r.ok) {
-      process.stderr.write(`${dim}[companion]${reset} ${red}paste failed${reset} — osascript exit=${r.exitCode} ${yellow}${r.stderr || "(no stderr — check Accessibility permission)"}${reset}\n`)
+      companionLog(`${red}paste failed${reset} — osascript exit=${r.exitCode} ${yellow}${r.stderr || "(no stderr — check Accessibility permission)"}${reset}`)
       return false
     }
     return true
   } catch (err) {
-    console.error("[companion] keyboard inject failed:", err)
+    companionLog(`keyboard inject failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`)
     return false
   }
 }

@@ -1,3 +1,4 @@
+import { companionLog } from "../lib/log"
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
 import { keyGate, runTmux } from "../lib/key-gate"
@@ -64,8 +65,8 @@ async function settle(key: string, want: boolean): Promise<Dialog | undefined> {
 }
 
 function log(msg: string): void {
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-  process.stderr.write(`${dim}[companion]${reset} ${cyan}model${reset} ${msg}\n`)
+  const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+  companionLog(`${cyan}model${reset} ${msg}`)
 }
 
 export async function handleModelRoute(req: Request, url: URL): Promise<Response | null> {

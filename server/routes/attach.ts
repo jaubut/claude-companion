@@ -1,3 +1,4 @@
+import { companionLog } from "../lib/log"
 import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -23,8 +24,8 @@ const MAX_BYTES = 25 * 1024 * 1024
 const SAFE_NAME = /[^A-Za-z0-9._-]+/g
 
 function log(msg: string): void {
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-  process.stderr.write(`${dim}[companion]${reset} ${cyan}attach${reset} ${msg}\n`)
+  const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+  companionLog(`${cyan}attach${reset} ${msg}`)
 }
 
 export async function handleAttachRoute(req: Request, url: URL): Promise<Response | null> {

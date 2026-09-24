@@ -1,3 +1,4 @@
+import { companionLog } from "../lib/log"
 import { broadcast } from "../state"
 import {
   appendTurn as orchAppendTurn,
@@ -130,16 +131,16 @@ async function sendToTmux(sessionName: string, text: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 2000))
   }
   if (!ready) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-    process.stderr.write(`${dim}[companion]${reset} ${red}orchestrator → tmux timeout${reset} ${sessionName} never became input-ready\n`)
+    const reset = "\x1b[0m"; const red = "\x1b[31m"
+    companionLog(`${red}orchestrator → tmux timeout${reset} ${sessionName} never became input-ready`)
     return
   }
   try {
     await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "-l", text], { stdout: "ignore", stderr: "ignore" }).exited
     await new Promise((r) => setTimeout(r, 300))
     await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Enter"], { stdout: "ignore", stderr: "ignore" }).exited
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator → tmux${reset} ${sessionName} "${text.slice(0, 50)}"\n`)
+    const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+    companionLog(`${cyan}orchestrator → tmux${reset} ${sessionName} "${text.slice(0, 50)}"`)
   } catch { /* worker session gone */ }
 }
 
@@ -160,8 +161,8 @@ const workerIdentity = createWorkerIdentityResolver({
   tmuxSessionForPane,
   now: Date.now,
   log(msg) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    process.stderr.write(`${dim}[companion]${reset} ${yellow}orchestrator identity${reset} ${msg}\n`)
+    const reset = "\x1b[0m"; const yellow = "\x1b[33m"
+    companionLog(`${yellow}orchestrator identity${reset} ${msg}`)
   },
 })
 
@@ -188,7 +189,7 @@ export function reconcileDispatch(sessions: Session[]): void {
     .catch((err) => {
       // Never wedge the chain — but never hide the failure either: a throw here
       // leaves a task in 'dispatched' with no prompt delivered.
-      process.stderr.write(`\x1b[2m[companion]\x1b[0m \x1b[31mreconcileDispatch failed\x1b[0m ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`)
+      companionLog(`\x1b[31mreconcileDispatch failed\x1b[0m ${err instanceof Error ? err.stack ?? err.message : String(err)}`)
     })
 }
 
@@ -235,19 +236,19 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
     setTaskStatus(task.taskId, "error")
     emitTask(task.taskId)
     const message = err instanceof Error ? err.message : String(err)
-    process.stderr.write(`${dim}[companion]${reset} ${red}dispatch crashed${reset} [${task.taskId}] — ${message}\n`)
+    companionLog(`${red}dispatch crashed${reset} [${task.taskId}] — ${message}`)
     return { ok: false, error: message }
   }
   if (!result.ok) {
     setTaskStatus(task.taskId, "error")
     emitTask(task.taskId)
-    process.stderr.write(`${dim}[companion]${reset} ${red}dispatch failed${reset} [${task.taskId}] — ${result.error}\n`)
+    companionLog(`${red}dispatch failed${reset} [${task.taskId}] — ${result.error}`)
     return { ok: false, error: result.error }
   }
   setTaskSpawn(task.taskId, result.sessionName ?? null)
   emitTask(task.taskId)
   workerTail.watch(task.taskId)
-  process.stderr.write(`${dim}[companion]${reset} ${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}\n`)
+  companionLog(`${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}`)
   const verb = task.status === "queued" ? "starting" : "approved"
   orchEmit(orchAppendTurn("orchestrator", `${verb} [${task.taskId}] — worker dispatched`, task.taskId, task.threadId))
   return { ok: true }
