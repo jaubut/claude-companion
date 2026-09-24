@@ -191,6 +191,17 @@ export type InjectOutcome =
   | { ok: false; error: "deliver_failed" }
   | { ok: false; error: "not_submitted"; excerpt: string }
 
+// Should the inject route write the user_prompt feed event (and start the
+// "Thinking" pill) itself? Only when nothing else will: a delivery that
+// cannot be confirmed (no tmux pane — the macOS AppleScript path, where
+// issue #8 saw the hook go missing). A confirmed inject already has its
+// event from the hook, a queued one gets it when the turn ends, and an
+// unsubmitted one must not show as sent at all (audit 2026-09-24: this
+// echo is what put a "Thinking" pill on three prompts Claude never got).
+export function echoPromptOnInject(res: InjectOutcome): boolean {
+  return res.ok && !res.confirmed && !res.queued
+}
+
 export interface ConfirmTarget extends InjectTarget {
   key?: string
   sessionId?: string

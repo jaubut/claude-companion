@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { type SubmitClock, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
+import { type SubmitClock, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
 
 // A manual clock: timers fire only when the test advances time.
 function fakeClock() {
@@ -174,4 +174,12 @@ test("paneExcerpt keeps the last non-blank lines, capped, unstyled", () => {
   expect(paneExcerpt(many).split("\n")).toEqual(Array.from({ length: 8 }, (_, i) => `line ${i + 12}`))
   expect(paneExcerpt("x".repeat(2_000)).length).toBe(600)
   expect(paneExcerpt("\x1b[2mdim\x1b[0m")).toBe("dim")
+})
+
+test("echoPromptOnInject: only an unconfirmable delivery is echoed into the feed", () => {
+  expect(echoPromptOnInject({ ok: true, confirmed: false })).toBe(true)                 // AppleScript path
+  expect(echoPromptOnInject({ ok: true, confirmed: true, retried: false })).toBe(false) // hook already recorded it
+  expect(echoPromptOnInject({ ok: true, confirmed: false, queued: true })).toBe(false)  // hook fires at turn end
+  expect(echoPromptOnInject({ ok: false, error: "not_submitted", excerpt: "" })).toBe(false)
+  expect(echoPromptOnInject({ ok: false, error: "deliver_failed" })).toBe(false)
 })
