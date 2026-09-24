@@ -51,6 +51,10 @@ export interface Session {
   // present, inject uses `tmux send-keys` (pane-id-keyed, no focus race)
   // instead of AppleScript (focus-bound, swap-prone with multiple windows).
   tmuxPane: string
+  // The tmux server tmuxPane lives on (socket path from $TMUX, forwarded as
+  // X-Companion-Tmux-Socket). Pane ids are per server, so the pair is the
+  // address; empty = the default server (lib/tmux-argv.ts).
+  tmuxSocket: string
   // The orchestrator task this session is a worker for, from
   // X-Companion-Task-Id (COMPANION_TASK_ID in the worker's env, issued at
   // dispatch). Empty for every session a human started — identity is issued,
@@ -122,6 +126,16 @@ function ensurePruneTimer(): void {
   }
 }
 ensurePruneTimer()
+
+// Pane and socket are one address and move together. A record that names a
+// NEW pane brings its own socket (none = default server) — never inherit the
+// old socket onto a different pane. The same pane with no socket (ps
+// discovery on macOS, which cannot read one) keeps the socket it had.
+function socketFor(meta: Partial<Session>, prev: Session | undefined): string {
+  if (meta.tmuxSocket) return meta.tmuxSocket
+  if (meta.tmuxPane && meta.tmuxPane !== prev?.tmuxPane) return ""
+  return prev?.tmuxSocket ?? ""
+}
 
 function deriveKey(meta: Partial<Session> & { cwd: string }): string {
   const agent = meta.agent === "codex" ? "codex" : "claude"
@@ -234,6 +248,7 @@ export function recordSession(
     tty: mergedTty,
     iTermSessionId: meta.iTermSessionId || prev?.iTermSessionId || "",
     tmuxPane: meta.tmuxPane || prev?.tmuxPane || "",
+    tmuxSocket: socketFor(meta, prev),
     // Sticky: ps-discovery and rehydrate re-record a worker with no headers at
     // all, and must not erase the identity a hook already established.
     taskId: meta.taskId || prev?.taskId || "",
@@ -318,6 +333,7 @@ export function recordSession(
     // every identity-first bind would silently wait out the 90s degrade.
     prev.taskId !== next.taskId ||
     prev.tmuxPane !== next.tmuxPane ||
+    prev.tmuxSocket !== next.tmuxSocket ||
     // Shape completeness only: no caller puts waiting in `meta`, so the sticky
     // merge always falls through to prev. The real emit path is the setters.
     prev.waitingSince !== next.waitingSince
@@ -568,12 +584,13 @@ export function removeSessionByTty(tty: string): boolean {
 // Precise removal by tmux pane — the tmux equivalent of removeSessionByTty,
 // for workers whose hooks report a pane but no usable tty. Without it a
 // session-end from one worker falls through to removeSessionByCwd and takes
-// every sibling session in that directory with it.
-export function removeSessionByTmuxPane(pane: string): boolean {
+// every sibling session in that directory with it. Matched on socket too: %N
+// on the cc server is not %N on the default one.
+export function removeSessionByTmuxPane(pane: string, socket = ""): boolean {
   if (!pane) return false
   let removed = false
   for (const [key, s] of sessions) {
-    if (s.tmuxPane === pane) {
+    if (s.tmuxPane === pane && s.tmuxSocket === socket) {
       sessions.delete(key)
       removed = true
     }

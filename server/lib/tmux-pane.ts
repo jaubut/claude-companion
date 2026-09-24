@@ -2,17 +2,20 @@
 // Used by the dialog watcher (mirror what's on screen) and the orchestrator
 // wiring (don't type into a worker until its input box is up).
 
+import { TMUX_PANE_RE, tmuxArgv } from "./tmux-argv"
+
 // `signal` (optional) kills the capture: a stalled tmux must not hold up a
 // caller that has a deadline (command-scrape's dirty-pane verification).
 // `escapes` adds `-e`: SGR attributes are kept, so a parser can tell Claude
 // Code's dim predicted reply from text the user typed (lib/command-menu.ts).
+// `socket`: the session's tmux server (lib/tmux-argv.ts); omit for default.
 export async function capturePane(
   sessionName: string,
   signal?: AbortSignal,
-  opts: { escapes?: boolean } = {},
+  opts: { escapes?: boolean; socket?: string } = {},
 ): Promise<string | null> {
   try {
-    const args = ["tmux", "capture-pane", "-t", sessionName, "-p", ...(opts.escapes ? ["-e"] : [])]
+    const args = tmuxArgv(opts.socket, ["capture-pane", "-t", sessionName, "-p", ...(opts.escapes ? ["-e"] : [])])
     const p = Bun.spawn(args, { stdout: "pipe", stderr: "ignore" })
     const kill = () => { try { p.kill() } catch { /* already gone */ } }
     if (signal?.aborted) kill()
@@ -51,12 +54,12 @@ export function paneHasDialog(pane: string): boolean {
 // single-worker path never pays for a subprocess. Null on anything unexpected
 // — a malformed pane id, a dead pane, a slow tmux — and the caller refuses to
 // guess rather than treating the failure as a match.
-const PANE_ID = /^%\d+$/
-
-export async function tmuxSessionForPane(pane: string): Promise<string | null> {
-  if (!PANE_ID.test(pane)) return null
+// `socket` scopes the lookup to the pane's own server: a %N absent there is
+// null, never looked up on the default server.
+export async function tmuxSessionForPane(pane: string, socket?: string): Promise<string | null> {
+  if (!TMUX_PANE_RE.test(pane)) return null
   try {
-    const p = Bun.spawn(["tmux", "display-message", "-p", "-t", pane, "#S"], {
+    const p = Bun.spawn(tmuxArgv(socket, ["display-message", "-p", "-t", pane, "#S"]), {
       stdout: "pipe",
       stderr: "ignore",
     })

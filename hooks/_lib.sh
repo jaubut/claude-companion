@@ -66,13 +66,19 @@ companion_find_agent_pid() {
 # X-Companion-Task-Id carries the orchestrator task this worker was dispatched
 # as (COMPANION_TASK_ID, exported into its tmux session at dispatch). Empty for
 # every session a human started, which is exactly what the server expects.
+#
+# X-Companion-Tmux-Socket is $TMUX's first comma field (the tmux server's
+# socket path). Pane ids are per server, so the server needs it to address a
+# pane on the durable `cc` socket (tmux -L cc) rather than the default one.
 companion_headers() {
+  local tmux_socket="${TMUX:-}"
   COMPANION_HDRS=(
     -H "X-Companion-Tty: ${TTY}"
     -H "X-Companion-Term-Program: ${TERM_PROGRAM:-}"
     -H "X-Companion-Iterm-Session-Id: ${ITERM_SESSION_ID:-}"
     -H "X-Companion-Pid: ${AGENT_PID:-${PPID:-}}"
     -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}"
+    -H "X-Companion-Tmux-Socket: ${tmux_socket%%,*}"
     -H "X-Companion-Task-Id: ${COMPANION_TASK_ID:-}"
   )
 }

@@ -1,7 +1,7 @@
 import { companionLog } from "../lib/log"
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
-import { keyGate, runTmux } from "../lib/key-gate"
+import { gatedTmux, type PaneRef } from "../lib/key-gate"
 import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -32,16 +32,16 @@ const KEY_GAP_MS = 40        // same gap /api/dialog/pick uses between keys
 // are relative to wherever the cursor currently sits.
 const inFlight = new Set<string>()
 
-async function sendKey(pane: string, key: string): Promise<boolean> {
+async function sendKey(pane: PaneRef, key: string): Promise<boolean> {
   // A named key goes as-is; a single character goes literal, so "s" is typed
   // rather than interpreted. Same split as /api/dialog/key.
   const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(key)
-  const args = named ? ["send-keys", "-t", pane, key] : ["send-keys", "-t", pane, "-l", key]
+  const args = named ? ["send-keys", "-t", pane.tmuxPane, key] : ["send-keys", "-t", pane.tmuxPane, "-l", key]
   try {
     // Through the shared per-pane gate (lib/key-gate.ts): /api/model/cancel's
     // Escape holds off every other sender for its chord window, and a cancel
     // arriving just after a phone's Escape waits its turn too.
-    await keyGate.send(pane, key, (signal) => runTmux(args, signal))
+    await gatedTmux(pane, key, args)
     return true
   } catch {
     return false
@@ -84,7 +84,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
       log(`open refused — ${refusal.error} (${session?.label || session?.key || key})`)
       return Response.json({ ok: false, ...refusal }, { status: 409 })
     }
-    const pane = session!.tmuxPane
+    const pane: PaneRef = session!
 
     if (inFlight.has(session!.key)) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
@@ -147,7 +147,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
       }
       const chosen = choicesFrom(dialog!)[index]
       for (const k of keys) {
-        if (!await sendKey(session.tmuxPane, k)) {
+        if (!await sendKey(session, k)) {
           return Response.json({ ok: false, error: "send_failed" }, { status: 500 })
         }
         await sleep(KEY_GAP_MS)
@@ -183,7 +183,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     if (!session?.tmuxPane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
     const dialog = dialogWatcher.current()[session.key]
     if (!isModelPicker(dialog)) return Response.json({ ok: true, closed: false })
-    await sendKey(session.tmuxPane, "Escape")
+    await sendKey(session, "Escape")
     // Escape is a meta-chord prefix (ESC_SETTLE_MS, lib/command-list.ts): the
     // next byte inside this window is read as opt+<byte>, the Escape never
     // fires, and the picker the caller thinks it just closed is still up. The

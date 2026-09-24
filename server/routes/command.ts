@@ -5,7 +5,7 @@ import {
   type HelpTab, listIncomplete, scrapeHelpTab,
 } from "../lib/command-list"
 import { beginFlow, endFlow, scrapeAbortRequested } from "../lib/command-scrape"
-import { keyGate, runTmux } from "../lib/key-gate"
+import { gatedTmux, type PaneRef } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { capturePane } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
@@ -73,25 +73,27 @@ async function sleepUnlessAborted(ms: number, aborted: () => boolean): Promise<b
 // phone's /api/dialog/key cannot land inside their chord window, and nothing
 // here can land inside one of the phone's. A send that wedges is killed at the
 // gate's deadline and reads as a failed send (false), never a stuck scrape.
-async function gatedSend(pane: string, key: string, args: string[]): Promise<boolean> {
+async function gatedSend(pane: PaneRef, key: string, args: string[]): Promise<boolean> {
   try {
-    await keyGate.send(pane, key, (signal) => runTmux(args, signal))
+    await gatedTmux(pane, key, args)
     return true
   } catch {
     return false
   }
 }
 
-const sendKey = (pane: string, key: string) => gatedSend(pane, key, ["send-keys", "-t", pane, key])
-const sendLiteral = (pane: string, text: string) => gatedSend(pane, text, ["send-keys", "-t", pane, "-l", text])
+const sendKey = (pane: PaneRef, key: string) => gatedSend(pane, key, ["send-keys", "-t", pane.tmuxPane, key])
+const sendLiteral = (pane: PaneRef, text: string) => gatedSend(pane, text, ["send-keys", "-t", pane.tmuxPane, "-l", text])
+// The session's pane, read on its own tmux server.
+const capture = (pane: PaneRef, escapes = false) => capturePane(pane.tmuxPane, undefined, { escapes, socket: pane.tmuxSocket })
 
 // C-u only over an empty line or text this flow typed itself. The line is
 // read fresh, with -e, right before the key: anything else on it (a phone
 // prompt whose Enter never landed, the user typing at the keyboard) is left
 // alone and the caller is told so. Returns true when the line is ours to have
 // cleared (or already empty).
-async function clearIfOurs(pane: string, owned: readonly string[], who: string): Promise<boolean> {
-  const typed = inputLine(await capturePane(pane, undefined, { escapes: true }) ?? "")
+async function clearIfOurs(pane: PaneRef, owned: readonly string[], who: string): Promise<boolean> {
+  const typed = inputLine(await capture(pane, true) ?? "")
   if (!mayClearLine(typed, owned)) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     companionLog(`${yellow}commands${reset} left the input line alone on ${who} — not ours: ${JSON.stringify((typed ?? "<unreadable>").slice(0, 40))}`)
@@ -118,7 +120,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
-    const typedNow = session?.tmuxPane ? inputLine(await capturePane(session.tmuxPane, undefined, { escapes: true }) ?? "") : null
+    const typedNow = session?.tmuxPane ? inputLine(await capture(session, true) ?? "") : null
     const refusal = suggestRefusal(
       session,
       dialogWatcher.current()[session?.key ?? ""],
@@ -127,7 +129,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     )
     if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
 
-    const pane = session!.tmuxPane
+    const pane: PaneRef = session!
     if (!beginFlow(session!.key, "suggest")) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
     }
@@ -147,7 +149,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       let commands: ReturnType<typeof parseCommandMenu> = []
       for (;;) {
         await sleep(SETTLE_POLL_MS)
-        const pane2 = await capturePane(pane)
+        const pane2 = await capture(pane)
         if (pane2) {
           commands = parseCommandMenu(pane2)
           if (commands.length) break
@@ -201,7 +203,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       return Response.json({ ok: true, key: session.key, cached: true, commands: cached.commands })
     }
 
-    const typedNow = session.tmuxPane ? inputLine(await capturePane(session.tmuxPane, undefined, { escapes: true }) ?? "") : null
+    const typedNow = session.tmuxPane ? inputLine(await capture(session, true) ?? "") : null
     const refusal = suggestRefusal(session, dialogWatcher.current()[session.key], typedNow, "")
     if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
     // The claim is what makes the scrape visible to the rest of the process:
@@ -210,7 +212,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     // instead of refusing with "has a dialog open".
     if (!beginFlow(session.key, "list")) return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
 
-    const pane = session.tmuxPane
+    const pane: PaneRef = session
     const aborted = () => scrapeAbortRequested(session.key)
     const t0 = Date.now()
     // Give the pane back the way we found it: no overlay, empty input line.
@@ -222,7 +224,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     // (clean:false → dirty release → `busy_flow`) instead of guessing.
     let enterAt = Date.now()
     const closeHelp = () => closeHelpOverlay({
-      capture: () => capturePane(pane),
+      capture: () => capture(pane),
       escape: async () => { await sendKey(pane, "Escape") },
       clearLine: async () => { await clearIfOurs(pane, ["/help"], session.label || session.key) },
       sleep,
@@ -267,7 +269,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
 
         const scrape = gaveUp ? null : await scrapeHelpTab({
           tab,
-          capture: async () => await capturePane(pane) ?? "",
+          capture: async () => await capture(pane) ?? "",
           pageDown: async (rows) => {
             for (let k = 0; k < rows; k++) {
               if (aborted()) return

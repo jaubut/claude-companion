@@ -1,7 +1,8 @@
 import { companionLog } from "../lib/log"
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import { pickKeys } from "../lib/dialogs"
-import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
+import { gatedTmux, opensChordWindow } from "../lib/key-gate"
+import { paneLabel } from "../lib/tmux-argv"
 import { resolveSession } from "../lib/sessions"
 import { dialogWatcher } from "../wiring/dialogs"
 
@@ -31,7 +32,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
       // response only serialised one client's taps; the gate spaces EVERY
       // sender on the pane — a second phone, /api/model/cancel, the /help
       // close path — behind the Escape's window.
-      await keyGate.send(session.tmuxPane, name, (signal) => runTmux(args, signal))
+      await gatedTmux(session, name, args)
     } catch {
       return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
     }
@@ -40,7 +41,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     // with no tmux pane, typed through osascript on the Mac.
     if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
     const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    companionLog(`${cyan}dialog key${reset} ${name} → ${session.tmuxPane}`)
+    companionLog(`${cyan}dialog key${reset} ${name} → ${paneLabel(session.tmuxPane, session.tmuxSocket)}`)
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)
     return Response.json({ ok: true })
   }
@@ -58,7 +59,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     if (!keys) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
     try {
       for (const k of keys) {
-        await keyGate.send(session.tmuxPane, k, (signal) => runTmux(["send-keys", "-t", session.tmuxPane!, k], signal))
+        await gatedTmux(session, k, ["send-keys", "-t", session.tmuxPane, k])
         await new Promise((r) => setTimeout(r, 40))
       }
     } catch {

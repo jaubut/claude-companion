@@ -18,6 +18,7 @@ import { companionLog } from "./log"
 import { INJECT_SEND_MS, injectText, resolveTmuxPaneFromTty, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
 import { inputLine, unstyle } from "./command-menu"
 import { capturePane } from "./tmux-pane"
+import { TMUX_PANE_RE, paneKey, paneLabel } from "./tmux-argv"
 
 export const SUBMIT_WINDOW_MS = 3_000
 
@@ -214,15 +215,15 @@ export interface ConfirmTarget extends InjectTarget {
 // a recorded pane resolve it from the tty, as injectText does.
 async function confirmPane(target: ConfirmTarget): Promise<string> {
   const pane = target.tmuxPane?.trim() ?? ""
-  if (/^%\d+$/.test(pane)) return pane
-  if (target.tty && process.platform === "linux") return (await resolveTmuxPaneFromTty(target.tty)) ?? ""
+  if (TMUX_PANE_RE.test(pane)) return pane
+  if (target.tty && process.platform === "linux") return (await resolveTmuxPaneFromTty(target.tty, target.tmuxSocket)) ?? ""
   return ""
 }
 
-function pressEnterIn(pane: string): () => Promise<boolean> {
+function pressEnterIn(pane: string, socket?: string): () => Promise<boolean> {
   return async () => {
     try {
-      const r = await keyGate.send(pane, "Enter", (signal) => tmuxSendKeys(["send-keys", "-t", pane, "Enter"], 2000, signal), { timeoutMs: INJECT_SEND_MS })
+      const r = await keyGate.send(paneKey(pane, socket), "Enter", (signal) => tmuxSendKeys(["send-keys", "-t", pane, "Enter"], 2000, signal, socket), { timeoutMs: INJECT_SEND_MS })
       return r.ok
     } catch {
       return false
@@ -259,21 +260,22 @@ export async function injectConfirmed(text: string, target: ConfirmTarget | unde
   if (!target || !pane) {
     return (await injectText(text, target)) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
   }
-  return withPaneLock(pane, async (): Promise<InjectOutcome> => {
+  const socket = target.tmuxSocket
+  return withPaneLock(paneKey(pane, socket), async (): Promise<InjectOutcome> => {
     const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty })
     try {
       if (!(await injectText(text, { ...target, tmuxPane: pane }))) return { ok: false, error: "deliver_failed" }
       const r = await confirmSubmit({
         watch,
         text,
-        pressEnter: pressEnterIn(pane),
-        capture: () => capturePane(pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true }),
+        pressEnter: pressEnterIn(pane, socket),
+        capture: () => capturePane(pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true, socket }),
       })
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const green = "\x1b[32m"; const yellow = "\x1b[33m"
       const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit hook`
         : r.confirmed ? `${green}submit confirmed${reset}${r.retried ? " (after Enter retry)" : ""}`
         : `${yellow}submit queued${reset} — Claude mid-turn, text in its queue`
-      companionLog(`${line} → ${pane}`)
+      companionLog(`${line} → ${paneLabel(pane, socket)}`)
       if (!r.ok) return r
       return r.confirmed ? { ok: true, confirmed: true, retried: r.retried } : { ok: true, confirmed: false, queued: true }
     } finally {
