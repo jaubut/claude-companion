@@ -14,12 +14,11 @@ import { getAuthToken } from "../server/lib/auth"
 // One-shot installer for Claude Companion.
 //
 // Replaces the README's seven manual setup steps with `bun cli.ts init`:
-//   1. (optional) build the React client if dist/ is missing
-//   2. copy hook scripts to ~/.claude/hooks/, +x
-//   3. patch ~/.claude/settings.json — append companion entries to each
+//   1. copy hook scripts to ~/.claude/hooks/, +x
+//   2. patch ~/.claude/settings.json — append companion entries to each
 //      Claude Code hook event, preserving any non-companion hooks the user
 //      has already configured. Idempotent.
-//   4. print the pairing URL + bearer token so the user can paste into iOS.
+//   3. print the pairing URL + bearer token so the user can paste into iOS.
 //
 // Reversible via `bun cli.ts uninstall`. Both commands always backup
 // settings.json before writing.
@@ -30,7 +29,6 @@ const HOOKS_DST = join(homedir(), ".claude", "hooks")
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json")
 const CODEX_HOOKS_DST = join(homedir(), ".codex", "hooks")
 const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml")
-const CLIENT_DIST = join(REPO_ROOT, "client", "dist", "index.html")
 const CODEX_BLOCK_START = "# >>> Claude Companion Codex hooks >>>"
 const CODEX_BLOCK_END = "# <<< Claude Companion Codex hooks <<<"
 
@@ -97,30 +95,11 @@ const SUPPORT_SCRIPTS = ["_lib.sh"]
 
 export async function init(): Promise<void> {
   console.log(`${bold}Claude Companion · install${reset}\n`)
-  await ensureClientBuilt()
   copyHooks()
   patchSettings()
   patchCodexConfig()
   printPairing()
   console.log(`\n${green}Done.${reset} Start the server: ${cyan}bun ${join(REPO_ROOT, "cli.ts")}${reset}`)
-}
-
-async function ensureClientBuilt(): Promise<void> {
-  if (existsSync(CLIENT_DIST)) {
-    console.log(`${dim}✓ client/dist already built${reset}`)
-    return
-  }
-  console.log(`${dim}building client (this can take a minute on first run)…${reset}`)
-  const clientDir = join(REPO_ROOT, "client")
-  await runOrThrow(["bun", "install"], clientDir)
-  await runOrThrow(["bun", "run", "build"], clientDir)
-  console.log(`${green}✓${reset} client built`)
-}
-
-async function runOrThrow(cmd: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawn({ cmd, cwd, stdout: "inherit", stderr: "inherit" })
-  const code = await proc.exited
-  if (code !== 0) throw new Error(`${cmd.join(" ")} exited with code ${code}`)
 }
 
 function copyHooks(): void {

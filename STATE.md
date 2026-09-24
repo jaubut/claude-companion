@@ -1,8 +1,14 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-09-13
+Last updated: 2026-09-24
 
 ## Active Decisions
+
+### The browser PWA is retired — the iOS app is the only client
+**Date:** 2026-09-24 (first called 2026-09-13; a 2026-09-23 follow-up still shipped PWA work — PR #48 — because that note was missed)
+**Choice:** `client/` deleted; the server answers `/` with a plain-text note and 404s everything else static; `bun cli.ts init` no longer builds a client; the menu bar app lost "Open Dashboard"; archmap has one target (`server`) plus the `ios` ref.
+**Why:** never used once the iOS app shipped; every PWA change cost a build, a review round and a hand-copied `FeedEvent` type.
+**How to apply:** frame contracts have two consumers now — server `lib/feed.ts` and iOS `WSFrame.swift`. Deploy is pull + restart; no `bun run build`.
 
 ### One always-open thread, workers report back tagged
 **Date:** 2026-06-22

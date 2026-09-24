@@ -17,5 +17,5 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "exclude": ["client", "**/node_modules"]
+  "exclude": ["**/node_modules"]
 }

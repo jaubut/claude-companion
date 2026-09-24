@@ -55,12 +55,11 @@ bun claude-companion/cli.ts
 echo 'alias companion="bun ~/claude-companion/cli.ts"' >> ~/.zshrc
 ```
 
-The server prints the pairing **URL** + **token** on every boot. Open
-`http://<your-ip>:4245` on your phone (or use the iOS app), paste both into
-the Settings screen, and you're connected. Works great over
-[Tailscale](https://tailscale.com) for remote access.
-
-For the browser PWA, open the URL once with the token in the query — `http://<your-mac>:4245/?token=<token>` — and it is remembered in that browser (the WebSocket and `/api/media` calls carry it from then on).
+The server prints the pairing **URL** + **token** on every boot. Enter both
+in the iOS app's Settings screen (or scan the QR from `bun cli.ts pair`) and
+you're connected. Works great over [Tailscale](https://tailscale.com) for
+remote access. There is no browser client: the PWA was retired on 2026-09-24
+(never used once the iOS app shipped); `GET /` answers with a plain-text note.
 
 ### One-tap pairing via QR
 
@@ -111,7 +110,6 @@ launches at login. The menu bar icon polls `/health` every 3 seconds and
 flips between green (running) and red (offline). The dropdown shows
 client + pending counts, plus quick actions:
 
-- **Open Dashboard** — opens the PWA in your default browser
 - **Copy Pairing Token** — copies the bearer token from
   `~/.claude-companion/auth.token` to the clipboard
 - **Restart Server** — `launchctl kickstart -k` on the server agent
@@ -196,7 +194,7 @@ Tokens live in a SQLite database at `~/.claude-companion/companion.db` (auto-cre
 ## How it's built
 
 - **Server**: Bun + Hono (50 lines of WebSocket + HTTP hook handler)
-- **Client**: React + Tailwind (mobile-optimized PWA)
+- **Client**: the native iOS app (separate repo, `claude-companion-ios`)
 - **Hook**: 20-line bash script that `curl`s the companion server
 - **Auto-judge**: Pattern matcher for safe/dangerous commands
 

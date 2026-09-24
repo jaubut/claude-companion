@@ -13,7 +13,7 @@ import Foundation
 //   - polls /health every 3s; flips the menubar icon between on/off
 //   - reads the bearer token from ~/.claude-companion/auth.token, then
 //     polls /api/status to surface client/pending counts
-//   - menu actions: open dashboard, copy token, restart launchd job, show logs
+//   - menu actions: copy token, restart launchd job, show logs
 //
 // Why it's tiny: this is the "is it running?" surface, not a full client.
 // The PWA + iOS app are the rich UIs.
@@ -78,7 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(menuItem(title: "Open Dashboard", action: #selector(openDashboard), key: "o"))
         menu.addItem(menuItem(title: "Copy Pairing Token", action: #selector(copyToken), key: "c"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(menuItem(title: "Restart Server", action: #selector(restartServer), key: "r"))
@@ -96,11 +95,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Actions
-
-    @objc private func openDashboard() {
-        guard let url = URL(string: "http://127.0.0.1:4245") else { return }
-        NSWorkspace.shared.open(url)
-    }
 
     @objc private func copyToken() {
         guard let token = readToken() else {

@@ -20,14 +20,8 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      - name: Install client deps
-        run: cd client && bun install --frozen-lockfile
-
       - name: Typecheck server (server, tools, cli, scripts)
         run: bunx tsc --noEmit -p .
-
-      - name: Typecheck + build client
-        run: cd client && bunx tsc -b && bun run build
 
       # The committed architecture map must match the code (--check) and no
       # module may cross an import boundary or grow past the 600-line cap
