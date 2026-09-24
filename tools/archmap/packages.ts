@@ -48,6 +48,10 @@ const BUN_LINE_RE = /^\s*"([^"]+)":\s*\["([^"]+)"/
 export function readLockfile(lock: Lockfile): Record<string, string | null> {
   const text = readFileSync(lock.path, "utf-8")
   const out: Record<string, string | null> = {}
+  // A 0-byte stub (kept to block npm/pnpm/yarn installs) pins nothing; a
+  // truncated JSON lockfile leaves everything unpinned rather than crash the map.
+  if (!text.trim()) return out
+  if (lock.kind !== "bun") { try { JSON.parse(text) } catch { return out } }
   if (lock.kind === "bun") {
     let inPackages = false
     for (const l of text.split("\n")) {
