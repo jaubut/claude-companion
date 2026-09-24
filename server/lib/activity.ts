@@ -104,13 +104,18 @@ function startPoll(): void {
 // forever (audit 2026-09-24: 8+ min of fake Thinking on an idle session). Two
 // clear paths, both suspended while a tool_start is still open:
 //
-//   1. TTL — no hook event and no transcript growth for ACTIVITY_TTL_MS, unless
-//      Claude Code's own status file says the session is busy (a long single
-//      generation writes nothing to the transcript until it completes).
-//   2. Idle — the status file reads "idle" and the transcript has not grown
-//      since the turn started. IDLE_GRACE_MS covers the status poll lagging a
-//      freshly submitted prompt.
+//   1. TTL — no hook event and no transcript growth for ACTIVITY_TTL_MS. When
+//      Claude Code's status reads "busy" the window stretches to BUSY_TTL_MS
+//      (a long single generation writes nothing to the transcript until it
+//      completes) — stretched, never disabled: a cached "busy" on a stalled
+//      session must not hold the pill forever (Codex review of PR #53).
+//   2. Idle — an "idle" status FIRST OBSERVED after the turn started, and the
+//      transcript has not grown since. A status that already read "idle"
+//      before the prompt is stale evidence (non-tmux sessions refresh it only
+//      every 60 s), so it never clears a turn; the TTL covers that case.
+//      IDLE_GRACE_MS covers the status poll lagging a fresh prompt.
 export const ACTIVITY_TTL_MS = 90_000
+export const BUSY_TTL_MS = 600_000
 export const IDLE_GRACE_MS = 10_000
 
 interface Progress {
@@ -121,8 +126,9 @@ interface Progress {
 const progress = new WeakMap<PathState, Progress>()
 
 // Claude Code's own view per Session.key ("busy" | "waiting" | "idle"), from
-// the last `sessions` emit. Only sessions with a status file appear here.
-const agentStatusByKey = new Map<string, string>()
+// the `sessions` emits, with WHEN this value was first observed: an unchanged
+// status keeps its original `since`. Only sessions with a status file appear.
+const agentStatusByKey = new Map<string, { status: string; since: number }>()
 
 function transcriptSize(s: PathState): number {
   if (!s.transcriptPath) return -1
@@ -155,11 +161,11 @@ function isStale(s: PathState, now: number): boolean {
     p.size = size
     p.grewAt = now
   }
-  const status = pill.key ? agentStatusByKey.get(pill.key) ?? "" : ""
+  const seen = pill.key ? agentStatusByKey.get(pill.key) : undefined
   const turnStart = pill.turnStartedAt || s.turnStartedAt
-  if (status === "idle" && size <= p.turnSize && now - turnStart >= IDLE_GRACE_MS) return true
-  if (status === "busy") return false
-  return now - Math.max(s.lastEventAt, p.grewAt) >= ACTIVITY_TTL_MS
+  if (seen?.status === "idle" && seen.since > turnStart && size <= p.turnSize && now - turnStart >= IDLE_GRACE_MS) return true
+  const ttl = seen?.status === "busy" ? BUSY_TTL_MS : ACTIVITY_TTL_MS
+  return now - Math.max(s.lastEventAt, p.grewAt) >= ttl
 }
 
 // Drop every pill that went stale. Returns whether anything was cleared.
@@ -240,8 +246,14 @@ function clearActivity(s: PathState, sessionKey: string): void {
 // map's key (path:/tty:/sid:/cwd:).
 export function reconcileActivityLiveness(sessions: Session[]): void {
   const now = Date.now()
+  const nextStatus = new Map<string, { status: string; since: number }>()
+  for (const sess of sessions) {
+    if (!sess.agentStatus) continue
+    const prev = agentStatusByKey.get(sess.key)
+    nextStatus.set(sess.key, prev && prev.status === sess.agentStatus ? prev : { status: sess.agentStatus, since: now })
+  }
   agentStatusByKey.clear()
-  for (const sess of sessions) if (sess.agentStatus) agentStatusByKey.set(sess.key, sess.agentStatus)
+  for (const [k, v] of nextStatus) agentStatusByKey.set(k, v)
   let live: Set<string> | null = null
   let cleared = expireStaleActivity(now, { emit: false })
   for (const s of activeStates()) {

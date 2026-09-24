@@ -67,11 +67,12 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 480,
+          "lines": 492,
           "kind": "lib",
           "exports": [
             "Activity",
             "ACTIVITY_TTL_MS",
+            "BUSY_TTL_MS",
             "IDLE_GRACE_MS",
             "expireStaleActivity",
             "onActivity",

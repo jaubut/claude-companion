@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   ACTIVITY_TTL_MS,
+  BUSY_TTL_MS,
   IDLE_GRACE_MS,
   expireStaleActivity,
   forgetSession,
@@ -65,6 +66,8 @@ function myOrder(): string[] {
 function cleanup(): void {
   forgetSession({ tty: A.tty })
   forgetSession({ tty: B.tty })
+  // No session is live between tests: empties the observed-status map too.
+  reconcileActivityLiveness([])
 }
 
 beforeEach(cleanup)
@@ -281,11 +284,15 @@ test("TTL: a long-running tool is never cleared while its tool_start is open", (
   expect(pill(A.key)).toBeUndefined()
 })
 
-test("TTL: a session whose status file says busy is spared", () => {
+test("TTL: busy stretches the window but never disables it", () => {
   prompt(A)
   reconcileActivityLiveness(withStatus(A.key, "busy"))
-  expireStaleActivity(Date.now() + 10 * ACTIVITY_TTL_MS)
+  // A long single generation writes nothing for minutes: spared.
+  expireStaleActivity(Date.now() + BUSY_TTL_MS - 1_000)
   expect(pill(A.key)?.verb).toBe("Thinking")
+  // A stalled session whose cached status still says busy: cleared.
+  expireStaleActivity(Date.now() + BUSY_TTL_MS + 1_000)
+  expect(pill(A.key)).toBeUndefined()
 })
 
 test("idle: status idle and no transcript growth since the turn started clears the pill", () => {
@@ -304,6 +311,7 @@ test("idle: status idle and no transcript growth since the turn started clears t
 
 test("idle: a fresh prompt is spared for the grace window", () => {
   prompt(A)
+  getState({ tty: A.tty, cwd: A.cwd }).activity!.turnStartedAt = Date.now() - 5
   reconcileActivityLiveness(withStatus(A.key, "idle"))
   expect(pill(A.key)?.verb).toBe("Thinking")
   expireStaleActivity(Date.now() + IDLE_GRACE_MS + 1_000)
@@ -320,6 +328,26 @@ test("idle: a transcript that grew since the turn started keeps the pill", () =>
     reconcileActivityLiveness(withStatus(A.key, "idle"))
 
     expect(pill(A.key)?.verb).toBe("Thinking")
+  } finally {
+    t.done()
+  }
+})
+
+test("idle: a status that already read idle BEFORE the prompt never clears the turn", () => {
+  const t = tmpTranscript()
+  try {
+    // Seen idle first (a non-tmux session refreshes its status only every 60 s)…
+    reconcileActivityLiveness(withStatus(A.key, "idle"))
+    prompt(A, t.path)
+    const st = getState({ transcriptPath: t.path, tty: A.tty, cwd: A.cwd })
+    st.activity!.turnStartedAt = Date.now() + 1
+    // …then the same cached "idle" again after the prompt: not fresh evidence.
+    reconcileActivityLiveness(withStatus(A.key, "idle"))
+    expireStaleActivity(Date.now() + IDLE_GRACE_MS + 1_000)
+    expect(pill(A.key)?.verb).toBe("Thinking")
+    // The inactivity TTL still applies.
+    expireStaleActivity(Date.now() + ACTIVITY_TTL_MS + 1_000)
+    expect(pill(A.key)).toBeUndefined()
   } finally {
     t.done()
   }
