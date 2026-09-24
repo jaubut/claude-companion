@@ -1,7 +1,7 @@
-import { test, expect, describe } from "bun:test"
+import { test, expect, describe, afterAll } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { appendFeedEvent, getFeed, FEED_EVENT_KINDS, type FeedEvent } from "./feed"
+import { appendFeedEvent, getFeed, pruneFeedForSession, FEED_EVENT_KINDS, type FeedEvent } from "./feed"
 import { CONTRACT_FIXTURES_DIR, IOS_FIXTURES_DIR, listFixtures } from "../../scripts/contracts-sync"
 
 // FeedEvent wire contract. contracts/feed-events/ holds one fixture per kind
@@ -15,6 +15,9 @@ const known = files.filter((f) => f !== UNKNOWN)
 const read = (f: string): unknown => JSON.parse(readFileSync(join(CONTRACT_FIXTURES_DIR, f), "utf8"))
 
 describe("feed-event fixtures", () => {
+  // The round-trip case appends every fixture to the shared in-memory feed;
+  // drop them so a later file counting events for that tty is not confused.
+  afterAll(() => { pruneFeedForSession({ tty: "/dev/ttys004" }) })
   test("every kind has a full and a minimal fixture, plus unknown-kind", () => {
     const expected = [...FEED_EVENT_KINDS.flatMap((k) => [`${k}.json`, `${k}.minimal.json`]), UNKNOWN].sort()
     expect(files).toEqual(expected)
