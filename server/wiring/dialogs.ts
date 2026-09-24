@@ -128,3 +128,16 @@ export async function openDialogFor(target: { key: string } | null | undefined):
   await dialogWatcher.refresh(target.key)
   return dialogWatcher.current()[target.key] ?? null
 }
+
+// The target's pane as it is right now, styled (`capture-pane -e`), for the
+// inject guard's pane_not_ready check (lib/inject-guard.ts). Undefined when
+// there is no tmux pane to read (nothing to check); null when the capture
+// failed or stalled past the deadline (refused — never typed into blind).
+const PANE_SNAPSHOT_TIMEOUT_MS = 1_000
+
+export async function paneSnapshotFor(
+  target: { tmuxPane?: string } | null | undefined,
+): Promise<string | null | undefined> {
+  if (!target?.tmuxPane) return undefined
+  return capturePane(target.tmuxPane, AbortSignal.timeout(PANE_SNAPSHOT_TIMEOUT_MS), { escapes: true })
+}

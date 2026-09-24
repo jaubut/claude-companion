@@ -49,18 +49,101 @@ const PLACEHOLDER_RE = /^Try\s+".*"$/
 // "  /model                    Set the AI model for Claude Code (…)"
 const ROW_RE = /^ {1,3}(\/[A-Za-z0-9:_.-]+)( {2,})(.*)$/
 
-// What the user currently has typed on the input line, or null when no prompt
-// line is on the pane. "" means an empty input box.
-export function inputLine(pane: string): string | null {
-  const lines = pane.split("\n")
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = lines[i]?.match(PROMPT_RE)
-    if (m) {
-      const typed = (m[1] ?? "").trim()
-      return PLACEHOLDER_RE.test(typed) ? "" : typed
-    }
+// ── Styled captures (`tmux capture-pane -e`) ────────────────────────────────
+//
+// Claude Code paints a PREDICTED next reply into the empty input box as dim
+// text (SGR 2), with the cursor still at column 2. A plain capture-pane shows
+// it exactly as if the user had typed it, so an idle box reads as busy. With
+// `-e` the attributes survive and dim text can be told apart. Every parser
+// here accepts either shape: a plain capture is just one unstyled segment.
+
+interface Cell { ch: string; dim: boolean; inverse: boolean }
+
+// CSI (incl. SGR), OSC, and two-byte escapes. Only SGR changes state.
+const ESC_SEQ_RE = /\x1b(?:\[([0-9;:?<=>]*)[ -\/]*([@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g
+
+function applySgr(params: string, st: { dim: boolean; inverse: boolean }): void {
+  const ps = params === "" ? ["0"] : params.split(";")
+  for (let i = 0; i < ps.length; i++) {
+    const p = ps[i] === "" ? 0 : Number(ps[i])
+    if (p === 0) { st.dim = false; st.inverse = false }
+    else if (p === 2) st.dim = true
+    else if (p === 22) st.dim = false
+    else if (p === 7) st.inverse = true
+    else if (p === 27) st.inverse = false
+    // Extended colours carry sub-parameters that must not be read as
+    // attributes: the "2" in 38;2;r;g;b is truecolour, not dim.
+    else if (p === 38 || p === 48 || p === 58) i += ps[i + 1] === "5" ? 2 : ps[i + 1] === "2" ? 4 : 0
   }
-  return null
+}
+
+// One pane (or line) → cells with the attributes that matter here. SGR state
+// carries across newlines, as it does on the terminal.
+function cells(text: string): Cell[] {
+  const out: Cell[] = []
+  const st = { dim: false, inverse: false }
+  const push = (s: string) => { for (const ch of s) out.push({ ch, dim: st.dim, inverse: st.inverse }) }
+  let last = 0
+  ESC_SEQ_RE.lastIndex = 0
+  for (let m = ESC_SEQ_RE.exec(text); m; m = ESC_SEQ_RE.exec(text)) {
+    push(text.slice(last, m.index))
+    last = ESC_SEQ_RE.lastIndex
+    if (m[2] === "m" && !/[?<=>]/.test(m[1] ?? "")) applySgr(m[1] ?? "", st)
+  }
+  push(text.slice(last))
+  return out
+}
+
+function splitLines(pane: string): Cell[][] {
+  const lines: Cell[][] = [[]]
+  for (const c of cells(pane)) {
+    if (c.ch === "\n") lines.push([])
+    else lines[lines.length - 1]!.push(c)
+  }
+  return lines
+}
+
+const textOf = (cs: Cell[]): string => cs.map((c) => c.ch).join("")
+
+// The pane with every escape sequence removed and ALL text kept (dim too).
+export function unstyle(pane: string): string {
+  return pane.includes("\x1b") ? textOf(cells(pane)) : pane
+}
+
+// What the user typed after the prompt marker, given the line's cells.
+//
+// Dim text is Claude Code's, not the user's (prediction, placeholder). Its own
+// cursor may be drawn as an inverse cell on the prediction's first character;
+// that cell only counts as typed when nothing dim follows it — a lone inverse
+// char with no ghost text is a real character under the caret.
+function typedAfterPrompt(line: Cell[]): string {
+  let i = line.findIndex((c) => c.ch === "❯") + 1
+  while (i < line.length && /[\s ]/.test(line[i]!.ch)) i++
+  const rest = line.slice(i)
+  const solid = textOf(rest.filter((c) => !c.dim && !c.inverse)).trim()
+  if (solid) return textOf(rest.filter((c) => !c.dim)).trim()
+  if (rest.some((c) => c.dim && c.ch.trim())) return ""
+  return textOf(rest).trim()
+}
+
+// Index of the input prompt line (the LAST "❯" line at column 0), or -1.
+export function promptLineIndex(lines: string[]): number {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (PROMPT_RE.test(lines[i] ?? "")) return i
+  }
+  return -1
+}
+
+// What the user currently has typed on the input line, or null when no prompt
+// line is on the pane. "" means an empty input box. Accepts a plain capture or
+// a `capture-pane -e` one; with the latter, dim-only input (a predicted reply)
+// reads as empty.
+export function inputLine(pane: string): string | null {
+  const lines = splitLines(pane)
+  const idx = promptLineIndex(lines.map(textOf))
+  if (idx < 0) return null
+  const typed = typedAfterPrompt(lines[idx]!)
+  return PLACEHOLDER_RE.test(typed) ? "" : typed
 }
 
 // The command menu as the pane currently renders it.

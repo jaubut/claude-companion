@@ -101,7 +101,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
-    const typedNow = session?.tmuxPane ? inputLine(await capturePane(session.tmuxPane) ?? "") : null
+    const typedNow = session?.tmuxPane ? inputLine(await capturePane(session.tmuxPane, undefined, { escapes: true }) ?? "") : null
     const refusal = suggestRefusal(
       session,
       dialogWatcher.current()[session?.key ?? ""],
@@ -181,7 +181,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       return Response.json({ ok: true, key: session.key, cached: true, commands: cached.commands })
     }
 
-    const typedNow = session.tmuxPane ? inputLine(await capturePane(session.tmuxPane) ?? "") : null
+    const typedNow = session.tmuxPane ? inputLine(await capturePane(session.tmuxPane, undefined, { escapes: true }) ?? "") : null
     const refusal = suggestRefusal(session, dialogWatcher.current()[session.key], typedNow, "")
     if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
     // The claim is what makes the scrape visible to the rest of the process:

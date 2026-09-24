@@ -4,9 +4,16 @@
 
 // `signal` (optional) kills the capture: a stalled tmux must not hold up a
 // caller that has a deadline (command-scrape's dirty-pane verification).
-export async function capturePane(sessionName: string, signal?: AbortSignal): Promise<string | null> {
+// `escapes` adds `-e`: SGR attributes are kept, so a parser can tell Claude
+// Code's dim predicted reply from text the user typed (lib/command-menu.ts).
+export async function capturePane(
+  sessionName: string,
+  signal?: AbortSignal,
+  opts: { escapes?: boolean } = {},
+): Promise<string | null> {
   try {
-    const p = Bun.spawn(["tmux", "capture-pane", "-t", sessionName, "-p"], { stdout: "pipe", stderr: "ignore" })
+    const args = ["tmux", "capture-pane", "-t", sessionName, "-p", ...(opts.escapes ? ["-e"] : [])]
+    const p = Bun.spawn(args, { stdout: "pipe", stderr: "ignore" })
     const kill = () => { try { p.kill() } catch { /* already gone */ } }
     if (signal?.aborted) kill()
     signal?.addEventListener("abort", kill, { once: true })
