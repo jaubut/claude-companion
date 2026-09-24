@@ -14,6 +14,7 @@ import { judgeWithBranchContextAndReason } from "../lib/branch-guard"
 import { type InjectTarget, withPickerIO } from "../lib/keyboard-inject"
 import { driveQuestionPicker } from "../lib/question-driver"
 import { rememberTitle, titleFromPrompt } from "../lib/session-titles"
+import { noteUserPromptSubmit } from "../lib/submit-confirm"
 import { isCatastrophic, isSuperAuto } from "../lib/super-auto"
 import { recordAllow } from "../lib/learned-allow"
 import {
@@ -338,6 +339,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const session = cwd
       ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
       : null
+    // Proof of submission for any phone inject waiting on this session.
+    noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty })
     // First real prompt names the chat (persisted by session id so a
     // restart or rediscovery brings the same name back).
     if (session && !session.title) {

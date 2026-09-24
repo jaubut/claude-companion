@@ -1,6 +1,6 @@
 import { getPending, resolveApproval } from "../lib/pty-manager"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
-import { injectText } from "../lib/keyboard-inject"
+import { injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
@@ -243,7 +243,15 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       process.stderr.write(`${dim}[companion]${reset} \x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m\n`)
     }
 
-    const ok = await injectText(text, target ?? undefined)
+    const res = await injectConfirmed(text, target ?? undefined)
+    if (!res.ok && res.error === "not_submitted") {
+      // Typed but never submitted (no UserPromptSubmit after Enter + one
+      // retry). Tell every client so the bubble is marked undelivered, and
+      // answer 409 like the other "target alive, text not accepted" cases.
+      broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? key, cwd: target?.cwd ?? cwd, text, excerpt: res.excerpt })
+      return Response.json({ ok: false, error: "not_submitted", excerpt: res.excerpt, key, cwd }, { status: 409 })
+    }
+    const ok = res.ok
     if (!ok) {
       process.stderr.write(`${dim}[companion]${reset} \x1b[31minject failed\x1b[0m — osascript rejected (Accessibility permission?)\n`)
     } else if (target) {
@@ -265,7 +273,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
         sessionKey: target.key,
       })
     }
-    return Response.json({ ok })
+    return Response.json(res.ok ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}) } : { ok })
   }
 
   // ── Learned-allow management ──

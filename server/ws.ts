@@ -1,7 +1,7 @@
 import type { WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
-import { injectText } from "./lib/keyboard-inject"
+import { injectConfirmed } from "./lib/submit-confirm"
 import { injectRefusal } from "./lib/inject-guard"
 import { isSuperAuto } from "./lib/super-auto"
 import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
@@ -143,8 +143,11 @@ export const websocket: WebSocketHandler<WsData> = {
           // its turn-end reason, since typed text answers nothing else.
           const { cleared } = clearWaitingForTarget(target, "turn-end")
           announceWaiting(cleared)
-          const ok = await injectText(msg.text.trim(), target ?? undefined)
-          if (!ok) {
+          const res = await injectConfirmed(msg.text.trim(), target ?? undefined)
+          if (!res.ok && res.error === "not_submitted") {
+            // Every client, so whichever phone shows the bubble marks it undelivered.
+            broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? msg.key, cwd: target?.cwd ?? msg.cwd, text: msg.text.trim(), excerpt: res.excerpt })
+          } else if (!res.ok) {
             try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed" })) } catch { /* ignore */ }
           }
         }
