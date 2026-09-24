@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test"
-import { inputLine, parseCommandMenu, suggestRefusal } from "./command-menu"
+import { inputLine, mayClearLine, parseCommandMenu, suggestRefusal } from "./command-menu"
 import type { Session } from "./sessions"
 import type { Dialog } from "./dialogs"
 
@@ -150,4 +150,29 @@ describe("inputLine on a styled capture (capture-pane -e)", () => {
     expect(inputLine('\x1b[38;5;244m❯\x1b[39m \x1b[2mTry "write a test"\x1b[0m')).toBe("")
     expect(inputLine("\x1b[38;5;244m❯\x1b[39m ")).toBe("")
   })
+})
+
+// ── PR #55: never C-u a line the flow did not type ──
+
+test("mayClearLine: empty or our own text only; unreadable never", () => {
+  expect(mayClearLine("", ["/mo"])).toBe(true)
+  expect(mayClearLine("/mo", ["/mo"])).toBe(true)
+  expect(mayClearLine("/help", ["/help"])).toBe(true)
+  expect(mayClearLine("done, service is running", ["/mo"])).toBe(false)
+  expect(mayClearLine("/mod", ["/mo"])).toBe(false)
+  expect(mayClearLine(null, ["/mo"])).toBe(false)
+})
+
+test("mayClearLine on a real -e capture: Claude Code's dim predicted reply counts as empty", () => {
+  const div = "─".repeat(40)
+  const ghost = `${div}\n❯ \x1b[2mdone, service is running\x1b[0m\n${div}\n  ⏸ manual mode on\n`
+  const typed = `${div}\n❯ done, service is running\n${div}\n  ⏸ manual mode on\n`
+  expect(mayClearLine(inputLine(ghost), ["/help"])).toBe(true)
+  expect(mayClearLine(inputLine(typed), ["/help"])).toBe(false)
+})
+
+test("suggestRefusal: an unreadable input line refuses instead of reading as empty", () => {
+  const session = { tmuxPane: "%1", agentStatus: "idle" } as unknown as Parameters<typeof suggestRefusal>[0]
+  expect(suggestRefusal(session, null, null, "/mo")).toEqual({ error: "input_busy" })
+  expect(suggestRefusal(session, null, "", "/mo")).toBeNull()
 })

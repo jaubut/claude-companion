@@ -208,8 +208,21 @@ export function suggestRefusal(
   if (!session?.tmuxPane) return { error: "no_pane" }
   if (dialog) return { error: "other_dialog" }
   if (session.agentStatus === "busy") return { error: "busy" }
+  // An UNREADABLE line (no prompt on the capture, or the capture failed) is
+  // not an empty one. Treating "don't know" as "empty" is how a scrape could
+  // C-u a phone prompt whose Enter never landed (audit 2026-09-24).
+  if (typed === null) return { error: "input_busy" }
   if (typed && typed !== ours) return { error: "input_busy" }
   return null
+}
+
+// Whether the flow may C-u the input line as it reads NOW. Only an empty line
+// or text the flow typed itself (`owned`) qualifies. `typed` must come from a
+// `capture-pane -e` read (inputLine), so Claude Code's dim predicted reply
+// reads as empty, not as the user's text. null (unreadable) never qualifies.
+export function mayClearLine(typed: string | null, owned: readonly string[]): boolean {
+  if (typed === null) return false
+  return typed === "" || owned.includes(typed)
 }
 
 // Ctrl-U kills the line. Escape does NOT: it closes the menu and leaves the

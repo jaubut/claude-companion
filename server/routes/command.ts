@@ -1,4 +1,4 @@
-import { CLEAR_LINE_KEY, inputLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
+import { CLEAR_LINE_KEY, inputLine, mayClearLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
 import {
   CLEAR_SETTLE_MS, closeHelpOverlay, type CommandEntry, HELP_CLOSE_OPEN_WAIT_MS, HELP_PAINT_MS,
   type HelpTab, listIncomplete, scrapeHelpTab,
@@ -84,6 +84,22 @@ async function gatedSend(pane: string, key: string, args: string[]): Promise<boo
 const sendKey = (pane: string, key: string) => gatedSend(pane, key, ["send-keys", "-t", pane, key])
 const sendLiteral = (pane: string, text: string) => gatedSend(pane, text, ["send-keys", "-t", pane, "-l", text])
 
+// C-u only over an empty line or text this flow typed itself. The line is
+// read fresh, with -e, right before the key: anything else on it (a phone
+// prompt whose Enter never landed, the user typing at the keyboard) is left
+// alone and the caller is told so. Returns true when the line is ours to have
+// cleared (or already empty).
+async function clearIfOurs(pane: string, owned: readonly string[], who: string): Promise<boolean> {
+  const typed = inputLine(await capturePane(pane, undefined, { escapes: true }) ?? "")
+  if (!mayClearLine(typed, owned)) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
+    process.stderr.write(`${dim}[companion]${reset} ${yellow}commands${reset} left the input line alone on ${who} — not ours: ${JSON.stringify((typed ?? "<unreadable>").slice(0, 40))}\n`)
+    return false
+  }
+  if (typed === "") return true
+  return sendKey(pane, CLEAR_LINE_KEY)
+}
+
 export async function handleCommandRoute(req: Request, url: URL): Promise<Response | null> {
   // ── Suggestions for a slash prefix ──
   // Body: { key, prefix } where prefix is what follows "/" ("" lists the menu
@@ -118,7 +134,10 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       // Always start from a known-empty line: the previous suggestion left its
       // own prefix there, and Escape does not clear it (it closes the menu and
       // keeps the text, which is how an earlier attempt typed "//").
-      await sendKey(pane, CLEAR_LINE_KEY)
+      const who = session!.label || session!.key
+      if (!(await clearIfOurs(pane, [`/${prefix}`], who))) {
+        return Response.json({ ok: false, error: "input_busy" }, { status: 409 })
+      }
       await sendLiteral(pane, `/${prefix}`)
 
       // Poll rather than sleep a fixed amount — the same lesson the model
@@ -144,7 +163,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       // types into it. No Escape is ever sent here — the probe closes the menu
       // by emptying the line, because Escape keeps the typed text — so the
       // short redraw gap is enough.
-      await sendKey(pane, CLEAR_LINE_KEY)
+      await clearIfOurs(pane, [`/${prefix}`], who)
       await sleep(CLEAR_SETTLE_MS)
 
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
@@ -204,7 +223,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const closeHelp = () => closeHelpOverlay({
       capture: () => capturePane(pane),
       escape: async () => { await sendKey(pane, "Escape") },
-      clearLine: async () => { await sendKey(pane, CLEAR_LINE_KEY) },
+      clearLine: async () => { await clearIfOurs(pane, ["/help"], session.label || session.key) },
       sleep,
       openWaitMs: HELP_CLOSE_OPEN_WAIT_MS,
       clearWaitMs: HELP_CLOSE_WAIT_MS,
@@ -227,7 +246,15 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       for (const tab of ["default", "custom"] as HelpTab[]) {
         // A fresh /help per tab: once the list has taken focus, Tab no longer
         // switches tabs (measured — it silently stays put).
-        await sendKey(pane, CLEAR_LINE_KEY)
+        if (!(await clearIfOurs(pane, ["/help"], session.label || session.key))) {
+          // Someone else's text is on the line: typing /help after it would
+          // corrupt their prompt. Stop here, pane untouched — so on the first
+          // tab the release is clean (nothing of ours is on screen); on the
+          // second, the first tab's close verdict stands.
+          if (tab === "default") releaseClean = true
+          gaveUp = true
+          break
+        }
         await sendLiteral(pane, "/help")
         await sendKey(pane, "Enter")
         enterAt = Date.now()

@@ -21,14 +21,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 365 | lib | 8 |  |
 | `routes/api.ts` | 362 | route-host | 1 | emits: resolved, inject_error, super_auto · routes: 16 |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
-| `routes/command.ts` | 318 | route-host | 1 | state: listCache: Map · routes: 2 |
+| `routes/command.ts` | 345 | route-host | 1 | state: listCache: Map · routes: 2 |
 | `wiring/orchestrator.ts` | 306 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/discover.ts` | 274 | lib | 1 |  |
 | `lib/submit-confirm.ts` | 272 | lib | 14 | state: watches: Set, paneLocks: Map |
 | `lib/media.ts` | 254 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/apns.ts` | 242 | lib | 6 | state: let keyPromise, let cachedJwt, sessions: Map |
+| `lib/command-menu.ts` | 231 | lib | 10 |  |
 | `lib/questions.ts` | 229 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map |
-| `lib/command-menu.ts` | 218 | lib | 9 |  |
 | `lib/auto-judge.ts` | 217 | lib | 8 | state: ALWAYS_SAFE_TOOLS: Set |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `lib/orchestrator-brain.ts` | 211 | lib | 2 |  |
@@ -203,13 +203,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `metaFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-end` |
 | `orchEmit()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
 | `summarize()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/codex-feed.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `wiring/events.ts` |
+| `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list` |
 | `ESC_SETTLE_MS()` | `lib/command-list.ts` | `lib/command-scrape.ts`, `lib/key-gate.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/model.ts#POST /api/model/cancel` |
 | `Task()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-brain.ts`, `lib/orchestrator-queue.ts`, `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/orchestrator.ts` |
+| `capturePane()` | `lib/tmux-pane.ts` | `lib/submit-confirm.ts`, `routes/command.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `wiring/dialogs.ts`, `wiring/orchestrator.ts` |
 | `getTask()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/`, `wiring/orchestrator.ts` |
 | `clients()` | `state.ts` | `routes/api.ts`, `routes/api.ts#* /api/status`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/orchestrator.ts`, `ws.ts` |
-| `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list` |
 | `apnsConfigured()` | `lib/apns.ts` | `lib/push.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#GET /api/push/tokens`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
-| `capturePane()` | `lib/tmux-pane.ts` | `lib/submit-confirm.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `wiring/dialogs.ts`, `wiring/orchestrator.ts` |
 | `setTaskStatus()` | `lib/orchestrator-chat.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/`, `wiring/orchestrator.ts` |
 | `workerQueue()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/orchestrator.ts#POST /api/orchestrator/task/`, `routes/orchestrator.ts#POST /api/orchestrator/proposal/` |
 | `listQueued()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-queue.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
@@ -292,7 +292,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `SCRAPE_ABORT_WAIT_MS()` | `lib/command-scrape.ts` | `routes/command.ts`, `routes/command.ts#POST /api/command/list` |
 | `suggestRefusal()` | `lib/command-menu.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list` |
 | `beginFlow()` | `lib/command-scrape.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list` |
-| `CLEAR_LINE_KEY()` | `lib/command-menu.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list` |
 | `removeSessionByCwd()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end` |
 | `removeSessionByTmuxPane()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end` |
 | `removeSessionByTty()` | `lib/sessions.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end` |

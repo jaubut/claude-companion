@@ -308,7 +308,7 @@
         },
         {
           "path": "lib/command-menu.ts",
-          "lines": 218,
+          "lines": 231,
           "kind": "lib",
           "exports": [
             "CommandSuggestion",
@@ -319,6 +319,7 @@
             "inputLine",
             "parseCommandMenu",
             "suggestRefusal",
+            "mayClearLine",
             "CLEAR_LINE_KEY"
           ],
           "state": [],
@@ -1445,7 +1446,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 318,
+          "lines": 345,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -2254,6 +2255,7 @@
             "lib/command-list.ts",
             "lib/inject-guard.ts",
             "lib/submit-confirm.ts",
+            "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list"
           ]
@@ -2539,6 +2541,7 @@
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/submit-confirm.ts",
+            "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
             "wiring/dialogs.ts",
@@ -3026,6 +3029,18 @@
             "routes/model.ts"
           ]
         },
+        "mayClearLine": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "routes/command.ts"
+          ]
+        },
+        "CLEAR_LINE_KEY": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "routes/command.ts"
+          ]
+        },
         "suggestRefusal": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -3035,13 +3050,6 @@
         },
         "beginFlow": {
           "module": "lib/command-scrape.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "CLEAR_LINE_KEY": {
-          "module": "lib/command-menu.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list"
