@@ -9,7 +9,14 @@ export function logPrefix(now: Date = new Date()): string {
   return `${DIM}${now.toISOString()} [companion]${RESET}`
 }
 
-/** Write one `[companion]` line to stderr. `msg` may carry its own colours. */
+// Every physical line carries the prefix: a multiline prompt excerpt or an
+// error stack must stay datable line by line (Codex review of PR #56).
+export function formatLogLines(msg: string, now: Date = new Date()): string {
+  const prefix = logPrefix(now)
+  return msg.split("\n").map((line) => `${prefix} ${line}`).join("\n") + "\n"
+}
+
+/** Write `[companion]` line(s) to stderr. `msg` may carry its own colours. */
 export function companionLog(msg: string): void {
-  process.stderr.write(`${logPrefix()} ${msg}\n`)
+  process.stderr.write(formatLogLines(msg))
 }
