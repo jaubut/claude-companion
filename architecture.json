@@ -67,10 +67,13 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 388,
+          "lines": 480,
           "kind": "lib",
           "exports": [
             "Activity",
+            "ACTIVITY_TTL_MS",
+            "IDLE_GRACE_MS",
+            "expireStaleActivity",
             "onActivity",
             "listActivities",
             "getActivity",
@@ -83,7 +86,9 @@
           ],
           "state": [
             "activityListeners: Set",
-            "let pollTimer"
+            "let pollTimer",
+            "progress: WeakMap",
+            "agentStatusByKey: Map"
           ],
           "emits": [],
           "consumes": [],
