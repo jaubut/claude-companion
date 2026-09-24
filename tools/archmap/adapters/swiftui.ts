@@ -41,6 +41,9 @@ function firstLabel(m: RegExpMatchArray): string | null {
 // `case "a", "b":` — every literal on a case line, not just the first.
 const FRAME_CASE_LINE_RE = /^\s*case\s+("[a-z_]+"(?:\s*,\s*"[a-z_]+")*)\s*:/gm
 const PATH_RE = /path:\s*"([^"?]+)/g
+// `/api/…` literals passed to a request helper (`req("/api/week/\\($0)")`); an
+// interpolation segment becomes `:p`, a query string is dropped.
+const API_LIT_RE = /"(\/api\/(?:[A-Za-z0-9_\-.\/]|\\\([^)]*\))+)/g
 const PUBLISHED_RE = /@Published(?:\s+private\(set\))?\s+var\s+([A-Za-z_]\w*)/g
 // presentation SITES only — `.sheet(isPresented:` / `.sheet(item:` — not a
 // modifier's own declaration or a `.sheet` enum case.
@@ -207,7 +210,8 @@ export function scanSwiftUI(cfg: TargetConfig, repoRoot: string): Target {
     // events applied: `case .name` in switch bodies (AppState.apply, socket emit)
     const applied = uniq([...text.matchAll(APPLY_CASE_RE)].map((x) => `.${x[1]}`))
     if (applied.length && !m.path.endsWith("WSFrame.swift")) m.listeners = applied
-    m.apiCalls = uniq([...text.matchAll(PATH_RE)].map((x) => x[1]!).filter((p) => p.startsWith("/")))
+    m.apiCalls = uniq([...[...text.matchAll(PATH_RE)].map((x) => x[1]!), ...[...text.matchAll(API_LIT_RE)].map((x) => x[1]!.replace(/\\\([^)]*\)/g, ":p"))]
+      .filter((p) => p.startsWith("/") && !p.endsWith("/")))
     m.state = uniq([...text.matchAll(PUBLISHED_RE)].map((x) => `@Published ${x[1]}`))
     m.sheets = [...text.matchAll(SHEET_RE)].length
     m.endpoints = routesOf(text)

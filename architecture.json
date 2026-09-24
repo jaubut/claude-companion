@@ -406,7 +406,7 @@
         },
         {
           "path": "lib/dialogs.ts",
-          "lines": 175,
+          "lines": 209,
           "kind": "lib",
           "exports": [
             "DialogItem",
@@ -2114,6 +2114,18 @@
             "companion-server.ts#* /"
           ]
         },
+        "activeStates": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "readTranscriptDelta": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
         "PathState": {
           "module": "lib/transcript.ts",
           "callers": [
@@ -2137,33 +2149,6 @@
             "wiring/events.ts",
             "wiring/orchestrator.ts",
             "wiring/waiting.ts"
-          ]
-        },
-        "recordSession": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "lib/activity.ts",
-            "lib/discover.ts",
-            "lib/rehydrate.ts",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/post-tool-use",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-start"
-          ]
-        },
-        "activeStates": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
-        "readTranscriptDelta": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
           ]
         },
         "getState": {
@@ -2249,12 +2234,6 @@
             "lib/auto-judge.ts"
           ]
         },
-        "autoJudge": {
-          "module": "lib/auto-judge.ts",
-          "callers": [
-            "lib/branch-guard.ts"
-          ]
-        },
         "Judgement": {
           "module": "lib/auto-judge.ts",
           "callers": [
@@ -2303,14 +2282,6 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
-        "parseDialog": {
-          "module": "lib/dialogs.ts",
-          "callers": [
-            "lib/command-menu.ts",
-            "lib/dialog-watch.ts",
-            "lib/model-control.ts"
-          ]
-        },
         "Dialog": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -2318,34 +2289,7 @@
             "lib/dialog-watch.ts",
             "lib/inject-guard.ts",
             "lib/model-control.ts",
-            "routes/dialogs.ts",
             "routes/model.ts",
-            "wiring/dialogs.ts"
-          ]
-        },
-        "ESC_SETTLE_MS": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "lib/command-scrape.ts",
-            "lib/key-gate.ts",
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/model.ts#POST /api/model/cancel"
-          ]
-        },
-        "closeHelpOverlay": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "lib/command-scrape.ts",
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "isPaneClean": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "lib/command-scrape.ts",
             "wiring/dialogs.ts"
           ]
         },
@@ -2353,6 +2297,15 @@
           "module": "lib/key-gate.ts",
           "callers": [
             "lib/command-scrape.ts"
+          ]
+        },
+        "ESC_SETTLE_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-scrape.ts",
+            "lib/key-gate.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/model.ts#POST /api/model/cancel"
           ]
         },
         "keyGate": {
@@ -2367,10 +2320,30 @@
             "routes/model.ts"
           ]
         },
+        "parseDialog": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "lib/dialog-watch.ts"
+          ]
+        },
         "dialogSignature": {
           "module": "lib/dialogs.ts",
           "callers": [
             "lib/dialog-watch.ts"
+          ]
+        },
+        "recordSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/rehydrate.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
         "SpawnAgent": {
@@ -2450,13 +2423,6 @@
             "lib/model-control.ts"
           ]
         },
-        "pickKeys": {
-          "module": "lib/dialogs.ts",
-          "callers": [
-            "lib/model-control.ts",
-            "routes/dialogs.ts#POST /api/dialog/pick"
-          ]
-        },
         "Task": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -2464,7 +2430,6 @@
             "lib/orchestrator-queue.ts",
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
-            "routes/hooks.ts#POST /hooks/stop",
             "wiring/orchestrator.ts"
           ]
         },
@@ -2588,12 +2553,6 @@
             "routes/hooks.ts"
           ]
         },
-        "injectText": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "lib/submit-confirm.ts"
-          ]
-        },
         "resolveTmuxPaneFromTty": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -2607,6 +2566,12 @@
           ]
         },
         "tmuxSendKeys": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "injectText": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
             "lib/submit-confirm.ts"
@@ -2628,14 +2593,6 @@
           "callers": [
             "lib/tool-format.ts",
             "routes/hooks.ts"
-          ]
-        },
-        "recordTurnEnd": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "lib/transcript.ts",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "Activity": {
@@ -2818,40 +2775,26 @@
             "routes/api.ts#DELETE /api/register-token"
           ]
         },
-        "broadcast": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts",
-            "routes/api.ts#POST /api/resolve",
-            "routes/api.ts#POST /api/answer",
-            "routes/api.ts#POST /api/push/test",
-            "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#POST /api/inject",
-            "routes/api.ts#POST /api/super-auto",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/hooks.ts#POST /hooks/stop",
-            "wiring/dialogs.ts",
-            "wiring/events.ts",
-            "wiring/orchestrator.ts",
-            "wiring/waiting.ts",
-            "ws.ts"
-          ]
-        },
-        "clients": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts",
-            "routes/api.ts#* /api/status",
-            "wiring/dialogs.ts",
-            "wiring/events.ts",
-            "wiring/orchestrator.ts",
-            "ws.ts"
-          ]
-        },
         "resolveApproval": {
           "module": "lib/pty-manager.ts",
           "callers": [
             "routes/api.ts#POST /api/resolve",
+            "ws.ts"
+          ]
+        },
+        "broadcast": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#POST /api/resolve",
+            "routes/api.ts#POST /api/answer",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#POST /api/inject",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "wiring/dialogs.ts",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts",
+            "wiring/waiting.ts",
             "ws.ts"
           ]
         },
@@ -2918,7 +2861,6 @@
           "module": "lib/sessions.ts",
           "callers": [
             "routes/api.ts#POST /api/inject",
-            "wiring/waiting.ts",
             "ws.ts"
           ]
         },
@@ -3003,6 +2945,14 @@
             "ws.ts"
           ]
         },
+        "clients": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "wiring/orchestrator.ts",
+            "ws.ts"
+          ]
+        },
         "dialogWatcher": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -3073,6 +3023,13 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
+        "closeHelpOverlay": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/list"
+          ]
+        },
         "HelpTab": {
           "module": "lib/command-list.ts",
           "callers": [
@@ -3089,13 +3046,6 @@
         },
         "listIncomplete": {
           "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "SCRAPE_ABORT_WAIT_MS": {
-          "module": "lib/command-scrape.ts",
           "callers": [
             "routes/command.ts",
             "routes/command.ts#POST /api/command/list"
@@ -3146,8 +3096,7 @@
           "module": "lib/command-scrape.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
-            "wiring/dialogs.ts"
+            "routes/command.ts#POST /api/command/list"
           ]
         },
         "scrapeAbortRequested": {
@@ -3160,6 +3109,12 @@
           "module": "lib/key-gate.ts",
           "callers": [
             "routes/dialogs.ts#POST /api/dialog/key"
+          ]
+        },
+        "pickKeys": {
+          "module": "lib/dialogs.ts",
+          "callers": [
+            "routes/dialogs.ts#POST /api/dialog/pick"
           ]
         },
         "Row": {
@@ -3264,6 +3219,13 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "recordTurnEnd": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "agentFromHeaders": {
@@ -3456,21 +3418,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "onSessions": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/session-start",
-            "wiring/events.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "reconcileDispatch": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/session-start",
-            "wiring/events.ts"
-          ]
-        },
         "isMediaId": {
           "module": "lib/media.ts",
           "callers": [
@@ -3536,8 +3483,7 @@
         "executeDispatch": {
           "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
+            "routes/orchestrator.ts"
           ]
         },
         "runBrain": {
@@ -3660,8 +3606,8 @@
             "wiring/dialogs.ts"
           ]
         },
-        "VERIFY_TIMEOUT_MS": {
-          "module": "lib/command-scrape.ts",
+        "isPaneClean": {
+          "module": "lib/command-list.ts",
           "callers": [
             "wiring/dialogs.ts"
           ]
@@ -3738,7 +3684,7 @@
             "wiring/events.ts"
           ]
         },
-        "setSessionModel": {
+        "onSessions": {
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/events.ts"
@@ -3752,6 +3698,18 @@
         },
         "modelFromTranscript": {
           "module": "lib/transcript.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "setSessionModel": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "reconcileDispatch": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
             "wiring/events.ts"
           ]
@@ -3836,12 +3794,6 @@
         },
         "tmuxSessionForPane": {
           "module": "lib/tmux-pane.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "decide": {
-          "module": "lib/orchestrator-brain.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]
