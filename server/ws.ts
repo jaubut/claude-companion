@@ -2,7 +2,7 @@ import { companionLog } from "./lib/log"
 import type { WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
-import { injectConfirmed } from "./lib/submit-confirm"
+import { deliveryFailedHint, injectConfirmed } from "./lib/submit-confirm"
 import { injectRefusal } from "./lib/inject-guard"
 import { isSuperAuto } from "./lib/super-auto"
 import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
@@ -149,7 +149,10 @@ export const websocket: WebSocketHandler<WsData> = {
             // Every client, so whichever phone shows the bubble marks it undelivered.
             broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? msg.key, cwd: target?.cwd ?? msg.cwd, text: msg.text.trim(), excerpt: res.excerpt })
           } else if (!res.ok) {
-            try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed" })) } catch { /* ignore */ }
+            const hint = deliveryFailedHint()
+            companionLog(`${red}ws inject failed${reset} — delivery failed (${hint})`)
+            // `error` stays the code shipped iOS builds switch on; `hint` is additive.
+            try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed", hint })) } catch { /* ignore */ }
           }
         }
         break

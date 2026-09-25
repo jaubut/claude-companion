@@ -75,6 +75,16 @@ function readPresentedToken(req: Request): string | null {
   return q || null
 }
 
+// What the server boot banner prints instead of the bearer. The banner goes
+// to companion.log (launchd / systemd stdout), so the full token there was a
+// standing leak — one copy per boot (audit 2026-09-25: 76 on Zettlab).
+// `bun cli.ts print-token` still prints it in full, on demand.
+export function maskToken(token: string): string {
+  const t = token.trim()
+  if (!t) return "(none)"
+  return `${t.slice(0, 4)}…`
+}
+
 export function unauthorized(): Response {
   return new Response("Unauthorized", {
     status: 401,

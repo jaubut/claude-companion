@@ -4,6 +4,12 @@ Last updated: 2026-09-24
 
 ## Active Decisions
 
+### Phone questions answer through updatedInput; no answer falls through to the terminal picker
+**Date:** 2026-09-25 (P1 audit, branch `fix/p1-audit-server-0925`)
+**Choice:** A phone answer goes back to Claude Code as allow + `updatedInput.answers` (question text to label, multi comma-joined). No keystrokes for Claude, and the picker driver is only a checked fallback. With no answer the hook returns no decision, never deny. The phone window is 90 s on PreToolUse when a terminal is attached and 290 s otherwise. A question answered at the terminal clears the phone card on its PostToolUse.
+**Why:** verified live on CC 2.1.282. Its AskUserQuestion schema takes `answers`. An allow without them always opens the picker. PermissionRequest runs while the picker is on screen and must reply with a matching `hookEventName`.
+**Revisit if:** Claude Code drops `answers` from the AskUserQuestion input. The log then says "hook answer not honoured".
+
 ### The browser PWA is retired — the iOS app is the only client
 **Date:** 2026-09-24 (first called 2026-09-13; a 2026-09-23 follow-up still shipped PWA work — PR #48 — because that note was missed)
 **Choice:** `client/` deleted; the server answers `/` with a plain-text note and 404s everything else static; `bun cli.ts init` no longer builds a client; the menu bar app lost "Open Dashboard"; archmap has one target (`server`) plus the `ios` ref.

@@ -74,3 +74,29 @@ export async function tmuxSessionForPane(pane: string): Promise<string | null> {
     return null
   }
 }
+
+// Does anyone have this pane's tmux session open in a terminal right now?
+// `#{session_attached}` counts attached clients. Null when tmux can't say
+// (bad id, dead pane, slow tmux) — callers treat that as "unknown".
+export async function tmuxPaneAttached(pane: string): Promise<boolean | null> {
+  if (!PANE_ID.test(pane)) return null
+  try {
+    const p = Bun.spawn(["tmux", "display-message", "-p", "-t", pane, "#{session_attached}"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      p.kill()
+    }, 1_000)
+    const out = await new Response(p.stdout).text()
+    const code = await p.exited
+    clearTimeout(timer)
+    if (timedOut || code !== 0) return null
+    const n = Number(out.trim())
+    return Number.isFinite(n) ? n > 0 : null
+  } catch {
+    return null
+  }
+}

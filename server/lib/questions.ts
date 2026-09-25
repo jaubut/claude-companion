@@ -42,8 +42,12 @@ export interface QuestionAnswer {
 
 type EventHandler = (event: QuestionRequest) => void
 // Expiry and resolve both hand back the request: the listener needs its
-// sessionKey and id to clear the waiting reason it created.
-type ExpiryHandler = (req: QuestionRequest) => void
+// sessionKey and id to clear the waiting reason it created. `decision` is the
+// `resolved` frame's value: "expired" for the phone window running out (or
+// the question going away with no answer), "answered" when it was answered
+// at the terminal instead (see cancelQuestionsFor).
+export type QuestionEndDecision = "expired" | "answered"
+type ExpiryHandler = (req: QuestionRequest, decision: QuestionEndDecision) => void
 
 const pending = new Map<string, QuestionRequest>()
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -52,8 +56,9 @@ const expiryHandlers = new Set<ExpiryHandler>()
 const resolvedHandlers = new Set<EventHandler>()
 
 // Same 290s budget as approvals — Claude's hook curl times out at 300s and
-// we want to broadcast a clean `expired` signal before that fires.
-const EXPIRY_MS = 290_000
+// we want to broadcast a clean `expired` signal before that fires. The hook
+// route may pick a shorter window (lib/question-hook.ts questionWindowMs).
+export const EXPIRY_MS = 290_000
 
 // `opts.expiryMs` is a test seam for the expiry exit — same reasoning as
 // pty-manager's: a param, not an env var.
@@ -78,20 +83,43 @@ export function addQuestionRequest(
     // On expiry we resolve with empty answers — the caller decides how to
     // surface that to Claude (typically: deny the tool with reason "user did
     // not answer in time"). We don't pretend they answered.
-    const timer = setTimeout(() => {
-      const r = pending.get(id)
-      if (!r) return
-      // One of the only two exits from `pending` (the other is resolveQuestion);
-      // both fire a listener, so a question can never strand its waiting reason.
-      pending.delete(id)
-      expiryTimers.delete(id)
-      for (const handler of expiryHandlers) {
-        try { handler(r) } catch { /* ignore */ }
-      }
-      r.resolve([])
-    }, opts.expiryMs ?? EXPIRY_MS)
+    const timer = setTimeout(() => endUnanswered(id, "expired"), opts.expiryMs ?? EXPIRY_MS)
     expiryTimers.set(id, timer)
   })
+}
+
+// The no-answer exit from `pending` (the other is resolveQuestion); both fire
+// a listener, so a question can never strand its waiting reason.
+function endUnanswered(id: string, decision: QuestionEndDecision): boolean {
+  const r = pending.get(id)
+  if (!r) return false
+  pending.delete(id)
+  const timer = expiryTimers.get(id)
+  if (timer) clearTimeout(timer)
+  expiryTimers.delete(id)
+  for (const handler of expiryHandlers) {
+    try { handler(r, decision) } catch { /* ignore */ }
+  }
+  r.resolve([])
+  return true
+}
+
+// The question went away without the phone: answered in the terminal picker
+// (PostToolUse for the question tool), or the turn / session moved on (Stop,
+// UserPromptSubmit, SessionEnd). Claude Code shows its picker WHILE a
+// PermissionRequest hook is still waiting and drops the hook when the user
+// answers locally, so without this the phone card sat there until the 290 s
+// expiry and the log read "question expired" for a question that had been
+// answered (audit 2026-09-25). Matches on session id or session key; returns
+// how many were ended.
+export function cancelQuestionsFor(who: { sessionId?: string; sessionKey?: string }, decision: QuestionEndDecision): number {
+  let n = 0
+  for (const r of [...pending.values()]) {
+    const bySession = !!who.sessionId && r.sessionId === who.sessionId
+    const byKey = !!who.sessionKey && r.sessionKey === who.sessionKey
+    if ((bySession || byKey) && endUnanswered(r.id, decision)) n++
+  }
+  return n
 }
 
 export function resolveQuestion(id: string, answers: QuestionAnswer[]): boolean {
@@ -202,7 +230,10 @@ export function parseQuestionInput(input: unknown): QuestionItem[] | null {
 // the same session + questions inside the window just allows.
 
 const RECENT_ANSWER_TTL_MS = 180_000
-const recentlyAnswered = new Map<string, number>()
+const recentlyAnswered = new Map<string, { at: number; answers: QuestionAnswer[] }>()
+// Questions whose phone window ended with no answer: the sibling hook for the
+// same call lets Claude Code's own picker run instead of asking again.
+const recentlyFellThrough = new Map<string, number>()
 
 export function questionDedupeKey(sessionId: string, cwd: string, questions: QuestionItem[]): string {
   const who = sessionId || cwd || "?"
@@ -210,19 +241,75 @@ export function questionDedupeKey(sessionId: string, cwd: string, questions: Que
   return `${who}::${what}`
 }
 
-export function markQuestionAnswered(key: string, now = Date.now()): void {
-  recentlyAnswered.set(key, now)
-  for (const [k, at] of recentlyAnswered) {
-    if (now - at > RECENT_ANSWER_TTL_MS) recentlyAnswered.delete(k)
+export function markQuestionAnswered(key: string, now = Date.now(), answers: QuestionAnswer[] = []): void {
+  recentlyAnswered.set(key, { at: now, answers })
+  for (const [k, v] of recentlyAnswered) {
+    if (now - v.at > RECENT_ANSWER_TTL_MS) recentlyAnswered.delete(k)
   }
 }
 
 export function wasQuestionAnswered(key: string, now = Date.now()): boolean {
-  const at = recentlyAnswered.get(key)
+  return answeredWith(key, now) !== null
+}
+
+// The phone's answers for a recently answered question, so the sibling hook
+// can hand Claude Code the same updatedInput. Null when unknown / aged out.
+export function answeredWith(key: string, now = Date.now()): QuestionAnswer[] | null {
+  const v = recentlyAnswered.get(key)
+  if (v === undefined) return null
+  if (now - v.at > RECENT_ANSWER_TTL_MS) {
+    recentlyAnswered.delete(key)
+    return null
+  }
+  return v.answers
+}
+
+export function markQuestionFellThrough(key: string, now = Date.now()): void {
+  recentlyFellThrough.set(key, now)
+  for (const [k, at] of recentlyFellThrough) {
+    if (now - at > RECENT_ANSWER_TTL_MS) recentlyFellThrough.delete(k)
+  }
+}
+
+export function didQuestionFallThrough(key: string, now = Date.now()): boolean {
+  const at = recentlyFellThrough.get(key)
   if (at === undefined) return false
   if (now - at > RECENT_ANSWER_TTL_MS) {
-    recentlyAnswered.delete(key)
+    recentlyFellThrough.delete(key)
     return false
   }
   return true
+}
+
+// Claude Code's AskUserQuestion takes `answers` in its input: question text ->
+// answer string, multi-select comma-joined ("User answers collected by the
+// permission component", CC 2.1.282 schema). A PreToolUse allow or a
+// PermissionRequest allow carrying it as updatedInput answers the question
+// with no picker at all — verified live on 2.1.282 for both hooks, single,
+// multi and free text. Option labels the phone picked are kept; anything
+// else (the phone's "Other") contributes its free text.
+export function questionAnswerMap(questions: QuestionItem[], answers: QuestionAnswer[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  questions.forEach((q, i) => {
+    const a = answers[i] ?? { selected: [] }
+    const labels = new Set(q.options.map((o) => o.label))
+    const picked = a.selected.filter((s) => labels.has(s))
+    const custom = (a.otherText ?? "").trim()
+    const parts = q.multiSelect ? [...picked] : picked.slice(0, 1)
+    if (custom && (q.multiSelect || parts.length === 0)) parts.push(custom)
+    // Nothing matched and no free text: the raw pick is the best we have.
+    if (parts.length === 0 && a.selected[0]) parts.push(a.selected[0])
+    if (parts.length > 0) out[q.question] = parts.join(", ")
+  })
+  return out
+}
+
+// The tool input Claude Code should run with: the call's own input, unchanged
+// (its card-answer admitter refuses a changed shown field), plus `answers`.
+export function answeredToolInput(
+  input: Record<string, unknown>,
+  questions: QuestionItem[],
+  answers: QuestionAnswer[],
+): Record<string, unknown> {
+  return { ...input, answers: questionAnswerMap(questions, answers) }
 }

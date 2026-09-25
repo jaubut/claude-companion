@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import http2 from "node:http2"
+import net from "node:net"
 import type { ApnsEnv } from "./push-tokens"
 
 // Read env lazily — cli.ts loads ~/.claude-companion/.env AFTER all ES module
@@ -97,13 +98,36 @@ export interface ApnsResult {
 // across sends; Apple keeps idle connections alive for a while.
 const sessions = new Map<ApnsEnv, http2.ClientHttp2Session>()
 
-function getSession(env: ApnsEnv): http2.ClientHttp2Session {
+// Bun 1.3.11's happy-eyeballs (autoSelectFamily) connect path crashed the
+// whole server 7x on 2026-09-14: `TypeError: null is not an object
+// (evaluating 'context') at internalConnectMultipleTimeout (node:net:1129)`.
+// That throw is inside a node:net timer, so no session 'error' listener can
+// catch it — the only fix is to never take that path. Off per connect here,
+// and process-wide at boot (disableAutoSelectFamily, called by
+// createCompanionServer) for any other node:net client.
+export const APNS_CONNECT_OPTIONS = { autoSelectFamily: false } as const
+
+export function disableAutoSelectFamily(): boolean {
+  try {
+    net.setDefaultAutoSelectFamily(false)
+    return net.getDefaultAutoSelectFamily() === false
+  } catch {
+    return false
+  }
+}
+
+type Connect = (authority: string, options: http2.SecureClientSessionOptions) => http2.ClientHttp2Session
+
+// `connect` is a test seam (a fake that emits 'error' like a failed dial).
+export function getSession(env: ApnsEnv, connect: Connect = http2.connect): http2.ClientHttp2Session {
   const existing = sessions.get(env)
   if (existing && !existing.closed && !existing.destroyed) return existing
   const host = env === "production" ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com"
-  const session = http2.connect(host)
-  session.on("error", () => { sessions.delete(env) })
-  session.on("close", () => { sessions.delete(env) })
+  // The 'error' listener is attached before anything can emit: an http2
+  // session 'error' with no listener is an uncaught exception.
+  const session = connect(host, { ...APNS_CONNECT_OPTIONS } as http2.SecureClientSessionOptions)
+  session.on("error", () => { if (sessions.get(env) === session) sessions.delete(env) })
+  session.on("close", () => { if (sessions.get(env) === session) sessions.delete(env) })
   sessions.set(env, session)
   return session
 }

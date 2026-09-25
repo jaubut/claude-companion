@@ -1,7 +1,7 @@
 import { getPending, resolveApproval } from "../lib/pty-manager"
 import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
-import { echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
+import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
@@ -254,7 +254,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     }
     const ok = res.ok
     if (!ok) {
-      companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (tmux send-keys, or osascript: Accessibility permission?)`)
+      companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (${deliveryFailedHint()})`)
     } else if (target && echoPromptOnInject(res)) {
       // Unconfirmable delivery only (see echoPromptOnInject): the hook is
       // the source of truth everywhere it can be observed.
@@ -266,7 +266,9 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
         sessionKey: target.key,
       })
     }
-    return Response.json(res.ok ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}) } : { ok })
+    return Response.json(res.ok
+      ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}), ...(res.command ? { command: true } : {}) }
+      : { ok, error: "deliver_failed", hint: deliveryFailedHint() })
   }
 
   // ── Learned-allow management ──
