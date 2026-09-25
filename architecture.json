@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 75,
+          "lines": 79,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -59,7 +59,8 @@
             "routes/attach.ts",
             "routes/media.ts",
             "routes/goals.ts",
-            "ws.ts"
+            "ws.ts",
+            "lib/apns.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -127,13 +128,16 @@
         },
         {
           "path": "lib/apns.ts",
-          "lines": 242,
+          "lines": 266,
           "kind": "lib",
           "exports": [
             "brokerConfigured",
             "apnsConfigured",
             "ApnsPayload",
             "ApnsResult",
+            "APNS_CONNECT_OPTIONS",
+            "disableAutoSelectFamily",
+            "getSession",
             "closeApnsSessions",
             "sendApns"
           ],
@@ -178,11 +182,12 @@
         },
         {
           "path": "lib/auth.ts",
-          "lines": 84,
+          "lines": 94,
           "kind": "lib",
           "exports": [
             "getAuthToken",
             "checkBearer",
+            "maskToken",
             "unauthorized"
           ],
           "state": [
@@ -497,13 +502,14 @@
         },
         {
           "path": "lib/hook-common.ts",
-          "lines": 95,
+          "lines": 111,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
             "agentTitle",
             "cwdFromPayload",
             "hookDecisionResponse",
+            "hookPassthroughResponse",
             "projectLabelFor",
             "subtitleFor",
             "metaFromHeaders"
@@ -638,12 +644,14 @@
         },
         {
           "path": "lib/log.ts",
-          "lines": 23,
+          "lines": 48,
           "kind": "lib",
           "exports": [
             "logPrefix",
             "formatLogLines",
-            "companionLog"
+            "companionLog",
+            "COMPANION_LOG_PATH",
+            "secureLogFile"
           ],
           "state": [],
           "emits": [],
@@ -890,7 +898,7 @@
         },
         {
           "path": "lib/question-driver.ts",
-          "lines": 181,
+          "lines": 217,
           "kind": "lib",
           "exports": [
             "PickerIO",
@@ -898,7 +906,9 @@
             "PICKER_READY_RE",
             "REVIEW_RE",
             "ANSWERED_RE",
+            "answeredCount",
             "pickerRegion",
+            "pickerShowsQuestions",
             "driveQuestionPicker"
           ],
           "state": [],
@@ -914,15 +924,52 @@
           "externals": []
         },
         {
+          "path": "lib/question-hook.ts",
+          "lines": 214,
+          "kind": "lib",
+          "exports": [
+            "LOCAL_PHONE_WINDOW_MS",
+            "questionWindowMs",
+            "localTerminalAttached",
+            "HOOK_ANSWER_CHECK_MS",
+            "QuestionHookInput",
+            "QuestionHookDeps",
+            "questionFastPath"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/spawn-session.ts",
+            "lib/log.ts",
+            "lib/questions.ts",
+            "lib/keyboard-inject.ts",
+            "lib/question-driver.ts",
+            "lib/tmux-pane.ts",
+            "lib/activity.ts",
+            "lib/tool-format.ts",
+            "lib/hook-common.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/questions.ts",
-          "lines": 229,
+          "lines": 316,
           "kind": "lib",
           "exports": [
             "QuestionOption",
             "QuestionItem",
             "QuestionRequest",
             "QuestionAnswer",
+            "QuestionEndDecision",
+            "EXPIRY_MS",
             "addQuestionRequest",
+            "cancelQuestionsFor",
             "resolveQuestion",
             "getPendingQuestions",
             "onQuestionRequest",
@@ -932,7 +979,12 @@
             "parseQuestionInput",
             "questionDedupeKey",
             "markQuestionAnswered",
-            "wasQuestionAnswered"
+            "wasQuestionAnswered",
+            "answeredWith",
+            "markQuestionFellThrough",
+            "didQuestionFallThrough",
+            "questionAnswerMap",
+            "answeredToolInput"
           ],
           "state": [
             "pending: Map",
@@ -940,7 +992,8 @@
             "handlers: Set",
             "expiryHandlers: Set",
             "resolvedHandlers: Set",
-            "recentlyAnswered: Map"
+            "recentlyAnswered: Map",
+            "recentlyFellThrough: Map"
           ],
           "emits": [],
           "consumes": [],
@@ -1068,14 +1121,16 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 298,
+          "lines": 351,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
             "SubmitIdentity",
+            "isHooklessInput",
             "SubmitClock",
             "SubmitWatch",
             "noteUserPromptSubmit",
+            "noteSessionBoundary",
             "watchSubmit",
             "activeWatchCount",
             "ConfirmResult",
@@ -1084,6 +1139,7 @@
             "confirmSubmit",
             "InjectOutcome",
             "echoPromptOnInject",
+            "deliveryFailedHint",
             "ConfirmTarget",
             "injectConfirmed"
           ],
@@ -1132,13 +1188,14 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 77,
+          "lines": 103,
           "kind": "lib",
           "exports": [
             "capturePane",
             "paneInputReady",
             "paneHasDialog",
-            "tmuxSessionForPane"
+            "tmuxSessionForPane",
+            "tmuxPaneAttached"
           ],
           "state": [],
           "emits": [],
@@ -1338,7 +1395,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 355,
+          "lines": 357,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1594,7 +1651,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 566,
+          "lines": 501,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -1644,12 +1701,10 @@
           "apiCalls": [],
           "imports": [
             "lib/log.ts",
-            "lib/spawn-session.ts",
             "lib/pty-manager.ts",
             "lib/questions.ts",
+            "lib/question-hook.ts",
             "lib/branch-guard.ts",
-            "lib/keyboard-inject.ts",
-            "lib/question-driver.ts",
             "lib/session-titles.ts",
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
@@ -1857,7 +1912,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 156,
+          "lines": 158,
           "kind": "lib",
           "exports": [],
           "state": [
@@ -2000,7 +2055,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 165,
+          "lines": 168,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -2037,6 +2092,12 @@
         }
       ],
       "fanIn": {
+        "disableAutoSelectFamily": {
+          "module": "lib/apns.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "WsData": {
           "module": "state.ts",
           "callers": [
@@ -2144,6 +2205,7 @@
             "lib/hook-common.ts",
             "lib/inject-guard.ts",
             "lib/model-control.ts",
+            "lib/question-hook.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
@@ -2184,7 +2246,7 @@
           "callers": [
             "lib/activity.ts",
             "lib/codex-feed.ts",
-            "routes/hooks.ts",
+            "lib/question-hook.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "wiring/events.ts"
@@ -2352,8 +2414,8 @@
           "module": "lib/spawn-session.ts",
           "callers": [
             "lib/hook-common.ts",
-            "routes/api.ts#POST /api/spawn-session",
-            "routes/hooks.ts"
+            "lib/question-hook.ts",
+            "routes/api.ts#POST /api/spawn-session"
           ]
         },
         "unstyle": {
@@ -2381,6 +2443,7 @@
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
             "lib/media.ts",
+            "lib/question-hook.ts",
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
             "routes/api.ts#POST /api/register-token",
@@ -2493,16 +2556,140 @@
           "module": "lib/questions.ts",
           "callers": [
             "lib/question-driver.ts",
-            "routes/hooks.ts"
+            "lib/question-hook.ts"
           ]
         },
         "QuestionAnswer": {
           "module": "lib/questions.ts",
           "callers": [
             "lib/question-driver.ts",
+            "lib/question-hook.ts",
             "routes/api.ts#POST /api/answer",
-            "routes/hooks.ts",
             "ws.ts"
+          ]
+        },
+        "EXPIRY_MS": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "addQuestionRequest": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "answeredToolInput": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "answeredWith": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "didQuestionFallThrough": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "isQuestionTool": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts",
+            "lib/tool-format.ts",
+            "routes/hooks.ts#POST /hooks/post-tool-use"
+          ]
+        },
+        "markQuestionAnswered": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "markQuestionFellThrough": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "parseQuestionInput": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "questionDedupeKey": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "InjectTarget": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/question-hook.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "tmuxPaneAttached": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "resolveTmuxPaneFromTty": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/question-hook.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "withPickerIO": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "driveQuestionPicker": {
+          "module": "lib/question-driver.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "pickerShowsQuestions": {
+          "module": "lib/question-driver.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "hookDecisionResponse": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "lib/question-hook.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "hookPassthroughResponse": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "recordToolStart": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/question-hook.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
         "WaitingKind": {
@@ -2548,19 +2735,6 @@
             "lib/sessions.ts"
           ]
         },
-        "InjectTarget": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "lib/submit-confirm.ts",
-            "routes/hooks.ts"
-          ]
-        },
-        "resolveTmuxPaneFromTty": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "lib/submit-confirm.ts"
-          ]
-        },
         "INJECT_SEND_MS": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -2594,13 +2768,6 @@
           "module": "lib/discover.ts",
           "callers": [
             "lib/submit-confirm.ts"
-          ]
-        },
-        "isQuestionTool": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "lib/tool-format.ts",
-            "routes/hooks.ts"
           ]
         },
         "Activity": {
@@ -2886,6 +3053,13 @@
             "ws.ts"
           ]
         },
+        "deliveryFailedHint": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "routes/api.ts#POST /api/inject",
+            "ws.ts"
+          ]
+        },
         "echoPromptOnInject": {
           "module": "lib/submit-confirm.ts",
           "callers": [
@@ -3149,36 +3323,6 @@
             "routes/goals.ts#GET /api/goals"
           ]
         },
-        "addQuestionRequest": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "routes/hooks.ts"
-          ]
-        },
-        "markQuestionAnswered": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "routes/hooks.ts"
-          ]
-        },
-        "parseQuestionInput": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "routes/hooks.ts"
-          ]
-        },
-        "questionDedupeKey": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "routes/hooks.ts"
-          ]
-        },
-        "wasQuestionAnswered": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "routes/hooks.ts"
-          ]
-        },
         "removeSessionByCwd": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -3221,14 +3365,6 @@
             "routes/hooks.ts#POST /hooks/post-tool-use"
           ]
         },
-        "recordToolStart": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request"
-          ]
-        },
         "recordTurnEnd": {
           "module": "lib/activity.ts",
           "callers": [
@@ -3266,14 +3402,6 @@
             "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
-        "hookDecisionResponse": {
-          "module": "lib/hook-common.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request"
-          ]
-        },
         "metaFromHeaders": {
           "module": "lib/hook-common.ts",
           "callers": [
@@ -3283,6 +3411,7 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
@@ -3301,14 +3430,14 @@
             "wiring/events.ts"
           ]
         },
-        "withPickerIO": {
-          "module": "lib/keyboard-inject.ts",
+        "QuestionEndDecision": {
+          "module": "lib/questions.ts",
           "callers": [
             "routes/hooks.ts"
           ]
         },
-        "driveQuestionPicker": {
-          "module": "lib/question-driver.ts",
+        "cancelQuestionsFor": {
+          "module": "lib/questions.ts",
           "callers": [
             "routes/hooks.ts"
           ]
@@ -3319,6 +3448,13 @@
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "wiring/dialogs.ts",
             "wiring/events.ts"
+          ]
+        },
+        "questionFastPath": {
+          "module": "lib/question-hook.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
         "isCatastrophic": {
@@ -3424,6 +3560,13 @@
           "module": "wiring/waiting.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "noteSessionBoundary": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
         "isMediaId": {
