@@ -15,7 +15,7 @@ import { judgeWithBranchContextAndReason } from "../lib/branch-guard"
 import { type InjectTarget, withPickerIO } from "../lib/keyboard-inject"
 import { driveQuestionPicker } from "../lib/question-driver"
 import { rememberTitle, titleFromPrompt } from "../lib/session-titles"
-import { noteUserPromptSubmit } from "../lib/submit-confirm"
+import { noteSessionBoundary, noteUserPromptSubmit } from "../lib/submit-confirm"
 import { isCatastrophic, isSuperAuto } from "../lib/super-auto"
 import { recordAllow } from "../lib/learned-allow"
 import {
@@ -522,6 +522,11 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   if (url.pathname === "/hooks/session-start" && req.method === "POST") {
     const body = await req.json() as { cwd?: string; session_id?: string; source?: string }
     const cwd = cwdFromPayload(body.cwd, req.headers)
+    // `/clear` from the phone fires no UserPromptSubmit; this is its proof.
+    if (body.source === "clear") {
+      const meta = metaFromHeaders(req.headers)
+      noteSessionBoundary({ sessionId: body.session_id, tty: meta.tty, pane: meta.tmuxPane })
+    }
     if (cwd) {
       // recordSession fires onSessions → reconcileDispatch binds this worker
       // to its dispatch task and sends the prompt. No inline binding needed.
@@ -554,6 +559,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       removed = removeSessionByCwd(cwd)
     }
     forgetSession({ tty, sessionId: body.session_id, cwd })
+    // `/exit` (and `/clear`, which ends the old session first) fire no
+    // UserPromptSubmit; the session ending is their proof of submission.
+    noteSessionBoundary({ sessionId: body.session_id, tty, pane: tmuxPane })
     if (removed) {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
       const label = tty || tmuxPane || (cwd ? cwd.split("/").pop() : "?")

@@ -29,6 +29,18 @@ export interface SubmitIdentity {
   key?: string
   sessionId?: string
   tty?: string
+  // tmux pane id (%N): the one identity that survives /clear (new session id).
+  pane?: string
+}
+
+// Slash commands (/exit, /clear, /model …) and `!` bash-mode run locally in
+// Claude Code and never fire UserPromptSubmit, so "no hook" is not evidence
+// of a lost prompt for them (log 2026-09-25: `/exit` delivered, session
+// ended, then flagged "not submitted"). Their proof, when there is one, is
+// the session ending or clearing — see noteSessionBoundary.
+export function isHooklessInput(text: string): boolean {
+  const t = text.trim()
+  return t.startsWith("/") || t.startsWith("!")
 }
 
 // Timer seam so the tests drive the window with a fake clock.
@@ -53,6 +65,8 @@ interface Watch {
   id: SubmitIdentity
   hits: number
   wake: (() => void) | null
+  // Also resolved by a SessionEnd / SessionStart(clear) for the same session.
+  boundary: boolean
 }
 
 const watches = new Set<Watch>()
@@ -62,7 +76,7 @@ function same(a: string | undefined, b: string | undefined): boolean {
 }
 
 function matches(w: SubmitIdentity, from: SubmitIdentity): boolean {
-  return same(w.key, from.key) || same(w.sessionId, from.sessionId) || same(w.tty, from.tty)
+  return same(w.key, from.key) || same(w.sessionId, from.sessionId) || same(w.tty, from.tty) || same(w.pane, from.pane)
 }
 
 // Called by the /hooks/user-prompt-submit route for every hook fire.
@@ -74,8 +88,20 @@ export function noteUserPromptSubmit(from: SubmitIdentity): void {
   }
 }
 
-export function watchSubmit(id: SubmitIdentity): SubmitWatch {
-  const w: Watch = { id, hits: 0, wake: null }
+// Called by the SessionEnd hook and by SessionStart with source "clear": the
+// session acted on a command (`/exit`, `/clear`). Only watches armed for a
+// hookless input count it — a typed prompt is never "confirmed" by its
+// session dying.
+export function noteSessionBoundary(from: SubmitIdentity): void {
+  for (const w of watches) {
+    if (!w.boundary || !matches(w.id, from)) continue
+    w.hits++
+    w.wake?.()
+  }
+}
+
+export function watchSubmit(id: SubmitIdentity, opts: { boundary?: boolean } = {}): SubmitWatch {
+  const w: Watch = { id, hits: 0, wake: null, boundary: !!opts.boundary }
   watches.add(w)
   return {
     wait(ms, clock = realClock) {
@@ -112,6 +138,9 @@ export type ConfirmResult =
   // when the turn ends. Both are read from a fresh capture — a cached "busy"
   // status is not evidence (review of PR #51).
   | { ok: true; confirmed: false; queued: true }
+  // A slash command / bash-mode input with no hook and no session boundary:
+  // delivered, and unconfirmable by design — never a failure.
+  | { ok: true; confirmed: false; command: true }
   | { ok: false; error: "not_submitted"; excerpt: string }
 
 // Mid-turn, Claude Code holds a typed prompt until the next tool boundary and
@@ -129,6 +158,8 @@ export interface ConfirmDeps {
   capture: () => Promise<string | null>
   // Fresh read of Claude Code's `status` for the session: true while "busy".
   busy?: () => Promise<boolean>
+  // The text is a slash command or `!` bash-mode input (isHooklessInput).
+  hookless?: boolean
   windowMs?: number
   clock?: SubmitClock
 }
@@ -171,6 +202,12 @@ function queuedBehindTurn(pane: string, prefix: string): boolean {
 }
 
 export async function confirmSubmit(deps: ConfirmDeps): Promise<ConfirmResult> {
+  const r = await confirmTyped(deps)
+  if (!r.ok && deps.hookless) return { ok: true, confirmed: false, command: true }
+  return r
+}
+
+async function confirmTyped(deps: ConfirmDeps): Promise<ConfirmResult> {
   const windowMs = deps.windowMs ?? SUBMIT_WINDOW_MS
   const prefix = textPrefix(deps.text)
   if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: false }
@@ -200,7 +237,7 @@ export async function confirmSubmit(deps: ConfirmDeps): Promise<ConfirmResult> {
 
 // What the inject routes answer with.
 export type InjectOutcome =
-  | { ok: true; confirmed: boolean; retried?: boolean; queued?: boolean }
+  | { ok: true; confirmed: boolean; retried?: boolean; queued?: boolean; command?: boolean }
   | { ok: false; error: "deliver_failed" }
   | { ok: false; error: "not_submitted"; excerpt: string }
 
@@ -211,8 +248,20 @@ export type InjectOutcome =
 // event from the hook, a queued one gets it when the turn ends, and an
 // unsubmitted one must not show as sent at all (audit 2026-09-24: this
 // echo is what put a "Thinking" pill on three prompts Claude never got).
+// A slash command / bash-mode input is never echoed either: it starts no
+// turn, so a "Thinking" pill for it would never end.
 export function echoPromptOnInject(res: InjectOutcome): boolean {
-  return res.ok && !res.confirmed && !res.queued
+  return res.ok && !res.confirmed && !res.queued && !res.command
+}
+
+// Why a delivery failed, for the log and the phone. macOS has two paths
+// (tmux, then an AppleScript paste that needs Accessibility); Linux has only
+// tmux, so a session outside tmux cannot be typed into at all — relaunching
+// it inside tmux (`cc-tmux`) is the fix, not a macOS permission.
+export function deliveryFailedHint(platform: string = process.platform): string {
+  return platform === "darwin"
+    ? "tmux send-keys failed, or osascript: Accessibility permission?"
+    : "session is not running inside tmux — relaunch it in tmux (e.g. cc-tmux) so the phone can type into it"
 }
 
 export interface ConfirmTarget extends InjectTarget {
@@ -273,7 +322,8 @@ export async function injectConfirmed(text: string, target: ConfirmTarget | unde
     return (await injectText(text, target)) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
   }
   return withPaneLock(pane, async (): Promise<InjectOutcome> => {
-    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty })
+    const hookless = isHooklessInput(text)
+    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty, pane }, { boundary: hookless })
     try {
       if (!(await injectText(text, { ...target, tmuxPane: pane }))) return { ok: false, error: "deliver_failed" }
       const r = await confirmSubmit({
@@ -282,14 +332,17 @@ export async function injectConfirmed(text: string, target: ConfirmTarget | unde
         pressEnter: pressEnterIn(pane),
         capture: () => capturePane(pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true }),
         busy: async () => !!target.pid && (await readClaudeSessionFile(target.pid))?.status === "busy",
+        hookless,
       })
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const green = "\x1b[32m"; const yellow = "\x1b[33m"
       const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit hook`
         : r.confirmed ? `${green}submit confirmed${reset}${r.retried ? " (after Enter retry)" : ""}`
+        : "command" in r ? `${dim}command sent${reset} — slash / bash-mode input fires no UserPromptSubmit (unconfirmable, not an error)`
         : `${yellow}submit queued${reset} — Claude mid-turn, text in its queue`
       companionLog(`${line} → ${pane}`)
       if (!r.ok) return r
-      return r.confirmed ? { ok: true, confirmed: true, retried: r.retried } : { ok: true, confirmed: false, queued: true }
+      if (r.confirmed) return { ok: true, confirmed: true, retried: r.retried }
+      return "command" in r ? { ok: true, confirmed: false, command: true } : { ok: true, confirmed: false, queued: true }
     } finally {
       watch.close()
     }
