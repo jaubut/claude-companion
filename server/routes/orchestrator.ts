@@ -23,6 +23,7 @@ import {
   setChannelAuto,
   setTaskStatus,
 } from "../lib/orchestrator-chat"
+import { handleKeyCommand } from "../lib/secret-store"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
 // approve/reject, task cancel, auto-dispatch toggle. Same paths, methods and
@@ -86,6 +87,14 @@ export async function handleOrchestratorRoute(req: Request, url: URL): Promise<R
     if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
     const ch = resolveChannel(channel)
     if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+    // `/key NAME value` goes to secrets.env: the thread (and the brain) only
+    // ever see the orchestrator's name-only confirmation.
+    const keyed = await handleKeyCommand(text)
+    if (keyed) {
+      const turn = orchAppendTurn("orchestrator", keyed.message, null, ch.id)
+      orchEmit(turn)
+      return Response.json({ ...keyed, turn }, { status: keyed.ok ? 200 : keyed.error === "sync_failed" ? 500 : 400 })
+    }
     const turn = orchAppendTurn("user", text.trim(), null, ch.id)
     orchEmit(turn)
     // Brain decides chat-vs-dispatch async; the user message is already

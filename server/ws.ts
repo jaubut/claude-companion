@@ -4,6 +4,7 @@ import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
 import { injectConfirmed } from "./lib/submit-confirm"
 import { injectRefusal } from "./lib/inject-guard"
+import { handleKeyCommand } from "./lib/secret-store"
 import { isSuperAuto } from "./lib/super-auto"
 import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
 import { getActivity, listActivities } from "./lib/activity"
@@ -99,6 +100,13 @@ export const websocket: WebSocketHandler<WsData> = {
         break
       case "input":
         if (msg.text?.trim()) {
+          // `/key NAME value` goes to secrets.env, never into the pane or a log.
+          const keyed = await handleKeyCommand(msg.text)
+          if (keyed) {
+            companionLog(`ws /key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
+            try { ws.send(JSON.stringify({ type: "key_saved", key: msg.key, cwd: msg.cwd, ...keyed })) } catch { /* ignore */ }
+            break
+          }
           const lookup = msg.key || msg.cwd || ""
           const target = lookup ? resolveSession(lookup) : null
           const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
