@@ -38,9 +38,12 @@ export interface SubmitIdentity {
 // of a lost prompt for them (log 2026-09-25: `/exit` delivered, session
 // ended, then flagged "not submitted"). Their proof, when there is one, is
 // the session ending or clearing — see noteSessionBoundary.
+// A slash command is `/name` whose first word has no second `/` — an
+// absolute path like `/Users/me/file.txt` is a normal prompt and fires the hook.
 export function isHooklessInput(text: string): boolean {
   const t = text.trim()
-  return t.startsWith("/") || t.startsWith("!")
+  if (t.startsWith("!")) return true
+  return /^\/[A-Za-z][\w:.-]*(?:\s|$)/.test(t)
 }
 
 // Timer seam so the tests drive the window with a fake clock.

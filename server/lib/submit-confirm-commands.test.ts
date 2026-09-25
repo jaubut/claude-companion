@@ -59,6 +59,14 @@ test("isHooklessInput: slash commands and bash-mode, after trim", () => {
   expect(isHooklessInput("fix the bug")).toBe(false)
 })
 
+test("isHooklessInput: absolute paths are prompts, not commands", () => {
+  expect(isHooklessInput("/Users/jeremie/file.txt")).toBe(false)
+  expect(isHooklessInput("/var/log/system.log what is this")).toBe(false)
+  expect(isHooklessInput("/")).toBe(false)
+  expect(isHooklessInput("/model opus")).toBe(true)
+  expect(isHooklessInput("/plugin:skill-name arg")).toBe(true)
+})
+
 test("/exit with no hook and no boundary: ok (command), never not_submitted", async () => {
   const { c, d, watch } = deps("/exit")
   const p = confirmSubmit(d)
