@@ -1,19 +1,8 @@
 import { companionLog } from "../lib/log"
-import type { SpawnAgent } from "../lib/spawn-session"
 import { addApprovalRequest } from "../lib/pty-manager"
-import {
-  type QuestionAnswer,
-  type QuestionItem,
-  addQuestionRequest,
-  isQuestionTool,
-  markQuestionAnswered,
-  parseQuestionInput,
-  questionDedupeKey,
-  wasQuestionAnswered,
-} from "../lib/questions"
+import { cancelQuestionsFor, isQuestionTool, type QuestionEndDecision } from "../lib/questions"
+import { questionFastPath } from "../lib/question-hook"
 import { judgeWithBranchContextAndReason } from "../lib/branch-guard"
-import { type InjectTarget, withPickerIO } from "../lib/keyboard-inject"
-import { driveQuestionPicker } from "../lib/question-driver"
 import { rememberTitle, titleFromPrompt } from "../lib/session-titles"
 import { noteSessionBoundary, noteUserPromptSubmit } from "../lib/submit-confirm"
 import { isCatastrophic, isSuperAuto } from "../lib/super-auto"
@@ -105,90 +94,15 @@ async function extractLastAssistantMessage(transcriptPath: string | undefined): 
   return ""
 }
 
-// Drive the terminal picker with the phone's answers. Fire-and-forget after
-// the hook returns allow: the driver waits for the picker to actually mount
-// (pane-driven, see question-driver.ts) instead of guessing a delay, then
-// verifies the "User answered" confirmation. Logged either way.
-function driveAnswer(target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[]): void {
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const green = "\x1b[32m"; const red = "\x1b[31m"; const cyan = "\x1b[36m"
-  void withPickerIO(target, async (io, via) => {
-    const r = await driveQuestionPicker(io, questions, answers)
-    if (r.ok) {
-      companionLog(`${green}picker driven${reset} → ${cyan}${via}${reset} ${dim}(${questions.length} question${questions.length === 1 ? "" : "s"}${r.reason ? `, ${r.reason}` : ""})${reset}`)
-    } else {
-      companionLog(`${red}picker drive failed${reset} → ${via} — ${r.reason}`)
-    }
-    return r.ok
-  }).then((res) => {
-    if (res === null) {
-      companionLog(`${red}picker drive refused${reset} — no tmux pane or tty target`)
-    }
-  }).catch(() => { /* logged above */ })
-}
-
-function questionInjectTarget(session: Session | null, headerMeta: Partial<Session>): InjectTarget {
-  return {
-    tmuxPane: session?.tmuxPane || headerMeta.tmuxPane || "",
-    tty: session?.tty || headerMeta.tty || "",
-    termProgram: session?.termProgram || headerMeta.termProgram || "",
-    iTermSessionId: session?.iTermSessionId || headerMeta.iTermSessionId || "",
+// A question that is no longer on screen: answered in the terminal picker
+// (PostToolUse of the question tool), or the turn / session moved past it.
+// Ends it so the phone card clears now, not at the 290 s expiry.
+function closeQuestionsFor(sessionId: string | undefined, sessionKey: string | undefined, decision: QuestionEndDecision, why: string): void {
+  const n = cancelQuestionsFor({ sessionId, sessionKey }, decision)
+  if (n > 0) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+    companionLog(`${cyan}question closed${reset} ${dim}— ${why} (${n})${reset}`)
   }
-}
-
-function hasQuestionInjectTarget(target: InjectTarget): boolean {
-  return !!(target.tmuxPane || target.tty)
-}
-
-// One AskUserQuestion / request_user_input fast path for both hook events.
-// Treat agent questions as structured phone prompts, not binary approval
-// gates: route to the phone with question + options, then drive the local
-// terminal picker after the user answers remotely. Claude Code can fire BOTH
-// PreToolUse and PermissionRequest for one call — whichever hook got here
-// first asked the phone and is driving the picker; the sibling just allows.
-// Returns a Response when the question was handled (already answered,
-// answered now, or expired), null to fall through to the generic approval
-// card (parse failed / no live terminal target) so the Mac flow still works.
-async function questionFastPath(p: {
-  agent: SpawnAgent
-  eventName: "PreToolUse" | "PermissionRequest"
-  tool: string
-  input: Record<string, unknown>
-  sessionId: string
-  cwd: string
-  tty: string
-  session: Session | null
-  headerMeta: Partial<Session>
-}): Promise<Response | null> {
-  if (!isQuestionTool(p.tool)) return null
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"; const green = "\x1b[32m"; const red = "\x1b[31m"
-  const questions = parseQuestionInput(p.input)
-  const answerTarget = questionInjectTarget(p.session, p.headerMeta)
-  if (questions && hasQuestionInjectTarget(answerTarget)) {
-    const dedupeKey = questionDedupeKey(p.sessionId, p.cwd, questions)
-    if (wasQuestionAnswered(dedupeKey)) {
-      companionLog(`${dim}question already answered — allow (${p.eventName})${reset}`)
-      return hookDecisionResponse(p.agent, p.eventName, "allow", "Answered via Claude Companion")
-    }
-    companionLog(`${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""}${reset}`)
-    recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
-    const answers = await addQuestionRequest({ agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions, sessionKey: p.session?.key ?? "" })
-
-    if (answers.length === 0) {
-      // Expired or otherwise no answer — deny so Claude doesn't sit on an
-      // open picker that nobody is going to drive.
-      companionLog(`${red}question expired${reset} ← phone`)
-      return hookDecisionResponse(p.agent, p.eventName, "deny", "User did not answer in time")
-    }
-
-    companionLog(`${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})`)
-    markQuestionAnswered(dedupeKey)
-    // The driver waits for the picker to mount, so it can start now even
-    // though the harness only opens the picker after our allow.
-    driveAnswer(answerTarget, questions, answers)
-    return hookDecisionResponse(p.agent, p.eventName, "allow", "Answered via Claude Companion")
-  }
-  companionLog(`${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}`)
-  return null
 }
 
 export async function handleHookRoute(req: Request, url: URL): Promise<Response | null> {
@@ -303,6 +217,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
       : null
 
+    if (isQuestionTool(tool)) {
+      closeQuestionsFor(body.session_id, session?.key, "answered", "answered at the terminal")
+    }
     recordToolEnd({
       tool,
       input,
@@ -342,6 +259,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       : null
     // Proof of submission for any phone inject waiting on this session.
     noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty })
+    // A new prompt means the picker is gone (e.g. "Chat about this").
+    closeQuestionsFor(body.session_id, session?.key, "expired", "new prompt in that session")
     // First real prompt names the chat (persisted by session id so a
     // restart or rediscovery brings the same name back).
     if (session && !session.title) {
@@ -403,8 +322,12 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const cyan = "\x1b[36m"
 
     // ── AskUserQuestion / request_user_input fast path ─────────────
+    // eventName MUST be PermissionRequest: Claude Code ignores a reply whose
+    // hookEventName doesn't match the hook (this passed "PreToolUse" until
+    // 2026-09-25, so every phone answer and every expiry deny on this path
+    // was silently dropped).
     {
-      const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, session, headerMeta })
+      const handled = await questionFastPath({ agent, eventName: "PermissionRequest", tool, input, sessionId, cwd, tty, session, headerMeta })
       if (handled) return handled
     }
 
@@ -449,6 +372,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (cwd) {
       session = recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
     }
+
+    // The turn ended: no question of it can still be open.
+    closeQuestionsFor(body.session_id, session?.key, "expired", "turn ended")
 
     const lastMessage = (body.last_assistant_message ?? "").trim()
       || await extractLastAssistantMessage(body.transcript_path)
@@ -558,6 +484,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (!removed && cwd) {
       removed = removeSessionByCwd(cwd)
     }
+    closeQuestionsFor(body.session_id, undefined, "expired", "session ended")
     forgetSession({ tty, sessionId: body.session_id, cwd })
     // `/exit` (and `/clear`, which ends the old session first) fire no
     // UserPromptSubmit; the session ending is their proof of submission.

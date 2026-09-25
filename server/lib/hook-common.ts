@@ -18,22 +18,30 @@ export function cwdFromPayload(payloadCwd: string | undefined, headers: Headers)
   return payloadCwd || headers.get("x-companion-cwd") || ""
 }
 
+// `updatedInput` (allow only) replaces the tool input. For AskUserQuestion it
+// carries the phone's `answers`, which is what lets Claude Code skip its
+// picker: an allow WITHOUT it leaves the tool's user-interaction floor in
+// place and the picker opens anyway (verified live on CC 2.1.282).
+// hookEventName must match the hook that called: a PreToolUse-shaped body
+// returned to a PermissionRequest hook is ignored outright.
 export function hookDecisionResponse(
   agent: SpawnAgent,
   eventName: "PreToolUse" | "PermissionRequest",
   decision: "allow" | "deny",
   reason: string,
+  updatedInput?: Record<string, unknown>,
 ): Response {
   if (agent === "codex") {
     // Codex hook compatibility: empty stdout continues; blocking is explicit.
     if (decision === "allow") return new Response("")
     return Response.json({ decision: "block", reason })
   }
+  const withInput = decision === "allow" && updatedInput ? { updatedInput } : {}
   if (eventName === "PermissionRequest") {
     return Response.json({
       hookSpecificOutput: {
         hookEventName: "PermissionRequest",
-        decision: { behavior: decision },
+        decision: { behavior: decision, ...withInput },
       },
     })
   }
@@ -42,8 +50,16 @@ export function hookDecisionResponse(
       hookEventName: "PreToolUse",
       permissionDecision: decision,
       permissionDecisionReason: reason,
+      ...withInput,
     },
   })
+}
+
+// No decision at all: Claude Code runs its normal flow. For a question that
+// means its own picker in the terminal — the right fallback when the phone
+// did not answer (a deny made Claude carry on without the answer).
+export function hookPassthroughResponse(agent: SpawnAgent): Response {
+  return agent === "codex" ? new Response("") : Response.json({})
 }
 
 // "claude-companion", "tls-dashboard-v2", or undefined when cwd is the

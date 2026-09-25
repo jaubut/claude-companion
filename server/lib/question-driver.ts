@@ -13,6 +13,15 @@ import type { QuestionItem, QuestionAnswer } from "./questions"
 //   Enter    → on the Submit tab, submits. Transcript then shows
 //              "User answered Claude's questions".
 //
+// A SINGLE question has no tab bar and no review screen (re-mapped live on
+// CC 2.1.282, 2026-09-25): "☐ Color / Which color? / ❯ 1. Red …", and a digit
+// submits at once. The driver used to wait for a review that never came and
+// logged "review screen never appeared" for an answer that had gone through;
+// it now also accepts a new "User answered Claude's questions" as done.
+//
+// For Claude Code the driver is only a fallback: the hook hands the answers
+// over as `updatedInput.answers` and no picker opens (lib/question-hook.ts).
+//
 // Pane-driven, not timer-driven: every step waits for the screen to show the
 // state it expects (picker mounted, next question, review) so it works whether
 // the picker takes 200ms or 5s to mount and never types into the wrong screen.
@@ -43,6 +52,14 @@ const STEP_TIMEOUT_MS = 6_000
 const CONFIRM_TIMEOUT_MS = 8_000
 const POLL_MS = 150
 
+const ANSWERED_ALL_RE = /User answered Claude's questions/g
+
+// How many "User answered" lines the pane shows: an earlier question's
+// confirmation can still be on screen, so "done" means one MORE than at mount.
+export function answeredCount(pane: string): number {
+  return pane.match(ANSWERED_ALL_RE)?.length ?? 0
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
@@ -63,6 +80,15 @@ function questionMarker(q: QuestionItem): RegExp {
   return new RegExp(escapeRe(q.question.trim().slice(0, 24)))
 }
 
+// Is the picker for these questions on screen right now? Used after a hook
+// answered via updatedInput: if the picker is still up a few seconds later,
+// Claude Code did not take the answers and the driver has to type them.
+export function pickerShowsQuestions(pane: string, questions: QuestionItem[]): boolean {
+  if (!PICKER_READY_RE.test(pane)) return false
+  const tail = pane.split("\n").slice(-40).join("\n")
+  return questions.some((q) => questionMarker(q).test(tail))
+}
+
 export async function driveQuestionPicker(
   io: PickerIO,
   questions: QuestionItem[],
@@ -70,21 +96,28 @@ export async function driveQuestionPicker(
 ): Promise<DriveResult> {
   if (!io.capture) return driveBlind(io, questions, answers)
   const capture = io.capture
+  let baseline = 0
 
-  async function waitFor(re: RegExp, timeoutMs: number, region: boolean): Promise<boolean> {
+  async function waitUntil(test: (pane: string) => boolean, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
       const pane = await capture()
       if (pane === null) return false
-      if (re.test(region ? pickerRegion(pane) : pane)) return true
+      if (test(pane)) return true
       await io.sleep(POLL_MS)
     }
     return false
   }
+  const waitFor = (re: RegExp, timeoutMs: number, region: boolean) =>
+    waitUntil((pane) => re.test(region ? pickerRegion(pane) : pane), timeoutMs)
+  const submitted = (pane: string) => answeredCount(pane) > baseline
+  const reviewOrDone = (pane: string) => REVIEW_RE.test(pickerRegion(pane)) || submitted(pane)
 
-  if (!(await waitFor(PICKER_READY_RE, MOUNT_TIMEOUT_MS, false))) {
+  let mountPane = ""
+  if (!(await waitUntil((pane) => { mountPane = pane; return PICKER_READY_RE.test(pane) }, MOUNT_TIMEOUT_MS))) {
     return { ok: false, reason: "picker never mounted" }
   }
+  baseline = answeredCount(mountPane)
 
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i]!
@@ -99,18 +132,21 @@ export async function driveQuestionPicker(
     if (!r.ok) return r
   }
 
-  // Single-select on the last question auto-advances to the review screen;
-  // otherwise Tab gets us there. Bounded retries in case a Tab lands mid-paint.
-  let onReview = await waitFor(REVIEW_RE, 1_500, true)
+  // A lone single-select question submits on the pick (no review screen).
+  // Otherwise single-select on the last question auto-advances to the review
+  // screen and Tab gets us there. Bounded retries in case a Tab lands mid-paint.
+  let onReview = await waitUntil(reviewOrDone, 1_500)
   for (let attempt = 0; !onReview && attempt <= questions.length; attempt++) {
     await io.key("Tab")
-    onReview = await waitFor(REVIEW_RE, STEP_TIMEOUT_MS, true)
+    onReview = await waitUntil(reviewOrDone, STEP_TIMEOUT_MS)
   }
+  const now = await capture()
+  if (now !== null && submitted(now)) return { ok: true, reason: "submitted on pick" }
   if (!onReview) return { ok: false, reason: "review screen never appeared" }
 
   await io.sleep(120)
   await io.key("Enter")
-  if (!(await waitFor(ANSWERED_RE, CONFIRM_TIMEOUT_MS, false))) {
+  if (!(await waitUntil(submitted, CONFIRM_TIMEOUT_MS))) {
     return { ok: false, reason: "submitted but no confirmation" }
   }
   return { ok: true, reason: "" }

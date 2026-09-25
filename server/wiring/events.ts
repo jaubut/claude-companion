@@ -98,9 +98,11 @@ onQuestionRequest((req) => {
   }
 })
 
-onQuestionExpired((req) => {
+onQuestionExpired((req, decision) => {
   // Mirrors approval expiry — phones know how to dequeue on `resolved`.
-  broadcast({ type: "resolved", id: req.id, decision: "expired" })
+  // "answered" when the terminal picker answered it (cancelQuestionsFor);
+  // both values are ones shipped iOS builds already map.
+  broadcast({ type: "resolved", id: req.id, decision })
   unmarkWaiting(req.sessionKey, "question", req.id)
 })
 
