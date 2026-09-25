@@ -11,9 +11,13 @@ import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
 import { websocket } from "./ws"
+import { disableAutoSelectFamily } from "./lib/apns"
 
 
 export function createCompanionServer(port: number) {
+  // Before any outbound node:net / http2 connect (APNs, broker): Bun's
+  // happy-eyeballs path is a known process crash — see lib/apns.ts.
+  disableAutoSelectFamily()
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
