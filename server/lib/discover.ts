@@ -140,7 +140,7 @@ interface ClaudeSessionFile {
   waitingFor?: string
 }
 
-async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | null> {
+export async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | null> {
   try {
     const text = await readFile(join(homedir(), ".claude", "sessions", `${pid}.json`), "utf-8")
     const j = JSON.parse(text) as ClaudeSessionFile
