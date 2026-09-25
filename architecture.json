@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-24",
+  "generatedAt": "2026-09-25",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -432,6 +432,7 @@
           "lines": 274,
           "kind": "lib",
           "exports": [
+            "readClaudeSessionFile",
             "discoverLiveClaudes"
           ],
           "state": [],
@@ -1067,7 +1068,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 284,
+          "lines": 298,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -1099,7 +1100,8 @@
             "lib/log.ts",
             "lib/keyboard-inject.ts",
             "lib/command-menu.ts",
-            "lib/tmux-pane.ts"
+            "lib/tmux-pane.ts",
+            "lib/discover.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2586,6 +2588,12 @@
             "routes/command.ts#POST /api/command/list",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "readClaudeSessionFile": {
+          "module": "lib/discover.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
           ]
         },
         "isQuestionTool": {
