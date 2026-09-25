@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { type SubmitClock, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
+import { type ConfirmDeps, type SubmitClock, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
 
 // A manual clock: timers fire only when the test advances time.
 function fakeClock() {
@@ -40,7 +40,7 @@ function harness(panes: string | Array<string | null>) {
   const presses: number[] = []
   const seq = Array.isArray(panes) ? panes : [panes]
   let captures = 0
-  const deps = {
+  const deps: ConfirmDeps = {
     watch,
     text: "hello there",
     clock: c.clock,
@@ -137,6 +137,34 @@ test("busy Claude but our text nowhere: a loss, not 'queued'", async () => {
   await h.c.advance(SUBMIT_WINDOW_MS)
   expect((await result).ok).toBe(false)
   expect(h.presses).toEqual([])
+  h.watch.close()
+})
+
+test("session file says busy, text not on screen: queued (hook fires at the next tool boundary)", async () => {
+  const h = harness(BUSY_NOT_QUEUED)
+  h.deps.busy = async () => true
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  expect(await result).toEqual({ ok: true, confirmed: false, queued: true })
+  expect(h.presses).toEqual([])
+  h.watch.close()
+})
+
+test("session file says busy but a picker is up: still not_submitted", async () => {
+  const h = harness(PICKER)
+  h.deps.busy = async () => true
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  expect((await result).ok).toBe(false)
+  h.watch.close()
+})
+
+test("session file says idle: an empty box is a loss", async () => {
+  const h = harness(GHOST)
+  h.deps.busy = async () => false
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  expect((await result).ok).toBe(false)
   h.watch.close()
 })
 

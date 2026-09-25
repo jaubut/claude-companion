@@ -18,6 +18,7 @@ import { companionLog } from "./log"
 import { INJECT_SEND_MS, injectText, resolveTmuxPaneFromTty, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
 import { inputLine, unstyle } from "./command-menu"
 import { capturePane } from "./tmux-pane"
+import { readClaudeSessionFile } from "./discover"
 
 export const SUBMIT_WINDOW_MS = 3_000
 
@@ -113,6 +114,12 @@ export type ConfirmResult =
   | { ok: true; confirmed: false; queued: true }
   | { ok: false; error: "not_submitted"; excerpt: string }
 
+// Mid-turn, Claude Code holds a typed prompt until the next tool boundary and
+// only then fires UserPromptSubmit — seconds after any fixed window (log
+// 2026-09-25: 6/6 "not submitted" verdicts got their hook 2–9 s late) — and
+// the pane need not show the text anywhere. So Claude Code's own session
+// status, read fresh at verdict time, is the queued signal; the pane
+// heuristic below stays as the fallback.
 export interface ConfirmDeps {
   watch: SubmitWatch
   // The injected text: the retry only fires while it is still in the box.
@@ -120,6 +127,8 @@ export interface ConfirmDeps {
   pressEnter: () => Promise<boolean>
   // A bounded `capture-pane -e` (null on failure/timeout).
   capture: () => Promise<string | null>
+  // Fresh read of Claude Code's `status` for the session: true while "busy".
+  busy?: () => Promise<boolean>
   windowMs?: number
   clock?: SubmitClock
 }
@@ -183,6 +192,9 @@ export async function confirmSubmit(deps: ConfirmDeps): Promise<ConfirmResult> {
 
   const after = await deps.capture()
   if (after !== null && queuedBehindTurn(after, prefix)) return { ok: true, confirmed: false, queued: true }
+  // A picker still means the text went into it, busy or not.
+  const last = after ?? before
+  if (!PICKER_RE.test(unstyle(last)) && (await deps.busy?.())) return { ok: true, confirmed: false, queued: true }
   return { ok: false, error: "not_submitted", excerpt: paneExcerpt(after ?? before) }
 }
 
@@ -208,6 +220,7 @@ export interface ConfirmTarget extends InjectTarget {
   sessionId?: string
   agent?: string
   agentStatus?: string
+  pid?: string
 }
 
 // A pane we can both re-press Enter in and read back. Linux sessions without
@@ -268,6 +281,7 @@ export async function injectConfirmed(text: string, target: ConfirmTarget | unde
         text,
         pressEnter: pressEnterIn(pane),
         capture: () => capturePane(pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true }),
+        busy: async () => !!target.pid && (await readClaudeSessionFile(target.pid))?.status === "busy",
       })
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const green = "\x1b[32m"; const yellow = "\x1b[33m"
       const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit hook`
