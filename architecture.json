@@ -1121,7 +1121,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 351,
+          "lines": 354,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",

@@ -21,7 +21,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 365 | lib | 8 |  |
 | `routes/api.ts` | 357 | route-host | 1 | emits: resolved, inject_error, super_auto · routes: 16 |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
-| `lib/submit-confirm.ts` | 351 | lib | 18 | state: watches: Set, paneLocks: Map |
+| `lib/submit-confirm.ts` | 354 | lib | 18 | state: watches: Set, paneLocks: Map |
 | `routes/command.ts` | 346 | route-host | 1 | state: listCache: Map · routes: 2 |
 | `lib/questions.ts` | 316 | lib | 23 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `wiring/orchestrator.ts` | 307 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
