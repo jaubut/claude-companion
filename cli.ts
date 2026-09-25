@@ -121,10 +121,14 @@ import { createCompanionServer } from "./server/companion-server"
 import { rehydrateSessions } from "./server/lib/rehydrate"
 import { discoverLiveClaudes } from "./server/lib/discover"
 import { startCodexFeedMonitor } from "./server/lib/codex-feed"
-import { getAuthToken } from "./server/lib/auth"
+import { getAuthToken, maskToken } from "./server/lib/auth"
+import { secureLogFile } from "./server/lib/log"
 import { startMediaSweeper } from "./server/wiring/media"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
+
+// Before anything is logged: companion.log is 0600 from here on.
+secureLogFile()
 
 const server = createCompanionServer(PORT)
 // After loadDefaultDotEnv() above: the age cap must come from the configured value.
@@ -140,7 +144,8 @@ console.log(`${dim}Claude Companion → http://0.0.0.0:${PORT}${reset}`)
 console.log()
 console.log(`${bold}Pairing${reset}`)
 console.log(`  ${dim}URL  ${reset} http://<your-mac>:${PORT}`)
-console.log(`  ${dim}Token${reset} ${cyan}${token}${reset}`)
+// Masked: this banner lands in companion.log on every boot.
+console.log(`  ${dim}Token${reset} ${cyan}${maskToken(token)}${reset} ${dim}(full: cat ~/.claude-companion/auth.token, or bun cli.ts print-token)${reset}`)
 console.log(`  ${dim}Paste both into the iOS app's Settings screen.${reset}`)
 console.log()
 
