@@ -3,6 +3,7 @@ import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
 import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
+import { handleKeyCommand } from "../lib/secret-store"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -161,6 +162,13 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   if (url.pathname === "/api/inject" && req.method === "POST") {
     const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
     if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+
+    // `/key NAME value` goes to secrets.env, never into the pane or a log.
+    const keyed = await handleKeyCommand(text)
+    if (keyed) {
+      companionLog(`/key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
+      return Response.json(keyed, { status: keyed.ok ? 200 : keyed.error === "sync_failed" ? 500 : 400 })
+    }
 
     const lookup = key || cwd || ""
     let target = lookup ? resolveSession(lookup) : null
