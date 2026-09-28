@@ -120,6 +120,7 @@ if (subcommand && subcommand.length > 0) {
 import { createCompanionServer } from "./server/companion-server"
 import { rehydrateSessions } from "./server/lib/rehydrate"
 import { discoverLiveClaudes } from "./server/lib/discover"
+import { reapScrapeSessions } from "./server/lib/command-offpane"
 import { startCodexFeedMonitor } from "./server/lib/codex-feed"
 import { getAuthToken, maskToken } from "./server/lib/auth"
 import { secureLogFile } from "./server/lib/log"
@@ -160,7 +161,10 @@ function ensureCodexFeedMonitor(): void {
 // Discover live Claude/Codex processes first — gives us tty-keyed entries that
 // work for inject on boot. Rehydrate then fills in anything that's recently
 // active but not currently running.
-discoverLiveClaudes().then(({ registered }) => {
+// Kill cc-scrape-* sessions a previous server left behind (hidden /help
+// enumeration, lib/command-offpane.ts) BEFORE the first discovery, so an
+// orphaned hidden claude is never picked up as a user session.
+reapScrapeSessions().catch(() => []).then(() => discoverLiveClaudes()).then(({ registered }) => {
   if (registered > 0) {
     console.log(`${dim}⚡ discovered ${registered} live agent process${registered === 1 ? "" : "es"}${reset}`)
   }

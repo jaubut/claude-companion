@@ -11,6 +11,7 @@ import { join, basename } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
 import { recordSession } from "./sessions"
+import { isScrapeTarget } from "./scrape-registry"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
@@ -228,6 +229,8 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
 
   await Promise.all(pids.map(async (p) => {
     try {
+      // The companion's own hidden /help enumeration claude (lib/command-offpane.ts).
+      if (isScrapeTarget({ tty: p.tty })) return
       const [cwd, termProgram] = await Promise.all([
         findCwdForPid(p.pid),
         findTermProgramForPid(p.pid),

@@ -6,6 +6,15 @@
 # shows `??` (macOS) or `?` (Linux). Walking up the process tree finds the
 # original claude-code process that owns the terminal.
 
+# The companion's own hidden /help enumeration session (cc-scrape-*, see
+# server/lib/command-offpane.ts) runs a real claude with COMPANION_SCRAPE=1.
+# Its hooks must post nothing: no picker entry, no push, no approval card.
+# Exiting here, while being sourced, ends the calling hook with 0 and no
+# output — Claude Code's normal flow.
+if [ -n "${COMPANION_SCRAPE:-}" ]; then
+  exit 0
+fi
+
 # Find the controlling tty by walking up the parent process tree.
 companion_find_tty() {
   local pid=$$

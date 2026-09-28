@@ -176,9 +176,13 @@ export const DETACHED_COLS = 220
 export const DETACHED_ROWS = 60
 
 // Exported for the test: the argv of the headless spawn, size included.
-export function detachedNewSessionArgs(sessionName: string, inner: string): string[] {
+// `printFormat` adds `-P -F <fmt>` so the caller learns the new pane's id/tty
+// from the same call (the hidden /help enumeration needs it before claude
+// boots — lib/command-offpane.ts).
+export function detachedNewSessionArgs(sessionName: string, inner: string, printFormat?: string): string[] {
   return [
     "new-session", "-d",
+    ...(printFormat ? ["-P", "-F", printFormat] : []),
     "-x", String(DETACHED_COLS),
     "-y", String(DETACHED_ROWS),
     "-s", sessionName,
