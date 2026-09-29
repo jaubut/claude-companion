@@ -70,7 +70,7 @@ test("inject: a different key runs again; no key behaves exactly as before (runs
   expect(n2.headers.get("Idempotent-Replayed")).toBeNull()
 })
 
-test("inject: 5xx and throws are not remembered, so a real failure can be retried; 4xx is final", async () => {
+test("inject: only a success is remembered — 5xx, throws, 409 refusals and 200 ok:false all retry", async () => {
   const failing = countingInject(500)
   await withIdempotency(post("/api/inject", {}, "k5"), "inject", failing.handler)
   await withIdempotency(post("/api/inject", {}, "k5"), "inject", failing.handler)
@@ -85,8 +85,34 @@ test("inject: 5xx and throws are not remembered, so a real failure can be retrie
   const refused = countingInject(409)
   await withIdempotency(post("/api/inject", {}, "k7"), "inject", refused.handler)
   const again = await withIdempotency(post("/api/inject", {}, "k7"), "inject", refused.handler)
-  expect(refused.runs()).toBe(1)
-  expect(again.status).toBe(409)
+  expect(refused.runs()).toBe(2)
+  expect(again.headers.get("Idempotent-Replayed")).toBeNull()
+})
+
+test("inject: deliver_failed (200 ok:false) then recovery — the retry delivers, the next repeat replays", async () => {
+  let runs = 0
+  const flaky = async (): Promise<Response> => {
+    runs++
+    return Response.json(runs === 1 ? { ok: false, error: "deliver_failed" } : { ok: true, confirmed: true })
+  }
+  const failed = await withIdempotency(post("/api/inject", {}, "k9"), "inject", flaky)
+  expect(await failed.json()).toEqual({ ok: false, error: "deliver_failed" })
+  const recovered = await withIdempotency(post("/api/inject", {}, "k9"), "inject", flaky)
+  expect(await recovered.json()).toEqual({ ok: true, confirmed: true })
+  expect(recovered.headers.get("Idempotent-Replayed")).toBeNull()
+  const replay = await withIdempotency(post("/api/inject", {}, "k9"), "inject", flaky)
+  expect(replay.headers.get("Idempotent-Replayed")).toBe("true")
+  expect(runs).toBe(2)
+})
+
+test("inject: a concurrent waiter on a failure is not flagged as a replay", async () => {
+  const failing = countingInject(500, 20)
+  const [a, b] = await Promise.all([
+    withIdempotency(post("/api/inject", {}, "k10"), "inject", failing.handler),
+    withIdempotency(post("/api/inject", {}, "k10"), "inject", failing.handler),
+  ])
+  expect(failing.runs()).toBe(1)
+  expect([a.headers.get("Idempotent-Replayed"), b.headers.get("Idempotent-Replayed")]).toEqual([null, null])
 })
 
 test("keys expire after 24 h, are scoped per route, and over-long keys are rejected", async () => {
@@ -108,15 +134,15 @@ test("keys expire after 24 h, are scoped per route, and over-long keys are rejec
   expect(inj.runs()).toBe(3)
 })
 
-test("POST /api/inject goes through the idempotency wrapper (replay header on a repeat key)", async () => {
-  // An unregistered target is refused with 410 before any keystroke — a final
-  // response, so the repeat is a replay.
+test("POST /api/inject goes through the idempotency wrapper; a refusal is not remembered", async () => {
+  // An unregistered target is refused with 410 before any keystroke. Refusals
+  // are not remembered, so the repeat re-runs the route (no replay header).
   const body = { text: "hi", key: "idem-no-such-session" }
   const first = (await handleApiRoute(post("/api/inject", body, "route-k1"), new URL("http://localhost:4245/api/inject")))!
   const second = (await handleApiRoute(post("/api/inject", body, "route-k1"), new URL("http://localhost:4245/api/inject")))!
   expect(first.status).toBe(410)
   expect(second.status).toBe(410)
-  expect(second.headers.get("Idempotent-Replayed")).toBe("true")
+  expect(second.headers.get("Idempotent-Replayed")).toBeNull()
   expect(await second.json()).toEqual(await first.json())
 })
 
