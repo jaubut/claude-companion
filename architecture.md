@@ -18,8 +18,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `lib/command-scrape.ts` | 402 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
+| `lib/spawn-session.ts` | 395 | lib | 9 |  |
 | `routes/api.ts` | 371 | route-host | 1 | emits: super_auto, resolved, inject_error · routes: 16 |
-| `lib/spawn-session.ts` | 365 | lib | 8 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/submit-confirm.ts` | 354 | lib | 18 | state: watches: Set, paneLocks: Map |
 | `routes/command.ts` | 346 | route-host | 1 | state: listCache: Map · routes: 2 |

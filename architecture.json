@@ -1119,7 +1119,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 365,
+          "lines": 395,
           "kind": "lib",
           "exports": [
             "SpawnApp",
@@ -1129,6 +1129,7 @@
             "DETACHED_COLS",
             "DETACHED_ROWS",
             "detachedNewSessionArgs",
+            "homeSpawnCwd",
             "spawnCompanionSession"
           ],
           "state": [],
