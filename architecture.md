@@ -13,7 +13,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/keyboard-inject.ts` | 600 | lib | 10 | state: let injectQueue |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/transcript.ts` | 598 | lib | 13 | state: states: Map, busyImages: WeakMap |
-| `lib/command-offpane.ts` | 521 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let retryTimer, let retryDeps |
+| `lib/command-offpane.ts` | 541 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let lastServerPid, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 507 | route-host | 1 | emits: user_prompt · routes: 8 |
 | `lib/activity.ts` | 492 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
@@ -27,10 +27,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/questions.ts` | 316 | lib | 23 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `wiring/orchestrator.ts` | 307 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
+| `lib/command-offpane-launch.ts` | 268 | lib | 20 | state: versionMemo: Map |
 | `lib/apns.ts` | 266 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
-| `lib/command-offpane-launch.ts` | 227 | lib | 18 | state: versionMemo: Map |
 | `lib/auto-judge.ts` | 217 | lib | 8 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/command-offpane-cache.ts` | 216 | lib | 14 | state: let launchMemo, warnedOld: Set |
@@ -57,8 +57,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pty-manager.ts` | 123 | lib | 7 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set |
 | `lib/hook-common.ts` | 120 | lib | 9 |  |
 | `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
+| `lib/scrape-registry.ts` | 119 | lib | 12 | state: panes: Map, ttys: Map, let nameSeq |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
-| `lib/scrape-registry.ts` | 111 | lib | 11 | state: panes: Map, ttys: Map, let nameSeq |
 | `lib/turso.ts` | 108 | lib | 5 | state: let agentToken, let agentEnvRead |
 | `lib/tmux-pane.ts` | 103 | lib | 5 |  |
 | `lib/auth.ts` | 94 | lib | 4 | state: let cached |

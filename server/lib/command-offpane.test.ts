@@ -10,7 +10,7 @@ import { createCommandLister, createSlots, prepareRealList } from "./command-off
 import { createScrapeHome, removeScrapeHome, resolveHomesBase, sweepOrphanHomes, UnsafeDirError, verifyPrivateDir } from "./command-offpane-home"
 import { isScrapeProcess, processEnvEntries } from "./discover"
 import {
-  computeFingerprint, fingerprintEntries, parseTmuxEnv, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
+  computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
 } from "./command-offpane-launch"
 import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner } from "./scrape-registry"
 import { DETACHED_COLS, DETACHED_ROWS } from "./spawn-session"
@@ -102,6 +102,7 @@ class FakeTmux {
   calls: string[][] = []
   nextPane = 10
   captures = 0
+  serverPid = 5000
   // Pids of live processes: pane processes, plus other companion servers.
   livePids = new Set<number>([SELF])
   // pid → how many more pidAlive checks it survives after its session died.
@@ -160,7 +161,9 @@ class FakeTmux {
       return { code: 0, stdout: `${pane}\t/dev/ttys0${this.nextPane}\t${pid}\n` }
     }
     if (cmd === "list-panes") {
-      return { code: 0, stdout: [...this.sessions].map(([n, s]) => `${n}\t${s.pane}\t${s.tty}\t${s.pid}`).join("\n") + "\n" }
+      // The last session closing takes the tmux server with it.
+      if (this.sessions.size === 0) return { code: 1, stdout: "", stderr: "no server running on /tmp/tmux-501/default" }
+      return { code: 0, stdout: [...this.sessions].map(([n, s]) => `${n}\t${s.pane}\t${s.tty}\t${s.pid}\t${this.serverPid}`).join("\n") + "\n" }
     }
     if (cmd === "kill-session") {
       const name = args[args.indexOf("-t") + 1]!.replace(/^=/, "")
@@ -468,6 +471,50 @@ describe("reapScrapeSessions", () => {
     expect(isScrapeTarget({ tmuxPane: "%60" }, Date.now() + 11 * 60_000)).toBe(false)
   })
 
+  test("a foreign scrape that was tmux's LAST session: 'no server running' releases it, pane mark included", async () => {
+    const tmux = new FakeTmux(sim())
+    tmux.sessions.delete("cc-user")
+    tmux.livePids.add(7777)
+    tmux.addSession("cc-scrape-7777-1-ab12", "%0", "/dev/ttys060", 9060)
+    const reap = () => reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes: fakeHomes().homes })
+    await reap()
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true)
+    tmux.sessions.clear() // it exits; the server goes with it
+    await reap()
+    expect(foreignScrapes()).toEqual([])
+    // The next server hands out %0 again: no mark may survive on it.
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(false)
+    expect(isScrapeTarget({ tty: "/dev/ttys060" }, Date.now() + 60_000)).toBe(false)
+  })
+
+  test("a replaced tmux server (new pid) drops old pane marks; ids it reuses are not hidden", async () => {
+    const tmux = new FakeTmux(sim())
+    tmux.livePids.add(7777)
+    tmux.addSession("cc-scrape-7777-1-ab12", "%60", "/dev/ttys060", 9060)
+    const reap = () => reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes: fakeHomes().homes })
+    await reap()
+    expect(isScrapeTarget({ tmuxPane: "%60" })).toBe(true)
+    // Server restarted: a user's session now owns %60.
+    tmux.serverPid = 6000
+    tmux.sessions.clear()
+    tmux.addSession("cc-myproject", "%60", "/dev/ttys061", 9061)
+    await reap()
+    expect(isScrapeTarget({ tmuxPane: "%60" })).toBe(false)
+  })
+
+  test("no inventory (tmux failed for another reason): nothing is released and no HOME is swept", async () => {
+    const tmux = new FakeTmux(sim())
+    let sweeps = 0
+    const homes: HomeFactory = { ...fakeHomes().homes, sweep: async () => { sweeps++ } }
+    const orig = tmux.run
+    tmux.run = async (args) => (args[0] === "list-panes" ? { code: 1, stdout: "", stderr: "server exited unexpectedly" } : orig(args))
+    await reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes })
+    expect(sweeps).toBe(0)
+    tmux.run = orig
+    await reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes })
+    expect(sweeps).toBe(1)
+  })
+
   test("generated names always match the reaper's pattern", () => {
     for (let i = 0; i < 50; i++) expect(isScrapeSessionName(scrapeSessionName())).toBe(true)
   })
@@ -773,6 +820,31 @@ describe("fingerprint", () => {
       join(cfg, "settings.json"), join(cfg, "plugins", "installed_plugins.json"),
       join(cwd, ".claude", "skills", "beta", "SKILL.md"), join(cwd, ".claude", "settings.json"), join(cwd, ".claude", "settings.local.json"),
     ]) expect(entries).toContain(p)
+  })
+
+  test("ancestors' .claude skills/commands (monorepo) are sources; the user config dir is not repeated", () => {
+    const src = fingerprintSources("/repo/packages/frontend", "/home/me/.claude")
+    const dirs = src.walk.map((w) => w.dir)
+    expect(dirs).toContain("/repo/packages/.claude/skills")
+    expect(dirs).toContain("/repo/.claude/skills")
+    expect(dirs).toContain("/repo/.claude/commands")
+    expect(dirs).toContain("/.claude/skills")
+    const home = fingerprintSources("/home/me/proj", "/home/me/.claude").walk.map((w) => w.dir)
+    expect(home.filter((d) => d === "/home/me/.claude/skills")).toHaveLength(1)
+  })
+
+  test("a linked git worktree also fingerprints the main worktree's .claude", async () => {
+    const r = realpathSync(mkdtempSync(join(tmpdir(), "cc-wt-")))
+    mkdirSync(join(r, "main", ".git", "worktrees", "feat"), { recursive: true })
+    mkdirSync(join(r, "main", ".claude", "skills", "s"), { recursive: true })
+    writeFileSync(join(r, "main", ".claude", "skills", "s", "SKILL.md"), "s")
+    mkdirSync(join(r, "wt", "sub"), { recursive: true })
+    writeFileSync(join(r, "wt", ".git"), `gitdir: ${join(r, "main", ".git", "worktrees", "feat")}\n`)
+    expect(await mainWorktreeRoot(join(r, "wt", "sub"))).toBe(join(r, "main"))
+    expect(await mainWorktreeRoot(join(r, "main"))).toBeNull()
+    const entries = (await fingerprintEntries(join(r, "wt"), join(r, "cfg"))).map((e) => e.slice(0, e.lastIndexOf(":")))
+    expect(entries).toContain(join(r, "main", ".claude", "skills", "s", "SKILL.md"))
+    rmSync(r, { recursive: true, force: true })
   })
 
   test("moves when any source file changes, and with the version / binary", async () => {

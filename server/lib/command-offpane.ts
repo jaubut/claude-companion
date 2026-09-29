@@ -44,10 +44,10 @@ import {
 } from "./command-list"
 import { paneHasDialog, paneInputReady } from "./tmux-pane"
 import {
-  isScrapeSessionName, markScrapeTarget, releaseScrapeTarget, SCRAPE_ENV, SCRAPE_ENV_CLAUDE, scrapeSessionName, scrapeSessionOwner,
+  clearPaneMarks, isScrapeSessionName, markScrapeTarget, releaseScrapeTarget, SCRAPE_ENV, SCRAPE_ENV_CLAUDE, scrapeSessionName, scrapeSessionOwner,
 } from "./scrape-registry"
 import { detachedNewSessionArgs } from "./spawn-session"
-import { defaultTmux, type ClaudeLaunch, type TmuxRunner } from "./command-offpane-launch"
+import { defaultTmux, tmuxNoServer, type ClaudeLaunch, type TmuxRunner } from "./command-offpane-launch"
 import { createScrapeHome, knownHomesBase, removeScrapeHome, sweepOrphanHomes, type ScrapeHome } from "./command-offpane-home"
 
 export type { ClaudeLaunch, TmuxResult, TmuxRunner } from "./command-offpane-launch"
@@ -207,6 +207,9 @@ const pendingKill = new Map<string, ScrapeRecord>()
 // released once they are gone from tmux — otherwise a later ordinary session
 // reusing that tty would stay hidden (and its hooks dropped) for good.
 const foreign = new Map<string, ScrapeRecord>()
+// Pid of the tmux server seen at the last complete inventory (null: none
+// running). A change means pane ids are being reused.
+let lastServerPid: number | null | undefined = undefined
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let retryDeps: LifecycleDeps | null = null
 const PENDING_RETRY_MS = 30_000
@@ -264,14 +267,16 @@ function reapable(name: string, selfPid: number, alive: (pid: number) => boolean
   return owner === selfPid || !alive(owner)
 }
 
-function parsePaneList(out: string): ScrapeRecord[] {
+function parsePaneList(out: string): { recs: ScrapeRecord[]; serverPid: number | null } {
   const recs: ScrapeRecord[] = []
+  let serverPid: number | null = null
   for (const line of out.split("\n")) {
-    const [name = "", pane = "", tty = "", pid = ""] = line.trim().split("\t")
+    const [name = "", pane = "", tty = "", pid = "", server = ""] = line.trim().split("\t")
+    if (serverPid === null && Number(server) > 0) serverPid = Number(server)
     if (!isScrapeSessionName(name)) continue
     recs.push({ name, pane, tty, pid: Number(pid) || 0, home: "" })
   }
-  return recs
+  return { recs, serverPid }
 }
 
 // Every cc-scrape-* pane is registered as hidden FIRST (so a discovery racing
@@ -284,11 +289,15 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
   const alive = full.pidAlive ?? pidAlive
   const selfPid = full.selfPid ?? process.pid
   const homes = full.homes ?? realHomes
-  const r = await full.tmux(["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_tty}\t#{pane_pid}"]).catch(() => ({ code: -1, stdout: "" }))
-  const listed = r.code === 0 ? parsePaneList(r.stdout) : []
-  for (const rec of listed) markScrapeTarget(rec)
-  // Only a successful listing can prove a foreign pane is gone.
-  if (r.code === 0) {
+  const r = await full.tmux(["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_tty}\t#{pane_pid}\t#{pid}"]).catch(() => ({ code: -1, stdout: "" }))
+  // A complete inventory: a good listing, or "no server running" (every
+  // session gone). Any other failure proves nothing — nothing is released or
+  // swept on it.
+  const noServer = r.code !== 0 && tmuxNoServer(r)
+  const inventory = r.code === 0 || noServer
+  const parsed = r.code === 0 ? parsePaneList(r.stdout) : { recs: [], serverPid: null }
+  const listed = parsed.recs
+  if (inventory) {
     const names = new Set(listed.map((l) => l.name))
     for (const [name, rec] of foreign) {
       if (!names.has(name)) { releaseScrapeTarget(rec); foreign.delete(name) }
@@ -297,7 +306,15 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
       if (!active.has(rec.name) && !pendingKill.has(rec.name) && !reapable(rec.name, selfPid, alive)) foreign.set(rec.name, rec)
       else foreign.delete(rec.name)
     }
+    // Server gone or replaced: its pane ids will be reused, so no pane mark
+    // (a release's grace included) may outlive it. Cleared AFTER the releases
+    // above, BEFORE re-marking what is live now. An unknown pid (older tmux)
+    // never clears.
+    const serverPid = noServer ? null : parsed.serverPid
+    if (lastServerPid !== undefined && (noServer || (serverPid !== null && serverPid !== lastServerPid))) clearPaneMarks()
+    if (noServer || serverPid !== null) lastServerPid = serverPid
   }
+  for (const rec of listed) markScrapeTarget(rec)
 
   const todo = new Map<string, ScrapeRecord>()
   for (const rec of pendingKill.values()) todo.set(rec.name, rec)
@@ -313,7 +330,9 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
     if (await finishSession(rec, full) && listed.some((l) => l.name === rec.name)) reaped.push(rec.name)
   }
   // Still-live sessions of another server are not reapable, so their homes stay.
-  await homes.sweep?.(
+  // Without an inventory a dead owner's surviving session is in neither
+  // `active` nor `pendingKill`: sweeping now could delete its HOME under it.
+  if (inventory) await homes.sweep?.(
     (name) => active.has(name) || pendingKill.has(name),
     (name) => isScrapeSessionName(name) && reapable(name, selfPid, alive),
     (pid) => !alive(pid),
@@ -345,6 +364,7 @@ export function resetOffPaneState(): void {
   active.clear()
   pendingKill.clear()
   foreign.clear()
+  lastServerPid = undefined
   if (retryTimer) clearTimeout(retryTimer)
   retryTimer = null
   retryDeps = null

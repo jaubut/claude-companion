@@ -103,6 +103,14 @@ export function isScrapeTarget(meta: { tmuxPane?: string; tty?: string }, now = 
   return false
 }
 
+// The tmux server that numbered these panes is gone (or was replaced): its
+// pane ids (%0, %1…) will be handed out again by the next server, so a
+// retained mark would hide an unrelated session's hooks. Tty marks keep their
+// own short grace.
+export function clearPaneMarks(): void {
+  panes.clear()
+}
+
 // Tests only.
 export function resetScrapeRegistry(): void {
   panes.clear()

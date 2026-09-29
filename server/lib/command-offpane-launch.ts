@@ -10,23 +10,30 @@
 // from, so the cache re-runs only when one of them changed.
 
 import { createHash } from "node:crypto"
-import { readdir, stat } from "node:fs/promises"
-import { join } from "node:path"
+import { readdir, readFile, stat } from "node:fs/promises"
+import { dirname, join, resolve } from "node:path"
 
-export interface TmuxResult { code: number; stdout: string }
+export interface TmuxResult { code: number; stdout: string; stderr?: string }
+
+// tmux exits 1 with this when no server is running on the socket — i.e. every
+// session is gone (the last one closing takes the server with it). That is a
+// complete, empty inventory, unlike any other failure.
+export function tmuxNoServer(r: TmuxResult): boolean {
+  return r.code === 1 && /no server running|error connecting to/i.test(r.stderr ?? "")
+}
 export type TmuxRunner = (args: string[]) => Promise<TmuxResult>
 
 // Spawn tmux, bounded. A wedged tmux must not hold the enumeration forever; a
 // killed call reads as code -1 ("unknown"), never as a real tmux exit code.
 export const defaultTmux: TmuxRunner = async (args) => {
   try {
-    const p = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "ignore" })
+    const p = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "pipe" })
     let timedOut = false
     const timer = setTimeout(() => { timedOut = true; try { p.kill() } catch { /* gone */ } }, 5_000)
     try {
-      const stdout = await new Response(p.stdout).text()
+      const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
       const code = await p.exited
-      return { code: timedOut ? -1 : code, stdout }
+      return { code: timedOut ? -1 : code, stdout, stderr }
     } finally {
       clearTimeout(timer)
     }
@@ -133,16 +140,30 @@ export interface FingerprintSources {
   files: string[]
 }
 
-export function fingerprintSources(cwd: string, configDir: string): FingerprintSources {
+// Claude Code also loads project skills/commands from every ancestor's
+// .claude/ (monorepo packages) and, in a linked git worktree, from the main
+// worktree's — so those move the fingerprint too. The user config dir is
+// already walked; an ancestor whose .claude IS it is skipped.
+export function fingerprintSources(cwd: string, configDir: string, extraRoots: string[] = []): FingerprintSources {
   const skill = (n: string) => n === "SKILL.md"
   const command = (n: string) => n.endsWith(".md")
   const project = join(cwd, ".claude")
+  const roots: string[] = []
+  for (let dir = dirname(resolve(cwd)); ; dir = dirname(dir)) {
+    if (join(dir, ".claude") !== resolve(configDir)) roots.push(dir)
+    if (dirname(dir) === dir) break
+  }
+  for (const r of extraRoots) if (!roots.includes(r) && resolve(r) !== resolve(cwd)) roots.push(r)
   return {
     walk: [
       { dir: join(configDir, "skills"), match: skill },
       { dir: join(configDir, "commands"), match: command },
       { dir: join(project, "skills"), match: skill },
       { dir: join(project, "commands"), match: command },
+      ...roots.flatMap((r) => [
+        { dir: join(r, ".claude", "skills"), match: skill },
+        { dir: join(r, ".claude", "commands"), match: command },
+      ]),
     ],
     files: [
       join(configDir, "settings.json"),
@@ -173,8 +194,28 @@ async function walkMtimes(dir: string, match: (name: string) => boolean, depth: 
   }
 }
 
+// In a linked worktree, `.git` is a file: "gitdir: <main>/.git/worktrees/<n>".
+// Returns the main worktree's root, or null.
+export async function mainWorktreeRoot(cwd: string): Promise<string | null> {
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    const dotgit = join(dir, ".git")
+    const st = await stat(dotgit).catch(() => null)
+    if (st?.isDirectory()) return null
+    if (st?.isFile()) {
+      const m = (await readFile(dotgit, "utf8").catch(() => "")).match(/^gitdir:\s*(.+)$/m)
+      const gitdir = m?.[1]?.trim()
+      if (!gitdir) return null
+      const abs = resolve(dir, gitdir)
+      const i = abs.lastIndexOf(`${"/"}.git${"/"}worktrees${"/"}`)
+      return i >= 0 ? abs.slice(0, i) : null
+    }
+    if (dirname(dir) === dir) return null
+  }
+}
+
 export async function fingerprintEntries(cwd: string, configDir: string): Promise<string[]> {
-  const src = fingerprintSources(cwd, configDir)
+  const main = await mainWorktreeRoot(cwd)
+  const src = fingerprintSources(cwd, configDir, main ? [main] : [])
   const out: string[] = []
   for (const w of src.walk) await walkMtimes(w.dir, w.match, WALK_DEPTH, out)
   for (const f of src.files) out.push(`${f}:${await mtimeOf(f)}`)

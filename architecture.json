@@ -421,10 +421,11 @@
         },
         {
           "path": "lib/command-offpane-launch.ts",
-          "lines": 227,
+          "lines": 268,
           "kind": "lib",
           "exports": [
             "TmuxResult",
+            "tmuxNoServer",
             "TmuxRunner",
             "defaultTmux",
             "ClaudeLaunch",
@@ -435,6 +436,7 @@
             "claudeVersion",
             "FingerprintSources",
             "fingerprintSources",
+            "mainWorktreeRoot",
             "fingerprintEntries",
             "computeFingerprint",
             "SECURE_STORAGE_MIN_VERSION",
@@ -457,7 +459,7 @@
         },
         {
           "path": "lib/command-offpane.ts",
-          "lines": 521,
+          "lines": 541,
           "kind": "lib",
           "exports": [
             "OffPaneTiming",
@@ -483,6 +485,7 @@
             "active: Map",
             "pendingKill: Map",
             "foreign: Map",
+            "let lastServerPid",
             "let retryTimer",
             "let retryDeps"
           ],
@@ -1209,7 +1212,7 @@
         },
         {
           "path": "lib/scrape-registry.ts",
-          "lines": 111,
+          "lines": 119,
           "kind": "lib",
           "exports": [
             "SCRAPE_SESSION_PREFIX",
@@ -1222,6 +1225,7 @@
             "markScrapeTarget",
             "releaseScrapeTarget",
             "isScrapeTarget",
+            "clearPaneMarks",
             "resetScrapeRegistry"
           ],
           "state": [
@@ -2776,6 +2780,12 @@
             "lib/command-offpane.ts"
           ]
         },
+        "clearPaneMarks": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
         "TmuxRunner": {
           "module": "lib/command-offpane-launch.ts",
           "callers": [
@@ -2817,6 +2827,12 @@
           "callers": [
             "lib/command-offpane.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "tmuxNoServer": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane.ts"
           ]
         },
         "detachedNewSessionArgs": {
