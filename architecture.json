@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25",
+  "generatedAt": "2026-09-29",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -523,6 +523,28 @@
             "lib/spawn-session.ts",
             "lib/sessions.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/idempotency.ts",
+          "lines": 83,
+          "kind": "lib",
+          "exports": [
+            "TTL_MS",
+            "MAX_KEY_LENGTH",
+            "withIdempotency",
+            "resetIdempotency"
+          ],
+          "state": [
+            "entries: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1395,7 +1417,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 357,
+          "lines": 367,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1403,8 +1425,8 @@
           "state": [],
           "emits": [
             "resolved",
-            "inject_error",
-            "super_auto"
+            "super_auto",
+            "inject_error"
           ],
           "consumes": [],
           "endpoints": [
@@ -1507,7 +1529,8 @@
             "lib/push.ts",
             "state.ts",
             "wiring/dialogs.ts",
-            "wiring/waiting.ts"
+            "wiring/waiting.ts",
+            "lib/idempotency.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2321,7 +2344,6 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/codex-feed.ts",
-            "routes/api.ts#POST /api/inject",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
             "wiring/dialogs.ts",
@@ -2448,10 +2470,10 @@
             "lib/super-auto.ts",
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#POST /api/inject",
             "routes/api.ts#DELETE /api/learned",
             "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#* /api/feed",
             "routes/attach.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
@@ -2564,7 +2586,7 @@
           "callers": [
             "lib/question-driver.ts",
             "lib/question-hook.ts",
-            "routes/api.ts#POST /api/answer",
+            "routes/api.ts#* /api/feed",
             "ws.ts"
           ]
         },
@@ -2961,10 +2983,9 @@
           "module": "state.ts",
           "callers": [
             "routes/api.ts#POST /api/resolve",
-            "routes/api.ts#POST /api/answer",
             "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#POST /api/inject",
             "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#* /api/feed",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "wiring/dialogs.ts",
             "wiring/events.ts",
@@ -2973,11 +2994,11 @@
             "ws.ts"
           ]
         },
-        "resolveQuestion": {
-          "module": "lib/questions.ts",
+        "withIdempotency": {
+          "module": "lib/idempotency.ts",
           "callers": [
             "routes/api.ts#POST /api/answer",
-            "ws.ts"
+            "routes/api.ts#POST /api/inject"
           ]
         },
         "pushToAll": {
@@ -2987,91 +3008,6 @@
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/events.ts"
-          ]
-        },
-        "resolveSession": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "routes/attach.ts#POST /api/attach",
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick",
-            "routes/model.ts#POST /api/model/open",
-            "routes/model.ts#POST /api/model/set",
-            "routes/model.ts#POST /api/model/cancel",
-            "ws.ts"
-          ]
-        },
-        "yieldPaneForInject": {
-          "module": "wiring/dialogs.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "injectRefusal": {
-          "module": "lib/inject-guard.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "openDialogFor": {
-          "module": "wiring/dialogs.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "paneSnapshotFor": {
-          "module": "wiring/dialogs.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "clearWaitingForTarget": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "announceWaiting": {
-          "module": "wiring/waiting.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "injectConfirmed": {
-          "module": "lib/submit-confirm.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "deliveryFailedHint": {
-          "module": "lib/submit-confirm.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "ws.ts"
-          ]
-        },
-        "echoPromptOnInject": {
-          "module": "lib/submit-confirm.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject"
-          ]
-        },
-        "recordUserPrompt": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "routes/api.ts#POST /api/inject",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
         "listLearned": {
@@ -3176,6 +3112,98 @@
           "callers": [
             "routes/api.ts#* /api/feed",
             "ws.ts"
+          ]
+        },
+        "resolveQuestion": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "resolveSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "routes/attach.ts#POST /api/attach",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel",
+            "ws.ts"
+          ]
+        },
+        "yieldPaneForInject": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "injectRefusal": {
+          "module": "lib/inject-guard.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "openDialogFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "paneSnapshotFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "clearWaitingForTarget": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "announceWaiting": {
+          "module": "wiring/waiting.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "injectConfirmed": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "deliveryFailedHint": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "echoPromptOnInject": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "recordUserPrompt": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
         "CommandEntry": {
