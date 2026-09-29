@@ -459,7 +459,7 @@
         },
         {
           "path": "lib/command-offpane.ts",
-          "lines": 544,
+          "lines": 561,
           "kind": "lib",
           "exports": [
             "OffPaneTiming",
@@ -485,7 +485,8 @@
             "active: Map",
             "pendingKill: Map",
             "foreign: Map",
-            "let lastServerPid",
+            "let serverTicket",
+            "let serverTicketSeen",
             "let retryTimer",
             "let retryDeps"
           ],
@@ -665,7 +666,7 @@
         },
         {
           "path": "lib/hook-common.ts",
-          "lines": 120,
+          "lines": 121,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
@@ -1212,7 +1213,7 @@
         },
         {
           "path": "lib/scrape-registry.ts",
-          "lines": 119,
+          "lines": 171,
           "kind": "lib",
           "exports": [
             "SCRAPE_SESSION_PREFIX",
@@ -1225,12 +1226,14 @@
             "markScrapeTarget",
             "releaseScrapeTarget",
             "isScrapeTarget",
-            "clearPaneMarks",
+            "noteTmuxServer",
+            "tmuxServerPidOf",
             "resetScrapeRegistry"
           ],
           "state": [
             "panes: Map",
             "ttys: Map",
+            "let tmuxServer",
             "let nameSeq"
           ],
           "emits": [],
@@ -2780,7 +2783,7 @@
             "lib/command-offpane.ts"
           ]
         },
-        "clearPaneMarks": {
+        "noteTmuxServer": {
           "module": "lib/scrape-registry.ts",
           "callers": [
             "lib/command-offpane.ts"
@@ -2920,6 +2923,12 @@
             "lib/hook-common.ts",
             "lib/question-hook.ts",
             "routes/api.ts#POST /api/spawn-session"
+          ]
+        },
+        "tmuxServerPidOf": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/hook-common.ts"
           ]
         },
         "unstyle": {

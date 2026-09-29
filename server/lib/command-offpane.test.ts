@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { scrapeHookPassthrough } from "./hook-common"
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -12,7 +13,7 @@ import { isScrapeProcess, processEnvEntries } from "./discover"
 import {
   computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
 } from "./command-offpane-launch"
-import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner } from "./scrape-registry"
+import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, noteTmuxServer, releaseScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner, tmuxServerPidOf } from "./scrape-registry"
 import { DETACHED_COLS, DETACHED_ROWS } from "./spawn-session"
 
 // ── A fake tmux server ─────────────────────────────────────────────────────
@@ -161,7 +162,7 @@ class FakeTmux {
       this.livePids.add(pid)
       // Render the requested -P -F format, as tmux does.
       const fmt = args.includes("-F") ? args[args.indexOf("-F") + 1]! : "#{pane_id}"
-      let out = fmt.replace("#{pane_id}", pane).replace("#{pane_tty}", `/dev/ttys0${this.nextPane}`).replace("#{pane_pid}", String(pid))
+      let out = fmt.replace("#{pane_id}", pane).replace("#{pane_tty}", `/dev/ttys0${this.nextPane}`).replace("#{pane_pid}", String(pid)).replace("#{pid}", String(this.serverPid))
       if (this.opts.mangleTabs) out = out.replace(/\t/g, "_")
       return { code: 0, stdout: `${out}\n` }
     }
@@ -180,6 +181,7 @@ class FakeTmux {
     }
     if (cmd === "has-session") {
       const name = args[args.indexOf("-t") + 1]!.replace(/^=/, "")
+      if (this.sessions.size === 0) return { code: 1, stdout: "", stderr: "no server running on /tmp/tmux-501/default" }
       return { code: this.sessions.has(name) ? 0 : 1, stdout: "" }
     }
     if (cmd === "show-environment") return { code: 0, stdout: "PATH=/usr/bin:/bin\n" }
@@ -279,7 +281,7 @@ describe("enumerateCommandsOffPane", () => {
     expect(isScrapeSessionName(create[create.indexOf("-s") + 1]!)).toBe(true)
     expect(create[create.indexOf("-x") + 1]).toBe(String(DETACHED_COLS))
     expect(create[create.indexOf("-y") + 1]).toBe(String(DETACHED_ROWS))
-    expect(create[create.indexOf("-F") + 1]).toBe("#{pane_id}|#{pane_tty}|#{pane_pid}")
+    expect(create[create.indexOf("-F") + 1]).toBe("#{pane_id}|#{pane_tty}|#{pane_pid}|#{pid}")
     const name = create[create.indexOf("-s") + 1]!
     expect(create.at(-1)).toBe(buildScrapeInner("/Users/me/proj", LAUNCH, { env: { HOME: `/tmp/homes/${name}` }, unset: ["CLAUDE_CONFIG_DIR"] }))
   })
@@ -512,6 +514,97 @@ describe("reapScrapeSessions", () => {
     tmux.addSession("cc-myproject", "%60", "/dev/ttys061", 9061)
     await reap()
     expect(isScrapeTarget({ tmuxPane: "%60" })).toBe(false)
+  })
+
+  test("our scrape was the server's LAST session: once it is cleaned up no mark survives for the next server's ids", async () => {
+    const tmux = new FakeTmux(sim())
+    tmux.sessions.delete("cc-user")
+    const res = await run(tmux)
+    expect(res.status).toBe("ok")
+    expect(tmux.sessions.size).toBe(0) // the server went with it
+    // No inventory runs after this; a new server hands out %10 to a user session.
+    tmux.serverPid = 6000
+    tmux.nextPane = 10
+    tmux.addSession("cc-myproject", "%10", "/dev/ttys070", 9070)
+    expect(isScrapeTarget({ tmuxPane: "%10" })).toBe(false)
+  })
+
+  test("a pending kill of a replaced server's session is never re-marked by its cleanup", async () => {
+    const tmux = new FakeTmux(sim(), { unkillable: { count: 3 } })
+    const res = await run(tmux, { killAttempts: 3 })
+    expect(res.status).toBe("ok")
+    expect(pendingKills()).toHaveLength(1)
+    expect(isScrapeTarget({ tmuxPane: "%10" })).toBe(true)
+    // The tmux server restarts (taking the hidden session with it) and a user's
+    // session now owns %10.
+    for (const s of tmux.sessions.values()) tmux.livePids.delete(s.pid)
+    tmux.sessions.clear()
+    tmux.serverPid = 6000
+    tmux.nextPane = 10
+    tmux.addSession("cc-myproject", "%10", "/dev/ttys070", 9070)
+    await reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes: fakeHomes().homes })
+    expect(pendingKills()).toEqual([])
+    expect(isScrapeTarget({ tmuxPane: "%10" })).toBe(false)
+  })
+
+  test("pane marks are scoped to the tmux server that numbered them", () => {
+    noteTmuxServer(5000)
+    markScrapeTarget({ pane: "%3", serverPid: 5000 })
+    expect(isScrapeTarget({ tmuxPane: "%3" })).toBe(true)
+    // A stale listing of a dead server's pane is not the current server's.
+    markScrapeTarget({ pane: "%4", serverPid: 4000 })
+    expect(isScrapeTarget({ tmuxPane: "%4" })).toBe(false)
+    // Released against a server that is gone: dropped, not given a grace.
+    noteTmuxServer(null)
+    releaseScrapeTarget({ pane: "%3", serverPid: 5000 })
+    noteTmuxServer(5000) // even if the pid came back
+    expect(isScrapeTarget({ tmuxPane: "%3" })).toBe(false)
+  })
+
+  test("an old server's cleanup never removes or overwrites the new server's mark on a reused id", () => {
+    noteTmuxServer(6000)
+    markScrapeTarget({ pane: "%0", serverPid: 6000 }) // new server's live scrape
+    releaseScrapeTarget({ pane: "%0", serverPid: 5000 }) // late cleanup of the old one
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true)
+    markScrapeTarget({ pane: "%0", serverPid: 5000 }) // stale listing
+    releaseScrapeTarget({ pane: "%0", serverPid: 6000 })
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true) // our own grace, still ours
+  })
+
+  test("a hook names its own tmux server ($TMUX): a restart no reap has seen does not hide it", () => {
+    noteTmuxServer(5000)
+    markScrapeTarget({ pane: "%0", serverPid: 5000 })
+    releaseScrapeTarget({ pane: "%0", serverPid: 5000 }) // 10-min grace for a late SessionEnd
+    // Same server's late hook: still dropped.
+    expect(isScrapeTarget({ tmuxPane: "%0", tmuxServerPid: 5000 })).toBe(true)
+    // tmux restarted (pid 7000), nothing re-listed yet: a real session on %0.
+    expect(isScrapeTarget({ tmuxPane: "%0", tmuxServerPid: 7000 })).toBe(false)
+    // Old hook scripts send no $TMUX: the cached server decides, as before.
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true)
+  })
+
+  test("every hook script that sends X-Companion-Tmux-Pane also sends X-Companion-Tmux", () => {
+    const dir = join(import.meta.dir, "..", "..", "hooks")
+    for (const f of ["_lib.sh", "companion-codex-hook.sh"]) {
+      const src = readFileSync(join(dir, f), "utf8")
+      expect(src).toContain("X-Companion-Tmux-Pane: ${TMUX_PANE:-}")
+      expect(src).toContain("X-Companion-Tmux: ${TMUX:-}")
+    }
+  })
+
+  test("tmuxServerPidOf parses $TMUX", () => {
+    expect(tmuxServerPidOf("/private/tmp/tmux-501/default,12345,0")).toBe(12345)
+    expect(tmuxServerPidOf("")).toBeNull()
+    expect(tmuxServerPidOf(undefined)).toBeNull()
+    expect(tmuxServerPidOf("garbage")).toBeNull()
+  })
+
+  test("hook passthrough uses the X-Companion-Tmux header's server", () => {
+    noteTmuxServer(5000)
+    markScrapeTarget({ pane: "%0", serverPid: 5000 })
+    const h = (tmux: string) => new Headers({ "x-companion-tmux-pane": "%0", "x-companion-tmux": tmux })
+    expect(scrapeHookPassthrough(h("/tmp/tmux-501/default,5000,0"))).not.toBeNull()
+    expect(scrapeHookPassthrough(h("/tmp/tmux-501/default,7000,0"))).toBeNull()
   })
 
   test("tmuxNoServer: only a missing server/socket is an empty inventory", () => {

@@ -26,15 +26,21 @@
 
 // Pane ids (%N) are never reused within a tmux server's lifetime, so a pane
 // can stay marked long after its session is killed — that is what catches a
-// late SessionEnd hook.
+// late SessionEnd hook. A NEW server hands out %0, %1… again, so each pane
+// mark carries the pid of the server that numbered it and only counts while
+// that server is the current one (noteTmuxServer).
 const PANE_GRACE_MS = 10 * 60 * 1000
 // A pty IS reused, quickly on macOS: the next Terminal window may get the same
 // ttysNNN. Keep a released tty only long enough for the dying claude's last
 // hook, never long enough to swallow a real session that inherits it.
 const TTY_GRACE_MS = 5_000
 
-const panes = new Map<string, number>() // pane → expiresAt (Infinity while live)
+// pane → expiresAt (Infinity while live) + its tmux server's pid (null: unknown)
+const panes = new Map<string, { exp: number; serverPid: number | null }>()
 const ttys = new Map<string, number>()
+// Pid of the current tmux server as last seen by lib/command-offpane.ts
+// (null: none running; undefined: never seen).
+let tmuxServer: number | null | undefined = undefined
 
 export const SCRAPE_SESSION_PREFIX = "cc-scrape-"
 export const SCRAPE_ENV = "COMPANION_SCRAPE"
@@ -86,33 +92,79 @@ function live(map: Map<string, number>, k: string, now: number): boolean {
   return false
 }
 
-export function markScrapeTarget(t: { pane?: string; tty?: string }): void {
-  if (t.pane) panes.set(t.pane, Number.POSITIVE_INFINITY)
+interface ScrapeTarget { pane?: string; tty?: string; serverPid?: number | null }
+
+// Is a mark numbered by `serverPid` about the current server's panes?
+function currentServer(serverPid: number | null): boolean {
+  return serverPid === null || tmuxServer === undefined || serverPid === tmuxServer
+}
+
+export function markScrapeTarget(t: ScrapeTarget): void {
+  const serverPid = t.serverPid ?? null
+  if (t.pane) {
+    // A late mark for a stale server never overwrites the current server's
+    // mark on the same (reused) id.
+    const cur = panes.get(t.pane)
+    const clobbers = cur && cur.serverPid !== serverPid && currentServer(cur.serverPid) && !currentServer(serverPid)
+    if (!clobbers) panes.set(t.pane, { exp: Number.POSITIVE_INFINITY, serverPid })
+  }
   if (t.tty) ttys.set(normTty(t.tty), Number.POSITIVE_INFINITY)
 }
 
-export function releaseScrapeTarget(t: { pane?: string; tty?: string }, now = Date.now()): void {
-  if (t.pane) panes.set(t.pane, now + PANE_GRACE_MS)
+// A pane of a server that is already gone is unmarked, never given a grace:
+// the next server may hand its id to an unrelated session.
+export function releaseScrapeTarget(t: ScrapeTarget, now = Date.now()): void {
+  const serverPid = t.serverPid ?? null
+  if (t.pane) {
+    const cur = panes.get(t.pane)
+    if (currentServer(serverPid)) {
+      // Only our own mark gets the grace — never another server's on this id.
+      if (!cur || cur.serverPid === serverPid || cur.serverPid === null) panes.set(t.pane, { exp: now + PANE_GRACE_MS, serverPid })
+    } else if (cur && (cur.serverPid === serverPid || serverPid === null)) {
+      panes.delete(t.pane)
+    }
+  }
   if (t.tty) ttys.set(normTty(t.tty), now + TTY_GRACE_MS)
 }
 
 // Does this hook / discovery record come from a hidden enumeration session?
-export function isScrapeTarget(meta: { tmuxPane?: string; tty?: string }, now = Date.now()): boolean {
-  if (meta.tmuxPane && live(panes, meta.tmuxPane, now)) return true
+// `tmuxServerPid` is the hook's OWN server (from its $TMUX, see
+// tmuxServerPidOf): when both it and the mark's server are known they must
+// match — that holds even after a tmux restart no reap has noticed yet.
+export function isScrapeTarget(meta: { tmuxPane?: string; tty?: string; tmuxServerPid?: number | null }, now = Date.now()): boolean {
+  if (meta.tmuxPane) {
+    const m = panes.get(meta.tmuxPane)
+    if (m && m.exp <= now) panes.delete(meta.tmuxPane)
+    else if (m) {
+      const hookServer = meta.tmuxServerPid ?? null
+      const sameServer = hookServer !== null && m.serverPid !== null ? hookServer === m.serverPid : currentServer(m.serverPid)
+      if (sameServer) return true
+    }
+  }
   if (meta.tty && live(ttys, normTty(meta.tty), now)) return true
   return false
 }
 
-// The tmux server that numbered these panes is gone (or was replaced): its
-// pane ids (%0, %1…) will be handed out again by the next server, so a
-// retained mark would hide an unrelated session's hooks. Tty marks keep their
-// own short grace.
-export function clearPaneMarks(): void {
-  panes.clear()
+// The current tmux server's pid (null: none running). When it changes, the
+// old server's pane ids will be handed out again, so no mark of another
+// server (nor of an unknown one) may survive. Tty marks keep their own short
+// grace.
+export function noteTmuxServer(pid: number | null): void {
+  if (tmuxServer !== undefined && pid !== tmuxServer) {
+    for (const [pane, m] of panes) if (m.serverPid !== pid) panes.delete(pane)
+  }
+  tmuxServer = pid
+}
+
+// $TMUX is "<socket>,<server pid>,<session idx>"; anything else → null.
+export function tmuxServerPidOf(tmuxEnv: string | null | undefined): number | null {
+  const pid = Number((tmuxEnv ?? "").split(",")[1])
+  return Number.isInteger(pid) && pid > 0 ? pid : null
 }
 
 // Tests only.
 export function resetScrapeRegistry(): void {
   panes.clear()
   ttys.clear()
+  tmuxServer = undefined
 }

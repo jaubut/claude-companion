@@ -1,6 +1,6 @@
 import type { SpawnAgent } from "./spawn-session"
 import type { Session } from "./sessions"
-import { isScrapeTarget } from "./scrape-registry"
+import { isScrapeTarget, tmuxServerPidOf } from "./scrape-registry"
 
 // Helpers shared by every hook endpoint and the event wiring: which agent a
 // hook came from, the cwd it reports, the decision envelope each hook event
@@ -115,5 +115,6 @@ export function metaFromHeaders(headers: Headers): Partial<Session> {
 // registration, no push, no card. Normally hooks/_lib.sh already stopped it
 // (COMPANION_SCRAPE=1); this covers hook scripts installed before that guard.
 export function scrapeHookPassthrough(headers: Headers): Response | null {
-  return isScrapeTarget(metaFromHeaders(headers)) ? hookPassthroughResponse(agentFromHeaders(headers)) : null
+  const meta = { ...metaFromHeaders(headers), tmuxServerPid: tmuxServerPidOf(headers.get("x-companion-tmux")) }
+  return isScrapeTarget(meta) ? hookPassthroughResponse(agentFromHeaders(headers)) : null
 }

@@ -38,6 +38,7 @@ call_server() {
     -H "X-Companion-Cwd: ${CWD}" \
     -H "X-Companion-Pid: ${PPID:-}" \
     -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}" \
+    -H "X-Companion-Tmux: ${TMUX:-}" \
     -d "$INPUT" 2>/dev/null
 }
 
