@@ -174,6 +174,18 @@ export async function createScrapeHome(sessionName: string, src: ScrapeHomeSourc
   // rm never follows a symlink: a stale entry of this name is removed, not its target.
   await rm(root, { recursive: true, force: true })
   await mkdir(root, { mode: 0o700 })
+  // From here on the dir exists: any failure removes it before rethrowing, so
+  // a half-built home (and a half-written .claude.json copy) never waits for
+  // the orphan sweep.
+  try {
+    return await fillScrapeHome(root, src, uid)
+  } catch (err) {
+    await removeScrapeHome(root).catch(() => {})
+    throw err
+  }
+}
+
+async function fillScrapeHome(root: string, src: ScrapeHomeSource, uid: number): Promise<ScrapeHome> {
   await verifyPrivateDir(root, uid)
   const cfg = join(root, ".claude")
   await mkdir(cfg, { mode: 0o700 })
