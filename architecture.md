@@ -13,7 +13,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/keyboard-inject.ts` | 600 | lib | 10 | state: let injectQueue |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/transcript.ts` | 598 | lib | 13 | state: states: Map, busyImages: WeakMap |
-| `lib/command-offpane.ts` | 541 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let lastServerPid, let retryTimer, let retryDeps |
+| `lib/command-offpane.ts` | 544 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let lastServerPid, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 507 | route-host | 1 | emits: user_prompt · routes: 8 |
 | `lib/activity.ts` | 492 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
