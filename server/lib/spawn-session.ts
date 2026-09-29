@@ -13,7 +13,7 @@
 // terminal window mirroring the first (tmux mirrors any session attached
 // from multiple clients in real time, which looked like a "copy" bug).
 
-import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -301,6 +301,28 @@ async function spawnInIterm(cwd: string, agent: SpawnAgent, env?: Record<string,
   return { ok: true, app: "iTerm", sessionName }
 }
 
+// A spawn in the bare home dir moves to ~/work on Linux. Claude Code's Linux
+// sandbox (bwrap) masks .git/config, .git/hooks and .git/info/exclude of the cwd
+// even when it isn't a repo, so every session started in ~ built a fake ~/.git
+// full of 0-byte read-only stubs and appended its 19-line exclude block again
+// (83 copies on Zettlab by 2026-09-29). Tools that walk up to the nearest .git
+// then took ~ for a project root. macOS's sandbox doesn't do this, so the Mac
+// keeps ~. Override with COMPANION_HOME_SPAWN_DIR.
+export function homeSpawnCwd(
+  resolved: string,
+  env: { platform: string; home?: string; override?: string } = {
+    platform: process.platform,
+    home: process.env.HOME,
+    override: process.env.COMPANION_HOME_SPAWN_DIR,
+  },
+): string {
+  if (env.platform === "darwin" || !env.home) return resolved
+  const strip = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p)
+  if (strip(resolved) !== strip(env.home)) return resolved
+  const target = env.override?.trim() || `${strip(env.home)}/work`
+  return target.startsWith("~") ? target.replace(/^~/, strip(env.home)) : target
+}
+
 export async function spawnCompanionSession(opts: {
   cwd: string
   app?: SpawnApp
@@ -315,9 +337,17 @@ export async function spawnCompanionSession(opts: {
     return { ok: false, error: "cwd must be absolute" }
   }
   // Expand ~ manually — osascript runs outside a shell so ~ isn't expanded.
-  const resolved = cwd.startsWith("~")
+  const expanded = cwd.startsWith("~")
     ? cwd.replace(/^~/, process.env.HOME ?? "")
     : cwd
+  const resolved = homeSpawnCwd(expanded)
+  if (resolved !== expanded) {
+    try {
+      mkdirSync(resolved, { recursive: true })
+    } catch (err) {
+      return { ok: false, error: `cannot create ${resolved}: ${(err as Error).message}` }
+    }
+  }
   if (!existsSync(resolved)) {
     return { ok: false, error: `cwd does not exist: ${resolved}` }
   }

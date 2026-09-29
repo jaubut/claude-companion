@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { DETACHED_COLS, DETACHED_ROWS, buildInner, detachedNewSessionArgs } from "./spawn-session"
+import { DETACHED_COLS, DETACHED_ROWS, buildInner, detachedNewSessionArgs, homeSpawnCwd } from "./spawn-session"
 
 // The inner command tmux runs. Both spawn paths build it here — the Mac one
 // wraps it in `tmux new-session -s <sess> '<inner>'` for AppleScript, the Linux
@@ -67,4 +67,32 @@ test("a real dispatch id passes the charset", () => {
   // Task ids are crypto.randomUUID().slice(0, 8) — always 8 hex chars.
   const id = crypto.randomUUID().slice(0, 8)
   expect(buildInner(CWD, "claude", { COMPANION_TASK_ID: id })).toBe(`export COMPANION_TASK_ID=${id}; cd '${CWD}' && claude`)
+})
+
+// Linux: a spawn in the bare home dir moves to ~/work so Claude Code's sandbox
+// stops building a fake ~/.git (see homeSpawnCwd).
+test("linux: home → ~/work, with or without a trailing slash", () => {
+  const env = { platform: "linux", home: "/home/aubut" }
+  expect(homeSpawnCwd("/home/aubut", env)).toBe("/home/aubut/work")
+  expect(homeSpawnCwd("/home/aubut/", env)).toBe("/home/aubut/work")
+})
+
+test("linux: any other dir is left alone, including subdirs of home", () => {
+  const env = { platform: "linux", home: "/home/aubut" }
+  expect(homeSpawnCwd("/home/aubut/claude-companion", env)).toBe("/home/aubut/claude-companion")
+  expect(homeSpawnCwd("/home/aubutx", env)).toBe("/home/aubutx")
+  expect(homeSpawnCwd("/tmp", env)).toBe("/tmp")
+})
+
+test("linux: COMPANION_HOME_SPAWN_DIR overrides the target, ~ expanded", () => {
+  expect(homeSpawnCwd("/home/aubut", { platform: "linux", home: "/home/aubut", override: "~/sessions" }))
+    .toBe("/home/aubut/sessions")
+  expect(homeSpawnCwd("/home/aubut", { platform: "linux", home: "/home/aubut", override: "/srv/cc" }))
+    .toBe("/srv/cc")
+})
+
+test("macOS keeps ~, and no HOME means no remap", () => {
+  expect(homeSpawnCwd("/Users/jeremieaubut", { platform: "darwin", home: "/Users/jeremieaubut" }))
+    .toBe("/Users/jeremieaubut")
+  expect(homeSpawnCwd("/home/aubut", { platform: "linux" })).toBe("/home/aubut")
 })
