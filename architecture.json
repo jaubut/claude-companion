@@ -2023,7 +2023,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 173,
+          "lines": 193,
           "kind": "route-host",
           "exports": [
             "handleOrchestratorRoute"
@@ -2076,7 +2076,8 @@
           "apiCalls": [],
           "imports": [
             "wiring/orchestrator.ts",
-            "lib/orchestrator-chat.ts"
+            "lib/orchestrator-chat.ts",
+            "lib/idempotency.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3428,7 +3429,13 @@
           "callers": [
             "routes/api.ts#POST /api/resolve",
             "routes/api.ts#POST /api/answer",
-            "routes/api.ts#POST /api/inject"
+            "routes/api.ts#POST /api/inject",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
           ]
         },
         "pushToAll": {
