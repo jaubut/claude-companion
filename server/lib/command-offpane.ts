@@ -44,7 +44,7 @@ import {
 } from "./command-list"
 import { paneHasDialog, paneInputReady } from "./tmux-pane"
 import {
-  clearPaneMarks, isScrapeSessionName, markScrapeTarget, releaseScrapeTarget, SCRAPE_ENV, SCRAPE_ENV_CLAUDE, scrapeSessionName, scrapeSessionOwner,
+  isScrapeSessionName, markScrapeTarget, noteTmuxServer, releaseScrapeTarget, SCRAPE_ENV, SCRAPE_ENV_CLAUDE, scrapeSessionName, scrapeSessionOwner,
 } from "./scrape-registry"
 import { detachedNewSessionArgs } from "./spawn-session"
 import { defaultTmux, tmuxNoServer, type ClaudeLaunch, type TmuxRunner } from "./command-offpane-launch"
@@ -196,7 +196,8 @@ export function buildScrapeInner(cwd: string, launch: ClaudeLaunch, home: Pick<S
 
 // ── Session lifecycle ──────────────────────────────────────────────────────
 
-interface ScrapeRecord { name: string; pane: string; tty: string; pid: number; home: string }
+// serverPid: the tmux server that numbered `pane` (null: unknown).
+interface ScrapeRecord { name: string; pane: string; tty: string; pid: number; home: string; serverPid: number | null }
 
 // Sessions currently being driven by THIS process — never reaped from under it.
 const active = new Map<string, ScrapeRecord>()
@@ -207,22 +208,33 @@ const pendingKill = new Map<string, ScrapeRecord>()
 // released once they are gone from tmux — otherwise a later ordinary session
 // reusing that tty would stay hidden (and its hooks dropped) for good.
 const foreign = new Map<string, ScrapeRecord>()
-// Pid of the tmux server seen at the last complete inventory (null: none
-// running). A change means pane ids are being reused.
-let lastServerPid: number | null | undefined = undefined
+// Every tmux call that can reveal the server's pid takes a ticket before it
+// runs; only an answer newer than the last applied one reaches the registry,
+// so a slow listing never overwrites a fresher new-session / has-session.
+let serverTicket = 0
+let serverTicketSeen = 0
+function observeServer(pid: number | null, ticket: number): void {
+  if (ticket < serverTicketSeen) return
+  serverTicketSeen = ticket
+  noteTmuxServer(pid)
+}
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let retryDeps: LifecycleDeps | null = null
 const PENDING_RETRY_MS = 30_000
 
 // kill-session, then has-session to prove it. has-session exits 1 when the
 // session (or the whole server) is gone; anything else — 0, or -1 for a
-// wedged/unspawnable tmux — is not proof.
+// wedged/unspawnable tmux — is not proof. "No server running" also tells the
+// registry the server is gone (it was that server's last session), so the
+// release that follows leaves no pane mark behind for the next server's ids.
 export async function killScrapeSession(
   tmux: TmuxRunner, name: string, sleep: (ms: number) => Promise<void>, attempts = DEFAULT_TIMING.killAttempts, retryMs = DEFAULT_TIMING.killRetryMs,
 ): Promise<boolean> {
   for (let i = 0; i < attempts; i++) {
     await tmux(["kill-session", "-t", `=${name}`]).catch(() => undefined)
+    const ticket = ++serverTicket
     const probe = await tmux(["has-session", "-t", `=${name}`]).catch(() => ({ code: -1, stdout: "" }))
+    if (tmuxNoServer(probe)) observeServer(null, ticket)
     if (probe.code === 1) return true
     await sleep(retryMs)
   }
@@ -274,8 +286,9 @@ function parsePaneList(out: string): { recs: ScrapeRecord[]; serverPid: number |
     const [name = "", pane = "", tty = "", pid = "", server = ""] = line.trim().split("\t")
     if (serverPid === null && Number(server) > 0) serverPid = Number(server)
     if (!isScrapeSessionName(name)) continue
-    recs.push({ name, pane, tty, pid: Number(pid) || 0, home: "" })
+    recs.push({ name, pane, tty, pid: Number(pid) || 0, home: "", serverPid: null })
   }
+  for (const rec of recs) rec.serverPid = serverPid
   return { recs, serverPid }
 }
 
@@ -289,6 +302,7 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
   const alive = full.pidAlive ?? pidAlive
   const selfPid = full.selfPid ?? process.pid
   const homes = full.homes ?? realHomes
+  const ticket = ++serverTicket
   const r = await full.tmux(["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_tty}\t#{pane_pid}\t#{pid}"]).catch(() => ({ code: -1, stdout: "" }))
   // A complete inventory: a good listing, or "no server running" (every
   // session gone). Any other failure proves nothing — nothing is released or
@@ -307,12 +321,11 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
       else foreign.delete(rec.name)
     }
     // Server gone or replaced: its pane ids will be reused, so no pane mark
-    // (a release's grace included) may outlive it. Cleared AFTER the releases
-    // above, BEFORE re-marking what is live now. An unknown pid (older tmux)
-    // never clears.
-    const serverPid = noServer ? null : parsed.serverPid
-    if (lastServerPid !== undefined && (noServer || (serverPid !== null && serverPid !== lastServerPid))) clearPaneMarks()
-    if (noServer || serverPid !== null) lastServerPid = serverPid
+    // (a release's grace included) may outlive it. Noted AFTER the releases
+    // above, BEFORE re-marking what is live now; finishSession below then
+    // never re-marks a dead server's pane. An unknown pid (older tmux) proves
+    // nothing.
+    if (noServer || parsed.serverPid !== null) observeServer(noServer ? null : parsed.serverPid, ticket)
   }
   for (const rec of listed) markScrapeTarget(rec)
 
@@ -364,7 +377,8 @@ export function resetOffPaneState(): void {
   active.clear()
   pendingKill.clear()
   foreign.clear()
-  lastServerPid = undefined
+  serverTicket = 0
+  serverTicketSeen = 0
   if (retryTimer) clearTimeout(retryTimer)
   retryTimer = null
   retryDeps = null
@@ -384,7 +398,7 @@ export async function enumerateCommandsOffPane(cwd: string, deps: OffPaneDeps): 
 
   await reapScrapeSessions(deps).catch(() => [])
 
-  const rec: ScrapeRecord = { name: session, pane: "", tty: "", pid: 0, home: "" }
+  const rec: ScrapeRecord = { name: session, pane: "", tty: "", pid: 0, home: "", serverPid: null }
   active.set(session, rec)
   try {
     let home: ScrapeHome
@@ -399,9 +413,12 @@ export async function enumerateCommandsOffPane(cwd: string, deps: OffPaneDeps): 
     // "|", not a tab: tmux 3.6 prints a -P -F tab as "_" (3.4 kept it), which
     // made every Mac enumeration fail as "new-session failed". Pane ids, ttys
     // and pids never contain "|".
-    const created = await tmux(detachedNewSessionArgs(session, inner, "#{pane_id}|#{pane_tty}|#{pane_pid}")).catch(() => ({ code: -1, stdout: "" }))
-    const [pane = "", tty = "", pid = ""] = created.stdout.trim().split("|")
-    Object.assign(rec, { pane, tty, pid: Number(pid) || 0 })
+    const ticket = ++serverTicket
+    const created = await tmux(detachedNewSessionArgs(session, inner, "#{pane_id}|#{pane_tty}|#{pane_pid}|#{pid}")).catch(() => ({ code: -1, stdout: "" }))
+    const [pane = "", tty = "", pid = "", server = ""] = created.stdout.trim().split("|")
+    const serverPid = Number(server) > 0 ? Number(server) : null
+    Object.assign(rec, { pane, tty, pid: Number(pid) || 0, serverPid })
+    if (created.code === 0 && serverPid !== null) observeServer(serverPid, ticket)
     // Marked before claude has booted far enough to do anything.
     markScrapeTarget(rec)
     if (created.code !== 0 || !/^%\d+$/.test(pane)) return result("error", [], 0, "tmux new-session failed")
