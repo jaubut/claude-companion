@@ -11,6 +11,7 @@ import { join, basename } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
 import { recordSession } from "./sessions"
+import { envHasScrapeVar, isScrapeTarget } from "./scrape-registry"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
@@ -64,6 +65,51 @@ async function listAgentPids(): Promise<DiscoveredAgent[]> {
     out.push({ agent: base, pid, tty: `/dev/${tty}`, cwd: "", command: trimmed })
   }
   return out
+}
+
+// A process's environment as NAME=value entries. Linux: /proc/<pid>/environ.
+// macOS/BSD: `ps eww` prints the argv followed by the env; the argv (from a
+// plain `ps ww`) is cut off first, so nothing typed on the command line is
+// ever read as environment. null when unreadable.
+export async function processEnvEntries(pid: string, platform: NodeJS.Platform = process.platform): Promise<string[] | null> {
+  try {
+    if (platform === "linux") return (await readFile(`/proc/${pid}/environ`, "latin1")).split("\0")
+    const [argv, withEnv] = await Promise.all([
+      run("ps", ["-ww", "-o", "command=", "-p", pid]),
+      run("ps", ["eww", "-o", "command=", "-p", pid]),
+    ])
+    const a = argv.replace(/\n$/, ""), e = withEnv.replace(/\n$/, "")
+    if (!a || !e.startsWith(a)) return null
+    return e.slice(a.length).trim().split(/\s+/).filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+async function ttyOwnedByMe(tty: string): Promise<boolean> {
+  const uid = process.getuid?.()
+  if (uid === undefined) return false
+  try {
+    return (await stat(tty.startsWith("/dev/") ? tty : `/dev/${tty}`)).uid === uid
+  } catch {
+    return false
+  }
+}
+
+export interface ScrapeProcessDeps {
+  ownsTty?: (tty: string) => Promise<boolean>
+  envOf?: (pid: string) => Promise<string[] | null>
+}
+
+// Is this the companion's own hidden /help enumeration claude? By its tty
+// (registered while the session lives, lib/scrape-registry.ts), else by a
+// scrape var in its ENVIRONMENT — read only for a tty this user owns (the
+// hidden session's pty always is). Never by its command line.
+export async function isScrapeProcess(pid: string, tty: string, deps: ScrapeProcessDeps = {}): Promise<boolean> {
+  if (isScrapeTarget({ tty })) return true
+  if (!(await (deps.ownsTty ?? ttyOwnedByMe)(tty))) return false
+  const env = await (deps.envOf ?? processEnvEntries)(pid)
+  return env ? envHasScrapeVar(env) : false
 }
 
 async function findCwdForPid(pid: string): Promise<string> {
@@ -228,6 +274,9 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
 
   await Promise.all(pids.map(async (p) => {
     try {
+      // The companion's own hidden /help enumeration claude (lib/command-offpane.ts):
+      // by its registered tty, or by the scrape var in its environment.
+      if (await isScrapeProcess(p.pid, p.tty)) return
       const [cwd, termProgram] = await Promise.all([
         findCwdForPid(p.pid),
         findTermProgramForPid(p.pid),
