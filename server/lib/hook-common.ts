@@ -1,5 +1,6 @@
 import type { SpawnAgent } from "./spawn-session"
 import type { Session } from "./sessions"
+import { isScrapeTarget } from "./scrape-registry"
 
 // Helpers shared by every hook endpoint and the event wiring: which agent a
 // hook came from, the cwd it reports, the decision envelope each hook event
@@ -107,4 +108,12 @@ export function metaFromHeaders(headers: Headers): Partial<Session> {
     taskId: raw("x-companion-task-id"),
     pid: raw("x-companion-pid"),
   }
+}
+
+// A hook from the companion's own hidden /help enumeration session
+// (lib/command-offpane.ts) gets a bare passthrough and nothing else — no
+// registration, no push, no card. Normally hooks/_lib.sh already stopped it
+// (COMPANION_SCRAPE=1); this covers hook scripts installed before that guard.
+export function scrapeHookPassthrough(headers: Headers): Response | null {
+  return isScrapeTarget(metaFromHeaders(headers)) ? hookPassthroughResponse(agentFromHeaders(headers)) : null
 }
