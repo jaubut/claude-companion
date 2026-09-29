@@ -583,6 +583,15 @@ describe("reapScrapeSessions", () => {
     expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true)
   })
 
+  test("every hook script that sends X-Companion-Tmux-Pane also sends X-Companion-Tmux", () => {
+    const dir = join(import.meta.dir, "..", "..", "hooks")
+    for (const f of ["_lib.sh", "companion-codex-hook.sh"]) {
+      const src = readFileSync(join(dir, f), "utf8")
+      expect(src).toContain("X-Companion-Tmux-Pane: ${TMUX_PANE:-}")
+      expect(src).toContain("X-Companion-Tmux: ${TMUX:-}")
+    }
+  })
+
   test("tmuxServerPidOf parses $TMUX", () => {
     expect(tmuxServerPidOf("/private/tmp/tmux-501/default,12345,0")).toBe(12345)
     expect(tmuxServerPidOf("")).toBeNull()
