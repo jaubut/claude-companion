@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { scrapeHookPassthrough } from "./hook-common"
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -12,7 +13,7 @@ import { isScrapeProcess, processEnvEntries } from "./discover"
 import {
   computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
 } from "./command-offpane-launch"
-import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, noteTmuxServer, releaseScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner } from "./scrape-registry"
+import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, noteTmuxServer, releaseScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner, tmuxServerPidOf } from "./scrape-registry"
 import { DETACHED_COLS, DETACHED_ROWS } from "./spawn-session"
 
 // ── A fake tmux server ─────────────────────────────────────────────────────
@@ -558,6 +559,43 @@ describe("reapScrapeSessions", () => {
     releaseScrapeTarget({ pane: "%3", serverPid: 5000 })
     noteTmuxServer(5000) // even if the pid came back
     expect(isScrapeTarget({ tmuxPane: "%3" })).toBe(false)
+  })
+
+  test("an old server's cleanup never removes or overwrites the new server's mark on a reused id", () => {
+    noteTmuxServer(6000)
+    markScrapeTarget({ pane: "%0", serverPid: 6000 }) // new server's live scrape
+    releaseScrapeTarget({ pane: "%0", serverPid: 5000 }) // late cleanup of the old one
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true)
+    markScrapeTarget({ pane: "%0", serverPid: 5000 }) // stale listing
+    releaseScrapeTarget({ pane: "%0", serverPid: 6000 })
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true) // our own grace, still ours
+  })
+
+  test("a hook names its own tmux server ($TMUX): a restart no reap has seen does not hide it", () => {
+    noteTmuxServer(5000)
+    markScrapeTarget({ pane: "%0", serverPid: 5000 })
+    releaseScrapeTarget({ pane: "%0", serverPid: 5000 }) // 10-min grace for a late SessionEnd
+    // Same server's late hook: still dropped.
+    expect(isScrapeTarget({ tmuxPane: "%0", tmuxServerPid: 5000 })).toBe(true)
+    // tmux restarted (pid 7000), nothing re-listed yet: a real session on %0.
+    expect(isScrapeTarget({ tmuxPane: "%0", tmuxServerPid: 7000 })).toBe(false)
+    // Old hook scripts send no $TMUX: the cached server decides, as before.
+    expect(isScrapeTarget({ tmuxPane: "%0" })).toBe(true)
+  })
+
+  test("tmuxServerPidOf parses $TMUX", () => {
+    expect(tmuxServerPidOf("/private/tmp/tmux-501/default,12345,0")).toBe(12345)
+    expect(tmuxServerPidOf("")).toBeNull()
+    expect(tmuxServerPidOf(undefined)).toBeNull()
+    expect(tmuxServerPidOf("garbage")).toBeNull()
+  })
+
+  test("hook passthrough uses the X-Companion-Tmux header's server", () => {
+    noteTmuxServer(5000)
+    markScrapeTarget({ pane: "%0", serverPid: 5000 })
+    const h = (tmux: string) => new Headers({ "x-companion-tmux-pane": "%0", "x-companion-tmux": tmux })
+    expect(scrapeHookPassthrough(h("/tmp/tmux-501/default,5000,0"))).not.toBeNull()
+    expect(scrapeHookPassthrough(h("/tmp/tmux-501/default,7000,0"))).toBeNull()
   })
 
   test("tmuxNoServer: only a missing server/socket is an empty inventory", () => {

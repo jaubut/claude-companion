@@ -666,7 +666,7 @@
         },
         {
           "path": "lib/hook-common.ts",
-          "lines": 120,
+          "lines": 121,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
@@ -1213,7 +1213,7 @@
         },
         {
           "path": "lib/scrape-registry.ts",
-          "lines": 146,
+          "lines": 171,
           "kind": "lib",
           "exports": [
             "SCRAPE_SESSION_PREFIX",
@@ -1227,6 +1227,7 @@
             "releaseScrapeTarget",
             "isScrapeTarget",
             "noteTmuxServer",
+            "tmuxServerPidOf",
             "resetScrapeRegistry"
           ],
           "state": [
@@ -2922,6 +2923,12 @@
             "lib/hook-common.ts",
             "lib/question-hook.ts",
             "routes/api.ts#POST /api/spawn-session"
+          ]
+        },
+        "tmuxServerPidOf": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/hook-common.ts"
           ]
         },
         "unstyle": {

@@ -83,6 +83,7 @@ companion_headers() {
     -H "X-Companion-Iterm-Session-Id: ${ITERM_SESSION_ID:-}"
     -H "X-Companion-Pid: ${AGENT_PID:-${PPID:-}}"
     -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}"
+    -H "X-Companion-Tmux: ${TMUX:-}"
     -H "X-Companion-Task-Id: ${COMPANION_TASK_ID:-}"
   )
 }

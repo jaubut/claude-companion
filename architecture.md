@@ -44,19 +44,19 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/learned-allow.ts` | 182 | lib | 7 | state: db: Database, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `routes/orchestrator.ts` | 173 | route-host | 1 | routes: 8 |
+| `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/inject-guard.ts` | 169 | lib | 7 |  |
 | `ws.ts` | 168 | lib | 1 | emits: approval, question, init, resolved, inject_error, pong |
 | `wiring/events.ts` | 158 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/feed.ts` | 149 | lib | 10 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
-| `lib/scrape-registry.ts` | 146 | lib | 12 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
 | `wiring/dialogs.ts` | 145 | lib | 4 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/dialog-watch.ts` | 138 | lib | 4 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/worker-identity.ts` | 127 | lib | 6 |  |
 | `lib/pty-manager.ts` | 123 | lib | 7 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set |
-| `lib/hook-common.ts` | 120 | lib | 9 |  |
+| `lib/hook-common.ts` | 121 | lib | 9 |  |
 | `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
 | `lib/turso.ts` | 108 | lib | 5 | state: let agentToken, let agentEnvRead |

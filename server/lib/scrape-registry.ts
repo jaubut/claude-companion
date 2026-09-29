@@ -100,7 +100,14 @@ function currentServer(serverPid: number | null): boolean {
 }
 
 export function markScrapeTarget(t: ScrapeTarget): void {
-  if (t.pane) panes.set(t.pane, { exp: Number.POSITIVE_INFINITY, serverPid: t.serverPid ?? null })
+  const serverPid = t.serverPid ?? null
+  if (t.pane) {
+    // A late mark for a stale server never overwrites the current server's
+    // mark on the same (reused) id.
+    const cur = panes.get(t.pane)
+    const clobbers = cur && cur.serverPid !== serverPid && currentServer(cur.serverPid) && !currentServer(serverPid)
+    if (!clobbers) panes.set(t.pane, { exp: Number.POSITIVE_INFINITY, serverPid })
+  }
   if (t.tty) ttys.set(normTty(t.tty), Number.POSITIVE_INFINITY)
 }
 
@@ -109,18 +116,30 @@ export function markScrapeTarget(t: ScrapeTarget): void {
 export function releaseScrapeTarget(t: ScrapeTarget, now = Date.now()): void {
   const serverPid = t.serverPid ?? null
   if (t.pane) {
-    if (currentServer(serverPid)) panes.set(t.pane, { exp: now + PANE_GRACE_MS, serverPid })
-    else panes.delete(t.pane)
+    const cur = panes.get(t.pane)
+    if (currentServer(serverPid)) {
+      // Only our own mark gets the grace — never another server's on this id.
+      if (!cur || cur.serverPid === serverPid || cur.serverPid === null) panes.set(t.pane, { exp: now + PANE_GRACE_MS, serverPid })
+    } else if (cur && (cur.serverPid === serverPid || serverPid === null)) {
+      panes.delete(t.pane)
+    }
   }
   if (t.tty) ttys.set(normTty(t.tty), now + TTY_GRACE_MS)
 }
 
 // Does this hook / discovery record come from a hidden enumeration session?
-export function isScrapeTarget(meta: { tmuxPane?: string; tty?: string }, now = Date.now()): boolean {
+// `tmuxServerPid` is the hook's OWN server (from its $TMUX, see
+// tmuxServerPidOf): when both it and the mark's server are known they must
+// match — that holds even after a tmux restart no reap has noticed yet.
+export function isScrapeTarget(meta: { tmuxPane?: string; tty?: string; tmuxServerPid?: number | null }, now = Date.now()): boolean {
   if (meta.tmuxPane) {
     const m = panes.get(meta.tmuxPane)
     if (m && m.exp <= now) panes.delete(meta.tmuxPane)
-    else if (m && currentServer(m.serverPid)) return true
+    else if (m) {
+      const hookServer = meta.tmuxServerPid ?? null
+      const sameServer = hookServer !== null && m.serverPid !== null ? hookServer === m.serverPid : currentServer(m.serverPid)
+      if (sameServer) return true
+    }
   }
   if (meta.tty && live(ttys, normTty(meta.tty), now)) return true
   return false
@@ -135,6 +154,12 @@ export function noteTmuxServer(pid: number | null): void {
     for (const [pane, m] of panes) if (m.serverPid !== pid) panes.delete(pane)
   }
   tmuxServer = pid
+}
+
+// $TMUX is "<socket>,<server pid>,<session idx>"; anything else → null.
+export function tmuxServerPidOf(tmuxEnv: string | null | undefined): number | null {
+  const pid = Number((tmuxEnv ?? "").split(",")[1])
+  return Number.isInteger(pid) && pid > 0 ? pid : null
 }
 
 // Tests only.
