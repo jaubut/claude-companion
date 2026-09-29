@@ -347,6 +347,160 @@
           "externals": []
         },
         {
+          "path": "lib/command-offpane-cache.ts",
+          "lines": 216,
+          "kind": "lib",
+          "exports": [
+            "PreparedList",
+            "ListerDeps",
+            "PrepareRefusal",
+            "ListOutcome",
+            "LIST_TTL_MS",
+            "NEGATIVE_TTL_MS",
+            "TIMEOUT_NEGATIVE_TTL_MS",
+            "LIST_WAIT_MS",
+            "MAX_PARALLEL",
+            "createSlots",
+            "createCommandLister",
+            "PrepareDeps",
+            "prepareRealList",
+            "commandLister"
+          ],
+          "state": [
+            "let launchMemo",
+            "warnedOld: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-list.ts",
+            "lib/command-offpane.ts",
+            "lib/command-offpane-launch.ts",
+            "lib/log.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/command-offpane-home.ts",
+          "lines": 268,
+          "kind": "lib",
+          "exports": [
+            "LINKED_CONFIG_ENTRIES",
+            "HOMES_DIR_NAME",
+            "ScrapeHomeSource",
+            "ScrapeHome",
+            "UnsafeDirError",
+            "verifyPrivateDir",
+            "BaseOptions",
+            "resolveHomesBase",
+            "currentHomesBase",
+            "knownHomesBase",
+            "globalConfigPath",
+            "isRealHome",
+            "createScrapeHome",
+            "removeScrapeHome",
+            "SweepOptions",
+            "sweepOrphanHomes",
+            "resetHomesBase"
+          ],
+          "state": [
+            "let baseMemo"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/command-offpane-launch.ts",
+          "lines": 227,
+          "kind": "lib",
+          "exports": [
+            "TmuxResult",
+            "TmuxRunner",
+            "defaultTmux",
+            "ClaudeLaunch",
+            "parseTmuxEnv",
+            "ResolveDeps",
+            "resolveClaudeLaunch",
+            "defaultWhich",
+            "claudeVersion",
+            "FingerprintSources",
+            "fingerprintSources",
+            "fingerprintEntries",
+            "computeFingerprint",
+            "SECURE_STORAGE_MIN_VERSION",
+            "parseClaudeVersion",
+            "versionAtLeast",
+            "needsSecureStorageDir",
+            "secureStorageProblem"
+          ],
+          "state": [
+            "versionMemo: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/command-offpane.ts",
+          "lines": 501,
+          "kind": "lib",
+          "exports": [
+            "OffPaneTiming",
+            "DEFAULT_TIMING",
+            "HomeFactory",
+            "realHomes",
+            "pidAlive",
+            "LifecycleDeps",
+            "OffPaneDeps",
+            "OffPaneStatus",
+            "OffPaneResult",
+            "paneBlockedByWizard",
+            "buildScrapeInner",
+            "killScrapeSession",
+            "reapScrapeSessions",
+            "pendingKills",
+            "resetOffPaneState",
+            "enumerateCommandsOffPane",
+            "realSleep"
+          ],
+          "state": [
+            "active: Map",
+            "pendingKill: Map",
+            "let retryTimer",
+            "let retryDeps"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-list.ts",
+            "lib/tmux-pane.ts",
+            "lib/scrape-registry.ts",
+            "lib/spawn-session.ts",
+            "lib/command-offpane-launch.ts",
+            "lib/command-offpane-home.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/command-scrape.ts",
           "lines": 402,
           "kind": "lib",
@@ -434,9 +588,12 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 274,
+          "lines": 323,
           "kind": "lib",
           "exports": [
+            "processEnvEntries",
+            "ScrapeProcessDeps",
+            "isScrapeProcess",
             "readClaudeSessionFile",
             "discoverLiveClaudes"
           ],
@@ -446,7 +603,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/scrape-registry.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -502,7 +660,7 @@
         },
         {
           "path": "lib/hook-common.ts",
-          "lines": 111,
+          "lines": 120,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
@@ -512,7 +670,8 @@
             "hookPassthroughResponse",
             "projectLabelFor",
             "subtitleFor",
-            "metaFromHeaders"
+            "metaFromHeaders",
+            "scrapeHookPassthrough"
           ],
           "state": [],
           "emits": [],
@@ -521,7 +680,8 @@
           "apiCalls": [],
           "imports": [
             "lib/spawn-session.ts",
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/scrape-registry.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1046,6 +1206,37 @@
           "externals": []
         },
         {
+          "path": "lib/scrape-registry.ts",
+          "lines": 111,
+          "kind": "lib",
+          "exports": [
+            "SCRAPE_SESSION_PREFIX",
+            "SCRAPE_ENV",
+            "SCRAPE_ENV_CLAUDE",
+            "scrapeSessionName",
+            "isScrapeSessionName",
+            "scrapeSessionOwner",
+            "envHasScrapeVar",
+            "markScrapeTarget",
+            "releaseScrapeTarget",
+            "isScrapeTarget",
+            "resetScrapeRegistry"
+          ],
+          "state": [
+            "panes: Map",
+            "ttys: Map",
+            "let nameSeq"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-titles.ts",
           "lines": 145,
           "kind": "lib",
@@ -1119,7 +1310,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 395,
+          "lines": 399,
           "kind": "lib",
           "exports": [
             "SpawnApp",
@@ -1565,14 +1756,12 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 346,
+          "lines": 200,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
           ],
-          "state": [
-            "listCache: Map"
-          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [
@@ -1592,6 +1781,7 @@
             "lib/command-menu.ts",
             "lib/log.ts",
             "lib/command-list.ts",
+            "lib/command-offpane-cache.ts",
             "lib/command-scrape.ts",
             "lib/key-gate.ts",
             "lib/sessions.ts",
@@ -1675,7 +1865,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 501,
+          "lines": 507,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -1686,6 +1876,11 @@
           ],
           "consumes": [],
           "endpoints": [
+            {
+              "method": "*",
+              "path": "/hooks/",
+              "prefix": true
+            },
             {
               "method": "POST",
               "path": "/hooks/pre-tool-use",
@@ -2365,8 +2560,7 @@
             "lib/inject-guard.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list"
+            "routes/command.ts#POST /api/command/suggest"
           ]
         },
         "Dialog": {
@@ -2378,6 +2572,262 @@
             "lib/model-control.ts",
             "routes/model.ts",
             "wiring/dialogs.ts"
+          ]
+        },
+        "defaultTmux": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts",
+            "lib/command-offpane.ts"
+          ]
+        },
+        "ClaudeLaunch": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts",
+            "lib/command-offpane.ts"
+          ]
+        },
+        "resolveClaudeLaunch": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "defaultWhich": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "claudeVersion": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "computeFingerprint": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "secureStorageProblem": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "OffPaneResult": {
+          "module": "lib/command-offpane.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "OffPaneStatus": {
+          "module": "lib/command-offpane.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "CommandEntry": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts",
+            "lib/command-offpane.ts"
+          ]
+        },
+        "companionLog": {
+          "module": "lib/log.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts",
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/media.ts",
+            "lib/question-hook.ts",
+            "lib/submit-confirm.ts",
+            "lib/super-auto.ts",
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#DELETE /api/learned",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#* /api/feed",
+            "routes/attach.ts",
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "routes/model.ts",
+            "wiring/dialogs.ts",
+            "wiring/orchestrator.ts",
+            "ws.ts"
+          ]
+        },
+        "enumerateCommandsOffPane": {
+          "module": "lib/command-offpane.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "realSleep": {
+          "module": "lib/command-offpane.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts"
+          ]
+        },
+        "helpTab": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "helpOverlayVisible": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts",
+            "lib/inject-guard.ts"
+          ]
+        },
+        "scrapeHelpTab": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "listIncomplete": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "HELP_PAINT_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "HELP_CLOSE_OPEN_WAIT_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "closeHelpOverlay": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "HelpTab": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "SCRAPE_ENV": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "SCRAPE_ENV_CLAUDE": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "scrapeSessionName": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "isScrapeSessionName": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "scrapeSessionOwner": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "markScrapeTarget": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "releaseScrapeTarget": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "TmuxRunner": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "ScrapeHome": {
+          "module": "lib/command-offpane-home.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "createScrapeHome": {
+          "module": "lib/command-offpane-home.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "removeScrapeHome": {
+          "module": "lib/command-offpane-home.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "sweepOrphanHomes": {
+          "module": "lib/command-offpane-home.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "knownHomesBase": {
+          "module": "lib/command-offpane-home.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "paneHasDialog": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/command-offpane.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "detachedNewSessionArgs": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "lib/command-offpane.ts"
+          ]
+        },
+        "paneInputReady": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/command-offpane.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "KeyGate": {
@@ -2419,6 +2869,19 @@
             "lib/dialog-watch.ts"
           ]
         },
+        "isScrapeTarget": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/hook-common.ts"
+          ]
+        },
+        "envHasScrapeVar": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
         "recordSession": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -2448,49 +2911,10 @@
             "lib/submit-confirm.ts"
           ]
         },
-        "helpOverlayVisible": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "lib/inject-guard.ts"
-          ]
-        },
         "promptLineIndex": {
           "module": "lib/command-menu.ts",
           "callers": [
             "lib/inject-guard.ts"
-          ]
-        },
-        "companionLog": {
-          "module": "lib/log.ts",
-          "callers": [
-            "lib/key-gate.ts",
-            "lib/keyboard-inject.ts",
-            "lib/media.ts",
-            "lib/question-hook.ts",
-            "lib/submit-confirm.ts",
-            "lib/super-auto.ts",
-            "routes/api.ts#POST /api/register-token",
-            "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#DELETE /api/learned",
-            "routes/api.ts#POST /api/super-auto",
-            "routes/api.ts#POST /api/spawn-session",
-            "routes/api.ts#* /api/feed",
-            "routes/attach.ts",
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-start",
-            "routes/hooks.ts#POST /hooks/session-end",
-            "routes/model.ts",
-            "wiring/dialogs.ts",
-            "wiring/orchestrator.ts",
-            "ws.ts"
           ]
         },
         "KeyGateTimeout": {
@@ -2782,7 +3206,6 @@
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts"
           ]
@@ -3070,7 +3493,6 @@
           "callers": [
             "routes/api.ts#* /api/status",
             "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts",
@@ -3207,61 +3629,6 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
-        "CommandEntry": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "HELP_PAINT_MS": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts"
-          ]
-        },
-        "CLEAR_SETTLE_MS": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "HELP_CLOSE_OPEN_WAIT_MS": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "closeHelpOverlay": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "HelpTab": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "scrapeHelpTab": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
-        "listIncomplete": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
-          ]
-        },
         "runTmux": {
           "module": "lib/key-gate.ts",
           "callers": [
@@ -3286,15 +3653,13 @@
         "suggestRefusal": {
           "module": "lib/command-menu.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list"
+            "routes/command.ts#POST /api/command/suggest"
           ]
         },
         "beginFlow": {
           "module": "lib/command-scrape.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list"
+            "routes/command.ts#POST /api/command/suggest"
           ]
         },
         "parseCommandMenu": {
@@ -3303,15 +3668,20 @@
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
+        "CLEAR_SETTLE_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
         "endFlow": {
           "module": "lib/command-scrape.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list"
+            "routes/command.ts#POST /api/command/suggest"
           ]
         },
-        "scrapeAbortRequested": {
-          "module": "lib/command-scrape.ts",
+        "commandLister": {
+          "module": "lib/command-offpane-cache.ts",
           "callers": [
             "routes/command.ts#POST /api/command/list"
           ]
@@ -3450,6 +3820,13 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/events.ts"
+          ]
+        },
+        "scrapeHookPassthrough": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#* /hooks/"
           ]
         },
         "transcriptPath": {
@@ -3950,18 +4327,6 @@
         },
         "createWorkerTailManager": {
           "module": "lib/worker-tail.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "paneHasDialog": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "paneInputReady": {
-          "module": "lib/tmux-pane.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]
