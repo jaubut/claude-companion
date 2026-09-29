@@ -33,15 +33,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // notification-action handlers have ~30s of background runtime and a
   // single POST is faster + cheaper than negotiating a WS.
   if (url.pathname === "/api/resolve" && req.method === "POST") {
-    const body = await req.json() as { id?: string; decision?: "allow" | "deny" }
-    const id = (body.id ?? "").trim()
-    const decision = body.decision
-    if (!id || (decision !== "allow" && decision !== "deny")) {
-      return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
-    }
-    const ok = resolveApproval(id, decision)
-    if (ok) broadcast({ type: "resolved", id, decision })
-    return Response.json({ ok })
+    return withIdempotency(req, "resolve", () => handleResolve(req))
   }
 
   // ── AskUserQuestion answer (HTTP) ──
@@ -230,6 +222,18 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     })
   }
   return null
+}
+
+async function handleResolve(req: Request): Promise<Response> {
+  const body = await req.json() as { id?: string; decision?: "allow" | "deny" }
+  const id = (body.id ?? "").trim()
+  const decision = body.decision
+  if (!id || (decision !== "allow" && decision !== "deny")) {
+    return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
+  }
+  const ok = resolveApproval(id, decision)
+  if (ok) broadcast({ type: "resolved", id, decision })
+  return Response.json({ ok })
 }
 
 async function handleAnswer(req: Request): Promise<Response> {

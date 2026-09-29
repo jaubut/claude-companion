@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { MAX_KEY_LENGTH, TTL_MS, resetIdempotency, withIdempotency } from "../lib/idempotency"
 import { addQuestionRequest, onQuestionRequest, onQuestionResolved } from "../lib/questions"
+import { addApprovalRequest, getPending } from "../lib/pty-manager"
 
 // Idempotency-Key on POST /api/inject and /api/answer (iOS outbox retries,
 // claude-companion-ios#33). The inject side is driven through withIdempotency
@@ -199,4 +200,25 @@ test("answer: a different key or no key runs again (second finds the question go
   expect(await bare.json()).toEqual({ ok: false })
   expect(bare.headers.get("Idempotent-Replayed")).toBeNull()
   expect(q2.resolves()).toBe(1)
+})
+
+// ── /api/resolve through the real route ──
+
+test("resolve: same key twice resolves once and replays {ok:true}; a lost-response retry does not see ok:false", async () => {
+  let decided = 0
+  void addApprovalRequest({ agent: "claude", sessionId: "idem-r1", tool: "Bash", input: { command: "ls" }, cwd: "/tmp", sessionKey: "idem-r1" }).then(() => decided++)
+  const id = getPending().find((r) => r.sessionId === "idem-r1")!.id
+  const resolve = async (key?: string) => (await handleApiRoute(
+    post("/api/resolve", { id, decision: "allow" }, key),
+    new URL("http://localhost:4245/api/resolve"),
+  ))!
+  const first = await resolve("res-k1")
+  const second = await resolve("res-k1")
+  await Bun.sleep(0)
+  expect(decided).toBe(1)
+  expect(await first.json()).toEqual({ ok: true })
+  expect(await second.json()).toEqual({ ok: true })
+  expect(second.headers.get("Idempotent-Replayed")).toBe("true")
+  const bare = await resolve()
+  expect(await bare.json()).toEqual({ ok: false })
 })
