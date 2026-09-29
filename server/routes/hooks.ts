@@ -35,6 +35,7 @@ import {
   hookDecisionResponse,
   metaFromHeaders,
   projectLabelFor,
+  scrapeHookPassthrough,
 } from "../lib/hook-common"
 import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"
 import { appendTurn as orchAppendTurn, setTaskStatus } from "../lib/orchestrator-chat"
@@ -106,6 +107,11 @@ function closeQuestionsFor(sessionId: string | undefined, sessionKey: string | u
 }
 
 export async function handleHookRoute(req: Request, url: URL): Promise<Response | null> {
+  // The companion's own hidden /help enumeration claude: drop everything.
+  if (url.pathname.startsWith("/hooks/")) {
+    const dropped = scrapeHookPassthrough(req.headers)
+    if (dropped) return dropped
+  }
   // ── Hook endpoint — PreToolUse ──
   if (url.pathname === "/hooks/pre-tool-use" && req.method === "POST") {
     const body = await req.json() as {

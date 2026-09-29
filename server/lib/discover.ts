@@ -11,6 +11,7 @@ import { join, basename } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
 import { recordSession } from "./sessions"
+import { hasScrapeMarker, isScrapeTarget } from "./scrape-registry"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
@@ -64,6 +65,24 @@ async function listAgentPids(): Promise<DiscoveredAgent[]> {
     out.push({ agent: base, pid, tty: `/dev/${tty}`, cwd: "", command: trimmed })
   }
   return out
+}
+
+// Linux: /proc/<pid>/environ. macOS/BSD: `ps eww` appends the env to the
+// command (own-user processes, which a hidden claude always is).
+export async function isScrapeProcess(pid: string, command: string): Promise<boolean> {
+  if (hasScrapeMarker(command)) return true
+  if (process.platform === "linux") {
+    try {
+      return hasScrapeMarker(await readFile(`/proc/${pid}/environ`, "latin1"))
+    } catch {
+      return false
+    }
+  }
+  try {
+    return hasScrapeMarker(await run("ps", ["eww", "-o", "command=", "-p", pid]))
+  } catch {
+    return false
+  }
 }
 
 async function findCwdForPid(pid: string): Promise<string> {
@@ -228,6 +247,10 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
 
   await Promise.all(pids.map(async (p) => {
     try {
+      // The companion's own hidden /help enumeration claude (lib/command-offpane.ts):
+      // by its registered tty, or by the scrape var in its env / command line.
+      if (isScrapeTarget({ tty: p.tty })) return
+      if (await isScrapeProcess(p.pid, p.command)) return
       const [cwd, termProgram] = await Promise.all([
         findCwdForPid(p.pid),
         findTermProgramForPid(p.pid),
