@@ -396,8 +396,11 @@ export async function enumerateCommandsOffPane(cwd: string, deps: OffPaneDeps): 
     }
 
     const inner = buildScrapeInner(cwd, deps.launch, home)
-    const created = await tmux(detachedNewSessionArgs(session, inner, "#{pane_id}\t#{pane_tty}\t#{pane_pid}")).catch(() => ({ code: -1, stdout: "" }))
-    const [pane = "", tty = "", pid = ""] = created.stdout.trim().split("\t")
+    // "|", not a tab: tmux 3.6 prints a -P -F tab as "_" (3.4 kept it), which
+    // made every Mac enumeration fail as "new-session failed". Pane ids, ttys
+    // and pids never contain "|".
+    const created = await tmux(detachedNewSessionArgs(session, inner, "#{pane_id}|#{pane_tty}|#{pane_pid}")).catch(() => ({ code: -1, stdout: "" }))
+    const [pane = "", tty = "", pid = ""] = created.stdout.trim().split("|")
     Object.assign(rec, { pane, tty, pid: Number(pid) || 0 })
     // Marked before claude has booted far enough to do anything.
     markScrapeTarget(rec)

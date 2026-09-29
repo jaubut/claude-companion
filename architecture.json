@@ -459,7 +459,7 @@
         },
         {
           "path": "lib/command-offpane.ts",
-          "lines": 541,
+          "lines": 544,
           "kind": "lib",
           "exports": [
             "OffPaneTiming",

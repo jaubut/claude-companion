@@ -91,6 +91,7 @@ interface FakeOpts {
   failCaptureAfter?: number          // hidden-pane captures that succeed before capture-pane starts failing
   failCaptureAt?: number             // exactly this one hidden-pane capture fails (a transient blip)
   failSendKey?: string               // send-keys carrying this key exits 1
+  mangleTabs?: boolean               // tmux 3.6: a tab in new-session -P -F output prints as "_"
   unkillable?: { count?: number }    // kill-session "succeeds" but the session survives (count times)
   lingerPolls?: number               // claude's pid outlives the kill for this many pidAlive checks
 }
@@ -158,7 +159,11 @@ class FakeTmux {
       const pid = 5000 + this.nextPane
       this.sessions.set(name, { pane, tty: `/dev/ttys0${this.nextPane}`, pid, sim: this.spawnSim() })
       this.livePids.add(pid)
-      return { code: 0, stdout: `${pane}\t/dev/ttys0${this.nextPane}\t${pid}\n` }
+      // Render the requested -P -F format, as tmux does.
+      const fmt = args.includes("-F") ? args[args.indexOf("-F") + 1]! : "#{pane_id}"
+      let out = fmt.replace("#{pane_id}", pane).replace("#{pane_tty}", `/dev/ttys0${this.nextPane}`).replace("#{pane_pid}", String(pid))
+      if (this.opts.mangleTabs) out = out.replace(/\t/g, "_")
+      return { code: 0, stdout: `${out}\n` }
     }
     if (cmd === "list-panes") {
       // The last session closing takes the tmux server with it.
@@ -274,7 +279,7 @@ describe("enumerateCommandsOffPane", () => {
     expect(isScrapeSessionName(create[create.indexOf("-s") + 1]!)).toBe(true)
     expect(create[create.indexOf("-x") + 1]).toBe(String(DETACHED_COLS))
     expect(create[create.indexOf("-y") + 1]).toBe(String(DETACHED_ROWS))
-    expect(create[create.indexOf("-F") + 1]).toBe("#{pane_id}\t#{pane_tty}\t#{pane_pid}")
+    expect(create[create.indexOf("-F") + 1]).toBe("#{pane_id}|#{pane_tty}|#{pane_pid}")
     const name = create[create.indexOf("-s") + 1]!
     expect(create.at(-1)).toBe(buildScrapeInner("/Users/me/proj", LAUNCH, { env: { HOME: `/tmp/homes/${name}` }, unset: ["CLAUDE_CONFIG_DIR"] }))
   })
@@ -347,6 +352,13 @@ describe("enumerateCommandsOffPane", () => {
     const res = await run(tmux)
     expect(res.status).toBe("error")
     expect([...tmux.sessions.keys()]).toEqual(["cc-user"])
+  })
+
+  test("tmux 3.6 (tabs in -P -F output print as '_'): the hidden session is still found and listed", async () => {
+    const tmux = new FakeTmux(sim(), { mangleTabs: true })
+    const res = await run(tmux)
+    expect(res.status).toBe("ok")
+    expect(res.commands.length).toBeGreaterThan(0)
   })
 
   test("a failed new-session is an error, not a hang", async () => {
