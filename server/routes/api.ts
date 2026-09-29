@@ -21,6 +21,7 @@ import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clients } from "../state"
 import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
+import { withIdempotency } from "../lib/idempotency"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
 // push debug, generic broadcast, inject, learned-allow, SUPER toggle, spawn,
@@ -49,22 +50,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // entry per question, in order. Resolves the pending question; the
   // PreToolUse hook handler then drives the local picker via tmux.
   if (url.pathname === "/api/answer" && req.method === "POST") {
-    const body = await req.json() as {
-      id?: string
-      answers?: Array<{ selected?: string[]; otherText?: string }>
-    }
-    const id = (body.id ?? "").trim()
-    const rawAnswers = body.answers
-    if (!id || !Array.isArray(rawAnswers) || rawAnswers.length === 0) {
-      return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
-    }
-    const answers: QuestionAnswer[] = rawAnswers.map((a) => ({
-      selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
-      otherText: typeof a.otherText === "string" ? a.otherText : undefined,
-    }))
-    const ok = resolveQuestion(id, answers)
-    if (ok) broadcast({ type: "resolved", id, decision: "answered" })
-    return Response.json({ ok })
+    return withIdempotency(req, "answer", () => handleAnswer(req))
   }
 
   // ── Device token registration (iOS companion app) ──
@@ -159,116 +145,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Inject text from phone into terminal ──
   if (url.pathname === "/api/inject" && req.method === "POST") {
-    const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
-    if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
-
-    const lookup = key || cwd || ""
-    let target = lookup ? resolveSession(lookup) : null
-    // The target the caller actually named, captured before the fallback below
-    // reassigns `target`. Only this one may have its waiting badge cleared:
-    // the fallback is a delivery convenience and picks whichever session was
-    // active last, which is not the session the text was addressed to.
-    const explicit = target
-
-    // No explicit target: pick the most-recently-active registered
-    // session as "frontmost". On Linux this is the only sane fallback —
-    // the legacy pbcopy + Cmd+V path is macOS-only and ENOENTs on Bun
-    // under Linux. On macOS this is also a safer default than blind
-    // System Events paste into whatever app happens to be frontmost
-    // (Cursor, Safari, anything). Caller that truly wants the
-    // System-Events fallback can still send key="" + cwd="" on a
-    // server with no registered sessions; injectText handles that.
-    if (!lookup) {
-      const recent = listSessions().find(s => !!s.tty)
-      if (recent) target = recent
-    }
-
-    // A dialog the COMPANION opened (the /help command scrape) is ours to
-    // close, not the user's problem — stop it and take the pane back before
-    // the refusal check even looks. If we could NOT take it back, the pane is
-    // in an unknown state (the scrape may still have its modal up and the
-    // watcher is still skipping that session, so the dialog check below would
-    // pass on a stale null): it is a `busy_flow` refusal below, not a blind
-    // send-keys.
-    const paneFree = await yieldPaneForInject(target)
-
-    // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
-    // target not registered, no live tty, or a dialog in the way. A dialog is
-    // modal in the pane — typing into one answers it instead of reaching the
-    // input box — so it is a refusal, not a delivery problem.
-    // With the pane still held there is nothing to learn from the watcher —
-    // it is skipping that session for the duration of the flow.
-    // Last, the pane itself: an input box that is on screen and empty, or a
-    // refusal (pane_not_ready) — the agents panel, the shortcuts overlay and a
-    // late /help take keys without ever becoming a Dialog.
-    const refusal = injectRefusal({
-      lookup, target, paneFree,
-      dialog: paneFree ? await openDialogFor(target) : null,
-      pane: paneFree ? await paneSnapshotFor(target) : undefined,
-    })
-    if (refusal) {
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-      // label is often empty (a session with no resolved title), so fall back
-      // to the key — an unnamed refusal reads as "inject refused — has a
-      // dialog open", which names nothing.
-      const who = target?.label || target?.key || lookup
-      const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
-        : refusal.error === "target_idle" ? `target ${who} has no live tty`
-        : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
-        : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
-        : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
-      companionLog(`${red}inject refused${reset} — ${why}`)
-      // 409 for the dialog and for a pane we could not take back: the request
-      // is fine and the target is alive, it just can't accept text yet. 410
-      // stays the "this target is gone" code the phone already maps to a
-      // re-pin prompt.
-      const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" ? 409 : 410
-      return Response.json({
-        ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt,
-      }, { status })
-    }
-
-    const dim = "\x1b[2m"
-    const reset = "\x1b[0m"
-    const cyan = "\x1b[36m"
-    const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
-    companionLog(`${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"`)
-
-    // Clear only what the caller named, and only its turn-end reason: typed
-    // text answers neither a pending approval nor an open dialog. With no
-    // explicit target and more than one session waiting on a turn-end, clear
-    // nothing rather than blank the wrong badge.
-    const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
-    announceWaiting(cleared)
-    if (!cleared && refused > 0) {
-      companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
-    }
-
-    const res = await injectConfirmed(text, target ?? undefined)
-    if (!res.ok && res.error === "not_submitted") {
-      // Typed but never submitted (no UserPromptSubmit after Enter + one
-      // retry). Tell every client so the bubble is marked undelivered, and
-      // answer 409 like the other "target alive, text not accepted" cases.
-      broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? key, cwd: target?.cwd ?? cwd, text, excerpt: res.excerpt })
-      return Response.json({ ok: false, error: "not_submitted", excerpt: res.excerpt, key, cwd }, { status: 409 })
-    }
-    const ok = res.ok
-    if (!ok) {
-      companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (${deliveryFailedHint()})`)
-    } else if (target && echoPromptOnInject(res)) {
-      // Unconfirmable delivery only (see echoPromptOnInject): the hook is
-      // the source of truth everywhere it can be observed.
-      recordUserPrompt({
-        text,
-        cwd: target.cwd,
-        sessionId: target.sessionId,
-        tty: target.tty,
-        sessionKey: target.key,
-      })
-    }
-    return Response.json(res.ok
-      ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}), ...(res.command ? { command: true } : {}) }
-      : { ok, error: "deliver_failed", hint: deliveryFailedHint() })
+    return withIdempotency(req, "inject", () => handleInject(req))
   }
 
   // ── Learned-allow management ──
@@ -353,4 +230,137 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     })
   }
   return null
+}
+
+async function handleAnswer(req: Request): Promise<Response> {
+  const body = await req.json() as {
+    id?: string
+    answers?: Array<{ selected?: string[]; otherText?: string }>
+  }
+  const id = (body.id ?? "").trim()
+  const rawAnswers = body.answers
+  if (!id || !Array.isArray(rawAnswers) || rawAnswers.length === 0) {
+    return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
+  }
+  const answers: QuestionAnswer[] = rawAnswers.map((a) => ({
+    selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
+    otherText: typeof a.otherText === "string" ? a.otherText : undefined,
+  }))
+  const ok = resolveQuestion(id, answers)
+  if (ok) broadcast({ type: "resolved", id, decision: "answered" })
+  return Response.json({ ok })
+}
+
+// Inject text from phone into terminal.
+async function handleInject(req: Request): Promise<Response> {
+  const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
+  if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+
+  const lookup = key || cwd || ""
+  let target = lookup ? resolveSession(lookup) : null
+  // The target the caller actually named, captured before the fallback below
+  // reassigns `target`. Only this one may have its waiting badge cleared:
+  // the fallback is a delivery convenience and picks whichever session was
+  // active last, which is not the session the text was addressed to.
+  const explicit = target
+
+  // No explicit target: pick the most-recently-active registered
+  // session as "frontmost". On Linux this is the only sane fallback —
+  // the legacy pbcopy + Cmd+V path is macOS-only and ENOENTs on Bun
+  // under Linux. On macOS this is also a safer default than blind
+  // System Events paste into whatever app happens to be frontmost
+  // (Cursor, Safari, anything). Caller that truly wants the
+  // System-Events fallback can still send key="" + cwd="" on a
+  // server with no registered sessions; injectText handles that.
+  if (!lookup) {
+    const recent = listSessions().find(s => !!s.tty)
+    if (recent) target = recent
+  }
+
+  // A dialog the COMPANION opened (the /help command scrape) is ours to
+  // close, not the user's problem — stop it and take the pane back before
+  // the refusal check even looks. If we could NOT take it back, the pane is
+  // in an unknown state (the scrape may still have its modal up and the
+  // watcher is still skipping that session, so the dialog check below would
+  // pass on a stale null): it is a `busy_flow` refusal below, not a blind
+  // send-keys.
+  const paneFree = await yieldPaneForInject(target)
+
+  // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
+  // target not registered, no live tty, or a dialog in the way. A dialog is
+  // modal in the pane — typing into one answers it instead of reaching the
+  // input box — so it is a refusal, not a delivery problem.
+  // With the pane still held there is nothing to learn from the watcher —
+  // it is skipping that session for the duration of the flow.
+  // Last, the pane itself: an input box that is on screen and empty, or a
+  // refusal (pane_not_ready) — the agents panel, the shortcuts overlay and a
+  // late /help take keys without ever becoming a Dialog.
+  const refusal = injectRefusal({
+    lookup, target, paneFree,
+    dialog: paneFree ? await openDialogFor(target) : null,
+    pane: paneFree ? await paneSnapshotFor(target) : undefined,
+  })
+  if (refusal) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
+    // label is often empty (a session with no resolved title), so fall back
+    // to the key — an unnamed refusal reads as "inject refused — has a
+    // dialog open", which names nothing.
+    const who = target?.label || target?.key || lookup
+    const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
+      : refusal.error === "target_idle" ? `target ${who} has no live tty`
+      : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
+      : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
+      : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
+    companionLog(`${red}inject refused${reset} — ${why}`)
+    // 409 for the dialog and for a pane we could not take back: the request
+    // is fine and the target is alive, it just can't accept text yet. 410
+    // stays the "this target is gone" code the phone already maps to a
+    // re-pin prompt.
+    const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" ? 409 : 410
+    return Response.json({
+      ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt,
+    }, { status })
+  }
+
+  const dim = "\x1b[2m"
+  const reset = "\x1b[0m"
+  const cyan = "\x1b[36m"
+  const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
+  companionLog(`${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"`)
+
+  // Clear only what the caller named, and only its turn-end reason: typed
+  // text answers neither a pending approval nor an open dialog. With no
+  // explicit target and more than one session waiting on a turn-end, clear
+  // nothing rather than blank the wrong badge.
+  const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
+  announceWaiting(cleared)
+  if (!cleared && refused > 0) {
+    companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
+  }
+
+  const res = await injectConfirmed(text, target ?? undefined)
+  if (!res.ok && res.error === "not_submitted") {
+    // Typed but never submitted (no UserPromptSubmit after Enter + one
+    // retry). Tell every client so the bubble is marked undelivered, and
+    // answer 409 like the other "target alive, text not accepted" cases.
+    broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? key, cwd: target?.cwd ?? cwd, text, excerpt: res.excerpt })
+    return Response.json({ ok: false, error: "not_submitted", excerpt: res.excerpt, key, cwd }, { status: 409 })
+  }
+  const ok = res.ok
+  if (!ok) {
+    companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (${deliveryFailedHint()})`)
+  } else if (target && echoPromptOnInject(res)) {
+    // Unconfirmable delivery only (see echoPromptOnInject): the hook is
+    // the source of truth everywhere it can be observed.
+    recordUserPrompt({
+      text,
+      cwd: target.cwd,
+      sessionId: target.sessionId,
+      tty: target.tty,
+      sessionKey: target.key,
+    })
+  }
+  return Response.json(res.ok
+    ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}), ...(res.command ? { command: true } : {}) }
+    : { ok, error: "deliver_failed", hint: deliveryFailedHint() })
 }
