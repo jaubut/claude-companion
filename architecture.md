@@ -27,7 +27,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/questions.ts` | 316 | lib | 23 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `wiring/orchestrator.ts` | 307 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
-| `lib/command-offpane-launch.ts` | 268 | lib | 20 | state: versionMemo: Map |
+| `lib/command-offpane-launch.ts` | 271 | lib | 20 | state: versionMemo: Map |
 | `lib/apns.ts` | 266 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |

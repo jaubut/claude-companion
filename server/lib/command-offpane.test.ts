@@ -10,7 +10,7 @@ import { createCommandLister, createSlots, prepareRealList } from "./command-off
 import { createScrapeHome, removeScrapeHome, resolveHomesBase, sweepOrphanHomes, UnsafeDirError, verifyPrivateDir } from "./command-offpane-home"
 import { isScrapeProcess, processEnvEntries } from "./discover"
 import {
-  computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
+  computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
 } from "./command-offpane-launch"
 import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner } from "./scrape-registry"
 import { DETACHED_COLS, DETACHED_ROWS } from "./spawn-session"
@@ -500,6 +500,14 @@ describe("reapScrapeSessions", () => {
     tmux.addSession("cc-myproject", "%60", "/dev/ttys061", 9061)
     await reap()
     expect(isScrapeTarget({ tmuxPane: "%60" })).toBe(false)
+  })
+
+  test("tmuxNoServer: only a missing server/socket is an empty inventory", () => {
+    expect(tmuxNoServer({ code: 1, stdout: "", stderr: "no server running on /tmp/tmux-501/default" })).toBe(true)
+    expect(tmuxNoServer({ code: 1, stdout: "", stderr: "error connecting to /tmp/tmux-501/default (No such file or directory)" })).toBe(true)
+    expect(tmuxNoServer({ code: 1, stdout: "", stderr: "error connecting to /tmp/tmux-501/default (Operation not permitted)" })).toBe(false)
+    expect(tmuxNoServer({ code: 1, stdout: "", stderr: "error connecting to /tmp/tmux-501/default (Permission denied)" })).toBe(false)
+    expect(tmuxNoServer({ code: -1, stdout: "", stderr: "no server running" })).toBe(false)
   })
 
   test("no inventory (tmux failed for another reason): nothing is released and no HOME is swept", async () => {

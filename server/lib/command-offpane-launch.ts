@@ -19,7 +19,10 @@ export interface TmuxResult { code: number; stdout: string; stderr?: string }
 // session is gone (the last one closing takes the server with it). That is a
 // complete, empty inventory, unlike any other failure.
 export function tmuxNoServer(r: TmuxResult): boolean {
-  return r.code === 1 && /no server running|error connecting to/i.test(r.stderr ?? "")
+  // Only a missing server/socket counts — "error connecting to … (Operation
+  // not permitted)" and friends are failures, not an empty inventory.
+  const err = r.stderr ?? ""
+  return r.code === 1 && (/no server running/i.test(err) || /error connecting to .*\(No such file or directory\)/i.test(err))
 }
 export type TmuxRunner = (args: string[]) => Promise<TmuxResult>
 

@@ -421,7 +421,7 @@
         },
         {
           "path": "lib/command-offpane-launch.ts",
-          "lines": 268,
+          "lines": 271,
           "kind": "lib",
           "exports": [
             "TmuxResult",
