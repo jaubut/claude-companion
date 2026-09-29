@@ -386,7 +386,7 @@
         },
         {
           "path": "lib/command-offpane-home.ts",
-          "lines": 268,
+          "lines": 280,
           "kind": "lib",
           "exports": [
             "LINKED_CONFIG_ENTRIES",
