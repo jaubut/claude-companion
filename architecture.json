@@ -1417,15 +1417,15 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 367,
+          "lines": 371,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
           ],
           "state": [],
           "emits": [
-            "resolved",
             "super_auto",
+            "resolved",
             "inject_error"
           ],
           "consumes": [],
@@ -2972,31 +2972,10 @@
             "routes/api.ts#DELETE /api/register-token"
           ]
         },
-        "resolveApproval": {
-          "module": "lib/pty-manager.ts",
-          "callers": [
-            "routes/api.ts#POST /api/resolve",
-            "ws.ts"
-          ]
-        },
-        "broadcast": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts#POST /api/resolve",
-            "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#POST /api/super-auto",
-            "routes/api.ts#* /api/feed",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "wiring/dialogs.ts",
-            "wiring/events.ts",
-            "wiring/orchestrator.ts",
-            "wiring/waiting.ts",
-            "ws.ts"
-          ]
-        },
         "withIdempotency": {
           "module": "lib/idempotency.ts",
           "callers": [
+            "routes/api.ts#POST /api/resolve",
             "routes/api.ts#POST /api/answer",
             "routes/api.ts#POST /api/inject"
           ]
@@ -3008,6 +2987,20 @@
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/events.ts"
+          ]
+        },
+        "broadcast": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#* /api/feed",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "wiring/dialogs.ts",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts",
+            "wiring/waiting.ts",
+            "ws.ts"
           ]
         },
         "listLearned": {
@@ -3109,6 +3102,13 @@
         },
         "getFeed": {
           "module": "lib/feed.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "resolveApproval": {
+          "module": "lib/pty-manager.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
             "ws.ts"
