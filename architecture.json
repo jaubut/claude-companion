@@ -386,7 +386,7 @@
         },
         {
           "path": "lib/command-offpane-home.ts",
-          "lines": 280,
+          "lines": 289,
           "kind": "lib",
           "exports": [
             "LINKED_CONFIG_ENTRIES",
@@ -457,7 +457,7 @@
         },
         {
           "path": "lib/command-offpane.ts",
-          "lines": 501,
+          "lines": 521,
           "kind": "lib",
           "exports": [
             "OffPaneTiming",
@@ -474,6 +474,7 @@
             "killScrapeSession",
             "reapScrapeSessions",
             "pendingKills",
+            "foreignScrapes",
             "resetOffPaneState",
             "enumerateCommandsOffPane",
             "realSleep"
@@ -481,6 +482,7 @@
           "state": [
             "active: Map",
             "pendingKill: Map",
+            "foreign: Map",
             "let retryTimer",
             "let retryDeps"
           ],

@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  buildScrapeInner, enumerateCommandsOffPane, paneBlockedByWizard, pendingKills,
+  buildScrapeInner, enumerateCommandsOffPane, foreignScrapes, paneBlockedByWizard, pendingKills,
   reapScrapeSessions, resetOffPaneState, type HomeFactory, type OffPaneResult,
 } from "./command-offpane"
 import { createCommandLister, createSlots, prepareRealList } from "./command-offpane-cache"
@@ -438,6 +438,34 @@ describe("reapScrapeSessions", () => {
     const reaped = await reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes: fakeHomes().homes })
     expect(reaped).toEqual(["cc-scrape-999-1-ab12"])
     expect([...tmux.sessions.keys()].sort()).toEqual(["cc-myproject", "cc-scrape-tool", "cc-user"])
+  })
+
+  test("another live server's hidden pane is marked while it lives, released once it is gone", async () => {
+    const tmux = new FakeTmux(sim())
+    tmux.livePids.add(7777) // the other companion server is alive
+    tmux.addSession("cc-scrape-7777-1-ab12", "%60", "/dev/ttys060", 9060)
+    const reap = () => reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes: fakeHomes().homes })
+    await reap()
+    // Not ours to kill, but never listed as a user session either.
+    expect(tmux.sessions.has("cc-scrape-7777-1-ab12")).toBe(true)
+    expect(isScrapeTarget({ tmuxPane: "%60" })).toBe(true)
+    expect(foreignScrapes()).toEqual(["cc-scrape-7777-1-ab12"])
+
+    // A failed listing proves nothing: the mark stays.
+    const orig = tmux.run
+    tmux.run = async (args) => (args[0] === "list-panes" ? { code: 1, stdout: "" } : orig(args))
+    tmux.sessions.delete("cc-scrape-7777-1-ab12")
+    await reap()
+    expect(foreignScrapes()).toEqual(["cc-scrape-7777-1-ab12"])
+    expect(isScrapeTarget({ tmuxPane: "%60" })).toBe(true)
+
+    // Gone from a good listing: released (after the grace), so an ordinary
+    // session that reuses the tty is visible again.
+    tmux.run = orig
+    await reap()
+    expect(foreignScrapes()).toEqual([])
+    expect(isScrapeTarget({ tty: "/dev/ttys060" }, Date.now() + 60_000)).toBe(false)
+    expect(isScrapeTarget({ tmuxPane: "%60" }, Date.now() + 11 * 60_000)).toBe(false)
   })
 
   test("generated names always match the reaper's pattern", () => {
@@ -964,6 +992,20 @@ describe("throwaway HOME base: private, ours, not a symlink", () => {
     expect(existsSync(live)).toBe(true)
     expect(existsSync(self)).toBe(true)
     expect(existsSync(loose)).toBe(true)
+  })
+  test("sweep: a dead server's base keeps a pending-kill session's HOME, and goes only once empty", async () => {
+    const tmp = fresh()
+    const dead = join(tmp, "cc-scrape-homes-6666-abc123"); mkdirSync(dead, { mode: 0o700 })
+    const pending = join(dead, "cc-scrape-6666-1-ab12"); mkdirSync(pending, { mode: 0o700 })
+    const stale = join(dead, "cc-scrape-6666-2-cd34"); mkdirSync(stale, { mode: 0o700 })
+    const keep = (name: string) => name === "cc-scrape-6666-1-ab12"
+    await sweepOrphanHomes({ keep, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid })
+    expect(existsSync(pending)).toBe(true)
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(dead)).toBe(true)
+    // Once its kill is confirmed nothing keeps it: the base goes too.
+    await sweepOrphanHomes({ keep: () => false, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid })
+    expect(existsSync(dead)).toBe(false)
   })
 })
 

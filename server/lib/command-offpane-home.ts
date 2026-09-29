@@ -36,7 +36,7 @@
 // Every dir is lstat-verified (ours, 0700, not a symlink) before anything is
 // copied into it; a pre-created foreign or symlinked base is refused.
 
-import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, rmdir, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -269,7 +269,16 @@ export async function sweepOrphanHomes(opts: SweepOptions): Promise<void> {
     if (pid === opts.selfPid || !opts.ownerDead(pid)) continue
     const path = join(tmp, e)
     if (!(await verifyPrivateDir(path, uid).then(() => true, () => false))) continue
-    await removeScrapeHome(path).catch(() => undefined)
+    // A dead server's base can still hold the HOME of a session whose kill
+    // failed (pending-kill, in `keep`): remove the others, and the base only
+    // once it is empty.
+    let children: string[] = []
+    try { children = await readdir(path) } catch { continue }
+    for (const name of children) {
+      if (opts.keep(name)) continue
+      await removeScrapeHome(join(path, name)).catch(() => undefined)
+    }
+    await rmdir(path).catch(() => undefined)
   }
 }
 

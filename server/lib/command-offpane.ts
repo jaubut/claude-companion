@@ -203,6 +203,10 @@ const active = new Map<string, ScrapeRecord>()
 // Not yet confirmed gone (kill unconfirmed, or claude's pid still alive):
 // stays marked in the registry and is retried by every reap.
 const pendingKill = new Map<string, ScrapeRecord>()
+// Another live server's hidden panes: marked hidden while they exist, and
+// released once they are gone from tmux — otherwise a later ordinary session
+// reusing that tty would stay hidden (and its hooks dropped) for good.
+const foreign = new Map<string, ScrapeRecord>()
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let retryDeps: LifecycleDeps | null = null
 const PENDING_RETRY_MS = 30_000
@@ -283,6 +287,17 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
   const r = await full.tmux(["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_tty}\t#{pane_pid}"]).catch(() => ({ code: -1, stdout: "" }))
   const listed = r.code === 0 ? parsePaneList(r.stdout) : []
   for (const rec of listed) markScrapeTarget(rec)
+  // Only a successful listing can prove a foreign pane is gone.
+  if (r.code === 0) {
+    const names = new Set(listed.map((l) => l.name))
+    for (const [name, rec] of foreign) {
+      if (!names.has(name)) { releaseScrapeTarget(rec); foreign.delete(name) }
+    }
+    for (const rec of listed) {
+      if (!active.has(rec.name) && !pendingKill.has(rec.name) && !reapable(rec.name, selfPid, alive)) foreign.set(rec.name, rec)
+      else foreign.delete(rec.name)
+    }
+  }
 
   const todo = new Map<string, ScrapeRecord>()
   for (const rec of pendingKill.values()) todo.set(rec.name, rec)
@@ -304,12 +319,13 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
     (pid) => !alive(pid),
     selfPid,
   ).catch(() => undefined)
+  if (foreign.size > 0) schedulePendingRetry(full)
   return reaped
 }
 
 function schedulePendingRetry(deps: LifecycleDeps): void {
   retryDeps = deps
-  if (retryTimer || pendingKill.size === 0) return
+  if (retryTimer || (pendingKill.size === 0 && foreign.size === 0)) return
   retryTimer = setTimeout(() => {
     retryTimer = null
     const d = retryDeps ?? deps
@@ -322,9 +338,13 @@ function schedulePendingRetry(deps: LifecycleDeps): void {
 export function pendingKills(): string[] {
   return [...pendingKill.keys()]
 }
+export function foreignScrapes(): string[] {
+  return [...foreign.keys()]
+}
 export function resetOffPaneState(): void {
   active.clear()
   pendingKill.clear()
+  foreign.clear()
   if (retryTimer) clearTimeout(retryTimer)
   retryTimer = null
   retryDeps = null
