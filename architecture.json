@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-29",
+  "generatedAt": "2026-09-30",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 79,
+          "lines": 80,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -59,6 +59,7 @@
             "routes/attach.ts",
             "routes/media.ts",
             "routes/goals.ts",
+            "routes/vault.ts",
             "ws.ts",
             "lib/apns.ts"
           ],
@@ -1246,6 +1247,43 @@
           "externals": []
         },
         {
+          "path": "lib/secret-store.ts",
+          "lines": 268,
+          "kind": "lib",
+          "exports": [
+            "SyncFn",
+            "VaultAction",
+            "VaultEntry",
+            "VaultResult",
+            "vaultDeps",
+            "storePath",
+            "auditPath",
+            "validName",
+            "validValue",
+            "validHosts",
+            "listNames",
+            "editLine",
+            "listSecrets",
+            "upsertSecret",
+            "setSecretHosts",
+            "deleteSecret",
+            "isKeyCommand",
+            "handleKeyCommand"
+          ],
+          "state": [
+            "FLAGS: Set",
+            "let lock"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-titles.ts",
           "lines": 145,
           "kind": "lib",
@@ -1618,7 +1656,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 371,
+          "lines": 380,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1719,6 +1757,7 @@
             "lib/questions.ts",
             "lib/submit-confirm.ts",
             "lib/inject-guard.ts",
+            "lib/secret-store.ts",
             "lib/spawn-session.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
@@ -2023,7 +2062,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 173,
+          "lines": 182,
           "kind": "route-host",
           "exports": [
             "handleOrchestratorRoute"
@@ -2076,7 +2115,29 @@
           "apiCalls": [],
           "imports": [
             "wiring/orchestrator.ts",
-            "lib/orchestrator-chat.ts"
+            "lib/orchestrator-chat.ts",
+            "lib/secret-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/vault.ts",
+          "lines": 59,
+          "kind": "lib",
+          "exports": [
+            "handleVaultRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/log.ts",
+            "lib/secret-store.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2283,7 +2344,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 168,
+          "lines": 176,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -2294,6 +2355,7 @@
             "question",
             "init",
             "resolved",
+            "key_saved",
             "inject_error",
             "pong"
           ],
@@ -2306,6 +2368,7 @@
             "lib/questions.ts",
             "lib/submit-confirm.ts",
             "lib/inject-guard.ts",
+            "lib/secret-store.ts",
             "lib/super-auto.ts",
             "lib/sessions.ts",
             "lib/activity.ts",
@@ -2336,13 +2399,15 @@
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
-            "companion-server.ts#* /ws"
+            "companion-server.ts#* /ws",
+            "routes/vault.ts"
           ]
         },
         "unauthorized": {
           "module": "lib/auth.ts",
           "callers": [
-            "companion-server.ts#* /ws"
+            "companion-server.ts#* /ws",
+            "routes/vault.ts"
           ]
         },
         "handleApiRoute": {
@@ -2395,6 +2460,12 @@
         },
         "handleOrchestratorRoute": {
           "module": "routes/orchestrator.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleVaultRoute": {
+          "module": "routes/vault.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -2675,6 +2746,7 @@
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/model.ts",
+            "routes/vault.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
@@ -3571,6 +3643,14 @@
             "ws.ts"
           ]
         },
+        "handleKeyCommand": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "ws.ts"
+          ]
+        },
         "resolveSession": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -4157,6 +4237,36 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/task/"
+          ]
+        },
+        "VaultResult": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "listSecrets": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "upsertSecret": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "deleteSecret": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "setSecretHosts": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
           ]
         },
         "SessionStatus": {

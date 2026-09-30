@@ -10,6 +10,7 @@ import { handleCommandRoute } from "./routes/command"
 import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
+import { handleVaultRoute } from "./routes/vault"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 
@@ -56,7 +57,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleVaultRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }
