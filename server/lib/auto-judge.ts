@@ -24,6 +24,37 @@ function commandFromInput(input: Record<string, unknown>): string {
   return String(input.command ?? input.cmd ?? "").trim()
 }
 
+// A word with no command substitution: `$VAR` ok, `$(…)` and backticks not.
+const PLAIN_WORD = /(?:[^\s;&|$`()]|\$(?!\())+/.source
+const SETUP_PREFIXES: RegExp[] = [
+  new RegExp(String.raw`^cd\s+${PLAIN_WORD}\s*(?:&&|;)\s*`),
+  new RegExp(String.raw`^[A-Za-z_]\w*=(?:${PLAIN_WORD})?\s*(?:&&|;)\s*`),
+  /^timeout\s+\d+[smh]?\s+/,
+]
+
+// Strip harmless setup (`cd <dir> &&`, `VAR=value;`, `timeout N`) so the
+// real verb gets judged. Without this every `cd x && cat y` went to the phone.
+export function stripSetupPrefixes(cmd: string): string {
+  let prev = ""
+  while (prev !== cmd) {
+    prev = cmd
+    for (const re of SETUP_PREFIXES) cmd = cmd.replace(re, "")
+  }
+  return cmd
+}
+
+// Blank out text that is data, not commands, so the denylist doesn't fire on
+// a heredoc or commit/PR message that merely *mentions* a dangerous command.
+// Heredocs fed to a shell (sh/bash/zsh/ssh) are kept — those do execute.
+export function stripDataText(cmd: string): string {
+  return cmd
+    .replace(/<<-?\s*(['"]?)(\w+)\1([^\n]*\n)[\s\S]*?\n([ \t]*\2)(?=\n|$)/g, (m, q, tag, rest, end, off: number, s: string) => {
+      const opener = s.slice(s.lastIndexOf("\n", off) + 1, off)
+      return /\b(sh|bash|zsh|ssh)\b/.test(opener) ? m : `<<${q}${tag}${q}${rest}${end}`
+    })
+    .replace(/(\s(?:-m|--message|--body|--title|--notes)\s+)("(?:[^"\\]|\\.)*"|'[^']*')/g, '$1""')
+}
+
 // ── Safe Bash patterns — auto-approve ──
 const SAFE_BASH: RegExp[] = [
   // Localhost / Companion API calls
@@ -33,6 +64,7 @@ const SAFE_BASH: RegExp[] = [
 
   // Read-only file inspection
   /^(cat|head|tail|less|wc|file|stat)\s/,
+  /^sed\s+-n\s/,
   /^ls(\s|$)/,
   /^pwd$/,
   /^echo\s/,
@@ -44,6 +76,7 @@ const SAFE_BASH: RegExp[] = [
   /^git\s+(status|log|diff|show|branch|remote|tag|stash list|blame|fetch|config\s+--get)/,
   /^git\s+rev-parse/,
   /^git\s+ls-files/,
+  /^gh\s+(pr|issue|run|repo|release)\s+(view|list|status|checks|diff)\b/,
 
   // Routine git writes (still gated on push-to-main below)
   /^git\s+add(\s|$)/,
@@ -148,6 +181,12 @@ const ALWAYS_SAFE_TOOLS = new Set([
   "TaskUpdate",
   "TaskList",
   "TaskGet",
+  "TaskOutput",
+  "TaskStop",
+  "ToolSearch",
+  "Skill",
+  "ScheduleWakeup",
+  "SubagentHandback",
 ])
 
 export interface Judgement {
@@ -167,10 +206,12 @@ export function autoJudgeWithReason(tool: string, input: Record<string, unknown>
   if (ALWAYS_SAFE_TOOLS.has(tool)) return { verdict: "allow", reason: `${tool} is always safe` }
 
   if (isShellTool(tool)) {
-    const cmd = commandFromInput(input)
+    const raw = commandFromInput(input)
+    const cmd = stripSetupPrefixes(raw)
 
+    const code = stripDataText(raw)
     for (const pattern of DANGEROUS_BASH) {
-      if (pattern.test(cmd)) return { verdict: "deny", reason: "matches the destructive-command denylist" }
+      if (pattern.test(code) || pattern.test(stripSetupPrefixes(code))) return { verdict: "deny", reason: "matches the destructive-command denylist" }
     }
 
     for (const pattern of SAFE_BASH) {
