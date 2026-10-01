@@ -71,6 +71,19 @@ test("setup prefixes never strip command substitution or hide a denylisted verb"
   expect(autoJudge("Bash", { command: `cd /repo && ${UNLISTED}` })).toBe("ask")
 })
 
+test("dangerous text inside data (heredoc / message flags) doesn't auto-deny", () => {
+  const FORCE = "git push --force origin main"
+  expect(autoJudge("Bash", { command: `cat >> notes.md <<'EOF'\n${FORCE}\nEOF` })).not.toBe("deny")
+  expect(autoJudge("Bash", { command: `git commit -m "never ${FORCE}"` })).toBe("allow")
+  expect(autoJudge("Bash", { command: `gh pr create --body "avoid ${FORCE}"` })).not.toBe("deny")
+})
+
+test("dangerous text that actually executes still denies", () => {
+  expect(autoJudge("Bash", { command: "bash <<'EOF'\nrm -rf /\nEOF" })).toBe("deny")
+  expect(autoJudge("Bash", { command: "cat <<'EOF' > x\nhi\nEOF\nsudo ls" })).toBe("deny")
+  expect(autoJudge("Bash", { command: `bash -c "sudo ls"` })).toBe("deny")
+})
+
 function repoOn(branch: string): string {
   const dir = mkdtempSync(join(tmpdir(), "cc-branch-guard-"))
   const git = (...args: string[]) =>

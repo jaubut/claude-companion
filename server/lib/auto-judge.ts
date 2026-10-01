@@ -43,6 +43,18 @@ export function stripSetupPrefixes(cmd: string): string {
   return cmd
 }
 
+// Blank out text that is data, not commands, so the denylist doesn't fire on
+// a heredoc or commit/PR message that merely *mentions* a dangerous command.
+// Heredocs fed to a shell (sh/bash/zsh/ssh) are kept — those do execute.
+export function stripDataText(cmd: string): string {
+  return cmd
+    .replace(/<<-?\s*(['"]?)(\w+)\1([^\n]*\n)[\s\S]*?\n([ \t]*\2)(?=\n|$)/g, (m, q, tag, rest, end, off: number, s: string) => {
+      const opener = s.slice(s.lastIndexOf("\n", off) + 1, off)
+      return /\b(sh|bash|zsh|ssh)\b/.test(opener) ? m : `<<${q}${tag}${q}${rest}${end}`
+    })
+    .replace(/(\s(?:-m|--message|--body|--title|--notes)\s+)("(?:[^"\\]|\\.)*"|'[^']*')/g, '$1""')
+}
+
 // ── Safe Bash patterns — auto-approve ──
 const SAFE_BASH: RegExp[] = [
   // Localhost / Companion API calls
@@ -197,8 +209,9 @@ export function autoJudgeWithReason(tool: string, input: Record<string, unknown>
     const raw = commandFromInput(input)
     const cmd = stripSetupPrefixes(raw)
 
+    const code = stripDataText(raw)
     for (const pattern of DANGEROUS_BASH) {
-      if (pattern.test(raw) || pattern.test(cmd)) return { verdict: "deny", reason: "matches the destructive-command denylist" }
+      if (pattern.test(code) || pattern.test(stripSetupPrefixes(code))) return { verdict: "deny", reason: "matches the destructive-command denylist" }
     }
 
     for (const pattern of SAFE_BASH) {
