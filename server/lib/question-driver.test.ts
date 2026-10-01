@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test"
 import { driveQuestionPicker, pickerRegion, type PickerIO } from "./question-driver"
 import type { QuestionItem, QuestionAnswer } from "./questions"
+import { answerOpenPicker } from "./question-hook"
 
 // A fake of the real picker, transcribed from live captures on 2026-09-05:
 // digit picks a row (single-select auto-advances, multi toggles), Tab moves to
@@ -155,4 +156,28 @@ test("pickerRegion ignores the prompt echo above the tab bar", () => {
   const pane = "❯ ask me: Pick one color\n────\n←  ☐ Color  ✔ Submit  →\nPick one color\n❯ 1. Red"
   expect(pickerRegion(pane)).toBe("←  ☐ Color  ✔ Submit  →\nPick one color\n❯ 1. Red")
   expect(pickerRegion("no picker here")).toBe("")
+})
+
+// ---- post-window answer (hook lapsed, picker still open) --------------------
+
+const scope: QuestionItem = { header: "Scope", question: "Which scope applies?", multiSelect: false, options: [{ label: "Small" }, { label: "Large" }] }
+const owner: QuestionItem = { header: "Owner", question: "Who owns the account?", multiSelect: false, options: [{ label: "Me" }, { label: "Client" }] }
+
+test("late phone answer drives a 4-tab picker that has been open for minutes", async () => {
+  const qs = [color, toppings, scope, owner]
+  const p = new FakePicker(qs, 1) // already mounted
+  const r = await answerOpenPicker(p, qs, [
+    { selected: ["Blue"] }, { selected: ["Olives", "Ham"] }, { selected: ["Other"], otherText: "Medium" }, { selected: ["Client"] },
+  ])
+  expect(r.ok).toBe(true)
+  expect(p.submitted).toBe(true)
+  expect([0, 1, 2, 3].map((i) => p.answersOf(i))).toEqual([["Blue"], ["Olives", "Ham"], ["Medium"], ["Client"]])
+})
+
+test("late phone answer types nothing when the picker is gone", async () => {
+  const p = new FakePicker([color], 1)
+  p.submitted = true
+  const r = await answerOpenPicker(p, [color], [{ selected: ["Red"] }])
+  expect(r).toEqual({ ok: false, reason: "picker no longer on screen" })
+  expect(p.keys).toEqual([])
 })

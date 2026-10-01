@@ -1,7 +1,7 @@
 import { companionLog } from "./lib/log"
 import type { WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
-import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
+import { resolveQuestion, getPendingQuestions, questionFrame, type QuestionAnswer } from "./lib/questions"
 import { deliveryFailedHint, injectConfirmed } from "./lib/submit-confirm"
 import { injectRefusal } from "./lib/inject-guard"
 import { handleKeyCommand } from "./lib/secret-store"
@@ -38,14 +38,7 @@ export const websocket: WebSocketHandler<WsData> = {
     // reconnects mid-question would stay blank until Claude asks
     // something new.
     for (const q of getPendingQuestions()) {
-      ws.send(JSON.stringify({
-        type: "question",
-        id: q.id,
-        agent: q.agent ?? "claude",
-        sessionId: q.sessionId,
-        cwd: q.cwd,
-        questions: q.questions,
-      }))
+      ws.send(JSON.stringify(questionFrame(q)))
     }
 
     ws.send(JSON.stringify({

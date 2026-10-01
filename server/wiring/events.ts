@@ -1,6 +1,6 @@
 import { broadcast } from "../state"
 import { onApprovalRequest, onApprovalExpired, onApprovalResolved } from "../lib/pty-manager"
-import { onQuestionRequest, onQuestionExpired, onQuestionResolved } from "../lib/questions"
+import { onQuestionRequest, onQuestionExpired, onQuestionLapsed, onQuestionResolved, questionFrame } from "../lib/questions"
 import { onActivity, reconcileActivityLiveness, type Activity } from "../lib/activity"
 import { onFeed, onFeedReset, type FeedEvent } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
@@ -70,14 +70,7 @@ onApprovalResolved((req) => {
 })
 
 onQuestionRequest((req) => {
-  broadcast({
-    type: "question",
-    id: req.id,
-    agent: req.agent ?? "claude",
-    sessionId: req.sessionId,
-    cwd: req.cwd,
-    questions: req.questions,
-  })
+  broadcast(questionFrame(req))
   markWaiting(req.sessionKey, "question", req.id)
   // Same urgency tier as approvals — Claude is blocked until the phone
   // answers. The push title carries the first question's text so a glance
@@ -96,6 +89,13 @@ onQuestionRequest((req) => {
       userInfo: { questionId: req.id, sessionId: req.sessionId, cwd: req.cwd },
     }).catch(() => { /* silent — don't let push failure break the hook */ })
   }
+})
+
+// Hook window ran out, card stays: re-send it so the phone shows "answer via
+// terminal" (same id — phones already upsert on the WS replay). The session
+// is still blocked, so the waiting reason stays.
+onQuestionLapsed((req) => {
+  broadcast(questionFrame(req))
 })
 
 onQuestionExpired((req, decision) => {
