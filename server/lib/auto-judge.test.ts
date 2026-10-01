@@ -55,6 +55,22 @@ test("auto-allow and auto-deny verdicts are unchanged", () => {
   expect(autoJudgeWithReason("Bash", { command: "git status" }).verdict).toBe("allow")
 })
 
+test("setup prefixes (cd / VAR= / timeout) don't hide a safe verb", () => {
+  for (const command of [
+    "cd ~/claude-companion && git log --oneline -5",
+    "S=/tmp/x; cd $S && cat out.txt",
+    "cd /repo; timeout 30 grep -rn foo .",
+    "cd ~/x && sed -n 1,40p a.ts",
+  ]) expect(autoJudge("Bash", { command })).toBe("allow")
+})
+
+test("setup prefixes never strip command substitution or hide a denylisted verb", () => {
+  expect(autoJudge("Bash", { command: `X=$(${UNLISTED}); cat y` })).toBe("ask")
+  expect(autoJudge("Bash", { command: `cd $(${UNLISTED}) && ls` })).toBe("ask")
+  expect(autoJudge("Bash", { command: "cd /repo && git push --force origin main" })).toBe("deny")
+  expect(autoJudge("Bash", { command: `cd /repo && ${UNLISTED}` })).toBe("ask")
+})
+
 function repoOn(branch: string): string {
   const dir = mkdtempSync(join(tmpdir(), "cc-branch-guard-"))
   const git = (...args: string[]) =>
