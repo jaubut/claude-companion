@@ -9,6 +9,8 @@ import {
   getPendingQuestions,
   onQuestionExpired,
   questionAnswerMap,
+  questionFrame,
+  resolveQuestion,
 } from "./questions"
 import {
   LOCAL_PHONE_WINDOW_MS,
@@ -166,6 +168,39 @@ test("answered at the terminal: the phone card is resolved 'answered' and the ho
   expect(await (await pending)!.json()).toEqual({})
   expect(ended.map(([r, d]) => [r.sessionId, d])).toEqual([["term-1", "answered"]])
   expect(cancelQuestionsFor({ sessionId: "term-1" }, "answered")).toBe(0)
+  off()
+})
+
+// ---- hook window lapsed: card stays, phone answer drives the picker ---------
+
+test("past the hook window the card stays listed (state terminal) and a phone answer drives the picker", async () => {
+  const late: Array<{ questions: QuestionItem[]; answers: QuestionAnswer[] }> = []
+  const ask: Ask = (req, opts = {}) => addQuestionRequest(req, { ...opts, expiryMs: 20 })
+  const inp = hookInput({ sessionId: "late-1", input: { questions: [color, toppings] } })
+  const res = await questionFastPath(inp, { ask, lateAnswer: (_t, questions, answers) => late.push({ questions, answers }) })
+  // The hook returned no decision so Claude Code's picker keeps the question…
+  expect(await res!.json()).toEqual({})
+  // …but the phone still lists it.
+  const q = getPendingQuestions().find((r) => r.sessionId === "late-1")!
+  expect(q.state).toBe("terminal")
+  expect(questionFrame(q).state).toBe("terminal")
+  const answers = [{ selected: ["Blue"] }, { selected: ["Cheese"] }]
+  expect(resolveQuestion(q.id, answers)).toBe(true)
+  expect(late).toEqual([{ questions: [color, toppings], answers }])
+  expect(getPendingQuestions().some((r) => r.sessionId === "late-1")).toBe(false)
+})
+
+test("past the hook window, answering in the terminal still clears the card", async () => {
+  const ended: string[] = []
+  const off = onQuestionExpired((r, d) => { if (r.sessionId === "late-2") ended.push(d) })
+  const ask: Ask = (req, opts = {}) => addQuestionRequest(req, { ...opts, expiryMs: 20 })
+  let drove = 0
+  await questionFastPath(hookInput({ sessionId: "late-2" }), { ask, lateAnswer: () => { drove++ } })
+  expect(ended).toEqual([]) // lapsing is not expiring
+  expect(cancelQuestionsFor({ sessionId: "late-2" }, "answered")).toBe(1)
+  expect(ended).toEqual(["answered"])
+  expect(getPendingQuestions().some((r) => r.sessionId === "late-2")).toBe(false)
+  expect(drove).toBe(0)
   off()
 })
 

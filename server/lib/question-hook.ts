@@ -34,7 +34,7 @@ import {
   questionDedupeKey,
 } from "./questions"
 import { type InjectTarget, resolveTmuxPaneFromTty, withPickerIO } from "./keyboard-inject"
-import { driveQuestionPicker, pickerShowsQuestions } from "./question-driver"
+import { type DriveResult, type PickerIO, driveQuestionPicker, pickerShowsQuestions } from "./question-driver"
 import { tmuxPaneAttached } from "./tmux-pane"
 import { recordToolStart } from "./activity"
 import { summarize } from "./tool-format"
@@ -87,6 +87,29 @@ function driveAnswer(target: InjectTarget, questions: QuestionItem[], answers: Q
     return r.ok
   }).then((res) => {
     if (res === null) companionLog(`${red}picker drive refused${reset} — no tmux pane or tty target`)
+  }).catch(() => { /* logged above */ })
+}
+
+// A phone answer for a question whose hook window already lapsed: the hook
+// returned with no decision, so Claude Code's own picker holds the question.
+// Type the answers into it — but only if the picker for THESE questions is on
+// screen; a readable pane without it means it went away unseen (no typing
+// into the prompt box). An unreadable pane (Mac tab outside tmux) drives
+// blind: the card would have been closed by PostToolUse / Stop /
+// UserPromptSubmit / SessionEnd had the picker gone.
+export async function answerOpenPicker(io: PickerIO, questions: QuestionItem[], answers: QuestionAnswer[]): Promise<DriveResult> {
+  const pane = io.capture ? await io.capture() : null
+  if (pane !== null && !pickerShowsQuestions(pane, questions)) return { ok: false, reason: "picker no longer on screen" }
+  return driveQuestionPicker(io, questions, answers)
+}
+
+export function driveLateAnswer(target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[]): void {
+  void withPickerIO(target, async (io, via) => {
+    const r = await answerOpenPicker(io, questions, answers)
+    companionLog(r.ok ? `${green}picker driven (late answer)${reset} → ${cyan}${via}${reset}` : `${red}late answer not delivered${reset} → ${via} — ${r.reason}`)
+    return r.ok
+  }).then((res) => {
+    if (res === null) companionLog(`${red}late answer refused${reset} — no tmux pane or tty target`)
   }).catch(() => { /* logged above */ })
 }
 
@@ -156,6 +179,7 @@ export interface QuestionHookDeps {
   ask?: typeof addQuestionRequest
   localAttached?: (target: InjectTarget) => Promise<boolean>
   afterAnswer?: (target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[], agent: SpawnAgent) => void
+  lateAnswer?: (target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[]) => void
 }
 
 function defaultAfterAnswer(target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[], agent: SpawnAgent): void {
@@ -194,7 +218,15 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
   recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
   const answers = await (deps.ask ?? addQuestionRequest)(
     { agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions, sessionKey: p.session?.key ?? "" },
-    { expiryMs: windowMs },
+    {
+      expiryMs: windowMs,
+      // Window lapsed: the card stays on the phone ("answer via terminal") and
+      // a later phone answer is typed into the terminal picker.
+      onLateAnswer: (late) => {
+        companionLog(`${green}answered${reset} ← phone after the hook window — driving the terminal picker`)
+        ;(deps.lateAnswer ?? driveLateAnswer)(target, questions, late)
+      },
+    },
   )
 
   if (answers.length === 0) {
@@ -202,7 +234,7 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
     // terminal). Never deny: that made Claude carry on without an answer.
     // No decision lets Claude Code show — or keep showing — its own picker.
     markQuestionFellThrough(dedupeKey)
-    companionLog(`${yellow}question unanswered on phone${reset} — terminal picker takes it (${p.eventName})`)
+    companionLog(`${yellow}question unanswered in hook window${reset} — terminal picker takes it, card stays on phone (${p.eventName})`)
     return hookPassthroughResponse(p.agent)
   }
 

@@ -30,6 +30,10 @@ export interface QuestionRequest {
   sessionKey: string
   timestamp: number
   resolve: (answers: QuestionAnswer[]) => void
+  // "terminal" once the hook window lapsed: the hook has returned and Claude
+  // Code's own picker holds the question, but the card stays on the phone and
+  // a phone answer is typed into that picker (see addQuestionRequest).
+  state?: "phone" | "terminal"
 }
 
 // One answer per question. selected[] holds the chosen option labels (single-
@@ -54,6 +58,9 @@ const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const handlers = new Set<EventHandler>()
 const expiryHandlers = new Set<ExpiryHandler>()
 const resolvedHandlers = new Set<EventHandler>()
+const lapsedHandlers = new Set<EventHandler>()
+// Lapsed questions: where a phone answer goes once the hook has returned.
+const lateAnswer = new Map<string, (answers: QuestionAnswer[]) => void>()
 
 // Same 290s budget as approvals — Claude's hook curl times out at 300s and
 // we want to broadcast a clean `expired` signal before that fires. The hook
@@ -62,9 +69,16 @@ export const EXPIRY_MS = 290_000
 
 // `opts.expiryMs` is a test seam for the expiry exit — same reasoning as
 // pty-manager's: a param, not an env var.
+//
+// `opts.onLateAnswer`: when the window runs out the promise still resolves
+// with [] (the hook must answer before Claude Code's 300 s curl timeout), but
+// the card is NOT expired — it lapses to state "terminal" and stays listed.
+// A phone answer then goes to onLateAnswer (which drives the terminal picker);
+// only cancelQuestionsFor (PostToolUse / Stop / UserPromptSubmit / SessionEnd)
+// or endQuestion closes it otherwise. Without it, expiry ends the card.
 export function addQuestionRequest(
-  req: Omit<QuestionRequest, "id" | "timestamp" | "resolve">,
-  opts: { expiryMs?: number } = {},
+  req: Omit<QuestionRequest, "id" | "timestamp" | "resolve" | "state">,
+  opts: { expiryMs?: number; onLateAnswer?: (answers: QuestionAnswer[]) => void } = {},
 ): Promise<QuestionAnswer[]> {
   return new Promise((resolve) => {
     const id = crypto.randomUUID()
@@ -83,9 +97,25 @@ export function addQuestionRequest(
     // On expiry we resolve with empty answers — the caller decides how to
     // surface that to Claude (typically: deny the tool with reason "user did
     // not answer in time"). We don't pretend they answered.
-    const timer = setTimeout(() => endUnanswered(id, "expired"), opts.expiryMs ?? EXPIRY_MS)
+    const onLate = opts.onLateAnswer
+    const timer = setTimeout(
+      () => (onLate ? lapse(id, onLate) : endUnanswered(id, "expired")),
+      opts.expiryMs ?? EXPIRY_MS,
+    )
     expiryTimers.set(id, timer)
   })
+}
+
+function lapse(id: string, onLate: (answers: QuestionAnswer[]) => void): void {
+  const r = pending.get(id)
+  if (!r) return
+  expiryTimers.delete(id)
+  r.state = "terminal"
+  lateAnswer.set(id, onLate)
+  for (const handler of lapsedHandlers) {
+    try { handler(r) } catch { /* ignore */ }
+  }
+  r.resolve([])
 }
 
 // The no-answer exit from `pending` (the other is resolveQuestion); both fire
@@ -94,6 +124,7 @@ function endUnanswered(id: string, decision: QuestionEndDecision): boolean {
   const r = pending.get(id)
   if (!r) return false
   pending.delete(id)
+  lateAnswer.delete(id)
   const timer = expiryTimers.get(id)
   if (timer) clearTimeout(timer)
   expiryTimers.delete(id)
@@ -122,6 +153,11 @@ export function cancelQuestionsFor(who: { sessionId?: string; sessionKey?: strin
   return n
 }
 
+// End one question with no answer (e.g. a lapsed card whose picker is gone).
+export function endQuestion(id: string, decision: QuestionEndDecision): boolean {
+  return endUnanswered(id, decision)
+}
+
 export function resolveQuestion(id: string, answers: QuestionAnswer[]): boolean {
   const req = pending.get(id)
   if (!req) return false
@@ -135,10 +171,16 @@ export function resolveQuestion(id: string, answers: QuestionAnswer[]): boolean 
   for (const handler of resolvedHandlers) {
     try { handler(req) } catch { /* ignore */ }
   }
-  req.resolve(answers)
-  // One of the only two exits from `pending` (the other is the expiry timer);
-  // both fire a listener.
+  // A lapsed question's hook has already returned: the answer goes to the
+  // terminal picker instead.
+  const late = lateAnswer.get(id)
+  lateAnswer.delete(id)
   pending.delete(id)
+  if (late) {
+    try { late(answers) } catch { /* ignore */ }
+  } else {
+    req.resolve(answers)
+  }
   return true
 }
 
@@ -149,6 +191,26 @@ export function getPendingQuestions(): QuestionRequest[] {
 export function onQuestionRequest(handler: EventHandler): () => void {
   handlers.add(handler)
   return () => handlers.delete(handler)
+}
+
+// The hook window ran out but the card stays (state "terminal").
+export function onQuestionLapsed(handler: EventHandler): () => void {
+  lapsedHandlers.add(handler)
+  return () => lapsedHandlers.delete(handler)
+}
+
+// The `question` wire frame, shared by the live broadcast and the WS replay.
+// `state` is only sent once lapsed, so the first frame is unchanged.
+export function questionFrame(q: QuestionRequest): Record<string, unknown> {
+  return {
+    type: "question",
+    id: q.id,
+    agent: q.agent ?? "claude",
+    sessionId: q.sessionId,
+    cwd: q.cwd,
+    questions: q.questions,
+    ...(q.state === "terminal" ? { state: "terminal" } : {}),
+  }
 }
 
 export function onQuestionExpired(handler: ExpiryHandler): () => void {
