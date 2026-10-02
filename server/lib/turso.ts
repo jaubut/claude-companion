@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs"
 // Minimal Turso (libSQL Hrana-over-HTTP) client for read-only proxy routes.
 // The phone never holds the Turso token; the server does. Token source is
 // TURSO_AUTH_TOKEN from the shell env, ~/.claude-companion/.env (loaded by
-// cli.ts), or the agent env file ~/.config/tls-agent/env. Never log it, and
+// cli.ts), or the agent env files ~/.config/tls-agent/{env,secrets.env}. Never log it, and
 // never put SQL or the token into an error message — callers surface
 // `TursoUnreachable` as a generic 503.
 
@@ -31,15 +31,19 @@ let agentEnvRead = false
 function readAgentToken(): string | undefined {
   if (agentEnvRead) return agentToken
   agentEnvRead = true
-  try {
-    const raw = readFileSync(join(homedir(), ".config", "tls-agent", "env"), "utf8")
-    for (const line of raw.split("\n")) {
-      const m = /^\s*(?:export\s+)?TURSO_AUTH_TOKEN\s*=\s*(.*)\s*$/.exec(line)
-      if (!m) continue
-      const v = m[1]!.trim().replace(/^["']|["']$/g, "")
-      if (v) agentToken = v
-    }
-  } catch { /* no agent env on this host */ }
+  // Zettlab keeps the token in secrets.env (the vault store); the Mac in env.
+  for (const file of ["env", "secrets.env"]) {
+    try {
+      const raw = readFileSync(join(homedir(), ".config", "tls-agent", file), "utf8")
+      for (const line of raw.split("\n")) {
+        const m = /^\s*(?:export\s+)?TURSO_AUTH_TOKEN\s*=\s*([^#]*?)\s*(?:#.*)?$/.exec(line)
+        if (!m) continue
+        const v = m[1]!.trim().replace(/^["']|["']$/g, "")
+        if (v) agentToken = v
+      }
+    } catch { /* file absent on this host */ }
+    if (agentToken) break
+  }
   return agentToken
 }
 
