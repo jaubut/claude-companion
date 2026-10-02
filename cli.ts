@@ -125,6 +125,7 @@ import { startCodexFeedMonitor } from "./server/lib/codex-feed"
 import { getAuthToken, maskToken } from "./server/lib/auth"
 import { secureLogFile } from "./server/lib/log"
 import { startMediaSweeper } from "./server/wiring/media"
+import { startRecordsExpiry } from "./server/lib/records-expiry"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -137,6 +138,8 @@ expectFirstDiscovery()
 const server = createCompanionServer(PORT)
 // After loadDefaultDotEnv() above: the age cap must come from the configured value.
 startMediaSweeper()
+// ID-record expiry pushes, store host only (inert when COMPANION_VAULT_UPSTREAM is set).
+startRecordsExpiry()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"
