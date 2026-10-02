@@ -196,7 +196,7 @@ export function reconcileDispatch(sessions: Session[]): void {
 async function reconcileOnce(sessions: Session[]): Promise<void> {
   for (const s of sessions) {
     if (!s.cwd) continue
-    const pending = await resolveWorkerTask("bind", { taskId: s.taskId, tmuxPane: s.tmuxPane, cwd: s.cwd })
+    const pending = await resolveWorkerTask("bind", { taskId: s.taskId, tmuxPane: s.tmuxPane, tmuxSocket: s.tmuxSocket, cwd: s.cwd })
     if (!pending) continue
     bindTaskSession(pending.taskId, s.key || s.cwd)
     emitTask(pending.taskId)

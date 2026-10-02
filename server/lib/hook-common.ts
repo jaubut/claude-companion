@@ -1,6 +1,7 @@
 import type { SpawnAgent } from "./spawn-session"
 import type { Session } from "./sessions"
 import { isScrapeTarget, tmuxServerPidOf } from "./scrape-registry"
+import { tmuxSocketFromEnv } from "./tmux-pane"
 
 // Helpers shared by every hook endpoint and the event wiring: which agent a
 // hook came from, the cwd it reports, the decision envelope each hook event
@@ -105,6 +106,9 @@ export function metaFromHeaders(headers: Headers): Partial<Session> {
     tty: raw("x-companion-tty"),
     iTermSessionId: raw("x-companion-iterm-session-id"),
     tmuxPane: raw("x-companion-tmux-pane"),
+    // X-Companion-Tmux is the hook's $TMUX ("<socket>,<pid>,<idx>"): the pane
+    // above is only unique on that socket's server.
+    tmuxSocket: tmuxSocketFromEnv(headers.get("x-companion-tmux")),
     taskId: raw("x-companion-task-id"),
     pid: raw("x-companion-pid"),
   }

@@ -4,9 +4,9 @@ import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
 import { isPaneDirty, isScraping, yieldPane } from "../lib/command-scrape"
 import { isPaneClean } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
-import { listSessions, setSessionStatus } from "../lib/sessions"
+import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
-import { capturePane } from "../lib/tmux-pane"
+import { capturePane, paneKey } from "../lib/tmux-pane"
 import { markWaiting, unmarkWaiting } from "./waiting"
 
 // Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
@@ -24,7 +24,10 @@ async function readSessionStatus(pid: string): Promise<SessionStatus | null> {
 
 export const dialogWatcher = createDialogWatcher({
   sessions: listSessions,
-  capture: capturePane,
+  // dialog-watch hands over the bare pane id today; until it also passes the
+  // session's socket, the one live session on that id names the server
+  // (ambiguous → default server, the old behaviour).
+  capture: (pane: string, socket?: string) => capturePane(pane, undefined, { socket: socket ?? socketForPane(pane) }),
   sessionStatus: readSessionStatus,
   hasPendingQuestion: (s) => getPendingQuestions().some((q) => (q.sessionId && q.sessionId === s.sessionId) || q.cwd === s.cwd),
   isScraping,
@@ -88,7 +91,9 @@ dialogWatcher.start()
 // below saying the pane really is back to an empty prompt.
 // Bounded by the caller (VERIFY_TIMEOUT_MS in lib/command-scrape.ts): on
 // abort the capture is killed and the answer is "not clean" — the mark stays.
-async function paneLooksClean(target: { key: string; tmuxPane?: string }, signal: AbortSignal): Promise<boolean> {
+type PaneTarget = { key: string; tmuxPane?: string; tmuxSocket?: string }
+
+async function paneLooksClean(target: PaneTarget, signal: AbortSignal): Promise<boolean> {
   // Refresh first: the watcher skipped this session for the whole scrape, so
   // its map is stale by construction, and if what is left on the pane IS a
   // modal this publishes it — the phone gets the card, the inject path gets a
@@ -96,12 +101,12 @@ async function paneLooksClean(target: { key: string; tmuxPane?: string }, signal
   // instead of waiting on a mark to expire.
   await dialogWatcher.refresh(target.key)
   if (!target.tmuxPane || signal.aborted) return false
-  const text = await capturePane(target.tmuxPane, signal)
+  const text = await capturePane(target.tmuxPane, signal, { socket: target.tmuxSocket })
   return text !== null && !signal.aborted && isPaneClean(text)
 }
 
 export async function yieldPaneForInject(
-  target: { key: string; tmuxPane?: string } | null | undefined,
+  target: PaneTarget | null | undefined,
 ): Promise<boolean> {
   if (!target) return true
   const wasDirty = isPaneDirty(target.key)
@@ -109,7 +114,8 @@ export async function yieldPaneForInject(
   // this pane (lib/key-gate.ts). The delivery itself goes through the same
   // gate; this keeps the verdict honest, so freed never means "free, but a
   // chord window is still open".
-  const { held, freed } = await yieldPane(target.key, { pane: target.tmuxPane, verify: (signal) => paneLooksClean(target, signal) })
+  const pane = target.tmuxPane ? paneKey(target.tmuxPane, target.tmuxSocket) : undefined
+  const { held, freed } = await yieldPane(target.key, { pane, verify: (signal) => paneLooksClean(target, signal) })
   if (held === "list") {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     const what = wasDirty ? "command scrape residue" : "command scrape aborted"
@@ -137,8 +143,8 @@ export async function openDialogFor(target: { key: string } | null | undefined):
 const PANE_SNAPSHOT_TIMEOUT_MS = 1_000
 
 export async function paneSnapshotFor(
-  target: { tmuxPane?: string } | null | undefined,
+  target: { tmuxPane?: string; tmuxSocket?: string } | null | undefined,
 ): Promise<string | null | undefined> {
   if (!target?.tmuxPane) return undefined
-  return capturePane(target.tmuxPane, AbortSignal.timeout(PANE_SNAPSHOT_TIMEOUT_MS), { escapes: true })
+  return capturePane(target.tmuxPane, AbortSignal.timeout(PANE_SNAPSHOT_TIMEOUT_MS), { escapes: true, socket: target.tmuxSocket })
 }

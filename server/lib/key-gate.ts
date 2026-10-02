@@ -8,7 +8,9 @@
 // a second request (another phone, a retry, /api/model/cancel, the /help
 // close path) could still send inside the window and lose its key.
 //
-// So the cooldown lives here, keyed by tmux pane, and every sender goes
+// So the cooldown lives here, keyed by tmux pane — paneKey(pane, socket) from
+// lib/tmux-pane.ts, since a pane id is only unique per tmux server — and every
+// sender goes
 // through `send()`:
 //   - sends to one pane run strictly one after another (a promise chain), so
 //     two requests that arrive together cannot both pass the check and fire

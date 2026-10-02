@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test"
-import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
+import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, removeSessionByKey, socketForPane, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
 import { metaFromHeaders } from "./hook-common"
+import { drainRemovalCount } from "./session-removal-log"
 
 test("Linux pts ttys get a tag like macOS ttys do", () => {
   expect(ttyTag("/dev/ttys017")).toBe("s017")
@@ -427,4 +428,60 @@ test("an inject answers turn-end only, and the ambiguity count reads the raw rea
   expect(rec.waitingKind).toBe("approval")
   expect(rec.waitingRef).toBe("appr-7")
   clearAllWaiting()
+})
+
+// ── tmux socket identity (sessions batch 3) ─────────────────────────────────
+
+test("tmuxSocket: from the X-Companion-Tmux header, sticky across a header-less discovery re-record", () => {
+  const meta = metaFromHeaders(new Headers({
+    "x-companion-tty": "/dev/pts/61",
+    "x-companion-tmux-pane": "%61",
+    "x-companion-tmux": "/tmp/tmux-1000/cc,4242,0",
+  }))
+  expect(meta.tmuxSocket).toBe("/tmp/tmux-1000/cc")
+  const s = recordSession({ cwd: "/home/aubut/sock", sessionId: "sock-1", ...meta })!
+  expect(s.tmuxSocket).toBe("/tmp/tmux-1000/cc")
+  // discovery without env access: same pane, no socket → keeps it
+  const again = recordSession({ cwd: "/home/aubut/sock", tty: "/dev/pts/61", tmuxPane: "%61" }, { provisional: true })!
+  expect(again.tmuxSocket).toBe("/tmp/tmux-1000/cc")
+  // no pane at all in the update → keeps it
+  expect(recordSession({ cwd: "/home/aubut/sock", tty: "/dev/pts/61" })!.tmuxSocket).toBe("/tmp/tmux-1000/cc")
+})
+
+test("tmuxSocket: a NEW pane without a socket drops the old pane's socket", () => {
+  recordSession({ cwd: "/home/aubut/sock2", tty: "/dev/pts/62", tmuxPane: "%62", tmuxSocket: "/tmp/tmux-1000/cc" })
+  const moved = recordSession({ cwd: "/home/aubut/sock2", tty: "/dev/pts/62", tmuxPane: "%70" })!
+  expect(moved.tmuxPane).toBe("%70")
+  expect(moved.tmuxSocket).toBe("")
+})
+
+test("tmuxSocket change alone is a meaningful change (emits)", () => {
+  recordSession({ cwd: "/home/aubut/sock3", tty: "/dev/pts/63", tmuxPane: "%63" })
+  let emits = 0
+  const off = onSessions(() => { emits++ })
+  recordSession({ cwd: "/home/aubut/sock3", tty: "/dev/pts/63", tmuxPane: "%63", tmuxSocket: "/tmp/tmux-1000/cc" })
+  expect(emits).toBeGreaterThan(0)
+  off()
+})
+
+test("removeSessionByTmuxPane: with a socket, only the pane on that server goes", () => {
+  const cc = recordSession({ cwd: "/home/aubut/dup", tty: "/dev/pts/64", tmuxPane: "%64", tmuxSocket: "/tmp/tmux-1000/cc" })!
+  const def = recordSession({ cwd: "/home/aubut/dup", tty: "/dev/pts/65", tmuxPane: "%64", tmuxSocket: "/tmp/tmux-1000/default" })!
+  expect(socketForPane("%64")).toBeUndefined()  // ambiguous: two servers
+  expect(removeSessionByTmuxPane("%64", "/tmp/tmux-1000/default")).toBe(true)
+  const keys = listSessions().map((s) => s.key)
+  expect(keys).toContain(cc.key)
+  expect(keys).not.toContain(def.key)
+  expect(socketForPane("%64")).toBe("/tmp/tmux-1000/cc")
+  // legacy call (no socket) still matches any server
+  expect(removeSessionByTmuxPane("%64")).toBe(true)
+  expect(listSessions().map((s) => s.key)).not.toContain(cc.key)
+})
+
+test("removals are counted for the discovery tick log, then drained", () => {
+  drainRemovalCount()
+  const s = recordSession({ cwd: "/home/aubut/gone", tty: "/dev/pts/66" })!
+  removeSessionByKey(s.key)
+  expect(drainRemovalCount()).toBe(1)
+  expect(drainRemovalCount()).toBe(0)
 })

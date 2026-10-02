@@ -15,9 +15,9 @@
 
 import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
-import { INJECT_SEND_MS, injectText, resolveTmuxPaneFromTty, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { INJECT_SEND_MS, injectText, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
 import { inputLine, unstyle } from "./command-menu"
-import { capturePane } from "./tmux-pane"
+import { type PaneRef, capturePane, paneKey, resolveTmuxRefFromTty, sendKeysArgs } from "./tmux-pane"
 import { readClaudeSessionFile } from "./discover"
 
 export const SUBMIT_WINDOW_MS = 3_000
@@ -30,6 +30,7 @@ export interface SubmitIdentity {
   sessionId?: string
   tty?: string
   // tmux pane id (%N): the one identity that survives /clear (new session id).
+  // Bare id, as hooks report it; the tty beside it is unique per server-pty.
   pane?: string
 }
 
@@ -277,17 +278,17 @@ export interface ConfirmTarget extends InjectTarget {
 
 // A pane we can both re-press Enter in and read back. Linux sessions without
 // a recorded pane resolve it from the tty, as injectText does.
-async function confirmPane(target: ConfirmTarget): Promise<string> {
+async function confirmPane(target: ConfirmTarget): Promise<PaneRef | null> {
   const pane = target.tmuxPane?.trim() ?? ""
-  if (/^%\d+$/.test(pane)) return pane
-  if (target.tty && process.platform === "linux") return (await resolveTmuxPaneFromTty(target.tty)) ?? ""
-  return ""
+  if (/^%\d+$/.test(pane)) return { pane, socket: target.tmuxSocket ?? "" }
+  if (target.tty && process.platform === "linux") return resolveTmuxRefFromTty(target.tty)
+  return null
 }
 
-function pressEnterIn(pane: string): () => Promise<boolean> {
+function pressEnterIn(ref: PaneRef): () => Promise<boolean> {
   return async () => {
     try {
-      const r = await keyGate.send(pane, "Enter", (signal) => tmuxSendKeys(["send-keys", "-t", pane, "Enter"], 2000, signal), { timeoutMs: INJECT_SEND_MS })
+      const r = await keyGate.send(paneKey(ref.pane, ref.socket), "Enter", (signal) => tmuxSendKeys(sendKeysArgs(ref, "Enter"), 2000, signal), { timeoutMs: INJECT_SEND_MS })
       return r.ok
     } catch {
       return false
@@ -320,20 +321,23 @@ function withPaneLock<T>(pane: string, fn: () => Promise<T>): Promise<T> {
 // confirmed: that is where the hook is guaranteed and the pane is readable.
 // Everything else keeps the old "delivered = sent" answer (confirmed: false).
 export async function injectConfirmed(text: string, target: ConfirmTarget | undefined): Promise<InjectOutcome> {
-  const pane = target && (target.agent ?? "claude") === "claude" ? await confirmPane(target) : ""
-  if (!target || !pane) {
+  const ref = target && (target.agent ?? "claude") === "claude" ? await confirmPane(target) : null
+  if (!target || !ref) {
     return (await injectText(text, target)) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
   }
+  // (socket, pane) is the lock's identity: two servers' panes sharing an id
+  // are two keyboards.
+  const pane = paneKey(ref.pane, ref.socket)
   return withPaneLock(pane, async (): Promise<InjectOutcome> => {
     const hookless = isHooklessInput(text)
-    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty, pane }, { boundary: hookless })
+    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty, pane: ref.pane }, { boundary: hookless })
     try {
-      if (!(await injectText(text, { ...target, tmuxPane: pane }))) return { ok: false, error: "deliver_failed" }
+      if (!(await injectText(text, { ...target, tmuxPane: ref.pane, tmuxSocket: ref.socket }))) return { ok: false, error: "deliver_failed" }
       const r = await confirmSubmit({
         watch,
         text,
-        pressEnter: pressEnterIn(pane),
-        capture: () => capturePane(pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true }),
+        pressEnter: pressEnterIn(ref),
+        capture: () => capturePane(ref.pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true, socket: ref.socket }),
         busy: async () => !!target.pid && (await readClaudeSessionFile(target.pid))?.status === "busy",
         hookless,
       })

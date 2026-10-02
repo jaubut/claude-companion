@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 85,
+          "lines": 93,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -72,7 +72,8 @@
             "routes/vault.ts",
             "lib/vault-guard.ts",
             "ws.ts",
-            "lib/apns.ts"
+            "lib/apns.ts",
+            "lib/discover.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -523,7 +524,7 @@
         },
         {
           "path": "lib/command-scrape.ts",
-          "lines": 402,
+          "lines": 403,
           "kind": "lib",
           "exports": [
             "PaneFlow",
@@ -609,23 +610,41 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 323,
+          "lines": 445,
           "kind": "lib",
           "exports": [
+            "isNoTty",
+            "parseAgentPs",
             "processEnvEntries",
             "ScrapeProcessDeps",
             "isScrapeProcess",
             "readClaudeSessionFile",
+            "tmuxPaneFromSessionFile",
+            "tmuxRefFromEnv",
+            "TmuxRefDeps",
+            "resolveTmuxRef",
+            "firstDiscovery",
+            "expectFirstDiscovery",
+            "waitForFirstDiscovery",
+            "resetFirstDiscovery",
+            "markFirstDiscoveryDoneForTest",
             "discoverLiveClaudes"
           ],
-          "state": [],
+          "state": [
+            "let firstDone",
+            "let firstExpected",
+            "let resolveFirst"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
             "lib/sessions.ts",
-            "lib/scrape-registry.ts"
+            "lib/session-removal-log.ts",
+            "lib/scrape-registry.ts",
+            "lib/tmux-pane.ts",
+            "lib/log.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -681,7 +700,7 @@
         },
         {
           "path": "lib/hook-common.ts",
-          "lines": 121,
+          "lines": 125,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
@@ -702,7 +721,8 @@
           "imports": [
             "lib/spawn-session.ts",
             "lib/sessions.ts",
-            "lib/scrape-registry.ts"
+            "lib/scrape-registry.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -760,7 +780,7 @@
         },
         {
           "path": "lib/key-gate.ts",
-          "lines": 208,
+          "lines": 210,
           "kind": "lib",
           "exports": [
             "SEND_TIMEOUT_MS",
@@ -788,7 +808,7 @@
         },
         {
           "path": "lib/keyboard-inject.ts",
-          "lines": 600,
+          "lines": 591,
           "kind": "lib",
           "exports": [
             "InjectTarget",
@@ -798,7 +818,6 @@
             "injectText",
             "TmuxResult",
             "tmuxSendKeys",
-            "resolveTmuxPaneFromTty",
             "deliverViaTmux",
             "withPickerIO"
           ],
@@ -812,6 +831,7 @@
           "imports": [
             "lib/log.ts",
             "lib/key-gate.ts",
+            "lib/tmux-pane.ts",
             "lib/question-driver.ts"
           ],
           "listeners": [],
@@ -1304,6 +1324,53 @@
           "externals": []
         },
         {
+          "path": "lib/session-identity.ts",
+          "lines": 55,
+          "kind": "lib",
+          "exports": [
+            "deriveKey",
+            "hasTtyIdentity",
+            "hasStrongIdentity",
+            "ttyTag",
+            "makeLabel",
+            "mergeTmuxSocket"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/session-removal-log.ts",
+          "lines": 24,
+          "kind": "lib",
+          "exports": [
+            "logRemoval",
+            "drainRemovalCount"
+          ],
+          "state": [
+            "let removedSinceDrain"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-titles.ts",
           "lines": 145,
           "kind": "lib",
@@ -1330,11 +1397,10 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 600,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "Session",
-            "ttyTag",
             "RecordOptions",
             "recordSession",
             "setTitleResolver",
@@ -1353,6 +1419,7 @@
             "removeSessionByKey",
             "removeSessionByTty",
             "removeSessionByTmuxPane",
+            "socketForPane",
             "listSessions",
             "onSessions"
           ],
@@ -1369,6 +1436,8 @@
           "apiCalls": [],
           "imports": [
             "lib/agent-pid.ts",
+            "lib/session-identity.ts",
+            "lib/session-removal-log.ts",
             "lib/waiting.ts"
           ],
           "listeners": [],
@@ -1402,7 +1471,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 354,
+          "lines": 358,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -1469,9 +1538,21 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 103,
+          "lines": 247,
           "kind": "lib",
           "exports": [
+            "tmuxSocketFromEnv",
+            "tmuxSocketFlags",
+            "tmuxArgv",
+            "paneKey",
+            "PaneRef",
+            "paneRefOf",
+            "sendKeysArgs",
+            "listTmuxSockets",
+            "parsePaneTtys",
+            "mapTtysToPanes",
+            "resolveTmuxPaneFromTty",
+            "resolveTmuxRefFromTty",
             "capturePane",
             "paneInputReady",
             "paneHasDialog",
@@ -1660,7 +1741,7 @@
         },
         {
           "path": "lib/worker-identity.ts",
-          "lines": 127,
+          "lines": 130,
           "kind": "lib",
           "exports": [
             "ResolveKind",
@@ -1855,7 +1936,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 200,
+          "lines": 202,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -1893,7 +1974,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 72,
+          "lines": 76,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -1920,6 +2001,7 @@
             "lib/dialogs.ts",
             "lib/key-gate.ts",
             "lib/sessions.ts",
+            "lib/tmux-pane.ts",
             "wiring/dialogs.ts"
           ],
           "listeners": [],
@@ -2070,7 +2152,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 200,
+          "lines": 201,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -2105,6 +2187,7 @@
             "lib/key-gate.ts",
             "lib/model-control.ts",
             "lib/sessions.ts",
+            "lib/tmux-pane.ts",
             "wiring/dialogs.ts"
           ],
           "listeners": [],
@@ -2217,7 +2300,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 145,
+          "lines": 151,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
@@ -2467,6 +2550,12 @@
             "routes/vault.ts"
           ]
         },
+        "waitForFirstDiscovery": {
+          "module": "lib/discover.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleApiRoute": {
           "module": "routes/api.ts",
           "callers": [
@@ -2562,6 +2651,8 @@
             "lib/inject-guard.ts",
             "lib/model-control.ts",
             "lib/question-hook.ts",
+            "lib/session-identity.ts",
+            "lib/session-removal-log.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
@@ -2778,10 +2869,12 @@
           "module": "lib/log.ts",
           "callers": [
             "lib/command-offpane-cache.ts",
+            "lib/discover.ts",
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
             "lib/media.ts",
             "lib/question-hook.ts",
+            "lib/session-removal-log.ts",
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
             "routes/api.ts#POST /api/register-token",
@@ -3032,6 +3125,35 @@
             "lib/discover.ts"
           ]
         },
+        "PaneRef": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "routes/model.ts"
+          ]
+        },
+        "tmuxSocketFromEnv": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/hook-common.ts"
+          ]
+        },
+        "drainRemovalCount": {
+          "module": "lib/session-removal-log.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
+        "mapTtysToPanes": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
         "recordSession": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -3073,10 +3195,35 @@
             "lib/inject-guard.ts"
           ]
         },
+        "paneKey": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "tmuxSocketFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/keyboard-inject.ts"
+          ]
+        },
         "KeyGateTimeout": {
           "module": "lib/key-gate.ts",
           "callers": [
             "lib/keyboard-inject.ts"
+          ]
+        },
+        "resolveTmuxRefFromTty": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts"
           ]
         },
         "PickerIO": {
@@ -3247,10 +3394,9 @@
           ]
         },
         "resolveTmuxPaneFromTty": {
-          "module": "lib/keyboard-inject.ts",
+          "module": "lib/tmux-pane.ts",
           "callers": [
-            "lib/question-hook.ts",
-            "lib/submit-confirm.ts"
+            "lib/question-hook.ts"
           ]
         },
         "withPickerIO": {
@@ -3339,6 +3485,42 @@
             "lib/sessions.ts"
           ]
         },
+        "logRemoval": {
+          "module": "lib/session-removal-log.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "deriveKey": {
+          "module": "lib/session-identity.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "makeLabel": {
+          "module": "lib/session-identity.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "mergeTmuxSocket": {
+          "module": "lib/session-identity.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "hasTtyIdentity": {
+          "module": "lib/session-identity.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
+        "hasStrongIdentity": {
+          "module": "lib/session-identity.ts",
+          "callers": [
+            "lib/sessions.ts"
+          ]
+        },
         "processStartMs": {
           "module": "lib/agent-pid.ts",
           "callers": [
@@ -3357,6 +3539,16 @@
             "lib/submit-confirm.ts"
           ]
         },
+        "sendKeysArgs": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts"
+          ]
+        },
         "injectText": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -3368,7 +3560,6 @@
           "callers": [
             "lib/submit-confirm.ts",
             "routes/command.ts",
-            "routes/command.ts#POST /api/command/suggest",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts"
           ]
@@ -3819,6 +4010,15 @@
           "module": "lib/command-menu.ts",
           "callers": [
             "routes/command.ts"
+          ]
+        },
+        "paneRefOf": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel"
           ]
         },
         "suggestRefusal": {
@@ -4383,6 +4583,12 @@
         },
         "createDialogWatcher": {
           "module": "lib/dialog-watch.ts",
+          "callers": [
+            "wiring/dialogs.ts"
+          ]
+        },
+        "socketForPane": {
+          "module": "lib/sessions.ts",
           "callers": [
             "wiring/dialogs.ts"
           ]
