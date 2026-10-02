@@ -8,8 +8,11 @@ import type { ApprovalRequest } from "./pty-manager"
 import type { QuestionAnswer, QuestionRequest } from "./questions"
 
 // Approval history — a permanent record of every approval and question that
-// reached the phone, with how it ended. Only escalations are recorded (the
-// `→ phone` path); auto-judge, learned and SUPER allows never call in here.
+// reached the phone, with how it ended (the `→ phone` path, this file), plus an
+// audit trail of every automatic decision (SUPER, auto-judge, learned, read-only
+// MCP) written in batches by lib/approval-history-auto.ts as `auto_allowed` /
+// `auto_denied` rows. Auto rows are kept COMPANION_HISTORY_AUTO_DAYS (30) days;
+// phone rows are permanent. The default list (`state=all`) is phone rows only.
 //
 // One row per id: a question re-asked under the same id (PreToolUse →
 // PermissionRequest, lib/question-hook.ts) is an upsert back to `pending`.
@@ -21,8 +24,12 @@ import type { QuestionAnswer, QuestionRequest } from "./questions"
 // previous process whose hooks are gone, so they end `expired` / `server_restart`.
 
 export type HistoryKind = "approval" | "question"
-export type HistoryState = "pending" | "allowed" | "denied" | "expired" | "elsewhere" | "answered"
-export const HISTORY_STATES: readonly HistoryState[] = ["pending", "allowed", "denied", "expired", "elsewhere", "answered"]
+export type PhoneState = "pending" | "allowed" | "denied" | "expired" | "elsewhere" | "answered"
+export type AutoState = "auto_allowed" | "auto_denied"
+export type HistoryState = PhoneState | AutoState
+export const PHONE_STATES: readonly PhoneState[] = ["pending", "allowed", "denied", "expired", "elsewhere", "answered"]
+export const AUTO_STATES: readonly AutoState[] = ["auto_allowed", "auto_denied"]
+export const HISTORY_STATES: readonly HistoryState[] = [...PHONE_STATES, ...AUTO_STATES]
 
 export interface HistoryItem {
   id: string
@@ -67,6 +74,7 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_approval_history_created ON approval_history(created_at);
   CREATE INDEX IF NOT EXISTS idx_approval_history_state ON approval_history(state);
+  CREATE INDEX IF NOT EXISTS idx_approval_history_state_created ON approval_history(state, created_at);
 `
 
 const LIST_COLS = "id, kind, state, tool, summary, cwd, session_key, session_id, decided_via, created_at, resolved_at"
@@ -92,6 +100,11 @@ function defaultPath(): string {
 function store(): Database {
   if (!db) db = open(defaultPath())
   return db
+}
+
+// The open store, for lib/approval-history-auto.ts (batched auto rows).
+export function historyDb(): Database {
+  return store()
 }
 
 // Test seam (and the explicit boot hook): reopen on `path`, reconciling it.
@@ -222,7 +235,7 @@ export interface OutcomeOpts {
 }
 
 // Moves a pending row to its end state. False when there is no pending row.
-export function recordOutcome(id: string, state: Exclude<HistoryState, "pending">, via: string, opts: OutcomeOpts = {}): boolean {
+export function recordOutcome(id: string, state: Exclude<PhoneState, "pending">, via: string, opts: OutcomeOpts = {}): boolean {
   const d = store()
   let detailJson: string | null = null
   if (opts.detailPatch) {
@@ -257,7 +270,9 @@ export function getHistoryItem(id: string): HistoryDetail | null {
 }
 
 export interface HistoryQuery {
-  state?: string   // a HistoryState, "all" (default) or "resolved" (anything but pending)
+  // A HistoryState; "all" (default) = every PHONE state; "resolved" = phone
+  // states but pending; "auto" = both auto states; "everything" = all rows.
+  state?: string
   kind?: string
   q?: string
   limit?: number
@@ -274,9 +289,8 @@ export function clampLimit(raw: number | undefined): number {
 export function listHistory(query: HistoryQuery): { items: HistoryItem[]; next: string | null } {
   const where: string[] = []
   const args: Array<string | number> = []
-  const state = query.state || "all"
-  if (state === "resolved") where.push("state != 'pending'")
-  else if (state !== "all") { where.push("state = ?"); args.push(state) }
+  const states = statesFor(query.state || "all")
+  if (states) { where.push(`state IN (${states.map(() => "?").join(", ")})`); args.push(...states) }
   if (query.kind) { where.push("kind = ?"); args.push(query.kind) }
   if (query.q) {
     const like = `%${query.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
@@ -295,6 +309,27 @@ export function listHistory(query: HistoryQuery): { items: HistoryItem[]; next: 
   const items = more ? rows.slice(0, limit) : rows
   const last = items[items.length - 1]
   return { items, next: more && last ? `${last.created_at}|${last.id}` : null }
+}
+
+// The state filter as a list of states; null = no filter ("everything").
+function statesFor(filter: string): readonly string[] | null {
+  if (filter === "everything") return null
+  if (filter === "all") return PHONE_STATES
+  if (filter === "resolved") return PHONE_STATES.filter((s) => s !== "pending")
+  if (filter === "auto") return AUTO_STATES
+  return [filter]
+}
+
+export type HistoryCounts = Record<HistoryState, number>
+
+// Rows per state created at/after `sinceIso` (all time when empty). Every
+// state is present, zero when none.
+export function historyCounts(sinceIso = ""): HistoryCounts {
+  const counts = Object.fromEntries(HISTORY_STATES.map((s) => [s, 0])) as HistoryCounts
+  const sql = `SELECT state, COUNT(*) AS n FROM approval_history ${sinceIso ? "WHERE created_at >= ?" : ""} GROUP BY state`
+  const rows = store().query(sql).all(...(sinceIso ? [sinceIso] : [])) as Array<{ state: string; n: number }>
+  for (const r of rows) if (r.state in counts) counts[r.state as HistoryState] = r.n
+  return counts
 }
 
 function splitCursor(cursor: string): [string, string] {

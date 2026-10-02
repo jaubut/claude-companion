@@ -7,6 +7,8 @@ import { rememberTitle, titleFromPrompt } from "../lib/session-titles"
 import { noteSessionBoundary, noteUserPromptSubmit } from "../lib/submit-confirm"
 import { isCatastrophic, isSuperAuto } from "../lib/super-auto"
 import { recordAllow } from "../lib/learned-allow"
+import { REASON_LEARNED, REASON_MCP_READONLY } from "../lib/auto-judge"
+import { type AutoVia, recordAutoDecision } from "../lib/approval-history-auto"
 import {
   type Session,
   recordSession,
@@ -168,6 +170,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
     let decision: "allow" | "deny"
     let verdict: Verdict
+    // Every automatic decision lands in the approval history (batched, off the hook path).
+    const audit = (d: "allow" | "deny", via: AutoVia, reason?: string): void =>
+      recordAutoDecision({ agent, tool, input, cwd, sessionId, sessionKey: session?.key ?? "", decision: d, via, reason, toolUseId: body.tool_use_id })
 
     // SUPER auto-approve mode: every tool call is allowed without phone
     // roundtrip, EXCEPT for the catastrophe denylist (rm -rf /, force-push
@@ -178,11 +183,16 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       verdict = "auto-allow"
       companionLog(`\x1b[35msuper-allow\x1b[0m ${tool} ${dim}${summarize(tool, input)}${reset}`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
+      audit("allow", "super", "SUPER mode")
       return hookDecisionResponse(agent, "PreToolUse", decision, "Approved via Claude Companion (SUPER)")
     }
 
     const { verdict: verdictJudge, reason: judgeReason } = await judgeWithBranchContextAndReason(tool, input, cwd)
 
+    if (verdictJudge !== "ask") {
+      const via: AutoVia = judgeReason === REASON_LEARNED ? "learned" : judgeReason === REASON_MCP_READONLY ? "mcp_readonly" : "auto_judge"
+      audit(verdictJudge, via, judgeReason)
+    }
     if (verdictJudge === "allow") {
       decision = "allow"
       verdict = "auto-allow"

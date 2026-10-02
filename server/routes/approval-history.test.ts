@@ -127,7 +127,7 @@ test("elsewhere via PostToolUse / UserPromptSubmit / Stop / SessionEnd, each nam
   }
 })
 
-test("auto-judge allow and SUPER allow are NOT recorded", async () => {
+test("auto-judge allow and SUPER allow: no approval_history frame, never in the default list (auto rows: approval-history-auto.test.ts)", async () => {
   const before = frames.filter((f) => f.type === "approval_history").length
   const judged = await (await preTool("ah-auto", "cat /etc/hostname"))!.json() as { hookSpecificOutput: { permissionDecision: string } }
   expect(judged.hookSpecificOutput.permissionDecision).toBe("allow")

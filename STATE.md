@@ -1,11 +1,17 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-09-24
+Last updated: 2026-10-02
 
 ## Active Decisions
 
+### Approval history also audits automatic decisions (auto rows, 30-day retention)
+**Date:** 2026-10-02 (branch `feat/history-auto`)
+**Choice:** Every automatic PreToolUse decision — SUPER allow, auto-judge allow/deny (incl. the feature-branch push rule), learned allow, read-only MCP allow; Claude and Codex alike — is written to `approval_history` as `auto_allowed`/`auto_denied` with `decided_via` = `super|auto_judge|learned|mcp_readonly`, resolved_at = created_at, same redaction + caps. The hook only pushes onto an in-memory buffer; `lib/approval-history-auto.ts` flushes it in one transaction every 250 ms or at 50 rows, drops a failed batch and logs at most once a minute. Auto rows are pruned daily after `COMPANION_HISTORY_AUTO_DAYS` (30); phone rows stay permanent. `GET /api/approvals/history` with no state (and `state=all`/`resolved`) still returns phone rows only; `state=auto|auto_allowed|auto_denied|everything` opt in; `GET /api/approvals/history/stats?since=` gives per-state counts. No `approval_history` frame per auto row — one `approval_history_auto {count, since}` frame per 5 s at most.
+**Why:** SUPER runs on every host, so almost nothing reaches the phone; the Approvals tab must be an audit log of everything agents did. ~800+/day on Zettlab, hence batching, retention and the throttled frame; old iOS builds must see no change.
+**Revisit if:** buffered rows lost on a crash/restart (≤ 250 ms worth) start to matter, or volume makes the 30-day table slow (index on `(state, created_at)`).
+
 ### Approval history is permanent, phone-escalations only
-**Date:** 2026-10-02 (branch `feat/approvals-history`)
+**Date:** 2026-10-02 (branch `feat/approvals-history`; auto rows added by the decision above)
 **Choice:** Every approval/question that reached the phone gets one row in `approval_history` (companion sqlite), inserted on escalation and moved out of `pending` exactly once by whichever exit fires (phone allow/deny/answer, expiry, hook gone, PostToolUse, UserPromptSubmit, Stop, SessionEnd). Rows still pending when the store opens end `expired`/`server_restart`. Summary and detail are secret-redacted before they are written. No automatic retention; `DELETE /api/approvals/history?before=` prunes by hand. Live updates go out on a NEW `approval_history` frame; `resolved` is unchanged. Contract: `docs/approvals-history.md`.
 **Why:** the iOS Ideas tab becomes Approvals and needs a durable list with states, not the in-memory pending maps.
 **Revisit if:** the table grows enough to matter (index on `created_at`, `state`), or a second server process shares one companion.db (the boot reconcile would expire its live rows).

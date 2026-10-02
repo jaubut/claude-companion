@@ -23,6 +23,7 @@ import {
   recordOutcome,
   recordPending,
 } from "../lib/approval-history"
+import { createAutoFrameThrottle, onAutoHistoryFlush, startAutoHistoryRetention } from "../lib/approval-history-auto"
 import { companionLog } from "../lib/log"
 
 // Event wiring: every lib store's listener → WS frame (+ push where the phone
@@ -145,6 +146,12 @@ onQuestionResolved((req, answers, by) => {
 onApprovalHistory((item: HistoryItem) => {
   broadcast({ type: "approval_history", item })
 })
+
+// Auto rows (SUPER / auto-judge / learned / read-only MCP) are too chatty for a
+// frame each: at most one `approval_history_auto` {count, since} per 5 s, so
+// the phone can show "N new" and refetch. Retention prunes them daily.
+onAutoHistoryFlush(createAutoFrameThrottle((frame) => broadcast({ ...frame })))
+startAutoHistoryRetention()
 
 onFeed((ev: FeedEvent) => {
   broadcast({ type: "event", event: ev })
