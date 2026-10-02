@@ -162,6 +162,55 @@
           "externals": []
         },
         {
+          "path": "lib/approval-history.ts",
+          "lines": 310,
+          "kind": "lib",
+          "exports": [
+            "HistoryKind",
+            "HistoryState",
+            "HISTORY_STATES",
+            "HistoryItem",
+            "HistoryDetail",
+            "SUMMARY_MAX",
+            "DETAIL_MAX_BYTES",
+            "LIST_MAX",
+            "useApprovalHistoryDb",
+            "onApprovalHistory",
+            "capDetail",
+            "capSummary",
+            "PendingEntry",
+            "recordPending",
+            "approvalEntry",
+            "questionEntry",
+            "questionEndState",
+            "answersPatch",
+            "OutcomeOpts",
+            "recordOutcome",
+            "getHistoryItem",
+            "HistoryQuery",
+            "clampLimit",
+            "listHistory",
+            "pruneHistory"
+          ],
+          "state": [
+            "let db",
+            "listeners: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/secret-redact.ts",
+            "lib/tool-format.ts",
+            "lib/pty-manager.ts",
+            "lib/questions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/artifacts.ts",
           "lines": 151,
           "kind": "lib",
@@ -1043,12 +1092,13 @@
         },
         {
           "path": "lib/pty-manager.ts",
-          "lines": 199,
+          "lines": 204,
           "kind": "lib",
           "exports": [
             "ApprovalRequest",
             "ApprovalOutcome",
             "ApprovalEndDecision",
+            "DecidedBy",
             "EXPIRY_MS",
             "setDefaultApprovalExpiryMs",
             "addApprovalRequest",
@@ -1186,7 +1236,7 @@
         },
         {
           "path": "lib/questions.ts",
-          "lines": 407,
+          "lines": 412,
           "kind": "lib",
           "exports": [
             "QuestionOption",
@@ -1194,6 +1244,7 @@
             "QuestionRequest",
             "QuestionAnswer",
             "QuestionEndDecision",
+            "AnsweredBy",
             "EXPIRY_MS",
             "PARK_MS",
             "QuestionAskOptions",
@@ -1356,6 +1407,31 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/secret-redact.ts",
+          "lines": 82,
+          "kind": "lib",
+          "exports": [
+            "MASK",
+            "parseSecretValues",
+            "setRedactionSources",
+            "redactSecrets"
+          ],
+          "state": [
+            "let sourceOverride",
+            "let cache"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/secret-store.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1923,12 +1999,15 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 400,
+          "lines": 445,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
           ],
-          "state": [],
+          "state": [
+            "HISTORY_KINDS: Set",
+            "HISTORY_FILTERS: Set"
+          ],
           "emits": [
             "super_auto",
             "resolved",
@@ -2007,6 +2086,21 @@
               "prefix": false
             },
             {
+              "method": "GET",
+              "path": "/api/approvals/history",
+              "prefix": false
+            },
+            {
+              "method": "DELETE",
+              "path": "/api/approvals/history",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/approvals/history/",
+              "prefix": true
+            },
+            {
               "method": "*",
               "path": "/api/status",
               "prefix": false
@@ -2038,7 +2132,8 @@
             "state.ts",
             "wiring/dialogs.ts",
             "wiring/waiting.ts",
-            "lib/idempotency.ts"
+            "lib/idempotency.ts",
+            "lib/approval-history.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2182,7 +2277,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 552,
+          "lines": 553,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -2507,7 +2602,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 163,
+          "lines": 193,
           "kind": "lib",
           "exports": [],
           "state": [
@@ -2517,6 +2612,7 @@
             "approval",
             "resolved",
             "question",
+            "approval_history",
             "event",
             "feed_pruned",
             "activity",
@@ -2539,7 +2635,9 @@
             "lib/transcript.ts",
             "lib/hook-common.ts",
             "wiring/orchestrator.ts",
-            "wiring/waiting.ts"
+            "wiring/waiting.ts",
+            "lib/approval-history.ts",
+            "lib/log.ts"
           ],
           "listeners": [
             "onApprovalRequest",
@@ -2548,6 +2646,7 @@
             "onQuestionRequest",
             "onQuestionExpired",
             "onQuestionResolved",
+            "onApprovalHistory",
             "onFeed",
             "onFeedReset",
             "onActivity",
@@ -2893,6 +2992,7 @@
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/activity.ts",
+            "lib/approval-history.ts",
             "lib/codex-feed.ts",
             "lib/question-hook.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
@@ -2938,6 +3038,34 @@
             "lib/apns.ts",
             "routes/api.ts",
             "routes/api.ts#POST /api/register-token"
+          ]
+        },
+        "redactSecrets": {
+          "module": "lib/secret-redact.ts",
+          "callers": [
+            "lib/approval-history.ts"
+          ]
+        },
+        "ApprovalRequest": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "lib/approval-history.ts"
+          ]
+        },
+        "QuestionRequest": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/approval-history.ts"
+          ]
+        },
+        "QuestionAnswer": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/approval-history.ts",
+            "lib/question-driver.ts",
+            "lib/question-hook.ts",
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
           ]
         },
         "isLearned": {
@@ -3111,6 +3239,7 @@
             "routes/records.ts",
             "routes/vault.ts",
             "wiring/dialogs.ts",
+            "wiring/events.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
           ]
@@ -3518,15 +3647,6 @@
             "lib/question-hook.ts"
           ]
         },
-        "QuestionAnswer": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "lib/question-driver.ts",
-            "lib/question-hook.ts",
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
         "PARK_MS": {
           "module": "lib/questions.ts",
           "callers": [
@@ -3700,6 +3820,12 @@
           "module": "lib/records-store.ts",
           "callers": [
             "lib/records-expiry.ts"
+          ]
+        },
+        "storePath": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/secret-redact.ts"
           ]
         },
         "forwardVault": {
@@ -4290,6 +4416,24 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "getHistoryItem": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "listHistory": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "pruneHistory": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
           ]
         },
         "runTmux": {
@@ -5048,6 +5192,54 @@
           "module": "lib/command-scrape.ts",
           "callers": [
             "wiring/dialogs.ts"
+          ]
+        },
+        "HistoryItem": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "answersPatch": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "approvalEntry": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onApprovalHistory": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "questionEndState": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "questionEntry": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "recordOutcome": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "recordPending": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
           ]
         },
         "onApprovalRequest": {

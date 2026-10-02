@@ -4,6 +4,12 @@ Last updated: 2026-09-24
 
 ## Active Decisions
 
+### Approval history is permanent, phone-escalations only
+**Date:** 2026-10-02 (branch `feat/approvals-history`)
+**Choice:** Every approval/question that reached the phone gets one row in `approval_history` (companion sqlite), inserted on escalation and moved out of `pending` exactly once by whichever exit fires (phone allow/deny/answer, expiry, hook gone, PostToolUse, UserPromptSubmit, Stop, SessionEnd). Rows still pending when the store opens end `expired`/`server_restart`. Summary and detail are secret-redacted before they are written. No automatic retention; `DELETE /api/approvals/history?before=` prunes by hand. Live updates go out on a NEW `approval_history` frame; `resolved` is unchanged. Contract: `docs/approvals-history.md`.
+**Why:** the iOS Ideas tab becomes Approvals and needs a durable list with states, not the in-memory pending maps.
+**Revisit if:** the table grows enough to matter (index on `created_at`, `state`), or a second server process shares one companion.db (the boot reconcile would expire its live rows).
+
 ### Phone questions answer through updatedInput; no answer falls through to the terminal picker
 **Date:** 2026-09-25 (P1 audit, branch `fix/p1-audit-server-0925`)
 **Choice:** A phone answer goes back to Claude Code as allow + `updatedInput.answers` (question text to label, multi comma-joined). No keystrokes for Claude, and the picker driver is only a checked fallback. With no answer the hook returns no decision, never deny. The phone window is 90 s on PreToolUse when a terminal is attached and 290 s otherwise. A question answered at the terminal clears the phone card on its PostToolUse.

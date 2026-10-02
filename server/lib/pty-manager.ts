@@ -31,14 +31,19 @@ export type ApprovalEndDecision = "expired" | "elsewhere"
 
 type EventHandler = (event: ApprovalRequest) => void
 // Expiry and resolve both hand back the request: the listener needs its
-// sessionKey and id to clear the waiting reason it created.
-type ExpiryHandler = (req: ApprovalRequest, decision: ApprovalEndDecision) => void
+// sessionKey and id to clear the waiting reason it created. `via` says which
+// exit ended it ("expiry", "hook_gone", or the caller's reason for
+// cancelApprovalsFor) — the approval history records it.
+type ExpiryHandler = (req: ApprovalRequest, decision: ApprovalEndDecision, via: string) => void
+// Who decided, when the transport knows (X-Companion-Device / WS client).
+export interface DecidedBy { device?: string }
+type ResolvedHandler = (req: ApprovalRequest, decision: "allow" | "deny", by: DecidedBy) => void
 
 const pending = new Map<string, ApprovalRequest>()
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const handlers = new Set<EventHandler>()
 const expiryHandlers = new Set<ExpiryHandler>()
-const resolvedHandlers = new Set<EventHandler>()
+const resolvedHandlers = new Set<ResolvedHandler>()
 
 // The hook's curl gives up at 295 s and Claude Code kills the hook at 300 s.
 // We expire the server-side request before either, so the route can answer
@@ -83,12 +88,12 @@ export function addApprovalRequest(
     // never an allow — the route returns no decision and Claude Code shows its
     // own prompt. (It resolved "allow" until 2026-10-01: an unanswered phone
     // approved anything after 290 s.)
-    const timer = setTimeout(() => endUndecided(id, "expired"), opts.expiryMs ?? defaultExpiryMs)
+    const timer = setTimeout(() => endUndecided(id, "expired", "expiry"), opts.expiryMs ?? defaultExpiryMs)
     expiryTimers.set(id, timer)
 
     const signal = opts.signal
     if (signal) {
-      const onAbort = (): void => { endUndecided(id, "elsewhere") }
+      const onAbort = (): void => { endUndecided(id, "elsewhere", "hook_gone") }
       if (signal.aborted) onAbort()
       else signal.addEventListener("abort", onAbort, { once: true })
     }
@@ -97,7 +102,7 @@ export function addApprovalRequest(
 
 // The no-decision exit from `pending` (the other is resolveApproval); both fire
 // a listener, so an approval can never strand its waiting reason.
-function endUndecided(id: string, decision: ApprovalEndDecision): boolean {
+function endUndecided(id: string, decision: ApprovalEndDecision, via: string): boolean {
   const req = pending.get(id)
   if (!req) return false
   pending.delete(id)
@@ -105,7 +110,7 @@ function endUndecided(id: string, decision: ApprovalEndDecision): boolean {
   if (timer) clearTimeout(timer)
   expiryTimers.delete(id)
   for (const handler of expiryHandlers) {
-    try { handler(req, decision) } catch { /* ignore */ }
+    try { handler(req, decision, via) } catch { /* ignore */ }
   }
   req.resolve(decision)
   return true
@@ -133,12 +138,12 @@ function sameCall(r: ApprovalRequest, who: ApprovalMatch): boolean {
 // ran (PostToolUse — answered at the terminal), or the turn / session ended.
 // Never an allow, never learned. Matches on session id or session key (and the
 // call, when given); returns how many were ended.
-export function cancelApprovalsFor(who: ApprovalMatch, decision: ApprovalEndDecision = "elsewhere"): number {
+export function cancelApprovalsFor(who: ApprovalMatch, decision: ApprovalEndDecision = "elsewhere", via = "cancelled"): number {
   let n = 0
   for (const r of [...pending.values()]) {
     const bySession = !!who.sessionId && r.sessionId === who.sessionId
     const byKey = !!who.sessionKey && r.sessionKey === who.sessionKey
-    if ((bySession || byKey) && sameCall(r, who) && endUndecided(r.id, decision)) n++
+    if ((bySession || byKey) && sameCall(r, who) && endUndecided(r.id, decision, via)) n++
   }
   return n
 }
@@ -151,7 +156,7 @@ export function hasPendingApprovalFor(sessionKey: string, sessionId: string): bo
   return false
 }
 
-export function resolveApproval(id: string, decision: "allow" | "deny"): boolean {
+export function resolveApproval(id: string, decision: "allow" | "deny", by: DecidedBy = {}): boolean {
   const req = pending.get(id)
   if (!req) return false
   const timer = expiryTimers.get(id)
@@ -162,7 +167,7 @@ export function resolveApproval(id: string, decision: "allow" | "deny"): boolean
   // Fired inside the `pending.get` guard, so a decision arriving over both the
   // WS and REST paths notifies exactly once.
   for (const handler of resolvedHandlers) {
-    try { handler(req) } catch { /* ignore */ }
+    try { handler(req, decision, by) } catch { /* ignore */ }
   }
   req.resolve(decision)
   // One of the only two exits from `pending` (the other is endUndecided);
@@ -192,7 +197,7 @@ export function onApprovalExpired(handler: ExpiryHandler): () => void {
 // Subscribe to "the user decided" — the counterpart exit to onApprovalExpired.
 // wiring/events.ts uses it to clear the session's `approval` waiting reason;
 // the `resolved` frame is already broadcast by ws.ts and routes/api.ts.
-export function onApprovalResolved(handler: EventHandler): () => void {
+export function onApprovalResolved(handler: ResolvedHandler): () => void {
   resolvedHandlers.add(handler)
   return () => resolvedHandlers.delete(handler)
 }

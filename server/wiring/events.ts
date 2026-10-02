@@ -13,6 +13,17 @@ import { modelForIdentity, modelFromTranscript } from "../lib/transcript"
 import { projectLabelFor, agentTitle, subtitleFor } from "../lib/hook-common"
 import { reconcileDispatch } from "./orchestrator"
 import { markWaiting, unmarkWaiting } from "./waiting"
+import {
+  type HistoryItem,
+  answersPatch,
+  approvalEntry,
+  onApprovalHistory,
+  questionEndState,
+  questionEntry,
+  recordOutcome,
+  recordPending,
+} from "../lib/approval-history"
+import { companionLog } from "../lib/log"
 
 // Event wiring: every lib store's listener → WS frame (+ push where the phone
 // must be interrupted). One onSessions listener does the `sessions` frame and
@@ -23,7 +34,14 @@ import { markWaiting, unmarkWaiting } from "./waiting"
 // (PRJ-OR1T Phase 11) — here and not in the routes, because the expiry timers
 // live inside the libs where a route could never clear the flag.
 
+// The approval history (lib/approval-history.ts) is a record, never a gate: a
+// sqlite error is logged and the approval / question flow carries on.
+function history(what: string, write: () => unknown): void {
+  try { write() } catch (err) { companionLog(`\x1b[31mapproval history ${what} failed\x1b[0m — ${(err as Error).message}`) }
+}
+
 onApprovalRequest((req) => {
+  history("insert", () => recordPending(approvalEntry(req)))
   broadcast({
     type: "approval",
     id: req.id,
@@ -56,22 +74,26 @@ onApprovalRequest((req) => {
   }
 })
 
-onApprovalExpired((req, decision) => {
+onApprovalExpired((req, decision, via) => {
   // Tell every connected client the approval ended with no decision: it
   // "expired" before the user could decide, or it was answered / dropped
   // "elsewhere" (terminal, hook gone, turn ended). Same `resolved` frame the
   // clients already dequeue on; the row badge reads EXPIRED / ELSEWHERE.
   broadcast({ type: "resolved", id: req.id, decision })
   unmarkWaiting(req.sessionKey, "approval", req.id)
+  history("update", () => recordOutcome(req.id, decision, via))
 })
 
 // Deliberately does NOT broadcast `resolved`: ws.ts and routes/api.ts already
 // send it on every decision path, and a second frame double-dequeues on iOS.
-onApprovalResolved((req) => {
+onApprovalResolved((req, decision, by) => {
   unmarkWaiting(req.sessionKey, "approval", req.id)
+  history("update", () => recordOutcome(req.id, decision === "allow" ? "allowed" : "denied", "phone", { device: by.device }))
 })
 
 onQuestionRequest((req) => {
+  // A re-ask under the same id (PermissionRequest phase) upserts the one row.
+  history("insert", () => recordPending(questionEntry(req)))
   broadcast({
     type: "question",
     id: req.id,
@@ -103,17 +125,25 @@ onQuestionRequest((req) => {
   }
 })
 
-onQuestionExpired((req, decision) => {
+onQuestionExpired((req, decision, via) => {
   // Mirrors approval expiry — phones know how to dequeue on `resolved`.
   // "answered" when the terminal picker answered it (cancelQuestionsFor);
   // both values are ones shipped iOS builds already map.
   broadcast({ type: "resolved", id: req.id, decision })
   unmarkWaiting(req.sessionKey, "question", req.id)
+  history("update", () => recordOutcome(req.id, questionEndState(decision), via))
 })
 
 // Same rule as onApprovalResolved: the `resolved` frame is already sent.
-onQuestionResolved((req) => {
+onQuestionResolved((req, answers, by) => {
   unmarkWaiting(req.sessionKey, "question", req.id)
+  history("update", () => recordOutcome(req.id, "answered", "phone", { device: by.device, detailPatch: answersPatch(answers) }))
+})
+
+// Every insert / transition, live to the phone's Approvals list. Additive
+// frame: `approval` / `question` / `resolved` are unchanged.
+onApprovalHistory((item: HistoryItem) => {
+  broadcast({ type: "approval_history", item })
 })
 
 onFeed((ev: FeedEvent) => {
