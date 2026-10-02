@@ -162,18 +162,63 @@
           "externals": []
         },
         {
+          "path": "lib/approval-history-auto.ts",
+          "lines": 191,
+          "kind": "lib",
+          "exports": [
+            "AutoVia",
+            "AutoDecision",
+            "FLUSH_MS",
+            "FLUSH_ROWS",
+            "onAutoHistoryFlush",
+            "recordAutoDecision",
+            "flushAutoHistory",
+            "autoHistoryStats",
+            "resetAutoHistoryForTests",
+            "autoRetentionDays",
+            "pruneAutoHistory",
+            "startAutoHistoryRetention",
+            "AutoFrame",
+            "createAutoFrameThrottle"
+          ],
+          "state": [
+            "let buffer",
+            "let timer",
+            "let lastErrorLog",
+            "flushListeners: Set",
+            "let retention"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/approval-history.ts",
+            "lib/tool-format.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/approval-history.ts",
-          "lines": 310,
+          "lines": 345,
           "kind": "lib",
           "exports": [
             "HistoryKind",
+            "PhoneState",
+            "AutoState",
             "HistoryState",
+            "PHONE_STATES",
+            "AUTO_STATES",
             "HISTORY_STATES",
             "HistoryItem",
             "HistoryDetail",
             "SUMMARY_MAX",
             "DETAIL_MAX_BYTES",
             "LIST_MAX",
+            "historyDb",
             "useApprovalHistoryDb",
             "onApprovalHistory",
             "capDetail",
@@ -190,6 +235,8 @@
             "HistoryQuery",
             "clampLimit",
             "listHistory",
+            "HistoryCounts",
+            "historyCounts",
             "pruneHistory"
           ],
           "state": [
@@ -258,7 +305,7 @@
         },
         {
           "path": "lib/auto-judge.ts",
-          "lines": 478,
+          "lines": 480,
           "kind": "lib",
           "exports": [
             "Verdict",
@@ -270,6 +317,8 @@
             "REASON_NOT_ALLOWLISTED",
             "REASON_SECRETS_FILE",
             "REASON_CLAUDE_SETTINGS",
+            "REASON_LEARNED",
+            "REASON_MCP_READONLY",
             "reasonNotAutoApproved",
             "judgeSegments",
             "autoJudgeWithReason",
@@ -1999,7 +2048,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 445,
+          "lines": 454,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -2093,6 +2142,11 @@
             {
               "method": "DELETE",
               "path": "/api/approvals/history",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/approvals/history/stats",
               "prefix": false
             },
             {
@@ -2277,7 +2331,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 553,
+          "lines": 563,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -2340,6 +2394,8 @@
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
+            "lib/auto-judge.ts",
+            "lib/approval-history-auto.ts",
             "lib/sessions.ts",
             "wiring/waiting.ts",
             "lib/activity.ts",
@@ -2602,7 +2658,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 193,
+          "lines": 200,
           "kind": "lib",
           "exports": [],
           "state": [
@@ -2637,6 +2693,7 @@
             "wiring/orchestrator.ts",
             "wiring/waiting.ts",
             "lib/approval-history.ts",
+            "lib/approval-history-auto.ts",
             "lib/log.ts"
           ],
           "listeners": [
@@ -2647,6 +2704,7 @@
             "onQuestionExpired",
             "onQuestionResolved",
             "onApprovalHistory",
+            "onAutoHistoryFlush",
             "onFeed",
             "onFeedReset",
             "onActivity",
@@ -2992,6 +3050,7 @@
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/activity.ts",
+            "lib/approval-history-auto.ts",
             "lib/approval-history.ts",
             "lib/codex-feed.ts",
             "lib/question-hook.ts",
@@ -3038,6 +3097,73 @@
             "lib/apns.ts",
             "routes/api.ts",
             "routes/api.ts#POST /api/register-token"
+          ]
+        },
+        "AutoState": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "lib/approval-history-auto.ts"
+          ]
+        },
+        "capDetail": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "lib/approval-history-auto.ts"
+          ]
+        },
+        "capSummary": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "lib/approval-history-auto.ts"
+          ]
+        },
+        "historyDb": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "lib/approval-history-auto.ts"
+          ]
+        },
+        "companionLog": {
+          "module": "lib/log.ts",
+          "callers": [
+            "lib/approval-history-auto.ts",
+            "lib/command-offpane-cache.ts",
+            "lib/discover.ts",
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/media.ts",
+            "lib/question-hook.ts",
+            "lib/records-expiry.ts",
+            "lib/session-removal-log.ts",
+            "lib/submit-confirm.ts",
+            "lib/super-auto.ts",
+            "lib/vault-upstream.ts",
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#DELETE /api/learned",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#* /api/feed",
+            "routes/attach.ts",
+            "routes/command.ts",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "routes/model.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "routes/records.ts",
+            "routes/vault.ts",
+            "wiring/dialogs.ts",
+            "wiring/events.ts",
+            "wiring/orchestrator.ts",
+            "ws.ts"
           ]
         },
         "redactSecrets": {
@@ -3200,48 +3326,6 @@
           "callers": [
             "lib/command-offpane-cache.ts",
             "lib/command-offpane.ts"
-          ]
-        },
-        "companionLog": {
-          "module": "lib/log.ts",
-          "callers": [
-            "lib/command-offpane-cache.ts",
-            "lib/discover.ts",
-            "lib/key-gate.ts",
-            "lib/keyboard-inject.ts",
-            "lib/media.ts",
-            "lib/question-hook.ts",
-            "lib/records-expiry.ts",
-            "lib/session-removal-log.ts",
-            "lib/submit-confirm.ts",
-            "lib/super-auto.ts",
-            "lib/vault-upstream.ts",
-            "routes/api.ts#POST /api/register-token",
-            "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#DELETE /api/learned",
-            "routes/api.ts#POST /api/super-auto",
-            "routes/api.ts#POST /api/spawn-session",
-            "routes/api.ts#* /api/feed",
-            "routes/attach.ts",
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-start",
-            "routes/hooks.ts#POST /hooks/session-end",
-            "routes/model.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "routes/records.ts",
-            "routes/vault.ts",
-            "wiring/dialogs.ts",
-            "wiring/events.ts",
-            "wiring/orchestrator.ts",
-            "ws.ts"
           ]
         },
         "enumerateCommandsOffPane": {
@@ -4430,6 +4514,12 @@
             "routes/api.ts#* /api/feed"
           ]
         },
+        "historyCounts": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
         "pruneHistory": {
           "module": "lib/approval-history.ts",
           "callers": [
@@ -4677,6 +4767,18 @@
             "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
+        "AutoVia": {
+          "module": "lib/approval-history-auto.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
+          ]
+        },
+        "recordAutoDecision": {
+          "module": "lib/approval-history-auto.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
+          ]
+        },
         "isCatastrophic": {
           "module": "lib/super-auto.ts",
           "callers": [
@@ -4685,6 +4787,18 @@
         },
         "judgeWithBranchContextAndReason": {
           "module": "lib/branch-guard.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
+          ]
+        },
+        "REASON_LEARNED": {
+          "module": "lib/auto-judge.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use"
+          ]
+        },
+        "REASON_MCP_READONLY": {
+          "module": "lib/auto-judge.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/pre-tool-use"
           ]
@@ -5280,6 +5394,24 @@
         },
         "onQuestionResolved": {
           "module": "lib/questions.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "onAutoHistoryFlush": {
+          "module": "lib/approval-history-auto.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "createAutoFrameThrottle": {
+          "module": "lib/approval-history-auto.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "startAutoHistoryRetention": {
+          "module": "lib/approval-history-auto.ts",
           "callers": [
             "wiring/events.ts"
           ]

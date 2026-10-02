@@ -25,7 +25,7 @@ import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../st
 import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 import { withIdempotency } from "../lib/idempotency"
-import { HISTORY_STATES, getHistoryItem, listHistory, pruneHistory } from "../lib/approval-history"
+import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
 // push debug, generic broadcast, inject, learned-allow, SUPER toggle, spawn,
@@ -206,6 +206,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // ── Approval history (the phone's Approvals tab) ──
   if (url.pathname === "/api/approvals/history" && req.method === "GET") return listApprovalHistory(url)
   if (url.pathname === "/api/approvals/history" && req.method === "DELETE") return pruneApprovalHistory(url)
+  if (url.pathname === "/api/approvals/history/stats" && req.method === "GET") return approvalHistoryStats(url)
   if (url.pathname.startsWith("/api/approvals/history/") && req.method === "GET") return approvalHistoryItem(url)
 
   // ── Status endpoint ──
@@ -407,11 +408,12 @@ async function handleInject(req: Request): Promise<Response> {
 
 // Approval history — lib/approval-history.ts. Bearer-gated like every /api route.
 //   GET    /api/approvals/history?state=&kind=&q=&limit=&before=
+//   GET    /api/approvals/history/stats?since=<iso>
 //   GET    /api/approvals/history/:id
 //   DELETE /api/approvals/history?before=<iso>   (manual pruning, resolved rows only)
 const HISTORY_ITEM_PREFIX = "/api/approvals/history/"
 const HISTORY_KINDS = new Set(["approval", "question"])
-const HISTORY_FILTERS = new Set<string>([...HISTORY_STATES, "all", "resolved"])
+const HISTORY_FILTERS = new Set<string>([...HISTORY_STATES, "all", "resolved", "auto", "everything"])
 
 function badRequest(error: string): Response {
   return Response.json({ ok: false, error }, { status: 400 })
@@ -434,6 +436,13 @@ function listApprovalHistory(url: URL): Response {
   if (limit !== undefined && !Number.isFinite(limit)) return badRequest("bad_limit")
   const { items, next } = listHistory({ state, kind, q: p.get("q") || "", limit, before: p.get("before") || "" })
   return Response.json({ ok: true, host: hostname(), items, next })
+}
+
+function approvalHistoryStats(url: URL): Response {
+  const raw = url.searchParams.get("since") ?? ""
+  const ms = raw ? Date.parse(raw) : NaN
+  if (raw && !Number.isFinite(ms)) return badRequest("bad_since")
+  return Response.json({ ok: true, counts: historyCounts(raw ? new Date(ms).toISOString() : "") })
 }
 
 function pruneApprovalHistory(url: URL): Response {

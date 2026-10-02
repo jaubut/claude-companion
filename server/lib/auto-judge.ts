@@ -389,6 +389,8 @@ export interface Judgement {
 export const REASON_NOT_ALLOWLISTED = "not on the Bash allowlist"
 export const REASON_SECRETS_FILE = "writes a secrets/env file"
 export const REASON_CLAUDE_SETTINGS = "edits Claude settings"
+export const REASON_LEARNED = "previously approved on phone"
+export const REASON_MCP_READONLY = "read-only MCP tool"
 export const reasonNotAutoApproved = (tool: string): string => `${tool} not auto-approved`
 
 const matches = (res: RegExp[], seg: string): boolean => res.some((re) => re.test(seg))
@@ -438,7 +440,7 @@ export function autoJudgeWithReason(tool: string, input: Record<string, unknown>
 
     // Learned-allow: check AFTER the static DANGEROUS list so a one-time
     // "yes" can never override the catastrophe denylist.
-    if (isLearned(tool, input)) return { verdict: "allow", reason: "previously approved on phone" }
+    if (isLearned(tool, input)) return { verdict: "allow", reason: REASON_LEARNED }
 
     return { verdict: "ask", reason: REASON_NOT_ALLOWLISTED }
   }
@@ -459,14 +461,14 @@ export function autoJudgeWithReason(tool: string, input: Record<string, unknown>
   if (isMcpTool(tool)) {
     const verb = (tool.split("__").pop() ?? "").toLowerCase()
     if (/^(search|get|list|read|query)_/.test(verb) && !/send|create|update|delete|trash|label|modify/.test(verb)) {
-      return { verdict: "allow", reason: "read-only MCP tool" }
+      return { verdict: "allow", reason: REASON_MCP_READONLY }
     }
   }
 
   // Other tools (e.g. Web*, MCP tools): consult the learned table before
   // bouncing to phone. Tools with no derivable pattern (see learned-allow.ts)
   // fall through to "ask".
-  if (isLearned(tool, input)) return { verdict: "allow", reason: "previously approved on phone" }
+  if (isLearned(tool, input)) return { verdict: "allow", reason: REASON_LEARNED }
 
   return { verdict: "ask", reason: reasonNotAutoApproved(tool) }
 }
