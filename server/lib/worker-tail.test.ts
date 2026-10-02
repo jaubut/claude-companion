@@ -135,3 +135,19 @@ test("resumeAll only reattaches live tasks that have a tmux session", () => {
   expect(m.watching("nopane")).toBe(false)
   expect(m.watching("prop")).toBe(false)
 })
+
+test("captures the pane on the task's recorded tmux server", async () => {
+  const seen: Array<[string, string | undefined]> = []
+  const h = harness([
+    makeTask({ taskId: "cc", tmuxSession: "cc-a", tmuxSocket: "/tmp/tmux-1000/cc" }),
+    makeTask({ taskId: "legacy", tmuxSession: "cc-b", tmuxSocket: null }),
+  ])
+  h.pane = "x"
+  h.deps.capturePane = async (name, socket) => { seen.push([name, socket]); return h.pane }
+  const m = createWorkerTailManager(h.deps)
+  m.watch("cc")
+  m.watch("legacy")
+  await settle()
+  expect(seen).toContainEqual(["cc-a", "/tmp/tmux-1000/cc"])
+  expect(seen).toContainEqual(["cc-b", undefined]) // NULL column = default server
+})

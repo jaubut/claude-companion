@@ -2,6 +2,7 @@
 // Used by the dialog watcher (mirror what's on screen) and the orchestrator
 // wiring (don't type into a worker until its input box is up).
 
+import { realpathSync } from "node:fs"
 import { readdir, realpath } from "node:fs/promises"
 import { join } from "node:path"
 
@@ -31,6 +32,55 @@ export function tmuxArgv(socket?: string | null): string[] {
   return ["tmux", ...tmuxSocketFlags(socket)]
 }
 
+// ── Which server spawned sessions land on ────────────────────────────────
+//
+// COMPANION_TMUX_SOCKET names a `tmux -L <name>` server for every session the
+// companion spawns (phone spawn + orchestrator workers). On the Linux host the
+// default server lives in an ssh login scope, so a logout or reboot kills it;
+// `-L cc` is owned by systemd user units and survives. COMPANION_TMUX_CONF is
+// the config that server should start with (`-f`, new-session only). Unset →
+// the default server, flag-for-flag the pre-socket behaviour.
+type Env = Record<string, string | undefined>
+
+const SOCKET_NAME = /^[A-Za-z0-9_.-]+$/
+
+// The configured socket name, or "" for the default server. A name carrying a
+// "/" or shell metacharacters is refused (default server) rather than handed
+// to tmux or spliced into the AppleScript launch line.
+export function spawnSocketName(env: Env = process.env): string {
+  const name = (env.COMPANION_TMUX_SOCKET ?? "").trim()
+  return SOCKET_NAME.test(name) ? name : ""
+}
+
+// Global flags selecting the spawn server: ["-L", name] or [].
+export function spawnServerFlags(env: Env = process.env): string[] {
+  const name = spawnSocketName(env)
+  return name ? ["-L", name] : []
+}
+
+// Flags for the one call that may start the spawn server: the -L pair plus
+// `-f <conf>` when COMPANION_TMUX_CONF is set. The conf is ignored without a
+// socket name, so the default server never gets a config it didn't have.
+export function spawnNewSessionFlags(env: Env = process.env): string[] {
+  const flags = spawnServerFlags(env)
+  const conf = (env.COMPANION_TMUX_CONF ?? "").trim()
+  return flags.length && conf ? [...flags, "-f", conf] : flags
+}
+
+// The socket PATH of the spawn server — the same string discovery records from
+// $TMUX (tmux realpaths $TMUX_TMPDIR/tmux-<uid>, hence /private/tmp on macOS) —
+// so a spawned session and its task can be addressed with `-S`. "" when unset.
+export function spawnSocketPath(env: Env = process.env, uid: number | undefined = process.getuid?.()): string {
+  const name = spawnSocketName(env)
+  if (!name || uid === undefined) return ""
+  const dir = join(env.TMUX_TMPDIR || "/tmp", `tmux-${uid}`)
+  try {
+    return join(realpathSync(dir), name)
+  } catch {
+    return join(dir, name)
+  }
+}
+
 // Identity of a pane across servers: the bare id on the default server (so
 // every existing key is unchanged), "<socket>|<pane>" on any other.
 export function paneKey(pane: string, socket?: string | null): string {
@@ -46,6 +96,13 @@ export interface PaneRef {
 export function paneRefOf(t: { tmuxPane?: string; tmuxSocket?: string } | null | undefined): PaneRef | null {
   const pane = t?.tmuxPane?.trim() ?? ""
   return pane ? { pane, socket: t?.tmuxSocket ?? "" } : null
+}
+
+// `tmux [-S sock] <cmd> -t <session> …rest`: addressing a session we spawned by
+// NAME (orchestrator kill / send-keys). Names are unique per server only, so
+// the socket recorded at spawn time must ride along.
+export function sessionCmdArgv(socket: string | null | undefined, cmd: string, session: string, ...rest: string[]): string[] {
+  return [...tmuxArgv(socket), cmd, "-t", session, ...rest]
 }
 
 // `tmux [-S sock] send-keys -t <pane> …rest` minus the leading "tmux".

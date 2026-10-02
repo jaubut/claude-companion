@@ -26,6 +26,7 @@ import {
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { keyCommandGate } from "../lib/vault-guard"
 import { companionLog } from "../lib/log"
+import { sessionCmdArgv } from "../lib/tmux-pane"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
 // approve/reject, task cancel, auto-dispatch toggle. Same paths, methods and
@@ -149,7 +150,9 @@ export async function handleOrchestratorRoute(req: Request, url: URL): Promise<R
     }
     if (task.tmuxSession) {
       try {
-        await Bun.spawn(["tmux", "kill-session", "-t", task.tmuxSession], { stdout: "ignore", stderr: "ignore" }).exited
+        // On the server it was spawned on (COMPANION_TMUX_SOCKET) — a bare
+        // `tmux kill-session` would miss it, or hit a same-named stranger.
+        await Bun.spawn(sessionCmdArgv(task.tmuxSocket, "kill-session", task.tmuxSession), { stdout: "ignore", stderr: "ignore" }).exited
       } catch { /* already gone */ }
     }
     setTaskStatus(taskId, "cancelled")

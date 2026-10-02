@@ -52,8 +52,10 @@ db.exec(`
   );
 `)
 // Migrate dbs created before these columns existed. ALTER throws if the column
-// is already present, so swallow that one case per column.
-for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT"]) {
+// is already present, so swallow that one case per column. tmux_socket is
+// nullable with no default: every pre-existing row reads NULL = the default
+// tmux server, which is where those workers were spawned.
+for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT"]) {
   try {
     db.exec(`ALTER TABLE orchestrator_tasks ADD COLUMN ${col}`)
   } catch {
@@ -107,6 +109,9 @@ export interface Task {
   cwd: string
   sessionKey: string | null
   tmuxSession: string | null
+  // Socket path of the tmux server holding tmuxSession (COMPANION_TMUX_SOCKET).
+  // null/absent = the default server.
+  tmuxSocket?: string | null
   reasoning: string | null
   logTail: string | null
   status: TaskStatus
@@ -130,6 +135,7 @@ interface TaskRow {
   cwd: string
   session_key: string | null
   tmux_session: string | null
+  tmux_socket: string | null
   reasoning: string | null
   log_tail: string | null
   status: TaskStatus
@@ -149,6 +155,7 @@ function toTask(r: TaskRow): Task {
     cwd: r.cwd,
     sessionKey: r.session_key,
     tmuxSession: r.tmux_session,
+    tmuxSocket: r.tmux_socket ?? null,
     reasoning: r.reasoning,
     logTail: r.log_tail,
     status: r.status,
@@ -197,11 +204,11 @@ export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn
 
 function insertTask(task: Task): void {
   db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, reasoning, log_tail, status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, tmux_socket, reasoning, log_tail, status, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     task.taskId, task.threadId, task.prompt, task.cwd, task.sessionKey,
-    task.tmuxSession, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
+    task.tmuxSession, task.tmuxSocket || null, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
   )
 }
 
@@ -240,11 +247,13 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
   return task
 }
 
-// Approve a proposal: record the spawned worker's tmux session and flip to
-// dispatched so reconcileDispatch picks it up and delivers the prompt.
-export function setTaskSpawn(taskId: string, tmuxSession: string | null): void {
-  db.query("UPDATE orchestrator_tasks SET tmux_session = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?").run(
+// Approve a proposal: record the spawned worker's tmux session (and the server
+// it is on — "" / null = default) and flip to dispatched so reconcileDispatch
+// picks it up and delivers the prompt.
+export function setTaskSpawn(taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null): void {
+  db.query("UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?").run(
     tmuxSession,
+    tmuxSocket || null,
     Date.now(),
     taskId,
   )

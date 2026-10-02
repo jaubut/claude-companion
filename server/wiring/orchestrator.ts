@@ -28,7 +28,7 @@ import {
 import { decide as brainDecide } from "../lib/orchestrator-brain"
 import { createWorkerTailManager } from "../lib/worker-tail"
 import { createQueue, DEFAULT_WIP_CAP } from "../lib/orchestrator-queue"
-import { capturePane, paneInputReady, paneHasDialog, tmuxSessionForPane } from "../lib/tmux-pane"
+import { capturePane, paneInputReady, paneHasDialog, sessionCmdArgv, tmuxSessionForPane } from "../lib/tmux-pane"
 import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
@@ -92,7 +92,7 @@ if (typeof (drainTimer as unknown as { unref?: () => void }).unref === "function
 // while the task is still live means the worker died without a stop hook — the
 // task is marked error instead of sitting in 'running' forever.
 export const workerTail = createWorkerTailManager({
-  capturePane,
+  capturePane: (sessionName, socket) => capturePane(sessionName, undefined, { socket }),
   getTask,
   setTaskLogTail,
   setTaskDead(taskId) {
@@ -115,15 +115,18 @@ void workerQueue.drain() // queued work left over from before a restart
 // tmux-wrapped worker discovered via ps has no tmuxPane recorded and its client
 // tty has no Terminal tab, so AppleScript/tty inject fails ("no tab for tty").
 // tmux send-keys does not care — it just needs the TUI to be input-ready first.
-async function sendToTmux(sessionName: string, text: string): Promise<void> {
+// `socket` is the server the worker was spawned on (task.tmuxSocket).
+async function sendToTmux(sessionName: string, text: string, socket?: string): Promise<void> {
+  const keys = (...rest: string[]) =>
+    Bun.spawn(sessionCmdArgv(socket, "send-keys", sessionName, ...rest), { stdout: "ignore", stderr: "ignore" }).exited
   let ready = false
   for (let i = 0; i < 30; i++) {
-    const pane = await capturePane(sessionName)
+    const pane = await capturePane(sessionName, undefined, { socket })
     if (pane === null) return // worker session gone
     if (paneHasDialog(pane)) {
       // Dismiss the onboarding dialog (Escape = reject MCP enable / decline
       // trust), then keep polling for the real input box.
-      await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Escape"], { stdout: "ignore", stderr: "ignore" }).exited
+      await keys("Escape")
       await new Promise((r) => setTimeout(r, 1500))
       continue
     }
@@ -136,9 +139,9 @@ async function sendToTmux(sessionName: string, text: string): Promise<void> {
     return
   }
   try {
-    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "-l", text], { stdout: "ignore", stderr: "ignore" }).exited
+    await keys("-l", text)
     await new Promise((r) => setTimeout(r, 300))
-    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Enter"], { stdout: "ignore", stderr: "ignore" }).exited
+    await keys("Enter")
     const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     companionLog(`${cyan}orchestrator → tmux${reset} ${sessionName} "${text.slice(0, 50)}"`)
   } catch { /* worker session gone */ }
@@ -201,11 +204,11 @@ async function reconcileOnce(sessions: Session[]): Promise<void> {
     bindTaskSession(pending.taskId, s.key || s.cwd)
     emitTask(pending.taskId)
     orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId, pending.threadId))
-    const { tmuxSession, prompt } = pending
+    const { tmuxSession, tmuxSocket, prompt } = pending
     // sendToTmux self-paces: it polls the pane until the TUI is input-ready
     // before send-keys, so binding the instant ps-discovery sees the worker is
     // fine — the prompt won't land until Claude can actually receive it.
-    if (tmuxSession) void sendToTmux(tmuxSession, prompt)
+    if (tmuxSession) void sendToTmux(tmuxSession, prompt, tmuxSocket || undefined)
   }
 }
 
@@ -245,7 +248,7 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
     companionLog(`${red}dispatch failed${reset} [${task.taskId}] — ${result.error}`)
     return { ok: false, error: result.error }
   }
-  setTaskSpawn(task.taskId, result.sessionName ?? null)
+  setTaskSpawn(task.taskId, result.sessionName ?? null, result.tmuxSocket || null)
   emitTask(task.taskId)
   workerTail.watch(task.taskId)
   companionLog(`${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}`)

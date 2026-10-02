@@ -120,6 +120,31 @@ test("createQueuedTask parks a task with no tmux session; listQueued is FIFO", (
 // ignored or steal the binding from this file's legacy seed. Keep every test
 // that touches orchestrator-chat in this one file.
 
+// COMPANION_TMUX_SOCKET: the spawn server's socket path rides on the task so
+// cancel/send/tail address the worker on the server it was spawned on.
+test("legacy rows (pre tmux_socket column) read as the default server", () => {
+  expect(chat.getTask("k1")?.tmuxSocket).toBeNull()
+})
+
+test("setTaskSpawn records the socket; '' and omitted store NULL (default server)", async () => {
+  const { sessionCmdArgv } = await import("./tmux-pane")
+  const a = chat.createProposal("a", "/s", "why", "general")
+  chat.setTaskSpawn(a.taskId, "cc-a", "/tmp/tmux-1000/cc")
+  const ta = chat.getTask(a.taskId)
+  expect(ta?.tmuxSocket).toBe("/tmp/tmux-1000/cc")
+  expect(sessionCmdArgv(ta?.tmuxSocket, "kill-session", ta?.tmuxSession ?? ""))
+    .toEqual(["tmux", "-S", "/tmp/tmux-1000/cc", "kill-session", "-t", "cc-a"])
+  const b = chat.createProposal("b", "/s", "why", "general")
+  chat.setTaskSpawn(b.taskId, "cc-b", "")
+  expect(chat.getTask(b.taskId)?.tmuxSocket).toBeNull()
+  const c = chat.createProposal("c", "/s", "why", "general")
+  chat.setTaskSpawn(c.taskId, "cc-c")
+  const tc = chat.getTask(c.taskId)
+  expect(tc?.tmuxSocket).toBeNull()
+  expect(sessionCmdArgv(tc?.tmuxSocket, "kill-session", "cc-c")).toEqual(["tmux", "kill-session", "-t", "cc-c"])
+  for (const id of [a.taskId, b.taskId, c.taskId]) chat.setTaskStatus(id, "done")
+})
+
 const { createQueue } = await import("./orchestrator-queue")
 const CWD = "/q"
 

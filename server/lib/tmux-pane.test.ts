@@ -9,6 +9,11 @@ import {
   paneRefOf,
   parsePaneTtys,
   sendKeysArgs,
+  sessionCmdArgv,
+  spawnNewSessionFlags,
+  spawnServerFlags,
+  spawnSocketName,
+  spawnSocketPath,
   tmuxArgv,
   tmuxSocketFlags,
   tmuxSocketFromEnv,
@@ -74,4 +79,54 @@ test("listTmuxSockets: every entry of $TMUX_TMPDIR/tmux-<uid>, realpath'd", asyn
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+// ── Spawn server (COMPANION_TMUX_SOCKET / COMPANION_TMUX_CONF) ───────────
+
+test("spawn server: unset → no flags, no socket path (the Mac's behaviour)", () => {
+  expect(spawnSocketName({})).toBe("")
+  expect(spawnServerFlags({})).toEqual([])
+  expect(spawnNewSessionFlags({})).toEqual([])
+  expect(spawnSocketPath({}, 501)).toBe("")
+  // A conf alone does not move the default server onto a new config.
+  expect(spawnNewSessionFlags({ COMPANION_TMUX_CONF: "/home/a/.tmux/cc.conf" })).toEqual([])
+  expect(spawnServerFlags({ COMPANION_TMUX_SOCKET: "   " })).toEqual([])
+})
+
+test("spawn server: set → -L <name>; -f <conf> only on new-session", () => {
+  const env = { COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/home/a/.tmux/cc.conf" }
+  expect(spawnServerFlags(env)).toEqual(["-L", "cc"])
+  expect(spawnNewSessionFlags(env)).toEqual(["-L", "cc", "-f", "/home/a/.tmux/cc.conf"])
+  expect(spawnNewSessionFlags({ COMPANION_TMUX_SOCKET: "cc" })).toEqual(["-L", "cc"])
+})
+
+test("spawn server: a name that is a path or carries metacharacters is refused", () => {
+  for (const bad of ["/tmp/x", "a b", "cc;id", "$(id)", "../cc", "cc'"]) {
+    expect(spawnServerFlags({ COMPANION_TMUX_SOCKET: bad })).toEqual([])
+    expect(spawnSocketPath({ COMPANION_TMUX_SOCKET: bad }, 501)).toBe("")
+  }
+})
+
+test("spawn server: socket path is $TMUX_TMPDIR/tmux-<uid>/<name>, dir realpath'd like $TMUX", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cc-sock-"))
+  try {
+    await mkdir(join(base, "tmux-501"))
+    const real = await realpath(join(base, "tmux-501"))
+    expect(spawnSocketPath({ COMPANION_TMUX_SOCKET: "cc", TMUX_TMPDIR: base }, 501)).toBe(join(real, "cc"))
+    // Dir not created yet → unresolved but well-formed.
+    expect(spawnSocketPath({ COMPANION_TMUX_SOCKET: "cc", TMUX_TMPDIR: base }, 777)).toBe(join(base, "tmux-777", "cc"))
+    // The discovery side parses the same string out of $TMUX.
+    expect(tmuxSocketFromEnv(`${join(real, "cc")},1234,0`)).toBe(join(real, "cc"))
+  } finally {
+    await rm(base, { recursive: true, force: true })
+  }
+})
+
+test("sessionCmdArgv: by-name commands carry the recorded socket, none for default", () => {
+  expect(sessionCmdArgv(null, "kill-session", "cc-x")).toEqual(["tmux", "kill-session", "-t", "cc-x"])
+  expect(sessionCmdArgv("", "send-keys", "cc-x", "Enter")).toEqual(["tmux", "send-keys", "-t", "cc-x", "Enter"])
+  expect(sessionCmdArgv("/tmp/tmux-1000/cc", "kill-session", "cc-x"))
+    .toEqual(["tmux", "-S", "/tmp/tmux-1000/cc", "kill-session", "-t", "cc-x"])
+  expect(sessionCmdArgv("/tmp/tmux-1000/cc", "send-keys", "cc-x", "-l", "hi"))
+    .toEqual(["tmux", "-S", "/tmp/tmux-1000/cc", "send-keys", "-t", "cc-x", "-l", "hi"])
 })

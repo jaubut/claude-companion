@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { DETACHED_COLS, DETACHED_ROWS, buildInner, detachedNewSessionArgs, homeSpawnCwd } from "./spawn-session"
+import { DETACHED_COLS, DETACHED_ROWS, buildInner, buildTmuxLaunch, detachedNewSessionArgs, detachedSpawnArgv, homeSpawnCwd } from "./spawn-session"
 
 // The inner command tmux runs. Both spawn paths build it here — the Mac one
 // wraps it in `tmux new-session -s <sess> '<inner>'` for AppleScript, the Linux
@@ -95,4 +95,38 @@ test("macOS keeps ~, and no HOME means no remap", () => {
   expect(homeSpawnCwd("/Users/jeremieaubut", { platform: "darwin", home: "/Users/jeremieaubut" }))
     .toBe("/Users/jeremieaubut")
   expect(homeSpawnCwd("/home/aubut", { platform: "linux" })).toBe("/home/aubut")
+})
+
+// ── Spawn server (COMPANION_TMUX_SOCKET) ─────────────────────────────────
+// Unset must be argv-for-argv the pre-socket spawn (the Mac); set, every spawn
+// path lands on `tmux -L <name>` and -f rides only on the creating call.
+
+test("headless spawn argv: unset → bare tmux, sized new-session", () => {
+  expect(detachedSpawnArgv("cc-repo", "cd '/x' && claude", {})).toEqual([
+    "tmux", "new-session", "-d", "-x", "220", "-y", "60", "-s", "cc-repo", "/bin/sh", "-c", "cd '/x' && claude",
+  ])
+})
+
+test("headless spawn argv: set → -L <name> -f <conf> ahead of new-session, size kept", () => {
+  const argv = detachedSpawnArgv("cc-repo", "cd '/x' && claude", {
+    COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/home/a/.tmux/cc.conf",
+  })
+  expect(argv).toEqual([
+    "tmux", "-L", "cc", "-f", "/home/a/.tmux/cc.conf",
+    "new-session", "-d", "-x", "220", "-y", "60", "-s", "cc-repo", "/bin/sh", "-c", "cd '/x' && claude",
+  ])
+})
+
+test("Terminal/iTerm launch line: unset → byte-identical to the pre-socket form", () => {
+  expect(buildTmuxLaunch("/x", "cc-x", "claude", undefined, {})).toBe(
+    `tmux new-session -s 'cc-x' 'cd '\\''/x'\\'' && claude' \\; set-option -t 'cc-x' detach-on-destroy on`,
+  )
+})
+
+test("Terminal/iTerm launch line: set → quoted -L/-f before new-session", () => {
+  const line = buildTmuxLaunch("/x", "cc-x", "claude", undefined, {
+    COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/Users/j/My Conf's/cc.conf",
+  })
+  expect(line.startsWith(`tmux -L 'cc' -f '/Users/j/My Conf'\\''s/cc.conf' new-session -s 'cc-x' `)).toBe(true)
+  expect(line.endsWith(` \\; set-option -t 'cc-x' detach-on-destroy on`)).toBe(true)
 })
