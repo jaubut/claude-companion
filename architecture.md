@@ -74,7 +74,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
-| `lib/super-auto.ts` | 82 | lib | 4 | state: let cached |
+| `lib/super-auto.ts` | 81 | lib | 4 | state: let cached |
 | `lib/orchestrator-queue.ts` | 79 | lib | 5 |  |
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |

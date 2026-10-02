@@ -1680,7 +1680,7 @@
         },
         {
           "path": "lib/super-auto.ts",
-          "lines": 82,
+          "lines": 81,
           "kind": "lib",
           "exports": [
             "isSuperAuto",
