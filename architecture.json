@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-30",
+  "generatedAt": "2026-10-02",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 80,
+          "lines": 85,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -20,6 +20,16 @@
           "emits": [],
           "consumes": [],
           "endpoints": [
+            {
+              "method": "*",
+              "path": "/api/vault",
+              "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/api/secret",
+              "prefix": false
+            },
             {
               "method": "*",
               "path": "/hooks/",
@@ -60,6 +70,7 @@
             "routes/media.ts",
             "routes/goals.ts",
             "routes/vault.ts",
+            "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts"
           ],
@@ -183,11 +194,12 @@
         },
         {
           "path": "lib/auth.ts",
-          "lines": 94,
+          "lines": 109,
           "kind": "lib",
           "exports": [
             "getAuthToken",
             "checkBearer",
+            "checkBearerHeaderOnly",
             "maskToken",
             "unauthorized"
           ],
@@ -205,10 +217,12 @@
         },
         {
           "path": "lib/auto-judge.ts",
-          "lines": 217,
+          "lines": 258,
           "kind": "lib",
           "exports": [
             "Verdict",
+            "stripSetupPrefixes",
+            "stripDataText",
             "Judgement",
             "REASON_NOT_ALLOWLISTED",
             "REASON_SECRETS_FILE",
@@ -1248,15 +1262,18 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 268,
+          "lines": 317,
           "kind": "lib",
           "exports": [
             "SyncFn",
             "VaultAction",
+            "AuditOrigin",
             "VaultEntry",
             "VaultResult",
             "vaultDeps",
             "storePath",
+            "syncToolPath",
+            "vaultWritable",
             "auditPath",
             "validName",
             "validValue",
@@ -1268,6 +1285,7 @@
             "setSecretHosts",
             "deleteSecret",
             "isKeyCommand",
+            "parseKeyCommand",
             "handleKeyCommand"
           ],
           "state": [
@@ -1278,7 +1296,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/vault-guard.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1563,7 +1583,7 @@
         },
         {
           "path": "lib/turso.ts",
-          "lines": 108,
+          "lines": 112,
           "kind": "lib",
           "exports": [
             "SqlArg",
@@ -1575,6 +1595,37 @@
           "state": [
             "let agentToken",
             "let agentEnvRead"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/vault-guard.ts",
+          "lines": 99,
+          "kind": "lib",
+          "exports": [
+            "Transport",
+            "ClientOrigin",
+            "recordPeer",
+            "peerOf",
+            "isLoopback",
+            "isTailnet",
+            "clientOrigin",
+            "Limiter",
+            "clock",
+            "createLimiter",
+            "writeLimiter",
+            "readLimiter",
+            "resetVaultLimits"
+          ],
+          "state": [
+            "peers: WeakMap"
           ],
           "emits": [],
           "consumes": [],
@@ -2124,7 +2175,7 @@
         },
         {
           "path": "routes/vault.ts",
-          "lines": 59,
+          "lines": 92,
           "kind": "lib",
           "exports": [
             "handleVaultRoute"
@@ -2137,7 +2188,8 @@
           "imports": [
             "lib/auth.ts",
             "lib/log.ts",
-            "lib/secret-store.ts"
+            "lib/secret-store.ts",
+            "lib/vault-guard.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2396,11 +2448,16 @@
             "ws.ts"
           ]
         },
+        "recordPeer": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "companion-server.ts#* /api/vault"
+          ]
+        },
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
-            "companion-server.ts#* /ws",
-            "routes/vault.ts"
+            "companion-server.ts#* /ws"
           ]
         },
         "unauthorized": {
@@ -3236,6 +3293,13 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "writeLimiter": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/secret-store.ts",
+            "routes/vault.ts"
           ]
         },
         "WaitingKind": {
@@ -4245,7 +4309,13 @@
             "routes/vault.ts"
           ]
         },
-        "listSecrets": {
+        "Limiter": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "AuditOrigin": {
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"
@@ -4265,6 +4335,42 @@
         },
         "setSecretHosts": {
           "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "peerOf": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "clientOrigin": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "checkBearerHeaderOnly": {
+          "module": "lib/auth.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "vaultWritable": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "listSecrets": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "readLimiter": {
+          "module": "lib/vault-guard.ts",
           "callers": [
             "routes/vault.ts"
           ]

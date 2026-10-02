@@ -52,7 +52,19 @@ export function checkBearer(req: Request): boolean {
   // Allow either Authorization header OR ?token= query param. Browsers can't
   // set Authorization on `new WebSocket(...)`, so the query-param form lets
   // a future PWA still authenticate.
-  const presented = readPresentedToken(req)
+  return tokenMatches(readPresentedToken(req), expected)
+}
+
+/**
+ * Header-only variant for the secrets surface (/api/vault*, /api/secret):
+ * a `?token=` query is refused even when valid — query strings end up in
+ * proxy logs, shell history and crash reports. Other routes keep checkBearer.
+ */
+export function checkBearerHeaderOnly(req: Request): boolean {
+  return tokenMatches(readHeaderToken(req), getAuthToken())
+}
+
+function tokenMatches(presented: string | null, expected: string): boolean {
   if (!presented) return false
   if (presented.length !== expected.length) return false
   try {
@@ -62,12 +74,15 @@ export function checkBearer(req: Request): boolean {
   }
 }
 
-function readPresentedToken(req: Request): string | null {
+function readHeaderToken(req: Request): string | null {
   const auth = req.headers.get("authorization") ?? ""
-  if (auth.toLowerCase().startsWith("bearer ")) {
-    const t = auth.slice(7).trim()
-    if (t) return t
-  }
+  if (!auth.toLowerCase().startsWith("bearer ")) return null
+  return auth.slice(7).trim() || null
+}
+
+function readPresentedToken(req: Request): string | null {
+  const fromHeader = readHeaderToken(req)
+  if (fromHeader) return fromHeader
   // Fallback for clients that can't set headers on the connecting request
   // (notably browser WebSocket).
   const url = new URL(req.url)
