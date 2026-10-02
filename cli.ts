@@ -119,7 +119,7 @@ if (subcommand && subcommand.length > 0) {
 
 import { createCompanionServer } from "./server/companion-server"
 import { rehydrateSessions } from "./server/lib/rehydrate"
-import { discoverLiveClaudes } from "./server/lib/discover"
+import { discoverLiveClaudes, expectFirstDiscovery } from "./server/lib/discover"
 import { reapScrapeSessions } from "./server/lib/command-offpane"
 import { startCodexFeedMonitor } from "./server/lib/codex-feed"
 import { getAuthToken, maskToken } from "./server/lib/auth"
@@ -131,6 +131,9 @@ const PORT = Number(process.env.COMPANION_PORT) || 4245
 // Before anything is logged: companion.log is 0600 from here on.
 secureLogFile()
 
+// Before the server accepts /ws: a phone that reconnects during boot waits
+// (≤3 s) for the first discovery pass instead of receiving `sessions: []`.
+expectFirstDiscovery()
 const server = createCompanionServer(PORT)
 // After loadDefaultDotEnv() above: the age cap must come from the configured value.
 startMediaSweeper()

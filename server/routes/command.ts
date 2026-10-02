@@ -5,7 +5,7 @@ import { commandLister } from "../lib/command-offpane-cache"
 import { beginFlow, endFlow } from "../lib/command-scrape"
 import { keyGate, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
-import { capturePane } from "../lib/tmux-pane"
+import { type PaneRef, capturePane, paneKey, paneRefOf, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 
 // Slash-command autocomplete (PRJ-OR1T Phase 16).
@@ -28,25 +28,26 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // phone's /api/dialog/key cannot land inside their chord window, and nothing
 // here can land inside one of the phone's. A send that wedges is killed at the
 // gate's deadline and reads as a failed send (false), never a stuck scrape.
-async function gatedSend(pane: string, key: string, args: string[]): Promise<boolean> {
+async function gatedSend(ref: PaneRef, key: string, args: string[]): Promise<boolean> {
   try {
-    await keyGate.send(pane, key, (signal) => runTmux(args, signal))
+    await keyGate.send(paneKey(ref.pane, ref.socket), key, (signal) => runTmux(args, signal))
     return true
   } catch {
     return false
   }
 }
 
-const sendKey = (pane: string, key: string) => gatedSend(pane, key, ["send-keys", "-t", pane, key])
-const sendLiteral = (pane: string, text: string) => gatedSend(pane, text, ["send-keys", "-t", pane, "-l", text])
+const sendKey = (ref: PaneRef, key: string) => gatedSend(ref, key, sendKeysArgs(ref, key))
+const sendLiteral = (ref: PaneRef, text: string) => gatedSend(ref, text, sendKeysArgs(ref, "-l", text))
+const capture = (ref: PaneRef, escapes = false) => capturePane(ref.pane, undefined, { escapes, socket: ref.socket })
 
 // C-u only over an empty line or text this flow typed itself. The line is
 // read fresh, with -e, right before the key: anything else on it (a phone
 // prompt whose Enter never landed, the user typing at the keyboard) is left
 // alone and the caller is told so. Returns true when the line is ours to have
 // cleared (or already empty).
-async function clearIfOurs(pane: string, owned: readonly string[], who: string): Promise<boolean> {
-  const typed = inputLine(await capturePane(pane, undefined, { escapes: true }) ?? "")
+async function clearIfOurs(pane: PaneRef, owned: readonly string[], who: string): Promise<boolean> {
+  const typed = inputLine(await capture(pane, true) ?? "")
   if (!mayClearLine(typed, owned)) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     companionLog(`${yellow}commands${reset} left the input line alone on ${who} — not ours: ${JSON.stringify((typed ?? "<unreadable>").slice(0, 40))}`)
@@ -73,7 +74,8 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
-    const typedNow = session?.tmuxPane ? inputLine(await capturePane(session.tmuxPane, undefined, { escapes: true }) ?? "") : null
+    const ref = paneRefOf(session)
+    const typedNow = ref ? inputLine(await capture(ref, true) ?? "") : null
     const refusal = suggestRefusal(
       session,
       dialogWatcher.current()[session?.key ?? ""],
@@ -82,7 +84,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     )
     if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
 
-    const pane = session!.tmuxPane
+    const pane = ref!
     if (!beginFlow(session!.key, "suggest")) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
     }
@@ -102,7 +104,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       let commands: ReturnType<typeof parseCommandMenu> = []
       for (;;) {
         await sleep(SETTLE_POLL_MS)
-        const pane2 = await capturePane(pane)
+        const pane2 = await capture(pane)
         if (pane2) {
           commands = parseCommandMenu(pane2)
           if (commands.length) break

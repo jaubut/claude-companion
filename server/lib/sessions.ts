@@ -18,6 +18,7 @@
 // previous Claude process that used the same TTY.
 
 import { isAgentPidAlive, processStartMs } from "./agent-pid"
+import { companionLog } from "./log"
 import {
   type WaitingKind,
   type WaitingReason,
@@ -51,6 +52,13 @@ export interface Session {
   // present, inject uses `tmux send-keys` (pane-id-keyed, no focus race)
   // instead of AppleScript (focus-bound, swap-prone with multiple windows).
   tmuxPane: string
+  // The tmux server socket that pane lives on (first field of $TMUX, e.g.
+  // "/tmp/tmux-501/cc" for `tmux -L cc`). "" = the default server. A pane id
+  // is only unique within one server, so (tmuxSocket, tmuxPane) is the pane's
+  // identity and every tmux call targets `-S tmuxSocket` (lib/tmux-pane.ts).
+  // Optional only so Session literals in fixtures predating it still type;
+  // recordSession always sets it.
+  tmuxSocket?: string
   // The orchestrator task this session is a worker for, from
   // X-Companion-Task-Id (COMPANION_TASK_ID in the worker's env, issued at
   // dispatch). Empty for every session a human started — identity is issued,
@@ -90,18 +98,38 @@ const listeners = new Set<Listener>()
 const PRUNE_AFTER_MS_NO_PID = 60 * 60 * 1000
 const PRUNE_INTERVAL_MS = 60 * 1000
 
+// Every removal is logged (key, pid, reason) and counted, so a session that
+// "vanished from the phone" can be traced to the decision that dropped it.
+let removedSinceDrain = 0
+
+function logRemoval(s: Session, reason: string): void {
+  removedSinceDrain++
+  const dim = "\x1b[2m"; const reset = "\x1b[0m"
+  companionLog(`${dim}session removed${reset} ${s.key} pid=${s.pid || "-"} reason=${reason}`)
+}
+
+// How many sessions were removed since the last call. The discovery tick logs
+// this once, and only when nonzero.
+export function drainRemovalCount(): number {
+  const n = removedSinceDrain
+  removedSinceDrain = 0
+  return n
+}
+
 function prune(now: number): boolean {
   let changed = false
   for (const [key, s] of sessions) {
     if (s.pid) {
       if (!isAgentPidAlive(s.pid, s.agent)) {
         sessions.delete(key)
+        logRemoval(s, "prune:pid-dead")
         changed = true
       }
       continue
     }
     if (now - s.lastSeenAt > PRUNE_AFTER_MS_NO_PID) {
       sessions.delete(key)
+      logRemoval(s, `prune:no-pid-idle>${PRUNE_AFTER_MS_NO_PID / 60_000}m`)
       changed = true
     }
   }
@@ -234,6 +262,7 @@ export function recordSession(
     tty: mergedTty,
     iTermSessionId: meta.iTermSessionId || prev?.iTermSessionId || "",
     tmuxPane: meta.tmuxPane || prev?.tmuxPane || "",
+    tmuxSocket: mergeTmuxSocket(meta, prev),
     // Sticky: ps-discovery and rehydrate re-record a worker with no headers at
     // all, and must not erase the identity a hook already established.
     taskId: meta.taskId || prev?.taskId || "",
@@ -287,6 +316,7 @@ export function recordSession(
           next.waitingReasons = s.waitingReasons
         }
         sessions.delete(otherKey)
+        logRemoval(s, `collapse:into ${key}`)
         collapsed = true
       }
     }
@@ -318,12 +348,22 @@ export function recordSession(
     // every identity-first bind would silently wait out the 90s degrade.
     prev.taskId !== next.taskId ||
     prev.tmuxPane !== next.tmuxPane ||
+    prev.tmuxSocket !== next.tmuxSocket ||
     // Shape completeness only: no caller puts waiting in `meta`, so the sticky
     // merge always falls through to prev. The real emit path is the setters.
     prev.waitingSince !== next.waitingSince
 
   if (meaningfulChange) emit()
   return next
+}
+
+// The socket travels with the pane: a record that gains a NEW pane without a
+// socket must not keep the old pane's socket (it would address the new id on
+// the wrong server). Same pane, or no pane in this update → sticky.
+function mergeTmuxSocket(meta: Partial<Session>, prev: Session | undefined): string {
+  if (meta.tmuxSocket) return meta.tmuxSocket
+  if (meta.tmuxPane && meta.tmuxPane !== prev?.tmuxPane) return ""
+  return prev?.tmuxSocket ?? ""
 }
 
 // ---- titles + creation time -------------------------------------------------
@@ -536,6 +576,7 @@ export function removeSessionByCwd(cwd: string): boolean {
   for (const [key, s] of sessions) {
     if (s.cwd === cwd) {
       sessions.delete(key)
+      logRemoval(s, "session-end:cwd")
       removed = true
     }
   }
@@ -544,7 +585,9 @@ export function removeSessionByCwd(cwd: string): boolean {
 }
 
 export function removeSessionByKey(key: string): boolean {
+  const s = sessions.get(key)
   const existed = sessions.delete(key)
+  if (s) logRemoval(s, "remove:key")
   if (existed) emit()
   return existed
 }
@@ -558,6 +601,7 @@ export function removeSessionByTty(tty: string): boolean {
   for (const [key, s] of sessions) {
     if (s.tty === tty) {
       sessions.delete(key)
+      logRemoval(s, "session-end:tty")
       removed = true
     }
   }
@@ -569,17 +613,39 @@ export function removeSessionByTty(tty: string): boolean {
 // for workers whose hooks report a pane but no usable tty. Without it a
 // session-end from one worker falls through to removeSessionByCwd and takes
 // every sibling session in that directory with it.
-export function removeSessionByTmuxPane(pane: string): boolean {
+//
+// `socket` (the hook's $TMUX socket): when given, only a pane on that server
+// matches — %3 on `tmux -L cc` is not %3 on the default server. Omitted keeps
+// the old any-server match for callers that do not know it yet.
+export function removeSessionByTmuxPane(pane: string, socket?: string): boolean {
   if (!pane) return false
   let removed = false
   for (const [key, s] of sessions) {
-    if (s.tmuxPane === pane) {
+    if (s.tmuxPane === pane && (socket === undefined || !s.tmuxSocket || !socket || s.tmuxSocket === socket)) {
       sessions.delete(key)
+      logRemoval(s, "session-end:tmux-pane")
       removed = true
     }
   }
   if (removed) emit()
   return removed
+}
+
+// The socket of the ONE live session on `pane`, for callers that only know a
+// pane id (dialog-watch's capture dep, until it passes the socket itself).
+// Ambiguous — the same id live on two servers — or unknown → undefined, and
+// the caller addresses the default server as before.
+export function socketForPane(pane: string): string | undefined {
+  let found: string | undefined
+  let n = 0
+  for (const s of sessions.values()) {
+    if (s.tmuxPane !== pane) continue
+    const sock = s.tmuxSocket ?? ""
+    if (n > 0 && sock !== found) return undefined
+    found = sock
+    n++
+  }
+  return n > 0 ? found : undefined
 }
 
 export function listSessions(): Session[] {

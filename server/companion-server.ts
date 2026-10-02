@@ -14,6 +14,12 @@ import { handleVaultRoute } from "./routes/vault"
 import { recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
+import { waitForFirstDiscovery } from "./lib/discover"
+
+// How long a /ws upgrade may wait for the boot discovery pass. The phone
+// treats init's `sessions` as authoritative, so an init sent before discovery
+// finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
+const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 
 
 export function createCompanionServer(port: number) {
@@ -53,6 +59,8 @@ export function createCompanionServer(port: number) {
 
       // ── WebSocket upgrade ──
       if (url.pathname === "/ws") {
+        // Immediate except in the first seconds after boot (lib/discover.ts).
+        await waitForFirstDiscovery(WS_FIRST_DISCOVERY_WAIT_MS)
         const upgraded = server.upgrade(req, {
           data: { id: crypto.randomUUID() },
         })

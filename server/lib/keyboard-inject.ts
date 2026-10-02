@@ -7,6 +7,7 @@
 
 import { companionLog } from "./log"
 import { KeyGateTimeout, keyGate } from "./key-gate"
+import { type PaneRef, mapTtysToPanes, paneKey, parsePaneTtys, tmuxArgv, tmuxSocketFlags } from "./tmux-pane"
 
 export interface InjectTarget {
   tty?: string
@@ -18,6 +19,9 @@ export interface InjectTarget {
   // key event that Ink's TUI treats as a true keypress (raw \n via stdin
   // does not, see claude-code issue #15553).
   tmuxPane?: string
+  // The tmux server that pane is on ($TMUX's socket path); "" / absent = the
+  // default server. Pane ids are only unique per server (lib/tmux-pane.ts).
+  tmuxSocket?: string
 }
 
 function escapeForAppleScript(s: string): string {
@@ -356,9 +360,9 @@ export async function injectText(text: string, target?: InjectTarget, opts: Inje
   // wedged pane cannot stall injects into every other session.
   if (target?.tmuxPane) {
     const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const green = "\x1b[32m"
-    const result = await deliverViaTmux(target.tmuxPane, text, sendKeys, deadline)
+    const result = await deliverViaTmux(target.tmuxPane, text, sendKeys, deadline, target.tmuxSocket)
     if (result.ok) {
-      companionLog(`${green}delivered (tmux)${reset} → ${target.tmuxPane}`)
+      companionLog(`${green}delivered (tmux)${reset} → ${paneKey(target.tmuxPane, target.tmuxSocket)}`)
       return true
     }
     // tmux failed (stale pane, no tmux, timed out, queue wedged past the
@@ -370,7 +374,7 @@ export async function injectText(text: string, target?: InjectTarget, opts: Inje
       return false
     }
     companionLog(`${yellow}retrying via osascript${reset} → ${target.tty}`)
-    const { tmuxPane: _dropped, ...rest } = target
+    const { tmuxPane: _dropped, tmuxSocket: _droppedSocket, ...rest } = target
     return withInjectLock(() => injectTextLocked(text, rest, deadline, sendKeys))
   }
   return withInjectLock(() => injectTextLocked(text, target, deadline, sendKeys))
@@ -388,6 +392,8 @@ export interface TmuxResult {
 type TmuxSender = (args: readonly string[], timeoutMs: number, signal?: AbortSignal) => Promise<TmuxResult>
 export async function tmuxSendKeys(args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<TmuxResult> {
   try {
+    // `args` may lead with `-S <socket>` (tmuxSocketFlags): global flags go
+    // before the command, so they are passed straight through.
     const proc = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "pipe" })
     // Killed on its own timeout AND when the key gate aborts the turn.
     const kill = () => { try { proc.kill() } catch { /* already exited */ } }
@@ -414,22 +420,34 @@ export async function tmuxSendKeys(args: readonly string[], timeoutMs: number, s
 // path: claude inherits $TMUX_PANE but the hook script may have raced the
 // initial registration, leaving the session with a tty but no pane). tmux
 // itself knows the mapping — ask it.
-export async function resolveTmuxPaneFromTty(tty: string): Promise<string | null> {
+//
+// One server only: the default one, or `socket`'s. resolveTmuxRefFromTty below
+// asks every server and also says which one answered.
+export async function resolveTmuxPaneFromTty(tty: string, socket?: string): Promise<string | null> {
   try {
-    const proc = Bun.spawn(["tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"], {
+    const proc = Bun.spawn([...tmuxArgv(socket), "list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"], {
       stdout: "pipe", stderr: "pipe",
     })
     const out = (await new Response(proc.stdout).text()).trim()
     await proc.exited
     if ((proc.exitCode ?? 1) !== 0) return null
-    for (const line of out.split("\n")) {
-      const [pane, paneTty] = line.split(" ")
-      if (paneTty === tty && pane && TMUX_PANE_RE.test(pane)) return pane
-    }
-    return null
+    return parsePaneTtys(out).get(tty) ?? null
   } catch {
     return null
   }
+}
+
+// (socket, pane) hosting `tty`, over every tmux server this user runs — a
+// session on `tmux -L cc` is invisible to a bare `tmux list-panes`. Falls back
+// to the default server when no socket directory can be listed.
+export async function resolveTmuxRefFromTty(
+  tty: string,
+  map: () => Promise<Map<string, PaneRef>> = () => mapTtysToPanes(),
+): Promise<PaneRef | null> {
+  const hit = (await map()).get(tty)
+  if (hit) return hit
+  const pane = await resolveTmuxPaneFromTty(tty)
+  return pane ? { pane, socket: "" } : null
 }
 
 // Exported with an injectable sender for the tests only.
@@ -438,6 +456,7 @@ export async function deliverViaTmux(
   text: string,
   sendKeys: TmuxSender = tmuxSendKeys,
   deadline: number = Date.now() + INJECT_QUEUE_MS,
+  socket = "",
 ): Promise<TmuxResult> {
   // Two send-keys calls — first with `-l` (literal) so the text is typed
   // exactly as-is regardless of contents, second to send Enter as a real
@@ -450,11 +469,14 @@ export async function deliverViaTmux(
   // is cancelled, never typed late) and is bounded by INJECT_SEND_MS.
   if (!TMUX_PANE_RE.test(paneId)) return { ok: false, reason: `invalid pane id "${paneId}"` }
   try {
-    return await keyGate.send(paneId, "Enter", async (signal): Promise<TmuxResult> => {
-      const literal = await sendKeys(["send-keys", "-t", paneId, "-l", text], 2000, signal)
+    // The gate is keyed by (socket, pane): %3 on `tmux -L cc` and %3 on the
+    // default server are two keyboards.
+    const flags = tmuxSocketFlags(socket)
+    return await keyGate.send(paneKey(paneId, socket), "Enter", async (signal): Promise<TmuxResult> => {
+      const literal = await sendKeys([...flags, "send-keys", "-t", paneId, "-l", text], 2000, signal)
       if (!literal.ok) return { ok: false, reason: `send-keys -l: ${literal.reason}` }
       if (signal.aborted) return { ok: false, reason: "send-keys -l: timed out" }
-      const enter = await sendKeys(["send-keys", "-t", paneId, "Enter"], 2000, signal)
+      const enter = await sendKeys([...flags, "send-keys", "-t", paneId, "Enter"], 2000, signal)
       if (!enter.ok) return { ok: false, reason: `send-keys Enter: ${enter.reason}` }
       return { ok: true, reason: "" }
     }, { startBy: deadline, timeoutMs: INJECT_SEND_MS })
@@ -477,14 +499,15 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
       // pbcopy/osascript untargeted path (also macOS-only). This makes
       // phone-spawned Linux sessions actually receive injects.
       if (process.platform === "linux") {
-        const pane = await resolveTmuxPaneFromTty(target.tty)
-        if (pane) {
-          const result = await deliverViaTmux(pane, text, sendKeys, deadline)
+        const ref = await resolveTmuxRefFromTty(target.tty)
+        if (ref) {
+          const where = paneKey(ref.pane, ref.socket)
+          const result = await deliverViaTmux(ref.pane, text, sendKeys, deadline, ref.socket)
           if (result.ok) {
-            companionLog(`${green}delivered (tmux)${reset} → ${pane} (resolved from ${target.tty})`)
+            companionLog(`${green}delivered (tmux)${reset} → ${where} (resolved from ${target.tty})`)
             return true
           }
-          companionLog(`${red}deliver failed${reset} — tmux send-keys to ${pane}: ${result.reason}`)
+          companionLog(`${red}deliver failed${reset} — tmux send-keys to ${where}: ${result.reason}`)
           return false
         }
         companionLog(`${red}deliver failed${reset} — no tmux pane backs ${target.tty}`)
@@ -535,9 +558,9 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
 
 import type { PickerIO } from "./question-driver"
 
-async function tmuxCapture(pane: string): Promise<string | null> {
+async function tmuxCapture({ pane, socket }: PaneRef): Promise<string | null> {
   try {
-    const p = Bun.spawn(["tmux", "capture-pane", "-p", "-t", pane], { stdout: "pipe", stderr: "ignore" })
+    const p = Bun.spawn([...tmuxArgv(socket), "capture-pane", "-p", "-t", pane], { stdout: "pipe", stderr: "ignore" })
     const out = await new Response(p.stdout).text()
     return (await p.exited) === 0 ? out : null
   } catch {
@@ -545,13 +568,14 @@ async function tmuxCapture(pane: string): Promise<string | null> {
   }
 }
 
-function tmuxPickerIO(pane: string): PickerIO {
+function tmuxPickerIO(ref: PaneRef): PickerIO {
+  const send = (...rest: string[]) => tmuxSendKeys([...tmuxSocketFlags(ref.socket), "send-keys", "-t", ref.pane, ...rest], 2000)
   return {
-    capture: () => tmuxCapture(pane),
-    key: async (name) => (await tmuxSendKeys(["send-keys", "-t", pane, name], 2000)).ok,
+    capture: () => tmuxCapture(ref),
+    key: async (name) => (await send(name)).ok,
     // -l = literal so a digit lands as the character, not a key name.
-    digit: async (n) => (await tmuxSendKeys(["send-keys", "-t", pane, "-l", String(n)], 2000)).ok,
-    text: async (t) => (await tmuxSendKeys(["send-keys", "-t", pane, "-l", t], 2000)).ok,
+    digit: async (n) => (await send("-l", String(n))).ok,
+    text: async (t) => (await send("-l", t)).ok,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   }
 }
@@ -587,12 +611,10 @@ export async function withPickerIO<T>(
   run: (io: PickerIO, via: string) => Promise<T>,
 ): Promise<T | null> {
   return withInjectLock(async () => {
-    let pane = target.tmuxPane?.trim() ?? ""
-    if (pane && !TMUX_PANE_RE.test(pane)) pane = ""
-    if (!pane && target.tty && process.platform === "linux") {
-      pane = (await resolveTmuxPaneFromTty(target.tty)) ?? ""
-    }
-    if (pane) return run(tmuxPickerIO(pane), pane)
+    const pane = target.tmuxPane?.trim() ?? ""
+    let ref: PaneRef | null = TMUX_PANE_RE.test(pane) ? { pane, socket: target.tmuxSocket ?? "" } : null
+    if (!ref && target.tty && process.platform === "linux") ref = await resolveTmuxRefFromTty(target.tty)
+    if (ref) return run(tmuxPickerIO(ref), paneKey(ref.pane, ref.socket))
     if (target.tty && process.platform === "darwin") return run(ttyPickerIO(target), target.tty)
     return null
   })
