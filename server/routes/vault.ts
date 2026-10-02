@@ -1,15 +1,18 @@
 import { checkBearerHeaderOnly, unauthorized } from "../lib/auth"
 import { companionLog } from "../lib/log"
-import { type AuditOrigin, type VaultResult, deleteSecret, listSecrets, setSecretHosts, upsertSecret, validName, vaultWritable } from "../lib/secret-store"
-import { type Limiter, clientOrigin, peerOf, readLimiter, writeLimiter } from "../lib/vault-guard"
+import { type AuditOrigin, REVEAL_FORBIDDEN, type RevealResult, type VaultResult, deleteSecret, listSecrets, revealSecret, setSecretHosts, upsertSecret, validName, vaultWritable } from "../lib/secret-store"
+import { type Limiter, clientOrigin, peerOf, readLimiter, revealLimiter, writeLimiter } from "../lib/vault-guard"
 import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaultUpstream } from "../lib/vault-upstream"
 
-// Companion Vault API — values are write-only, no response ever carries one.
+// Companion Vault API — values are write-only; only the reveal 200 carries one.
 //   GET    /api/vault          → { ok, writable, secrets: [{name, hosts, scripts, updated_at}] }
 //   POST   /api/vault          {name, value, hosts} → upsert (create or rotate)
 //   POST   /api/secret         alias of POST /api/vault (chat composer key button)
 //   PATCH  /api/vault/:name    {hosts} → change hosts, value untouched
 //   DELETE /api/vault/:name    → remove the line
+//   POST   /api/vault/:name/reveal → { ok, name, value } — the ONE exception to
+//          "no response carries a value" (Jeremie, 2026-10-02: iOS shows it
+//          behind Face ID). Own 5/min budget, audited, never logged.
 // Gates, in order: network (loopback / tailnet / tailscale serve, else 403) →
 // header-only bearer (`?token=` refused, 401) → rate limit (429) → writable
 // (501 when tls-secrets.py is absent). The /api/* bearer gate in
@@ -21,7 +24,9 @@ import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaul
 // Contract: docs/vault-api.md.
 
 const PREFIX = "/api/vault/"
+const REVEAL_SUFFIX = "/reveal"
 const NO_STORE = { "Cache-Control": "no-store" }
+const REVEAL_HEADERS = { "Cache-Control": "no-store", Pragma: "no-cache" }
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return Response.json(body, { status, headers: { ...NO_STORE, ...headers } })
@@ -65,8 +70,8 @@ async function mutate(req: Request, isCollection: boolean, name: string, origin:
   return json({ ok: false, error: "method_not_allowed" }, 405)
 }
 
-function passthrough(r: UpstreamReply, extra?: Record<string, unknown>): Response {
-  const headers: Record<string, string> = { ...NO_STORE, "content-type": r.json ? "application/json" : "text/plain;charset=utf-8" }
+function passthrough(r: UpstreamReply, extra?: Record<string, unknown>, base: Record<string, string> = NO_STORE): Response {
+  const headers: Record<string, string> = { ...base, "content-type": r.json ? "application/json" : "text/plain;charset=utf-8" }
   if (r.retryAfter) headers["Retry-After"] = r.retryAfter
   const text = extra && r.json ? JSON.stringify({ ...r.json, ...extra }) : r.text
   return new Response(text, { status: r.status, headers })
@@ -80,6 +85,37 @@ async function forward(req: Request, up: UpstreamConfig, isCollection: boolean, 
   const body = req.method === "DELETE" ? undefined : await readJson(req)
   if (req.method !== "DELETE" && !body) return json({ ok: false, error: "bad_json" }, 400)
   return passthrough(await forwardVault(up, req.method, isCollection ? "/api/vault" : `/api/vault/${name}`, device, body ?? undefined))
+}
+
+// Gates 1–2 + hop guard already passed. Value only ever in the returned body.
+// A bad name is never logged: it is caller text (could be a pasted value).
+async function reveal(req: Request, name: string, up: UpstreamConfig | null, origin: AuditOrigin): Promise<Response> {
+  if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405)
+  const wait = limited(revealLimiter)
+  if (wait) return wait
+  const via = `via=${origin.transport} from=${origin.peer}`
+  if (!validName(name)) {
+    companionLog(`vault reveal bad_name ${via}`)
+    return revealReply(revealSecret(name, origin))
+  }
+  if (REVEAL_FORBIDDEN.includes(name)) {
+    companionLog(`vault reveal reveal_forbidden ${name} ${via}`)
+    return revealReply(revealSecret(name, origin))
+  }
+  if (up) {
+    // The upstream audits; it is never asked to run the pull command for a read.
+    const r = await forwardVault(up, "POST", `/api/vault/${name}/reveal`, origin.device_claimed, undefined, { pull: false })
+    companionLog(`vault reveal ${name} ${via} upstream=${r.status}`)
+    return passthrough(r, undefined, REVEAL_HEADERS)
+  }
+  const r = revealSecret(name, origin)
+  companionLog(r.ok ? `vault reveal ${name} ${via}` : `vault reveal ${r.error} ${name} ${via}`)
+  return revealReply(r)
+}
+
+function revealReply(r: RevealResult): Response {
+  const { status, ...body } = r
+  return Response.json(body, { status, headers: REVEAL_HEADERS })
 }
 
 export async function handleVaultRoute(req: Request, url: URL): Promise<Response | null> {
@@ -98,6 +134,11 @@ export async function handleVaultRoute(req: Request, url: URL): Promise<Response
   // A forwarded call landing on a server that would forward again = a loop.
   if (up && req.headers.get(HOP_HEADER)) return json({ ok: false, error: "upstream_loop" }, 508)
   const name = isCollection ? "" : p.slice(PREFIX.length)
+
+  if (name.endsWith(REVEAL_SUFFIX)) {
+    const origin = { device_claimed: claimedDevice(req), transport: from.transport, peer: from.peer }
+    return reveal(req, name.slice(0, -REVEAL_SUFFIX.length), up, origin)
+  }
 
   if (isCollection && req.method === "GET") {
     const wait = limited(readLimiter)

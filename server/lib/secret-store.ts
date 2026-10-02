@@ -17,7 +17,8 @@ import { forwardVault, vaultUpstream } from "./vault-upstream"
 // transport, peer} to vault-audit.jsonl — never the value. `device_claimed`
 // is the client's own x-companion-device header (spoofable, informative only);
 // transport + peer come from the server's view of the connection. No value is
-// ever returned, logged or broadcast by this module.
+// ever logged or broadcast by this module, and only `revealSecret` (the
+// POST /api/vault/:name/reveal route, Face ID-gated on iOS) returns one.
 //
 // No sync tool on this host (tls-secrets.py absent) → every mutation is a 501
 // `vault_unavailable` before secrets.env is read or written; listing still works.
@@ -193,7 +194,9 @@ function lastAuditTimes(): Map<string, string> {
   if (!existsSync(path)) return out
   for (const line of readFileSync(path, "utf8").split("\n")) {
     try {
-      const e = JSON.parse(line) as { ts?: unknown; name?: unknown }
+      const e = JSON.parse(line) as { ts?: unknown; name?: unknown; action?: unknown }
+      // A reveal reads the value; it does not change it.
+      if (e.action === "revealed") continue
       if (typeof e.name === "string" && typeof e.ts === "string") out.set(e.name, e.ts)
     } catch { /* skip torn / blank lines */ }
   }
@@ -282,6 +285,41 @@ export function deleteSecret(name: string, origin: string | Partial<AuditOrigin>
     if (after === null) return bad("not_found", `${name} introuvable`, 404)
     return commit(before, after, "deleted", name, [], toOrigin(origin))
   })
+}
+
+// ── Reveal (POST /api/vault/:name/reveal) ──
+// The ONE place a value leaves the store: returned to the route, which puts it
+// in that single HTTP response body. Never logged, broadcast or audited here.
+
+/** The vault's own bootstrap credentials: never revealed, even to a valid caller. */
+export const REVEAL_FORBIDDEN: readonly string[] = ["PHASE_SERVICE_TOKEN", "PHASE_HOST"]
+
+export type RevealResult =
+  | { ok: true; status: 200; name: string; value: string }
+  | { ok: false; status: 400 | 403 | 404 | 500; error: "bad_name" | "reveal_forbidden" | "not_found" | "audit_failed"; message: string }
+
+/** `NAME='v'`, `NAME="v"`, `export NAME=v` → v (first occurrence, as listNames). */
+function valueOf(raw: string): string {
+  const v = raw.slice(raw.indexOf("=") + 1)
+  const q = v[0]
+  return (q === "'" || q === '"') && v.length >= 2 && v.endsWith(q) ? v.slice(1, -1) : v
+}
+
+/** Read one value + append a `revealed` audit line (no value) on success. */
+export function revealSecret(name: string, origin: Partial<AuditOrigin>): RevealResult {
+  if (!validName(name)) return { ok: false, status: 400, error: "bad_name", message: "NOM en MAJUSCULES_ET_CHIFFRES (2–64)" }
+  if (REVEAL_FORBIDDEN.includes(name)) return { ok: false, status: 403, error: "reveal_forbidden", message: `${name} ne peut pas être affiché.` }
+  const entry = parseLines(readStore() ?? "").entries.find((e) => e.name === name)
+  if (!entry) return { ok: false, status: 404, error: "not_found", message: `${name} introuvable` }
+  try {
+    const path = auditPath()
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    appendFileSync(path, JSON.stringify({ ts: new Date().toISOString(), action: "revealed", name, ...toOrigin(origin) }) + "\n", { mode: 0o600 })
+  } catch {
+    // No audit line, no value.
+    return { ok: false, status: 500, error: "audit_failed", message: `${name} non affiché — journal d'audit illisible.` }
+  }
+  return { ok: true, status: 200, name, value: valueOf(entry.raw) }
 }
 
 /**

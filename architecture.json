@@ -1291,7 +1291,7 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 335,
+          "lines": 373,
           "kind": "lib",
           "exports": [
             "SyncFn",
@@ -1313,6 +1313,9 @@
             "upsertSecret",
             "setSecretHosts",
             "deleteSecret",
+            "REVEAL_FORBIDDEN",
+            "RevealResult",
+            "revealSecret",
             "saveSecret",
             "isKeyCommand",
             "parseKeyCommand",
@@ -1709,7 +1712,7 @@
         },
         {
           "path": "lib/vault-guard.ts",
-          "lines": 131,
+          "lines": 134,
           "kind": "lib",
           "exports": [
             "Transport",
@@ -1724,6 +1727,7 @@
             "createLimiter",
             "writeLimiter",
             "readLimiter",
+            "revealLimiter",
             "resetVaultLimits",
             "KeyGate",
             "keyCommandGate",
@@ -1745,7 +1749,7 @@
         },
         {
           "path": "lib/vault-upstream.ts",
-          "lines": 139,
+          "lines": 140,
           "kind": "lib",
           "exports": [
             "UPSTREAM_TIMEOUT_MS",
@@ -2322,7 +2326,7 @@
         },
         {
           "path": "routes/vault.ts",
-          "lines": 121,
+          "lines": 162,
           "kind": "lib",
           "exports": [
             "handleVaultRoute"
@@ -4712,6 +4716,30 @@
           ]
         },
         "validName": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "revealLimiter": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "revealSecret": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "REVEAL_FORBIDDEN": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "RevealResult": {
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"
