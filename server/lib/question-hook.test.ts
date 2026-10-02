@@ -4,11 +4,14 @@ import {
   type QuestionItem,
   type QuestionRequest,
   EXPIRY_MS,
+  PARK_MS,
   addQuestionRequest,
   cancelQuestionsFor,
   getPendingQuestions,
   onQuestionExpired,
+  onQuestionRequest,
   questionAnswerMap,
+  resolveQuestion,
 } from "./questions"
 import {
   LOCAL_PHONE_WINDOW_MS,
@@ -43,7 +46,7 @@ function hookInput(over: Partial<QuestionHookInput> = {}): QuestionHookInput {
 
 type Ask = typeof addQuestionRequest
 function fakeAsk(answers: QuestionAnswer[]) {
-  const calls: Array<{ expiryMs?: number }> = []
+  const calls: Array<{ expiryMs?: number; id?: string; parkMs?: number }> = []
   const ask: Ask = async (_req, opts = {}) => { calls.push(opts); return answers }
   return { ask, calls }
 }
@@ -136,14 +139,111 @@ test("no phone answer → no decision ({}), never a deny", async () => {
   }
 })
 
-test("after a PreToolUse fell through, the PermissionRequest sibling does not re-ask the phone", async () => {
+test("after a PreToolUse fell through, the PermissionRequest sibling RE-ASKS the phone (same id, full window)", async () => {
   const first = fakeAsk([])
   const inp = hookInput({ eventName: "PreToolUse" })
-  await questionFastPath(inp, { ask: first.ask, localAttached: async () => false })
+  await questionFastPath(inp, { ask: first.ask, localAttached: async () => true, claim: () => undefined })
+  expect(first.calls[0]?.parkMs).toBe(PARK_MS)
   const second = fakeAsk([{ selected: ["Red"] }])
-  const res = await questionFastPath({ ...inp, eventName: "PermissionRequest" }, { ask: second.ask })
-  expect(second.calls.length).toBe(0)
+  const res = await questionFastPath({ ...inp, eventName: "PermissionRequest" }, { ask: second.ask, claim: () => null, afterAnswer: () => {} })
+  expect(second.calls.length).toBe(1)
+  expect(second.calls[0]?.id).toBe(first.calls[0]?.id)
+  expect(second.calls[0]?.expiryMs).toBe(EXPIRY_MS)
+  // The final window never parks.
+  expect(second.calls[0]?.parkMs).toBeUndefined()
+  const body = await res!.json() as { hookSpecificOutput: { decision: { behavior: string; updatedInput: { answers: unknown } } } }
+  expect(body.hookSpecificOutput.decision.behavior).toBe("allow")
+  expect(body.hookSpecificOutput.decision.updatedInput.answers).toEqual({ "Which color test?": "Red" })
+})
+
+test("both windows lapse → passthrough; a further sibling does not ask again; never deny", async () => {
+  const inp = hookInput({ eventName: "PreToolUse" })
+  await questionFastPath(inp, { ask: fakeAsk([]).ask, localAttached: async () => false, claim: () => undefined })
+  const second = fakeAsk([])
+  const res = await questionFastPath({ ...inp, eventName: "PermissionRequest" }, { ask: second.ask, claim: () => null })
+  expect(second.calls.length).toBe(1)
   expect(await res!.json()).toEqual({})
+  const third = fakeAsk([{ selected: ["Red"] }])
+  const again = await questionFastPath({ ...inp, eventName: "PermissionRequest" }, { ask: third.ask })
+  expect(third.calls.length).toBe(0)
+  expect(await again!.json()).toEqual({})
+})
+
+// ---- real queue: the card survives the gap between the two windows ----------
+
+// The real queue with the windows shrunk: PreToolUse 20 ms, park 300 ms.
+const quickAsk: Ask = (req, opts = {}) => addQuestionRequest(req, { ...opts, expiryMs: 20, ...(opts.parkMs ? { parkMs: 300 } : {}) })
+
+test("phone answers BETWEEN windows: not lost — the PermissionRequest sibling answers with it, no second ask", async () => {
+  const asked: string[] = []
+  const off = onQuestionRequest((r) => asked.push(r.id))
+  const inp = hookInput({ eventName: "PreToolUse" })
+  const pre = await questionFastPath(inp, { ask: quickAsk, localAttached: async () => true, afterAnswer: () => {} })
+  expect(await pre!.json()).toEqual({})
+  // Still on the phone (parked), same id.
+  const q = getPendingQuestions().find((r) => r.sessionId === inp.sessionId)!
+  expect(q.id).toBe(asked[0]!)
+  expect(resolveQuestion(q.id, [{ selected: ["Blue"] }])).toBe(true)
+  const ask = fakeAsk([])
+  const res = await questionFastPath({ ...inp, eventName: "PermissionRequest" }, { ask: ask.ask, afterAnswer: () => {} })
+  expect(ask.calls.length).toBe(0)
+  const body = await res!.json() as { hookSpecificOutput: { hookEventName: string; decision: { updatedInput: { answers: unknown } } } }
+  expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest")
+  expect(body.hookSpecificOutput.decision.updatedInput.answers).toEqual({ "Which color test?": "Blue" })
+  expect(asked.length).toBe(1)
+  off()
+})
+
+test("re-ask: the question frame goes out again with the SAME id and the phone can answer in the second window", async () => {
+  const asked: string[] = []
+  const ended: string[] = []
+  const offA = onQuestionRequest((r) => asked.push(r.id))
+  const offE = onQuestionExpired((r) => ended.push(r.id))
+  const inp = hookInput({ eventName: "PreToolUse" })
+  await questionFastPath(inp, { ask: quickAsk, localAttached: async () => true, afterAnswer: () => {} })
+  const perm = questionFastPath({ ...inp, eventName: "PermissionRequest" }, { afterAnswer: () => {} })
+  for (let i = 0; i < 100 && asked.length < 2; i++) await Bun.sleep(2)
+  expect(asked.length).toBe(2)
+  expect(asked[1]).toBe(asked[0])
+  // No `expired` between the windows: the card never left the phone.
+  expect(ended).toEqual([])
+  expect(resolveQuestion(asked[0]!, [{ selected: ["Red"] }])).toBe(true)
+  const body = await (await perm)!.json() as { hookSpecificOutput: { decision: { updatedInput: { answers: unknown } } } }
+  expect(body.hookSpecificOutput.decision.updatedInput.answers).toEqual({ "Which color test?": "Red" })
+  offA(); offE()
+})
+
+test("parked with no sibling: the card expires after the park; an answer that came in meanwhile goes to the picker fallback", async () => {
+  const ended: string[] = []
+  const offE = onQuestionExpired((r) => ended.push(r.id))
+  const driven: QuestionAnswer[][] = []
+  const inp = hookInput({ eventName: "PreToolUse" })
+  await questionFastPath(inp, { ask: quickAsk, localAttached: async () => true, afterAnswer: (_t, _q, a) => driven.push(a) })
+  const q = getPendingQuestions().find((r) => r.sessionId === inp.sessionId)!
+  expect(resolveQuestion(q.id, [{ selected: ["Red"] }])).toBe(true)
+  await Bun.sleep(350)
+  expect(driven).toEqual([[{ selected: ["Red"] }]])
+  // Answered → not "expired" on top.
+  expect(ended).toEqual([])
+
+  const inp2 = hookInput({ eventName: "PreToolUse" })
+  await questionFastPath(inp2, { ask: quickAsk, localAttached: async () => true, afterAnswer: (_t, _q, a) => driven.push(a) })
+  const q2 = getPendingQuestions().find((r) => r.sessionId === inp2.sessionId)!
+  await Bun.sleep(350)
+  expect(ended).toEqual([q2.id])
+  expect(getPendingQuestions().some((r) => r.id === q2.id)).toBe(false)
+  offE()
+})
+
+test("answered at the terminal while parked: the held phone answer is dropped, never typed", async () => {
+  const driven: QuestionAnswer[][] = []
+  const inp = hookInput({ eventName: "PreToolUse" })
+  await questionFastPath(inp, { ask: quickAsk, localAttached: async () => true, afterAnswer: (_t, _q, a) => driven.push(a) })
+  const q = getPendingQuestions().find((r) => r.sessionId === inp.sessionId)!
+  expect(resolveQuestion(q.id, [{ selected: ["Red"] }])).toBe(true)
+  cancelQuestionsFor({ sessionId: inp.sessionId }, "answered")
+  await Bun.sleep(350)
+  expect(driven).toEqual([])
 })
 
 test("someone at the terminal on the PreToolUse path gets the 90 s window", async () => {
@@ -204,7 +304,14 @@ test("localTerminalAttached: tmux attach count, Mac tab, Linux tty → pane, unk
   expect(await localTerminalAttached({ tmuxPane: "%3" }, "linux", no)).toBe(false)
   expect(await localTerminalAttached({ tmuxPane: "%3" }, "darwin", unknown)).toBe(false)
   expect(await localTerminalAttached({ tty: "/dev/ttys004" }, "darwin", no)).toBe(true)
-  expect(await localTerminalAttached({ tty: "/dev/pts/4" }, "linux", yes, async () => "%9")).toBe(true)
+  expect(await localTerminalAttached({ tty: "/dev/pts/4" }, "linux", yes, async () => ({ pane: "%9", socket: "" }))).toBe(true)
+  // The tmux server travels with the pane: from the target, or from the tty map.
+  const seen: Array<[string, string | undefined]> = []
+  const spy = async (pane: string, socket?: string) => { seen.push([pane, socket]); return true }
+  await localTerminalAttached({ tmuxPane: "%3", tmuxSocket: "/tmp/tmux-1/w" }, "linux", spy)
+  await localTerminalAttached({ tty: "/dev/pts/5" }, "linux", spy, async () => ({ pane: "%7", socket: "/tmp/tmux-1/x" }))
+  await localTerminalAttached({ tmuxPane: "%4" }, "linux", spy)
+  expect(seen).toEqual([["%3", "/tmp/tmux-1/w"], ["%7", "/tmp/tmux-1/x"], ["%4", undefined]])
   expect(await localTerminalAttached({ tty: "/dev/pts/4" }, "linux", yes, async () => null)).toBe(false)
   expect(await localTerminalAttached({}, "darwin", yes)).toBe(false)
 })

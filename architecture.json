@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 93,
+          "lines": 92,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -20,16 +20,6 @@
           "emits": [],
           "consumes": [],
           "endpoints": [
-            {
-              "method": "*",
-              "path": "/api/vault",
-              "prefix": true
-            },
-            {
-              "method": "*",
-              "path": "/api/secret",
-              "prefix": false
-            },
             {
               "method": "*",
               "path": "/hooks/",
@@ -141,7 +131,7 @@
         },
         {
           "path": "lib/apns.ts",
-          "lines": 266,
+          "lines": 273,
           "kind": "lib",
           "exports": [
             "brokerConfigured",
@@ -218,17 +208,20 @@
         },
         {
           "path": "lib/auto-judge.ts",
-          "lines": 258,
+          "lines": 478,
           "kind": "lib",
           "exports": [
             "Verdict",
             "stripSetupPrefixes",
             "stripDataText",
+            "Segmented",
+            "segmentShell",
             "Judgement",
             "REASON_NOT_ALLOWLISTED",
             "REASON_SECRETS_FILE",
             "REASON_CLAUDE_SETTINGS",
             "reasonNotAutoApproved",
+            "judgeSegments",
             "autoJudgeWithReason",
             "autoJudge"
           ],
@@ -564,7 +557,7 @@
         },
         {
           "path": "lib/dialog-watch.ts",
-          "lines": 138,
+          "lines": 142,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -840,9 +833,11 @@
         },
         {
           "path": "lib/learned-allow.ts",
-          "lines": 182,
+          "lines": 224,
           "kind": "lib",
           "exports": [
+            "useLearnedAllowDb",
+            "isMcpTool",
             "patternFor",
             "LearnedEntry",
             "recordAllow",
@@ -852,7 +847,7 @@
             "clearLearned"
           ],
           "state": [
-            "db: Database",
+            "let db",
             "MULTI_VERB_BINARIES: Set",
             "NEVER_LEARN: Set"
           ],
@@ -1047,11 +1042,18 @@
         },
         {
           "path": "lib/pty-manager.ts",
-          "lines": 123,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "ApprovalRequest",
+            "ApprovalOutcome",
+            "ApprovalEndDecision",
+            "EXPIRY_MS",
+            "setDefaultApprovalExpiryMs",
             "addApprovalRequest",
+            "ApprovalMatch",
+            "cancelApprovalsFor",
+            "hasPendingApprovalFor",
             "resolveApproval",
             "getPending",
             "onApprovalRequest",
@@ -1063,7 +1065,8 @@
             "expiryTimers: Map",
             "handlers: Set",
             "expiryHandlers: Set",
-            "resolvedHandlers: Set"
+            "resolvedHandlers: Set",
+            "let defaultExpiryMs"
           ],
           "emits": [],
           "consumes": [],
@@ -1148,7 +1151,7 @@
         },
         {
           "path": "lib/question-hook.ts",
-          "lines": 214,
+          "lines": 263,
           "kind": "lib",
           "exports": [
             "LOCAL_PHONE_WINDOW_MS",
@@ -1182,7 +1185,7 @@
         },
         {
           "path": "lib/questions.ts",
-          "lines": 316,
+          "lines": 407,
           "kind": "lib",
           "exports": [
             "QuestionOption",
@@ -1191,7 +1194,10 @@
             "QuestionAnswer",
             "QuestionEndDecision",
             "EXPIRY_MS",
+            "PARK_MS",
+            "QuestionAskOptions",
             "addQuestionRequest",
+            "claimParkedQuestion",
             "cancelQuestionsFor",
             "resolveQuestion",
             "getPendingQuestions",
@@ -1205,6 +1211,7 @@
             "wasQuestionAnswered",
             "answeredWith",
             "markQuestionFellThrough",
+            "fellThrough",
             "didQuestionFallThrough",
             "questionAnswerMap",
             "answeredToolInput"
@@ -1215,6 +1222,8 @@
             "handlers: Set",
             "expiryHandlers: Set",
             "resolvedHandlers: Set",
+            "parkedAnswers: Map",
+            "parkTimers: Map",
             "recentlyAnswered: Map",
             "recentlyFellThrough: Map"
           ],
@@ -1515,10 +1524,11 @@
         },
         {
           "path": "lib/super-auto.ts",
-          "lines": 76,
+          "lines": 82,
           "kind": "lib",
           "exports": [
             "isSuperAuto",
+            "setSuperAutoInMemoryForTests",
             "setSuperAuto",
             "isCatastrophic"
           ],
@@ -1688,7 +1698,7 @@
         },
         {
           "path": "lib/vault-guard.ts",
-          "lines": 99,
+          "lines": 131,
           "kind": "lib",
           "exports": [
             "Transport",
@@ -1703,7 +1713,10 @@
             "createLimiter",
             "writeLimiter",
             "readLimiter",
-            "resetVaultLimits"
+            "resetVaultLimits",
+            "KeyGate",
+            "keyCommandGate",
+            "originLabel"
           ],
           "state": [
             "peers: WeakMap"
@@ -1712,7 +1725,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/auth.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1788,7 +1803,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 380,
+          "lines": 400,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -1890,6 +1905,7 @@
             "lib/submit-confirm.ts",
             "lib/inject-guard.ts",
             "lib/secret-store.ts",
+            "lib/vault-guard.ts",
             "lib/spawn-session.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
@@ -2046,7 +2062,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 507,
+          "lines": 552,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -2280,10 +2296,13 @@
         },
         {
           "path": "state.ts",
-          "lines": 25,
+          "lines": 65,
           "kind": "lib",
           "exports": [
             "WsData",
+            "ClientInfo",
+            "clientInfo",
+            "describeClient",
             "clients",
             "broadcast",
             "HOST_INFO"
@@ -2300,7 +2319,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 151,
+          "lines": 153,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
@@ -2325,6 +2344,7 @@
             "lib/dialogs.ts",
             "lib/sessions.ts",
             "lib/questions.ts",
+            "lib/pty-manager.ts",
             "lib/tmux-pane.ts",
             "wiring/waiting.ts"
           ],
@@ -2336,7 +2356,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 158,
+          "lines": 163,
           "kind": "lib",
           "exports": [],
           "state": [
@@ -2479,7 +2499,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 176,
+          "lines": 200,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -2492,7 +2512,8 @@
             "resolved",
             "key_saved",
             "inject_error",
-            "pong"
+            "pong",
+            "resolve_failed"
           ],
           "consumes": [],
           "endpoints": [],
@@ -2534,7 +2555,7 @@
         "recordPeer": {
           "module": "lib/vault-guard.ts",
           "callers": [
-            "companion-server.ts#* /api/vault"
+            "companion-server.ts"
           ]
         },
         "checkBearer": {
@@ -2554,6 +2575,27 @@
           "module": "lib/discover.ts",
           "callers": [
             "companion-server.ts#* /ws"
+          ]
+        },
+        "keyCommandGate": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "companion-server.ts#* /ws",
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "originLabel": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "companion-server.ts#* /ws",
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "clientInfo": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts#* /ws",
+            "routes/api.ts#* /api/feed"
           ]
         },
         "handleApiRoute": {
@@ -2745,6 +2787,12 @@
             "lib/auto-judge.ts"
           ]
         },
+        "isMcpTool": {
+          "module": "lib/learned-allow.ts",
+          "callers": [
+            "lib/auto-judge.ts"
+          ]
+        },
         "Judgement": {
           "module": "lib/auto-judge.ts",
           "callers": [
@@ -2770,6 +2818,8 @@
             "lib/codex-feed.ts",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-end",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
@@ -3073,12 +3123,6 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "KeyGate": {
-          "module": "lib/key-gate.ts",
-          "callers": [
-            "lib/command-scrape.ts"
-          ]
-        },
         "ESC_SETTLE_MS": {
           "module": "lib/command-list.ts",
           "callers": [
@@ -3130,6 +3174,7 @@
           "callers": [
             "lib/discover.ts",
             "lib/keyboard-inject.ts",
+            "lib/question-hook.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "routes/model.ts"
@@ -3223,6 +3268,7 @@
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/keyboard-inject.ts",
+            "lib/question-hook.ts",
             "lib/submit-confirm.ts"
           ]
         },
@@ -3318,7 +3364,7 @@
             "ws.ts"
           ]
         },
-        "EXPIRY_MS": {
+        "PARK_MS": {
           "module": "lib/questions.ts",
           "callers": [
             "lib/question-hook.ts"
@@ -3342,7 +3388,13 @@
             "lib/question-hook.ts"
           ]
         },
-        "didQuestionFallThrough": {
+        "claimParkedQuestion": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/question-hook.ts"
+          ]
+        },
+        "fellThrough": {
           "module": "lib/questions.ts",
           "callers": [
             "lib/question-hook.ts"
@@ -3393,12 +3445,6 @@
             "lib/question-hook.ts"
           ]
         },
-        "resolveTmuxPaneFromTty": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/question-hook.ts"
-          ]
-        },
         "withPickerIO": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -3429,7 +3475,10 @@
         "hookPassthroughResponse": {
           "module": "lib/hook-common.ts",
           "callers": [
-            "lib/question-hook.ts"
+            "lib/question-hook.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
         "recordToolStart": {
@@ -3653,6 +3702,13 @@
           "module": "lib/media.ts",
           "callers": [
             "lib/transcript.ts"
+          ]
+        },
+        "checkBearerHeaderOnly": {
+          "module": "lib/auth.ts",
+          "callers": [
+            "lib/vault-guard.ts",
+            "routes/vault.ts"
           ]
         },
         "matchUnboundTaskById": {
@@ -3891,8 +3947,22 @@
             "ws.ts"
           ]
         },
+        "describeClient": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
         "resolveQuestion": {
           "module": "lib/questions.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "isKeyCommand": {
+          "module": "lib/secret-store.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
             "ws.ts"
@@ -4093,21 +4163,7 @@
             "routes/goals.ts#GET /api/goals"
           ]
         },
-        "removeSessionByCwd": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
-        "removeSessionByTmuxPane": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
-        "removeSessionByTty": {
+        "removeSessionByKey": {
           "module": "lib/sessions.ts",
           "callers": [
             "routes/hooks.ts",
@@ -4215,6 +4271,18 @@
         },
         "cancelQuestionsFor": {
           "module": "lib/questions.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "ApprovalMatch": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "routes/hooks.ts"
+          ]
+        },
+        "cancelApprovalsFor": {
+          "module": "lib/pty-manager.ts",
           "callers": [
             "routes/hooks.ts"
           ]
@@ -4551,12 +4619,6 @@
             "routes/vault.ts"
           ]
         },
-        "checkBearerHeaderOnly": {
-          "module": "lib/auth.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
         "vaultWritable": {
           "module": "lib/secret-store.ts",
           "callers": [
@@ -4598,6 +4660,12 @@
           "callers": [
             "wiring/dialogs.ts",
             "ws.ts"
+          ]
+        },
+        "hasPendingApprovalFor": {
+          "module": "lib/pty-manager.ts",
+          "callers": [
+            "wiring/dialogs.ts"
           ]
         },
         "isScraping": {

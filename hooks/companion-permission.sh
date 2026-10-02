@@ -19,7 +19,7 @@ AGENT_PID=$(companion_find_agent_pid)
 companion_headers
 
 call_server() {
-  curl -s --max-time 300 \
+  curl -s --max-time 295 \
     -X POST "$COMPANION_URL/hooks/permission-request" \
     -H "Content-Type: application/json" \
     "${COMPANION_HDRS[@]}" \
@@ -29,7 +29,11 @@ call_server() {
 RESPONSE=$(call_server)
 curl_exit=$?
 
-if [ $curl_exit -ne 0 ]; then
+# Exit 28 = our own --max-time ran out: the server held the request its full
+# window (it expires at 290 s and answers {} itself, so this is a stuck
+# server). Re-issuing would only push past Claude Code's 300 s hook timeout.
+# 295 s stays under that timeout so curl, not Claude Code, ends the wait.
+if [ $curl_exit -ne 0 ] && [ $curl_exit -ne 28 ]; then
   for i in 1 2 3 4 5 6 7 8 9 10; do
     if curl -s --max-time 1 "$COMPANION_URL/health" > /dev/null 2>&1; then
       RESPONSE=$(call_server)

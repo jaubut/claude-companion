@@ -165,6 +165,7 @@ test("leak: `/key` typed in the chat never reaches the log, a WS client, the fee
       headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({ text: `/key C_KEY ${SECRET} --hosts c.io` }),
     })
+    recordPeer(req, "127.0.0.1")
     const res = (await handleApiRoute(req, new URL(req.url)))!
     const text = await res.text()
     expect(res.status).toBe(200)
@@ -176,6 +177,75 @@ test("leak: `/key` typed in the chat never reaches the log, a WS client, the fee
   } finally {
     clients.delete(fake)
   }
+})
+
+// ── `/key` through the chat paths gets the vault's bar (batch 1a follow-up) ──
+
+async function injectKey(peer: string | null, opts: { query?: boolean; xff?: string } = {}): Promise<Reply> {
+  const { handleApiRoute } = await import("./api")
+  const headers: Record<string, string> = { "content-type": "application/json" }
+  if (!opts.query) headers.authorization = `Bearer ${TOKEN}`
+  if (opts.xff) headers["x-forwarded-for"] = opts.xff
+  const req = new Request(`http://localhost:4245/api/inject${opts.query ? `?token=${TOKEN}` : ""}`, {
+    method: "POST", headers, body: JSON.stringify({ text: `/key C_KEY ${SECRET} --hosts c.io` }),
+  })
+  recordPeer(req, peer)
+  const res = (await handleApiRoute(req, new URL(req.url)))!
+  const text = await res.text()
+  return { status: res.status, text, json: JSON.parse(text), headers: res.headers }
+}
+
+test("/api/inject `/key`: untrusted network → 403, `?token=` auth → 401; nothing stored, nothing injected, no value echoed", async () => {
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-inject-")), "companion.db")
+  for (const [peer, opts, status, error] of [
+    ["192.168.1.20", {}, 403, "forbidden_network"],
+    [null, {}, 403, "forbidden_network"],
+    ["127.0.0.1", { xff: "203.0.113.9" }, 403, "forbidden_network"],
+    ["127.0.0.1", { query: true }, 401, "header_auth_required"],
+    ["100.101.1.2", { query: true }, 401, "header_auth_required"],
+  ] as const) {
+    const r = await injectKey(peer, opts)
+    expect([peer, r.status, r.json.error]).toEqual([peer, status, error])
+    expect(r.text).not.toContain(SECRET)
+  }
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+  expect(syncCalls).toBe(0)
+  expect(stderr).not.toContain(SECRET)
+  // Tailnet peer with a header bearer is accepted, and the audit says how it came.
+  const ok = await injectKey("100.101.1.2")
+  expect(ok.json).toMatchObject({ ok: true, name: "C_KEY" })
+  expect(JSON.parse(readFileSync(auditFile, "utf8").split("\n")[0]!)).toMatchObject({ transport: "tailnet", peer: "100.101.1.2" })
+})
+
+test("WS `input` `/key`: refused unless the socket passed the gate at upgrade; never reaches a pane", async () => {
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-ws-")), "companion.db")
+  const { websocket } = await import("../ws")
+  const { dialogWatcher } = await import("../wiring/dialogs")
+  dialogWatcher.stop()
+  const { keyCommandGate } = await import("../lib/vault-guard")
+  const socket = (keyGate: unknown) => {
+    const got: Array<Record<string, unknown>> = []
+    return { got, ws: { send: (m: string) => { got.push(JSON.parse(m)) }, data: { id: "w", keyGate } } }
+  }
+  const upgrade = (peer: string, query: boolean) => {
+    const req = new Request(`http://localhost:4245/ws${query ? `?token=${TOKEN}` : ""}`, { headers: query ? {} : { authorization: `Bearer ${TOKEN}` } })
+    recordPeer(req, peer)
+    return keyCommandGate(req)
+  }
+  const text = `/key C_KEY ${SECRET} --hosts c.io`
+  for (const [gate, error] of [[undefined, "forbidden_network"], [upgrade("192.168.1.20", false), "forbidden_network"], [upgrade("127.0.0.1", true), "header_auth_required"]] as const) {
+    const s = socket(gate)
+    await websocket.message!(s.ws as never, JSON.stringify({ type: "input", text }))
+    expect(s.got.length).toBe(1)
+    expect(s.got[0]).toMatchObject({ type: "key_saved", ok: false, error })
+    expect(JSON.stringify(s.got)).not.toContain(SECRET)
+  }
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+  const s = socket(upgrade("127.0.0.1", false))
+  await websocket.message!(s.ws as never, JSON.stringify({ type: "input", text }))
+  expect(s.got[0]).toMatchObject({ type: "key_saved", ok: true, name: "C_KEY" })
+  expect(JSON.parse(readFileSync(auditFile, "utf8").split("\n")[0]!)).toMatchObject({ transport: "loopback" })
+  expect(stderr).not.toContain(SECRET)
 })
 
 // ── Hardening (fix/vault-hardening) ──

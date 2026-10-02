@@ -1,3 +1,4 @@
+import { hostname } from "node:os"
 import { broadcast } from "../state"
 import { onApprovalRequest, onApprovalExpired, onApprovalResolved } from "../lib/pty-manager"
 import { onQuestionRequest, onQuestionExpired, onQuestionResolved } from "../lib/questions"
@@ -49,17 +50,18 @@ onApprovalRequest((req) => {
       body: summary.slice(0, 220) || req.tool,
       category: "approval",
       threadId: req.cwd || "approval",
-      userInfo: { approvalId: req.id, sessionId: req.sessionId, cwd: req.cwd },
+      collapseId: req.id,
+      userInfo: { approvalId: req.id, sessionId: req.sessionId, cwd: req.cwd, host: hostname() },
     }).catch(() => { /* silent — don't let push failure break the hook */ })
   }
 })
 
-onApprovalExpired((req) => {
-  // Tell every connected client the approval expired before the user
-  // could decide. Use the existing `resolved` frame (clients already
-  // know how to dequeue and flip verdict on it) with a third decision
-  // value so the row badge can read "EXPIRED" instead of OK/DENY.
-  broadcast({ type: "resolved", id: req.id, decision: "expired" })
+onApprovalExpired((req, decision) => {
+  // Tell every connected client the approval ended with no decision: it
+  // "expired" before the user could decide, or it was answered / dropped
+  // "elsewhere" (terminal, hook gone, turn ended). Same `resolved` frame the
+  // clients already dequeue on; the row badge reads EXPIRED / ELSEWHERE.
+  broadcast({ type: "resolved", id: req.id, decision })
   unmarkWaiting(req.sessionKey, "approval", req.id)
 })
 
@@ -93,7 +95,10 @@ onQuestionRequest((req) => {
       body: body.slice(0, 220),
       category: "question",
       threadId: req.cwd || "question",
-      userInfo: { questionId: req.id, sessionId: req.sessionId, cwd: req.cwd },
+      // Same id when the question is re-asked in the PermissionRequest
+      // phase (lib/question-hook.ts): the second banner replaces the first.
+      collapseId: req.id,
+      userInfo: { questionId: req.id, sessionId: req.sessionId, cwd: req.cwd, host: hostname() },
     }).catch(() => { /* silent — don't let push failure break the hook */ })
   }
 })

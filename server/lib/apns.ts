@@ -81,6 +81,12 @@ export interface ApnsPayload {
   body: string
   category: "approval" | "question" | "waiting_input" | "briefing"
   threadId?: string
+  /**
+   * `apns-collapse-id` (≤ 64 bytes): a later push with the same id replaces
+   * the earlier banner instead of stacking. Set to the approval/question id so
+   * a re-asked question does not leave two banners for one card.
+   */
+  collapseId?: string
   /** Arbitrary key/value data the iOS app can read from userInfo. */
   userInfo?: Record<string, string>
 }
@@ -169,6 +175,7 @@ export async function sendApns(deviceToken: string, env: ApnsEnv, payload: ApnsP
         "apns-priority": interruptive ? "10" : "5",
         "content-type": "application/json",
         "content-length": bodyBytes.length.toString(),
+        ...(payload.collapseId && Buffer.byteLength(payload.collapseId) <= 64 ? { "apns-collapse-id": payload.collapseId } : {}),
       })
 
       // Manual timer instead of req.setTimeout() — http2's setTimeout
