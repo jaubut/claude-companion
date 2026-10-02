@@ -966,7 +966,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 490,
+          "lines": 499,
           "kind": "lib",
           "exports": [
             "GENERAL_CHANNEL",
@@ -1455,16 +1455,18 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 399,
+          "lines": 431,
           "kind": "lib",
           "exports": [
             "SpawnApp",
             "SpawnAgent",
             "buildInner",
             "SpawnResult",
+            "buildTmuxLaunch",
             "DETACHED_COLS",
             "DETACHED_ROWS",
             "detachedNewSessionArgs",
+            "detachedSpawnArgv",
             "homeSpawnCwd",
             "spawnCompanionSession"
           ],
@@ -1473,7 +1475,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/tmux-pane.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1548,15 +1552,20 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 247,
+          "lines": 304,
           "kind": "lib",
           "exports": [
             "tmuxSocketFromEnv",
             "tmuxSocketFlags",
             "tmuxArgv",
+            "spawnSocketName",
+            "spawnServerFlags",
+            "spawnNewSessionFlags",
+            "spawnSocketPath",
             "paneKey",
             "PaneRef",
             "paneRefOf",
+            "sessionCmdArgv",
             "sendKeysArgs",
             "listTmuxSockets",
             "parsePaneTtys",
@@ -1780,7 +1789,7 @@
         },
         {
           "path": "lib/worker-tail.ts",
-          "lines": 120,
+          "lines": 121,
           "kind": "lib",
           "exports": [
             "WorkerTailDeps",
@@ -2212,7 +2221,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 196,
+          "lines": 199,
           "kind": "route-host",
           "exports": [
             "handleOrchestratorRoute"
@@ -2268,7 +2277,8 @@
             "lib/orchestrator-chat.ts",
             "lib/secret-store.ts",
             "lib/vault-guard.ts",
-            "lib/log.ts"
+            "lib/log.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2431,7 +2441,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 307,
+          "lines": 310,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -3580,6 +3590,18 @@
             "lib/sessions.ts"
           ]
         },
+        "spawnNewSessionFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "spawnSocketPath": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
         "INJECT_SEND_MS": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -4574,6 +4596,13 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/task/"
+          ]
+        },
+        "sessionCmdArgv": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "wiring/orchestrator.ts"
           ]
         },
         "VaultResult": {

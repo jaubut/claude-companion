@@ -15,25 +15,25 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/keyboard-inject.ts` | 591 | lib | 9 | state: let injectQueue |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 552 | route-host | 1 | emits: user_prompt · routes: 8 |
+| `lib/orchestrator-chat.ts` | 499 | lib | 35 | state: db: Database |
 | `lib/activity.ts` | 492 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/orchestrator-chat.ts` | 490 | lib | 35 | state: db: Database |
 | `lib/auto-judge.ts` | 478 | lib | 13 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `lib/discover.ts` | 445 | lib | 16 | state: let firstDone, let firstExpected, let resolveFirst |
+| `lib/spawn-session.ts` | 431 | lib | 11 |  |
 | `lib/questions.ts` | 407 | lib | 27 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 403 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `routes/api.ts` | 400 | route-host | 1 | emits: super_auto, resolved, inject_error · routes: 16 |
-| `lib/spawn-session.ts` | 399 | lib | 9 |  |
 | `lib/submit-confirm.ts` | 358 | lib | 18 | state: watches: Set, paneLocks: Map |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/secret-store.ts` | 317 | lib | 22 | state: FLAGS: Set, let lock |
-| `wiring/orchestrator.ts` | 307 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
+| `wiring/orchestrator.ts` | 310 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
+| `lib/tmux-pane.ts` | 304 | lib | 22 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
 | `lib/apns.ts` | 273 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/command-offpane-launch.ts` | 271 | lib | 20 | state: versionMemo: Map |
 | `lib/question-hook.ts` | 263 | lib | 7 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
-| `lib/tmux-pane.ts` | 247 | lib | 17 |  |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
@@ -46,7 +46,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `ws.ts` | 200 | lib | 1 | emits: approval, question, init, resolved, key_saved, inject_error, pong, resolve_failed |
 | `lib/pty-manager.ts` | 199 | lib | 14 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
-| `routes/orchestrator.ts` | 196 | route-host | 1 | routes: 8 |
+| `routes/orchestrator.ts` | 199 | route-host | 1 | routes: 8 |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/inject-guard.ts` | 169 | lib | 7 |  |
@@ -60,7 +60,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-guard.ts` | 131 | lib | 16 | state: peers: WeakMap |
 | `lib/worker-identity.ts` | 130 | lib | 6 |  |
 | `lib/hook-common.ts` | 125 | lib | 9 |  |
-| `lib/worker-tail.ts` | 120 | lib | 3 | state: LIVE_STATUSES: Set |
+| `lib/worker-tail.ts` | 121 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
 | `lib/turso.ts` | 112 | lib | 5 | state: let agentToken, let agentEnvRead |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
@@ -312,5 +312,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `appendTurn()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/orchestrator.ts` |
 | `createChannel()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels` |
 | `createQueuedTask()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch` |
+| `sessionCmdArgv()` | `lib/tmux-pane.ts` | `routes/orchestrator.ts#POST /api/orchestrator/task/`, `wiring/orchestrator.ts` |
 | `getPendingQuestions()` | `lib/questions.ts` | `wiring/dialogs.ts`, `ws.ts` |
 
