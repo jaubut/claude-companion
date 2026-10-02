@@ -93,10 +93,13 @@ export function createLimiter(max: number, windowMs: number): Limiter {
 /** Shared by POST/PATCH/DELETE /api/vault*, POST /api/secret and `/key`. */
 export const writeLimiter = createLimiter(10, 60_000)
 export const readLimiter = createLimiter(60, 60_000)
+/** POST /api/vault/:name/reveal only — its own budget, not the write one. */
+export const revealLimiter = createLimiter(5, 60_000)
 
 export function resetVaultLimits(): void {
   writeLimiter.reset()
   readLimiter.reset()
+  revealLimiter.reset()
 }
 
 // ── `/key` typed in the chat (POST /api/inject, WS `input`) ──

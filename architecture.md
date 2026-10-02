@@ -24,9 +24,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/questions.ts` | 407 | lib | 27 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 403 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `routes/api.ts` | 400 | route-host | 1 | emits: super_auto, resolved, inject_error · routes: 16 |
+| `lib/secret-store.ts` | 373 | lib | 26 | state: FLAGS: Set, let lock |
 | `lib/submit-confirm.ts` | 358 | lib | 18 | state: watches: Set, paneLocks: Map |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
-| `lib/secret-store.ts` | 335 | lib | 23 | state: FLAGS: Set, let lock |
 | `wiring/orchestrator.ts` | 310 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/tmux-pane.ts` | 304 | lib | 22 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
@@ -51,18 +51,18 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/inject-guard.ts` | 169 | lib | 7 |  |
 | `wiring/events.ts` | 163 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onFeed, onFeedReset, onActivity, onSessions |
+| `routes/vault.ts` | 162 | lib | 1 |  |
 | `wiring/dialogs.ts` | 153 | lib | 4 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/feed.ts` | 149 | lib | 10 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
 | `lib/dialog-watch.ts` | 142 | lib | 4 |  |
-| `lib/vault-upstream.ts` | 139 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
+| `lib/vault-upstream.ts` | 140 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
-| `lib/vault-guard.ts` | 131 | lib | 16 | state: peers: WeakMap |
+| `lib/vault-guard.ts` | 134 | lib | 17 | state: peers: WeakMap |
 | `lib/worker-identity.ts` | 130 | lib | 6 |  |
 | `lib/hook-common.ts` | 125 | lib | 9 |  |
 | `lib/worker-tail.ts` | 121 | lib | 3 | state: LIVE_STATUSES: Set |
-| `routes/vault.ts` | 121 | lib | 1 |  |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
 | `lib/turso.ts` | 112 | lib | 5 | state: let agentToken, let agentEnvRead |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |

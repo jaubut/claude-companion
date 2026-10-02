@@ -102,9 +102,10 @@ const UNREACHABLE = JSON.stringify({ ok: false, error: "upstream_unreachable", m
 /**
  * Forward one vault call to the upstream. `path` is `/api/vault` or
  * `/api/vault/NAME` (NAME already validated). Network error, timeout or a
- * redirect → 502 upstream_unreachable. A 2xx write triggers the pull command.
+ * redirect → 502 upstream_unreachable. A 2xx write triggers the pull command
+ * unless `opts.pull` is false (reveal: a read that happens to be a POST).
  */
-export async function forwardVault(cfg: UpstreamConfig, method: string, path: string, device: string, body?: Record<string, unknown>): Promise<UpstreamReply> {
+export async function forwardVault(cfg: UpstreamConfig, method: string, path: string, device: string, body?: Record<string, unknown>, opts: { pull?: boolean } = {}): Promise<UpstreamReply> {
   const headers: Record<string, string> = {
     authorization: `Bearer ${getAuthToken()}`,
     "x-companion-device": forwardedDevice(device),
@@ -133,6 +134,6 @@ export async function forwardVault(cfg: UpstreamConfig, method: string, path: st
     if (v && typeof v === "object" && !Array.isArray(v)) json = v as Record<string, unknown>
   } catch { /* plain-text reply (e.g. the upstream's 401) */ }
   companionLog(`vault upstream ${method} → ${res.status}`)
-  if (method !== "GET" && res.ok) runPull()
+  if (method !== "GET" && res.ok && opts.pull !== false) runPull()
   return { status: res.status, text, retryAfter: res.headers.get("retry-after"), json }
 }
