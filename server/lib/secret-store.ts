@@ -2,6 +2,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameS
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { writeLimiter } from "./vault-guard"
+import { forwardVault, vaultUpstream } from "./vault-upstream"
 
 // Companion Vault: list / add / rotate / change hosts / delete the agent
 // secrets in ~/.config/tls-agent/secrets.env — values are WRITE-ONLY.
@@ -24,6 +25,9 @@ import { writeLimiter } from "./vault-guard"
 // The `/key NAME value [--hosts a,b]` chat command (session inject, WS input,
 // orchestrator) goes through the same upsert: every chat entry point calls
 // `handleKeyCommand` FIRST so the value never reaches a pane or transcript.
+//
+// COMPANION_VAULT_UPSTREAM set → `saveSecret` (and the HTTP route) forward to
+// another Companion's vault instead of this file; see lib/vault-upstream.ts.
 
 const NAME_RE = /^[A-Z][A-Z0-9_]{1,63}$/
 // example.com, *.example.com, optional :port.
@@ -280,6 +284,20 @@ export function deleteSecret(name: string, origin: string | Partial<AuditOrigin>
   })
 }
 
+/**
+ * Store abstraction for a create/rotate: the upstream Companion's vault when
+ * COMPANION_VAULT_UPSTREAM is set (its status + body mapped through), else
+ * this host's secrets.env via upsertSecret (incl. its 501 check).
+ */
+export async function saveSecret(input: { name: string; value: string; hosts: string[] }, origin: Partial<AuditOrigin>): Promise<VaultResult> {
+  const up = vaultUpstream()
+  if (!up) return upsertSecret(input, origin)
+  const r = await forwardVault(up, "POST", "/api/vault", origin.device_claimed ?? "chat", { ...input })
+  const body = r.json ?? { ok: false, error: r.status === 401 ? "upstream_unauthorized" : "upstream_error", message: `Coffre distant: HTTP ${r.status} — rien n'a changé.` }
+  const retry = Number(r.retryAfter)
+  return { ...(body as Partial<VaultResult>), ok: r.status >= 200 && r.status < 300 && body.ok === true, status: r.status, message: String(body.message ?? ""), ...(Number.isFinite(retry) && r.retryAfter ? { retry_after: retry } : {}) }
+}
+
 // ── `/key` chat command ──
 
 const CMD_RE = /^\/key(?:\s|$)/i
@@ -312,5 +330,5 @@ export async function handleKeyCommand(text: string, origin: Partial<AuditOrigin
   if (wait !== null) return { ...bad("rate_limited", `Trop d'écritures au coffre — réessaie dans ${wait}s.`, 429), retry_after: wait }
   const parsed = parseKeyCommand(text)
   if ("error" in parsed) return bad("bad_key_command", parsed.error)
-  return upsertSecret(parsed, { device_claimed: "chat", transport: "chat", ...origin })
+  return saveSecret(parsed, { device_claimed: "chat", transport: "chat", ...origin })
 }
