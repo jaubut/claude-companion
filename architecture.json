@@ -1291,7 +1291,7 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 317,
+          "lines": 335,
           "kind": "lib",
           "exports": [
             "SyncFn",
@@ -1313,6 +1313,7 @@
             "upsertSecret",
             "setSecretHosts",
             "deleteSecret",
+            "saveSecret",
             "isKeyCommand",
             "parseKeyCommand",
             "handleKeyCommand"
@@ -1326,7 +1327,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/vault-guard.ts"
+            "lib/vault-guard.ts",
+            "lib/vault-upstream.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1736,6 +1738,40 @@
           "apiCalls": [],
           "imports": [
             "lib/auth.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/vault-upstream.ts",
+          "lines": 139,
+          "kind": "lib",
+          "exports": [
+            "UPSTREAM_TIMEOUT_MS",
+            "HOP_HEADER",
+            "UpstreamConfig",
+            "UpstreamReply",
+            "parseUpstream",
+            "vaultUpstream",
+            "pullCommand",
+            "forwardedDevice",
+            "pendingPulls",
+            "runPull",
+            "forwardVault"
+          ],
+          "state": [
+            "LOCAL_HTTP: Set",
+            "warned: Set",
+            "inflight: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/log.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2286,7 +2322,7 @@
         },
         {
           "path": "routes/vault.ts",
-          "lines": 92,
+          "lines": 121,
           "kind": "lib",
           "exports": [
             "handleVaultRoute"
@@ -2300,7 +2336,8 @@
             "lib/auth.ts",
             "lib/log.ts",
             "lib/secret-store.ts",
-            "lib/vault-guard.ts"
+            "lib/vault-guard.ts",
+            "lib/vault-upstream.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2940,6 +2977,7 @@
             "lib/session-removal-log.ts",
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
+            "lib/vault-upstream.ts",
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/api.ts#DELETE /api/learned",
@@ -3504,6 +3542,20 @@
             "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
+        "vaultUpstream": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "lib/secret-store.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "forwardVault": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "lib/secret-store.ts",
+            "routes/vault.ts"
+          ]
+        },
         "writeLimiter": {
           "module": "lib/vault-guard.ts",
           "callers": [
@@ -3735,6 +3787,12 @@
           "callers": [
             "lib/vault-guard.ts",
             "routes/vault.ts"
+          ]
+        },
+        "getAuthToken": {
+          "module": "lib/auth.ts",
+          "callers": [
+            "lib/vault-upstream.ts"
           ]
         },
         "matchUnboundTaskById": {
@@ -4641,6 +4699,24 @@
             "routes/vault.ts"
           ]
         },
+        "UpstreamReply": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "UpstreamConfig": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "validName": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
         "peerOf": {
           "module": "lib/vault-guard.ts",
           "callers": [
@@ -4648,6 +4724,18 @@
           ]
         },
         "clientOrigin": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "HOP_HEADER": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "readLimiter": {
           "module": "lib/vault-guard.ts",
           "callers": [
             "routes/vault.ts"
@@ -4661,12 +4749,6 @@
         },
         "listSecrets": {
           "module": "lib/secret-store.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "readLimiter": {
-          "module": "lib/vault-guard.ts",
           "callers": [
             "routes/vault.ts"
           ]

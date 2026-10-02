@@ -62,6 +62,8 @@ Every response is JSON with `Cache-Control: no-store`, except the 401.
 | 429 | `rate_limited` | Over budget. See `retry_after` and `Retry-After` |
 | 500 | `sync_failed` | `tls-secrets.py sync` failed. The store was rolled back and the value is redacted from the detail |
 | 501 | `vault_unavailable` | `tls-secrets.py` is absent on this host |
+| 502 | `upstream_unreachable` | Upstream mode: the upstream did not answer in 10 s, failed, or redirected |
+| 508 | `upstream_loop` | Upstream mode: the call was itself forwarded by another Companion |
 
 ## `/key` chat command
 
@@ -83,6 +85,33 @@ It is intercepted before the text can reach a pane, transcript or log.
   Text after the value is never treated as hosts.
 - The command shares the 10/min write budget (`429 rate_limited`) and the `501 vault_unavailable` check.
 - The audit entry has `transport:"chat"`. `peer` is `"unknown"` until the chat entry points pass their origin through.
+
+## Upstream mode (one vault for every host)
+
+A Companion server can use **another** Companion server's vault as its single
+source of truth (e.g. the Mac uses Zettlab's `secrets.env`). Code:
+`server/lib/vault-upstream.ts`.
+
+| Env | Value | Invalid → |
+|---|---|---|
+| `COMPANION_VAULT_UPSTREAM` | Base URL of the other server. `https://…`, or `http://` only for `127.0.0.1` / `localhost` / `[::1]`. No credentials, query or fragment | ignored (local store), one log line |
+| `COMPANION_VAULT_PULL_CMD` | Optional. Absolute path of an executable file | ignored, one log line |
+
+When `COMPANION_VAULT_UPSTREAM` is set:
+
+- Gates 1–3 (network, header-only bearer, rate limit) still run on **this** server first. Gate 4 (local `tls-secrets.py` / 501) is skipped.
+- `GET/POST /api/vault`, `POST /api/secret`, `PATCH/DELETE /api/vault/:name` and `/key` (inject, WS `input`, orchestrator send) are forwarded to the upstream's `/api/vault` REST API. `POST /api/secret` goes to `POST /api/vault`.
+- Auth to the upstream is **this server's own token** in `Authorization: Bearer` (never `?token=`). Both servers must share the token.
+- `x-companion-device` is forwarded as `<claimed device> via <this hostname>` (cut to 64 chars, the suffix kept), so the upstream audit line shows both.
+- The value travels only in the POST body (JSON, re-serialized from the parsed body). `bad_json` and a malformed `:name` (`bad_name`) are answered locally and never forwarded.
+- The upstream's status and body come back unchanged, including `Retry-After` on 429 and its plain-text 401. The upstream writes its own audit line; this server writes none.
+- `GET /api/vault` adds `upstream: "<host[:port]>"`; `writable` is the upstream's.
+- Upstream unreachable, 10 s timeout, or a redirect (not followed, so the bearer never goes elsewhere) → `502 {ok:false, error:"upstream_unreachable"}`.
+- Forwarded calls carry `x-companion-vault-hop: 1`. A server in upstream mode answers such a call with `508 {ok:false, error:"upstream_loop"}` instead of forwarding again.
+- After each 2xx write (not GET, not a failure), `COMPANION_VAULT_PULL_CMD` runs: no shell, no args, inherited env, stdin/stdout/stderr discarded, killed after 30 s. Fire-and-forget; only `vault pull exit=<code>` is logged.
+- Logs carry the method and the upstream status only, never the value, the token, the URL query or the upstream's response body.
+
+Unset (or invalid) → behaviour identical to the local store described above.
 
 ## Audit line
 

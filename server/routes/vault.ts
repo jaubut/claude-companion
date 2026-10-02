@@ -1,7 +1,8 @@
 import { checkBearerHeaderOnly, unauthorized } from "../lib/auth"
 import { companionLog } from "../lib/log"
-import { type AuditOrigin, type VaultResult, deleteSecret, listSecrets, setSecretHosts, upsertSecret, vaultWritable } from "../lib/secret-store"
+import { type AuditOrigin, type VaultResult, deleteSecret, listSecrets, setSecretHosts, upsertSecret, validName, vaultWritable } from "../lib/secret-store"
 import { type Limiter, clientOrigin, peerOf, readLimiter, writeLimiter } from "../lib/vault-guard"
+import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaultUpstream } from "../lib/vault-upstream"
 
 // Companion Vault API — values are write-only, no response ever carries one.
 //   GET    /api/vault          → { ok, writable, secrets: [{name, hosts, scripts, updated_at}] }
@@ -14,6 +15,9 @@ import { type Limiter, clientOrigin, peerOf, readLimiter, writeLimiter } from ".
 // (501 when tls-secrets.py is absent). The /api/* bearer gate in
 // companion-server.ts runs first too; the vault never relies on it.
 // Never log the URL or the body: a `?token=` or the value would land in the log.
+// Upstream mode (COMPANION_VAULT_UPSTREAM): same gates 1–3 here, then the call
+// is forwarded to the other Companion's vault and its status + body come back
+// unchanged; the local writable/501 check is skipped (lib/vault-upstream.ts).
 // Contract: docs/vault-api.md.
 
 const PREFIX = "/api/vault/"
@@ -61,6 +65,23 @@ async function mutate(req: Request, isCollection: boolean, name: string, origin:
   return json({ ok: false, error: "method_not_allowed" }, 405)
 }
 
+function passthrough(r: UpstreamReply, extra?: Record<string, unknown>): Response {
+  const headers: Record<string, string> = { ...NO_STORE, "content-type": r.json ? "application/json" : "text/plain;charset=utf-8" }
+  if (r.retryAfter) headers["Retry-After"] = r.retryAfter
+  const text = extra && r.json ? JSON.stringify({ ...r.json, ...extra }) : r.text
+  return new Response(text, { status: r.status, headers })
+}
+
+// Gates 1–3 already passed. Bodies are parsed here (bad_json stays local) and
+// re-serialized, so only a JSON object ever reaches the upstream.
+async function forward(req: Request, up: UpstreamConfig, isCollection: boolean, name: string, device: string): Promise<Response> {
+  if (req.method === "GET") return passthrough(await forwardVault(up, "GET", "/api/vault", device), { upstream: up.host })
+  if (!isCollection && !validName(name)) return json({ ok: false, error: "bad_name", message: "NOM en MAJUSCULES_ET_CHIFFRES (2–64)" }, 400)
+  const body = req.method === "DELETE" ? undefined : await readJson(req)
+  if (req.method !== "DELETE" && !body) return json({ ok: false, error: "bad_json" }, 400)
+  return passthrough(await forwardVault(up, req.method, isCollection ? "/api/vault" : `/api/vault/${name}`, device, body ?? undefined))
+}
+
 export async function handleVaultRoute(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname
   const isCollection = p === "/api/vault" || (p === "/api/secret" && req.method === "POST")
@@ -73,19 +94,27 @@ export async function handleVaultRoute(req: Request, url: URL): Promise<Response
   }
   if (!checkBearerHeaderOnly(req)) return unauthorized()
 
+  const up = vaultUpstream()
+  // A forwarded call landing on a server that would forward again = a loop.
+  if (up && req.headers.get(HOP_HEADER)) return json({ ok: false, error: "upstream_loop" }, 508)
+  const name = isCollection ? "" : p.slice(PREFIX.length)
+
   if (isCollection && req.method === "GET") {
-    return limited(readLimiter) ?? json({ ok: true, writable: vaultWritable(), secrets: listSecrets() })
+    const wait = limited(readLimiter)
+    if (wait) return wait
+    if (up) return forward(req, up, true, "", claimedDevice(req))
+    return json({ ok: true, writable: vaultWritable(), secrets: listSecrets() })
   }
   const known = (isCollection && req.method === "POST") || (!isCollection && (req.method === "PATCH" || req.method === "DELETE"))
   if (!known) return json({ ok: false, error: "method_not_allowed" }, 405)
 
   const wait = limited(writeLimiter)
   if (wait) return wait
+  if (up) return forward(req, up, isCollection, name, claimedDevice(req))
   // Up front: no body parse, no store read when this host can't sync the mask.
   if (!vaultWritable()) {
     return json({ ok: false, error: "vault_unavailable", message: "Coffre en lecture seule sur cet hôte (tls-secrets.py absent)." }, 501)
   }
   // Valid names are [A-Z0-9_] only, so no URL decoding: anything else is a 400.
-  const name = isCollection ? "" : p.slice(PREFIX.length)
   return mutate(req, isCollection, name, { device_claimed: claimedDevice(req), transport: from.transport, peer: from.peer })
 }
