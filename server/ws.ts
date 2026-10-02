@@ -4,7 +4,7 @@ import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
 import { deliveryFailedHint, injectConfirmed } from "./lib/submit-confirm"
 import { injectRefusal } from "./lib/inject-guard"
-import { handleKeyCommand } from "./lib/secret-store"
+import { handleKeyCommand, isKeyCommand } from "./lib/secret-store"
 import { isSuperAuto } from "./lib/super-auto"
 import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
 import { getActivity, listActivities } from "./lib/activity"
@@ -104,8 +104,16 @@ export const websocket: WebSocketHandler<WsData> = {
         break
       case "input":
         if (msg.text?.trim()) {
-          // `/key NAME value` goes to secrets.env, never into the pane or a log.
-          const keyed = await handleKeyCommand(msg.text)
+          // `/key NAME value` goes to secrets.env, never into the pane or a log —
+          // only on a socket that passed the vault's bar at upgrade (trusted
+          // network + header bearer). Refused = reported, never injected.
+          if (isKeyCommand(msg.text) && !ws.data.keyGate?.allowed) {
+            const refusal = ws.data.keyGate?.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
+            companionLog(`ws /key refused — ${refusal.error} peer=${ws.data.keyGate?.origin.peer ?? "?"}`)
+            try { ws.send(JSON.stringify({ type: "key_saved", key: msg.key, cwd: msg.cwd, ok: false, ...refusal })) } catch { /* ignore */ }
+            break
+          }
+          const keyed = isKeyCommand(msg.text) ? await handleKeyCommand(msg.text, ws.data.keyGate?.origin) : null
           if (keyed) {
             companionLog(`ws /key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
             try { ws.send(JSON.stringify({ type: "key_saved", key: msg.key, cwd: msg.cwd, ...keyed })) } catch { /* ignore */ }

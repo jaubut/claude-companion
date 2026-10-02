@@ -25,9 +25,9 @@ async function readSessionStatus(pid: string): Promise<SessionStatus | null> {
 
 export const dialogWatcher = createDialogWatcher({
   sessions: listSessions,
-  // dialog-watch hands over the bare pane id today; until it also passes the
-  // session's socket, the one live session on that id names the server
-  // (ambiguous → default server, the old behaviour).
+  // dialog-watch passes the session's socket; with none recorded, the one
+  // live session on that pane id names the server (ambiguous → default
+  // server, the old behaviour).
   capture: (pane: string, socket?: string) => capturePane(pane, undefined, { socket: socket ?? socketForPane(pane) }),
   sessionStatus: readSessionStatus,
   hasPendingQuestion: (s) => getPendingQuestions().some((q) => (q.sessionId && q.sessionId === s.sessionId) || q.cwd === s.cwd),

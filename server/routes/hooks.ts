@@ -437,6 +437,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       const task = await resolveWorkerTask("close", {
         taskId: headerMeta.taskId,
         tmuxPane: headerMeta.tmuxPane,
+        tmuxSocket: headerMeta.tmuxSocket,
         cwd,
       })
       if (task) {

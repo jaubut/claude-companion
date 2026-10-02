@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "./lib/auth"
-import { type WsData, clientInfo, rememberRemote } from "./state"
+import { type WsData, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { handleApiRoute } from "./routes/api"
@@ -11,7 +11,7 @@ import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
 import { handleVaultRoute } from "./routes/vault"
-import { recordPeer } from "./lib/vault-guard"
+import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
@@ -31,11 +31,9 @@ export function createCompanionServer(port: number) {
     hostname: "0.0.0.0",
     async fetch(req, server) {
       const url = new URL(req.url)
-      // TCP peer for the vault's network gate (routes only get req + url).
-      if (url.pathname.startsWith("/api/vault") || url.pathname === "/api/secret") {
-        recordPeer(req, server.requestIP(req)?.address)
-      }
-      rememberRemote(req, server.requestIP(req)?.address)
+      // TCP peer for the vault's network gate and the resolve/WS audit log
+      // (routes only get req + url). Weak map: dies with the Request.
+      recordPeer(req, server.requestIP(req)?.address)
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
@@ -63,7 +61,7 @@ export function createCompanionServer(port: number) {
         // Immediate except in the first seconds after boot (lib/discover.ts).
         await waitForFirstDiscovery(WS_FIRST_DISCOVERY_WAIT_MS)
         const upgraded = server.upgrade(req, {
-          data: { id: crypto.randomUUID(), client: clientInfo(req) },
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req) },
         })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })

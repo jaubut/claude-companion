@@ -304,7 +304,14 @@ test("localTerminalAttached: tmux attach count, Mac tab, Linux tty → pane, unk
   expect(await localTerminalAttached({ tmuxPane: "%3" }, "linux", no)).toBe(false)
   expect(await localTerminalAttached({ tmuxPane: "%3" }, "darwin", unknown)).toBe(false)
   expect(await localTerminalAttached({ tty: "/dev/ttys004" }, "darwin", no)).toBe(true)
-  expect(await localTerminalAttached({ tty: "/dev/pts/4" }, "linux", yes, async () => "%9")).toBe(true)
+  expect(await localTerminalAttached({ tty: "/dev/pts/4" }, "linux", yes, async () => ({ pane: "%9", socket: "" }))).toBe(true)
+  // The tmux server travels with the pane: from the target, or from the tty map.
+  const seen: Array<[string, string | undefined]> = []
+  const spy = async (pane: string, socket?: string) => { seen.push([pane, socket]); return true }
+  await localTerminalAttached({ tmuxPane: "%3", tmuxSocket: "/tmp/tmux-1/w" }, "linux", spy)
+  await localTerminalAttached({ tty: "/dev/pts/5" }, "linux", spy, async () => ({ pane: "%7", socket: "/tmp/tmux-1/x" }))
+  await localTerminalAttached({ tmuxPane: "%4" }, "linux", spy)
+  expect(seen).toEqual([["%3", "/tmp/tmux-1/w"], ["%7", "/tmp/tmux-1/x"], ["%4", undefined]])
   expect(await localTerminalAttached({ tty: "/dev/pts/4" }, "linux", yes, async () => null)).toBe(false)
   expect(await localTerminalAttached({}, "darwin", yes)).toBe(false)
 })

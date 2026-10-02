@@ -3,7 +3,8 @@ import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
 import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
-import { handleKeyCommand } from "../lib/secret-store"
+import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
+import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -242,7 +243,7 @@ async function handleResolve(req: Request): Promise<Response> {
 // (transport, peer address, user-agent, X-Companion-Device). Never the token.
 function logResolve(req: Request, what: "approval" | "question", id: string, decision: string, ok: boolean): void {
   const tag = ok ? "\x1b[36mresolve\x1b[0m" : "\x1b[33mresolve failed (gone)\x1b[0m"
-  companionLog(`${tag} ${what} ${id.slice(0, 8)} → ${decision} ${describeClient("rest", clientInfo(req))}`)
+  companionLog(`${tag} ${what} ${id.slice(0, 8)} → ${decision} ${describeClient("rest", clientInfo(req, originLabel(req)))}`)
 }
 
 async function handleAnswer(req: Request): Promise<Response> {
@@ -270,12 +271,22 @@ async function handleInject(req: Request): Promise<Response> {
   const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
   if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
 
-  // `/key NAME value` goes to secrets.env, never into the pane or a log.
-  const keyed = await handleKeyCommand(text)
-  if (keyed) {
-    companionLog(`/key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
-    const { status, ...body } = keyed
-    return Response.json(body, { status })
+  // `/key NAME value` goes to secrets.env, never into the pane or a log —
+  // and only from where the vault itself would accept it. A refused /key is
+  // still never injected (the value would land in the pane).
+  if (isKeyCommand(text)) {
+    const gate = keyCommandGate(req)
+    if (!gate.allowed) {
+      const { status, ...refusal } = gate.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
+      companionLog(`/key refused — ${refusal.error} peer=${gate.origin.peer}`)
+      return Response.json({ ok: false, ...refusal }, { status })
+    }
+    const keyed = await handleKeyCommand(text, gate.origin)
+    if (keyed) {
+      companionLog(`/key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
+      const { status, ...body } = keyed
+      return Response.json(body, { status })
+    }
   }
 
   const lookup = key || cwd || ""

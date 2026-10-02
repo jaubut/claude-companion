@@ -17,7 +17,7 @@ export interface SessionStatus {
 
 export interface DialogWatchDeps {
   sessions(): Session[]
-  capture(pane: string): Promise<string | null>
+  capture(pane: string, socket?: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
   // An approval the hooks already routed to the phone: its terminal
@@ -88,7 +88,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       if (st.status !== "waiting") { close(s.key); return }
     }
     if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { close(s.key); return }
-    const pane = await deps.capture(s.tmuxPane)
+    const pane = await deps.capture(s.tmuxPane, s.tmuxSocket || undefined)
     if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)
     // Question pickers are the hooks' business (structured card + driver);

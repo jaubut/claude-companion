@@ -15,6 +15,8 @@
 //   - anything else (LAN, public) → refused. X-Forwarded-For from a non-
 //     loopback peer is ignored: anyone can send that header.
 
+import { checkBearerHeaderOnly } from "./auth"
+
 export type Transport = "tailscale-serve" | "loopback" | "tailnet" | "untrusted"
 
 export interface ClientOrigin { transport: Transport; peer: string }
@@ -95,4 +97,34 @@ export const readLimiter = createLimiter(60, 60_000)
 export function resetVaultLimits(): void {
   writeLimiter.reset()
   readLimiter.reset()
+}
+
+// ── `/key` typed in the chat (POST /api/inject, WS `input`) ──
+// Same bar as the vault routes: a trusted network origin AND the bearer in a
+// header (a `?token=` query — the WS fallback — is refused for secrets). The
+// WS path evaluates this once at upgrade and keeps it on the socket.
+
+export interface KeyGate {
+  allowed: boolean
+  origin: { transport: string; peer: string; device_claimed: string }
+  refusal?: { status: number; error: string; message: string }
+}
+
+export function keyCommandGate(req: Request): KeyGate {
+  const from = clientOrigin(req, peerOf(req))
+  const device = (req.headers.get("x-companion-device") ?? "").replace(/[^\x20-\x7e]/g, "").slice(0, 64) || "chat"
+  const origin = { transport: from.transport, peer: from.peer, device_claimed: device }
+  if (from.transport === "untrusted") {
+    return { allowed: false, origin, refusal: { status: 403, error: "forbidden_network", message: "/key refusé: réseau non fiable (tailnet ou loopback seulement). Rien enregistré." } }
+  }
+  if (!checkBearerHeaderOnly(req)) {
+    return { allowed: false, origin, refusal: { status: 401, error: "header_auth_required", message: "/key refusé: jeton dans l'URL — le coffre exige l'en-tête Authorization. Rien enregistré." } }
+  }
+  return { allowed: true, origin }
+}
+
+/** "100.64.0.9/tailnet" — for audit log lines. */
+export function originLabel(req: Request): string {
+  const o = clientOrigin(req, peerOf(req))
+  return `${o.peer}/${o.transport}`
 }

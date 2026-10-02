@@ -42,9 +42,9 @@ import {
   parseQuestionInput,
   questionDedupeKey,
 } from "./questions"
-import { type InjectTarget, resolveTmuxPaneFromTty, withPickerIO } from "./keyboard-inject"
+import { type InjectTarget, withPickerIO } from "./keyboard-inject"
 import { driveQuestionPicker, pickerShowsQuestions } from "./question-driver"
-import { tmuxPaneAttached } from "./tmux-pane"
+import { type PaneRef, resolveTmuxRefFromTty, tmuxPaneAttached } from "./tmux-pane"
 import { recordToolStart } from "./activity"
 import { summarize } from "./tool-format"
 import { hookDecisionResponse, hookPassthroughResponse } from "./hook-common"
@@ -73,13 +73,18 @@ const PANE_RE = /^%\d+$/
 export async function localTerminalAttached(
   target: InjectTarget,
   platform: string = process.platform,
-  attached: (pane: string) => Promise<boolean | null> = tmuxPaneAttached,
-  paneForTty: (tty: string) => Promise<string | null> = resolveTmuxPaneFromTty,
+  attached: (pane: string, socket?: string) => Promise<boolean | null> = tmuxPaneAttached,
+  refForTty: (tty: string) => Promise<PaneRef | null> = resolveTmuxRefFromTty,
 ): Promise<boolean> {
   let pane = target.tmuxPane?.trim() ?? ""
+  let socket = target.tmuxSocket ?? ""
   if (!PANE_RE.test(pane)) pane = ""
-  if (!pane && target.tty && platform === "linux") pane = (await paneForTty(target.tty)) ?? ""
-  if (pane) return (await attached(pane)) === true
+  if (!pane && target.tty && platform === "linux") {
+    const ref = await refForTty(target.tty)
+    pane = ref?.pane ?? ""
+    socket = ref?.socket ?? ""
+  }
+  if (pane) return (await attached(pane, socket || undefined)) === true
   return !!target.tty && platform === "darwin"
 }
 
@@ -142,6 +147,8 @@ function answeredResponse(
 function questionInjectTarget(session: Session | null, headerMeta: Partial<Session>): InjectTarget {
   return {
     tmuxPane: session?.tmuxPane || headerMeta.tmuxPane || "",
+    // The socket belongs with whichever pane id was picked.
+    tmuxSocket: (session?.tmuxPane ? session.tmuxSocket : headerMeta.tmuxSocket) || "",
     tty: session?.tty || headerMeta.tty || "",
     termProgram: session?.termProgram || headerMeta.termProgram || "",
     iTermSessionId: session?.iTermSessionId || headerMeta.iTermSessionId || "",
