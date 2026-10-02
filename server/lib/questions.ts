@@ -47,13 +47,18 @@ type EventHandler = (event: QuestionRequest) => void
 // the question going away with no answer), "answered" when it was answered
 // at the terminal instead (see cancelQuestionsFor).
 export type QuestionEndDecision = "expired" | "answered"
-type ExpiryHandler = (req: QuestionRequest, decision: QuestionEndDecision) => void
+// `via` names the exit ("expiry", or the caller's reason for
+// cancelQuestionsFor) — the approval history records it.
+type ExpiryHandler = (req: QuestionRequest, decision: QuestionEndDecision, via: string) => void
+// Who answered, when the transport knows (X-Companion-Device / WS client).
+export interface AnsweredBy { device?: string }
+type ResolvedHandler = (req: QuestionRequest, answers: QuestionAnswer[], by: AnsweredBy) => void
 
 const pending = new Map<string, QuestionRequest>()
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const handlers = new Set<EventHandler>()
 const expiryHandlers = new Set<ExpiryHandler>()
-const resolvedHandlers = new Set<EventHandler>()
+const resolvedHandlers = new Set<ResolvedHandler>()
 
 // Same 290s budget as approvals — Claude's hook curl times out at 300s and
 // we want to broadcast a clean `expired` signal before that fires. The hook
@@ -108,7 +113,7 @@ export function addQuestionRequest(
     // On expiry we resolve with empty answers — the caller decides how to
     // surface that (the hook route: no decision, so the terminal picker takes
     // it). We don't pretend they answered.
-    const onLapse = opts.parkMs ? () => park(id, opts.parkMs!, opts.onUnclaimedAnswer) : () => endUnanswered(id, "expired")
+    const onLapse = opts.parkMs ? () => park(id, opts.parkMs!, opts.onUnclaimedAnswer) : () => endUnanswered(id, "expired", "expiry")
     const timer = setTimeout(onLapse, opts.expiryMs ?? EXPIRY_MS)
     expiryTimers.set(id, timer)
   })
@@ -131,7 +136,7 @@ function park(id: string, parkMs: number, onUnclaimed?: (answers: QuestionAnswer
     const held = parkedAnswers.get(id)
     parkedAnswers.delete(id)
     if (held) { try { onUnclaimed?.(held.answers) } catch { /* ignore */ } }
-    endUnanswered(id, "expired")
+    endUnanswered(id, "expired", "expiry")
   }, parkMs)
   ;(t as unknown as { unref?: () => void }).unref?.()
   parkTimers.set(id, t)
@@ -163,7 +168,7 @@ export function claimParkedQuestion(id: string): QuestionAnswer[] | null | undef
 
 // The no-answer exit from `pending` (the other is resolveQuestion); both fire
 // a listener, so a question can never strand its waiting reason.
-function endUnanswered(id: string, decision: QuestionEndDecision): boolean {
+function endUnanswered(id: string, decision: QuestionEndDecision, via: string): boolean {
   const r = pending.get(id)
   if (!r) return false
   pending.delete(id)
@@ -172,7 +177,7 @@ function endUnanswered(id: string, decision: QuestionEndDecision): boolean {
   if (timer) clearTimeout(timer)
   expiryTimers.delete(id)
   for (const handler of expiryHandlers) {
-    try { handler(r, decision) } catch { /* ignore */ }
+    try { handler(r, decision, via) } catch { /* ignore */ }
   }
   r.resolve([])
   return true
@@ -186,12 +191,12 @@ function endUnanswered(id: string, decision: QuestionEndDecision): boolean {
 // expiry and the log read "question expired" for a question that had been
 // answered (audit 2026-09-25). Matches on session id or session key; returns
 // how many were ended.
-export function cancelQuestionsFor(who: { sessionId?: string; sessionKey?: string }, decision: QuestionEndDecision): number {
+export function cancelQuestionsFor(who: { sessionId?: string; sessionKey?: string }, decision: QuestionEndDecision, via = "cancelled"): number {
   let n = 0
   for (const r of [...pending.values()]) {
     const bySession = !!who.sessionId && r.sessionId === who.sessionId
     const byKey = !!who.sessionKey && r.sessionKey === who.sessionKey
-    if ((bySession || byKey) && endUnanswered(r.id, decision)) n++
+    if ((bySession || byKey) && endUnanswered(r.id, decision, via)) n++
   }
   // A phone answer held for a sibling that will now never come (the picker
   // was answered at the terminal / the turn moved on): drop it, never type it.
@@ -201,7 +206,7 @@ export function cancelQuestionsFor(who: { sessionId?: string; sessionKey?: strin
   return n
 }
 
-export function resolveQuestion(id: string, answers: QuestionAnswer[]): boolean {
+export function resolveQuestion(id: string, answers: QuestionAnswer[], by: AnsweredBy = {}): boolean {
   const req = pending.get(id)
   if (!req) return false
   // A parked question keeps its park timer: the held answer waits there for
@@ -214,7 +219,7 @@ export function resolveQuestion(id: string, answers: QuestionAnswer[]): boolean 
   // Fired inside the `pending.get` guard, so an answer arriving over both the
   // WS and REST paths notifies exactly once.
   for (const handler of resolvedHandlers) {
-    try { handler(req) } catch { /* ignore */ }
+    try { handler(req, answers, by) } catch { /* ignore */ }
   }
   req.resolve(answers)
   // One of the only two exits from `pending` (the other is the expiry timer);
@@ -239,7 +244,7 @@ export function onQuestionExpired(handler: ExpiryHandler): () => void {
 
 // Subscribe to "the user answered" — the counterpart exit to onQuestionExpired.
 // wiring/events.ts uses it to clear the session's `question` waiting reason.
-export function onQuestionResolved(handler: EventHandler): () => void {
+export function onQuestionResolved(handler: ResolvedHandler): () => void {
   resolvedHandlers.add(handler)
   return () => resolvedHandlers.delete(handler)
 }

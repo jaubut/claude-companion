@@ -80,7 +80,7 @@ export const websocket: WebSocketHandler<WsData> = {
       case "deny":
         if (msg.id) {
           const decision = msg.type === "approve" ? "allow" : "deny"
-          const ok = resolveApproval(msg.id, decision)
+          const ok = resolveApproval(msg.id, decision, { device: ws.data.client?.device })
           logResolve(ws, "approval", msg.id, decision, ok)
           // Only a decision that actually reached a waiting hook is announced.
           // A late/duplicate one (already expired, answered elsewhere, or
@@ -96,7 +96,7 @@ export const websocket: WebSocketHandler<WsData> = {
             selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
             otherText: typeof a.otherText === "string" ? a.otherText : undefined,
           }))
-          const ok = resolveQuestion(msg.id, answers)
+          const ok = resolveQuestion(msg.id, answers, { device: ws.data.client?.device })
           logResolve(ws, "question", msg.id, "answered", ok)
           if (ok) broadcast({ type: "resolved", id: msg.id, decision: "answered" })
           else resolveFailed(ws, msg.id)

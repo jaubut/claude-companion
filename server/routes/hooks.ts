@@ -97,9 +97,10 @@ async function extractLastAssistantMessage(transcriptPath: string | undefined): 
 
 // A question that is no longer on screen: answered in the terminal picker
 // (PostToolUse of the question tool), or the turn / session moved past it.
-// Ends it so the phone card clears now, not at the 290 s expiry.
-function closeQuestionsFor(sessionId: string | undefined, sessionKey: string | undefined, decision: QuestionEndDecision, why: string): void {
-  const n = cancelQuestionsFor({ sessionId, sessionKey }, decision)
+// Ends it so the phone card clears now, not at the 290 s expiry. `via` is the
+// hook that ended it, recorded as the approval history's decided_via.
+function closeQuestionsFor(sessionId: string | undefined, sessionKey: string | undefined, decision: QuestionEndDecision, why: string, via: string): void {
+  const n = cancelQuestionsFor({ sessionId, sessionKey }, decision, via)
   if (n > 0) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     companionLog(`${cyan}question closed${reset} ${dim}— ${why} (${n})${reset}`)
@@ -109,8 +110,8 @@ function closeQuestionsFor(sessionId: string | undefined, sessionKey: string | u
 // The approval twin of closeQuestionsFor: an approval whose hook went away, or
 // whose call already ran / whose turn or session ended, is ended "elsewhere" —
 // no allow, nothing learned, and the phone card clears now.
-function closeApprovalsFor(who: ApprovalMatch, why: string): void {
-  const n = cancelApprovalsFor(who, "elsewhere")
+function closeApprovalsFor(who: ApprovalMatch, why: string, via: string): void {
+  const n = cancelApprovalsFor(who, "elsewhere", via)
   if (n > 0) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     companionLog(`${cyan}approval closed${reset} ${dim}— elsewhere: ${why} (${n})${reset}`)
@@ -248,12 +249,12 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       : null
 
     if (isQuestionTool(tool)) {
-      closeQuestionsFor(body.session_id, session?.key, "answered", "answered at the terminal")
+      closeQuestionsFor(body.session_id, session?.key, "answered", "answered at the terminal", "post_tool_use")
     }
     // The call ran, so any approval still pending for THIS call was answered
     // at the terminal (PermissionRequest dialog). A parallel call of the same
     // tool with other input keeps its card.
-    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key, tool, input, toolUseId: body.tool_use_id }, "the call ran (answered at the terminal)")
+    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key, tool, input, toolUseId: body.tool_use_id }, "the call ran (answered at the terminal)", "post_tool_use")
     recordToolEnd({
       tool,
       input,
@@ -294,8 +295,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // Proof of submission for any phone inject waiting on this session.
     noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty })
     // A new prompt means the picker is gone (e.g. "Chat about this").
-    closeQuestionsFor(body.session_id, session?.key, "expired", "new prompt in that session")
-    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key }, "new prompt in that session")
+    closeQuestionsFor(body.session_id, session?.key, "expired", "new prompt in that session", "user_prompt")
+    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key }, "new prompt in that session", "user_prompt")
     // First real prompt names the chat (persisted by session id so a
     // restart or rediscovery brings the same name back).
     if (session && !session.title) {
@@ -420,8 +421,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     }
 
     // The turn ended: no question or approval of it can still be open.
-    closeQuestionsFor(body.session_id, session?.key, "expired", "turn ended")
-    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key }, "turn ended")
+    closeQuestionsFor(body.session_id, session?.key, "expired", "turn ended", "stop")
+    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key }, "turn ended", "stop")
 
     const lastMessage = (body.last_assistant_message ?? "").trim()
       || await extractLastAssistantMessage(body.transcript_path)
@@ -539,8 +540,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
         ? `${magenta}session end${reset} removed ${removedKeys.join(", ")} ${dim}(by ${by}, reason=${body.reason ?? "-"})${reset}`
         : `${magenta}session end${reset} ${dim}no session matched sid=${sid.slice(0, 8) || "?"} pid=${pid || "?"} — nothing removed (reason=${body.reason ?? "-"})${reset}`)
     }
-    closeQuestionsFor(body.session_id, undefined, "expired", "session ended")
-    closeApprovalsFor({ sessionId: body.session_id }, "session ended")
+    closeQuestionsFor(body.session_id, undefined, "expired", "session ended", "session_end")
+    closeApprovalsFor({ sessionId: body.session_id }, "session ended", "session_end")
     forgetSession({ tty, sessionId: body.session_id, cwd })
     // `/exit` (and `/clear`, which ends the old session first) fire no
     // UserPromptSubmit; the session ending is their proof of submission.
