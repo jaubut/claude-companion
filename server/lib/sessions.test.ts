@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test"
-import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, removeSessionByKey, socketForPane, drainRemovalCount, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
+import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, removeSessionByKey, socketForPane, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
 import { metaFromHeaders } from "./hook-common"
+import { drainRemovalCount } from "./session-removal-log"
 
 test("Linux pts ttys get a tag like macOS ttys do", () => {
   expect(ttyTag("/dev/ttys017")).toBe("s017")

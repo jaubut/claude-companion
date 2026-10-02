@@ -15,9 +15,9 @@
 
 import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
-import { INJECT_SEND_MS, injectText, resolveTmuxRefFromTty, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { INJECT_SEND_MS, injectText, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
 import { inputLine, unstyle } from "./command-menu"
-import { type PaneRef, capturePane, paneKey, sendKeysArgs } from "./tmux-pane"
+import { type PaneRef, capturePane, paneKey, resolveTmuxRefFromTty, sendKeysArgs } from "./tmux-pane"
 import { readClaudeSessionFile } from "./discover"
 
 export const SUBMIT_WINDOW_MS = 3_000

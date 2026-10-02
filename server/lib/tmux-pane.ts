@@ -108,6 +108,42 @@ export async function mapTtysToPanes(
   return out
 }
 
+// Resolve a tmux pane id from the pty it's hosting. Used when the hook
+// stack didn't capture $TMUX_PANE at registration time (Linux server-spawn
+// path: claude inherits $TMUX_PANE but the hook script may have raced the
+// initial registration, leaving the session with a tty but no pane). tmux
+// itself knows the mapping — ask it.
+//
+// One server only: the default one, or `socket`'s. resolveTmuxRefFromTty below
+// asks every server and also says which one answered.
+export async function resolveTmuxPaneFromTty(tty: string, socket?: string): Promise<string | null> {
+  try {
+    const proc = Bun.spawn([...tmuxArgv(socket), "list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"], {
+      stdout: "pipe", stderr: "pipe",
+    })
+    const out = (await new Response(proc.stdout).text()).trim()
+    await proc.exited
+    if ((proc.exitCode ?? 1) !== 0) return null
+    return parsePaneTtys(out).get(tty) ?? null
+  } catch {
+    return null
+  }
+}
+
+// (socket, pane) hosting `tty`, over every tmux server this user runs — a
+// session on `tmux -L cc` is invisible to a bare `tmux list-panes`. Falls back
+// to the default server when no socket directory can be listed.
+export async function resolveTmuxRefFromTty(
+  tty: string,
+  map: () => Promise<Map<string, PaneRef>> = () => mapTtysToPanes(),
+): Promise<PaneRef | null> {
+  const hit = (await map()).get(tty)
+  if (hit) return hit
+  const pane = await resolveTmuxPaneFromTty(tty)
+  return pane ? { pane, socket: "" } : null
+}
+
+
 // ── Reading a pane ───────────────────────────────────────────────────────
 
 // `signal` (optional) kills the capture: a stalled tmux must not hold up a

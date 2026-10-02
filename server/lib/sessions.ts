@@ -18,7 +18,8 @@
 // previous Claude process that used the same TTY.
 
 import { isAgentPidAlive, processStartMs } from "./agent-pid"
-import { companionLog } from "./log"
+import { deriveKey, hasStrongIdentity, hasTtyIdentity, makeLabel, mergeTmuxSocket } from "./session-identity"
+import { logRemoval } from "./session-removal-log"
 import {
   type WaitingKind,
   type WaitingReason,
@@ -52,12 +53,9 @@ export interface Session {
   // present, inject uses `tmux send-keys` (pane-id-keyed, no focus race)
   // instead of AppleScript (focus-bound, swap-prone with multiple windows).
   tmuxPane: string
-  // The tmux server socket that pane lives on (first field of $TMUX, e.g.
-  // "/tmp/tmux-501/cc" for `tmux -L cc`). "" = the default server. A pane id
-  // is only unique within one server, so (tmuxSocket, tmuxPane) is the pane's
-  // identity and every tmux call targets `-S tmuxSocket` (lib/tmux-pane.ts).
-  // Optional only so Session literals in fixtures predating it still type;
-  // recordSession always sets it.
+  // The tmux server socket of that pane ($TMUX's first field); "" = default
+  // server. Pane ids are unique per server only, so (tmuxSocket, tmuxPane) is
+  // the identity (lib/tmux-pane.ts). Optional so older fixtures still type.
   tmuxSocket?: string
   // The orchestrator task this session is a worker for, from
   // X-Companion-Task-Id (COMPANION_TASK_ID in the worker's env, issued at
@@ -98,24 +96,6 @@ const listeners = new Set<Listener>()
 const PRUNE_AFTER_MS_NO_PID = 60 * 60 * 1000
 const PRUNE_INTERVAL_MS = 60 * 1000
 
-// Every removal is logged (key, pid, reason) and counted, so a session that
-// "vanished from the phone" can be traced to the decision that dropped it.
-let removedSinceDrain = 0
-
-function logRemoval(s: Session, reason: string): void {
-  removedSinceDrain++
-  const dim = "\x1b[2m"; const reset = "\x1b[0m"
-  companionLog(`${dim}session removed${reset} ${s.key} pid=${s.pid || "-"} reason=${reason}`)
-}
-
-// How many sessions were removed since the last call. The discovery tick logs
-// this once, and only when nonzero.
-export function drainRemovalCount(): number {
-  const n = removedSinceDrain
-  removedSinceDrain = 0
-  return n
-}
-
 function prune(now: number): boolean {
   let changed = false
   for (const [key, s] of sessions) {
@@ -150,47 +130,6 @@ function ensurePruneTimer(): void {
   }
 }
 ensurePruneTimer()
-
-function deriveKey(meta: Partial<Session> & { cwd: string }): string {
-  const agent = meta.agent === "codex" ? "codex" : "claude"
-  if (meta.tty) return `${agent}:tty:${meta.tty}`
-  if (meta.iTermSessionId) return `${agent}:iterm:${meta.iTermSessionId}`
-  if (meta.sessionId) return `${agent}:sid:${meta.sessionId}`
-  return `${agent}:cwd:${meta.cwd}`
-}
-
-function hasTtyIdentity(key: string): boolean {
-  return key.startsWith("tty:") || key.includes(":tty:")
-}
-
-function hasStrongIdentity(key: string): boolean {
-  return hasTtyIdentity(key) || key.startsWith("iterm:") || key.includes(":iterm:")
-}
-
-function basename(cwd: string): string {
-  if (!cwd) return ""
-  return cwd.split("/").filter(Boolean).pop() ?? cwd
-}
-
-// Tail of the tty for disambiguation when two sessions share a cwd.
-// macOS `/dev/ttys017` → `s017`; Linux `/dev/pts/8` → `pts8`. Empty if we
-// don't have a tty yet. (Linux ttys used to fall through untagged, which is
-// why every Linux-host session launched from $HOME was labelled "aubut".)
-export function ttyTag(tty: string): string {
-  const mac = tty.match(/ttys?(\d+)$/)
-  if (mac) return `s${mac[1]}`
-  const pts = tty.match(/pts\/(\d+)$/)
-  return pts ? `pts${pts[1]}` : ""
-}
-
-function makeLabel(cwd: string, tty: string): string {
-  const base = basename(cwd)
-  const tag = ttyTag(tty)
-  if (!base && !tag) return ""
-  if (!tag) return base
-  if (!base) return tag
-  return `${base} · ${tag}`
-}
 
 // Recompute the three wire scalars from the reason list. Every mutation of
 // waitingReasons calls this; nothing else writes the scalars.
@@ -357,14 +296,7 @@ export function recordSession(
   return next
 }
 
-// The socket travels with the pane: a record that gains a NEW pane without a
-// socket must not keep the old pane's socket (it would address the new id on
-// the wrong server). Same pane, or no pane in this update → sticky.
-function mergeTmuxSocket(meta: Partial<Session>, prev: Session | undefined): string {
-  if (meta.tmuxSocket) return meta.tmuxSocket
-  if (meta.tmuxPane && meta.tmuxPane !== prev?.tmuxPane) return ""
-  return prev?.tmuxSocket ?? ""
-}
+export { ttyTag } from "./session-identity"
 
 // ---- titles + creation time -------------------------------------------------
 
@@ -613,10 +545,8 @@ export function removeSessionByTty(tty: string): boolean {
 // for workers whose hooks report a pane but no usable tty. Without it a
 // session-end from one worker falls through to removeSessionByCwd and takes
 // every sibling session in that directory with it.
-//
-// `socket` (the hook's $TMUX socket): when given, only a pane on that server
-// matches — %3 on `tmux -L cc` is not %3 on the default server. Omitted keeps
-// the old any-server match for callers that do not know it yet.
+// With `socket` (the hook's $TMUX socket) only that server's pane matches;
+// omitted keeps the old any-server match.
 export function removeSessionByTmuxPane(pane: string, socket?: string): boolean {
   if (!pane) return false
   let removed = false
