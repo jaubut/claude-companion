@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { vaultDeps } from "../lib/secret-store"
+import { clock, recordPeer, resetVaultLimits } from "../lib/vault-guard"
 import { handleVaultRoute } from "./vault"
 
 // Drives the route handler directly (booting createCompanionServer would pull
@@ -25,6 +26,10 @@ beforeEach(() => {
   store = process.env.TLS_SECRETS_FILE = join(dir, "secrets.env")
   auditFile = process.env.TLS_VAULT_AUDIT_FILE = join(dir, "vault-audit.jsonl")
   writeFileSync(store, FILE, { mode: 0o600 })
+  // Temp stand-in for ~/.claude/tools/tls-secrets.py (sync itself is mocked).
+  process.env.TLS_SECRETS_TOOL = join(dir, "tls-secrets.py")
+  writeFileSync(process.env.TLS_SECRETS_TOOL, "")
+  resetVaultLimits()
   syncCalls = 0
   vaultDeps.sync = async () => { syncCalls++; return { ok: true, detail: "" } }
   stderr = ""
@@ -35,13 +40,17 @@ afterEach(() => {
   process.stderr.write = realWrite
 })
 
-async function call(method: string, path: string, body?: unknown, auth = true): Promise<{ status: number; text: string; json: Record<string, unknown> }> {
-  const headers: Record<string, string> = { "content-type": "application/json", "x-companion-device": "test-phone" }
+interface Reply { status: number; text: string; json: Record<string, unknown>; headers: Headers }
+
+// `peer` = what Bun's server.requestIP would report; default = loopback.
+async function call(method: string, path: string, body?: unknown, auth = true, peer: string | null = "127.0.0.1", extra: Record<string, string> = {}): Promise<Reply> {
+  const headers: Record<string, string> = { "content-type": "application/json", "x-companion-device": "test-phone", ...extra }
   if (auth) headers.authorization = `Bearer ${TOKEN}`
   const req = new Request(`http://localhost:4245${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  recordPeer(req, peer)
   const res = (await handleVaultRoute(req, new URL(req.url)))!
   const text = await res.text()
-  return { status: res.status, text, json: text.startsWith("{") ? JSON.parse(text) : {} }
+  return { status: res.status, text, json: text.startsWith("{") ? JSON.parse(text) : {}, headers: res.headers }
 }
 
 test("other paths pass through", async () => {
@@ -82,7 +91,7 @@ test("bad name / value / hosts / json → 400 without the value, no sync", async
 test("GET lists names + hosts + scripts, never values", async () => {
   const r = await call("GET", "/api/vault")
   expect(r.status).toBe(200)
-  expect(r.json).toEqual({ ok: true, secrets: [
+  expect(r.json).toEqual({ ok: true, writable: true, secrets: [
     { name: "A_KEY", hosts: ["a.io"], scripts: false, updated_at: null },
     { name: "B_KEY", hosts: [], scripts: true, updated_at: null },
   ] })
@@ -139,7 +148,7 @@ test("leak: after add + rotate the value is absent from log, responses and audit
   for (const b of bodies) expect(b).not.toContain(SECRET)
   const audit = readFileSync(auditFile, "utf8")
   expect(audit).not.toContain(SECRET)
-  expect(JSON.parse(audit.split("\n")[0]!)).toMatchObject({ action: "created", name: "C_KEY", hosts: ["c.io"], device: "test-phone" })
+  expect(JSON.parse(audit.split("\n")[0]!)).toMatchObject({ action: "created", name: "C_KEY", hosts: ["c.io"], device_claimed: "test-phone", transport: "loopback", peer: "127.0.0.1" })
 })
 
 test("leak: `/key` typed in the chat never reaches the log, a WS client, the feed or the response", async () => {
@@ -154,7 +163,7 @@ test("leak: `/key` typed in the chat never reaches the log, a WS client, the fee
     const req = new Request("http://localhost:4245/api/inject", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
-      body: JSON.stringify({ text: `/key C_KEY ${SECRET} c.io` }),
+      body: JSON.stringify({ text: `/key C_KEY ${SECRET} --hosts c.io` }),
     })
     const res = (await handleApiRoute(req, new URL(req.url)))!
     const text = await res.text()
@@ -166,5 +175,124 @@ test("leak: `/key` typed in the chat never reaches the log, a WS client, the fee
     }
   } finally {
     clients.delete(fake)
+  }
+})
+
+// ── Hardening (fix/vault-hardening) ──
+
+test("?token= is refused on every vault verb even when valid → 401, store untouched", async () => {
+  for (const [method, path, body] of [
+    ["GET", "/api/vault", undefined],
+    ["POST", "/api/vault", { name: "C_KEY", value: SECRET }],
+    ["POST", "/api/secret", { name: "C_KEY", value: SECRET }],
+    ["PATCH", "/api/vault/A_KEY", { hosts: [] }],
+    ["DELETE", "/api/vault/A_KEY", undefined],
+  ] as const) {
+    const r = await call(method, `${path}?token=${TOKEN}`, body, false)
+    expect(r.status).toBe(401)
+  }
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+  expect(syncCalls).toBe(0)
+})
+
+test("network gate: LAN / public / unknown peers → 403 before auth; XFF only trusted from loopback", async () => {
+  const denied: [string | null, Record<string, string>][] = [
+    ["192.168.1.20", {}],
+    ["10.0.0.5", {}],
+    ["8.8.8.8", {}],
+    ["100.128.0.1", {}],                                          // just outside 100.64/10
+    [null, {}],                                                   // peer unknown → fail closed
+    ["192.168.1.20", { "x-forwarded-for": "100.100.1.1" }],      // spoofed XFF from LAN
+    ["127.0.0.1", { "x-forwarded-for": "203.0.113.9" }],          // serve-proxied public client
+    ["127.0.0.1", { "x-forwarded-for": "100.100.1.1", "tailscale-funnel-request": "?1" }], // Funnel
+  ]
+  for (const [peer, extra] of denied) {
+    for (const auth of [true, false]) {
+      expect((await call("POST", "/api/vault", { name: "C_KEY", value: SECRET }, auth, peer, extra)).status).toBe(403)
+    }
+    expect((await call("GET", "/api/vault", undefined, true, peer, extra)).status).toBe(403)
+  }
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+
+  for (const [peer, extra] of [
+    ["::1", {}], ["::ffff:127.0.0.1", {}], ["100.64.0.1", {}], ["100.127.255.254", {}], ["fd7a:115c:a1e0::1", {}],
+    ["127.0.0.1", { "x-forwarded-for": "100.101.102.103" }],
+  ] as [string, Record<string, string>][]) {
+    expect((await call("GET", "/api/vault", undefined, true, peer, extra)).status).toBe(200)
+  }
+  await call("POST", "/api/vault", { name: "C_KEY", value: SECRET }, true, "127.0.0.1", { "x-forwarded-for": "100.101.102.103" })
+  const line = JSON.parse(readFileSync(auditFile, "utf8").trim())
+  expect(line).toMatchObject({ device_claimed: "test-phone", transport: "tailscale-serve", peer: "100.101.102.103" })
+  expect(line.device).toBeUndefined()
+})
+
+test("rate limit: 11th write in a minute → 429 + Retry-After, nothing written; GET still served", async () => {
+  const t0 = 5_000_000
+  const realNow = clock.now
+  clock.now = () => t0
+  try {
+    for (let i = 0; i < 10; i++) {
+      const verb = i % 3
+      const r = verb === 0 ? await call("POST", "/api/vault", { name: "C_KEY", value: `v${i}` })
+        : verb === 1 ? await call("PATCH", "/api/vault/A_KEY", { hosts: [`h${i}.io`] })
+        : await call("POST", "/api/secret", { name: "C_KEY", value: `v${i}` })
+      expect(r.status).toBe(200)
+    }
+    const before = readFileSync(store, "utf8")
+    clock.now = () => t0 + 15_000
+    const r = await call("DELETE", "/api/vault/A_KEY")
+    expect(r.status).toBe(429)
+    expect(r.headers.get("retry-after")).toBe("45")
+    expect(r.json).toMatchObject({ ok: false, error: "rate_limited", retry_after: 45 })
+    expect(readFileSync(store, "utf8")).toBe(before)
+    expect((await call("GET", "/api/vault")).status).toBe(200)
+    clock.now = () => t0 + 60_000
+    expect((await call("DELETE", "/api/vault/A_KEY")).status).toBe(200)
+  } finally {
+    clock.now = realNow
+  }
+})
+
+test("GET is capped at 60/min", async () => {
+  for (let i = 0; i < 60; i++) expect((await call("GET", "/api/vault")).status).toBe(200)
+  expect((await call("GET", "/api/vault")).status).toBe(429)
+})
+
+test("tls-secrets.py absent → mutations 501 vault_unavailable up front; GET lists with writable:false", async () => {
+  process.env.TLS_SECRETS_TOOL = join(tmpdir(), "definitely-missing-tls-secrets.py")
+  for (const r of [
+    await call("POST", "/api/vault", { name: "C_KEY", value: SECRET }),
+    await call("POST", "/api/secret", { name: "C_KEY", value: SECRET }),
+    await call("PATCH", "/api/vault/A_KEY", { hosts: [] }),
+    await call("DELETE", "/api/vault/A_KEY"),
+  ]) {
+    expect(r.status).toBe(501)
+    expect(r.json).toMatchObject({ ok: false, error: "vault_unavailable" })
+    expect(r.text).not.toContain(SECRET)
+  }
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+  expect(syncCalls).toBe(0)
+  const g = await call("GET", "/api/vault")
+  expect(g.status).toBe(200)
+  expect(g.json.writable).toBe(false)
+  expect((g.json.secrets as unknown[]).length).toBe(2)
+})
+
+test("real Bun.serve: the peer Bun reports for a loopback client passes the gate", async () => {
+  const srv = Bun.serve({
+    port: 0,
+    hostname: "0.0.0.0",
+    async fetch(req, server) {
+      recordPeer(req, server.requestIP(req)?.address)
+      return (await handleVaultRoute(req, new URL(req.url))) ?? new Response("nf", { status: 404 })
+    },
+  })
+  try {
+    const ok = await fetch(`http://127.0.0.1:${srv.port}/api/vault`, { headers: { authorization: `Bearer ${TOKEN}` } })
+    expect(ok.status).toBe(200)
+    const q = await fetch(`http://127.0.0.1:${srv.port}/api/vault?token=${TOKEN}`)
+    expect(q.status).toBe(401)
+  } finally {
+    srv.stop(true)
   }
 })

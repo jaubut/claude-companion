@@ -1,6 +1,7 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import { writeLimiter } from "./vault-guard"
 
 // Companion Vault: list / add / rotate / change hosts / delete the agent
 // secrets in ~/.config/tls-agent/secrets.env — values are WRITE-ONLY.
@@ -11,11 +12,16 @@ import { dirname, join } from "node:path"
 // byte-identical), is atomic + 0600, then runs `tls-secrets.py sync` so the
 // key is masked in the Claude sandbox. If sync fails the store is rolled
 // back: an unmasked key would be exported in clear into every new session.
-// Each successful write appends {ts, action, name, hosts, device} to
-// vault-audit.jsonl — never the value. No value is ever returned, logged or
-// broadcast by this module.
+// Each successful write appends {ts, action, name, hosts, device_claimed,
+// transport, peer} to vault-audit.jsonl — never the value. `device_claimed`
+// is the client's own x-companion-device header (spoofable, informative only);
+// transport + peer come from the server's view of the connection. No value is
+// ever returned, logged or broadcast by this module.
 //
-// The `/key NAME value [host ...]` chat command (session inject, WS input,
+// No sync tool on this host (tls-secrets.py absent) → every mutation is a 501
+// `vault_unavailable` before secrets.env is read or written; listing still works.
+//
+// The `/key NAME value [--hosts a,b]` chat command (session inject, WS input,
 // orchestrator) goes through the same upsert: every chat entry point calls
 // `handleKeyCommand` FIRST so the value never reaches a pane or transcript.
 
@@ -32,6 +38,9 @@ const HEADER = "# Agent secrets. NAME='value'  # hosts [scripts]   — see ~/.cl
 export type SyncFn = () => Promise<{ ok: boolean; detail: string }>
 export type VaultAction = "created" | "updated" | "hosts" | "deleted"
 
+/** Who asked for a write, as recorded in the audit log. */
+export interface AuditOrigin { device_claimed: string; transport: string; peer: string }
+
 export interface VaultEntry { name: string; hosts: string[]; scripts: boolean; updated_at: string | null }
 export interface VaultResult {
   ok: boolean
@@ -41,6 +50,8 @@ export interface VaultResult {
   action?: VaultAction
   error?: string
   message: string
+  /** Seconds, set on 429 rate_limited. */
+  retry_after?: number
 }
 
 // Test seam: tests swap `sync` for a mock instead of spawning python.
@@ -48,6 +59,15 @@ export const vaultDeps: { sync: SyncFn } = { sync: runSync }
 
 export function storePath(): string {
   return process.env.TLS_SECRETS_FILE ?? join(homedir(), ".config", "tls-agent", "secrets.env")
+}
+
+export function syncToolPath(): string {
+  return process.env.TLS_SECRETS_TOOL ?? join(homedir(), ".claude", "tools", "tls-secrets.py")
+}
+
+/** Writes are only possible where the masking sync tool exists. */
+export function vaultWritable(): boolean {
+  return existsSync(syncToolPath())
 }
 
 export function auditPath(): string {
@@ -142,7 +162,7 @@ function readStore(): string | null {
 }
 
 async function runSync(): Promise<{ ok: boolean; detail: string }> {
-  const script = join(homedir(), ".claude", "tools", "tls-secrets.py")
+  const script = syncToolPath()
   if (!existsSync(script)) return { ok: false, detail: "tls-secrets.py introuvable" }
   const proc = Bun.spawn(["python3", script, "sync"], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
   const timer = setTimeout(() => proc.kill(), 30_000)
@@ -152,10 +172,15 @@ async function runSync(): Promise<{ ok: boolean; detail: string }> {
   return { ok: code === 0, detail: out.slice(-200) }
 }
 
-function audit(action: VaultAction, name: string, hosts: string[], device: string): void {
+function toOrigin(o: string | Partial<AuditOrigin>): AuditOrigin {
+  const raw = typeof o === "string" ? { device_claimed: o } : o
+  return { device_claimed: raw.device_claimed ?? "unknown", transport: raw.transport ?? "unknown", peer: raw.peer ?? "unknown" }
+}
+
+function audit(action: VaultAction, name: string, hosts: string[], origin: AuditOrigin): void {
   const path = auditPath()
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  appendFileSync(path, JSON.stringify({ ts: new Date().toISOString(), action, name, hosts, device }) + "\n", { mode: 0o600 })
+  appendFileSync(path, JSON.stringify({ ts: new Date().toISOString(), action, name, hosts, ...origin }) + "\n", { mode: 0o600 })
 }
 
 function lastAuditTimes(): Map<string, string> {
@@ -180,7 +205,7 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // Write, sync, roll back on sync failure, audit on success.
-async function commit(before: string | null, after: string, action: VaultAction, name: string, hosts: string[], device: string, secret?: string): Promise<VaultResult> {
+async function commit(before: string | null, after: string, action: VaultAction, name: string, hosts: string[], origin: AuditOrigin, secret?: string): Promise<VaultResult> {
   const path = storePath()
   atomicWrite(path, after)
   const synced = await vaultDeps.sync().catch((e: unknown) => ({ ok: false, detail: String(e) }))
@@ -192,7 +217,7 @@ async function commit(before: string | null, after: string, action: VaultAction,
     const detail = secret ? synced.detail.split(secret).join("•••") : synced.detail
     return { ok: false, status: 500, name, error: "sync_failed", message: `${name} NON enregistré — masquage échoué (${detail}). Rien n'a changé.` }
   }
-  audit(action, name, hosts, device)
+  audit(action, name, hosts, origin)
   return { ok: true, status: 200, name, hosts, action, message: messageFor(action, name, hosts) }
 }
 
@@ -206,6 +231,8 @@ function bad(error: string, message: string, status = 400): VaultResult {
   return { ok: false, status, error, message }
 }
 
+const UNAVAILABLE = (): VaultResult => bad("vault_unavailable", "Coffre en lecture seule sur cet hôte (tls-secrets.py absent) — rien n'a changé.", 501)
+
 // ── Vault operations ──
 
 export function listSecrets(): VaultEntry[] {
@@ -214,7 +241,8 @@ export function listSecrets(): VaultEntry[] {
 }
 
 /** Create or replace a value (rotate). */
-export function upsertSecret(input: { name?: unknown; value?: unknown; hosts?: unknown }, device = "unknown"): Promise<VaultResult> {
+export function upsertSecret(input: { name?: unknown; value?: unknown; hosts?: unknown }, origin: string | Partial<AuditOrigin> = "unknown"): Promise<VaultResult> {
+  if (!vaultWritable()) return Promise.resolve(UNAVAILABLE())
   const hosts = input.hosts ?? []
   if (!validName(input.name)) return Promise.resolve(bad("bad_name", "NOM en MAJUSCULES_ET_CHIFFRES (2–64)"))
   if (!validValue(input.value)) return Promise.resolve(bad("bad_value", `valeur de ${input.name} refusée (vide, guillemet ou retour de ligne)`))
@@ -224,29 +252,31 @@ export function upsertSecret(input: { name?: unknown; value?: unknown; hosts?: u
     const before = readStore()
     const existed = listNames(before ?? "").some((e) => e.name === name)
     const after = editLine(before ?? "", name, { value, hosts })!
-    return commit(before, after, existed ? "updated" : "created", name, hosts, device, value)
+    return commit(before, after, existed ? "updated" : "created", name, hosts, toOrigin(origin), value)
   })
 }
 
 /** Change where the value may be injected; value untouched. */
-export function setSecretHosts(name: string, hosts: unknown, device = "unknown"): Promise<VaultResult> {
+export function setSecretHosts(name: string, hosts: unknown, origin: string | Partial<AuditOrigin> = "unknown"): Promise<VaultResult> {
+  if (!vaultWritable()) return Promise.resolve(UNAVAILABLE())
   if (!validName(name)) return Promise.resolve(bad("bad_name", "NOM en MAJUSCULES_ET_CHIFFRES (2–64)"))
   if (!validHosts(hosts)) return Promise.resolve(bad("bad_hosts", `hôtes invalides (max ${MAX_HOSTS}, ex. api.example.com ou *.example.com)`))
   return serialized(async () => {
     const before = readStore()
     const after = editLine(before ?? "", name, { hosts })
     if (after === null) return bad("not_found", `${name} introuvable`, 404)
-    return commit(before, after, "hosts", name, hosts, device)
+    return commit(before, after, "hosts", name, hosts, toOrigin(origin))
   })
 }
 
-export function deleteSecret(name: string, device = "unknown"): Promise<VaultResult> {
+export function deleteSecret(name: string, origin: string | Partial<AuditOrigin> = "unknown"): Promise<VaultResult> {
+  if (!vaultWritable()) return Promise.resolve(UNAVAILABLE())
   if (!validName(name)) return Promise.resolve(bad("bad_name", "NOM en MAJUSCULES_ET_CHIFFRES (2–64)"))
   return serialized(async () => {
     const before = readStore()
     const after = editLine(before ?? "", name, { remove: true })
     if (after === null) return bad("not_found", `${name} introuvable`, 404)
-    return commit(before, after, "deleted", name, [], device)
+    return commit(before, after, "deleted", name, [], toOrigin(origin))
   })
 }
 
@@ -258,10 +288,29 @@ export function isKeyCommand(text: string): boolean {
   return CMD_RE.test(text.trim())
 }
 
-/** `/key NAME value [host ...]` → vault upsert. null = not a /key message. */
-export async function handleKeyCommand(text: string, device = "chat"): Promise<VaultResult | null> {
+const KEY_USAGE = "usage: /key NOM valeur [--hosts a.io,b.io] — valeur en UN seul mot (espace → écran Vault)"
+
+/**
+ * Grammar: `/key NAME VALUE` or `/key NAME VALUE --hosts h1,h2`. Anything else
+ * (a value with a space, a bare trailing host) is rejected — never guessed —
+ * so half a value can't be silently stored and the rest treated as hosts.
+ * Errors never echo the value.
+ */
+export function parseKeyCommand(text: string): { name: string; value: string; hosts: string[] } | { error: string } {
+  const [, name = "", value = "", ...rest] = text.trim().split(/\s+/)
+  if (!validName(name)) return { error: `${KEY_USAGE} — NOM en MAJUSCULES_ET_CHIFFRES` }
+  if (!value || value === "--hosts") return { error: `${KEY_USAGE} — valeur manquante` }
+  if (rest.length === 0) return { name, value, hosts: [] }
+  if (rest.length === 2 && rest[0] === "--hosts") return { name, value, hosts: rest[1]!.split(",").filter(Boolean) }
+  return { error: `${KEY_USAGE} — texte en trop après la valeur: rien enregistré` }
+}
+
+/** `/key NAME value [--hosts a,b]` → vault upsert. null = not a /key message. */
+export async function handleKeyCommand(text: string, origin: Partial<AuditOrigin> = {}): Promise<VaultResult | null> {
   if (!isKeyCommand(text)) return null
-  const [, name = "", value = "", ...hosts] = text.trim().split(/\s+/)
-  if (!validName(name)) return bad("bad_key_command", "usage: /key NOM valeur [hôte ...] — NOM en MAJUSCULES_ET_CHIFFRES")
-  return upsertSecret({ name, value, hosts }, device)
+  const wait = writeLimiter.take()
+  if (wait !== null) return { ...bad("rate_limited", `Trop d'écritures au coffre — réessaie dans ${wait}s.`, 429), retry_after: wait }
+  const parsed = parseKeyCommand(text)
+  if ("error" in parsed) return bad("bad_key_command", parsed.error)
+  return upsertSecret(parsed, { device_claimed: "chat", transport: "chat", ...origin })
 }

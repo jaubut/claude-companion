@@ -11,6 +11,7 @@ import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
 import { handleVaultRoute } from "./routes/vault"
+import { recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 
@@ -24,6 +25,10 @@ export function createCompanionServer(port: number) {
     hostname: "0.0.0.0",
     async fetch(req, server) {
       const url = new URL(req.url)
+      // TCP peer for the vault's network gate (routes only get req + url).
+      if (url.pathname.startsWith("/api/vault") || url.pathname === "/api/secret") {
+        recordPeer(req, server.requestIP(req)?.address)
+      }
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
