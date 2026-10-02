@@ -23,7 +23,9 @@ import {
   setChannelAuto,
   setTaskStatus,
 } from "../lib/orchestrator-chat"
-import { handleKeyCommand } from "../lib/secret-store"
+import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
+import { keyCommandGate } from "../lib/vault-guard"
+import { companionLog } from "../lib/log"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
 // approve/reject, task cancel, auto-dispatch toggle. Same paths, methods and
@@ -89,7 +91,19 @@ export async function handleOrchestratorRoute(req: Request, url: URL): Promise<R
     if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
     // `/key NAME value` goes to secrets.env: the thread (and the brain) only
     // ever see the orchestrator's name-only confirmation.
-    const keyed = await handleKeyCommand(text)
+    // Same gate as /api/inject: only from where the vault itself would accept
+    // it, and a refused /key never reaches the thread (the value would land
+    // in it and in the brain's prompt).
+    let keyed: Awaited<ReturnType<typeof handleKeyCommand>> = null
+    if (isKeyCommand(text)) {
+      const gate = keyCommandGate(req)
+      if (!gate.allowed) {
+        const { status, ...refusal } = gate.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
+        companionLog(`/key refused (orchestrator) — ${refusal.error} peer=${gate.origin.peer}`)
+        return Response.json({ ok: false, ...refusal }, { status })
+      }
+      keyed = await handleKeyCommand(text, gate.origin)
+    }
     if (keyed) {
       const turn = orchAppendTurn("orchestrator", keyed.message, null, ch.id)
       orchEmit(turn)

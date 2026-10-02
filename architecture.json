@@ -2212,7 +2212,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 182,
+          "lines": 196,
           "kind": "route-host",
           "exports": [
             "handleOrchestratorRoute"
@@ -2266,7 +2266,9 @@
           "imports": [
             "wiring/orchestrator.ts",
             "lib/orchestrator-chat.ts",
-            "lib/secret-store.ts"
+            "lib/secret-store.ts",
+            "lib/vault-guard.ts",
+            "lib/log.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2581,7 +2583,8 @@
           "module": "lib/vault-guard.ts",
           "callers": [
             "companion-server.ts#* /ws",
-            "routes/api.ts#* /api/feed"
+            "routes/api.ts#* /api/feed",
+            "routes/orchestrator.ts#POST /api/orchestrator/send"
           ]
         },
         "originLabel": {
@@ -2946,6 +2949,7 @@
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/model.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/vault.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
@@ -3965,6 +3969,7 @@
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
             "ws.ts"
           ]
         },

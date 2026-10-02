@@ -366,3 +366,33 @@ test("real Bun.serve: the peer Bun reports for a loopback client passes the gate
     srv.stop(true)
   }
 })
+
+test("/api/orchestrator/send `/key`: same gate as inject; a refused /key never reaches the thread", async () => {
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-orch-")), "companion.db")
+  const { handleOrchestratorRoute } = await import("./orchestrator")
+  const { getThread } = await import("../lib/orchestrator-chat")
+  const send = async (peer: string | null, query = false) => {
+    const url = new URL(`http://localhost:4245/api/orchestrator/send${query ? `?token=${TOKEN}` : ""}`)
+    const req = new Request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(query ? {} : { authorization: `Bearer ${TOKEN}` }) },
+      body: JSON.stringify({ text: `/key C_KEY ${SECRET} --hosts c.io` }),
+    })
+    if (peer) recordPeer(req, peer)
+    const res = (await handleOrchestratorRoute(req, url))!
+    const text = await res.text()
+    return { status: res.status, text, json: JSON.parse(text) }
+  }
+  for (const [peer, query, status, error] of [
+    ["192.168.1.20", false, 403, "forbidden_network"],
+    [null, false, 403, "forbidden_network"],
+    ["127.0.0.1", true, 401, "header_auth_required"],
+  ] as const) {
+    const r = await send(peer, query)
+    expect([peer, r.status, r.json.error]).toEqual([peer, status, error])
+    expect(r.text).not.toContain(SECRET)
+  }
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+  expect(JSON.stringify(getThread())).not.toContain(SECRET)
+  expect(stderr).not.toContain(SECRET)
+})
