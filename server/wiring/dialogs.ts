@@ -6,6 +6,7 @@ import { isPaneClean } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
+import { hasPendingApprovalFor } from "../lib/pty-manager"
 import { capturePane, paneKey } from "../lib/tmux-pane"
 import { markWaiting, unmarkWaiting } from "./waiting"
 
@@ -30,6 +31,7 @@ export const dialogWatcher = createDialogWatcher({
   capture: (pane: string, socket?: string) => capturePane(pane, undefined, { socket: socket ?? socketForPane(pane) }),
   sessionStatus: readSessionStatus,
   hasPendingQuestion: (s) => getPendingQuestions().some((q) => (q.sessionId && q.sessionId === s.sessionId) || q.cwd === s.cwd),
+  hasPendingApproval: (s) => hasPendingApprovalFor(s.key, s.sessionId),
   isScraping,
   onDialog(key, dialog) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"

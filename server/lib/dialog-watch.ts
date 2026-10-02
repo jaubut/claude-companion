@@ -20,6 +20,10 @@ export interface DialogWatchDeps {
   capture(pane: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
+  // An approval the hooks already routed to the phone: its terminal
+  // permission dialog is the hooks' business too (approval card), so it is
+  // never mirrored as a second, generic dialog card.
+  hasPendingApproval?(s: Session): boolean
   // True while the companion itself is driving that session's pane through
   // /help (lib/command-scrape.ts). The overlay on screen is ours.
   isScraping(key: string): boolean
@@ -83,7 +87,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       }
       if (st.status !== "waiting") { close(s.key); return }
     }
-    if (deps.hasPendingQuestion(s)) { close(s.key); return }
+    if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { close(s.key); return }
     const pane = await deps.capture(s.tmuxPane)
     if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)

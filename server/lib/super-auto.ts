@@ -20,6 +20,12 @@ export function isSuperAuto(): boolean {
   return cached
 }
 
+// Test seam: flip the in-memory mode WITHOUT touching the host's flag file
+// (setSuperAuto would delete/create the real ~/.claude-companion flag).
+export function setSuperAutoInMemoryForTests(enabled: boolean): void {
+  cached = enabled
+}
+
 export function setSuperAuto(enabled: boolean): boolean {
   cached = enabled
   try {

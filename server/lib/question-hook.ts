@@ -16,6 +16,13 @@
 // answer falls through to the terminal picker (never deny), and a question
 // answered at the terminal clears the phone card (cancelQuestionsFor, called
 // from routes/hooks.ts).
+//
+// Two windows, one card (2026-10-01): when the PreToolUse window lapses the
+// question is PARKED, not ended — the phone card stays up and answerable —
+// and the PermissionRequest sibling (fired ~0.3 s later, while the picker is
+// on screen) re-asks it under the SAME id for a full window. An answer that
+// landed in between is claimed by the sibling. Only when that second window
+// lapses too does the phone lose the question (passthrough, never deny).
 
 import type { SpawnAgent } from "./spawn-session"
 import { companionLog } from "./log"
@@ -23,10 +30,12 @@ import {
   type QuestionAnswer,
   type QuestionItem,
   EXPIRY_MS,
+  PARK_MS,
   addQuestionRequest,
   answeredToolInput,
   answeredWith,
-  didQuestionFallThrough,
+  claimParkedQuestion,
+  fellThrough,
   isQuestionTool,
   markQuestionAnswered,
   markQuestionFellThrough,
@@ -154,6 +163,7 @@ export interface QuestionHookInput {
 // Test seams: the phone round-trip and the terminal probe.
 export interface QuestionHookDeps {
   ask?: typeof addQuestionRequest
+  claim?: typeof claimParkedQuestion
   localAttached?: (target: InjectTarget) => Promise<boolean>
   afterAnswer?: (target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[], agent: SpawnAgent) => void
 }
@@ -183,31 +193,63 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
     companionLog(`${dim}question already answered — allow (${p.eventName})${reset}`)
     return answeredResponse(p.agent, p.eventName, p.input, questions, prior)
   }
-  if (didQuestionFallThrough(dedupeKey)) {
+  const afterAnswer = deps.afterAnswer ?? defaultAfterAnswer
+  const fell = fellThrough(dedupeKey)
+  // A lapse is final for a PreToolUse sibling (it would block the picker
+  // again) and for anything after the PermissionRequest window.
+  if (fell && (p.eventName === "PreToolUse" || fell.phase === "PermissionRequest")) {
     companionLog(`${dim}question already went unanswered on the phone — terminal picker (${p.eventName})${reset}`)
     return hookPassthroughResponse(p.agent)
+  }
+  // PreToolUse lapsed, picker now on screen: give the phone a second window.
+  const reask = fell?.phase === "PreToolUse" && p.eventName === "PermissionRequest"
+  const id = reask && fell.id ? fell.id : crypto.randomUUID()
+  if (reask) {
+    const held = (deps.claim ?? claimParkedQuestion)(id)
+    if (held && held.length > 0) {
+      companionLog(`${green}answered${reset} ← phone between windows (${held.length} answer${held.length === 1 ? "" : "s"}, ${p.eventName})`)
+      markQuestionAnswered(dedupeKey, Date.now(), held)
+      afterAnswer(target, questions, held, p.agent)
+      return answeredResponse(p.agent, p.eventName, p.input, questions, held)
+    }
   }
 
   const attached = p.eventName === "PreToolUse" && (await (deps.localAttached ?? localTerminalAttached)(target))
   const windowMs = questionWindowMs(p.eventName, attached)
-  companionLog(`${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""} (${p.eventName}, ${Math.round(windowMs / 1000)}s)${reset}`)
-  recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
+  companionLog(`${yellow}→ phone${reset} ${cyan}question${reset} ${dim}${questions[0]?.question.slice(0, 80) ?? ""} (${p.eventName}${reask ? ", re-ask" : ""}, ${Math.round(windowMs / 1000)}s)${reset}`)
+  if (!reask) recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
+  // Claude PreToolUse: park on lapse so the card stays answerable until the
+  // PermissionRequest sibling claims it. Codex has no such sibling.
+  const park = p.eventName === "PreToolUse" && p.agent !== "codex"
   const answers = await (deps.ask ?? addQuestionRequest)(
     { agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions, sessionKey: p.session?.key ?? "" },
-    { expiryMs: windowMs },
+    {
+      expiryMs: windowMs,
+      id,
+      ...(park ? {
+        parkMs: PARK_MS,
+        // Answered while parked but no sibling ever came: the picker is up,
+        // so answer it there (only if it visibly shows these questions).
+        onUnclaimedAnswer: (late: QuestionAnswer[]) => {
+          companionLog(`${yellow}phone answer between windows unclaimed${reset} — answering the terminal picker`)
+          markQuestionAnswered(dedupeKey, Date.now(), late)
+          afterAnswer(target, questions, late, p.agent)
+        },
+      } : {}),
+    },
   )
 
   if (answers.length === 0) {
     // No phone answer (window ran out, or it was answered / dropped at the
     // terminal). Never deny: that made Claude carry on without an answer.
     // No decision lets Claude Code show — or keep showing — its own picker.
-    markQuestionFellThrough(dedupeKey)
-    companionLog(`${yellow}question unanswered on phone${reset} — terminal picker takes it (${p.eventName})`)
+    markQuestionFellThrough(dedupeKey, Date.now(), p.eventName, id)
+    companionLog(`${yellow}question unanswered on phone${reset} — terminal picker takes it (${p.eventName}${park ? ", card stays up for the sibling" : ""})`)
     return hookPassthroughResponse(p.agent)
   }
 
   companionLog(`${green}answered${reset} ← phone (${answers.length} answer${answers.length === 1 ? "" : "s"})`)
   markQuestionAnswered(dedupeKey, Date.now(), answers)
-  ;(deps.afterAnswer ?? defaultAfterAnswer)(target, questions, answers, p.agent)
+  afterAnswer(target, questions, answers, p.agent)
   return answeredResponse(p.agent, p.eventName, p.input, questions, answers)
 }

@@ -44,6 +44,7 @@ interface H {
   pane: string | null
   status: SessionStatus | null
   pendingQuestion: boolean
+  pendingApproval: boolean
   scraping: boolean
   captures: number
   opened: [string, Dialog][]
@@ -57,7 +58,7 @@ interface H {
 function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
   const h: H = {
     sessions: [session()], pane: IDLE_PANE, status: { status: "idle", waitingFor: "" },
-    pendingQuestion: false, scraping: false, captures: 0, opened: [], closed: [], statuses: [],
+    pendingQuestion: false, pendingApproval: false, scraping: false, captures: 0, opened: [], closed: [], statuses: [],
     duringStatus: null, duringCapture: null,
   }
   const w = createDialogWatcher({
@@ -65,6 +66,7 @@ function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
     capture: async () => { h.captures++; if (h.duringCapture) await h.duringCapture(); return h.pane },
     sessionStatus: async () => { if (h.duringStatus) await h.duringStatus(); return h.status },
     hasPendingQuestion: () => h.pendingQuestion,
+    hasPendingApproval: () => h.pendingApproval,
     isScraping: () => h.scraping,
     onDialog: (k, d) => h.opened.push([k, d]),
     onDialogClosed: (k) => h.closed.push(k),
@@ -124,6 +126,18 @@ test("a question the hooks already routed is not mirrored", async () => {
   h.pendingQuestion = true
   await w.tick()
   expect(h.opened).toEqual([])
+})
+
+test("an approval the hooks already routed is not mirrored as a second (dialog) card; closes an open one", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = MODEL_PANE
+  await w.tick()
+  expect(h.opened.length).toBe(1)
+  h.pendingApproval = true
+  await w.tick()
+  expect(h.closed).toEqual([h.sessions[0]!.key])
+  expect(h.opened.length).toBe(1)
 })
 
 // The bug this fixes: the companion's /help scrape drives the session's own

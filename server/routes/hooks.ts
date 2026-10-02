@@ -1,5 +1,5 @@
 import { companionLog } from "../lib/log"
-import { addApprovalRequest } from "../lib/pty-manager"
+import { type ApprovalMatch, addApprovalRequest, cancelApprovalsFor } from "../lib/pty-manager"
 import { cancelQuestionsFor, isQuestionTool, type QuestionEndDecision } from "../lib/questions"
 import { questionFastPath } from "../lib/question-hook"
 import { judgeWithBranchContextAndReason } from "../lib/branch-guard"
@@ -10,9 +10,8 @@ import { recordAllow } from "../lib/learned-allow"
 import {
   type Session,
   recordSession,
-  removeSessionByCwd,
-  removeSessionByTmuxPane,
-  removeSessionByTty,
+  listSessions,
+  removeSessionByKey,
   setSessionTitle,
 } from "../lib/sessions"
 import { announceKeylessWaiting, markWaiting, unmarkWaiting } from "../wiring/waiting"
@@ -33,6 +32,7 @@ import {
   agentTitle,
   cwdFromPayload,
   hookDecisionResponse,
+  hookPassthroughResponse,
   metaFromHeaders,
   projectLabelFor,
   scrapeHookPassthrough,
@@ -106,6 +106,17 @@ function closeQuestionsFor(sessionId: string | undefined, sessionKey: string | u
   }
 }
 
+// The approval twin of closeQuestionsFor: an approval whose hook went away, or
+// whose call already ran / whose turn or session ended, is ended "elsewhere" —
+// no allow, nothing learned, and the phone card clears now.
+function closeApprovalsFor(who: ApprovalMatch, why: string): void {
+  const n = cancelApprovalsFor(who, "elsewhere")
+  if (n > 0) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
+    companionLog(`${cyan}approval closed${reset} ${dim}— elsewhere: ${why} (${n})${reset}`)
+  }
+}
+
 export async function handleHookRoute(req: Request, url: URL): Promise<Response | null> {
   // The companion's own hidden /help enumeration claude: drop everything.
   if (url.pathname.startsWith("/hooks/")) {
@@ -118,6 +129,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
+      tool_use_id?: string
       cwd?: string
     }
 
@@ -184,7 +196,18 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       verdict = "pending"
       companionLog(`${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}`)
       recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
-      decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "", reason: judgeReason })
+      const outcome = await addApprovalRequest(
+        { agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "", reason: judgeReason, toolUseId: body.tool_use_id },
+        { signal: req.signal },
+      )
+      // No phone decision (window lapsed, or the hook / call went away): NO
+      // decision back, so Claude Code falls back to its own terminal prompt.
+      // Never an allow, never learned.
+      if (outcome === "expired" || outcome === "elsewhere") {
+        companionLog(`${yellow}${outcome}${reset} ${dim}— no phone decision, terminal prompt takes it${reset}`)
+        return hookPassthroughResponse(agent)
+      }
+      decision = outcome
       const decisionColor = decision === "allow" ? green : red
       companionLog(`${decisionColor}${decision}${reset} ← phone`)
       // Phone said yes — remember this shape so future identical prompts
@@ -210,6 +233,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
+      tool_use_id?: string
       tool_response?: unknown
       transcript_path?: string
       cwd?: string
@@ -226,6 +250,10 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (isQuestionTool(tool)) {
       closeQuestionsFor(body.session_id, session?.key, "answered", "answered at the terminal")
     }
+    // The call ran, so any approval still pending for THIS call was answered
+    // at the terminal (PermissionRequest dialog). A parallel call of the same
+    // tool with other input keeps its card.
+    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key, tool, input, toolUseId: body.tool_use_id }, "the call ran (answered at the terminal)")
     recordToolEnd({
       tool,
       input,
@@ -267,6 +295,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty })
     // A new prompt means the picker is gone (e.g. "Chat about this").
     closeQuestionsFor(body.session_id, session?.key, "expired", "new prompt in that session")
+    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key }, "new prompt in that session")
     // First real prompt names the chat (persisted by session id so a
     // restart or rediscovery brings the same name back).
     if (session && !session.title) {
@@ -305,6 +334,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
+      tool_use_id?: string
       hook_event_name?: string
       cwd?: string
     }
@@ -340,7 +370,17 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     companionLog(`${yellow}→ phone${reset} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
 
     recordToolStart({ tool, input, summary: summarize(tool, input), verdict: "pending", cwd, sessionId, tty, sessionKey: session?.key ?? "" })
-    const decision = await addApprovalRequest({ agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "" })
+    const outcome = await addApprovalRequest(
+      { agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "", toolUseId: body.tool_use_id },
+      { signal: req.signal },
+    )
+    // Same fail-closed rule as PreToolUse: no phone decision → no decision
+    // back (the terminal dialog is already on screen and stays the way in).
+    if (outcome === "expired" || outcome === "elsewhere") {
+      companionLog(`${yellow}${outcome}${reset} ${dim}← permission — terminal dialog takes it${reset}`)
+      return hookPassthroughResponse(agent)
+    }
+    const decision = outcome
 
     const green = "\x1b[32m"
     const red = "\x1b[31m"
@@ -379,8 +419,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       session = recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
     }
 
-    // The turn ended: no question of it can still be open.
+    // The turn ended: no question or approval of it can still be open.
     closeQuestionsFor(body.session_id, session?.key, "expired", "turn ended")
+    closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key }, "turn ended")
 
     const lastMessage = (body.last_assistant_message ?? "").trim()
       || await extractLastAssistantMessage(body.transcript_path)
@@ -470,36 +511,39 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   }
 
   // ── Hook endpoint — SessionEnd — remove from registry immediately ──
-  // Prefer tty, then tmux pane, so we don't nuke a sibling session that happens
-  // to share the same cwd — the common shape for orchestrator workers, which
-  // often have a pane but no usable tty. Cwd-wholesale removal is the
-  // last-resort fallback for hooks that could resolve neither.
+  // Removes ONLY the session that ended: by its session id, else by the agent
+  // pid. Never by cwd, tty or tmux pane — those are shared: every Zettlab
+  // session lives in ~/work, and a headless `claude -p` run from inside a live
+  // session's pane carries that pane's tty/TMUX_PANE, so ending it wiped the
+  // live session (or the whole cwd) off the phone.
   if (url.pathname === "/hooks/session-end" && req.method === "POST") {
     const body = await req.json() as { cwd?: string; session_id?: string; reason?: string }
     const cwd = cwdFromPayload(body.cwd, req.headers)
     const headerMeta = metaFromHeaders(req.headers)
     const tty = headerMeta.tty ?? ""
     const tmuxPane = headerMeta.tmuxPane ?? ""
-    let removed = false
-    if (tty) {
-      removed = removeSessionByTty(tty)
+    const sid = body.session_id ?? ""
+    const pid = headerMeta.pid ?? ""
+    let victims = sid ? listSessions().filter((s) => s.sessionId === sid) : []
+    let by = "session_id"
+    if (victims.length === 0 && pid) {
+      victims = listSessions().filter((s) => s.pid === pid)
+      by = "pid"
     }
-    if (!removed && tmuxPane) {
-      removed = removeSessionByTmuxPane(tmuxPane)
-    }
-    if (!removed && cwd) {
-      removed = removeSessionByCwd(cwd)
+    const removedKeys = victims.map((s) => s.key).filter((k) => removeSessionByKey(k))
+    const removed = removedKeys.length > 0
+    {
+      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
+      companionLog(removed
+        ? `${magenta}session end${reset} removed ${removedKeys.join(", ")} ${dim}(by ${by}, reason=${body.reason ?? "-"})${reset}`
+        : `${magenta}session end${reset} ${dim}no session matched sid=${sid.slice(0, 8) || "?"} pid=${pid || "?"} — nothing removed (reason=${body.reason ?? "-"})${reset}`)
     }
     closeQuestionsFor(body.session_id, undefined, "expired", "session ended")
+    closeApprovalsFor({ sessionId: body.session_id }, "session ended")
     forgetSession({ tty, sessionId: body.session_id, cwd })
     // `/exit` (and `/clear`, which ends the old session first) fire no
     // UserPromptSubmit; the session ending is their proof of submission.
     noteSessionBoundary({ sessionId: body.session_id, tty, pane: tmuxPane })
-    if (removed) {
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
-      const label = tty || tmuxPane || (cwd ? cwd.split("/").pop() : "?")
-      companionLog(`${magenta}session end${reset} ${label} ${dim}(${body.reason ?? "-"})${reset}`)
-    }
     return Response.json({ ok: true })
   }
   return null

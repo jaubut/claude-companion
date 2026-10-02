@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "./lib/auth"
-import { type WsData } from "./state"
+import { type WsData, clientInfo, rememberRemote } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { handleApiRoute } from "./routes/api"
@@ -35,6 +35,7 @@ export function createCompanionServer(port: number) {
       if (url.pathname.startsWith("/api/vault") || url.pathname === "/api/secret") {
         recordPeer(req, server.requestIP(req)?.address)
       }
+      rememberRemote(req, server.requestIP(req)?.address)
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
@@ -62,7 +63,7 @@ export function createCompanionServer(port: number) {
         // Immediate except in the first seconds after boot (lib/discover.ts).
         await waitForFirstDiscovery(WS_FIRST_DISCOVERY_WAIT_MS)
         const upgraded = server.upgrade(req, {
-          data: { id: crypto.randomUUID() },
+          data: { id: crypto.randomUUID(), client: clientInfo(req) },
         })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })

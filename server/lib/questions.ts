@@ -60,14 +60,39 @@ const resolvedHandlers = new Set<EventHandler>()
 // route may pick a shorter window (lib/question-hook.ts questionWindowMs).
 export const EXPIRY_MS = 290_000
 
-// `opts.expiryMs` is a test seam for the expiry exit — same reasoning as
-// pty-manager's: a param, not an env var.
+// How long a question whose PreToolUse window lapsed stays answerable on the
+// phone while Claude Code puts up its picker and fires the PermissionRequest
+// sibling (~0.3 s later in practice). If no sibling claims it in this time it
+// ends "expired" as before.
+export const PARK_MS = 15_000
+
+// Phone answers that arrived while a question was parked (between the
+// PreToolUse and PermissionRequest windows), waiting for the sibling to claim
+// them. Keyed by question id.
+const parkedAnswers = new Map<string, { answers: QuestionAnswer[]; sessionId: string; sessionKey: string }>()
+const parkTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+export interface QuestionAskOptions {
+  // Test seam for the expiry exit — a param, not an env var (pty-manager).
+  expiryMs?: number
+  // Reuse this id (the PermissionRequest re-ask keeps the PreToolUse id, so
+  // the phone upserts the same card).
+  id?: string
+  // When the window lapses, resolve [] for the caller but keep the question
+  // pending (still answerable on the phone) for this long — see PARK_MS.
+  parkMs?: number
+  // A phone answer that landed while parked and nobody claimed it.
+  onUnclaimedAnswer?: (answers: QuestionAnswer[]) => void
+}
+
 export function addQuestionRequest(
   req: Omit<QuestionRequest, "id" | "timestamp" | "resolve">,
-  opts: { expiryMs?: number } = {},
+  opts: QuestionAskOptions = {},
 ): Promise<QuestionAnswer[]> {
   return new Promise((resolve) => {
-    const id = crypto.randomUUID()
+    const id = opts.id ?? crypto.randomUUID()
+    // A reused id still pending from an earlier ask ends quietly first.
+    discardParked(id)
     const request: QuestionRequest = {
       ...req,
       id,
@@ -81,11 +106,59 @@ export function addQuestionRequest(
     }
 
     // On expiry we resolve with empty answers — the caller decides how to
-    // surface that to Claude (typically: deny the tool with reason "user did
-    // not answer in time"). We don't pretend they answered.
-    const timer = setTimeout(() => endUnanswered(id, "expired"), opts.expiryMs ?? EXPIRY_MS)
+    // surface that (the hook route: no decision, so the terminal picker takes
+    // it). We don't pretend they answered.
+    const onLapse = opts.parkMs ? () => park(id, opts.parkMs!, opts.onUnclaimedAnswer) : () => endUnanswered(id, "expired")
+    const timer = setTimeout(onLapse, opts.expiryMs ?? EXPIRY_MS)
     expiryTimers.set(id, timer)
   })
+}
+
+// The window lapsed but a sibling hook is expected to pick the question up:
+// the caller gets [] now, the question stays pending (phone card up, replayed
+// on reconnect, answerable), and a phone answer is held for the sibling.
+function park(id: string, parkMs: number, onUnclaimed?: (answers: QuestionAnswer[]) => void): void {
+  const r = pending.get(id)
+  if (!r) return
+  expiryTimers.delete(id)
+  const hand = r.resolve
+  r.resolve = (answers) => {
+    if (answers.length) parkedAnswers.set(id, { answers, sessionId: r.sessionId, sessionKey: r.sessionKey })
+  }
+  hand([])
+  const t = setTimeout(() => {
+    parkTimers.delete(id)
+    const held = parkedAnswers.get(id)
+    parkedAnswers.delete(id)
+    if (held) { try { onUnclaimed?.(held.answers) } catch { /* ignore */ } }
+    endUnanswered(id, "expired")
+  }, parkMs)
+  ;(t as unknown as { unref?: () => void }).unref?.()
+  parkTimers.set(id, t)
+}
+
+function discardParked(id: string): void {
+  const t = parkTimers.get(id)
+  if (t) clearTimeout(t)
+  parkTimers.delete(id)
+  parkedAnswers.delete(id)
+}
+
+// The sibling hook claims a parked question. Returns the phone's answer when
+// it already came in between windows, `null` when the question is still
+// waiting (still pending, parked — the caller re-asks it with the same id),
+// or `undefined` when it is gone (expired / ended).
+export function claimParkedQuestion(id: string): QuestionAnswer[] | null | undefined {
+  const held = parkedAnswers.get(id)
+  if (held) {
+    discardParked(id)
+    return held.answers
+  }
+  if (!parkTimers.has(id)) return undefined
+  discardParked(id)
+  // Leave it in `pending`: addQuestionRequest with the same id replaces the
+  // record, re-broadcasts the `question` frame and re-pushes.
+  return null
 }
 
 // The no-answer exit from `pending` (the other is resolveQuestion); both fire
@@ -94,6 +167,7 @@ function endUnanswered(id: string, decision: QuestionEndDecision): boolean {
   const r = pending.get(id)
   if (!r) return false
   pending.delete(id)
+  discardParked(id)
   const timer = expiryTimers.get(id)
   if (timer) clearTimeout(timer)
   expiryTimers.delete(id)
@@ -119,12 +193,19 @@ export function cancelQuestionsFor(who: { sessionId?: string; sessionKey?: strin
     const byKey = !!who.sessionKey && r.sessionKey === who.sessionKey
     if ((bySession || byKey) && endUnanswered(r.id, decision)) n++
   }
+  // A phone answer held for a sibling that will now never come (the picker
+  // was answered at the terminal / the turn moved on): drop it, never type it.
+  for (const [id, h] of [...parkedAnswers]) {
+    if ((who.sessionId && h.sessionId === who.sessionId) || (who.sessionKey && h.sessionKey === who.sessionKey)) discardParked(id)
+  }
   return n
 }
 
 export function resolveQuestion(id: string, answers: QuestionAnswer[]): boolean {
   const req = pending.get(id)
   if (!req) return false
+  // A parked question keeps its park timer: the held answer waits there for
+  // the sibling hook (claimParkedQuestion) or the unclaimed fallback.
   const timer = expiryTimers.get(id)
   if (timer) {
     clearTimeout(timer)
@@ -231,9 +312,10 @@ export function parseQuestionInput(input: unknown): QuestionItem[] | null {
 
 const RECENT_ANSWER_TTL_MS = 180_000
 const recentlyAnswered = new Map<string, { at: number; answers: QuestionAnswer[] }>()
-// Questions whose phone window ended with no answer: the sibling hook for the
-// same call lets Claude Code's own picker run instead of asking again.
-const recentlyFellThrough = new Map<string, number>()
+// Questions whose phone window ended with no answer, with the hook phase that
+// lapsed and the question id. A PreToolUse lapse is re-asked by the
+// PermissionRequest sibling (same id); a PermissionRequest lapse is final.
+const recentlyFellThrough = new Map<string, { at: number; phase: "PreToolUse" | "PermissionRequest"; id: string }>()
 
 export function questionDedupeKey(sessionId: string, cwd: string, questions: QuestionItem[]): string {
   const who = sessionId || cwd || "?"
@@ -264,21 +346,30 @@ export function answeredWith(key: string, now = Date.now()): QuestionAnswer[] | 
   return v.answers
 }
 
-export function markQuestionFellThrough(key: string, now = Date.now()): void {
-  recentlyFellThrough.set(key, now)
-  for (const [k, at] of recentlyFellThrough) {
-    if (now - at > RECENT_ANSWER_TTL_MS) recentlyFellThrough.delete(k)
+export function markQuestionFellThrough(
+  key: string,
+  now = Date.now(),
+  phase: "PreToolUse" | "PermissionRequest" = "PermissionRequest",
+  id = "",
+): void {
+  recentlyFellThrough.set(key, { at: now, phase, id })
+  for (const [k, v] of recentlyFellThrough) {
+    if (now - v.at > RECENT_ANSWER_TTL_MS) recentlyFellThrough.delete(k)
   }
 }
 
-export function didQuestionFallThrough(key: string, now = Date.now()): boolean {
-  const at = recentlyFellThrough.get(key)
-  if (at === undefined) return false
-  if (now - at > RECENT_ANSWER_TTL_MS) {
+export function fellThrough(key: string, now = Date.now()): { phase: "PreToolUse" | "PermissionRequest"; id: string } | null {
+  const v = recentlyFellThrough.get(key)
+  if (v === undefined) return null
+  if (now - v.at > RECENT_ANSWER_TTL_MS) {
     recentlyFellThrough.delete(key)
-    return false
+    return null
   }
-  return true
+  return { phase: v.phase, id: v.id }
+}
+
+export function didQuestionFallThrough(key: string, now = Date.now()): boolean {
+  return fellThrough(key, now) !== null
 }
 
 // Claude Code's AskUserQuestion takes `answers` in its input: question text ->

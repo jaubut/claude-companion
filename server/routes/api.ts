@@ -19,7 +19,7 @@ import {
 } from "../lib/push-tokens"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import { HOST_INFO, broadcast, clients } from "../state"
+import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
 import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 import { withIdempotency } from "../lib/idempotency"
@@ -233,8 +233,16 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
   }
   const ok = resolveApproval(id, decision)
+  logResolve(req, "approval", id, decision, ok)
   if (ok) broadcast({ type: "resolved", id, decision })
-  return Response.json({ ok })
+  return Response.json(ok ? { ok } : { ok, reason: "gone" })
+}
+
+// Audit line for every phone decision: what, which id, and where it came from
+// (transport, peer address, user-agent, X-Companion-Device). Never the token.
+function logResolve(req: Request, what: "approval" | "question", id: string, decision: string, ok: boolean): void {
+  const tag = ok ? "\x1b[36mresolve\x1b[0m" : "\x1b[33mresolve failed (gone)\x1b[0m"
+  companionLog(`${tag} ${what} ${id.slice(0, 8)} → ${decision} ${describeClient("rest", clientInfo(req))}`)
 }
 
 async function handleAnswer(req: Request): Promise<Response> {
@@ -252,8 +260,9 @@ async function handleAnswer(req: Request): Promise<Response> {
     otherText: typeof a.otherText === "string" ? a.otherText : undefined,
   }))
   const ok = resolveQuestion(id, answers)
+  logResolve(req, "question", id, "answered", ok)
   if (ok) broadcast({ type: "resolved", id, decision: "answered" })
-  return Response.json({ ok })
+  return Response.json(ok ? { ok } : { ok, reason: "gone" })
 }
 
 // Inject text from phone into terminal.

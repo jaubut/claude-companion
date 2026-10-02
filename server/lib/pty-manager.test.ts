@@ -2,7 +2,9 @@ import { test, expect } from "bun:test"
 import {
   type ApprovalRequest,
   addApprovalRequest,
+  cancelApprovalsFor,
   getPending,
+  hasPendingApprovalFor,
   onApprovalExpired,
   onApprovalRequest,
   onApprovalResolved,
@@ -51,9 +53,10 @@ test("onApprovalResolved fires once with the request, and not on a duplicate res
   off()
 })
 
-test("the expiry exit fires the handler with the request and resolves allow", async () => {
+test("the expiry exit fires the handler with the request and resolves expired — never allow", async () => {
   const seen: ApprovalRequest[] = []
-  const off = onApprovalExpired((r) => seen.push(r))
+  const decisions: string[] = []
+  const off = onApprovalExpired((r, d) => { seen.push(r); decisions.push(d) })
   const decided = addApprovalRequest(
     {
       agent: "claude", sessionId: "pm-3", tool: "Bash", input: {},
@@ -62,8 +65,10 @@ test("the expiry exit fires the handler with the request and resolves allow", as
     { expiryMs: 10 },
   )
   const id = pendingFor("pm-3").id
-  // Claude defaults to "allow" once its own hook curl times out; we match it.
-  expect(await decided).toBe("allow")
+  // Fail closed: an unanswered approval is NOT an allow (it was until
+  // 2026-10-01). The route turns "expired" into no decision at all.
+  expect(await decided).toBe("expired")
+  expect(decisions).toEqual(["expired"])
   expect(seen.length).toBe(1)
   expect(seen[0]?.id).toBe(id)
   expect(seen[0]?.sessionKey).toBe("claude:tty:/dev/pts/82")
@@ -91,4 +96,54 @@ test("reason rides the pending record and the request handler; absent stays abse
   resolveApproval(pendingFor("pm-5").id, "deny")
   await Promise.all([withReason, without])
   off()
+})
+
+test("abort of the hook request ends the approval 'elsewhere' (no allow), once", async () => {
+  const decisions: string[] = []
+  const off = onApprovalExpired((_r, d) => decisions.push(d))
+  const ctrl = new AbortController()
+  const decided = addApprovalRequest(
+    { agent: "claude", sessionId: "pm-ab", tool: "Bash", input: { command: "x" }, cwd: "/h", sessionKey: "k-ab" },
+    { signal: ctrl.signal },
+  )
+  const id = pendingFor("pm-ab").id
+  ctrl.abort()
+  expect(await decided).toBe("elsewhere")
+  expect(decisions).toEqual(["elsewhere"])
+  // Late phone decision finds nothing.
+  expect(resolveApproval(id, "allow")).toBe(false)
+  off()
+})
+
+test("an already-aborted signal ends the approval immediately", async () => {
+  const ctrl = new AbortController()
+  ctrl.abort()
+  const decided = addApprovalRequest(
+    { agent: "claude", sessionId: "pm-ab2", tool: "Bash", input: {}, cwd: "/h", sessionKey: "k-ab2" },
+    { signal: ctrl.signal },
+  )
+  expect(await decided).toBe("elsewhere")
+  expect(getPending().some((r) => r.sessionId === "pm-ab2")).toBe(false)
+})
+
+test("cancelApprovalsFor ends only the matching call; a parallel call of the same tool keeps its card", async () => {
+  const a = addApprovalRequest({ agent: "claude", sessionId: "pm-c", tool: "Bash", input: { command: "one" }, cwd: "/h", sessionKey: "k-c" })
+  const b = addApprovalRequest({ agent: "claude", sessionId: "pm-c", tool: "Bash", input: { command: "two" }, cwd: "/h", sessionKey: "k-c" })
+  const c = addApprovalRequest({ agent: "claude", sessionId: "pm-c", tool: "Write", input: { file_path: "/x" }, cwd: "/h", sessionKey: "k-c", toolUseId: "toolu_1" })
+  expect(hasPendingApprovalFor("k-c", "")).toBe(true)
+  expect(hasPendingApprovalFor("", "pm-c")).toBe(true)
+  expect(hasPendingApprovalFor("k-other", "pm-other")).toBe(false)
+  expect(cancelApprovalsFor({ sessionId: "pm-c", tool: "Bash", input: { command: "one" } })).toBe(1)
+  expect(await a).toBe("elsewhere")
+  // tool_use_id wins over input when both sides carry one.
+  expect(cancelApprovalsFor({ sessionId: "pm-c", tool: "Write", input: { file_path: "/x" }, toolUseId: "toolu_2" })).toBe(0)
+  expect(cancelApprovalsFor({ sessionId: "pm-c", tool: "Write", input: {}, toolUseId: "toolu_1" })).toBe(1)
+  expect(await c).toBe("elsewhere")
+  // Another session never matches; an empty matcher never matches.
+  expect(cancelApprovalsFor({ sessionId: "pm-z", sessionKey: "k-z" })).toBe(0)
+  expect(cancelApprovalsFor({})).toBe(0)
+  // Session-wide (Stop / SessionEnd) ends the rest.
+  expect(cancelApprovalsFor({ sessionKey: "k-c" })).toBe(1)
+  expect(await b).toBe("elsewhere")
+  expect(hasPendingApprovalFor("k-c", "pm-c")).toBe(false)
 })
