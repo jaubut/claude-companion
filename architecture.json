@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 92,
+          "lines": 93,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -60,6 +60,7 @@
             "routes/media.ts",
             "routes/goals.ts",
             "routes/vault.ts",
+            "routes/records.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -1237,6 +1238,76 @@
           "externals": []
         },
         {
+          "path": "lib/records-expiry.ts",
+          "lines": 128,
+          "kind": "lib",
+          "exports": [
+            "AlertState",
+            "expiryDeps",
+            "alertsPath",
+            "daysUntil",
+            "alertDue",
+            "alertBody",
+            "checkRecordExpiry",
+            "startRecordsExpiry"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/push.ts",
+            "lib/records-store.ts",
+            "lib/vault-upstream.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/records-store.ts",
+          "lines": 266,
+          "kind": "lib",
+          "exports": [
+            "RecordType",
+            "RecordAction",
+            "IdRecord",
+            "RecordSummary",
+            "RecordOrigin",
+            "RecordError",
+            "RecordResult",
+            "RevealRecordResult",
+            "recordsDir",
+            "recordsPath",
+            "recordsAuditPath",
+            "validType",
+            "validId",
+            "validDate",
+            "defaultLabel",
+            "atomicWriteJson",
+            "readRecords",
+            "listRecords",
+            "createRecord",
+            "updateRecord",
+            "deleteRecord",
+            "revealRecord"
+          ],
+          "state": [
+            "DATE_FIELDS: Set",
+            "let lock"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/rehydrate.ts",
           "lines": 76,
           "kind": "lib",
@@ -2325,6 +2396,33 @@
           "externals": []
         },
         {
+          "path": "routes/records.ts",
+          "lines": 150,
+          "kind": "lib",
+          "exports": [
+            "recordsWriteLimiter",
+            "recordsReadLimiter",
+            "recordsRevealLimiter",
+            "resetRecordsLimits",
+            "handleRecordsRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/log.ts",
+            "lib/records-store.ts",
+            "lib/vault-guard.ts",
+            "lib/vault-upstream.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/vault.ts",
           "lines": 162,
           "kind": "lib",
@@ -2621,6 +2719,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/records.ts",
             "routes/vault.ts"
           ]
         },
@@ -2702,6 +2801,12 @@
         },
         "handleOrchestratorRoute": {
           "module": "routes/orchestrator.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleRecordsRoute": {
+          "module": "routes/records.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -2978,6 +3083,7 @@
             "lib/keyboard-inject.ts",
             "lib/media.ts",
             "lib/question-hook.ts",
+            "lib/records-expiry.ts",
             "lib/session-removal-log.ts",
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
@@ -3002,6 +3108,7 @@
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/model.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "routes/records.ts",
             "routes/vault.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
@@ -3546,17 +3653,60 @@
             "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
+        "RecordType": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "lib/records-expiry.ts"
+          ]
+        },
+        "pushToAll": {
+          "module": "lib/push.ts",
+          "callers": [
+            "lib/records-expiry.ts",
+            "routes/api.ts#POST /api/push/test",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/events.ts"
+          ]
+        },
+        "recordsDir": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "lib/records-expiry.ts"
+          ]
+        },
+        "IdRecord": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "lib/records-expiry.ts"
+          ]
+        },
         "vaultUpstream": {
           "module": "lib/vault-upstream.ts",
           "callers": [
+            "lib/records-expiry.ts",
             "lib/secret-store.ts",
+            "routes/records.ts",
             "routes/vault.ts"
+          ]
+        },
+        "readRecords": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "lib/records-expiry.ts"
+          ]
+        },
+        "atomicWriteJson": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "lib/records-expiry.ts"
           ]
         },
         "forwardVault": {
           "module": "lib/vault-upstream.ts",
           "callers": [
             "lib/secret-store.ts",
+            "routes/records.ts",
             "routes/vault.ts"
           ]
         },
@@ -3790,6 +3940,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "lib/vault-guard.ts",
+            "routes/records.ts",
             "routes/vault.ts"
           ]
         },
@@ -3900,15 +4051,6 @@
             "routes/api.ts#POST /api/resolve",
             "routes/api.ts#POST /api/answer",
             "routes/api.ts#POST /api/inject"
-          ]
-        },
-        "pushToAll": {
-          "module": "lib/push.ts",
-          "callers": [
-            "routes/api.ts#POST /api/push/test",
-            "routes/api.ts#POST /api/push/broadcast",
-            "routes/hooks.ts#POST /hooks/stop",
-            "wiring/events.ts"
           ]
         },
         "broadcast": {
@@ -4667,14 +4809,110 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "VaultResult": {
-          "module": "lib/secret-store.ts",
+        "createLimiter": {
+          "module": "lib/vault-guard.ts",
           "callers": [
-            "routes/vault.ts"
+            "routes/records.ts"
+          ]
+        },
+        "RecordOrigin": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
           ]
         },
         "Limiter": {
           "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "RecordResult": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "RevealRecordResult": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "UpstreamReply": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "UpstreamConfig": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "validId": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "revealRecord": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "createRecord": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "updateRecord": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "deleteRecord": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "peerOf": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "clientOrigin": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "HOP_HEADER": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "listRecords": {
+          "module": "lib/records-store.ts",
+          "callers": [
+            "routes/records.ts"
+          ]
+        },
+        "VaultResult": {
+          "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"
           ]
@@ -4699,18 +4937,6 @@
         },
         "setSecretHosts": {
           "module": "lib/secret-store.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "UpstreamReply": {
-          "module": "lib/vault-upstream.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "UpstreamConfig": {
-          "module": "lib/vault-upstream.ts",
           "callers": [
             "routes/vault.ts"
           ]
@@ -4741,24 +4967,6 @@
         },
         "RevealResult": {
           "module": "lib/secret-store.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "peerOf": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "clientOrigin": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "HOP_HEADER": {
-          "module": "lib/vault-upstream.ts",
           "callers": [
             "routes/vault.ts"
           ]
