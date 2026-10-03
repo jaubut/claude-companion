@@ -13,7 +13,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript.ts` | 598 | lib | 13 | state: states: Map, busyImages: WeakMap |
 | `lib/sessions.ts` | 596 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/keyboard-inject.ts` | 591 | lib | 9 | state: let injectQueue |
-| `routes/hooks.ts` | 563 | route-host | 1 | emits: user_prompt · routes: 8 |
+| `routes/hooks.ts` | 569 | route-host | 1 | emits: user_prompt · routes: 8 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/orchestrator-chat.ts` | 499 | lib | 35 | state: db: Database |
 | `lib/activity.ts` | 492 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
@@ -48,10 +48,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dialogs.ts` | 209 | lib | 7 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `routes/capture.ts` | 204 | lib | 3 |  |
+| `ws.ts` | 204 | lib | 1 | emits: init, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `routes/command.ts` | 202 | route-host | 1 | routes: 2 |
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
-| `ws.ts` | 200 | lib | 1 | emits: approval, question, init, resolved, key_saved, inject_error, pong, resolve_failed |
 | `routes/orchestrator.ts` | 199 | route-host | 1 | routes: 8 |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/receipt-checks.ts` | 188 | lib | 20 | state: CURRENCIES: Set |

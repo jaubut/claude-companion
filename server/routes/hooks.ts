@@ -187,7 +187,13 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       return hookDecisionResponse(agent, "PreToolUse", decision, "Approved via Claude Companion (SUPER)")
     }
 
-    const { verdict: verdictJudge, reason: judgeReason } = await judgeWithBranchContextAndReason(tool, input, cwd)
+    const judged = await judgeWithBranchContextAndReason(tool, input, cwd)
+    // SUPER + a catastrophe-list match goes to the PHONE, never auto-deny:
+    // Jeremie decides those himself (2026-10-03). Auto-judge's hard deny used to
+    // win here, so catastrophic commands never reached him at all.
+    const superCatastrophe = isSuperAuto() && isCatastrophic(tool, input)
+    const verdictJudge = superCatastrophe ? "ask" : judged.verdict
+    const judgeReason = superCatastrophe ? "catastrophe list (SUPER) — your call" : judged.reason
 
     if (verdictJudge !== "ask") {
       const via: AutoVia = judgeReason === REASON_LEARNED ? "learned" : judgeReason === REASON_MCP_READONLY ? "mcp_readonly" : "auto_judge"
