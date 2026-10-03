@@ -2622,7 +2622,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 563,
+          "lines": 569,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -3127,16 +3127,16 @@
         },
         {
           "path": "ws.ts",
-          "lines": 200,
+          "lines": 204,
           "kind": "lib",
           "exports": [
             "websocket"
           ],
           "state": [],
           "emits": [
+            "init",
             "approval",
             "question",
-            "init",
             "resolved",
             "key_saved",
             "inject_error",
