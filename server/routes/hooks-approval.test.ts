@@ -133,6 +133,26 @@ test("phone deny is a deny and is not learned; phone allow is an allow and IS le
   expect(listLearned().map((e) => e.pattern)).toEqual(["bash:zz-appr-unlisted"])
 })
 
+// 2026-10-03: under SUPER a catastrophe-list match goes to the phone (Jeremie
+// decides) instead of auto-judge's hard deny, which never reached him.
+test("SUPER + catastrophe-list command → phone card, not auto-deny; without SUPER auto-judge still denies", async () => {
+  const CATASTROPHE = "sudo rm -rf /var/zz-appr-probe"
+  setSuperAutoInMemoryForTests(true)
+  try {
+    const res = handleHookRoute(...post("/hooks/pre-tool-use", { session_id: "ap-cat", tool_name: "Bash", tool_input: { command: CATASTROPHE }, cwd: "/tmp/ap-cat" }))
+    const r = await waitPending("ap-cat")
+    expect(resolveApproval(r.id, "deny")).toBe(true)
+    const body = await (await res)!.json() as { hookSpecificOutput: { permissionDecision: string } }
+    expect(body.hookSpecificOutput.permissionDecision).toBe("deny")
+    expect(listLearned().some((e) => e.pattern.includes("rm"))).toBe(false)
+  } finally {
+    setSuperAutoInMemoryForTests(false)
+  }
+  const plain = await (await handleHookRoute(...post("/hooks/pre-tool-use", { session_id: "ap-cat-off", tool_name: "Bash", tool_input: { command: CATASTROPHE }, cwd: "/tmp/ap-cat-off" })))!.json() as { hookSpecificOutput?: { permissionDecision?: string } }
+  expect(plain.hookSpecificOutput?.permissionDecision).toBe("deny")
+  expect(getPending().some((x) => x.sessionId === "ap-cat-off")).toBe(false)
+})
+
 test("SessionEnd removes only the session that ended — never its cwd/tty/pane siblings", async () => {
   recordSession({ cwd: "/tmp/se-shared", sessionId: "se-a", tty: "/dev/pts/191" })
   recordSession({ cwd: "/tmp/se-shared", sessionId: "se-b", tty: "/dev/pts/192" })
