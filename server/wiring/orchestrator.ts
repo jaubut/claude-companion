@@ -32,6 +32,8 @@ import { capturePane, paneInputReady, paneHasDialog, sessionCmdArgv, tmuxSession
 import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
+import { BODY_CHANNEL } from "../lib/body"
+import { bodyDigestFor } from "./body"
 
 // Orchestrator wiring (PRJ-OR1T): the always-on pieces that turn a proposal
 // into a running worker and report back — emit helpers, the WIP queue, the
@@ -267,7 +269,9 @@ export async function runBrain(userText: string, channel: OrchChannel): Promise<
   const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
   let decision
   try {
-    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd)
+    // #Body and health questions anywhere get the ≤ 800-char Body digest.
+    const context = await bodyDigestFor(channel.id, userText)
+    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd, context)
   } catch {
     decision = null
   }
@@ -288,7 +292,9 @@ export async function runBrain(userText: string, channel: OrchChannel): Promise<
   // during the brain call. Auto mode skips the tap but never the reasoning:
   // every auto-dispatch shows why + what in the thread, so a bad route is
   // caught at step 2, not step 20. Cancel is the veto.
-  if (getChannel(channel.id)?.autoDispatch) {
+  // #Body never auto-dispatches: alerts land there, and an alert must not be
+  // able to start work without a tap.
+  if (channel.id !== BODY_CHANNEL && getChannel(channel.id)?.autoDispatch) {
     orchEmit(orchAppendTurn(
       "orchestrator",
       `Auto-dispatch [${task.taskId}] — worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}`,

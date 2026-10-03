@@ -24,6 +24,7 @@ import {
   setTaskStatus,
 } from "../lib/orchestrator-chat"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
+import { BODY_CHANNEL } from "../lib/body"
 import { keyCommandGate } from "../lib/vault-guard"
 import { companionLog } from "../lib/log"
 import { sessionCmdArgv } from "../lib/tmux-pane"
@@ -62,6 +63,7 @@ export async function handleOrchestratorRoute(req: Request, url: URL): Promise<R
     if (action !== "auto" || !id) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
     const { enabled } = await req.json() as { enabled?: unknown }
     if (typeof enabled !== "boolean") return Response.json({ ok: false, error: "enabled must be boolean" }, { status: 400 })
+    if (id === BODY_CHANNEL && enabled) return Response.json({ ok: false, error: "auto-dispatch is disabled for #Body" }, { status: 400 })
     const ch = setChannelAuto(id, enabled)
     if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
     emitChannel(ch)

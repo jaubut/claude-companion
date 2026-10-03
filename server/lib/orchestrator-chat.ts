@@ -496,3 +496,12 @@ export function createChannel(name: string, cwd: string | null = null): Channel 
   )
   return ch
 }
+
+// A system channel with a fixed id (e.g. the Body monitor's "body"). Created
+// once; an existing row with that id is reused as-is, even if archived.
+export function ensureChannel(id: string, name: string): { channel: Channel; created: boolean } {
+  const res = db.query("INSERT OR IGNORE INTO orchestrator_channels (id, name, cwd, created_at, archived, auto_dispatch) VALUES (?, ?, NULL, ?, 0, 0)").run(
+    id, name, Date.now(),
+  )
+  return { channel: getChannel(id)!, created: res.changes > 0 }
+}
