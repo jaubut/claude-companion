@@ -19,7 +19,7 @@ export const QA_STATUSES = ["queued", "jev_ok", "to_review", "sonnet_fixed", "ne
 export type QaStatus = typeof QA_STATUSES[number]
 
 export interface QaIssue { field: string; problem: string; suggestion?: string }
-export interface QaChange { field: string; from: string; to: string; by: "sonnet" | "human" }
+export interface QaChange { field: string; from: string; to: string; by: "jev" | "sonnet" | "human" }
 export type ExpenseFields = Record<string, string>
 
 export interface QaItem {

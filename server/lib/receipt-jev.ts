@@ -118,13 +118,19 @@ export async function askJev(f: ExpenseFields, chart: ChartEntry[]): Promise<Jev
 
 // ── Decision (pure) ──
 
-export interface JevDecision { status: Extract<QaStatus, "jev_ok" | "to_review">; issues: QaIssue[] }
+export interface JevDecision {
+  status: Extract<QaStatus, "jev_ok" | "to_review">
+  issues: QaIssue[]
+  /** Blank saved code + confident Jev + clean receipt: the code Jev books itself. */
+  fill?: string
+}
 
 const fmt = (p: number): string => p.toFixed(2)
 
 /**
  * All code checks pass AND Jev agrees with the saved code at ≥ 0.9 AND no
- * books-rule flag → jev_ok. Anything else → to_review with every issue found.
+ * books-rule flag → jev_ok; the same with a BLANK saved code → jev_ok + `fill`.
+ * Anything else → to_review with every issue found.
  */
 export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerdict | null): JevDecision {
   const issues = [...checkIssues]
@@ -142,6 +148,11 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
     issues.push({ field: "purpose", problem: "meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)" })
   }
   const suggestion = jev.code !== PERSONAL_OPTION ? jev.code : undefined
+  // Jeremie 2026-10-03: a blank code is filled by Jev when it is confident and
+  // nothing else is wrong. A non-blank code is never overwritten here.
+  if (!saved && suggestion && jev.confidence >= JEV_AGREE_MIN && issues.length === 0) {
+    return { status: "jev_ok", issues, fill: suggestion }
+  }
   if (!saved) {
     issues.push({ field: "category_code", problem: `GL code missing; Jev suggests ${jev.code} (conf ${fmt(jev.confidence)})`, ...(suggestion ? { suggestion } : {}) })
   } else if (jev.code !== saved) {

@@ -29,8 +29,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 345 | lib | 32 | state: let db, listeners: Set |
 | `wiring/orchestrator.ts` | 310 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
+| `lib/receipt-qa-worker.ts` | 308 | lib | 12 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/tmux-pane.ts` | 304 | lib | 22 |  |
-| `lib/receipt-qa-worker.ts` | 295 | lib | 12 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
 | `lib/apns.ts` | 273 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/command-offpane-launch.ts` | 271 | lib | 20 | state: versionMemo: Map |
@@ -59,8 +59,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/inject-guard.ts` | 169 | lib | 7 |  |
+| `lib/receipt-jev.ts` | 165 | lib | 12 | state: let chartCache |
 | `routes/vault.ts` | 162 | lib | 1 |  |
-| `lib/receipt-jev.ts` | 154 | lib | 12 | state: let chartCache |
 | `wiring/dialogs.ts` | 153 | lib | 4 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `routes/records.ts` | 150 | lib | 5 |  |

@@ -16,6 +16,7 @@ import { vaultUpstream } from "./vault-upstream"
 // (dashboard/Turso/claude unreachable) back off 30 s → 1 h, MAX_ATTEMPTS, then
 // the row moves on with an issue naming what was unavailable.
 // Kill switch COMPANION_RECEIPT_QA=off: rows stay `queued`, saves still work.
+// Jev fills a BLANK category_code itself (conf ≥ 0.9, receipt clean, no flag).
 // Every edit made here or by the phone is appended to
 // ~/.config/tls-agent/receipt-qa-audit.jsonl {ts, expense_id, by, field, from, to, reason}.
 
@@ -118,7 +119,19 @@ async function jevPass(row: QaRow): Promise<void> {
   const chart = await loadChart(workerDeps.chartQuery)
   const jev = await workerDeps.jev(row.fields, chart).catch(() => null)
   const d = decideJev(row.fields, issues, jev)
+  if (d.fill && jev) return jevFill(row, d.fill, jev)
   settle(row, d.status, { issues: d.issues, jev: jev ? { ...jev } : null })
+}
+
+/** Book Jev's confident code on a blank expense (PATCH + by:"jev" change + audit). */
+async function jevFill(row: QaRow, code: string, jev: JevVerdict): Promise<void> {
+  const changes = diff(row.fields, { category_code: code }, "jev")
+  if (!await applyPatch(row.expense_id, { category_code: code })) {
+    const issue: QaIssue = { field: "category_code", problem: `dashboard refused Jev's ${code}`, suggestion: code }
+    return settle(row, "to_review", { issues: [issue], jev: { ...jev } })
+  }
+  audit(row.expense_id, "jev", changes, `jev conf ${jev.confidence.toFixed(2)}`)
+  settle(row, "jev_ok", { issues: [], jev: { ...jev }, fields: { ...row.fields, category_code: code }, changes: [...row.changes, ...changes] })
 }
 
 // ── Pass 2: Sonnet on `to_review` ──

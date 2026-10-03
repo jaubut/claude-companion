@@ -128,8 +128,9 @@ test("decideJev: agree at ≥ 0.9 with every check passing → jev_ok", () => {
 test("decideJev: disagree / low confidence / missing code / failed check → to_review", () => {
   expect(decideJev(MEAL, [], V("5216", 0.97, { meal: 0.9, trip: 0.9 })).issues[0]).toMatchObject({ field: "category_code", suggestion: "5216" })
   expect(decideJev(MEAL, [], V("5776", 0.6, { meal: 0.9, trip: 0.9 })).status).toBe("to_review")
-  const missing = decideJev({ ...MEAL, category_code: "" }, [], V("5776", 0.95, { meal: 0.9, trip: 0.9 }))
+  const missing = decideJev({ ...MEAL, category_code: "" }, [], V("5776", 0.85, { meal: 0.9, trip: 0.9 }))
   expect(missing).toMatchObject({ status: "to_review", issues: [{ field: "category_code", suggestion: "5776" }] })
+  expect(missing.fill).toBeUndefined()
   expect(decideJev(MEAL, [{ field: "tps", problem: "x" }], V("5776", 0.99, { meal: 0.9, trip: 0.9 })).status).toBe("to_review")
 })
 
@@ -153,7 +154,63 @@ test("decideJev: Jev unavailable → to_review with jev_unavailable", () => {
   expect(decideJev(MEAL, [], null)).toEqual({ status: "to_review", issues: [{ field: "jev", problem: "jev_unavailable" }] })
 })
 
+test("decideJev: blank code + conf ≥ 0.9 + clean → jev_ok with fill; any flag or check → no fill", () => {
+  const blank = { ...MEAL, category_code: "" }
+  expect(decideJev(blank, [], V("5776", 0.92, { meal: 0.9, trip: 0.9 }))).toEqual({ status: "jev_ok", issues: [], fill: "5776" })
+  expect(decideJev(blank, [{ field: "tps", problem: "x" }], V("5776", 0.99, { meal: 0.9, trip: 0.9 })).fill).toBeUndefined()
+  expect(decideJev({ ...blank, purpose: "lunch" }, [], V("5776", 0.99, { meal: 0.9, trip: 0.1 })).fill).toBeUndefined()
+  expect(decideJev(blank, [], V("personal", 0.99)).fill).toBeUndefined()
+})
+
 // ── Pass 1 end to end ──
+
+test("Jev fill: blank code + confident + clean → PATCH category_code, by:jev change, audit, jev_ok", async () => {
+  seed({ category_code: "" })
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "jev_ok", category_code: "5776", issues: [] })
+  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5776", by: "jev" }])
+  const patches = hits.filter((h) => h.method === "PATCH")
+  expect(patches).toHaveLength(1)
+  expect(patches[0]!.key).toBe(DASH_KEY)
+  expect(JSON.parse(patches[0]!.body)).toEqual({ category_code: "5776" })
+  const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+  expect(audit).toEqual([expect.objectContaining({ expense_id: ID, by: "jev", field: "category_code", from: "", to: "5776", reason: "jev conf 0.95" })])
+  expect(sonnetCalls).toHaveLength(0)
+  expect(frames.map((f) => f.status)).toEqual(["queued", "jev_ok"])
+})
+
+test("Jev fill refused: grocery flag, conf 0.85, or a non-blank code Jev disagrees with → to_review, no write", async () => {
+  sonnetText = null // keep rows in to_review
+  seed({ category_code: "", merchant: "Maxi Granby", category: "Other", purpose: "Snacks for the shoot" }, `${ID}-g`)
+  jevAnswer = jev("5700", 0.97)
+  await drainReceiptQa()
+  expect(getQaRow(`${ID}-g`)!.status).toBe("to_review")
+  seed({ category_code: "" }, `${ID}-l`)
+  jevAnswer = jev("5776", 0.85, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(`${ID}-l`)!.issues[0]).toMatchObject({ field: "category_code", suggestion: "5776" })
+  seed({}, `${ID}-n`) // saved 5776
+  jevAnswer = jev("5216", 0.97, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  const n = getQaRow(`${ID}-n`)!
+  expect(n).toMatchObject({ status: "to_review", category_code: "5776", changes: [] })
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+  expect(existsSync(auditFile())).toBe(false)
+})
+
+test("Jev fill: dashboard PATCH 5xx → retried later, not dropped", async () => {
+  seed({ category_code: "" })
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  patchReply = () => new Response("down", { status: 503 })
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "queued", attempts: 1 })
+  patchReply = () => Response.json({ ok: true })
+  workerDeps.now = () => NOW + 3_600_000
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "jev_ok", category_code: "5776" })
+})
 
 test("Jev pass: fake System One agrees → jev_ok; request carries the vault key and the chart", async () => {
   seed()
