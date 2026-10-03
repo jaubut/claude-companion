@@ -127,6 +127,7 @@ import { secureLogFile } from "./server/lib/log"
 import { startMediaSweeper } from "./server/wiring/media"
 import { startRecordsExpiry } from "./server/lib/records-expiry"
 import { startReceiptQa } from "./server/wiring/receipt-qa"
+import { dispatchWiring } from "./server/wiring/dispatch"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -143,6 +144,8 @@ startMediaSweeper()
 startRecordsExpiry()
 // Receipt QA frames/push + queue resume (worker inert upstream or with COMPANION_RECEIPT_QA=off).
 startReceiptQa()
+// Turso dispatch poller (orchestrator-one-queue): every 20 s + /hooks/dispatch-event nudges.
+dispatchWiring.start()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"

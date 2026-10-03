@@ -850,6 +850,118 @@
           "externals": []
         },
         {
+          "path": "lib/dispatch-mirror.ts",
+          "lines": 49,
+          "kind": "lib",
+          "exports": [
+            "Seen",
+            "lastSeen",
+            "markSeen",
+            "seenCount",
+            "pruneSeen"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts",
+            "lib/dispatch-tasks.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/dispatch-poller.ts",
+          "lines": 291,
+          "kind": "lib",
+          "exports": [
+            "DispatchCounts",
+            "ChannelWithCounts",
+            "QueueSummary",
+            "Seen",
+            "Mirror",
+            "DispatchWiringDeps",
+            "turnText",
+            "pushPayload",
+            "createDispatchWiring",
+            "DispatchWiring"
+          ],
+          "state": [
+            "ANNOUNCE: Set",
+            "PUSH: Set"
+          ],
+          "emits": [
+            "orchestrator_task",
+            "orchestrator_channel",
+            "orchestrator_queue",
+            "orchestrator"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/apns.ts",
+            "lib/body.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/dispatch-tasks.ts",
+          "lines": 267,
+          "kind": "lib",
+          "exports": [
+            "DispatchStatus",
+            "TaskSource",
+            "TaskMode",
+            "DispatchTask",
+            "TaskDto",
+            "DispatchColumns",
+            "BLOCKER_STATES",
+            "effectiveStatus",
+            "legacyStatus",
+            "phaseOf",
+            "seenKey",
+            "parseTs",
+            "fromRow",
+            "dispatchToDto",
+            "toTaskDto",
+            "detectColumns",
+            "POLL_WINDOW_DAYS",
+            "POLL_LIMIT",
+            "listDispatchTasks",
+            "getDispatchTask",
+            "ActivityItem",
+            "getTaskActivity",
+            "RESULT_EXCERPT_MAX",
+            "TaskResult",
+            "getTaskResult",
+            "ProjectRef",
+            "listProjects",
+            "getNote"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-chat.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dotenv.ts",
           "lines": 34,
           "kind": "lib",
@@ -1172,11 +1284,43 @@
           "externals": []
         },
         {
-          "path": "lib/orchestrator-chat.ts",
-          "lines": 508,
+          "path": "lib/orchestrator-channels.ts",
+          "lines": 165,
           "kind": "lib",
           "exports": [
-            "GENERAL_CHANNEL",
+            "ChannelTrust",
+            "AUTO_ELIGIBLE_STREAK",
+            "Channel",
+            "channelTrust",
+            "setChannelAuto",
+            "listChannels",
+            "getChannel",
+            "createChannel",
+            "ensureChannel",
+            "getChannelByNote",
+            "NoteLink",
+            "SetNoteResult",
+            "setChannelNote",
+            "linkedNotes"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/orchestrator-chat.ts",
+          "lines": 318,
+          "kind": "lib",
+          "exports": [
             "TurnRole",
             "TaskStatus",
             "LIVE_STATUSES",
@@ -1202,20 +1346,29 @@
             "countRunningTasksInCwd",
             "listTasks",
             "countLiveTasks",
-            "listQueued",
-            "ChannelTrust",
-            "AUTO_ELIGIBLE_STREAK",
-            "Channel",
-            "channelTrust",
-            "setChannelAuto",
-            "listChannels",
-            "getChannel",
-            "createChannel",
-            "ensureChannel"
+            "listQueued"
           ],
-          "state": [
-            "db: Database"
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/orchestrator-db.ts",
+          "lines": 101,
+          "kind": "lib",
+          "exports": [
+            "db",
+            "GENERAL_CHANNEL"
+          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -1227,10 +1380,11 @@
         },
         {
           "path": "lib/orchestrator-queue.ts",
-          "lines": 79,
+          "lines": 84,
           "kind": "lib",
           "exports": [
             "DEFAULT_WIP_CAP",
+            "wipCap",
             "QueueDeps",
             "Admission",
             "Queue",
@@ -2221,7 +2375,7 @@
         },
         {
           "path": "lib/turso.ts",
-          "lines": 112,
+          "lines": 125,
           "kind": "lib",
           "exports": [
             "SqlArg",
@@ -2737,7 +2891,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 569,
+          "lines": 579,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -2787,6 +2941,11 @@
               "method": "POST",
               "path": "/hooks/session-end",
               "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/hooks/dispatch-event",
+              "prefix": false
             }
           ],
           "apiCalls": [],
@@ -2812,7 +2971,10 @@
             "state.ts",
             "lib/hook-common.ts",
             "wiring/orchestrator.ts",
-            "lib/orchestrator-chat.ts"
+            "lib/orchestrator-chat.ts",
+            "wiring/dispatch.ts",
+            "lib/vault-guard.ts",
+            "lib/auth.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2889,9 +3051,10 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 201,
+          "lines": 282,
           "kind": "route-host",
           "exports": [
+            "createOrchestratorHandler",
             "handleOrchestratorRoute"
           ],
           "state": [],
@@ -2919,6 +3082,16 @@
               "prefix": false
             },
             {
+              "method": "GET",
+              "path": "/api/orchestrator/projects",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/orchestrator/task/",
+              "prefix": true
+            },
+            {
               "method": "POST",
               "path": "/api/orchestrator/send",
               "prefix": false
@@ -2943,6 +3116,11 @@
           "imports": [
             "wiring/orchestrator.ts",
             "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-db.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/turso.ts",
+            "wiring/dispatch.ts",
             "lib/secret-store.ts",
             "lib/body.ts",
             "lib/vault-guard.ts",
@@ -3028,7 +3206,7 @@
         },
         {
           "path": "wiring/body.ts",
-          "lines": 68,
+          "lines": 69,
           "kind": "lib",
           "exports": [
             "bodySnapshot",
@@ -3054,6 +3232,7 @@
             "lib/body.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
             "lib/push.ts",
             "lib/turso.ts",
             "state.ts"
@@ -3096,6 +3275,36 @@
           "listeners": [
             "dialogWatcher.start"
           ],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/dispatch.ts",
+          "lines": 38,
+          "kind": "lib",
+          "exports": [
+            "dispatchPushEnabled",
+            "dispatchWiring"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/apns.ts",
+            "lib/dispatch-mirror.ts",
+            "lib/dispatch-poller.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-queue.ts",
+            "lib/push.ts",
+            "lib/turso.ts",
+            "state.ts"
+          ],
+          "listeners": [],
           "sheets": 0,
           "externals": []
         },
@@ -3180,7 +3389,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 316,
+          "lines": 317,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -3210,6 +3419,7 @@
             "lib/log.ts",
             "state.ts",
             "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
             "lib/orchestrator-brain.ts",
             "lib/worker-tail.ts",
             "lib/orchestrator-queue.ts",
@@ -3218,7 +3428,9 @@
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/body.ts",
-            "wiring/body.ts"
+            "wiring/body.ts",
+            "lib/dispatch-tasks.ts",
+            "wiring/dispatch.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3343,7 +3555,8 @@
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
-            "companion-server.ts#* /ws"
+            "companion-server.ts#* /ws",
+            "routes/hooks.ts#POST /hooks/dispatch-event"
           ]
         },
         "unauthorized": {
@@ -3646,11 +3859,13 @@
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/model.ts",
+            "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/records.ts",
             "routes/vault.ts",
             "wiring/body.ts",
             "wiring/dialogs.ts",
+            "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
@@ -3700,6 +3915,7 @@
           "module": "lib/apns.ts",
           "callers": [
             "lib/body-alert.ts",
+            "lib/dispatch-poller.ts",
             "lib/push.ts",
             "wiring/body.ts",
             "wiring/receipt-qa.ts"
@@ -3709,6 +3925,7 @@
           "module": "lib/turso.ts",
           "callers": [
             "lib/body.ts",
+            "lib/dispatch-tasks.ts",
             "routes/goals.ts"
           ]
         },
@@ -3716,6 +3933,8 @@
           "module": "lib/turso.ts",
           "callers": [
             "lib/body.ts",
+            "lib/dispatch-poller.ts",
+            "lib/dispatch-tasks.ts",
             "routes/body.ts",
             "routes/goals.ts"
           ]
@@ -4110,6 +4329,120 @@
             "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
+        "seenKey": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-mirror.ts",
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "DispatchTask": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-mirror.ts",
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "phaseOf": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-mirror.ts",
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "DispatchColumns": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "ProjectRef": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "TaskDto": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "detectColumns": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "dispatchToDto": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "routes/orchestrator.ts"
+          ]
+        },
+        "effectiveStatus": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "listDispatchTasks": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "listProjects": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "Channel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "Turn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "lib/orchestrator-brain.ts",
+            "wiring/body.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "BODY_CHANNEL": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "wiring/body.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "TaskStatus": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/dispatch-tasks.ts",
+            "lib/orchestrator-channels.ts"
+          ]
+        },
+        "Task": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/dispatch-tasks.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/orchestrator-queue.ts",
+            "lib/worker-identity.ts",
+            "lib/worker-tail.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "SpawnAgent": {
           "module": "lib/spawn-session.ts",
           "callers": [
@@ -4181,30 +4514,19 @@
             "lib/model-control.ts"
           ]
         },
-        "Task": {
-          "module": "lib/orchestrator-chat.ts",
+        "GENERAL_CHANNEL": {
+          "module": "lib/orchestrator-db.ts",
           "callers": [
-            "lib/orchestrator-brain.ts",
-            "lib/orchestrator-queue.ts",
-            "lib/worker-identity.ts",
-            "lib/worker-tail.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "Turn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/orchestrator-brain.ts",
-            "wiring/body.ts",
-            "wiring/orchestrator.ts"
+            "lib/orchestrator-chat.ts",
+            "routes/orchestrator.ts",
+            "wiring/dispatch.ts"
           ]
         },
         "listQueued": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/orchestrator-queue.ts",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -4216,6 +4538,7 @@
             "routes/api.ts#GET /api/push/tokens",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/body.ts",
+            "wiring/dispatch.ts",
             "wiring/events.ts"
           ]
         },
@@ -4498,7 +4821,8 @@
             "lib/receipt-qa-worker.ts",
             "routes/body.ts",
             "routes/goals.ts",
-            "wiring/body.ts"
+            "wiring/body.ts",
+            "wiring/dispatch.ts"
           ]
         },
         "askJev": {
@@ -4685,6 +5009,7 @@
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/body.ts",
+            "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/receipt-qa.ts"
           ]
@@ -5082,6 +5407,7 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "wiring/body.ts",
             "wiring/dialogs.ts",
+            "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/orchestrator.ts",
             "wiring/receipt-qa.ts",
@@ -5355,7 +5681,8 @@
           "module": "lib/turso.ts",
           "callers": [
             "routes/body.ts",
-            "routes/goals.ts#GET /api/goals"
+            "routes/goals.ts#GET /api/goals",
+            "routes/orchestrator.ts"
           ]
         },
         "bodySnapshot": {
@@ -5806,6 +6133,28 @@
             "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
+        "peerOf": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/dispatch-event",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "isLoopback": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/dispatch-event"
+          ]
+        },
+        "dispatchWiring": {
+          "module": "wiring/dispatch.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/dispatch-event",
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "isMediaId": {
           "module": "lib/media.ts",
           "callers": [
@@ -5852,13 +6201,6 @@
             "routes/model.ts#POST /api/model/set"
           ]
         },
-        "WIP_CAP": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
-          ]
-        },
         "emitChannel": {
           "module": "wiring/orchestrator.ts",
           "callers": [
@@ -5881,41 +6223,13 @@
             "routes/orchestrator.ts#POST /api/orchestrator/send"
           ]
         },
-        "Channel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "wiring/body.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "GENERAL_CHANNEL": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts"
-          ]
-        },
         "appendTurn": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body.ts",
+            "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
-          ]
-        },
-        "countLiveTasks": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "createChannel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels"
           ]
         },
         "createQueuedTask": {
@@ -5923,14 +6237,6 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
-          ]
-        },
-        "getChannel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "wiring/orchestrator.ts"
           ]
         },
         "getThread": {
@@ -5941,36 +6247,78 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "listChannels": {
+        "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/channels",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+            "wiring/orchestrator.ts"
           ]
         },
-        "listTasks": {
-          "module": "lib/orchestrator-chat.ts",
+        "getChannel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "getNote": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "setChannelNote": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "toTaskDto": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/orchestrator.ts"
           ]
         },
-        "setChannelAuto": {
-          "module": "lib/orchestrator-chat.ts",
+        "getDispatchTask": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/"
+            "routes/orchestrator.ts"
           ]
         },
-        "BODY_CHANNEL": {
-          "module": "lib/body.ts",
+        "getTaskActivity": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "getTaskResult": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "listChannels": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/channels",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "createChannel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/channels"
+          ]
+        },
+        "setChannelAuto": {
+          "module": "lib/orchestrator-channels.ts",
           "callers": [
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "wiring/body.ts",
-            "wiring/orchestrator.ts"
+            "routes/orchestrator.ts#POST /api/orchestrator/task/"
           ]
         },
         "sessionCmdArgv": {
@@ -6040,13 +6388,6 @@
           "module": "lib/records-store.ts",
           "callers": [
             "routes/records.ts"
-          ]
-        },
-        "peerOf": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/records.ts",
-            "routes/vault.ts"
           ]
         },
         "clientOrigin": {
@@ -6165,7 +6506,7 @@
           ]
         },
         "ensureChannel": {
-          "module": "lib/orchestrator-chat.ts",
+          "module": "lib/orchestrator-channels.ts",
           "callers": [
             "wiring/body.ts"
           ]
@@ -6247,6 +6588,38 @@
           "module": "lib/command-scrape.ts",
           "callers": [
             "wiring/dialogs.ts"
+          ]
+        },
+        "DispatchWiring": {
+          "module": "lib/dispatch-poller.ts",
+          "callers": [
+            "wiring/dispatch.ts"
+          ]
+        },
+        "createDispatchWiring": {
+          "module": "lib/dispatch-poller.ts",
+          "callers": [
+            "wiring/dispatch.ts"
+          ]
+        },
+        "linkedNotes": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "wiring/dispatch.ts"
+          ]
+        },
+        "countLiveTasks": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "wipCap": {
+          "module": "lib/orchestrator-queue.ts",
+          "callers": [
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "HistoryItem": {
@@ -6443,12 +6816,6 @@
         },
         "bindTaskSession": {
           "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "DEFAULT_WIP_CAP": {
-          "module": "lib/orchestrator-queue.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]

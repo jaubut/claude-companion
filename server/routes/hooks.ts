@@ -41,6 +41,9 @@ import {
 } from "../lib/hook-common"
 import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"
 import { appendTurn as orchAppendTurn, setTaskStatus } from "../lib/orchestrator-chat"
+import { dispatchWiring } from "../wiring/dispatch"
+import { isLoopback, peerOf } from "../lib/vault-guard"
+import { checkBearer } from "../lib/auth"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -563,6 +566,13 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // UserPromptSubmit; the session ending is their proof of submission.
     noteSessionBoundary({ sessionId: body.session_id, tty, pane: tmuxPane })
     return Response.json({ ok: true })
+  }
+  // dispatch.sh nudge after each Turso transition: carries no state ({taskId?}
+  // is ignored), only triggers a poll (≤ 1 per 2 s). Loopback, or the bearer.
+  if (url.pathname === "/hooks/dispatch-event" && req.method === "POST") {
+    const peer = peerOf(req)
+    if (!(peer && isLoopback(peer)) && !checkBearer(req)) return Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+    return Response.json({ ok: true, polled: dispatchWiring.nudge() }, { status: 202 })
   }
   return null
 }

@@ -1,5 +1,4 @@
 import {
-  WIP_CAP,
   emitChannel,
   emitTask,
   executeDispatch,
@@ -8,21 +7,18 @@ import {
   workerQueue,
 } from "../wiring/orchestrator"
 import {
-  type Channel as OrchChannel,
-  GENERAL_CHANNEL,
   appendTurn as orchAppendTurn,
-  countLiveTasks,
-  createChannel,
   createQueuedTask,
-  getChannel,
   getTask,
   getThread,
-  listChannels,
-  listQueued,
   listTasks,
-  setChannelAuto,
   setTaskStatus,
 } from "../lib/orchestrator-chat"
+import { type Channel as OrchChannel, createChannel, getChannel, listChannels, setChannelAuto, setChannelNote } from "../lib/orchestrator-channels"
+import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
+import { dispatchToDto, getDispatchTask, getNote, getTaskActivity, getTaskResult, toTaskDto } from "../lib/dispatch-tasks"
+import { TursoUnreachable } from "../lib/turso"
+import { type DispatchWiring, dispatchWiring } from "../wiring/dispatch"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { BODY_CHANNEL } from "../lib/body"
 import { keyCommandGate } from "../lib/vault-guard"
@@ -30,8 +26,19 @@ import { companionLog } from "../lib/log"
 import { sessionCmdArgv } from "../lib/tmux-pane"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
-// approve/reject, task cancel, auto-dispatch toggle. Same paths, methods and
-// responses as before the split. Returns null for any other path.
+// approve/reject, task cancel, auto-dispatch toggle; plus the Turso dispatch
+// read path (orchestrator-one-queue P1): channel ↔ note link, task detail,
+// projects. Contract: docs/orchestrator-dispatch-api.md. Returns null for any
+// other path. Turso failures → 503 {ok:false, error:"turso_unreachable"}.
+
+const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/
+const NOTE_ID_MAX = 300
+
+function unreachable(err: unknown): Response {
+  const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`
+  companionLog(`[orchestrator] ${what}`)
+  return Response.json({ ok: false, error: "turso_unreachable" }, { status: 503 })
+}
 
 // Resolve a channel id from a request (query param or body field), defaulting to
 // General. Returns null only when a non-empty id names a channel that doesn't
@@ -41,13 +48,72 @@ function resolveChannel(id: string | null | undefined): OrchChannel | null {
   return getChannel(wanted)
 }
 
-export async function handleOrchestratorRoute(req: Request, url: URL): Promise<Response | null> {
+// POST .../channels/<id>/link {noteId: string|null}. Re-routes that note's
+// dispatch tasks (frames re-emitted) and refreshes the rail counts.
+async function linkChannel(req: Request, id: string, dispatch: DispatchWiring): Promise<Response> {
+  const ch = getChannel(id)
+  if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+  if (id === GENERAL_CHANNEL || id === BODY_CHANNEL) {
+    return Response.json({ ok: false, error: "system channels cannot be linked" }, { status: 400 })
+  }
+  let raw: { noteId?: unknown }
+  try {
+    raw = await req.json() as { noteId?: unknown }
+  } catch {
+    return Response.json({ ok: false, error: "invalid JSON" }, { status: 400 })
+  }
+  const noteId = typeof raw?.noteId === "string" ? raw.noteId.trim() : raw?.noteId === null ? null : undefined
+  if (noteId === undefined || noteId === "" || (noteId && noteId.length > NOTE_ID_MAX)) {
+    return Response.json({ ok: false, error: "noteId must be a note id or null" }, { status: 400 })
+  }
+  let link = null
+  if (noteId) {
+    try {
+      link = await getNote(dispatch.query, noteId)
+    } catch (err) {
+      return unreachable(err)
+    }
+    if (!link) return Response.json({ ok: false, error: "no such note" }, { status: 404 })
+  }
+  const res = setChannelNote(id, link)
+  if (!res.ok) return Response.json({ ok: false, error: res.error }, { status: res.error === "no_such_channel" ? 404 : 409 })
+  dispatch.relink([ch.noteId, link?.noteId].filter((n): n is string => !!n))
+  emitChannel(res.channel)
+  return Response.json({ ok: true, channel: dispatch.decorate(res.channel) })
+}
+
+// GET .../task/<id>: a local (8-char) task from sqlite, else the Turso row with
+// its description, result note excerpt and last 20 activity rows.
+async function taskDetail(id: string, dispatch: DispatchWiring): Promise<Response> {
+  if (!TASK_ID.test(id)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
+  const local = getTask(id)
+  if (local) return Response.json({ ok: true, task: toTaskDto(local), description: local.prompt, activity: [] })
+  try {
+    const found = await getDispatchTask(dispatch.query, await dispatch.columns(), id)
+    if (!found) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
+    const [result, activity] = await Promise.all([getTaskResult(dispatch.query, found.task), getTaskActivity(dispatch.query, id)])
+    return Response.json({
+      ok: true, task: dispatchToDto(found.task, dispatch.threadIdFor(found.task)), description: found.description,
+      ...(result ? { result } : {}), activity,
+    })
+  } catch (err) {
+    return unreachable(err)
+  }
+}
+
+export function createOrchestratorHandler(dispatch: DispatchWiring = dispatchWiring) {
+  return (req: Request, url: URL) => handleRoute(req, url, dispatch)
+}
+
+export const handleOrchestratorRoute = createOrchestratorHandler()
+
+async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring): Promise<Response | null> {
   // ── Orchestrator single-thread: chat + worker dispatch (PRJ-OR1T Phase 1) ──
   // One always-open thread per host. /send records a user message; /dispatch
   // spawns a worker bound to this thread (its turn-end reports back tagged by
   // task, via the session-start + stop hooks above); /thread reads it all.
   if (url.pathname === "/api/orchestrator/channels" && req.method === "GET") {
-    return Response.json({ channels: listChannels() })
+    return Response.json({ channels: listChannels().map(dispatch.decorate) })
   }
   if (url.pathname === "/api/orchestrator/channels" && req.method === "POST") {
     const { name, cwd } = await req.json() as { name?: string; cwd?: string }
@@ -60,6 +126,7 @@ export async function handleOrchestratorRoute(req: Request, url: URL): Promise<R
   // The server reports eligibility (trust.eligible); only the user flips it.
   if (url.pathname.startsWith("/api/orchestrator/channels/") && req.method === "POST") {
     const [id, action] = url.pathname.slice("/api/orchestrator/channels/".length).split("/")
+    if (action === "link" && id) return linkChannel(req, id, dispatch)
     if (action !== "auto" || !id) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
     const { enabled } = await req.json() as { enabled?: unknown }
     if (typeof enabled !== "boolean") return Response.json({ ok: false, error: "enabled must be boolean" }, { status: 400 })
@@ -82,10 +149,24 @@ export async function handleOrchestratorRoute(req: Request, url: URL): Promise<R
     if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
     // Returns the channel roster too, so the client fills the rail and the
     // active thread in one round-trip.
+    // tasks = this channel's local rows + its Turso dispatch tasks (from the
+    // poller's last read; never blocks on Turso). queue gains `dispatch`.
     return Response.json({
-      channel: ch.id, channels: listChannels(), turns: getThread(ch.id), tasks: listTasks(ch.id),
-      queue: { cap: WIP_CAP, live: countLiveTasks(), queued: listQueued().length },
+      channel: ch.id, channels: listChannels().map(dispatch.decorate), turns: getThread(ch.id),
+      tasks: [...listTasks(ch.id).map(toTaskDto), ...dispatch.tasksFor(ch.id)],
+      queue: dispatch.queueSummary(),
     })
+  }
+  if (url.pathname === "/api/orchestrator/projects" && req.method === "GET") {
+    try {
+      return Response.json({ projects: await dispatch.projects(url.searchParams.get("fresh") === "1") })
+    } catch (err) {
+      return unreachable(err)
+    }
+  }
+  if (url.pathname.startsWith("/api/orchestrator/task/") && req.method === "GET") {
+    const id = url.pathname.slice("/api/orchestrator/task/".length)
+    return taskDetail(id, dispatch)
   }
   if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
     const { text, channel } = await req.json() as { text?: string; channel?: string }

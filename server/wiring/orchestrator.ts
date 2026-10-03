@@ -20,20 +20,21 @@ import {
   countUnboundTasksInCwd,
   countRunningTasksInCwd,
   listTasks,
-  getChannel,
   type Turn as OrchTurn,
   type Task as OrchTask,
-  type Channel as OrchChannel,
 } from "../lib/orchestrator-chat"
+import { getChannel, type Channel as OrchChannel } from "../lib/orchestrator-channels"
 import { decide as brainDecide } from "../lib/orchestrator-brain"
 import { createWorkerTailManager } from "../lib/worker-tail"
-import { createQueue, DEFAULT_WIP_CAP } from "../lib/orchestrator-queue"
+import { createQueue, wipCap } from "../lib/orchestrator-queue"
 import { capturePane, paneInputReady, paneHasDialog, sessionCmdArgv, tmuxSessionForPane } from "../lib/tmux-pane"
 import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
 import { BODY_CHANNEL } from "../lib/body"
 import { bodyDigestFor } from "./body"
+import { toTaskDto } from "../lib/dispatch-tasks"
+import { dispatchWiring } from "./dispatch"
 
 // Orchestrator wiring (PRJ-OR1T): the always-on pieces that turn a proposal
 // into a running worker and report back — emit helpers, the WIP queue, the
@@ -51,20 +52,20 @@ export function orchEmit(turn: OrchTurn): void {
 // running → done/error/rejected) so the phone's Tasks panel tracks live work.
 export function emitTask(taskId: string): void {
   const t = getTask(taskId)
-  if (t) broadcast({ type: "orchestrator_task", task: t })
+  if (t) broadcast({ type: "orchestrator_task", task: toTaskDto(t) })
 }
 
 // Broadcast a new/updated channel so every device's channel rail live-updates
 // (PRJ-OR1T Phase 6).
 export function emitChannel(channel: OrchChannel): void {
-  broadcast({ type: "orchestrator_channel", channel })
+  broadcast({ type: "orchestrator_channel", channel: dispatchWiring.decorate(channel) })
 }
 
 // Backpressure (PRJ-OR1T Phase 7): at most WIP_CAP live workers on this host.
 // Anything admitted past that — approved proposal, auto-dispatch, or a manual
 // /dispatch — parks as queued and drains FIFO when a worker exits (stop hook,
 // dead-pane backstop, cancel), on boot, and on a 30s safety tick.
-export const WIP_CAP = Number(process.env.COMPANION_WIP_CAP) || DEFAULT_WIP_CAP
+export const WIP_CAP = wipCap()
 export const workerQueue = createQueue({
   cap: WIP_CAP,
   countLive: countLiveTasks,

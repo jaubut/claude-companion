@@ -79,7 +79,7 @@ export interface ApnsPayload {
   /** One-line context shown between title and body on iOS banners. */
   subtitle?: string
   body: string
-  category: "approval" | "question" | "waiting_input" | "briefing" | "body_alert"
+  category: "approval" | "question" | "waiting_input" | "briefing" | "body_alert" | "dispatch_task"
   /**
    * Overrides the category-derived level (approval/question → time-sensitive,
    * everything else → passive). `passive` = no sound, priority 5; `active` and

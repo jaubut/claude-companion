@@ -83,12 +83,9 @@ function parseResult(body: unknown): ExecResult {
   return first.response.result
 }
 
-export const tursoQuery: QueryFn = async (sql, args) => {
-  const auth = token()
-  if (!auth) throw new TursoUnreachable("no token configured")
-  let res: Response
+async function post(auth: string, sql: string, args: SqlArg[]): Promise<Response> {
   try {
-    res = await fetch(`${baseUrl()}/v2/pipeline`, {
+    return await fetch(`${baseUrl()}/v2/pipeline`, {
       method: "POST",
       headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -98,6 +95,22 @@ export const tursoQuery: QueryFn = async (sql, args) => {
     })
   } catch {
     throw new TursoUnreachable("network")
+  }
+}
+
+export const tursoQuery: QueryFn = async (sql, args) => {
+  let auth = token()
+  if (!auth) throw new TursoUnreachable("no token configured")
+  let res = await post(auth, sql, args)
+  if (res.status === 401) {
+    // Token rotated under us: drop the cached agent token and re-read it once.
+    agentToken = undefined
+    agentEnvRead = false
+    const fresh = token()
+    if (fresh && fresh !== auth) {
+      auth = fresh
+      res = await post(auth, sql, args)
+    }
   }
   if (!res.ok) throw new TursoUnreachable(`http ${res.status}`)
   let body: unknown

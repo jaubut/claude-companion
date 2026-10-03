@@ -27,7 +27,7 @@ process.env.COMPANION_DB_PATH = dbPath
 
 // Import AFTER seeding + pointing COMPANION_DB_PATH at it, so module init (seed +
 // backfill) runs against our fixture.
-const chat = await import("./orchestrator-chat")
+const chat = { ...(await import("./orchestrator-chat")), ...(await import("./orchestrator-channels")) }
 
 test("seeds General and backfills legacy 'main' history into it", () => {
   expect(chat.listChannels().some((c) => c.id === "general" && c.name === "General")).toBe(true)

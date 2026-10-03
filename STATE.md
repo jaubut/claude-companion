@@ -68,6 +68,118 @@ Last updated: 2026-10-03
 
 ## Change Plans
 
+### Change Plan — orchestrator-one-queue (2026-10-03)
+**Request:** "Make the Companion orchestrator the brain's face, merged with dispatch: one queue." Turso `tasks` becomes the only work queue. Orchestrator chat files, shows, unblocks, requeues and cancels Turso agent tasks per channel. #Body brings vitals, alerts and blocked-work triage. Touches ~/claude-companion, ~/.claude/tools (dispatch.sh, dispatch-run.ts, dispatch-reconcile.ts; pm-nightly.py audited, no change), the tls-dashboard-v2 schema, and the iOS app.
+**Done when:**
+- A proposal approved (or auto-filed) in a channel shows up as a Turso task (`agent:<slug>`, `queued`) in /today. No new `orchestrator_tasks` row runs headless.
+- Each channel lists its project's dispatch tasks live: queued/running/blocked/pr/completed/failed/cancelled, with PR link and result ref. Blocked tasks can be answered and requeued from the phone. Cancel works for queued, blocked and failed tasks.
+- The brain in #Body gets the body digest plus the blocked-queue digest. The new iOS build shows vitals and `body_alert` there.
+
+**Target shape & drift**
+- Leader reference: Linear Agents API (developers.linear.app/docs/agents) and GitHub Copilot coding agent ("assign issue → PR"). Mapping: Issue → `tasks` row · Issue.delegate → `assignee agent:<slug>` · AgentSession → one run (`dispatch_run_id`) · session `awaitingInput` + `elicitation` activity → `blocked` + `dispatch_blocker` · the human's reply to the elicitation, which resumes the session → **unblock** (answer appended to `description`, then requeue) · `response` activity → result note (`dispatch_result_ref`) · PR attachment → `dispatch_pr_url` · Project → `notes` (projects/) · agent activity log → `agent_activity`.
+- Reference for this intent: (1) one durable queue as the system of record. Chat, /today, dashboard and Telegram are views that issue commands; no surface owns a private task table. (2) Every writer uses guarded compare-and-set transitions plus an append-only ledger row. (3) Runners claim work atomically: headless dispatch-run, or the Companion live-pane runner. The brain only proposes and files work. (4) Status flows from the record (poll); a push is only a nudge and never carries state. (5) Projects are the grouping key and a channel is a view onto one project. (6) Additive DTOs on one WS.
+- Deviations today: two queues and two state vocabularies (sqlite `orchestrator_tasks` vs Turso). The PR URL and result ref live only in the note body, and dispatch-reconcile regex-parses them. There is no `cancelled` state. `dispatch.sh` UPDATE is unguarded (last writer wins). dispatch-run's prompt is `tasks.text` only, so there is no way to answer a block. Channels map to a project only by `cwd`. `orchestrator-chat.ts` holds db, turns, tasks, channels and trust (508 lines, 36 exports). `reapStalled` assumes every `running` row belongs to dispatch-run. iOS `Models.swift` (775) and `CompanionSocket.swift` (649) are over cap. STATE.md decision "Phase 7 autonomy… Revisit if: hosts need one shared queue" — this is that revisit.
+- This change moves toward (1)–(6) and fixes all the dispatch-side deviations above. Left for follow-up: F1 brain-issued actions (requeue/unblock from a chat sentence) · F2 accept/mark-done from the phone · F3 split dispatch-run.ts (621) into runner + `dispatch-repos.ts` · F4 dispatch-reconcile reads the env token first (today it reads the dashboard .env only) · F5 /today shows `cancelled` and the Companion source · F6 split CompanionSocket.swift · F7 drop legacy local task history after 90 days read-only.
+
+**State decisions**
+- Work queue (status, assignee, blocker, run, PR, result): Turso `tasks`. Writers: dispatch-run.ts/dispatch.sh (claim, run outcome, stall), pm-nightly.py (NULL→queued, orphan close), dispatch-reconcile.ts (merged→done), and Companion `lib/dispatch-tasks.ts`. Companion's operations are file, cancel, requeue, unblock, claimLive, finishLive. Every UPDATE is guarded `AND dispatch_status IN (<expected>)`, and every write has an `agent_activity` row (`dispatch:<state>`, meta `{source:"companion",host,channel}`). The change is announced by the `orchestrator_task` frame, emitted by the `wiring/dispatch.ts` poller. Persistence: Turso.
+- New Turso columns: `dispatch_result_ref`, `dispatch_pr_url` (TEXT, nullable). dispatch-run is the only writer. New state `cancelled` (sets `done=1`; requeue sets it back to `done=0`).
+- Proposals stay in Companion sqlite `orchestrator_tasks` (`proposed|rejected|filed`) with a new column `dispatch_task_id`. Filing flips `proposed→filed` and stamps a pre-generated 32-hex Turso id in one sqlite UPDATE, then runs `INSERT OR IGNORE` into Turso with that id. Retries are therefore idempotent. Rejected drafts never reach Turso, and pm-nightly cannot queue a draft. `listTasks` hides `filed`.
+- Tmux worker runner is **kept as opt-in "live" mode** (Phase 4), not retired. It is the only path with a watchable pane and mid-task phone approvals (29/33 ok). Its record is a Turso row claimed at filing: `running`, `dispatch_owner='companion:<host>'`. dispatch-run only picks `queued` rows and its reaper skips `companion:%`. The local row keeps the tmux identity. The WIP cap of 3 applies to live mode only. Default mode is headless.
+- Legacy history (pre-Phase-2 local tasks) stays read-only in sqlite and is listed with `source:"local"`. There is no migration into Turso: those rows have no note_id, and Turso `note_id` is NOT NULL.
+- Channel ↔ project: `orchestrator_channels.note_id` plus a cached `note_title` and `note_ref`. There is at most one non-archived channel per note_id. Set by create with `noteId` or by `POST channels/<id>/link`; announced by `orchestrator_channel`. A channel's tasks are those whose `note_id` matches. #General shows agent tasks of unlinked notes plus everything filed from General. #Body shows blocked tasks across all notes.
+- Status flow: the Companion polls Turso every 20 s. The poll query covers agent tasks updated since the cursor, plus open ones, over a 7-day window. `/hooks/dispatch-event` (stateless, rate-limited to one call per 2 s) triggers an immediate poll and is called by dispatch.sh after each transition. The diff is keyed on the value `(dispatch_status, updated_at, done, pr_url)`, not on counts. The announce cursor is persisted in sqlite table `dispatch_seen(task_id PK, status, updated_at)`, owned by `lib/dispatch-mirror.ts`, so a restart does not re-announce. A blocked or PR transition appends one orchestrator turn in the owning channel and fires a gated APNs push.
+- Auth: Companion writes with the same `TURSO_AUTH_TOKEN` it already reads (agent env, never logged). Writes go only through named, guarded functions in `lib/dispatch-tasks.ts`; there is no generic SQL route. The phone never sees the token. Every new `/api/orchestrator/*` route stays behind the bearer gate. On HTTP 401 `turso.ts` clears the cached token and re-reads it once (rotation is pending per memory).
+
+**Contracts touched** (map + grep)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `orchestrator_task` | frame | task DTO gains `source, dispatchStatus, agent, noteId, projectTitle, prUrl, resultRef, blocker, done, owner, mode`. Turso tasks are mapped to legacy `status` (queued→queued, running→running, completed/pr→done, blocked/failed→error, cancelled→cancelled). `logTail` carries a "PR <url> · <verdict>" summary and `cwd` carries the project title (display-only for `source:"dispatch"`) | ios WSFrame.swift → AppState+SocketEvents | additive. The shipped build renders, counts and cancels these tasks; unblock and requeue need the new build |
+| `orchestrator_channel` | frame | +`noteId, noteTitle, noteRef, counts{queued,running,blocked,pr}` | ios WSFrame.swift | additive |
+| `orchestrator_queue` | frame NEW | `{cap,live,queued,dispatch:{queued,running,blocked,pr}}` | new iOS build | the shipped build decodes it as `.unknown`, safe |
+| `body_alert` | frame | unchanged; first iOS consumer | new iOS build | safe |
+| `GET /api/orchestrator/thread` | endpoint | `tasks` = proposals + Turso tasks for the channel + legacy local rows; `queue.dispatch` added | ios CompanionClient.swift | additive |
+| `POST /api/orchestrator/proposal/<id>/approve` | endpoint | files a Turso task instead of spawning one. Response adds `dispatchTaskId`, `status:"queued"`. A replay on `filed` returns 200 with the same id. Optional body `{agent?, mode?:"live"}` (live from Phase 4) | ios CompanionClient.swift (ProposalCard, durable outbox) | same shape; idempotent |
+| `POST /api/orchestrator/task/<id>/cancel` | endpoint | also accepts 32-hex Turso ids (queued/blocked/failed). Running dispatch tasks return 409 `running_on_<owner>`; running live tasks keep the tmux kill | ios CompanionClient.swift | same shape |
+| `POST /api/orchestrator/task/<id>/requeue` · `/unblock {answer}` · `GET …/task/<id>` · `POST …/channels/<id>/link {noteId\|null}` · `GET /api/orchestrator/projects` | endpoint NEW | see iOS contract | new iOS build | new |
+| `POST /api/orchestrator/channels` | endpoint | +optional `noteId` | ios CompanionClient.swift | additive |
+| `POST /api/orchestrator/dispatch` | endpoint | files to Turso; body +`noteId, agent`; `cwd` only for `mode:"live"` | none (map) | internal |
+| `POST /hooks/dispatch-event` | hook NEW | `{taskId?}` → 202, nudge only | dispatch.sh (shell; map blind spot) | new |
+| Turso `tasks` | table | +2 columns, +`cancelled`, guarded transitions | dispatch-run.ts, dispatch.sh, pm-nightly.py, dispatch-reconcile.ts, dashboard today-cron.ts / ticket-dispatch.ts | additive. today-cron reads `done=0` only, so cancelled rows drop out |
+
+**iOS contract (exact)** — written to `docs/orchestrator-dispatch-api.md`; all fields decoded permissively.
+- `DispatchTaskDTO` (inside `task` of `orchestrator_task` and in `tasks[]`): `{taskId, threadId, prompt(=title), cwd, reasoning, status(legacy), logTail?, sessionKey?, tmuxSession?, createdAt(ms), updatedAt(ms), source:"dispatch"|"local"|"proposal", dispatchStatus:"queued"|"running"|"blocked"|"pr"|"completed"|"failed"|"cancelled"|null, agent, noteId, projectTitle, prUrl?, resultRef?, blocker?, done:bool, owner?, mode:"headless"|"live"}`. `pr` = completed with prUrl.
+- `GET /api/orchestrator/task/<id>` → `{ok, task: DispatchTaskDTO, description, result?: {ref, title, excerpt(≤4000)}, activity:[{action, summary, ts}](≤20)}`.
+- `POST /api/orchestrator/task/<id>/unblock {answer:string(1..4000)}` → `{ok, task}`; 409 unless `blocked`. Appends `\n\n[unblock <ISO>] <answer>` to `description`, then sets status queued.
+- `POST …/task/<id>/requeue` → `{ok, task}`; allowed from blocked|failed|cancelled|completed-not-done.
+- `POST …/task/<id>/cancel` → `{ok, taskId, status:"cancelled"}` | 409 `{ok:false, error}`.
+- `POST …/channels/<id>/link {noteId: string|null}` → `{ok, channel}`; 409 `note_linked_elsewhere`.
+- `GET /api/orchestrator/projects` → `{projects:[{noteId, ref, title, openAgentTasks}]}` (active `projects/` notes, 5-min cache).
+- Errors: 503 `{ok:false, error:"turso_unreachable"}` on any Turso failure (body-api.md style).
+
+**Files — one owner each** (S = builder-server, T = builder-tools, D = builder-dashboard, I = builder-ios)
+| file | owner | change | lines now → after cap check |
+|---|---|---|---|
+| `server/lib/orchestrator-db.ts` | S | NEW: `db, GENERAL_CHANNEL`. Holds schema and migrations (+`note_id, note_title, note_ref` on channels; +`dispatch_task_id` on tasks; `dispatch_seen`) | 0 → ~110 ✓ |
+| `server/lib/orchestrator-chat.ts` | S | split: db and channels move out. Adds `markFiled, getTaskByDispatchId`; `TaskStatus` +`filed`; listTasks hides filed | 508 → ~360 ✓ |
+| `server/lib/orchestrator-channels.ts` | S | NEW: `Channel, ChannelTrust, AUTO_ELIGIBLE_STREAK, channelTrust, listChannels, getChannel, createChannel, ensureChannel, setChannelAuto, setChannelNote, getChannelByNote` (trust counts `filed` as approved) | 0 → ~190 ✓ |
+| `server/lib/dispatch-tasks.ts` | S | NEW: `DispatchStatus, DispatchTask, toTaskDto, legacyStatus, listDispatchTasks, getDispatchTask, fileTask, cancelDispatchTask, requeueTask, unblockTask, claimLive, finishLive, listProjects, AGENT_ALLOWLIST`. Takes QueryFn/BatchFn as parameters so tests can inject fakes | 0 → ~300 ✓ |
+| `server/lib/dispatch-mirror.ts` | S | NEW: `seenKey, lastSeen, markSeen` (sqlite `dispatch_seen`) | 0 → ~60 ✓ |
+| `server/lib/turso.ts` | S | +`tursoBatch` (multi-statement, returns `affected[]`); clear cache and retry once on 401 | 112 → ~160 ✓ |
+| `server/wiring/dispatch.ts` | S | NEW: `dispatchPoller{start,nudge}, emitDispatchTask, dispatchCounts, dispatchDigestFor, projectCandidates` (+ blocked/pr turn + push) | 0 → ~220 ✓ |
+| `server/wiring/orchestrator.ts` | S | the approve and auto paths call `fileProposal()`. `executeDispatch` is used only for `mode:"live"` (Phase 4). Brain context = body digest + dispatch digest. Imports updated | 316 → ~345 ✓ |
+| `server/lib/orchestrator-brain.ts` | S | compose returns `{noteId, agent, title, prompt, reasoning}` from candidate projects and the agent allowlist; the server validates both | 220 → ~265 ✓ |
+| `server/routes/orchestrator.ts` | S | new routes, Turso-aware cancel, thread merge, withIdempotency on approve/unblock/requeue | 201 → ~340 ✓ |
+| `server/routes/hooks.ts` | S | `/hooks/dispatch-event` → `dispatchPoller.nudge()`. Phase 4: the stop path calls `finishLive` when the task has `dispatch_task_id` | 569 → ~582 ✓ (near cap; any more → split the stop handler) |
+| `server/wiring/body.ts`, `server/routes/body.test.ts`, `server/lib/orchestrator-chat.test.ts`, `server/routes/vault.test.ts` | S | import paths only (ensureChannel/Channel → orchestrator-channels) | ±0 |
+| `server/lib/dispatch-tasks.test.ts`, `server/wiring/dispatch.test.ts`, `server/routes/orchestrator-dispatch.test.ts` | S | NEW tests (fake QueryFn; real sqlite via `COMPANION_DB_PATH`) | new |
+| `docs/orchestrator-dispatch-api.md` | S | NEW contract doc (above) | new |
+| `~/.claude/tools/dispatch.sh` | T | +`cancelled`; `DISPATCH_FROM=<state>` guard (skip the ledger insert and exit 3 when 0 rows are affected); fail-silent nudge `curl -m1 localhost:${COMPANION_PORT:-4245}/hooks/dispatch-event` | 103 → ~125 ✓ |
+| `~/.claude/tools/dispatch-run.ts` | T | SELECT `description` into the prompt; write `dispatch_result_ref/pr_url`; reaper skips `dispatch_owner LIKE 'companion:%'`; final transitions use `DISPATCH_FROM=running` | 621 → ~645 ⚠ over 600. Not split now: the module is unmapped tooling and the change is +24 lines → F3 |
+| `~/.claude/tools/dispatch-reconcile.ts` | T | read `dispatch_pr_url` first, body regex as fallback | 117 → ~122 ✓ |
+| `~/.claude/tools/pm-nightly.py` | T | **no change**. Step 3 only touches `dispatch_status IS NULL`; Companion inserts `queued`; drafts never reach Turso | 115 |
+| `tls-dashboard-v2/server/lib/data/schema.sql` + `tests/_helpers/test-db.ts` + live ALTER | D | +2 columns, update the state comment (three-file rule) | additive |
+| iOS `Models.swift` → `OrchestratorModels.swift` | I | NEW file takes all Orchestrator* types + `DispatchInfo, ProjectRef, TaskDetail` | 775 → ~490 / 0 → ~330 ✓ |
+| iOS `CompanionClient.swift`, `AppState+Orchestrator.swift`, `OrchestratorTaskRow.swift`, `WSFrame.swift` (+`orchestrator_queue`, `body_alert`), `UnblockSheet.swift` NEW, `BodyVitalsHeader.swift` NEW, `ChannelLinkPicker.swift` NEW | I | status chip by `dispatchStatus`, PR link, blocker, requeue/unblock/cancel, link picker, #Body vitals + alert banner. `CompanionSocket.swift` gets 0 lines: route the new cases via AppState+SocketEvents, else split first (F6) | each < 600 ✓ |
+
+**Fan-in paths to guard**
+- `fileProposal()` is reached from `POST /proposal/<id>/approve` (iOS taps and durable-outbox replays) and from `runBrain` auto mode. The filed id is stamped in sqlite before the Turso `INSERT OR IGNORE`; a replay on `filed` returns the same id. Never two Turso rows.
+- `orchestrator_task` frames come from `emitTask` (local) and `emitDispatchTask` (Turso). Both use the one `toTaskDto`. Id spaces are disjoint (8-char vs 32-hex), so iOS upsert-by-id cannot collide.
+- Turso transitions come from 4 writers. Cancel vs dispatch-run's final `completed/blocked`: whichever guarded UPDATE lands first wins, and the loser no-ops (dispatch.sh exit 3, no ledger row). The **guard line is in dispatch.sh**, and dispatch-run must pass `DISPATCH_FROM=running`.
+- `setTaskStatus/emitTask/orchEmit/workerQueue` from the `hooks.ts#POST /hooks/stop` path: in live mode `finishLive` is guarded `WHERE dispatch_status='running' AND dispatch_owner=?`, so a second stop is a no-op.
+- `tursoQuery()` fan-in (receipt-qa-worker, routes/body, routes/goals, wiring/body): the 401 retry must keep `TursoUnreachable` generic, with no SQL or token in errors.
+- `channelTrust()`: `filed` counts as approved, so auto eligibility survives the switch.
+
+**Risks**
+- The Companion host's token may lack write scope, or be missing on the Mac → filing returns 503. Mitigation: Verify 2 on both hosts before Phase 2 ships.
+- Phase 2 shipped before Phase 0 would give workers the title only (dispatch-run reads `text`). Mitigation: hard gate, and Phase 2's checklist confirms `description` is in the prompt.
+- The stall reaper would re-run a long live task headless. Mitigation: the `companion:%` skip, plus a test.
+- A brain-picked agent slug or note that cannot dispatch → `not found` / `no repo mapped` blocks. Mitigation: server-side allowlist (agents dir + AGENT_ALIASES), notes from `/projects`; the blocker is surfaced and answerable.
+- Restart re-announce or push storm. Mitigation: `dispatch_seen` is persisted, and the first poll after boot seeds it silently.
+- Two hosts poll the same queue and both announce. Mitigation: each host appends turns only to its own sqlite (that is fine), but push only from the host whose `COMPANION_DISPATCH_PUSH=1` (Zettlab).
+- Map blind spots (archmap adapter bugs to file): the shell caller of `/hooks/dispatch-event`; iOS consumers of `receipt_qa`/`approval_history` (CompanionSocket emits `.receiptQA`/`.approvalHistory`, but the map shows none); the dead iOS alias `orchestrator_proposal`.
+- kb: touched modules have no third-party externals (bun:sqlite and node builtins only), so no external gotchas were checked.
+
+**Rollout — each phase shippable**
+- **P0 tools+schema (T, D):** columns, `cancelled`, guarded dispatch.sh, dispatch-run (description, ref/pr columns, reaper skip), reconcile, nudge. Benefits /today on its own.
+- **P1 read path (S):** db/channels split, dispatch-tasks reads, poller, DTO, link + projects routes, thread merge, blocked/pr turns. The shipped iOS app already sees dispatch tasks.
+- **P2 write path (S, then I):** approve/auto/dispatch file to Turso; cancel/requeue/unblock routes. iOS build N+1 adds actions, link picker and the models split. The local headless spawn path is off from here.
+- **P3 #Body triage (S, I):** dispatch digest in brain context, `orchestrator_queue` frame, iOS vitals header + `body_alert` banner.
+- **P4 live mode (S, I):** `mode:"live"` claims the Turso row, then runs the tmux runner; stop hook → `finishLive`. iOS "Run live" on the proposal card. Remove `createTask`/`createQueuedTask` headless callers.
+
+**Verify**
+1. `bun test server/` green, including new: fileProposal twice gives one Turso insert; legacy status map per state; poller emits once per value change, not on a count-only change; the cancel-vs-complete race (fake) gives one winner.
+2. On each host (Mac, Zettlab): `curl -X POST /api/orchestrator/task/<test-id>/requeue` against a scratch task → 200, the Turso row is `queued`, and an `agent_activity` row has `source:"companion"`.
+3. `DISPATCH_FROM=running dispatch.sh <id> completed` on a `cancelled` row → exit 3, row unchanged, no ledger row.
+4. `bun dispatch-run.ts --mock --task <id>` → `dispatch_result_ref` set; the `--mock-status pr` variant sets `dispatch_pr_url`; the prompt log shows the description.
+5. Seed a `running` row with owner `companion:test` and started_at −2 h → `reapStalled` leaves it.
+6. Restart Companion → no duplicate blocked/pr turns, no push.
+7. **Manual pass by Jeremie on the running build** (shipped build after P1, build N+1 after P2/P3): (a) #General Tasks panel lists this week's dispatch tasks; blocked/failed show as error, PR tasks show done with the PR line. (b) Link a channel to PRJ-WCLS → only dashboard tasks appear, with counts on the rail. (c) Ask for a small dashboard fix → proposal card → Approve → card leaves, task appears `queued` within 20 s and shows up in /today. Drain → chip `running` → `pr` with a tappable PR link and one push. (d) Answer a blocked task → its row goes `queued`; after the next drain the result note quotes your answer. (e) Cancel a queued task → `cancelled`, gone from /today. Cancel a running one → refusal names the host. (f) #Body: vitals header, a test `POST /api/body/alert` shows a banner and a turn, and "what's blocked?" lists blocked tasks with reasons. (g) Auto-dispatch ON in a linked channel → filing has no tap, and the reasoning turn is visible. The plan is not shipped until this pass is clean.
+
+**Out of scope:** F1–F7; brain executing requeue/unblock itself; Telegram/dispatch-cron notification changes; migrating legacy local tasks into Turso; dashboard UI for Companion-filed tasks; multi-host live-mode scheduling.
+
+**P1 notes (read path, 2026-10-03):** shipped on `feat/orch-p1-read`. One deviation from the file table: the poller policy lives in `server/lib/dispatch-poller.ts` (pure, seams only) and `server/wiring/dispatch.ts` is just the live instance; its test is `server/lib/dispatch-poller.test.ts`. Reason: bun shares one module registry across test files, so a `wiring/` test that imports sqlite would load `orchestrator-db` before `orchestrator-chat.test.ts` seeds its legacy fixture. The sqlite cursor, link and route tests live in `server/routes/orchestrator-dispatch.test.ts`. Announce rules: the first-ever poll (empty `dispatch_seen`) seeds silently. After a restart, the first poll appends catch-up turns for real transitions but never pushes. Turns fire on blocked / pr / completed / done (failed and cancelled stay silent). Pushes fire on blocked / pr only, at most 3 per poll plus one overflow push, and only with `COMPANION_DISPATCH_PUSH=1`. The P0 columns are probed via `pragma_table_info`, re-probed every 10 min and after any failed poll. `/hooks/dispatch-event` takes loopback, or any peer with the bearer. Turso 401 → re-read the agent token once. Not in P1 (P2): `fileProposal`, `markFiled`, `listTasks` hiding `filed`, Turso-aware cancel/requeue/unblock, create channel with `noteId`, brain context. In P1 the shipped build shows dispatch tasks but cannot cancel them: the cancel route still 404s on Turso ids.
+
 ### Change Plan — images-in-feed-server (2026-09-23) — ✅ shipped #41 (`321cab7`), both hosts deployed 2026-09-23 with sharp 0.34.5; Codex HIGH (unbounded pending buffers) fixed post-review in `05316b0`; drift CLEAN
 **Request:** RES-L5NG step 3, server half. Forward `tool_result` image blocks (base64: Read on a PNG, MCP screenshots) to the feed as a new `FeedEvent` kind `"image"`. Downscale to 1024px long edge JPEG q80 into `~/.claude-companion/media/<sha>.jpg`. Serve via `GET /api/media/:id`. Prune with the 200-event feed cap plus a 200 MB dir cap. Replay on reconnect. Older clients ignore the kind. `![alt](path)` refs in assistant text if cheap.
 **Done when:**

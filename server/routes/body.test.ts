@@ -14,13 +14,13 @@ process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-")), 
 
 type Mod = typeof import("./body")
 type Wiring = typeof import("../wiring/body")
-type Chat = typeof import("../lib/orchestrator-chat")
+type Chat = typeof import("../lib/orchestrator-chat") & typeof import("../lib/orchestrator-channels")
 let routes: Mod
 let wiring: Wiring
 let chat: Chat
 
 beforeAll(async () => {
-  chat = await import("../lib/orchestrator-chat")
+  chat = { ...(await import("../lib/orchestrator-chat")), ...(await import("../lib/orchestrator-channels")) }
   wiring = await import("../wiring/body")
   routes = await import("./body")
 })
