@@ -79,7 +79,14 @@ export interface ApnsPayload {
   /** One-line context shown between title and body on iOS banners. */
   subtitle?: string
   body: string
-  category: "approval" | "question" | "waiting_input" | "briefing"
+  category: "approval" | "question" | "waiting_input" | "briefing" | "body_alert"
+  /**
+   * Overrides the category-derived level (approval/question → time-sensitive,
+   * everything else → passive). `passive` = no sound, priority 5; `active` and
+   * `time-sensitive` = sound, priority 10. Direct sends only — the broker
+   * receives the payload as-is and may ignore it.
+   */
+  interruptionLevel?: "passive" | "active" | "time-sensitive"
   threadId?: string
   /**
    * `apns-collapse-id` (≤ 64 bytes): a later push with the same id replaces
@@ -146,14 +153,16 @@ export function closeApnsSessions(): void {
 export async function sendApns(deviceToken: string, env: ApnsEnv, payload: ApnsPayload): Promise<ApnsResult> {
   if (brokerConfigured()) return sendViaBroker(deviceToken, env, payload)
   if (!apnsConfigured()) return { token: deviceToken, ok: false, status: 0, reason: "not-configured" }
-  const interruptive = payload.category === "approval" || payload.category === "question"
+  const level = payload.interruptionLevel
+    ?? (payload.category === "approval" || payload.category === "question" ? "time-sensitive" : "passive")
+  const interruptive = level !== "passive"
   const alert: Record<string, string> = { title: payload.title, body: payload.body }
   if (payload.subtitle) alert.subtitle = payload.subtitle
   const body: Record<string, unknown> = {
     aps: {
       alert,
       sound: interruptive ? "default" : "",
-      "interruption-level": interruptive ? "time-sensitive" : "passive",
+      "interruption-level": level,
       "thread-id": payload.threadId ?? payload.category,
       category: payload.category,
     },

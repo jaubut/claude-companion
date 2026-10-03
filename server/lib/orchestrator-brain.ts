@@ -100,6 +100,12 @@ async function runClaude(model: string, prompt: string): Promise<string | null> 
   return null
 }
 
+// Extra live context (e.g. the Body monitor digest, wiring/body.ts) placed
+// before the thread. Empty when there is none, so prompts are unchanged.
+export function contextLines(context: string | null): string[] {
+  return context?.trim() ? ["Live system context (read-only, use it to answer health questions):", context.trim(), ""] : []
+}
+
 // ---- tier 1: gate + chat (Haiku) ------------------------------------------
 
 type Gate = { kind: "chat"; text: string } | { kind: "task" }
@@ -107,7 +113,7 @@ type Gate = { kind: "chat"; text: string } | { kind: "task" }
 // One cheap call that classifies AND, when it's chat, writes the reply — so the
 // common case costs a single Haiku call. A task returns just the marker; Opus
 // composes the dispatch in tier 2.
-async function gateAndChat(turns: Turn[], userMessage: string): Promise<Gate | null> {
+async function gateAndChat(turns: Turn[], userMessage: string, context: string | null = null): Promise<Gate | null> {
   const prompt = [
     "You are the orchestrator for Jeremie — one always-open chat that can dispatch work to worker Claude sessions.",
     "Classify the latest user message and respond accordingly. Return ONLY minified JSON, one of:",
@@ -117,6 +123,7 @@ async function gateAndChat(turns: Turn[], userMessage: string): Promise<Gate | n
     "CHAT = you can answer now: a question, a fact, planning, chit-chat, or anything ambiguous/underspecified. Put your reply in text.",
     "TASK = real work to dispatch to a worker in a project directory (run/build/edit/test something concrete). A stronger model will compose the dispatch — return just the marker, no text.",
     "",
+    ...contextLines(context),
     "Recent thread:",
     history(turns),
     "",
@@ -160,7 +167,7 @@ function parseProposal(raw: string): BrainDecision | null {
   return null
 }
 
-async function composeProposal(turns: Turn[], userMessage: string, candidateCwds: string[], channelCwd: string | null): Promise<BrainDecision | null> {
+async function composeProposal(turns: Turn[], userMessage: string, candidateCwds: string[], channelCwd: string | null, context: string | null = null): Promise<BrainDecision | null> {
   const dirs = candidateCwds.length ? candidateCwds.map((d) => `  - ${d}`).join("\n") : "  (none currently active)"
   const channelLine = channelCwd
     ? `- This conversation is the channel for the project at ${channelCwd} — dispatch there unless the user explicitly names another project.`
@@ -178,6 +185,7 @@ async function composeProposal(turns: Turn[], userMessage: string, candidateCwds
     "- The worker prompt must be self-contained — the worker has NO memory of this conversation.",
     "- If it's ambiguous which project or what to do, return the chat form with a clarifying question instead of guessing.",
     "",
+    ...contextLines(context),
     "Recent thread:",
     history(turns),
     "",
@@ -199,12 +207,13 @@ export async function decide(
   userMessage: string,
   candidateCwds: string[],
   channelCwd: string | null = null,
+  context: string | null = null,
 ): Promise<BrainDecision | null> {
-  const g = await gateAndChat(turns, userMessage)
+  const g = await gateAndChat(turns, userMessage, context)
   if (!g) return null
   if (g.kind === "chat") return g
   // task → Opus composes the dispatch (and may downgrade to a clarifying chat).
-  const proposal = await composeProposal(turns, userMessage, candidateCwds, channelCwd)
+  const proposal = await composeProposal(turns, userMessage, candidateCwds, channelCwd, context)
   if (proposal) return proposal
   return { kind: "chat", text: "Looks like a task, but I couldn't pin down the project — which directory?" }
 }
