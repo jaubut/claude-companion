@@ -20,11 +20,10 @@ import {
   countUnboundTasksInCwd,
   countRunningTasksInCwd,
   listTasks,
-  getChannel,
   type Turn as OrchTurn,
   type Task as OrchTask,
-  type Channel as OrchChannel,
 } from "../lib/orchestrator-chat"
+import { getChannel, type Channel as OrchChannel } from "../lib/orchestrator-channels"
 import { decide as brainDecide } from "../lib/orchestrator-brain"
 import { createWorkerTailManager } from "../lib/worker-tail"
 import { createQueue, DEFAULT_WIP_CAP } from "../lib/orchestrator-queue"

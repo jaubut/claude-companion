@@ -1172,11 +1172,38 @@
           "externals": []
         },
         {
-          "path": "lib/orchestrator-chat.ts",
-          "lines": 508,
+          "path": "lib/orchestrator-channels.ts",
+          "lines": 116,
           "kind": "lib",
           "exports": [
-            "GENERAL_CHANNEL",
+            "ChannelTrust",
+            "AUTO_ELIGIBLE_STREAK",
+            "Channel",
+            "channelTrust",
+            "setChannelAuto",
+            "listChannels",
+            "getChannel",
+            "createChannel",
+            "ensureChannel"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/orchestrator-chat.ts",
+          "lines": 318,
+          "kind": "lib",
+          "exports": [
             "TurnRole",
             "TaskStatus",
             "LIVE_STATUSES",
@@ -1202,20 +1229,29 @@
             "countRunningTasksInCwd",
             "listTasks",
             "countLiveTasks",
-            "listQueued",
-            "ChannelTrust",
-            "AUTO_ELIGIBLE_STREAK",
-            "Channel",
-            "channelTrust",
-            "setChannelAuto",
-            "listChannels",
-            "getChannel",
-            "createChannel",
-            "ensureChannel"
+            "listQueued"
           ],
-          "state": [
-            "db: Database"
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/orchestrator-db.ts",
+          "lines": 84,
+          "kind": "lib",
+          "exports": [
+            "db",
+            "GENERAL_CHANNEL"
+          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -2889,7 +2925,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 201,
+          "lines": 197,
           "kind": "route-host",
           "exports": [
             "handleOrchestratorRoute"
@@ -2943,6 +2979,8 @@
           "imports": [
             "wiring/orchestrator.ts",
             "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-db.ts",
             "lib/secret-store.ts",
             "lib/body.ts",
             "lib/vault-guard.ts",
@@ -3028,7 +3066,7 @@
         },
         {
           "path": "wiring/body.ts",
-          "lines": 68,
+          "lines": 69,
           "kind": "lib",
           "exports": [
             "bodySnapshot",
@@ -3054,6 +3092,7 @@
             "lib/body.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
             "lib/push.ts",
             "lib/turso.ts",
             "state.ts"
@@ -3180,7 +3219,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 316,
+          "lines": 315,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -3210,6 +3249,7 @@
             "lib/log.ts",
             "state.ts",
             "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
             "lib/orchestrator-brain.ts",
             "lib/worker-tail.ts",
             "lib/orchestrator-queue.ts",
@@ -4197,6 +4237,19 @@
             "lib/orchestrator-brain.ts",
             "wiring/body.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "TaskStatus": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/orchestrator-channels.ts"
+          ]
+        },
+        "GENERAL_CHANNEL": {
+          "module": "lib/orchestrator-db.ts",
+          "callers": [
+            "lib/orchestrator-chat.ts",
+            "routes/orchestrator.ts"
           ]
         },
         "listQueued": {
@@ -5881,20 +5934,6 @@
             "routes/orchestrator.ts#POST /api/orchestrator/send"
           ]
         },
-        "Channel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "wiring/body.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "GENERAL_CHANNEL": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts"
-          ]
-        },
         "appendTurn": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -5911,26 +5950,11 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "createChannel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels"
-          ]
-        },
         "createQueuedTask": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
-          ]
-        },
-        "getChannel": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "wiring/orchestrator.ts"
           ]
         },
         "getThread": {
@@ -5941,14 +5965,6 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "listChannels": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/channels",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
-          ]
-        },
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -5957,12 +5973,25 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "setChannelAuto": {
-          "module": "lib/orchestrator-chat.ts",
+        "getChannel": {
+          "module": "lib/orchestrator-channels.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/"
+            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "listChannels": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/channels",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+          ]
+        },
+        "createChannel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/channels"
           ]
         },
         "BODY_CHANNEL": {
@@ -5971,6 +6000,13 @@
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "wiring/body.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "setChannelAuto": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/task/"
           ]
         },
         "sessionCmdArgv": {
@@ -6146,6 +6182,12 @@
             "wiring/body.ts"
           ]
         },
+        "Channel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "wiring/body.ts"
+          ]
+        },
         "BodyAlert": {
           "module": "lib/body-alert.ts",
           "callers": [
@@ -6165,7 +6207,7 @@
           ]
         },
         "ensureChannel": {
-          "module": "lib/orchestrator-chat.ts",
+          "module": "lib/orchestrator-channels.ts",
           "callers": [
             "wiring/body.ts"
           ]

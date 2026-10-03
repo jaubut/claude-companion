@@ -8,21 +8,17 @@ import {
   workerQueue,
 } from "../wiring/orchestrator"
 import {
-  type Channel as OrchChannel,
-  GENERAL_CHANNEL,
   appendTurn as orchAppendTurn,
   countLiveTasks,
-  createChannel,
   createQueuedTask,
-  getChannel,
   getTask,
   getThread,
-  listChannels,
   listQueued,
   listTasks,
-  setChannelAuto,
   setTaskStatus,
 } from "../lib/orchestrator-chat"
+import { type Channel as OrchChannel, createChannel, getChannel, listChannels, setChannelAuto } from "../lib/orchestrator-channels"
+import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { BODY_CHANNEL } from "../lib/body"
 import { keyCommandGate } from "../lib/vault-guard"
