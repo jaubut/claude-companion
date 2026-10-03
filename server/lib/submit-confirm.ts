@@ -21,6 +21,13 @@ import { type PaneRef, capturePane, paneKey, resolveTmuxRefFromTty, sendKeysArgs
 import { readClaudeSessionFile } from "./discover"
 
 export const SUBMIT_WINDOW_MS = 3_000
+// Text left the box but no hook yet: on a loaded host Claude Code runs its
+// pre-prompt hooks before UserPromptSubmit reaches us — seen 6.6 s after the
+// Enter on Zettlab (2026-10-03), past the 3 s window, so a delivered prompt was
+// reported lost. One more wait in that case only. 3 s + this stays under the
+// phone's 12 s inject timeout (the Enter-retry path skips it: it already waited
+// a second window).
+export const LATE_HOOK_GRACE_MS = 6_000
 
 // Who a UserPromptSubmit hook (or a watch) is about. Any non-empty field that
 // matches is enough: the hook's session key is derived from the same tty /
@@ -165,6 +172,8 @@ export interface ConfirmDeps {
   // The text is a slash command or `!` bash-mode input (isHooklessInput).
   hookless?: boolean
   windowMs?: number
+  // Extra wait when our text left the box but no hook came (LATE_HOOK_GRACE_MS).
+  lateGraceMs?: number
   clock?: SubmitClock
 }
 
@@ -226,7 +235,9 @@ async function confirmTyped(deps: ConfirmDeps): Promise<ConfirmResult> {
   // and nothing modal is on screen. Anything else — an empty box, a picker, a
   // panel — means the text went somewhere else, and an Enter there would
   // answer a prompt nobody chose (review of PR #51, item 1).
+  let retried = false
   if (stillInBox(before, prefix) && !PICKER_RE.test(unstyle(before))) {
+    retried = true
     await deps.pressEnter()
     if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: true }
   }
@@ -236,6 +247,12 @@ async function confirmTyped(deps: ConfirmDeps): Promise<ConfirmResult> {
   // A picker still means the text went into it, busy or not.
   const last = after ?? before
   if (!PICKER_RE.test(unstyle(last)) && (await deps.busy?.())) return { ok: true, confirmed: false, queued: true }
+  // Our text is gone from the input line and nothing modal took it: it was
+  // most likely submitted and the hook is just late. Wait once more.
+  // Never for hookless input (/cmd, !cmd): no hook is coming.
+  if (!deps.hookless && !retried && after !== null && !PICKER_RE.test(unstyle(after)) && !stillInBox(after, prefix)) {
+    if (await deps.watch.wait(deps.lateGraceMs ?? LATE_HOOK_GRACE_MS, deps.clock)) return { ok: true, confirmed: true, retried: false }
+  }
   return { ok: false, error: "not_submitted", excerpt: paneExcerpt(after ?? before) }
 }
 
