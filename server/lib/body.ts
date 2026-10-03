@@ -321,3 +321,34 @@ export function isHealthIntent(text: string): boolean {
   const t = text.toLowerCase().replace(/[’`]/g, "'")
   return HEALTH_PATTERNS.some((re) => re.test(t))
 }
+
+// ── #Body vitals header (thread payload, orchestrator-one-queue P3) ──────────
+
+export interface BodyVitals {
+  /** One display line, e.g. "43 components: 38 ok · 1 failing · 1 dead — 2 tasks blocked". */
+  line: string
+  summary: BodySummary
+  /** Worst state present (dead > crash_loop > failing > unknown > stopped > dormant > ok). */
+  worst: BodyState
+  /** dead + crash_loop + failing. */
+  problems: number
+  /** Agent tasks blocked across all projects (Turso dispatch queue). */
+  blockedTasks: number
+  generatedAt: string
+}
+
+const WORST_ORDER: readonly BodyState[] = ["dead", "crash_loop", "failing", "unknown", "stopped", "dormant", "ok"]
+
+export function vitalsHeader(body: BodyResponse, blockedTasks: number): BodyVitals {
+  const s = body.summary
+  const parts = [`${s.ok} ok`, ...BODY_STATES.filter((k) => k !== "ok" && s[k] > 0).map((k) => `${s[k]} ${k}`)]
+  const tasks = blockedTasks > 0 ? ` — ${blockedTasks} task${blockedTasks === 1 ? "" : "s"} blocked` : ""
+  return {
+    line: `${s.total} components: ${parts.join(" · ")}${tasks}`,
+    summary: s,
+    worst: WORST_ORDER.find((k) => s[k] > 0) ?? "ok",
+    problems: s.dead + s.crash_loop + s.failing,
+    blockedTasks,
+    generatedAt: body.generated_at,
+  }
+}

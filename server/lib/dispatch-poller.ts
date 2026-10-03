@@ -14,7 +14,7 @@ import {
 } from "./dispatch-tasks"
 import type { Channel } from "./orchestrator-channels"
 import type { Turn } from "./orchestrator-chat"
-import type { QueryFn } from "./turso"
+import { type ExecFn, type QueryFn, TursoUnreachable } from "./turso"
 
 // Turso dispatch poller core (orchestrator-one-queue P1). Status flows from the
 // record: every 20 s (or on a /hooks/dispatch-event nudge) read the agent
@@ -41,6 +41,8 @@ export interface Mirror {
 
 export interface DispatchWiringDeps {
   query: QueryFn
+  /** Guarded writes (P2). Absent → every write fails as turso_unreachable. */
+  exec?: ExecFn
   broadcast: (frame: Record<string, unknown>) => void
   appendTurn: (text: string, taskId: string, channelId: string) => Turn
   push: (payload: ApnsPayload) => void
@@ -66,6 +68,27 @@ const PRUNE_EVERY_MS = 60 * 60_000
 const SEEN_MAX_AGE_MS = 30 * 24 * 60 * 60_000
 
 const zero = (): DispatchCounts => ({ queued: 0, running: 0, blocked: 0, pr: 0 })
+const DIGEST_MAX = 800
+const DIGEST_BLOCKED = 5
+
+const noExec: ExecFn = async () => { throw new TursoUnreachable("no writer configured") }
+
+/**
+ * The brain's dispatch context (P2/P3): counts, then the top blocked tasks with
+ * their reasons, ≤ 800 chars. `scope` names the view ("#Dash", "all projects").
+ */
+export function buildDispatchDigest(scope: string, counts: DispatchCounts, blocked: DispatchTask[], max = DIGEST_MAX): string {
+  const head = `Dispatch queue (${scope}): ${counts.queued} queued · ${counts.running} running · ${counts.blocked} blocked · ${counts.pr} PR open`
+  const lines = [head]
+  if (blocked.length) lines.push("Blocked (answer one to requeue it):")
+  for (const t of blocked.slice(0, DIGEST_BLOCKED)) {
+    const where = t.projectTitle ? ` (${t.projectTitle})` : ""
+    lines.push(`- [${short(t.id)}] ${t.agent ?? "agent"} — ${t.title}${where}: ${(t.blocker ?? "unspecified").replace(/\s+/g, " ").slice(0, 160)}`)
+  }
+  if (blocked.length > DIGEST_BLOCKED) lines.push(`…and ${blocked.length - DIGEST_BLOCKED} more blocked`)
+  const out = lines.join("\n")
+  return out.length <= max ? out : `${out.slice(0, max - 1)}…`
+}
 
 function short(id: string): string {
   return id.slice(0, 8)
@@ -273,6 +296,26 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     emitAggregates(links)
   }
 
+  // A Companion write just landed (P2): show it now instead of on the next poll.
+  // Marked seen so the poll does not emit it twice; queued / cancelled are never
+  // announced, so nothing is skipped.
+  function applyLocal(t: DispatchTask): void {
+    const links = deps.linkedNotes()
+    cache = [t, ...cache.filter((c) => c.id !== t.id)]
+    mirror.markSeen(t, now())
+    emitTask(t, links)
+    emitAggregates(links)
+  }
+
+  // Blocked tasks in this view (#Body: every note), oldest block first.
+  function digestFor(channelId: string, scope: string): string | null {
+    if (!polledOk) return null
+    const links = deps.linkedNotes()
+    const view = channelId === BODY_CHANNEL ? cache : inChannel(channelId, links)
+    const blocked = view.filter((t) => t.status === "blocked" && !t.done).sort((a, b) => a.updatedAt - b.updatedAt)
+    return buildDispatchDigest(scope, countsOf(view), blocked)
+  }
+
   async function projects(fresh = false): Promise<ProjectRef[]> {
     if (!fresh && projectsCache && now() - projectsCache.at < PROJECTS_TTL_MS) return projectsCache.value
     projectsCache = { value: await listProjects(deps.query), at: now() }
@@ -280,8 +323,8 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
   }
 
   return {
-    query: deps.query, columns, poll, nudge, start, stop, projects,
-    tasksFor, countsFor, decorate, queueSummary, threadIdFor,
+    query: deps.query, exec: deps.exec ?? noExec, columns, poll, nudge, start, stop, projects,
+    tasksFor, countsFor, decorate, queueSummary, threadIdFor, digestFor, applyLocal,
     cached: (id: string): DispatchTask | null => cache.find((t) => t.id === id) ?? null,
     relink,
   }

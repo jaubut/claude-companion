@@ -19,9 +19,19 @@ import type { Turn } from "./orchestrator-chat"
 //    in the same call; only a task escalates to a second (Opus) call. Brain calls
 //    run in a bare cwd so they don't pay to load a project's MCP servers (~5s).
 
+// A proposal files a Turso agent task (orchestrator-one-queue P2): noteId + agent
+// are the brain's pick, validated server-side against /projects and the agent
+// allowlist; cwd is only for a live tmux run ("" when none).
 export type BrainDecision =
   | { kind: "chat"; text: string }
-  | { kind: "proposal"; cwd: string; prompt: string; reasoning: string }
+  | { kind: "proposal"; cwd: string; prompt: string; reasoning: string; noteId: string | null; agent: string | null; title: string | null }
+
+/** What compose may pick from: active projects, dispatchable agents, the channel's own note. */
+export interface ComposeTargets {
+  projects: { noteId: string; ref: string | null; title: string }[]
+  agents: string[]
+  channelNoteId: string | null
+}
 
 const GATE_MODEL = process.env.COMPANION_GATE_MODEL || "claude-haiku-4-5"
 const COMPOSE_MODEL = process.env.COMPANION_COMPOSE_MODEL || "claude-opus-4-8"
@@ -103,7 +113,7 @@ async function runClaude(model: string, prompt: string): Promise<string | null> 
 // Extra live context (e.g. the Body monitor digest, wiring/body.ts) placed
 // before the thread. Empty when there is none, so prompts are unchanged.
 export function contextLines(context: string | null): string[] {
-  return context?.trim() ? ["Live system context (read-only, use it to answer health questions):", context.trim(), ""] : []
+  return context?.trim() ? ["Live system context (read-only; use it for health and work-queue questions):", context.trim(), ""] : []
 }
 
 // ---- tier 1: gate + chat (Haiku) ------------------------------------------
@@ -156,18 +166,32 @@ function parseProposal(raw: string): BrainDecision | null {
   if (o.kind === "chat" && typeof o.text === "string" && o.text.trim()) {
     return { kind: "chat", text: o.text.trim() }
   }
-  if (
-    o.kind === "proposal" &&
-    typeof o.cwd === "string" && o.cwd.startsWith("/") &&
-    typeof o.prompt === "string" && o.prompt.trim() &&
-    typeof o.reasoning === "string"
-  ) {
-    return { kind: "proposal", cwd: o.cwd, prompt: o.prompt.trim(), reasoning: o.reasoning.trim() }
+  if (o.kind === "proposal" && typeof o.prompt === "string" && o.prompt.trim() && typeof o.reasoning === "string") {
+    const cwd = typeof o.cwd === "string" && o.cwd.startsWith("/") ? o.cwd : ""
+    const noteId = typeof o.noteId === "string" && o.noteId.trim() ? o.noteId.trim() : null
+    if (!cwd && !noteId) return null
+    const opt = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null)
+    return { kind: "proposal", cwd, prompt: o.prompt.trim(), reasoning: o.reasoning.trim(), noteId, agent: opt(o.agent), title: opt(o.title) }
   }
   return null
 }
 
-async function composeProposal(turns: Turn[], userMessage: string, candidateCwds: string[], channelCwd: string | null, context: string | null = null): Promise<BrainDecision | null> {
+function targetLines(t: ComposeTargets | null): string[] {
+  if (!t) return []
+  const projects = t.projects.slice(0, 40).map((p) => `  - ${p.noteId}${p.ref ? ` (${p.ref})` : ""}: ${p.title}`)
+  return [
+    "- noteId = the project this task belongs to. Pick from these active projects:",
+    ...(projects.length ? projects : ["  (none listed)"]),
+    ...(t.channelNoteId ? [`- This channel is the project ${t.channelNoteId} — use it unless the user explicitly names another project.`] : []),
+    `- agent = who runs it, one of: ${t.agents.slice(0, 60).join(", ") || "builder"} (code changes → builder).`,
+    "- title = a short task title (≤ 80 chars).",
+  ]
+}
+
+async function composeProposal(
+  turns: Turn[], userMessage: string, candidateCwds: string[], channelCwd: string | null, context: string | null = null,
+  targets: ComposeTargets | null = null,
+): Promise<BrainDecision | null> {
   const dirs = candidateCwds.length ? candidateCwds.map((d) => `  - ${d}`).join("\n") : "  (none currently active)"
   const channelLine = channelCwd
     ? `- This conversation is the channel for the project at ${channelCwd} — dispatch there unless the user explicitly names another project.`
@@ -175,11 +199,12 @@ async function composeProposal(turns: Turn[], userMessage: string, candidateCwds
   const prompt = [
     "You are the orchestrator brain. The user wants real work done — compose a dispatch proposal for a worker Claude.",
     "Return ONLY minified JSON. No prose, no markdown fences. One of:",
-    '{"kind":"proposal","cwd":"<absolute project dir>","prompt":"<full self-contained task prompt for the worker>","reasoning":"<one sentence: why this worker, why now>"}',
+    '{"kind":"proposal","noteId":"<project note id>","agent":"<agent slug>","title":"<short title>","cwd":"<absolute project dir, optional>","prompt":"<full self-contained task prompt for the worker>","reasoning":"<one sentence: why this worker, why now>"}',
     '{"kind":"chat","text":"<a clarifying question>"}   ← use this if you cannot determine the project or the task',
     "",
     "Rules:",
-    "- cwd MUST be an absolute path. Candidate project directories (pick the best fit; if none fit, ask which):",
+    ...targetLines(targets),
+    "- cwd (optional) MUST be an absolute path. Candidate project directories:",
     dirs,
     ...(channelLine ? [channelLine] : []),
     "- The worker prompt must be self-contained — the worker has NO memory of this conversation.",
@@ -208,12 +233,13 @@ export async function decide(
   candidateCwds: string[],
   channelCwd: string | null = null,
   context: string | null = null,
+  targets: ComposeTargets | null = null,
 ): Promise<BrainDecision | null> {
   const g = await gateAndChat(turns, userMessage, context)
   if (!g) return null
   if (g.kind === "chat") return g
   // task → Opus composes the dispatch (and may downgrade to a clarifying chat).
-  const proposal = await composeProposal(turns, userMessage, candidateCwds, channelCwd, context)
+  const proposal = await composeProposal(turns, userMessage, candidateCwds, channelCwd, context, targets)
   if (proposal) return proposal
-  return { kind: "chat", text: "Looks like a task, but I couldn't pin down the project — which directory?" }
+  return { kind: "chat", text: "Looks like a task, but I couldn't pin down the project — which one?" }
 }

@@ -11,7 +11,9 @@ export type TurnRole = "user" | "orchestrator" | "worker"
 // Backpressure (Phase 7): past the WIP cap an admitted task parks as queued and
 // drains FIFO into dispatched when a live worker exits. cancelled = user pulled a
 // queued/dispatched/running task (its tmux worker is killed).
-export type TaskStatus = "proposed" | "queued" | "dispatched" | "running" | "done" | "error" | "rejected" | "cancelled"
+// filed (orchestrator-one-queue P2) = approved and handed to Turso `tasks`
+// under dispatch_task_id; the local row is history, listTasks hides it.
+export type TaskStatus = "proposed" | "queued" | "dispatched" | "running" | "done" | "error" | "rejected" | "cancelled" | "filed"
 
 // Statuses that hold a worker slot against the WIP cap.
 export const LIVE_STATUSES: readonly TaskStatus[] = ["dispatched", "running"]
@@ -40,7 +42,16 @@ export interface Task {
   status: TaskStatus
   createdAt: number
   updatedAt: number
+  // Proposal target (P2): the Turso project note + agent it files to, and the
+  // Turso id it was (or is being) filed as. Absent on legacy rows.
+  noteId?: string | null
+  agent?: string | null
+  title?: string | null
+  dispatchTaskId?: string | null
 }
+
+/** Where a proposal files to; every field optional (resolved at approve time). */
+export interface ProposalTarget { noteId?: string | null; agent?: string | null; title?: string | null }
 
 interface TurnRow {
   id: string
@@ -64,6 +75,10 @@ interface TaskRow {
   status: TaskStatus
   created_at: number
   updated_at: number
+  note_id: string | null
+  agent: string | null
+  title: string | null
+  dispatch_task_id: string | null
 }
 
 function toTurn(r: TurnRow): Turn {
@@ -84,6 +99,10 @@ function toTask(r: TaskRow): Task {
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    noteId: r.note_id ?? null,
+    agent: r.agent ?? null,
+    title: r.title ?? null,
+    dispatchTaskId: r.dispatch_task_id ?? null,
   }
 }
 
@@ -127,11 +146,12 @@ export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn
 
 function insertTask(task: Task): void {
   db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, tmux_socket, reasoning, log_tail, status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, tmux_socket, reasoning, log_tail, status, created_at, updated_at, note_id, agent, title) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     task.taskId, task.threadId, task.prompt, task.cwd, task.sessionKey,
     task.tmuxSession, task.tmuxSocket || null, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
+    task.noteId ?? null, task.agent ?? null, task.title ?? null,
   )
 }
 
@@ -160,11 +180,12 @@ export function createQueuedTask(prompt: string, cwd: string, threadId: string =
 
 // Propose-confirm (Phase 2): the brain proposes a dispatch; nothing spawns until
 // the user approves (setTaskSpawn flips it to dispatched).
-export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL): Task {
+export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL, target: ProposalTarget = {}): Task {
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
     sessionKey: null, tmuxSession: null, reasoning, logTail: null, status: "proposed", createdAt: now, updatedAt: now,
+    noteId: target.noteId ?? null, agent: target.agent ?? null, title: target.title ?? null, dispatchTaskId: null,
   }
   insertTask(task)
   return task
@@ -180,6 +201,34 @@ export function setTaskSpawn(taskId: string, tmuxSession: string | null, tmuxSoc
     Date.now(),
     taskId,
   )
+}
+
+// ---- filing (orchestrator-one-queue P2) -------------------------------------
+
+/**
+ * Stamp the Turso id a proposal will be filed as, BEFORE the Turso insert, so a
+ * retried approve reuses it (INSERT OR IGNORE → never two rows). COALESCE keeps
+ * the first id if two approves race. Returns the stamped id, null unless proposed.
+ */
+export function stampDispatchId(taskId: string, freshId: string): string | null {
+  db.query("UPDATE orchestrator_tasks SET dispatch_task_id = COALESCE(dispatch_task_id, ?) WHERE task_id = ? AND status = 'proposed'").run(freshId, taskId)
+  const row = db.query("SELECT dispatch_task_id, status FROM orchestrator_tasks WHERE task_id = ?").get(taskId) as
+    | { dispatch_task_id: string | null; status: TaskStatus }
+    | null
+  return row?.status === "proposed" ? row.dispatch_task_id : null
+}
+
+/** proposed → filed once the Turso row exists. False when it was not proposed. */
+export function markFiled(taskId: string, target: { noteId: string; agent: string }): boolean {
+  const res = db.query(
+    "UPDATE orchestrator_tasks SET status = 'filed', note_id = ?, agent = ?, updated_at = ? WHERE task_id = ? AND status = 'proposed' AND dispatch_task_id IS NOT NULL",
+  ).run(target.noteId, target.agent, Date.now(), taskId)
+  return res.changes > 0
+}
+
+export function getTaskByDispatchId(dispatchTaskId: string): Task | null {
+  const row = db.query("SELECT * FROM orchestrator_tasks WHERE dispatch_task_id = ?").get(dispatchTaskId) as TaskRow | null
+  return row ? toTask(row) : null
 }
 
 export function getTask(taskId: string): Task | null {
@@ -290,10 +339,11 @@ export function countRunningTasksInCwd(cwd: string): number {
 
 // List tasks, optionally scoped to one channel. threadId omitted → all channels
 // (the Tasks panel's global view); scoped → that channel's dispatched work.
+// Filed proposals are hidden: their Turso task is listed instead (P2).
 export function listTasks(threadId?: string): Task[] {
   const rows = threadId
-    ? (db.query("SELECT * FROM orchestrator_tasks WHERE thread_id = ? ORDER BY created_at DESC LIMIT 100").all(threadId) as TaskRow[])
-    : (db.query("SELECT * FROM orchestrator_tasks ORDER BY created_at DESC LIMIT 100").all() as TaskRow[])
+    ? (db.query("SELECT * FROM orchestrator_tasks WHERE thread_id = ? AND status != 'filed' ORDER BY created_at DESC LIMIT 100").all(threadId) as TaskRow[])
+    : (db.query("SELECT * FROM orchestrator_tasks WHERE status != 'filed' ORDER BY created_at DESC LIMIT 100").all() as TaskRow[])
   return rows.map(toTask)
 }
 

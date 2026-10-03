@@ -61,8 +61,9 @@ function addColumn(table: string, col: string): void {
     /* column already exists */
   }
 }
-// dispatch_task_id: the Turso tasks.id a proposal was filed as (orchestrator-one-queue P2).
-for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT", "dispatch_task_id TEXT"]) {
+// dispatch_task_id: the Turso tasks.id a proposal was filed as (orchestrator-one-queue P2);
+// note_id / agent / title: where it files to (brain pick, else the channel's note).
+for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT", "dispatch_task_id TEXT", "note_id TEXT", "agent TEXT", "title TEXT"]) {
   addColumn("orchestrator_tasks", col)
 }
 // note_id links a channel to one Turso project note; title/ref are a display cache.

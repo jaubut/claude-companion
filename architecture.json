@@ -373,7 +373,7 @@
         },
         {
           "path": "lib/body.ts",
-          "lines": 324,
+          "lines": 355,
           "kind": "lib",
           "exports": [
             "BODY_CHANNEL",
@@ -398,7 +398,9 @@
             "BodySnapshot",
             "createBodySnapshot",
             "buildBodyDigest",
-            "isHealthIntent"
+            "isHealthIntent",
+            "BodyVitals",
+            "vitalsHeader"
           ],
           "state": [],
           "emits": [],
@@ -875,7 +877,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 291,
+          "lines": 334,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -884,6 +886,7 @@
             "Seen",
             "Mirror",
             "DispatchWiringDeps",
+            "buildDispatchDigest",
             "turnText",
             "pushPayload",
             "createDispatchWiring",
@@ -916,7 +919,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 267,
+          "lines": 451,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -946,7 +949,23 @@
             "getTaskResult",
             "ProjectRef",
             "listProjects",
-            "getNote"
+            "getNote",
+            "AGENT_ALIASES",
+            "DEFAULT_AGENT",
+            "ANSWER_MAX",
+            "TITLE_MAX",
+            "agentAllowlist",
+            "resolveAgent",
+            "newDispatchId",
+            "DISPATCH_ID",
+            "WriteCtx",
+            "WriteOutcome",
+            "FileInput",
+            "fileTask",
+            "cancelDispatchTask",
+            "requeueTask",
+            "unblockMarker",
+            "unblockTask"
           ],
           "state": [],
           "emits": [],
@@ -1264,10 +1283,11 @@
         },
         {
           "path": "lib/orchestrator-brain.ts",
-          "lines": 220,
+          "lines": 246,
           "kind": "lib",
           "exports": [
             "BrainDecision",
+            "ComposeTargets",
             "contextLines",
             "decide"
           ],
@@ -1318,7 +1338,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 318,
+          "lines": 368,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -1326,12 +1346,16 @@
             "LIVE_STATUSES",
             "Turn",
             "Task",
+            "ProposalTarget",
             "appendTurn",
             "getThread",
             "createTask",
             "createQueuedTask",
             "createProposal",
             "setTaskSpawn",
+            "stampDispatchId",
+            "markFiled",
+            "getTaskByDispatchId",
             "getTask",
             "bindTaskSession",
             "setTaskStatus",
@@ -1362,7 +1386,7 @@
         },
         {
           "path": "lib/orchestrator-db.ts",
-          "lines": 101,
+          "lines": 102,
           "kind": "lib",
           "exports": [
             "db",
@@ -2375,14 +2399,16 @@
         },
         {
           "path": "lib/turso.ts",
-          "lines": 125,
+          "lines": 137,
           "kind": "lib",
           "exports": [
             "SqlArg",
             "Row",
             "QueryFn",
+            "ExecFn",
             "TursoUnreachable",
-            "tursoQuery"
+            "tursoQuery",
+            "tursoExec"
           ],
           "state": [
             "let agentToken",
@@ -3051,9 +3077,10 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 282,
+          "lines": 442,
           "kind": "route-host",
           "exports": [
+            "OrchestratorRouteOpts",
             "createOrchestratorHandler",
             "handleOrchestratorRoute"
           ],
@@ -3119,6 +3146,8 @@
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
+            "lib/idempotency.ts",
+            "wiring/body.ts",
             "lib/turso.ts",
             "wiring/dispatch.ts",
             "lib/secret-store.ts",
@@ -3280,7 +3309,7 @@
         },
         {
           "path": "wiring/dispatch.ts",
-          "lines": 38,
+          "lines": 39,
           "kind": "lib",
           "exports": [
             "dispatchPushEnabled",
@@ -3389,7 +3418,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 317,
+          "lines": 419,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -3401,6 +3430,11 @@
             "resolveWorkerTask",
             "reconcileDispatch",
             "executeDispatch",
+            "writeCtx",
+            "FileOutcome",
+            "fileProposal",
+            "applyDecision",
+            "brainContext",
             "runBrain"
           ],
           "state": [
@@ -3430,6 +3464,7 @@
             "lib/body.ts",
             "wiring/body.ts",
             "lib/dispatch-tasks.ts",
+            "lib/turso.ts",
             "wiring/dispatch.ts"
           ],
           "listeners": [],
@@ -4340,7 +4375,8 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-mirror.ts",
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "routes/orchestrator.ts"
           ]
         },
         "phaseOf": {
@@ -4359,7 +4395,8 @@
         "ProjectRef": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "TaskDto": {
@@ -4403,7 +4440,15 @@
           "module": "lib/orchestrator-channels.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "routes/orchestrator.ts",
             "wiring/body.ts"
+          ]
+        },
+        "ExecFn": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "lib/dispatch-tasks.ts"
           ]
         },
         "Turn": {
@@ -4415,12 +4460,29 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "DIGEST_MAX": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "TursoUnreachable": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "routes/body.ts",
+            "routes/goals.ts#GET /api/goals",
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "BODY_CHANNEL": {
           "module": "lib/body.ts",
           "callers": [
             "lib/dispatch-poller.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/body.ts",
             "wiring/orchestrator.ts"
           ]
@@ -4440,7 +4502,14 @@
             "lib/orchestrator-queue.ts",
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
+            "routes/orchestrator.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "SqlArg": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/dispatch-tasks.ts"
           ]
         },
         "SpawnAgent": {
@@ -5314,8 +5383,6 @@
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "routes/orchestrator.ts#POST /api/orchestrator/proposal/",
             "wiring/orchestrator.ts"
           ]
         },
@@ -5395,7 +5462,8 @@
             "routes/api.ts#POST /api/resolve",
             "routes/api.ts#POST /api/answer",
             "routes/api.ts#POST /api/inject",
-            "routes/capture.ts"
+            "routes/capture.ts",
+            "routes/orchestrator.ts"
           ]
         },
         "broadcast": {
@@ -5494,6 +5562,7 @@
           "module": "state.ts",
           "callers": [
             "routes/api.ts#* /api/status",
+            "wiring/orchestrator.ts",
             "ws.ts"
           ]
         },
@@ -5668,7 +5737,9 @@
           "module": "lib/body.ts",
           "callers": [
             "routes/body.ts",
-            "wiring/body.ts"
+            "routes/orchestrator.ts",
+            "wiring/body.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "BodyAlertSink": {
@@ -5677,18 +5748,11 @@
             "routes/body.ts"
           ]
         },
-        "TursoUnreachable": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "routes/body.ts",
-            "routes/goals.ts#GET /api/goals",
-            "routes/orchestrator.ts"
-          ]
-        },
         "bodySnapshot": {
           "module": "wiring/body.ts",
           "callers": [
-            "routes/body.ts"
+            "routes/body.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
         "bodyAlertSink": {
@@ -6076,8 +6140,6 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "routes/orchestrator.ts#POST /api/orchestrator/proposal/",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6085,9 +6147,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
+            "routes/orchestrator.ts"
           ]
         },
         "orchEmit": {
@@ -6096,20 +6156,14 @@
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
+            "routes/orchestrator.ts#POST /api/orchestrator/send"
           ]
         },
         "workerQueue": {
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "routes/orchestrator.ts#POST /api/orchestrator/proposal/"
+            "routes/orchestrator.ts"
           ]
         },
         "markWaiting": {
@@ -6205,12 +6259,10 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/"
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/"
           ]
         },
-        "executeDispatch": {
+        "fileProposal": {
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts"
@@ -6221,6 +6273,12 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send"
+          ]
+        },
+        "writeCtx": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "routes/orchestrator.ts"
           ]
         },
         "appendTurn": {
@@ -6235,8 +6293,7 @@
         "createQueuedTask": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/dispatch"
+            "routes/orchestrator.ts"
           ]
         },
         "getThread": {
@@ -6254,17 +6311,37 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "setChannelAuto": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/"
+          ]
+        },
+        "listChannels": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/channels",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+          ]
+        },
         "getChannel": {
           "module": "lib/orchestrator-channels.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ]
         },
-        "getNote": {
-          "module": "lib/dispatch-tasks.ts",
+        "createChannel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "getChannelByNote": {
+          "module": "lib/orchestrator-channels.ts",
           "callers": [
             "routes/orchestrator.ts"
           ]
@@ -6275,18 +6352,36 @@
             "routes/orchestrator.ts"
           ]
         },
-        "toTaskDto": {
+        "DEFAULT_AGENT": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "ANSWER_MAX": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "DISPATCH_ID": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "WriteOutcome": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
           ]
         },
         "getDispatchTask": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "getTaskActivity": {
@@ -6301,31 +6396,77 @@
             "routes/orchestrator.ts"
           ]
         },
-        "listChannels": {
-          "module": "lib/orchestrator-channels.ts",
+        "getNote": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts#GET /api/orchestrator/channels",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
           ]
         },
-        "createChannel": {
-          "module": "lib/orchestrator-channels.ts",
+        "fileTask": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/channels"
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
           ]
         },
-        "setChannelAuto": {
-          "module": "lib/orchestrator-channels.ts",
+        "cancelDispatchTask": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/"
+            "routes/orchestrator.ts"
+          ]
+        },
+        "toTaskDto": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "resolveAgent": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "newDispatchId": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "requeueTask": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "unblockTask": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts"
           ]
         },
         "sessionCmdArgv": {
           "module": "lib/tmux-pane.ts",
           "callers": [
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
+            "routes/orchestrator.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "BodyVitals": {
+          "module": "lib/body.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "vitalsHeader": {
+          "module": "lib/body.ts",
+          "callers": [
+            "routes/orchestrator.ts"
           ]
         },
         "RecordOrigin": {
@@ -6602,6 +6743,12 @@
             "wiring/dispatch.ts"
           ]
         },
+        "tursoExec": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "wiring/dispatch.ts"
+          ]
+        },
         "linkedNotes": {
           "module": "lib/orchestrator-channels.ts",
           "callers": [
@@ -6820,6 +6967,18 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "stampDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "markFiled": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
         "createQueue": {
           "module": "lib/orchestrator-queue.ts",
           "callers": [
@@ -6840,6 +6999,18 @@
         },
         "tmuxSessionForPane": {
           "module": "lib/tmux-pane.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "WriteCtx": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "BrainDecision": {
+          "module": "lib/orchestrator-brain.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]
