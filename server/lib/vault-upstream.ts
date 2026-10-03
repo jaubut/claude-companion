@@ -104,8 +104,9 @@ const UNREACHABLE = JSON.stringify({ ok: false, error: "upstream_unreachable", m
  * `/api/vault/NAME` (NAME already validated). Network error, timeout or a
  * redirect → 502 upstream_unreachable. A 2xx write triggers the pull command
  * unless `opts.pull` is false (reveal: a read that happens to be a POST).
+ * `opts.timeoutMs` overrides the 10 s budget (receipt capture waits on OCR).
  */
-export async function forwardVault(cfg: UpstreamConfig, method: string, path: string, device: string, body?: Record<string, unknown>, opts: { pull?: boolean } = {}): Promise<UpstreamReply> {
+export async function forwardVault(cfg: UpstreamConfig, method: string, path: string, device: string, body?: Record<string, unknown>, opts: { pull?: boolean; timeoutMs?: number } = {}): Promise<UpstreamReply> {
   const headers: Record<string, string> = {
     authorization: `Bearer ${getAuthToken()}`,
     "x-companion-device": forwardedDevice(device),
@@ -116,7 +117,7 @@ export async function forwardVault(cfg: UpstreamConfig, method: string, path: st
   try {
     res = await fetch(cfg.base + path, {
       method, headers, body: body ? JSON.stringify(body) : undefined,
-      redirect: "manual", signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      redirect: "manual", signal: AbortSignal.timeout(opts.timeoutMs ?? UPSTREAM_TIMEOUT_MS),
     })
   } catch (e) {
     companionLog(`vault upstream ${method} unreachable (${e instanceof Error ? e.name : "error"})`)

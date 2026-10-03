@@ -1,8 +1,15 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 ## Active Decisions
+
+### Quick Capture → TLS inbox; receipts save first, QA after (Jev → Sonnet → phone)
+**Date:** 2026-10-03 (branch `feat/capture-receipts`)
+**Choice:** `POST /api/capture/inbox` forwards to the dashboard's `POST /api/inbox`; `POST /api/capture/receipt` runs dashboard extract then save immediately and queues a `receipt_qa` row (companion.db). A one-at-a-time worker on the store host runs code checks (sum, QC tax rates, date, currency, duplicate via read-only Turso) + Jev (GL choice over the `coa` 5xxx chart ∪ the in-use base chart, grocery / meal / trip nouls) → `jev_ok` | `to_review`. A BLANK saved `category_code` (always, today: the extractor never sets one) is filled by Jev itself when its pick is ≥ 0.9, every code check passes and no grocery/meal flag fires — PATCH + `changes:[{…, by:"jev"}]` + audit with the confidence (Jeremie, 2026-10-03); a non-blank code is never overwritten by Jev; then `claude -p --model sonnet` (work tools denied, no MCP, Read pinned to the one receipt file) → patch gated in code (field allowlist, chart code, amounts must add up; `total` only when arithmetic proves it wrong; duplicates never auto-resolved) → `sonnet_fixed` | `needs_human` (+ APNs). Phone resolves/accepts. Every edit → `~/.config/tls-agent/receipt-qa-audit.jsonl`. Dashboard key = `TLS_DASHBOARD_API_KEY` in secrets.env, read server-side only. `COMPANION_RECEIPT_QA=off` = save only. The Mac forwards everything upstream.
+**Why:** Jeremie 2026-10-03: never lose a receipt to a slow review; spend model calls only on what the cheap pass flags; the human only sees what Sonnet can't settle.
+`changes[].by` is `"jev" | "sonnet" | "human"`.
+**Revisit if:** Jev-filled codes get corrected often (score the audit's `by:"jev"` lines against later human edits), or the extractor's tax-inclusive `subtotal` keeps tripping the sum check.
 
 ### Approval history also audits automatic decisions (auto rows, 30-day retention)
 **Date:** 2026-10-02 (branch `feat/history-auto`)

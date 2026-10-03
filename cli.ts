@@ -126,6 +126,7 @@ import { getAuthToken, maskToken } from "./server/lib/auth"
 import { secureLogFile } from "./server/lib/log"
 import { startMediaSweeper } from "./server/wiring/media"
 import { startRecordsExpiry } from "./server/lib/records-expiry"
+import { startReceiptQa } from "./server/wiring/receipt-qa"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -140,6 +141,8 @@ const server = createCompanionServer(PORT)
 startMediaSweeper()
 // ID-record expiry pushes, store host only (inert when COMPANION_VAULT_UPSTREAM is set).
 startRecordsExpiry()
+// Receipt QA frames/push + queue resume (worker inert upstream or with COMPANION_RECEIPT_QA=off).
+startReceiptQa()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"
