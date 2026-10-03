@@ -13,15 +13,32 @@ import { clients, broadcast, describeClient, HOST_INFO, type WsData } from "./st
 import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 
-// WebSocket handlers: on open, replay pending approvals/questions and send the
-// init frame; on message, approve/deny/answer/input/ping; on close, drop the
-// client. Same frames and log lines as before the split.
+// WebSocket handlers: on open, send the init frame, then replay pending
+// approvals/questions; on message, approve/deny/answer/input/ping; on close,
+// drop the client. Same frames and log lines as before the split.
 export const websocket: WebSocketHandler<WsData> = {
   open(ws) {
     clients.add(ws)
     companionLog(`\x1b[2mws open ${describeClient("ws", ws.data.client)} (${clients.size} client${clients.size === 1 ? "" : "s"})\x1b[0m`)
 
     const pendingList = getPending()
+
+    // init FIRST, replays after: iOS treats init as "this host resynced" and
+    // drops every approval/question it holds from the host (resetHostState).
+    // Replaying before init meant a phone reconnecting mid-question (push
+    // tap from the background) got the question and wiped it a frame later.
+    ws.send(JSON.stringify({
+      type: "init",
+      pending: pendingList.length,
+      ...waitingSummary(),
+      activity: getActivity(),
+      activities: listActivities(),
+      feed: getFeed(),
+      sessions: listSessions(),
+      superAuto: isSuperAuto(),
+      dialogs: dialogWatcher.current(),
+      host: HOST_INFO,
+    }))
     for (const req of pendingList) {
       ws.send(JSON.stringify({
         type: "approval",
@@ -48,19 +65,6 @@ export const websocket: WebSocketHandler<WsData> = {
         questions: q.questions,
       }))
     }
-
-    ws.send(JSON.stringify({
-      type: "init",
-      pending: pendingList.length,
-      ...waitingSummary(),
-      activity: getActivity(),
-      activities: listActivities(),
-      feed: getFeed(),
-      sessions: listSessions(),
-      superAuto: isSuperAuto(),
-      dialogs: dialogWatcher.current(),
-      host: HOST_INFO,
-    }))
   },
   async message(ws, raw) {
     let msg: {

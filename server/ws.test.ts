@@ -73,3 +73,26 @@ test("answer for a gone question: resolve_failed to the sender, nothing broadcas
   expect(bystander.got).toEqual([])
   expect(sender.got).toEqual([{ type: "resolve_failed", id, reason: "gone" }])
 })
+
+test("open: init goes out BEFORE the pending question/approval replay (iOS resets host state on init)", async () => {
+  const q = addQuestionRequest(
+    { agent: "claude", sessionId: "ws-open-q", cwd: "/tmp", sessionKey: "k-ws-open-q", questions: [{ header: "h", question: "q?", multiSelect: false, options: [{ label: "a" }] }] },
+    { expiryMs: 60_000 },
+  )
+  const a = addApprovalRequest({ agent: "claude", sessionId: "ws-open-a", tool: "Bash", input: {}, cwd: "/tmp", sessionKey: "k-ws-open-a" })
+  const qid = getPendingQuestions().find((r) => r.sessionId === "ws-open-q")!.id
+  const aid = getPending().find((r) => r.sessionId === "ws-open-a")!.id
+  const phone = fakeWs()
+  websocket.open!(phone.ws as never)
+  clients.delete(phone.ws)
+  const types = phone.got.map((f) => f.type)
+  expect(types[0]).toBe("init")
+  expect(types.indexOf("question")).toBeGreaterThan(0)
+  expect(types.indexOf("approval")).toBeGreaterThan(0)
+  expect(phone.got.some((f) => f.type === "question" && f.id === qid)).toBe(true)
+  // Clean up the two pending items.
+  await send({ type: "approve", id: aid })
+  await send({ type: "answer", id: qid, answers: [{ selected: ["a"] }] })
+  await a
+  await q
+})
