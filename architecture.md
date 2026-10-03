@@ -24,7 +24,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 431 | lib | 11 |  |
 | `lib/questions.ts` | 412 | lib | 28 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 403 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
-| `lib/submit-confirm.ts` | 374 | lib | 19 | state: watches: Set, paneLocks: Map |
+| `lib/submit-confirm.ts` | 375 | lib | 19 | state: watches: Set, paneLocks: Map |
 | `lib/secret-store.ts` | 373 | lib | 26 | state: FLAGS: Set, let lock |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 345 | lib | 32 | state: let db, listeners: Set |

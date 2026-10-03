@@ -249,7 +249,8 @@ async function confirmTyped(deps: ConfirmDeps): Promise<ConfirmResult> {
   if (!PICKER_RE.test(unstyle(last)) && (await deps.busy?.())) return { ok: true, confirmed: false, queued: true }
   // Our text is gone from the input line and nothing modal took it: it was
   // most likely submitted and the hook is just late. Wait once more.
-  if (!retried && after !== null && !PICKER_RE.test(unstyle(after)) && !stillInBox(after, prefix)) {
+  // Never for hookless input (/cmd, !cmd): no hook is coming.
+  if (!deps.hookless && !retried && after !== null && !PICKER_RE.test(unstyle(after)) && !stillInBox(after, prefix)) {
     if (await deps.watch.wait(deps.lateGraceMs ?? LATE_HOOK_GRACE_MS, deps.clock)) return { ok: true, confirmed: true, retried: false }
   }
   return { ok: false, error: "not_submitted", excerpt: paneExcerpt(after ?? before) }
