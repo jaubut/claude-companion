@@ -342,7 +342,7 @@
         },
         {
           "path": "lib/body-alert.ts",
-          "lines": 189,
+          "lines": 173,
           "kind": "lib",
           "exports": [
             "Severity",
@@ -350,10 +350,7 @@
             "PUSH_WINDOW_MS",
             "PUSH_BODY_MAX",
             "validateAlert",
-            "BodyHost",
-            "selfBodyHost",
-            "componentOwner",
-            "ownsPush",
+            "bodyPushEnabled",
             "clampChars",
             "collapseIdFor",
             "isDailyReport",
@@ -376,7 +373,7 @@
         },
         {
           "path": "lib/body.ts",
-          "lines": 316,
+          "lines": 324,
           "kind": "lib",
           "exports": [
             "BODY_CHANNEL",
@@ -3031,7 +3028,7 @@
         },
         {
           "path": "wiring/body.ts",
-          "lines": 69,
+          "lines": 68,
           "kind": "lib",
           "exports": [
             "bodySnapshot",
@@ -6149,12 +6146,6 @@
             "wiring/body.ts"
           ]
         },
-        "BodyHost": {
-          "module": "lib/body-alert.ts",
-          "callers": [
-            "wiring/body.ts"
-          ]
-        },
         "BodyAlert": {
           "module": "lib/body-alert.ts",
           "callers": [
@@ -6162,12 +6153,6 @@
           ]
         },
         "createPushGate": {
-          "module": "lib/body-alert.ts",
-          "callers": [
-            "wiring/body.ts"
-          ]
-        },
-        "ownsPush": {
           "module": "lib/body-alert.ts",
           "callers": [
             "wiring/body.ts"
@@ -6185,7 +6170,7 @@
             "wiring/body.ts"
           ]
         },
-        "selfBodyHost": {
+        "bodyPushEnabled": {
           "module": "lib/body-alert.ts",
           "callers": [
             "wiring/body.ts"

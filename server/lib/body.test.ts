@@ -183,10 +183,17 @@ describe("brain digest", () => {
 })
 
 describe("health intent predicate", () => {
-  for (const t of ["how's the body?", "How’s the body", "what's broken", "anything down?", "status", "system health please", "is everything ok?", "body report", "qu'est-ce qui est brisé", "quelque chose en panne?"]) {
+  for (const t of [
+    "how's the body?", "How’s the body", "what's broken", "anything down?", "system status", "status of the servers",
+    "status of the system", "is everything ok?", "is the server up?", "health check", "body report", "any outages today?",
+    "qu'est-ce qui est brisé", "est-ce que tout roule?", "état du système", "quelque chose en panne?",
+  ]) {
     test(`yes: ${t}`, () => expect(isHealthIntent(t)).toBe(true))
   }
-  for (const t of ["update the README", "fix the request body parser", "write down the plan", "dispatch a worker to refactor goals.ts"]) {
+  for (const t of [
+    "update the README", "fix the request body parser", "write down the plan", "dispatch a worker to refactor goals.ts",
+    "status", "status of project X", "what's the status on the Pelchat quote", "status of the invoice", "statut du projet Granby",
+  ]) {
     test(`no: ${t}`, () => expect(isHealthIntent(t)).toBe(false))
   }
 })

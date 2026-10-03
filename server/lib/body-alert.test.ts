@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ApnsPayload } from "./apns"
 import {
-  type BodyAlert, PUSH_WINDOW_MS, alertPushPayload, collapseIdFor, componentOwner, createPushGate, ownsPush,
-  selfBodyHost, validateAlert,
+  type BodyAlert, PUSH_WINDOW_MS, alertPushPayload, bodyPushEnabled, collapseIdFor, createPushGate, validateAlert,
 } from "./body-alert"
 
 const alert = (over: Partial<BodyAlert> = {}): BodyAlert => ({
@@ -27,24 +26,12 @@ describe("validateAlert", () => {
   })
 })
 
-describe("push ownership", () => {
-  test("self host from env override, else platform", () => {
-    expect(selfBodyHost({ COMPANION_BODY_HOST: "Zettlab" }, "darwin")).toBe("zettlab")
-    expect(selfBodyHost({}, "darwin")).toBe("mac")
-    expect(selfBodyHost({}, "linux")).toBe("zettlab")
-  })
-  test("mac:* → mac; zettlab:*/cloud:*/other → zettlab; no prefix → self", () => {
-    expect(componentOwner("mac:launchd:x", "zettlab")).toBe("mac")
-    expect(componentOwner("zettlab:systemd:x", "mac")).toBe("zettlab")
-    expect(componentOwner("cloud:cron:x", "mac")).toBe("zettlab")
-    expect(componentOwner("bare", "mac")).toBe("mac")
-  })
-  test("only the owning host with a sender pushes — never both", () => {
-    for (const id of ["mac:a", "zettlab:b", "cloud:c"]) {
-      const both = [ownsPush(id, "mac", true), ownsPush(id, "zettlab", true)]
-      expect(both.filter(Boolean)).toHaveLength(1)
-    }
-    expect(ownsPush("mac:a", "mac", false)).toBe(false)
+describe("push enablement", () => {
+  test("sender configured AND COMPANION_BODY_PUSH not \"0\"", () => {
+    expect(bodyPushEnabled(true, {})).toBe(true)
+    expect(bodyPushEnabled(true, { COMPANION_BODY_PUSH: "1" })).toBe(true)
+    expect(bodyPushEnabled(true, { COMPANION_BODY_PUSH: " 0 " })).toBe(false)
+    expect(bodyPushEnabled(false, {})).toBe(false)
   })
 })
 

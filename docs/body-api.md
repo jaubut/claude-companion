@@ -108,27 +108,26 @@ Reply `{ "ok": true }`. Effects:
 
 ### Who pushes (no double-fire)
 
-Every host's collector posts to **its own** server; in forward mode
-(`COMPANION_VAULT_UPSTREAM` set, i.e. the Mac) this endpoint is still handled
-locally. A server pushes only if it has an APNs sender (`apnsConfigured()`) **and**
-owns the component:
+**All body alerts go to the Zettlab server.** Every collector — the Mac's
+included — posts to Zettlab's Companion URL, so in practice Zettlab pushes
+everything and owns the `#Body` channel. A server pushes body alerts iff:
 
-| component id prefix | pushing server |
-|---|---|
-| `mac:*` | Mac |
-| `zettlab:*`, `cloud:*`, any other prefix | Zettlab |
-| no `host:` prefix | whichever server received it |
+- it has a push sender (`apnsConfigured()`: APNs direct or broker), **and**
+- `COMPANION_BODY_PUSH` is not `"0"`.
 
-Server identity: `COMPANION_BODY_HOST=mac|zettlab`, else `darwin` → mac,
-anything else → zettlab. A non-owning server still records the turn and sends
-the frame. Consequence: a `mac:*` alert only pushes if the Mac has APNs
-configured (direct or broker).
+Component id prefixes (`mac:*`, `zettlab:*`, `cloud:*`) play no part in the
+decision. If an alert ever reaches another server (e.g. a collector pointed at
+the Mac by mistake), that server still records the turn and sends the frame; set
+`COMPANION_BODY_PUSH=0` there to guarantee it never pushes.
 
 ## Orchestrator brain ("brain's face")
 
 `wiring/orchestrator.ts runBrain` calls `bodyDigestFor(channel, text)`: for every
-message in `#Body`, and for a health question anywhere (`isHealthIntent`: "how's
-the body", "what's broken", "status", "health", "is everything ok", FR variants),
+message in `#Body`, and for a health question anywhere (`isHealthIntent`:
+system/body-scoped phrasing only — "how's the body", "what's broken", "system
+status", "status of the servers", "is everything ok/up/running", "health check",
+"est-ce que tout roule", "qu'est-ce qui est brisé", "état du système"; a bare
+"status" / "status of project X" does not match),
 a ≤ 800-char digest from the cached `GET /api/body` snapshot is added to the
 gate and compose prompts as "Live system context". Turso down → a one-line
 "unreachable" note instead.

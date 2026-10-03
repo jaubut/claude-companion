@@ -3,7 +3,6 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ApnsPayload } from "../lib/apns"
-import type { BodyHost } from "../lib/body-alert"
 import type { BodyResponse, BodySnapshot } from "../lib/body"
 import { type QueryFn, TursoUnreachable } from "../lib/turso"
 
@@ -26,7 +25,7 @@ beforeAll(async () => {
   routes = await import("./body")
 })
 
-function rig(selfHost: BodyHost = "mac", configured = true) {
+function rig(enabled = true) {
   const frames: Record<string, unknown>[] = []
   const pushes: ApnsPayload[] = []
   const sink = wiring.createBodyAlertSink({
@@ -34,8 +33,7 @@ function rig(selfHost: BodyHost = "mac", configured = true) {
     ensureChannel: () => chat.ensureChannel("body", "Body"),
     broadcast: (f) => frames.push(f),
     push: (p) => pushes.push(p),
-    pushConfigured: () => configured,
-    selfHost,
+    pushEnabled: () => enabled,
     now: () => Date.UTC(2026, 9, 3, 12),
     schedule: () => {},
   })
@@ -80,19 +78,16 @@ describe("POST /api/body/alert", () => {
     expect(frames.some((f) => f.type === "body_alert")).toBe(true)
   })
 
-  test("host ownership: the Mac never pushes zettlab:* and vice versa; no sender → no push", async () => {
-    const mac = rig("mac")
-    await call(mac.handler, "POST", "/api/body/alert", { component_id: "zettlab:systemd:kb-api", severity: "critical", title: "t", message: "m" })
-    await call(mac.handler, "POST", "/api/body/alert", { component_id: "cloud:cron:x", severity: "critical", title: "t", message: "m" })
-    expect(mac.pushes).toHaveLength(0)
-    expect(mac.frames.filter((f) => f.type === "body_alert")).toHaveLength(2) // still local turn + frame
-    const zl = rig("zettlab")
-    await call(zl.handler, "POST", "/api/body/alert", { component_id: "zettlab:systemd:kb-api", severity: "critical", title: "t", message: "m" })
-    await call(zl.handler, "POST", "/api/body/alert", { component_id: "mac:launchd:y", severity: "critical", title: "t", message: "m" })
-    expect(zl.pushes.map((p) => p.userInfo?.component_id)).toEqual(["zettlab:systemd:kb-api"])
-    const none = rig("mac", false)
-    await call(none.handler, "POST", "/api/body/alert", { component_id: "mac:launchd:z", severity: "critical", title: "t", message: "m" })
-    expect(none.pushes).toHaveLength(0)
+  test("pushes for any host prefix when enabled; none when disabled (no sender or COMPANION_BODY_PUSH=0)", async () => {
+    const on = rig(true)
+    for (const id of ["zettlab:systemd:kb-api", "mac:launchd:y", "cloud:cron:x"]) {
+      await call(on.handler, "POST", "/api/body/alert", { component_id: id, severity: "critical", title: "t", message: "m" })
+    }
+    expect(on.pushes.map((p) => p.userInfo?.component_id)).toEqual(["zettlab:systemd:kb-api", "mac:launchd:y", "cloud:cron:x"])
+    const off = rig(false)
+    await call(off.handler, "POST", "/api/body/alert", { component_id: "mac:launchd:z", severity: "critical", title: "t", message: "m" })
+    expect(off.pushes).toHaveLength(0)
+    expect(off.frames.filter((f) => f.type === "body_alert")).toHaveLength(1) // still local turn + frame
   })
 
   test("400 on missing fields / bad JSON; nothing recorded", async () => {
@@ -183,6 +178,6 @@ describe("brain digest wiring", () => {
 
   test("unreachable Turso becomes a one-line note, never a throw", async () => {
     const bad: BodySnapshot = { get: async () => { throw new TursoUnreachable("network") } }
-    expect(await wiring.bodyDigestFor("body", "status", bad)).toStartWith("Body monitor: unreachable")
+    expect(await wiring.bodyDigestFor("body", "system status", bad)).toStartWith("Body monitor: unreachable")
   })
 })

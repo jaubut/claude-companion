@@ -298,15 +298,23 @@ function clip2(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1) + "…"
 }
 
-// "how's the body", "what's broken", "status", "is everything ok", FR variants.
+// System/body-scoped phrasing only: a bare "status" ("status of project X",
+// "the status on the Pelchat quote") is about work, not the machines.
+const SYSTEM = "(system|systems|server|servers|body|machines?|hosts?|infra|infrastructure|fleet|services|zettlab|mac)"
 const HEALTH_PATTERNS: RegExp[] = [
   /\b(how'?s|how is|check(ing)?)\s+(the\s+)?body\b/,
   /\bbody\s+(status|report|check|health)\b/,
-  /\b(what'?s|what is|whats|anything|is anything|something|is something)\s+(broken|down|failing|dead|wrong|crashing|crashed)\b/,
-  /\b(status|statut|health|healthy|outage|uptime)\b/,
-  /\bis\s+(everything|it all|the system|all)\s+(ok|okay|up|running|fine|good)\b/,
-  /qu'?est[- ]ce qui (est|a)\s+(brisé|cassé|planté|en panne|down)/,
-  /(en panne|état du système|etat du systeme|ça roule|ca roule)/,
+  /\b(what'?s|what is|whats|anything|is anything|something|is something)\s+(broken|down|failing|dead|crashing|crashed)\b/,
+  new RegExp(`\\b${SYSTEM}\\s+(status|health|check|uptime)\\b`),
+  new RegExp(`\\b(status|health|state)\\s+(of|on)\\s+(the\\s+|my\\s+|our\\s+)?${SYSTEM}\\b`),
+  new RegExp(`\\bis\\s+(the\\s+)?${SYSTEM}\\s+(ok|okay|up|running|fine|healthy|down)\\b`),
+  /\bis\s+(everything|it all|all)\s+(ok|okay|up|running|fine|good)\b/,
+  /\bhealth\s*check\b/,
+  /\b(any|an)\s+outages?\b/,
+  /qu'?est[- ]ce qui (est|a)\s+(brisé|brise|cassé|casse|planté|plante|en panne|down)/,
+  /est[- ]ce que tout (roule|marche|fonctionne|va bien)/,
+  /(état|etat|statut) (du|des) (système|systeme|systèmes|systemes|serveurs?|machines?)/,
+  /\b(rien|quelque chose) (de )?(brisé|cassé|en panne)/,
 ]
 
 export function isHealthIntent(text: string): boolean {

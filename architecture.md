@@ -28,7 +28,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/submit-confirm.ts` | 375 | lib | 19 | state: watches: Set, paneLocks: Map |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 345 | lib | 32 | state: let db, listeners: Set |
-| `lib/body.ts` | 316 | lib | 23 |  |
+| `lib/body.ts` | 324 | lib | 23 |  |
 | `wiring/orchestrator.ts` | 316 | lib | 10 | state: let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/receipt-qa-worker.ts` | 308 | lib | 12 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/tmux-pane.ts` | 304 | lib | 22 |  |
@@ -55,8 +55,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/orchestrator.ts` | 201 | route-host | 1 | routes: 8 |
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
-| `lib/body-alert.ts` | 189 | lib | 16 |  |
 | `lib/receipt-checks.ts` | 188 | lib | 20 | state: CURRENCIES: Set |
+| `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
@@ -91,7 +91,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
 | `routes/dialogs.ts` | 76 | route-host | 1 | routes: 2 |
 | `routes/body.ts` | 75 | route-host | 3 | routes: 3 |
-| `wiring/body.ts` | 69 | lib | 7 | emits: orchestrator_channel, orchestrator, body_alert |
+| `wiring/body.ts` | 68 | lib | 7 | emits: orchestrator_channel, orchestrator, body_alert |
 | `routes/attach.ts` | 67 | route-host | 1 | route: POST /api/attach |
 | `lib/waiting.ts` | 66 | lib | 6 |  |
 | `state.ts` | 65 | lib | 7 |  |

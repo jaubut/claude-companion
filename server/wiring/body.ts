@@ -1,6 +1,6 @@
 import type { ApnsPayload } from "../lib/apns"
 import { apnsConfigured } from "../lib/apns"
-import { type BodyAlert, type BodyHost, createPushGate, ownsPush, selfBodyHost } from "../lib/body-alert"
+import { type BodyAlert, bodyPushEnabled, createPushGate } from "../lib/body-alert"
 import { BODY_CHANNEL, BODY_CHANNEL_NAME, type BodySnapshot, buildBodyDigest, createBodySnapshot, isHealthIntent } from "../lib/body"
 import { companionLog } from "../lib/log"
 import { type Channel, type Turn, appendTurn, ensureChannel } from "../lib/orchestrator-chat"
@@ -18,8 +18,8 @@ export interface BodyAlertSinkDeps {
   ensureChannel: () => { channel: Channel; created: boolean }
   broadcast: (frame: Record<string, unknown>) => void
   push: (payload: ApnsPayload) => void
-  pushConfigured: () => boolean
-  selfHost: BodyHost
+  /** Sender configured AND COMPANION_BODY_PUSH !== "0" (lib/body-alert.ts). */
+  pushEnabled: () => boolean
   now?: () => number
   schedule?: (fn: () => void, ms: number) => void
 }
@@ -36,7 +36,7 @@ export function createBodyAlertSink(deps: BodyAlertSinkDeps): BodyAlertSink {
     const turn = deps.appendTurn(`${alert.title}\n${alert.message}`)
     deps.broadcast({ type: "orchestrator", turn })
     deps.broadcast({ type: "body_alert", alert: { ...alert, at: new Date(now()).toISOString() } })
-    const pushed = ownsPush(alert.component_id, deps.selfHost, deps.pushConfigured()) && gate.offer(alert)
+    const pushed = deps.pushEnabled() && gate.offer(alert)
     return { pushed, turn }
   }
 }
@@ -46,8 +46,7 @@ export const bodyAlertSink: BodyAlertSink = createBodyAlertSink({
   ensureChannel: () => ensureChannel(BODY_CHANNEL, BODY_CHANNEL_NAME),
   broadcast,
   push: (payload) => void pushToAll(payload).catch(() => { /* never break the collector's POST */ }),
-  pushConfigured: apnsConfigured,
-  selfHost: selfBodyHost(),
+  pushEnabled: () => bodyPushEnabled(apnsConfigured()),
 })
 
 // Brain context: the digest rides along for every message in #Body and for a

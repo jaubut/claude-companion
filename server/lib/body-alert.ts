@@ -53,29 +53,13 @@ export function validateAlert(raw: unknown): BodyAlert | { error: string } {
 }
 
 // ── Who pushes ──────────────────────────────────────────────────────────────
-// Each host's collector posts to its own server, and in forward mode the Mac
-// still handles this endpoint locally. To never double-fire, a server pushes
-// only when it has an APNs sender AND owns the component: `mac:*` → the Mac
-// server, every other prefix (`zettlab:*`, `cloud:*`, …) → the Zettlab server.
-// An id with no `host:` prefix belongs to whichever server received it.
+// Every collector (Mac included) posts to the Zettlab server, so in practice
+// Zettlab pushes everything and owns #Body. A server pushes iff it has a sender
+// (APNs direct or broker) and COMPANION_BODY_PUSH is not "0" — set it to "0" on
+// any other server that might receive an alert to keep pushes single-fire.
 
-export type BodyHost = "mac" | "zettlab"
-
-/** This server's identity: COMPANION_BODY_HOST, else darwin → mac, else zettlab. */
-export function selfBodyHost(env: Record<string, string | undefined> = process.env, platform: string = process.platform): BodyHost {
-  const raw = env.COMPANION_BODY_HOST?.trim().toLowerCase()
-  if (raw === "mac" || raw === "zettlab") return raw
-  return platform === "darwin" ? "mac" : "zettlab"
-}
-
-export function componentOwner(componentId: string, self: BodyHost): BodyHost {
-  const i = componentId.indexOf(":")
-  if (i <= 0) return self
-  return componentId.slice(0, i).toLowerCase() === "mac" ? "mac" : "zettlab"
-}
-
-export function ownsPush(componentId: string, self: BodyHost, senderConfigured: boolean): boolean {
-  return senderConfigured && componentOwner(componentId, self) === self
+export function bodyPushEnabled(senderConfigured: boolean, env: Record<string, string | undefined> = process.env): boolean {
+  return senderConfigured && env.COMPANION_BODY_PUSH?.trim() !== "0"
 }
 
 // ── Payload ─────────────────────────────────────────────────────────────────
