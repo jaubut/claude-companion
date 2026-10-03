@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 93,
+          "lines": 94,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -61,6 +61,7 @@
             "routes/goals.ts",
             "routes/vault.ts",
             "routes/records.ts",
+            "routes/capture.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -649,6 +650,39 @@
           "imports": [
             "lib/command-list.ts",
             "lib/key-gate.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/dashboard-client.ts",
+          "lines": 112,
+          "kind": "lib",
+          "exports": [
+            "DASHBOARD_KEY_NAME",
+            "EXTRACT_TIMEOUT_MS",
+            "DashboardKeyMissing",
+            "DashboardUnreachable",
+            "DashReply",
+            "dashboardBase",
+            "dashboardKey",
+            "encodeIdPath",
+            "dashboardJson",
+            "dashboardBytes",
+            "postInbox",
+            "extractReceipt",
+            "saveExpense",
+            "patchExpense",
+            "fetchReceiptFile"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/secret-store.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1338,6 +1372,232 @@
           "externals": []
         },
         {
+          "path": "lib/receipt-capture.ts",
+          "lines": 173,
+          "kind": "lib",
+          "exports": [
+            "MAX_DECODED_BYTES",
+            "Mime",
+            "CaptureOutcome",
+            "qaDir",
+            "decodeBase64",
+            "decodedSizeOf",
+            "sniffMime",
+            "normalizeImage",
+            "localCopyPath",
+            "removeLocalCopy",
+            "ReceiptInput",
+            "prepareUpload",
+            "captureReceipt"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dashboard-client.ts",
+            "lib/log.ts",
+            "lib/receipt-qa-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "sharp"
+          ]
+        },
+        {
+          "path": "lib/receipt-checks.ts",
+          "lines": 188,
+          "kind": "lib",
+          "exports": [
+            "TPS_RATE",
+            "TVQ_RATE",
+            "MAX_AGE_DAYS",
+            "ALWAYS_PERSONAL",
+            "BASE_CHART",
+            "BOOKS_RULES",
+            "parseMoney",
+            "Amounts",
+            "amountsOf",
+            "checkArithmetic",
+            "checkTaxRates",
+            "todayMontreal",
+            "checkDate",
+            "checkCurrency",
+            "codeChecks",
+            "DupQuery",
+            "normMerchant",
+            "checkDuplicate",
+            "isPersonalPurpose",
+            "groceryByName"
+          ],
+          "state": [
+            "CURRENCIES: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/receipt-qa-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/receipt-jev.ts",
+          "lines": 154,
+          "kind": "lib",
+          "exports": [
+            "JEV_AGREE_MIN",
+            "PERSONAL_OPTION",
+            "ChartEntry",
+            "ChartQuery",
+            "JevVerdict",
+            "resetChartCache",
+            "loadChart",
+            "jevQuestions",
+            "jevState",
+            "askJev",
+            "JevDecision",
+            "decideJev"
+          ],
+          "state": [
+            "let chartCache"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/receipt-checks.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/secret-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/receipt-qa-store.ts",
+          "lines": 237,
+          "kind": "lib",
+          "exports": [
+            "QA_STATUSES",
+            "QaStatus",
+            "QaIssue",
+            "QaChange",
+            "ExpenseFields",
+            "QaItem",
+            "QaRow",
+            "LIST_MAX",
+            "useReceiptQaDb",
+            "onReceiptQa",
+            "toItem",
+            "getQaRow",
+            "insertQueued",
+            "clampLimit",
+            "listQa",
+            "nextDue",
+            "nextWakeAt",
+            "Transition",
+            "transition",
+            "defer",
+            "setImagePath"
+          ],
+          "state": [
+            "let db",
+            "listeners: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/receipt-qa-worker.ts",
+          "lines": 295,
+          "kind": "lib",
+          "exports": [
+            "MAX_ATTEMPTS",
+            "WorkerDeps",
+            "workerDeps",
+            "qaEnabled",
+            "auditFile",
+            "drainReceiptQa",
+            "kickReceiptQa",
+            "startReceiptQaWorker",
+            "HumanResult",
+            "humanPatch",
+            "resolveByHuman",
+            "acceptByHuman"
+          ],
+          "state": [
+            "let running",
+            "let again",
+            "let timer",
+            "let started",
+            "HUMAN_FIELDS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dashboard-client.ts",
+            "lib/log.ts",
+            "lib/receipt-checks.ts",
+            "lib/receipt-capture.ts",
+            "lib/receipt-jev.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/receipt-sonnet.ts",
+            "lib/turso.ts",
+            "lib/vault-upstream.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/receipt-sonnet.ts",
+          "lines": 139,
+          "kind": "lib",
+          "exports": [
+            "PATCH_ALLOWLIST",
+            "SonnetAnswer",
+            "SonnetRun",
+            "SonnetRunner",
+            "resolveClaudeBin",
+            "sonnetArgs",
+            "runSonnetCli",
+            "buildPrompt",
+            "parseAnswer",
+            "PatchVerdict",
+            "validatePatch"
+          ],
+          "state": [
+            "MONEY_FIELDS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/receipt-checks.ts",
+            "lib/receipt-jev.ts",
+            "lib/receipt-qa-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/records-expiry.ts",
           "lines": 128,
           "kind": "lib",
@@ -1487,7 +1747,7 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 373,
+          "lines": 385,
           "kind": "lib",
           "exports": [
             "SyncFn",
@@ -1511,6 +1771,7 @@
             "deleteSecret",
             "REVEAL_FORBIDDEN",
             "RevealResult",
+            "readSecretValue",
             "revealSecret",
             "saveSecret",
             "isKeyCommand",
@@ -1946,7 +2207,7 @@
         },
         {
           "path": "lib/vault-upstream.ts",
-          "lines": 140,
+          "lines": 141,
           "kind": "lib",
           "exports": [
             "UPSTREAM_TIMEOUT_MS",
@@ -2215,6 +2476,35 @@
           "imports": [
             "lib/log.ts",
             "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/capture.ts",
+          "lines": 204,
+          "kind": "lib",
+          "exports": [
+            "captureLimiter",
+            "parseItemPath",
+            "handleCaptureRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/dashboard-client.ts",
+            "lib/idempotency.ts",
+            "lib/log.ts",
+            "lib/receipt-capture.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/receipt-qa-worker.ts",
+            "lib/vault-guard.ts",
+            "lib/vault-upstream.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2781,6 +3071,35 @@
           "externals": []
         },
         {
+          "path": "wiring/receipt-qa.ts",
+          "lines": 48,
+          "kind": "lib",
+          "exports": [
+            "ReceiptQaSinks",
+            "receiptPushPayload",
+            "wireReceiptQa",
+            "startReceiptQa"
+          ],
+          "state": [],
+          "emits": [
+            "receipt_qa"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/apns.ts",
+            "lib/push.ts",
+            "lib/receipt-checks.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/receipt-qa-worker.ts",
+            "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/waiting.ts",
           "lines": 78,
           "kind": "lib",
@@ -2917,6 +3236,12 @@
         },
         "handleAttachRoute": {
           "module": "routes/attach.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleCaptureRoute": {
+          "module": "routes/capture.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -3134,6 +3459,8 @@
             "lib/keyboard-inject.ts",
             "lib/media.ts",
             "lib/question-hook.ts",
+            "lib/receipt-capture.ts",
+            "lib/receipt-qa-worker.ts",
             "lib/records-expiry.ts",
             "lib/session-removal-log.ts",
             "lib/submit-confirm.ts",
@@ -3146,6 +3473,7 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/feed",
             "routes/attach.ts",
+            "routes/capture.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
@@ -3521,6 +3849,13 @@
             "routes/model.ts"
           ]
         },
+        "readSecretValue": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/dashboard-client.ts",
+            "lib/receipt-jev.ts"
+          ]
+        },
         "parseDialog": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -3690,7 +4025,8 @@
         "ApnsPayload": {
           "module": "lib/apns.ts",
           "callers": [
-            "lib/push.ts"
+            "lib/push.ts",
+            "wiring/receipt-qa.ts"
           ]
         },
         "apnsConfigured": {
@@ -3858,6 +4194,301 @@
             "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
+        "ExpenseFields": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-capture.ts",
+            "lib/receipt-checks.ts",
+            "lib/receipt-jev.ts",
+            "lib/receipt-qa-worker.ts",
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "DashReply": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-capture.ts",
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "extractReceipt": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-capture.ts"
+          ]
+        },
+        "DashboardUnreachable": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-capture.ts",
+            "lib/receipt-qa-worker.ts",
+            "routes/capture.ts"
+          ]
+        },
+        "saveExpense": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-capture.ts"
+          ]
+        },
+        "insertQueued": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-capture.ts"
+          ]
+        },
+        "DashboardKeyMissing": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-capture.ts",
+            "lib/receipt-qa-worker.ts",
+            "routes/capture.ts"
+          ]
+        },
+        "QaIssue": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-checks.ts",
+            "lib/receipt-jev.ts",
+            "lib/receipt-qa-worker.ts",
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "BASE_CHART": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-jev.ts"
+          ]
+        },
+        "QaStatus": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-jev.ts",
+            "lib/receipt-qa-worker.ts",
+            "routes/capture.ts"
+          ]
+        },
+        "isPersonalPurpose": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-jev.ts",
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "groceryByName": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-jev.ts"
+          ]
+        },
+        "DupQuery": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "ChartQuery": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "ChartEntry": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts",
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "JevVerdict": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "SonnetRunner": {
+          "module": "lib/receipt-sonnet.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "tursoQuery": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts",
+            "routes/goals.ts"
+          ]
+        },
+        "askJev": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "runSonnetCli": {
+          "module": "lib/receipt-sonnet.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "patchExpense": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "fetchReceiptFile": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts",
+            "routes/capture.ts"
+          ]
+        },
+        "QaChange": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "QaRow": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "transition": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "removeLocalCopy": {
+          "module": "lib/receipt-capture.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "getQaRow": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts",
+            "routes/capture.ts"
+          ]
+        },
+        "codeChecks": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "checkDuplicate": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "loadChart": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "decideJev": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "localCopyPath": {
+          "module": "lib/receipt-capture.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "qaDir": {
+          "module": "lib/receipt-capture.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "setImagePath": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "buildPrompt": {
+          "module": "lib/receipt-sonnet.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "parseAnswer": {
+          "module": "lib/receipt-sonnet.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "validatePatch": {
+          "module": "lib/receipt-sonnet.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "defer": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "vaultUpstream": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts",
+            "lib/records-expiry.ts",
+            "lib/secret-store.ts",
+            "routes/capture.ts",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "nextDue": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "nextWakeAt": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "BOOKS_RULES": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "checkArithmetic": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "parseMoney": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-sonnet.ts",
+            "wiring/receipt-qa.ts"
+          ]
+        },
+        "checkTaxRates": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-sonnet.ts"
+          ]
+        },
         "RecordType": {
           "module": "lib/records-store.ts",
           "callers": [
@@ -3871,7 +4502,8 @@
             "routes/api.ts#POST /api/push/test",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
-            "wiring/events.ts"
+            "wiring/events.ts",
+            "wiring/receipt-qa.ts"
           ]
         },
         "recordsDir": {
@@ -3884,15 +4516,6 @@
           "module": "lib/records-store.ts",
           "callers": [
             "lib/records-expiry.ts"
-          ]
-        },
-        "vaultUpstream": {
-          "module": "lib/vault-upstream.ts",
-          "callers": [
-            "lib/records-expiry.ts",
-            "lib/secret-store.ts",
-            "routes/records.ts",
-            "routes/vault.ts"
           ]
         },
         "readRecords": {
@@ -3917,6 +4540,7 @@
           "module": "lib/vault-upstream.ts",
           "callers": [
             "lib/secret-store.ts",
+            "routes/capture.ts",
             "routes/records.ts",
             "routes/vault.ts"
           ]
@@ -4158,7 +4782,8 @@
         "getAuthToken": {
           "module": "lib/auth.ts",
           "callers": [
-            "lib/vault-upstream.ts"
+            "lib/vault-upstream.ts",
+            "routes/capture.ts"
           ]
         },
         "matchUnboundTaskById": {
@@ -4261,7 +4886,8 @@
           "callers": [
             "routes/api.ts#POST /api/resolve",
             "routes/api.ts#POST /api/answer",
-            "routes/api.ts#POST /api/inject"
+            "routes/api.ts#POST /api/inject",
+            "routes/capture.ts"
           ]
         },
         "broadcast": {
@@ -4274,6 +4900,7 @@
             "wiring/dialogs.ts",
             "wiring/events.ts",
             "wiring/orchestrator.ts",
+            "wiring/receipt-qa.ts",
             "wiring/waiting.ts",
             "ws.ts"
           ]
@@ -4527,6 +5154,77 @@
             "routes/api.ts#* /api/feed"
           ]
         },
+        "createLimiter": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/capture.ts",
+            "routes/records.ts"
+          ]
+        },
+        "UpstreamConfig": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/capture.ts",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "HOP_HEADER": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/capture.ts",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "forwardedDevice": {
+          "module": "lib/vault-upstream.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "postInbox": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "captureReceipt": {
+          "module": "lib/receipt-capture.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "kickReceiptQa": {
+          "module": "lib/receipt-qa-worker.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "QA_STATUSES": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "listQa": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "acceptByHuman": {
+          "module": "lib/receipt-qa-worker.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "resolveByHuman": {
+          "module": "lib/receipt-qa-worker.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
         "runTmux": {
           "module": "lib/key-gate.ts",
           "callers": [
@@ -4612,12 +5310,6 @@
           ]
         },
         "QueryFn": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "routes/goals.ts"
-          ]
-        },
-        "tursoQuery": {
           "module": "lib/turso.ts",
           "callers": [
             "routes/goals.ts"
@@ -5068,12 +5760,6 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "createLimiter": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/records.ts"
-          ]
-        },
         "RecordOrigin": {
           "module": "lib/records-store.ts",
           "callers": [
@@ -5100,13 +5786,6 @@
           ]
         },
         "UpstreamReply": {
-          "module": "lib/vault-upstream.ts",
-          "callers": [
-            "routes/records.ts",
-            "routes/vault.ts"
-          ]
-        },
-        "UpstreamConfig": {
           "module": "lib/vault-upstream.ts",
           "callers": [
             "routes/records.ts",
@@ -5152,13 +5831,6 @@
         },
         "clientOrigin": {
           "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/records.ts",
-            "routes/vault.ts"
-          ]
-        },
-        "HOP_HEADER": {
-          "module": "lib/vault-upstream.ts",
           "callers": [
             "routes/records.ts",
             "routes/vault.ts"
@@ -5537,6 +6209,24 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "QaItem": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "wiring/receipt-qa.ts"
+          ]
+        },
+        "onReceiptQa": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "wiring/receipt-qa.ts"
+          ]
+        },
+        "startReceiptQaWorker": {
+          "module": "lib/receipt-qa-worker.ts",
+          "callers": [
+            "wiring/receipt-qa.ts"
+          ]
+        },
         "clearSessionWaiting": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -5566,7 +6256,8 @@
         "sharp": {
           "version": "0.34.5",
           "modules": [
-            "lib/media.ts"
+            "lib/media.ts",
+            "lib/receipt-capture.ts"
           ]
         }
       }

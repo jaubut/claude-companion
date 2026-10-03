@@ -1,8 +1,14 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 ## Active Decisions
+
+### Quick Capture → TLS inbox; receipts save first, QA after (Jev → Sonnet → phone)
+**Date:** 2026-10-03 (branch `feat/capture-receipts`)
+**Choice:** `POST /api/capture/inbox` forwards to the dashboard's `POST /api/inbox`; `POST /api/capture/receipt` runs dashboard extract then save immediately and queues a `receipt_qa` row (companion.db). A one-at-a-time worker on the store host runs code checks (sum, QC tax rates, date, currency, duplicate via read-only Turso) + Jev (GL choice over the `coa` 5xxx chart ∪ the in-use base chart, grocery / meal / trip nouls) → `jev_ok` | `to_review`; then `claude -p --model sonnet` (work tools denied, no MCP, Read pinned to the one receipt file) → patch gated in code (field allowlist, chart code, amounts must add up; `total` only when arithmetic proves it wrong; duplicates never auto-resolved) → `sonnet_fixed` | `needs_human` (+ APNs). Phone resolves/accepts. Every edit → `~/.config/tls-agent/receipt-qa-audit.jsonl`. Dashboard key = `TLS_DASHBOARD_API_KEY` in secrets.env, read server-side only. `COMPANION_RECEIPT_QA=off` = save only. The Mac forwards everything upstream.
+**Why:** Jeremie 2026-10-03: never lose a receipt to a slow review; spend model calls only on what the cheap pass flags; the human only sees what Sonnet can't settle.
+**Revisit if:** most receipts reach Sonnet because extraction never fills `category_code` (Jev ≥ 0.9 could pre-fill — needs a contract change: `by:"jev"`), or the extractor's tax-inclusive `subtotal` keeps tripping the sum check.
 
 ### Approval history also audits automatic decisions (auto rows, 30-day retention)
 **Date:** 2026-10-02 (branch `feat/history-auto`)

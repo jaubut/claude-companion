@@ -305,6 +305,18 @@ function valueOf(raw: string): string {
   return (q === "'" || q === '"') && v.length >= 2 && v.endsWith(q) ? v.slice(1, -1) : v
 }
 
+/**
+ * Server-internal read of one value (e.g. TLS_DASHBOARD_API_KEY for the
+ * capture routes). Never returned to a client, so no `revealed` audit line.
+ * A trailing CR (Windows-edited line) is stripped. null = absent or empty.
+ */
+export function readSecretValue(name: string): string | null {
+  if (!validName(name)) return null
+  const entry = parseLines(readStore() ?? "").entries.find((e) => e.name === name)
+  const value = entry ? valueOf(entry.raw.replace(/\r$/, "")).replace(/\r$/, "").trim() : ""
+  return value || null
+}
+
 /** Read one value + append a `revealed` audit line (no value) on success. */
 export function revealSecret(name: string, origin: Partial<AuditOrigin>): RevealResult {
   if (!validName(name)) return { ok: false, status: 400, error: "bad_name", message: "NOM en MAJUSCULES_ET_CHIFFRES (2–64)" }
