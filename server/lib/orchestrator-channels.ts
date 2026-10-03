@@ -24,6 +24,11 @@ export interface Channel {
   archived: boolean
   autoDispatch: boolean
   trust: ChannelTrust
+  // Project link (orchestrator-one-queue): the Turso note this channel views.
+  // At most one non-archived channel per note; title/ref are a display cache.
+  noteId: string | null
+  noteTitle: string | null
+  noteRef: string | null
 }
 
 interface ChannelRow {
@@ -33,6 +38,9 @@ interface ChannelRow {
   created_at: number
   archived: number
   auto_dispatch: number
+  note_id: string | null
+  note_title: string | null
+  note_ref: string | null
 }
 
 // Proposals are the tasks that carry brain reasoning; manual /dispatch tasks
@@ -64,6 +72,7 @@ function toChannel(r: ChannelRow): Channel {
   return {
     id: r.id, name: r.name, cwd: r.cwd, createdAt: r.created_at, archived: !!r.archived,
     autoDispatch: !!r.auto_dispatch, trust: channelTrust(r.id),
+    noteId: r.note_id ?? null, noteTitle: r.note_title ?? null, noteRef: r.note_ref ?? null,
   }
 }
 
@@ -98,6 +107,7 @@ export function createChannel(name: string, cwd: string | null = null): Channel 
   const ch: Channel = {
     id, name: name.trim(), cwd: cwd?.trim() || null, createdAt: Date.now(), archived: false,
     autoDispatch: false, trust: { approved: 0, rejected: 0, streak: 0, eligible: false },
+    noteId: null, noteTitle: null, noteRef: null,
   }
   db.query("INSERT INTO orchestrator_channels (id, name, cwd, created_at, archived, auto_dispatch) VALUES (?, ?, ?, ?, 0, 0)").run(
     ch.id, ch.name, ch.cwd, ch.createdAt,
@@ -112,4 +122,43 @@ export function ensureChannel(id: string, name: string): { channel: Channel; cre
     id, name, Date.now(),
   )
   return { channel: getChannel(id)!, created: res.changes > 0 }
+}
+
+// The live (non-archived) channel linked to a note, if any.
+export function getChannelByNote(noteId: string): Channel | null {
+  const row = db
+    .query("SELECT * FROM orchestrator_channels WHERE note_id = ? AND archived = 0")
+    .get(noteId) as ChannelRow | null
+  return row ? toChannel(row) : null
+}
+
+export interface NoteLink { noteId: string; title: string | null; ref: string | null }
+
+export type SetNoteResult = { ok: true; channel: Channel } | { ok: false; error: "no_such_channel" | "note_linked_elsewhere" }
+
+// Link a channel to a note (or unlink with null). One live channel per note:
+// another channel holding it → note_linked_elsewhere (the partial unique index
+// is the backstop for a race between two requests).
+export function setChannelNote(id: string, link: NoteLink | null): SetNoteResult {
+  if (!getChannel(id)) return { ok: false, error: "no_such_channel" }
+  if (link) {
+    const holder = getChannelByNote(link.noteId)
+    if (holder && holder.id !== id) return { ok: false, error: "note_linked_elsewhere" }
+  }
+  try {
+    db.query("UPDATE orchestrator_channels SET note_id = ?, note_title = ?, note_ref = ? WHERE id = ?").run(
+      link?.noteId ?? null, link?.title ?? null, link?.ref ?? null, id,
+    )
+  } catch {
+    return { ok: false, error: "note_linked_elsewhere" }
+  }
+  return { ok: true, channel: getChannel(id)! }
+}
+
+// note_id → channel id for every live linked channel (dispatch task routing).
+export function linkedNotes(): Map<string, string> {
+  const rows = db
+    .query("SELECT id, note_id FROM orchestrator_channels WHERE note_id IS NOT NULL AND archived = 0")
+    .all() as { id: string; note_id: string }[]
+  return new Map(rows.map((r) => [r.note_id, r.id]))
 }

@@ -54,18 +54,35 @@ db.exec(`
 // is already present, so swallow that one case per column. tmux_socket is
 // nullable with no default: every pre-existing row reads NULL = the default
 // tmux server, which is where those workers were spawned.
-for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT"]) {
+function addColumn(table: string, col: string): void {
   try {
-    db.exec(`ALTER TABLE orchestrator_tasks ADD COLUMN ${col}`)
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`)
   } catch {
     /* column already exists */
   }
 }
-try {
-  db.exec("ALTER TABLE orchestrator_channels ADD COLUMN auto_dispatch INTEGER NOT NULL DEFAULT 0")
-} catch {
-  /* column already exists */
+// dispatch_task_id: the Turso tasks.id a proposal was filed as (orchestrator-one-queue P2).
+for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT", "dispatch_task_id TEXT"]) {
+  addColumn("orchestrator_tasks", col)
 }
+// note_id links a channel to one Turso project note; title/ref are a display cache.
+for (const col of ["auto_dispatch INTEGER NOT NULL DEFAULT 0", "note_id TEXT", "note_title TEXT", "note_ref TEXT"]) {
+  addColumn("orchestrator_channels", col)
+}
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_note ON orchestrator_channels (note_id)
+    WHERE note_id IS NOT NULL AND archived = 0;
+
+  -- Announce cursor for the Turso dispatch poller (lib/dispatch-mirror.ts):
+  -- the last value seen per task, so a restart never re-announces.
+  CREATE TABLE IF NOT EXISTS dispatch_seen (
+    task_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    seen_key TEXT NOT NULL,
+    seen_at INTEGER NOT NULL
+  );
+`)
 
 // Default channel (PRJ-OR1T Phase 6). Was the single hardcoded thread id 'main';
 // now the seeded catch-all channel that holds pre-Phase-6 history and any turn or
