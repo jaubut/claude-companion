@@ -986,7 +986,7 @@
         },
         {
           "path": "lib/dialog-watch.ts",
-          "lines": 189,
+          "lines": 196,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -2043,7 +2043,7 @@
         },
         {
           "path": "lib/questions.ts",
-          "lines": 412,
+          "lines": 428,
           "kind": "lib",
           "exports": [
             "QuestionOption",
@@ -2059,6 +2059,8 @@
             "claimParkedQuestion",
             "cancelQuestionsFor",
             "resolveQuestion",
+            "ANSWER_GRACE_MS",
+            "questionAnsweredRecently",
             "getPendingQuestions",
             "onQuestionRequest",
             "onQuestionExpired",
@@ -2083,6 +2085,7 @@
             "resolvedHandlers: Set",
             "parkedAnswers: Map",
             "parkTimers: Map",
+            "answeredAtByKey: Map",
             "recentlyAnswered: Map",
             "recentlyFellThrough: Map"
           ],
@@ -4647,7 +4650,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 160,
+          "lines": 161,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
@@ -9827,6 +9830,12 @@
           "callers": [
             "wiring/dialogs.ts",
             "ws.ts"
+          ]
+        },
+        "questionAnsweredRecently": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "wiring/dialogs.ts"
           ]
         },
         "hasPendingApprovalFor": {

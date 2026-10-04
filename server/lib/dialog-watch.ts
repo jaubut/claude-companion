@@ -28,6 +28,9 @@ export interface DialogWatchDeps {
   capture(pane: string, socket?: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
+  // A question just answered from the phone: its picker is still on screen
+  // while the question driver types the answer — still the hooks' business.
+  questionAnsweredRecently?(s: Session): boolean
   // An approval the hooks already routed to the phone: its terminal
   // permission dialog is the hooks' business too (approval card), so it is
   // never mirrored as a second, generic dialog card.
@@ -131,6 +134,10 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     const questionScreen = dialog?.kind === "question" || (pane !== null && !!deps.isQuestionScreen?.(pane))
     if (!dialog && !questionScreen) { questionGone(s.key); close(s.key); return }
     if (questionScreen) {
+      // Just answered from the phone: the driver is still typing into this
+      // picker. Only the question screen is held back — a real /model or
+      // trust dialog in the same window still mirrors.
+      if (deps.questionAnsweredRecently?.(s)) { questionSince.delete(s.key); close(s.key); return }
       const since = questionSince.get(s.key) ?? now()
       questionSince.set(s.key, since)
       if (now() - since < QUESTION_ORPHAN_MS) { close(s.key); return }

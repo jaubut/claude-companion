@@ -222,10 +222,26 @@ export function resolveQuestion(id: string, answers: QuestionAnswer[], by: Answe
     try { handler(req, answers, by) } catch { /* ignore */ }
   }
   req.resolve(answers)
+  if (req.sessionKey) answeredAtByKey.set(req.sessionKey, Date.now())
   // One of the only two exits from `pending` (the other is the expiry timer);
   // both fire a listener.
   pending.delete(id)
   return true
+}
+
+// After a phone answer the picker stays on screen while lib/question-driver.ts
+// types it (~20 s seen on Zettlab 2026-09-10). Inside this grace the dialog
+// watcher keeps treating the session as carded, so the picker is not
+// mirrored as a stray dialog / dialog badge.
+export const ANSWER_GRACE_MS = 30_000
+const answeredAtByKey = new Map<string, number>()
+
+export function questionAnsweredRecently(sessionKey: string, now = Date.now()): boolean {
+  const at = answeredAtByKey.get(sessionKey)
+  if (at === undefined) return false
+  if (now - at < ANSWER_GRACE_MS) return true
+  answeredAtByKey.delete(sessionKey)
+  return false
 }
 
 export function getPendingQuestions(): QuestionRequest[] {

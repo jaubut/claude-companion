@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test"
 import { QUESTION_ORPHAN_MS, createDialogWatcher, type DialogWatchDeps, type SessionStatus } from "./dialog-watch"
 import type { Session } from "./sessions"
+import { ANSWER_GRACE_MS, addQuestionRequest, getPendingQuestions, questionAnsweredRecently, resolveQuestion } from "./questions"
 import type { Dialog } from "./dialogs"
 
 const MODEL_PANE = `
@@ -168,6 +169,41 @@ test("a question picker with a pending phone card never starts the orphan clock"
   await w.tick()
   expect(h.opened).toEqual([])
   t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+})
+
+test("a picker answered from the phone is not mirrored while the driver types it (grace window)", async () => {
+  // Zettlab 2026-09-10: resolveQuestion dropped the card, the picker stayed up
+  // ~20 s while the driver typed, and after QUESTION_ORPHAN_MS it lit a dialog.
+  const key = session().key
+  let t = Date.now()
+  const { h, w } = harness({
+    now: () => t,
+    hasPendingQuestion: (s) => getPendingQuestions().some((q) => q.sessionKey === s.key),
+    questionAnsweredRecently: (s) => questionAnsweredRecently(s.key, t),
+  })
+  void addQuestionRequest({ sessionId: "sid", cwd: "/home/aubut", sessionKey: key, questions: [] }, { expiryMs: 60_000 })
+  const id = getPendingQuestions().find((q) => q.sessionKey === key)!.id
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  expect(resolveQuestion(id, [{ selected: ["Red"] }])).toBe(true)
+  const answeredAt = t
+  while (t + 2_000 < answeredAt + ANSWER_GRACE_MS) { t += 2_000; await w.tick() } // 2 s poll
+  expect(h.opened).toEqual([])
+  // Past the grace a still-stuck picker is an orphan again.
+  t = answeredAt + ANSWER_GRACE_MS + 1_000 // resolveQuestion stamped real Date.now(), a hair after t
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+})
+
+test("the answer grace only holds back question screens — a real dialog still mirrors", async () => {
+  const { h, w } = harness({ questionAnsweredRecently: () => true })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = MODEL_PANE
   await w.tick()
   expect(h.opened).toHaveLength(1)
 })
