@@ -1,6 +1,6 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 ## Active Decisions
 
@@ -67,6 +67,69 @@ Last updated: 2026-10-03
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — body-auto-investigate (2026-10-04)
+**Request (Jeremie):** "what's showing as dead on the Body tab should be investigated by the orchestrator right away without my permission. this is part of the holistic, nervous system goal."
+**Boundary (decided):** the INVESTIGATION is autonomous — no tap, no permission prompt. Any FIX comes back as a one-tap proposal card in #Body. The investigator never mutates the system.
+**Done when:**
+- A component going dead / crash_loop / failing (alert path) — or already in one of those states (sweep on boot + every 10 min) — gets one headless read-only `claude -p` investigation on the host that owns it, with no tap.
+- The result lands in #Body as "🔍 <component> — <rootCause> (confidence N%)" + evidence + fix summary; a non-null fix becomes the existing proposal card (approve → files a builder/claude task, or live); a Turso `body_events` row `kind='investigation'` is written; `GET /api/body/component/<id>` carries `investigation`; the #Body brain sees open + recent investigations.
+- A restart never re-runs a finished investigation.
+
+**State decisions**
+- Investigation records: Companion sqlite `body_investigations` (companion.db, created in `lib/body-investigate.ts` against the injected `Database`). Statuses `running | pending_host | forwarded | done | failed | dropped`. Open = running/pending_host/forwarded (≤ 1 per component). Writer: `wiring/body-investigate.ts` only. Persistence: sqlite; nothing in memory but the in-flight child processes.
+- Trigger gate (pure, `gate()`): state ∈ dead|crash_loop|failing; no open record; cooldown 12 h after a `done` (or after 2 consecutive `failed`) for the SAME state — a different state, or an alert carrying a real transition (`from_state ≠ state`), breaks it; a single failure retries after 10 min. Budgets (local runs only): ≤ 3 running, ≤ 10 started per rolling 24 h. Kill switch: `~/.claude-companion/.body-investigate-disabled` or `COMPANION_BODY_INVESTIGATE=0` (checked on every decision). A record left `running` by a restart is closed `failed` ("companion restarted") on boot.
+- Host routing: owner = `mac` for `mac:*`, `zettlab` for `zettlab:*`/`cloud:*`. Local host = `COMPANION_BODY_HOST` else darwin→mac, linux→zettlab. Own component → run here. Zettlab + mac component → `POST <COMPANION_BODY_PEER>/api/body/investigate` (bearer = `COMPANION_BODY_PEER_TOKEN` else this server's token; hop header `x-companion-body-hop: 1`, a hopped request is never re-forwarded) → record `forwarded`; unreachable / no peer configured → `pending_host`, re-forwarded on the next sweep; `forwarded` with no report after 30 min → `failed`. The Mac never forwards (its sweep covers only `mac:*`; Mac dedupe makes Zettlab's forward + the Mac's own sweep idempotent).
+- Reports: whoever owns #Body applies them (turn, proposal, Turso event, push). Zettlab applies locally. The Mac POSTs `{report}` to `COMPANION_BODY_PEER` (Zettlab) and falls back to its own #Body when that fails or no peer is set. Zettlab upserts the report onto its forwarded/pending record (or inserts it); a replayed report id is a no-op.
+- Investigator: `claude -p` on the owning host, model `COMPANION_INVESTIGATE_MODEL` (default `sonnet`), 10 min timeout, prompt on stdin, cwd = `~/.claude-companion/investigate` (empty, stable — the CLI leaves one empty `~/.claude/projects/<cwd>/memory` per distinct cwd), env allowlisted (no Turso/Companion/broker tokens). Read-only by construction: `--setting-sources project,local` (user settings carry `defaultMode: auto`, `Bash(launchctl:*)` and hooks — never loaded), `--settings {"disableAllHooks":true}`, `--strict-mcp-config`, `--permission-mode dontAsk` (anything not allowlisted is denied, never prompted), `--tools Read,Grep,Glob,Bash`, `--add-dir /` (paths outside cwd are otherwise refused even for `ls`), `--allowedTools` = Read/Grep/Glob + the diagnostic Bash prefixes, `--disallowedTools` = Edit, Write, NotebookEdit + secret paths + mutating flags (`curl -X/-d/-o…`, `git --output`, `journalctl --vacuum…`), `--no-session-persistence`. Verified on Mac 2.1.289 (`ls` outside cwd ok only with `--add-dir /`; `touch`, `ls > f`, `ls; touch`, `curl -X POST`, `git diff --output=`, `head …/tls-agent/env` all denied). Zettlab 2.1.284 not verifiable from here (tailnet SSH policy) — first Zettlab run is the check.
+- Output: strict JSON `{rootCause, evidence[], confidence 0-1, severity low|med|high|critical, recommendedFix {summary, steps[], risk low|med|high, reversible} | null, retire, notes}`; fenced or prose-wrapped JSON is extracted; anything else → `failed` ("unparseable"). Every text field is passed through `redactSecrets` before it is stored or posted.
+- Proposal: the existing `createProposal` in #Body. noteId = `COMPANION_BODY_NOTE_ID` (default `projects/2026-06-22-companion-orchestrator`, PRJ-OR1T), agent = `builder` when a git repo is known for the component, else `claude`; cwd = that repo / the unit's working dir, else `~/.claude`. Approve uses the existing modes (headless file, or live). #Body never auto-dispatches (unchanged).
+- Push: only severity high/critical, or a second consecutive failed investigation. Same sender gate as alerts (`bodyPushEnabled`).
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `GET /api/body/component/:id` | endpoint | + `investigation: {id, status, startedAt, finishedAt, rootCause, confidence, severity, proposalId, error} \| null` | additive |
+| `POST /api/body/investigate` | endpoint NEW | `{component_id, state?, from_state?, trigger?}` → `{ok, status: started\|forwarded\|pending_host\|duplicate\|skipped\|not_owner\|disabled, id?, reason?}`; `{report}` → `{ok, status: applied\|duplicate}` | new, bearer-gated |
+| `body_events` (Turso) | table | new rows `kind='investigation'` (from_state null, to_state = state, detail = root cause + confidence + proposal) | collectors only read `alert_sent` |
+| `orchestrator` / `orchestrator_task` | frame | report turns + proposal cards in `body` | unchanged shapes |
+| brain context | internal | #Body / health questions also get an investigations digest | internal |
+
+**Files — one owner (builder)**
+| file | change | lines |
+|---|---|---|
+| `server/lib/body-investigate.ts` | NEW: types, kill switch, host routing, `gate()`, sqlite store, DTO, brain digest | ~330 |
+| `server/lib/body-investigator.ts` | NEW: known paths from the id, prompt, argv, env allowlist, runner, JSON parse, turn/proposal text | ~380 |
+| `server/lib/body-investigate-engine.ts` | NEW: engine (`consider`, `sweep`, run, forward, report, `receiveReport`), report applier, peer client — seams only, no sqlite | ~370 |
+| `server/wiring/body-investigate.ts` | NEW: live instance (companion.db, Turso, #Body, push, peer) + `startBodyInvestigate()` + brain digest | ~90 |
+| `server/routes/body.ts` | `POST /api/body/investigate`; alert → `consider`; `investigation` on component detail | 74 → ~120 |
+| `server/wiring/orchestrator.ts` | `brainContext` + investigations digest | +3 |
+| `cli.ts` | `startBodyInvestigate()` | +2 |
+| `scripts/body-investigate.ts` | NEW: one-shot CLI (smoke), prints the JSON, no store / no report | ~70 |
+| `docs/body-api.md` | document both endpoint changes, config, behaviour | +60 |
+| tests: `server/lib/body-investigate.test.ts`, `server/lib/body-investigator.test.ts`, `server/lib/body-investigate-engine.test.ts`, `server/routes/body.test.ts` (+route cases) | NEW / extended | — |
+
+**Risks / failure modes**
+- Zettlab's 2.1.284 may reject a flag (`--tools`, `--permission-mode dontAsk`, `--setting-sources`) → every Zettlab run fails → 2 failures push once per component per 12 h. Mitigation: kill switch; first Zettlab run checked by hand.
+- ~~Approved Mac fixes land on Zettlab's queue~~ — resolved in the same PR: Mac fixes are forwarded and run live on the Mac (build notes). A Mac that is down at approve time → 503, retry later.
+- `--add-dir /` widens Read to the whole disk; secret paths are denied by rule and the output is redacted, but an unknown secret location could still be read into the model context (it never leaves as an edit).
+- Budget 10/day across a mass outage → the rest wait for the next day's window (sweep picks them up).
+
+**Verify**
+1. `bun test server/` green twice (trigger/dedupe, budgets + kill switch, routing local/forward/pending_host, prompt, argv shape, JSON parsing, proposal + no-fix, restart idempotence).
+2. `bunx tsc --noEmit -p .` clean; archmap regenerated.
+3. Real smoke on this Mac: `bun scripts/body-investigate.ts <dead mac component>` → JSON printed; `git status` of the touched dirs unchanged; no file writes outside the temp dir.
+4. Manual (Jeremie, after deploy): set `COMPANION_BODY_PEER` on both hosts; a test dead component on Zettlab gets a 🔍 turn within 10 min; approve its card.
+
+**Out of scope:** auto-applying any fix; investigating `ok`/`dormant`/`stopped`/`unknown`; GitHub/Turso-side probes beyond reading local files; a #Body UI for investigations beyond the existing turn + card.
+
+**Build notes (2026-10-04, `feat/body-auto-investigate`):**
+- **Engine moved to `lib/`.** The plan had the engine in `wiring/body-investigate.ts`; its test loaded `orchestrator-db` and stole `orchestrator-chat.test.ts`'s legacy fixture (the P1 trap — 3 failures). The engine is now `lib/body-investigate-engine.ts` (seams only) and the wiring file is just the live instance, same split as dispatch-poller.
+- **Stable cwd, not a temp dir.** The CLI leaves an empty `~/.claude/projects/<cwd>/memory` per distinct cwd, so a temp dir per run would pile up thousands of them. The investigator runs in `~/.claude-companion/investigate` (empty, ours).
+- **Live instance is off under `bun test`** (`NODE_ENV=test`) so a test that reaches the default route can never spawn a real claude.
+- **Smoke (this Mac, 2.1.289):** `bun scripts/body-investigate.ts mac:launchd:com.openai.atlas.update-helper` → 13 s, root cause "ChatGPT Atlas uninstalled, plist left behind (exit 78 EX_CONFIG)", confidence 0.9, severity low, retire=true, fix = bootout + move the plist aside. Twice, same verdict. `git status` of `~/.claude`, `~/claude-companion` and the worktree, the LaunchAgents listing and `launchctl list` unchanged; no file newer than the run in LaunchAgents / `~/.claude/{tools,hooks,agents,settings.json}`; no Companion hook fired.
+- **Follow-up (Jeremie's choice, same PR): Mac fixes run LIVE ON THE MAC.** A `mac:*` fix card is recorded in companion.db `body_fix_cards` (host, component, cwd, note, agent). On Zettlab its approve (headless or live) is intercepted in `routes/orchestrator.ts` → `wiring/body-fix.ts#approveBodyFix`: it never files a queued Turso row; it POSTs `/api/body/fix` to `COMPANION_BODY_PEER` (bearer, hop header, 30 s). The Mac (`runBodyFix`) makes one local #Body proposal row per fix id (`body_fix_runs`) and runs `approveLive` with the fix's cwd as the explicit cwd — `resolveLiveCwd` returns an explicit cwd before any note → repo mapping, so `~/claude-companion` is never picked. claimLive owner = `companion:<mac hostname>`. Zettlab stamps the Mac's Turso id onto the card and marks it `filed`; the poller surfaces the live row. Mac unreachable / no peer → 503 `host_unreachable`, card stays `proposed` (nothing stamped before success; idempotency only caches successes). The Mac's 401/403 → 502 `host_refused`. zettlab/cloud cards: unchanged. Tests: `server/routes/body-fix.test.ts` (8) + 1 applier case. New files beyond the table: `server/lib/body-fix.ts`, `server/wiring/body-fix.ts`.
+- **Cooldown signal.** `last_ok_at` keeps moving on some dead components (atlas: dead since 23:19, last ok 23:14 then later), so it is NOT used to break the cooldown; only a different state or an alert transition does.
 
 ### Change Plan — orchestrator-one-queue (2026-10-03)
 **Request:** "Make the Companion orchestrator the brain's face, merged with dispatch: one queue." Turso `tasks` becomes the only work queue. Orchestrator chat files, shows, unblocks, requeues and cancels Turso agent tasks per channel. #Body brings vitals, alerts and blocked-work triage. Touches ~/claude-companion, ~/.claude/tools (dispatch.sh, dispatch-run.ts, dispatch-reconcile.ts; pm-nightly.py audited, no change), the tls-dashboard-v2 schema, and the iOS app.

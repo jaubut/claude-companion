@@ -25,7 +25,22 @@ beforeAll(async () => {
   routes = await import("./body")
 })
 
+// Fake investigator: records what the routes ask of it (the engine has its own tests).
+type ConsiderArg = Parameters<import("../wiring/body-investigate").BodyInvestigator["consider"]>[0]
+type ReportArg = Parameters<import("../wiring/body-investigate").BodyInvestigator["receiveReport"]>[0]
+function fakeInvestigator(latest: import("../lib/body-investigate").InvestigationRecord | null = null) {
+  const considered: ConsiderArg[] = []
+  const reports: ReportArg[] = []
+  const inv = {
+    consider: async (i: ConsiderArg) => { considered.push(i); return { status: "started" as const, id: "inv1" } },
+    receiveReport: async (r: ReportArg) => { reports.push(r); return "applied" as const },
+    latestFor: () => latest,
+  }
+  return { considered, reports, investigator: () => inv }
+}
+
 function rig(enabled = true) {
+  const fake = fakeInvestigator()
   const frames: Record<string, unknown>[] = []
   const pushes: ApnsPayload[] = []
   const sink = wiring.createBodyAlertSink({
@@ -37,8 +52,8 @@ function rig(enabled = true) {
     now: () => Date.UTC(2026, 9, 3, 12),
     schedule: () => {},
   })
-  const handler = routes.createBodyHandler({ sink, query: async () => [], snapshot: { get: async () => { throw new Error("unused") } } })
-  return { frames, pushes, handler }
+  const handler = routes.createBodyHandler({ sink, investigator: fake.investigator, query: async () => [], snapshot: { get: async () => { throw new Error("unused") } } })
+  return { frames, pushes, handler, considered: fake.considered, reports: fake.reports }
 }
 
 async function call(handler: ReturnType<Mod["createBodyHandler"]>, method: string, path: string, body?: unknown): Promise<Response | null> {
@@ -110,6 +125,50 @@ describe("POST /api/body/alert", () => {
   })
 })
 
+describe("auto-investigation routes", () => {
+  test("an alert hands its transition to the investigator", async () => {
+    const { handler, considered } = rig()
+    await call(handler, "POST", "/api/body/alert", { component_id: "mac:launchd:x", severity: "warning", title: "x dead", message: "m", state: "dead", from_state: "ok" })
+    expect(considered).toEqual([{ componentId: "mac:launchd:x", state: "dead", fromState: "ok", trigger: "alert" }])
+  })
+
+  test("POST /api/body/investigate: request (hop header honoured), report, 400s", async () => {
+    const { handler, considered, reports } = rig()
+    const req = new Request("http://localhost/api/body/investigate", {
+      method: "POST", headers: { "x-companion-body-hop": "1" }, body: JSON.stringify({ component_id: "mac:launchd:x", state: "dead" }),
+    })
+    const res = await handler(req, new URL(req.url))
+    expect(await res!.json()).toEqual({ ok: true, status: "started", id: "inv1" })
+    expect(considered.at(-1)).toEqual({ componentId: "mac:launchd:x", state: "dead", fromState: null, trigger: "forward", hop: true })
+
+    const report = { id: "abc12345", componentId: "mac:launchd:x", host: "mac", state: "dead", status: "failed", attempt: 1, startedAt: 1, finishedAt: 2, runOn: "mac", result: null, error: "boom", cwd: null, repo: false }
+    const r2 = await call(handler, "POST", "/api/body/investigate", { report })
+    expect(await r2!.json()).toEqual({ ok: true, status: "applied" })
+    expect(reports[0]).toMatchObject({ id: "abc12345", status: "failed", error: "boom" })
+
+    for (const bad of [{}, { component_id: 3 }, { component_id: "a", state: 1 }, { report: { id: "x" } }, { report: { ...report, status: "done", result: null } }]) {
+      expect((await call(handler, "POST", "/api/body/investigate", bad))?.status).toBe(400)
+    }
+    expect((await call(handler, "POST", "/api/body/investigate", "{nope"))?.status).toBe(400)
+  })
+
+  test("component detail carries the latest investigation", async () => {
+    const rec = {
+      id: "inv9", componentId: "a:b:c", host: "mac", state: "dead", fromState: null, trigger: "sweep", status: "done" as const, runOn: "local", attempt: 1,
+      createdAt: Date.UTC(2026, 9, 4, 10), startedAt: Date.UTC(2026, 9, 4, 10), finishedAt: Date.UTC(2026, 9, 4, 10, 5),
+      result: { rootCause: "plist points at a deleted app", evidence: [], confidence: 0.9, severity: "low" as const, recommendedFix: null, retire: true, notes: "" },
+      error: null, proposalId: "p1", reported: true, peerId: null,
+    }
+    const query: QueryFn = async (sql) => (sql.includes("WHERE id = ?") ? [{ id: "a:b:c", retired: 0 }] : [])
+    const handler = routes.createBodyHandler({ query, now: () => 0, snapshot: { get: async () => { throw new Error("unused") } }, investigator: fakeInvestigator(rec).investigator })
+    const d = (await (await call(handler, "GET", "/api/body/component/a:b:c"))!.json()) as { investigation: unknown }
+    expect(d.investigation).toEqual({
+      id: "inv9", status: "done", startedAt: "2026-10-04T10:00:00.000Z", finishedAt: "2026-10-04T10:05:00.000Z",
+      rootCause: "plist points at a deleted app", confidence: 0.9, severity: "low", proposalId: "p1", error: null,
+    })
+  })
+})
+
 describe("GET /api/body + /api/body/component/:id", () => {
   const snapshotBody: BodyResponse = {
     ok: true, generated_at: "2026-10-03T12:00:00.000Z", components: [], recent_events: [],
@@ -132,12 +191,13 @@ describe("GET /api/body + /api/body/component/:id", () => {
       if (sql.includes("WHERE id = ?")) { asked.push(args[0]); return args[0] === "zettlab:zfs:tank" ? [{ id: "zettlab:zfs:tank", retired: 0 }] : [] }
       return []
     }
-    const handler = routes.createBodyHandler({ query, now: () => 0, snapshot: { get: async () => snapshotBody } })
+    const handler = routes.createBodyHandler({ query, now: () => 0, snapshot: { get: async () => snapshotBody }, investigator: fakeInvestigator().investigator })
     const enc = await call(handler, "GET", "/api/body/component/zettlab%3Azfs%3Atank")
     expect(enc?.status).toBe(200)
-    const d = (await enc!.json()) as { component: { id: string }; vitals: unknown; events: unknown[] }
+    const d = (await enc!.json()) as { component: { id: string }; vitals: unknown; events: unknown[]; investigation: unknown }
     expect(d.component.id).toBe("zettlab:zfs:tank")
     expect(d.vitals).toBeNull()
+    expect(d.investigation).toBeNull()
     expect((await call(handler, "GET", "/api/body/component/zettlab:zfs:tank"))?.status).toBe(200)
     expect(asked).toEqual(["zettlab:zfs:tank", "zettlab:zfs:tank"])
     expect((await call(handler, "GET", "/api/body/component/nope"))?.status).toBe(404)
