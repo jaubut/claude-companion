@@ -9,6 +9,7 @@ import {
   getTaskResult,
   legacyStatus,
   listDispatchTasks,
+  listAllProjects,
   listProjects,
   parseTs,
   phaseOf,
@@ -137,6 +138,19 @@ describe("reads", () => {
   test("projects carry their open agent-task count", async () => {
     const { query } = recorder(() => [{ id: "projects/x", ref_code: "PRJ-X", title: "X", open_tasks: 3 }])
     expect(await listProjects(query)).toEqual([{ noteId: "projects/x", ref: "PRJ-X", title: "X", openAgentTasks: 3 }])
+  })
+
+  test("all projects: every status, active first (the brain resolves inactive ones too)", async () => {
+    const { query, calls } = recorder(() => [
+      { id: "projects/a", ref_code: "PRJ-A", title: "A", status: "active", open_tasks: 0 },
+      { id: "projects/d", ref_code: null, title: "D", status: "done", open_tasks: 1 },
+    ])
+    expect(await listAllProjects(query)).toEqual([
+      { noteId: "projects/a", ref: "PRJ-A", title: "A", openAgentTasks: 0, status: "active" },
+      { noteId: "projects/d", ref: null, title: "D", openAgentTasks: 1, status: "done" },
+    ])
+    expect(calls[0]!.sql).not.toContain("status = 'active' ORDER")
+    expect(calls[0]!.sql).toContain("ORDER BY (n.status = 'active') DESC")
   })
 })
 

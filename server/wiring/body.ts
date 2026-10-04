@@ -57,8 +57,8 @@ export function wantsBodyDigest(channelId: string, text: string): boolean {
   return channelId === BODY_CHANNEL || isHealthIntent(text)
 }
 
-export async function bodyDigestFor(channelId: string, text: string, snapshot: BodySnapshot = bodySnapshot): Promise<string | null> {
-  if (!wantsBodyDigest(channelId, text)) return null
+export async function bodyDigestFor(channelId: string, text: string, snapshot: BodySnapshot = bodySnapshot, force = false): Promise<string | null> {
+  if (!force && !wantsBodyDigest(channelId, text)) return null
   try {
     return buildBodyDigest(await snapshot.get())
   } catch (err) {

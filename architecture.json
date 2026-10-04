@@ -504,7 +504,7 @@
         },
         {
           "path": "lib/body-investigator.ts",
-          "lines": 438,
+          "lines": 386,
           "kind": "lib",
           "exports": [
             "INVESTIGATE_TIMEOUT_MS",
@@ -540,9 +540,8 @@
           "apiCalls": [],
           "imports": [
             "lib/body.ts",
-            "lib/cli-json.ts",
             "lib/body-investigate.ts",
-            "lib/receipt-sonnet.ts",
+            "lib/readonly-claude.ts",
             "lib/secret-redact.ts"
           ],
           "listeners": [],
@@ -1073,7 +1072,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 351,
+          "lines": 363,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -1115,7 +1114,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 566,
+          "lines": 581,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -1147,6 +1146,8 @@
             "getTaskResult",
             "ProjectRef",
             "listProjects",
+            "AnyProjectRef",
+            "listAllProjects",
             "getNote",
             "AGENT_ALIASES",
             "DEFAULT_AGENT",
@@ -1234,6 +1235,38 @@
           "externals": []
         },
         {
+          "path": "lib/front-door.ts",
+          "lines": 165,
+          "kind": "lib",
+          "exports": [
+            "BrainHints",
+            "BrainResult",
+            "FrontDoorDeps",
+            "ACK_TEXT",
+            "ACK_DELAY_MS",
+            "createFrontDoor",
+            "FrontDoor"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-brain.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/project-catalog.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/jev-router.ts",
+            "lib/jev-route-log.ts",
+            "lib/quick-look.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/hook-common.ts",
           "lines": 125,
           "kind": "lib",
@@ -1309,6 +1342,108 @@
             "lib/dialogs.ts",
             "lib/sessions.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/jev-route-log.ts",
+          "lines": 168,
+          "kind": "lib",
+          "exports": [
+            "OldOutcome",
+            "RouteLogRow",
+            "TEXT_MAX",
+            "textHash",
+            "ensureRouteLog",
+            "insertRouteLog",
+            "readRouteLog",
+            "GO_LIVE_MIN_CONFIDENT",
+            "GO_LIVE_MIN_AGREEMENT",
+            "comparable",
+            "agrees",
+            "IntentStats",
+            "RouteReport",
+            "buildReport",
+            "formatReport"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/jev-router.ts",
+            "lib/secret-redact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/jev-router.ts",
+          "lines": 145,
+          "kind": "lib",
+          "exports": [
+            "INTENTS",
+            "Intent",
+            "RouterMode",
+            "ProjectSource",
+            "DEFAULT_MIN_CONF",
+            "routerMode",
+            "minConfidence",
+            "INTENT_CRITERIA",
+            "RouterInput",
+            "routerQuestions",
+            "routerState",
+            "RouteDecision",
+            "Decided",
+            "toDecision",
+            "decideRoute",
+            "Route",
+            "pickRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/project-catalog.ts",
+            "lib/jev.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/jev.ts",
+          "lines": 143,
+          "kind": "lib",
+          "exports": [
+            "JEV_ENDPOINT",
+            "JEV_MODEL",
+            "JEV_TIMEOUT_MS",
+            "ChoiceQuestion",
+            "NoulQuestion",
+            "JevQuestion",
+            "ChoiceAnswer",
+            "NoulAnswer",
+            "JevAnswer",
+            "JevOutcome",
+            "JevOpts",
+            "jevKeySources",
+            "envLineValue",
+            "jevKey",
+            "parseJevResponse",
+            "systemOne"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1404,10 +1539,11 @@
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 63,
+          "lines": 68,
           "kind": "lib",
           "exports": [
             "RepoEntry",
+            "readRepoMapSource",
             "parseRepoMap",
             "isDir",
             "repoForNote",
@@ -1509,11 +1645,13 @@
         },
         {
           "path": "lib/orchestrator-brain.ts",
-          "lines": 239,
+          "lines": 272,
           "kind": "lib",
           "exports": [
             "BrainDecision",
             "ComposeTargets",
+            "DecideOpts",
+            "brainArgs",
             "contextLines",
             "decide"
           ],
@@ -1686,6 +1824,38 @@
             "lib/keyboard-inject.ts",
             "lib/session-titles.ts",
             "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/project-catalog.ts",
+          "lines": 156,
+          "kind": "lib",
+          "exports": [
+            "ProjectNote",
+            "Candidate",
+            "Catalog",
+            "MAX_CANDIDATES",
+            "NONE_KEY",
+            "normalize",
+            "noteSlug",
+            "regexAliases",
+            "buildCatalog",
+            "matchAlias",
+            "jevCriteria",
+            "catalogLines"
+          ],
+          "state": [
+            "GENERIC_TAIL: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/live-repo.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1885,6 +2055,69 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/quick-look.ts",
+          "lines": 139,
+          "kind": "lib",
+          "exports": [
+            "QUICK_LOOK_TIMEOUT_MS",
+            "QUICK_LOOK_MODEL",
+            "QUICK_LOOK_ALLOWED",
+            "QUICK_LOOK_DISALLOWED",
+            "quickLookModel",
+            "quickLookSpec",
+            "quickLookArgs",
+            "QuickLookInput",
+            "OUTPUT_SCHEMA",
+            "buildQuickLookPrompt",
+            "QuickLookResult",
+            "parseQuickLook",
+            "ackText",
+            "answerTurnText",
+            "failureText",
+            "QuickLookRunner",
+            "runQuickLookCli"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/readonly-claude.ts",
+            "lib/secret-redact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/readonly-claude.ts",
+          "lines": 114,
+          "kind": "lib",
+          "exports": [
+            "ReadonlySpec",
+            "SECRET_PATHS",
+            "BASE_DISALLOWED",
+            "readonlyArgs",
+            "readonlyEnv",
+            "readonlyCwd",
+            "ReadonlyRun",
+            "runReadonlyClaude"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/cli-json.ts",
+            "lib/receipt-sonnet.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -2458,6 +2691,28 @@
           "apiCalls": [],
           "imports": [
             "lib/tmux-pane.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/status-answer.ts",
+          "lines": 88,
+          "kind": "lib",
+          "exports": [
+            "StatusInput",
+            "buildStatusAnswer",
+            "scopeTasks"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/dispatch-tasks.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3360,7 +3615,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 463,
+          "lines": 464,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -3431,6 +3686,7 @@
             "lib/dispatch-tasks.ts",
             "wiring/live.ts",
             "wiring/body-fix.ts",
+            "wiring/front-door.ts",
             "state.ts",
             "lib/idempotency.ts",
             "wiring/body.ts",
@@ -3759,6 +4015,39 @@
           "externals": []
         },
         {
+          "path": "wiring/front-door.ts",
+          "lines": 67,
+          "kind": "lib",
+          "exports": [
+            "frontDoor"
+          ],
+          "state": [],
+          "emits": [
+            "orchestrator"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/front-door.ts",
+            "lib/jev-router.ts",
+            "lib/jev-route-log.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-db.ts",
+            "lib/quick-look.ts",
+            "lib/status-answer.ts",
+            "state.ts",
+            "wiring/body.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/live.ts",
           "lines": 329,
           "kind": "lib",
@@ -3831,7 +4120,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 437,
+          "lines": 465,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -3849,6 +4138,10 @@
             "fileProposal",
             "applyDecision",
             "brainContext",
+            "BrainRunOpts",
+            "BrainOutcome",
+            "BrainCatalog",
+            "brainCatalog",
             "runBrain"
           ],
           "state": [
@@ -3870,6 +4163,8 @@
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-brain.ts",
+            "lib/project-catalog.ts",
+            "lib/live-repo.ts",
             "lib/worker-tail.ts",
             "lib/orchestrator-queue.ts",
             "lib/tmux-pane.ts",
@@ -4324,6 +4619,7 @@
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
+            "wiring/front-door.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
@@ -4333,7 +4629,9 @@
           "module": "lib/secret-redact.ts",
           "callers": [
             "lib/approval-history.ts",
-            "lib/body-investigator.ts"
+            "lib/body-investigator.ts",
+            "lib/jev-route-log.ts",
+            "lib/quick-look.ts"
           ]
         },
         "ApprovalRequest": {
@@ -4503,7 +4801,6 @@
           "callers": [
             "lib/body-investigate-engine.ts",
             "lib/dispatch-tasks.ts",
-            "lib/orchestrator-brain.ts",
             "lib/orchestrator-queue.ts",
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
@@ -4577,24 +4874,36 @@
             "wiring/body.ts"
           ]
         },
+        "readonlyArgs": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/body-investigator.ts",
+            "lib/quick-look.ts"
+          ]
+        },
+        "readonlyEnv": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/body-investigator.ts"
+          ]
+        },
         "InvestigationResult": {
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigator.ts"
           ]
         },
-        "resolveClaudeBin": {
-          "module": "lib/receipt-sonnet.ts",
+        "readonlyCwd": {
+          "module": "lib/readonly-claude.ts",
           "callers": [
             "lib/body-investigator.ts"
           ]
         },
-        "parseCliResult": {
-          "module": "lib/cli-json.ts",
+        "runReadonlyClaude": {
+          "module": "lib/readonly-claude.ts",
           "callers": [
             "lib/body-investigator.ts",
-            "lib/orchestrator-brain.ts",
-            "lib/receipt-sonnet.ts"
+            "lib/quick-look.ts"
           ]
         },
         "RecommendedFix": {
@@ -5023,6 +5332,7 @@
           "callers": [
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
+            "lib/status-answer.ts",
             "routes/orchestrator.ts",
             "wiring/live.ts"
           ]
@@ -5046,10 +5356,17 @@
             "lib/dispatch-poller.ts"
           ]
         },
+        "AnyProjectRef": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
         "ProjectRef": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/front-door.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -5074,10 +5391,17 @@
         "effectiveStatus": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "lib/status-answer.ts"
           ]
         },
         "listDispatchTasks": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "listAllProjects": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-poller.ts"
@@ -5093,6 +5417,7 @@
           "module": "lib/orchestrator-channels.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/front-door.ts",
             "routes/orchestrator.ts",
             "wiring/body.ts"
           ]
@@ -5101,6 +5426,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/front-door.ts",
             "lib/orchestrator-brain.ts",
             "wiring/body.ts",
             "wiring/orchestrator.ts"
@@ -5136,6 +5462,99 @@
             "lib/dispatch-tasks.ts"
           ]
         },
+        "Catalog": {
+          "module": "lib/project-catalog.ts",
+          "callers": [
+            "lib/front-door.ts",
+            "lib/jev-router.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "RouterMode": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "RouterInput": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "Decided": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "QuickLookRunner": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "BrainDecision": {
+          "module": "lib/orchestrator-brain.ts",
+          "callers": [
+            "lib/front-door.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "RouteLogRow": {
+          "module": "lib/jev-route-log.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "RouteDecision": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "ackText": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "buildQuickLookPrompt": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "parseQuickLook": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "failureText": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "answerTurnText": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "pickRoute": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
+        "OldOutcome": {
+          "module": "lib/jev-route-log.ts",
+          "callers": [
+            "lib/front-door.ts"
+          ]
+        },
         "SpawnAgent": {
           "module": "lib/spawn-session.ts",
           "callers": [
@@ -5161,6 +5580,60 @@
           "module": "lib/command-menu.ts",
           "callers": [
             "lib/inject-guard.ts"
+          ]
+        },
+        "Intent": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "lib/jev-route-log.ts"
+          ]
+        },
+        "INTENTS": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "lib/jev-route-log.ts"
+          ]
+        },
+        "JevQuestion": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-router.ts"
+          ]
+        },
+        "jevCriteria": {
+          "module": "lib/project-catalog.ts",
+          "callers": [
+            "lib/jev-router.ts"
+          ]
+        },
+        "JevOutcome": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-router.ts"
+          ]
+        },
+        "NONE_KEY": {
+          "module": "lib/project-catalog.ts",
+          "callers": [
+            "lib/jev-router.ts"
+          ]
+        },
+        "matchAlias": {
+          "module": "lib/project-catalog.ts",
+          "callers": [
+            "lib/jev-router.ts"
+          ]
+        },
+        "JevOpts": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-router.ts"
+          ]
+        },
+        "systemOne": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-router.ts"
           ]
         },
         "paneKey": {
@@ -5205,6 +5678,14 @@
           "module": "lib/dialogs.ts",
           "callers": [
             "lib/model-control.ts"
+          ]
+        },
+        "parseCliResult": {
+          "module": "lib/cli-json.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts",
+            "lib/readonly-claude.ts",
+            "lib/receipt-sonnet.ts"
           ]
         },
         "GENERAL_CHANNEL": {
@@ -5314,6 +5795,24 @@
           "callers": [
             "lib/orphan-question.ts",
             "routes/hooks.ts"
+          ]
+        },
+        "RepoEntry": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/project-catalog.ts"
+          ]
+        },
+        "isDir": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/project-catalog.ts"
+          ]
+        },
+        "parseRepoMap": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/project-catalog.ts"
           ]
         },
         "apnsConfigured": {
@@ -5430,6 +5929,24 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "ReadonlySpec": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/quick-look.ts"
+          ]
+        },
+        "ReadonlyRun": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/quick-look.ts"
+          ]
+        },
+        "resolveClaudeBin": {
+          "module": "lib/receipt-sonnet.ts",
+          "callers": [
+            "lib/readonly-claude.ts"
           ]
         },
         "ExpenseFields": {
@@ -5888,6 +6405,19 @@
             "lib/spawn-session.ts"
           ]
         },
+        "BodyResponse": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/status-answer.ts",
+            "wiring/front-door.ts"
+          ]
+        },
+        "BodyComponent": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/status-answer.ts"
+          ]
+        },
         "INJECT_SEND_MS": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
@@ -6144,6 +6674,7 @@
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
+            "wiring/front-door.ts",
             "wiring/orchestrator.ts",
             "wiring/receipt-qa.ts",
             "wiring/waiting.ts",
@@ -6428,7 +6959,8 @@
           "callers": [
             "routes/body.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "wiring/body-investigate.ts"
+            "wiring/body-investigate.ts",
+            "wiring/front-door.ts"
           ]
         },
         "bodyAlertSink": {
@@ -6847,6 +7379,7 @@
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/body-fix.ts",
+            "wiring/front-door.ts",
             "wiring/live.ts"
           ]
         },
@@ -6898,6 +7431,7 @@
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
             "wiring/body-fix.ts",
+            "wiring/front-door.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
@@ -6961,13 +7495,6 @@
             "routes/orchestrator.ts"
           ]
         },
-        "runBrain": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/send"
-          ]
-        },
         "writeCtx": {
           "module": "wiring/orchestrator.ts",
           "callers": [
@@ -6983,6 +7510,7 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
+            "wiring/front-door.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
@@ -6992,6 +7520,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/front-door.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -7211,6 +7740,12 @@
           "module": "lib/body.ts",
           "callers": [
             "routes/orchestrator.ts"
+          ]
+        },
+        "frontDoor": {
+          "module": "wiring/front-door.ts",
+          "callers": [
+            "routes/orchestrator.ts#POST /api/orchestrator/send"
           ]
         },
         "RecordOrigin": {
@@ -7864,6 +8399,78 @@
             "wiring/events.ts"
           ]
         },
+        "ensureRouteLog": {
+          "module": "lib/jev-route-log.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "createFrontDoor": {
+          "module": "lib/front-door.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "routerMode": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "minConfidence": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "brainCatalog": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "decideRoute": {
+          "module": "lib/jev-router.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "runBrain": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "buildStatusAnswer": {
+          "module": "lib/status-answer.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "scopeTasks": {
+          "module": "lib/status-answer.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "runQuickLookCli": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "applyDecision": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
+        "insertRouteLog": {
+          "module": "lib/jev-route-log.ts",
+          "callers": [
+            "wiring/front-door.ts"
+          ]
+        },
         "setLiveTarget": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -7984,14 +8591,26 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "BrainDecision": {
-          "module": "lib/orchestrator-brain.ts",
+        "bodyDigestFor": {
+          "module": "wiring/body.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]
         },
-        "bodyDigestFor": {
-          "module": "wiring/body.ts",
+        "readRepoMapSource": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "buildCatalog": {
+          "module": "lib/project-catalog.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "catalogLines": {
+          "module": "lib/project-catalog.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]

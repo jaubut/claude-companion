@@ -27,6 +27,8 @@ import {
 } from "../lib/orchestrator-chat"
 import { getChannel, type Channel as OrchChannel } from "../lib/orchestrator-channels"
 import { type BrainDecision, decide as brainDecide } from "../lib/orchestrator-brain"
+import { type Catalog, buildCatalog, catalogLines } from "../lib/project-catalog"
+import { readRepoMapSource } from "../lib/live-repo"
 import { createWorkerTailManager } from "../lib/worker-tail"
 import { createQueue, wipCap } from "../lib/orchestrator-queue"
 import { capturePane, paneInputReady, paneHasDialog, sessionCmdArgv, tmuxSessionForPane } from "../lib/tmux-pane"
@@ -398,30 +400,55 @@ export async function applyDecision(
 
 /** Brain context: Body digest + investigations (#Body / health questions) + this view's dispatch digest. */
 export async function brainContext(
-  channel: OrchChannel, userText: string, dispatch: DispatchWiring = dispatchWiring, snapshot?: BodySnapshot,
+  channel: OrchChannel, userText: string, dispatch: DispatchWiring = dispatchWiring, snapshot?: BodySnapshot, forceBody = false,
 ): Promise<string | null> {
-  const body = await bodyDigestFor(channel.id, userText, snapshot)
+  const body = await bodyDigestFor(channel.id, userText, snapshot, forceBody)
   const investigations = investigationDigestFor(channel.id, userText)
   const scope = channel.id === BODY_CHANNEL ? "all projects" : `#${channel.name}`
   const parts = [body, investigations, dispatch.digestFor(channel.id, scope)].filter((p): p is string => !!p?.trim())
   return parts.length ? parts.join("\n\n") : null
 }
 
+/** Front-door hints for one brain run (lib/front-door.ts). */
+export interface BrainRunOpts {
+  /** Skip the Haiku gate (Jev said task). */
+  forceTask?: boolean
+  /** Give the brain the Body digest even when the regex health check misses (Jev said body). */
+  forceBodyDigest?: boolean
+  resolved?: { noteId: string | null; title: string; repo: string | null } | null
+  /** Prebuilt projects + catalog (the front door already has them). */
+  prebuilt?: BrainCatalog
+}
+
+/** What the old path did — the shadow log's label. */
+export type BrainOutcome = { kind: "chat" } | { kind: "task"; noteId: string | null } | { kind: "error" }
+
+export interface BrainCatalog { projects: ProjectRef[]; catalog: Catalog }
+
+/** Every project (any status) + the repo map; [] projects when Turso is down. */
+export async function brainCatalog(dispatch: DispatchWiring = dispatchWiring): Promise<BrainCatalog> {
+  const projects = await dispatch.allProjects().catch(() => [])
+  return { projects, catalog: buildCatalog(projects, readRepoMapSource()) }
+}
+
 // Run the brain on a user message: answer inline (chat) or stage a proposal.
 // Fire-and-forget — never blocks /send. Falls back to a soft note on any model
 // failure so the thread never wedges.
-export async function runBrain(userText: string, channel: OrchChannel, dispatch: DispatchWiring = dispatchWiring): Promise<void> {
+export async function runBrain(
+  userText: string, channel: OrchChannel, dispatch: DispatchWiring = dispatchWiring, opts: BrainRunOpts = {},
+): Promise<BrainOutcome> {
   // History and cwd candidates are scoped to the channel so the brain reasons
   // within one project's thread.
   const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
   let decision: BrainDecision | null
   let projects: ProjectRef[] = []
   try {
-    projects = await dispatch.projects().catch(() => [])
-    const context = await brainContext(channel, userText, dispatch)
+    const cat = opts.prebuilt ?? await brainCatalog(dispatch)
+    projects = cat.projects
+    const context = await brainContext(channel, userText, dispatch, undefined, opts.forceBodyDigest)
     decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd, context, {
-      projects, agents: [...agentAllowlist()].sort(), channelNoteId: channel.noteId,
-    })
+      projects, agents: [...agentAllowlist()].sort(), channelNoteId: channel.noteId, catalog: catalogLines(cat.catalog), resolved: opts.resolved ?? null,
+    }, { forceTask: opts.forceTask })
   } catch {
     decision = null
   }
@@ -430,7 +457,8 @@ export async function runBrain(userText: string, channel: OrchChannel, dispatch:
     // call itself kept failing (overload / auth contention), NOT because the
     // message was unclear.
     orchEmit(orchAppendTurn("orchestrator", "Couldn't reach the model just now — transient error on my side, not your message. Send that again.", null, channel.id))
-    return
+    return { kind: "error" }
   }
   await applyDecision(decision, channel, projects, dispatch)
+  return decision.kind === "chat" ? { kind: "chat" } : { kind: "task", noteId: validatedTarget(decision, projects).noteId ?? channel.noteId }
 }

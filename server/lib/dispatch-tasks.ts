@@ -295,6 +295,21 @@ export async function listProjects(query: QueryFn): Promise<ProjectRef[]> {
   }))
 }
 
+export type AnyProjectRef = ProjectRef & { status: string | null }
+
+/** EVERY projects/ note (any status), active first then most recently touched — the brain and the front door resolve against these. */
+export async function listAllProjects(query: QueryFn): Promise<AnyProjectRef[]> {
+  const rows = await query(
+    "SELECT n.id, n.ref_code, n.title, n.status, " +
+      "(SELECT COUNT(*) FROM tasks t WHERE t.note_id = n.id AND t.done = 0 AND t.assignee LIKE 'agent:%') AS open_tasks " +
+      "FROM notes n WHERE n.folder = 'projects' ORDER BY (n.status = 'active') DESC, n.updated_at DESC LIMIT 300",
+    [],
+  )
+  return rows.map((r) => ({
+    noteId: String(r.id), ref: str(r.ref_code), title: str(r.title) ?? String(r.id), openAgentTasks: Number(r.open_tasks ?? 0), status: str(r.status),
+  }))
+}
+
 export async function getNote(query: QueryFn, id: string): Promise<{ noteId: string; title: string | null; ref: string | null } | null> {
   const rows = await query("SELECT id, title, ref_code FROM notes WHERE id = ?", [id])
   const r = rows[0]

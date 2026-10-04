@@ -95,6 +95,33 @@ if (subcommand === "menubar") {
   process.exit(0)
 }
 
+// Jev front door go-live numbers from the shadow log (companion.db jev_route_log).
+if (subcommand === "jev-report") {
+  const { Database } = await import("bun:sqlite")
+  const { existsSync } = await import("node:fs")
+  const { homedir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { buildReport, formatReport, readRouteLog } = await import("./server/lib/jev-route-log")
+  const { minConfidence } = await import("./server/lib/jev-router")
+  const at = process.argv.indexOf("--days")
+  const days = at > 0 && Number(process.argv[at + 1]) > 0 ? Number(process.argv[at + 1]) : 30
+  const path = process.env.COMPANION_DB_PATH ?? join(homedir(), ".claude-companion", "companion.db")
+  if (!existsSync(path)) {
+    console.log(`no companion.db at ${path}`)
+    process.exit(0)
+  }
+  const db = new Database(path, { readonly: true })
+  let rows: ReturnType<typeof readRouteLog> = []
+  try {
+    rows = readRouteLog(db, Date.now() - days * 86_400_000)
+  } catch {
+    console.log("no jev_route_log yet — the server has not routed a message with this build")
+    process.exit(0)
+  }
+  console.log(formatReport(buildReport(rows, minConfidence()), days))
+  process.exit(0)
+}
+
 if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
   console.log(`Claude Companion
 
@@ -106,6 +133,7 @@ Usage:
   bun cli.ts print-token       Print the pairing URL + token without starting the server
   bun cli.ts daemon <action>   Manage the server LaunchAgent (install/uninstall/status/logs)
   bun cli.ts menubar <action>  Manage the menu bar app (install/uninstall/status/build)
+  bun cli.ts jev-report [--days N]  Jev front-door shadow report (agreement, go-live bar)
 `)
   process.exit(0)
 }

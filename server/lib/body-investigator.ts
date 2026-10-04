@@ -1,14 +1,13 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BodyComponentDetail } from "./body"
-import { parseCliResult } from "./cli-json"
 import type { InvestigationReport, InvestigationResult, RecommendedFix } from "./body-investigate"
-import { resolveClaudeBin } from "./receipt-sonnet"
+import { BASE_DISALLOWED, readonlyArgs, readonlyCwd, readonlyEnv, runReadonlyClaude } from "./readonly-claude"
 import { redactSecrets } from "./secret-redact"
 
 // The investigator: one headless `claude -p` per component, READ-ONLY by
-// construction (verified against claude 2.1.289, see STATE.md):
+// construction via lib/readonly-claude.ts (verified against claude 2.1.289, see STATE.md):
 //   --setting-sources project,local   user settings (auto mode, broad allows, hooks) never load;
 //                                     cwd is ~/.claude-companion/investigate (empty, ours), so there
 //                                     are no project settings either. One stable dir on purpose: the
@@ -43,18 +42,9 @@ export const ALLOWED_TOOLS: readonly string[] = [
   "Bash(curl -s http://localhost*)", "Bash(curl -s http://127.0.0.1*)",
 ]
 
-const SECRET_PATHS = ["~/.config/tls-agent/**", "~/.claude-companion/auth.token", "~/.claude-companion/.env", "**/.env", "**/.env.*",
-  "~/.ssh/**", "~/.claude/.credentials.json", "~/.aws/**", "~/.config/gh/**", "~/.netrc", "**/*.pem", "**/*.p8", "**/*.p12", "/proc/**"]
-
 export const DISALLOWED_TOOLS: readonly string[] = [
-  "Edit", "Write", "NotebookEdit",
-  ...SECRET_PATHS.map((p) => `Read(${p})`),
-  // Bash reads of the same secrets, whatever the command.
-  "Bash(*tls-agent*)", "Bash(*.env*)", "Bash(*auth.token*)", "Bash(*credentials*)", "Bash(*.ssh/*)", "Bash(*environ*)", "Bash(*secrets*)",
-  // Flags that turn an allowlisted prefix into a write.
-  "Bash(curl * -X*)", "Bash(curl * --request*)", "Bash(curl * -d*)", "Bash(curl * --data*)", "Bash(curl * -F*)", "Bash(curl * --form*)",
-  "Bash(curl * -T*)", "Bash(curl * --upload*)", "Bash(curl * -o*)", "Bash(curl * -O*)", "Bash(curl * --output*)",
-  "Bash(git *--output*)", "Bash(journalctl *--vacuum*)", "Bash(journalctl *--rotate*)", "Bash(journalctl *--flush*)",
+  ...BASE_DISALLOWED,
+  "Bash(journalctl *--vacuum*)", "Bash(journalctl *--rotate*)", "Bash(journalctl *--flush*)",
   "Bash(journalctl *--sync*)", "Bash(journalctl *--relinquish*)", "Bash(journalctl *--setup-keys*)", "Bash(journalctl *--update-catalog*)",
 ]
 
@@ -225,32 +215,12 @@ export function buildInvestigationPrompt(input: InvestigationInput): string {
 // ── argv + env ───────────────────────────────────────────────────────────────
 
 export function investigatorArgs(bin: string, model: string): string[] {
-  return [
-    bin, "-p", "--model", model, "--output-format", "json",
-    "--setting-sources", "project,local",
-    "--settings", JSON.stringify({ disableAllHooks: true }),
-    "--strict-mcp-config",
-    "--permission-mode", "dontAsk",
-    "--no-session-persistence",
-    "--append-system-prompt", SYSTEM,
-    "--tools", "Read,Grep,Glob,Bash",
-    "--add-dir", "/",
-    "--allowedTools", ...ALLOWED_TOOLS,
-    "--disallowedTools", ...DISALLOWED_TOOLS,
-  ]
+  return readonlyArgs(bin, { model, system: SYSTEM, tools: "Read,Grep,Glob,Bash", addDirs: ["/"], allowed: ALLOWED_TOOLS, disallowed: DISALLOWED_TOOLS })
 }
-
-const ENV_KEEP = ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TMPDIR", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "DOCKER_HOST"]
 
 /** Allowlisted child env: no Turso / Companion / broker tokens ever reach the investigator. */
 export function investigatorEnv(env: Record<string, string | undefined> = process.env, home: string = realFs.home): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const k of ENV_KEEP) if (env[k]) out[k] = env[k]!
-  for (const [k, v] of Object.entries(env)) if (v && /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_BASE_URL|CLAUDE_CONFIG_DIR)$/.test(k)) out[k] = v
-  out.HOME ??= home
-  out.PATH = [join(home, ".local/bin"), join(home, ".bun/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":")
-  out.TERM = "dumb"
-  return out
+  return readonlyEnv(env, home)
 }
 
 // ── Runner ───────────────────────────────────────────────────────────────────
@@ -263,39 +233,17 @@ export function investigateModel(env: Record<string, string | undefined> = proce
 }
 
 export function investigatorCwd(home: string = realFs.home): string {
-  return join(home, ".claude-companion", "investigate")
+  return readonlyCwd(home)
 }
 
 /** Spawn the real `claude -p` in the investigator's empty cwd. Never throws. */
 export async function runInvestigatorCli(prompt: string, opts: { timeoutMs?: number; model?: string } = {}): Promise<RunOutcome> {
-  const bin = resolveClaudeBin()
-  if (!bin) return { ok: false, error: "claude binary not found" }
-  let proc: ReturnType<typeof Bun.spawn>
-  try {
-    const cwd = investigatorCwd()
-    mkdirSync(cwd, { recursive: true })
-    proc = Bun.spawn(investigatorArgs(bin, opts.model ?? investigateModel()), {
-      cwd, env: investigatorEnv(), stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe",
-    })
-  } catch {
-    return { ok: false, error: "spawn failed" }
-  }
-  let timedOut = false
-  const timer = setTimeout(() => { timedOut = true; try { proc.kill() } catch { /* gone */ } }, opts.timeoutMs ?? INVESTIGATE_TIMEOUT_MS)
-  try {
-    const [out] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), new Response(proc.stderr as ReadableStream).text()])
-    const code = await proc.exited
-    if (timedOut) return { ok: false, error: "timed out after 10 min" }
-    if (code !== 0) return { ok: false, error: `claude exited ${code}` }
-    const text = parseCliResult(out)
-    if (text === null) return { ok: false, error: "no result in claude output" }
-    const result = parseInvestigationResult(text)
-    return result ? { ok: true, result, raw: text } : { ok: false, error: "unparseable investigator output", raw: redactSecrets(text).slice(0, 2000) }
-  } catch {
-    return { ok: false, error: "investigator crashed" }
-  } finally {
-    clearTimeout(timer)
-  }
+  const run = await runReadonlyClaude(prompt, {
+    model: opts.model ?? investigateModel(), system: SYSTEM, tools: "Read,Grep,Glob,Bash", addDirs: ["/"], allowed: ALLOWED_TOOLS, disallowed: DISALLOWED_TOOLS,
+  }, { timeoutMs: opts.timeoutMs ?? INVESTIGATE_TIMEOUT_MS, cwd: investigatorCwd() })
+  if (!run.ok) return run
+  const result = parseInvestigationResult(run.text)
+  return result ? { ok: true, result, raw: run.text } : { ok: false, error: "unparseable investigator output", raw: redactSecrets(run.text).slice(0, 2000) }
 }
 
 // ── Output parsing ───────────────────────────────────────────────────────────

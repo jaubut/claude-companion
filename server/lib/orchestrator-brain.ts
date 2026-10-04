@@ -14,11 +14,12 @@ import { parseCliResult } from "./cli-json"
 //  - `claude -p` is a full agent WITH tools, so every call is pinned
 //    classifier/responder-only (work tools denied + system prompt) or it just
 //    DOES the task instead of routing it.
-//  - Each `claude -p` carries a ~11s process-startup floor (no API-key path on
-//    Max to avoid it), so a separate Sonnet "chat" tier would be a pure latency
-//    tax for marginal quality. Instead the Haiku gate ALSO writes the chat reply
-//    in the same call; only a task escalates to a second (Opus) call. Brain calls
-//    run in a bare cwd so they don't pay to load a project's MCP servers (~5s).
+//  - Each `claude -p` carries a process-startup floor (no API-key path on Max to
+//    avoid it), so a separate Sonnet "chat" tier would be a pure latency tax for
+//    marginal quality. Instead the Haiku gate ALSO writes the chat reply in the
+//    same call; only a task escalates to a second (Opus) call. Brain calls run
+//    lean (brainArgs): no user settings, hooks, MCP, tools or session file, in a
+//    bare cwd — measured 2026-10-04 on the Mac: ~6.4 s → ~3.0 s per gate call.
 
 // A proposal files a Turso agent task (orchestrator-one-queue P2): noteId + agent
 // are the brain's pick, validated server-side against /projects and the agent
@@ -27,11 +28,20 @@ export type BrainDecision =
   | { kind: "chat"; text: string }
   | { kind: "proposal"; cwd: string; prompt: string; reasoning: string; noteId: string | null; agent: string | null; title: string | null }
 
-/** What compose may pick from: active projects, dispatchable agents, the channel's own note. */
+/** What compose may pick from: projects, dispatchable agents, the channel's own note. */
 export interface ComposeTargets {
   projects: { noteId: string; ref: string | null; title: string }[]
   agents: string[]
   channelNoteId: string | null
+  /** Every project (any status, with its repo) + the repo map, one line each; replaces `projects` in the prompt when set. */
+  catalog?: string[]
+  /** The front door's resolution for this message (Jev / alias / channel). */
+  resolved?: { noteId: string | null; title: string; repo: string | null } | null
+}
+
+export interface DecideOpts {
+  /** Skip the Haiku gate: the front door already knows this is a task. */
+  forceTask?: boolean
 }
 
 const GATE_MODEL = process.env.COMPANION_GATE_MODEL || "claude-haiku-4-5"
@@ -47,7 +57,24 @@ const BRAIN_CWD = join(homedir(), ".claude-companion")
 const NO_TOOLS_SYSTEM =
   "You have NO tools and must NEVER attempt to run, read, edit, or search anything. " +
   "Do not perform the user's task. Follow the output format exactly, nothing else."
-const DENY_TOOLS = ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "Task", "WebSearch", "WebFetch", "NotebookEdit", "TodoWrite"]
+
+/**
+ * Lean headless argv (the Body investigator's startup flags): no user settings
+ * (auto mode, hooks, plugins), no hooks, no MCP servers, no tools at all, no
+ * session file. The prompt goes on stdin.
+ */
+export function brainArgs(bin: string, model: string): string[] {
+  return [
+    bin, "-p", "--model", model, "--output-format", "json",
+    "--setting-sources", "project,local",
+    "--settings", JSON.stringify({ disableAllHooks: true }),
+    "--strict-mcp-config",
+    "--no-session-persistence",
+    "--permission-mode", "dontAsk",
+    "--tools", "",
+    "--append-system-prompt", NO_TOOLS_SYSTEM,
+  ]
+}
 
 // The launchd service PATH excludes ~/.local/bin where claude installs, so the
 // bare name won't resolve under the daemon. Resolve to an absolute path.
@@ -69,11 +96,7 @@ function history(turns: Turn[]): string {
 // `.result`), or null on any failure. Caller decides how to parse it.
 async function runClaudeOnce(model: string, prompt: string): Promise<string | null> {
   const bin = resolveClaudeBin()
-  const proc = Bun.spawn(
-    [bin, "-p", prompt, "--append-system-prompt", NO_TOOLS_SYSTEM, "--disallowed-tools", ...DENY_TOOLS,
-      "--model", model, "--output-format", "json"],
-    { stdout: "pipe", stderr: "pipe", cwd: BRAIN_CWD },
-  )
+  const proc = Bun.spawn(brainArgs(bin, model), { stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", cwd: BRAIN_CWD })
   const timer = setTimeout(() => { try { proc.kill() } catch { /* gone */ } }, CALL_TIMEOUT_MS)
   let out: string
   try {
@@ -116,7 +139,7 @@ type Gate = { kind: "chat"; text: string } | { kind: "task" }
 // One cheap call that classifies AND, when it's chat, writes the reply — so the
 // common case costs a single Haiku call. A task returns just the marker; Opus
 // composes the dispatch in tier 2.
-async function gateAndChat(turns: Turn[], userMessage: string, context: string | null = null): Promise<Gate | null> {
+async function gateAndChat(turns: Turn[], userMessage: string, context: string | null = null, projects: string[] = []): Promise<Gate | null> {
   const prompt = [
     "You are the orchestrator for Jeremie — one always-open chat that can dispatch work to worker Claude sessions.",
     "Classify the latest user message and respond accordingly. Return ONLY minified JSON, one of:",
@@ -125,6 +148,9 @@ async function gateAndChat(turns: Turn[], userMessage: string, context: string |
     "",
     "CHAT = you can answer now: a question, a fact, planning, chit-chat, or anything ambiguous/underspecified. Put your reply in text.",
     "TASK = real work to dispatch to a worker in a project directory (run/build/edit/test something concrete). A stronger model will compose the dispatch — return just the marker, no text.",
+    "A question about a specific project's code, versions, files or deploy state that the context below does not answer is a TASK (a worker checks it and reports back).",
+    "Never ask Jeremie for a repo path, a directory, or permission to check: every project's repo is already known to the dispatcher.",
+    ...(projects.length ? ["", "Jeremie's projects (any status; → repo when one is mapped):", ...projects] : []),
     "",
     ...contextLines(context),
     "Recent thread:",
@@ -147,7 +173,7 @@ async function gateAndChat(turns: Turn[], userMessage: string, context: string |
 
 // ---- tier 2: compose proposal (Opus) --------------------------------------
 
-function parseProposal(raw: string): BrainDecision | null {
+function parseProposal(raw: string, fallbackNoteId: string | null = null): BrainDecision | null {
   let obj: unknown
   try {
     obj = JSON.parse(stripFence(raw))
@@ -161,7 +187,7 @@ function parseProposal(raw: string): BrainDecision | null {
   }
   if (o.kind === "proposal" && typeof o.prompt === "string" && o.prompt.trim() && typeof o.reasoning === "string") {
     const cwd = typeof o.cwd === "string" && o.cwd.startsWith("/") ? o.cwd : ""
-    const noteId = typeof o.noteId === "string" && o.noteId.trim() ? o.noteId.trim() : null
+    const noteId = typeof o.noteId === "string" && o.noteId.trim() ? o.noteId.trim() : fallbackNoteId
     if (!cwd && !noteId) return null
     const opt = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null)
     return { kind: "proposal", cwd, prompt: o.prompt.trim(), reasoning: o.reasoning.trim(), noteId, agent: opt(o.agent), title: opt(o.title) }
@@ -171,11 +197,15 @@ function parseProposal(raw: string): BrainDecision | null {
 
 function targetLines(t: ComposeTargets | null): string[] {
   if (!t) return []
-  const projects = t.projects.slice(0, 40).map((p) => `  - ${p.noteId}${p.ref ? ` (${p.ref})` : ""}: ${p.title}`)
+  const projects = t.catalog?.length ? t.catalog : t.projects.slice(0, 160).map((p) => `  - ${p.noteId}${p.ref ? ` (${p.ref})` : ""}: ${p.title}`)
+  const r = t.resolved
   return [
-    "- noteId = the project this task belongs to. Pick from these active projects:",
+    "- noteId = the project this task belongs to. Pick from ALL of Jeremie's projects (status shown when not active — an inactive project is still valid; → repo = its checkout):",
     ...(projects.length ? projects : ["  (none listed)"]),
+    ...(r?.noteId ? [`- This message was resolved to the project ${r.noteId} (${r.title})${r.repo ? `, repo ${r.repo}` : ""} — use it unless the message clearly names another.`] : []),
+    ...(!r?.noteId && r?.repo ? [`- This message is about the repo ${r.repo} (${r.title}) — use it as cwd.`] : []),
     ...(t.channelNoteId ? [`- This channel is the project ${t.channelNoteId} — use it unless the user explicitly names another project.`] : []),
+    "- NEVER ask for a repo path, a directory or permission: the worker's repo comes from the project note. A check or question about a project (e.g. a dependency version) is a proposal for a worker to check and report.",
     `- agent = who runs it, one of: ${t.agents.slice(0, 60).join(", ") || "builder"} (code changes → builder).`,
     "- title = a short task title (≤ 80 chars).",
   ]
@@ -193,7 +223,7 @@ async function composeProposal(
     "You are the orchestrator brain. The user wants real work done — compose a dispatch proposal for a worker Claude.",
     "Return ONLY minified JSON. No prose, no markdown fences. One of:",
     '{"kind":"proposal","noteId":"<project note id>","agent":"<agent slug>","title":"<short title>","cwd":"<absolute project dir, optional>","prompt":"<full self-contained task prompt for the worker>","reasoning":"<one sentence: why this worker, why now>"}',
-    '{"kind":"chat","text":"<a clarifying question>"}   ← use this if you cannot determine the project or the task',
+    '{"kind":"chat","text":"<a clarifying question>"}   ← only if you truly cannot tell WHAT to do, or no listed project fits',
     "",
     "Rules:",
     ...targetLines(targets),
@@ -201,7 +231,7 @@ async function composeProposal(
     dirs,
     ...(channelLine ? [channelLine] : []),
     "- The worker prompt must be self-contained — the worker has NO memory of this conversation.",
-    "- If it's ambiguous which project or what to do, return the chat form with a clarifying question instead of guessing.",
+    "- If what to do is ambiguous, return the chat form with a clarifying question. Never ask which repo/path when a project fits.",
     "",
     ...contextLines(context),
     "Recent thread:",
@@ -211,7 +241,7 @@ async function composeProposal(
     userMessage,
   ].join("\n")
   const raw = await runClaude(COMPOSE_MODEL, prompt)
-  return raw ? parseProposal(raw) : null
+  return raw ? parseProposal(raw, targets?.resolved?.noteId ?? targets?.channelNoteId ?? null) : null
 }
 
 // ---- orchestration --------------------------------------------------------
@@ -227,12 +257,15 @@ export async function decide(
   channelCwd: string | null = null,
   context: string | null = null,
   targets: ComposeTargets | null = null,
+  opts: DecideOpts = {},
 ): Promise<BrainDecision | null> {
-  const g = await gateAndChat(turns, userMessage, context)
-  if (!g) return null
-  if (g.kind === "chat") return g
+  if (!opts.forceTask) {
+    const g = await gateAndChat(turns, userMessage, context, targets?.catalog ?? [])
+    if (!g) return null
+    if (g.kind === "chat") return g
+  }
   // task → Opus composes the dispatch (and may downgrade to a clarifying chat).
   const proposal = await composeProposal(turns, userMessage, candidateCwds, channelCwd, context, targets)
   if (proposal) return proposal
-  return { kind: "chat", text: "Looks like a task, but I couldn't pin down the project — which one?" }
+  return { kind: "chat", text: "Looks like a task, but I couldn't compose the dispatch just now — send it again (naming the project helps)." }
 }
