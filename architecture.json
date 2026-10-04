@@ -4330,7 +4330,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 426,
+          "lines": 434,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -8312,6 +8312,10 @@
             "routes/api.ts#POST /api/inject",
             "routes/capture.ts",
             "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
             "routes/trips.ts"
           ]
         },

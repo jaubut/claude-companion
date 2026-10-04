@@ -23,9 +23,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `routes/api.ts` | 454 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/discover.ts` | 449 | lib | 16 | state: let firstDone, let firstExpected, let resolveFirst |
+| `routes/orchestrator.ts` | 434 | route-host | 3 | routes: 10 |
 | `lib/spawn-session.ts` | 431 | lib | 11 |  |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
-| `routes/orchestrator.ts` | 426 | route-host | 3 | routes: 10 |
 | `lib/triage.ts` | 425 | lib | 38 | state: DESTRUCTIVE: Set |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |

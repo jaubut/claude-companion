@@ -235,7 +235,7 @@ async function taskActionRoute(req: Request, path: string, dispatch: DispatchWir
   if (!taskId || !TASK_ID.test(taskId)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
   const local = getTask(taskId)
   if (local) {
-    if (action === "cancel") return cancelLocal(local, dispatch)
+    if (action === "cancel") return withIdempotency(req, `task-cancel:${taskId}`, () => cancelLocal(local, dispatch))
     return Response.json({ ok: false, error: `${action} needs a dispatch task` }, { status: 409 })
   }
   if (!DISPATCH_ID.test(taskId)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
@@ -250,7 +250,7 @@ async function proposalRoute(req: Request, path: string, dispatch: DispatchWirin
   const [taskId, action] = path.split("/")
   const task = taskId ? getTask(taskId) : null
   if (!task) return Response.json({ ok: false, error: "no such proposal" }, { status: 404 })
-  if (action === "reject") return rejectProposal(task, dispatch)
+  if (action === "reject") return withIdempotency(req, `reject:${task.taskId}`, async () => rejectProposal(task, dispatch))
   if (action !== "approve") return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
   return withIdempotency(req, `approve:${task.taskId}`, async () => {
     const body = (await readJson(req)) ?? {}
@@ -332,28 +332,32 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
   if (url.pathname === "/api/orchestrator/channels" && req.method === "GET") {
     return Response.json({ channels: listChannels().map(dispatch.decorate) })
   }
-  if (url.pathname === "/api/orchestrator/channels" && req.method === "POST") return createChannelRoute(req, dispatch)
+  if (url.pathname === "/api/orchestrator/channels" && req.method === "POST") {
+    return withIdempotency(req, "orch-channel-create", () => createChannelRoute(req, dispatch))
+  }
   // Trust ramp toggle (Phase 7). POST .../channels/<id>/auto { enabled }.
   // The server reports eligibility (trust.eligible); only the user flips it.
   if (url.pathname.startsWith("/api/orchestrator/channels/") && req.method === "POST") {
     const [id, action] = url.pathname.slice("/api/orchestrator/channels/".length).split("/")
     if (action === "link" && id) return linkChannel(req, id, dispatch)
-    if (action !== "auto" || !id) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
-    const { enabled } = await req.json() as { enabled?: unknown }
-    if (typeof enabled !== "boolean") return Response.json({ ok: false, error: "enabled must be boolean" }, { status: 400 })
-    if (id === BODY_CHANNEL && enabled) return Response.json({ ok: false, error: "auto-dispatch is disabled for #Body" }, { status: 400 })
-    const ch = setChannelAuto(id, enabled)
-    if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
-    emitChannel(ch)
-    orchEmit(orchAppendTurn(
-      "orchestrator",
-      enabled
-        ? `auto-dispatch ON for #${ch.name} — proposals run without a tap; cancel any task to switch it back off`
-        : `auto-dispatch OFF for #${ch.name} — back to propose-confirm`,
-      null,
-      ch.id,
-    ))
-    return Response.json({ ok: true, channel: ch })
+    return withIdempotency(req, `orch-auto:${id}`, async () => {
+      if (action !== "auto" || !id) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
+      const { enabled } = await req.json() as { enabled?: unknown }
+      if (typeof enabled !== "boolean") return Response.json({ ok: false, error: "enabled must be boolean" }, { status: 400 })
+      if (id === BODY_CHANNEL && enabled) return Response.json({ ok: false, error: "auto-dispatch is disabled for #Body" }, { status: 400 })
+      const ch = setChannelAuto(id, enabled)
+      if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+      emitChannel(ch)
+      orchEmit(orchAppendTurn(
+        "orchestrator",
+        enabled
+          ? `auto-dispatch ON for #${ch.name} — proposals run without a tap; cancel any task to switch it back off`
+          : `auto-dispatch OFF for #${ch.name} — back to propose-confirm`,
+        null,
+        ch.id,
+      ))
+      return Response.json({ ok: true, channel: ch })
+    })
   }
   if (url.pathname === "/api/orchestrator/thread" && req.method === "GET") {
     const ch = resolveChannel(url.searchParams.get("channel"))
@@ -382,39 +386,43 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     return taskDetail(id, dispatch)
   }
   if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
-    const { text, channel } = await req.json() as { text?: string; channel?: string }
-    if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
-    const ch = resolveChannel(channel)
-    if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
-    // `/key NAME value` goes to secrets.env: the thread (and the brain) only
-    // ever see the orchestrator's name-only confirmation.
-    // Same gate as /api/inject: only from where the vault itself would accept
-    // it, and a refused /key never reaches the thread (the value would land
-    // in it and in the brain's prompt).
-    let keyed: Awaited<ReturnType<typeof handleKeyCommand>> = null
-    if (isKeyCommand(text)) {
-      const gate = keyCommandGate(req)
-      if (!gate.allowed) {
-        const { status, ...refusal } = gate.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
-        companionLog(`/key refused (orchestrator) — ${refusal.error} peer=${gate.origin.peer}`)
-        return Response.json({ ok: false, ...refusal }, { status })
+    return withIdempotency(req, "orch-send", async () => {
+      const { text, channel } = await req.json() as { text?: string; channel?: string }
+      if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+      const ch = resolveChannel(channel)
+      if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
+      // `/key NAME value` goes to secrets.env: the thread (and the brain) only
+      // ever see the orchestrator's name-only confirmation.
+      // Same gate as /api/inject: only from where the vault itself would accept
+      // it, and a refused /key never reaches the thread (the value would land
+      // in it and in the brain's prompt).
+      let keyed: Awaited<ReturnType<typeof handleKeyCommand>> = null
+      if (isKeyCommand(text)) {
+        const gate = keyCommandGate(req)
+        if (!gate.allowed) {
+          const { status, ...refusal } = gate.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
+          companionLog(`/key refused (orchestrator) — ${refusal.error} peer=${gate.origin.peer}`)
+          return Response.json({ ok: false, ...refusal }, { status })
+        }
+        keyed = await handleKeyCommand(text, gate.origin)
       }
-      keyed = await handleKeyCommand(text, gate.origin)
-    }
-    if (keyed) {
-      const turn = orchAppendTurn("orchestrator", keyed.message, null, ch.id)
+      if (keyed) {
+        const turn = orchAppendTurn("orchestrator", keyed.message, null, ch.id)
+        orchEmit(turn)
+        return Response.json({ ...keyed, turn }, { status: keyed.status })
+      }
+      const turn = orchAppendTurn("user", text.trim(), null, ch.id)
       orchEmit(turn)
-      return Response.json({ ...keyed, turn }, { status: keyed.status })
-    }
-    const turn = orchAppendTurn("user", text.trim(), null, ch.id)
-    orchEmit(turn)
-    // The front door (Jev route → status / quick look / old brain) answers
-    // async; the user message is already recorded, so /send returns instantly
-    // and the reply/proposal streams in.
-    void frontDoor.handle(text.trim(), ch)
-    return Response.json({ ok: true, turn })
+      // The front door (Jev route → status / quick look / old brain) answers
+      // async; the user message is already recorded, so /send returns instantly
+      // and the reply/proposal streams in.
+      void frontDoor.handle(text.trim(), ch)
+      return Response.json({ ok: true, turn })
+    })
   }
-  if (url.pathname === "/api/orchestrator/dispatch" && req.method === "POST") return dispatchRoute(req, dispatch)
+  if (url.pathname === "/api/orchestrator/dispatch" && req.method === "POST") {
+    return withIdempotency(req, "orch-dispatch", () => dispatchRoute(req, dispatch))
+  }
   if (url.pathname.startsWith("/api/orchestrator/task/") && req.method === "POST") {
     return taskActionRoute(req, url.pathname.slice("/api/orchestrator/task/".length), dispatch)
   }
