@@ -13,7 +13,7 @@ import { bodySnapshot } from "./body"
 import { dispatchWiring } from "./dispatch"
 import { applyDecision, brainCatalog, orchEmit, runBrain } from "./orchestrator"
 
-// The live front door (lib/front-door.ts): real Jev, companion.db shadow log,
+// The live front door (lib/front-door.ts): real Jev, sqlite shadow log,
 // the dispatch poller's cache, the Body snapshot, and the old brain.
 // COMPANION_JEV_ROUTER=off|shadow|live (default shadow), COMPANION_JEV_MIN_CONF (0.7).
 

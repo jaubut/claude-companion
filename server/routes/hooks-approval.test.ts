@@ -21,7 +21,7 @@ const fake = { send: (m: string) => { frames.push(JSON.parse(m)) } } as unknown 
 
 beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), "hooks-appr-"))
-  process.env.COMPANION_DB_PATH = join(dir, "companion.db")
+  process.env.COMPANION_DB_PATH = join(dir, "test.db")
   // Whatever test file opened the learned table first, this one is isolated.
   useLearnedAllowDb(join(dir, "learned.db"))
   await import("../wiring/events")

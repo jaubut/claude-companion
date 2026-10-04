@@ -41,6 +41,8 @@ export interface ConsiderInput {
   trigger: "alert" | "sweep" | "forward" | "manual"
   /** Arrived over the peer hop: never forwarded again. */
   hop?: boolean
+  /** A human asked again (triage requeue): skip the failed-twice cooldown. */
+  force?: boolean
 }
 
 export interface InvestigatorDeps {
@@ -163,7 +165,7 @@ export function createBodyInvestigator(deps: InvestigatorDeps): BodyInvestigator
       const state = await stateOf(input)
       if (!state || !isProblemState(state)) return { status: "skipped", reason: "not a problem state" }
       // gate + insert run with no await in between: two triggers can't both pass.
-      const verdict = gate(deps.store, { componentId: input.componentId, state, fromState: input.fromState }, now(), { budget: route === "local" })
+      const verdict = gate(deps.store, { componentId: input.componentId, state, fromState: input.fromState }, now(), { budget: route === "local", force: input.force === true })
       if (!verdict.ok) return verdict.open ? { status: "duplicate", id: verdict.open.id, reason: verdict.reason } : { status: "skipped", reason: verdict.reason }
       if (route === "forward") return forwardOne(input, state, host!, verdict.attempt, verdict.retry)
       const rec = deps.store.insert({
@@ -333,7 +335,7 @@ async function peerPost(cfg: PeerConfig, body: unknown, fetchFn: typeof fetch = 
 export function peerForwarder(cfg: PeerConfig, fetchFn: typeof fetch = fetch): NonNullable<InvestigatorDeps["forward"]> {
   return async (input) => {
     try {
-      const { status, json } = await peerPost(cfg, { component_id: input.componentId, state: input.state, from_state: input.fromState ?? null, trigger: input.trigger }, fetchFn)
+      const { status, json } = await peerPost(cfg, { component_id: input.componentId, state: input.state, from_state: input.fromState ?? null, trigger: input.trigger, ...(input.force ? { force: true } : {}) }, fetchFn)
       if (status !== 200 || !json?.ok) return { kind: "unreachable", reason: `peer http ${status}` }
       const s = String(json.status ?? "")
       if (s === "started" || s === "duplicate") return { kind: "accepted", status: s }

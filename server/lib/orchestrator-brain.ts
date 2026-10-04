@@ -126,6 +126,11 @@ async function runClaude(model: string, prompt: string): Promise<string | null> 
   return null
 }
 
+/** One lean, tool-less `claude -p` (brainArgs) with the brain's retries; the model's text or null. */
+export function runBrainCall(model: string, prompt: string): Promise<string | null> {
+  return runClaude(model, prompt)
+}
+
 // Extra live context (e.g. the Body monitor digest, wiring/body.ts) placed
 // before the thread. Empty when there is none, so prompts are unchanged.
 export function contextLines(context: string | null): string[] {

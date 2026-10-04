@@ -22,6 +22,14 @@ export function dispatchPushEnabled(senderConfigured: boolean, env: Record<strin
   return senderConfigured && env.COMPANION_DISPATCH_PUSH?.trim() === "1"
 }
 
+const polledListeners = new Set<() => void>()
+
+/** Run `fn` after every successful dispatch poll / applied local write (wiring/triage.ts). */
+export function onDispatchPolled(fn: () => void): () => void {
+  polledListeners.add(fn)
+  return () => polledListeners.delete(fn)
+}
+
 export const dispatchWiring: DispatchWiring = createDispatchWiring({
   query: tursoQuery,
   exec: tursoExec,
@@ -33,6 +41,7 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   mirror,
   generalChannel: GENERAL_CHANNEL,
   log: companionLog,
+  onPolled: () => { for (const fn of polledListeners) fn() },
   getChannel,
   localQueue: () => ({ cap: wipCap(), live: countLiveTasks(), queued: listQueued().length }),
   liveIdentity: (id) => {

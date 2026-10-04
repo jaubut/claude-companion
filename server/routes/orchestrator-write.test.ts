@@ -13,7 +13,7 @@ import { TursoUnreachable } from "../lib/turso"
 // the QueryFn / ExecFn seams — so INSERT OR IGNORE, guarded UPDATEs and affected
 // row counts behave as on libSQL. Temp HOME holds the agent allowlist.
 
-process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-orch-write-")), "companion.db")
+process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-orch-write-")), "test.db")
 
 const savedHome = process.env.HOME
 const tempHome = mkdtempSync(join(tmpdir(), "cc-orch-home-"))
@@ -132,7 +132,7 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
-  // Shared companion.db across test files: leave no #Body behind (body.test.ts expects to create it).
+  // Shared test sqlite across test files: leave no #Body behind (body.test.ts expects to create it).
   sqlite.exec("DELETE FROM orchestrator_turns WHERE thread_id = 'body'")
   sqlite.exec("DELETE FROM orchestrator_tasks WHERE thread_id = 'body'")
   sqlite.exec("DELETE FROM orchestrator_channels WHERE id = 'body'")

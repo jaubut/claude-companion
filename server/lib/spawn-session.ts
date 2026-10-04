@@ -14,7 +14,7 @@
 // from multiple clients in real time, which looked like a "copy" bug).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs"
-import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath } from "./tmux-pane"
+import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -216,7 +216,7 @@ export function detachedSpawnArgv(
   inner: string,
   serverEnv: Record<string, string | undefined> = process.env,
 ): string[] {
-  return ["tmux", ...spawnNewSessionFlags(serverEnv), ...detachedNewSessionArgs(sessionName, inner)]
+  return [...tmuxArgv(), ...spawnNewSessionFlags(serverEnv), ...detachedNewSessionArgs(sessionName, inner)]
 }
 
 function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
@@ -230,7 +230,7 @@ function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
 // prefix and `cc-foo` would falsely report existing because `cc-foo-2` is.
 // Probed on the spawn server: that is where the new session will land.
 async function tmuxSessionExists(name: string): Promise<boolean> {
-  const proc = Bun.spawn(["tmux", ...spawnServerFlags(), "has-session", "-t", `=${name}`], {
+  const proc = Bun.spawn([...tmuxArgv(), ...spawnServerFlags(), "has-session", "-t", `=${name}`], {
     stdout: "ignore",
     stderr: "ignore",
   })
@@ -308,7 +308,7 @@ async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<
   // tmux switching them to some unrelated sibling session. Best-effort:
   // failure here is non-fatal, the session still works.
   const opt = Bun.spawn(
-    ["tmux", ...spawnServerFlags(), "set-option", "-t", sessionName, "detach-on-destroy", "on"],
+    [...tmuxArgv(), ...spawnServerFlags(), "set-option", "-t", sessionName, "detach-on-destroy", "on"],
     { stdout: "ignore", stderr: "ignore" },
   )
   await opt.exited

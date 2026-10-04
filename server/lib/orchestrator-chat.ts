@@ -362,6 +362,11 @@ export function listTasks(threadId?: string): Task[] {
   return rows.map(toTask)
 }
 
+// Every pending proposal, any channel, oldest first (triage).
+export function listProposals(limit = 200): Task[] {
+  return (db.query("SELECT * FROM orchestrator_tasks WHERE status = 'proposed' ORDER BY created_at ASC LIMIT ?").all(limit) as TaskRow[]).map(toTask)
+}
+
 // Every local worker row that may still hold a tmux worker (dispatched/running),
 // listed or not — the worker tail resumes these on boot.
 export function listLiveTasks(): Task[] {

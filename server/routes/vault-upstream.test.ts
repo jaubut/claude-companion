@@ -197,7 +197,7 @@ test("upstream down / redirect → 502 upstream_unreachable, no pull, no value a
 })
 
 test("/key via /api/inject and WS input goes upstream; value never in log, response, WS frame, feed", async () => {
-  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-up-inject-")), "companion.db")
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-up-inject-")), "test.db")
   respond = () => Response.json({ ok: true, name: "C_KEY", hosts: ["c.io"], action: "created", message: "🔑 C_KEY enregistré" })
   const { handleApiRoute } = await import("./api")
   const { clients } = await import("../state")
