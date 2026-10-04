@@ -7,7 +7,7 @@ import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
 import { hasPendingApprovalFor } from "../lib/pty-manager"
-import { orphanPickerClosed, raiseOrphanQuestion } from "../lib/orphan-question"
+import { isQuestionReview, orphanPickerClosed, raiseOrphanQuestion } from "../lib/orphan-question"
 import { capturePane, paneKey } from "../lib/tmux-pane"
 import { markWaiting, unmarkWaiting } from "./waiting"
 
@@ -56,6 +56,7 @@ export const dialogWatcher = createDialogWatcher({
     setSessionStatus(key, st.status, st.waitingFor)
   },
   raiseOrphanQuestion: (s, pane) => raiseOrphanQuestion(s, pane),
+  isQuestionScreen: isQuestionReview,
   onQuestionPickerGone: orphanPickerClosed,
 })
 dialogWatcher.start()
