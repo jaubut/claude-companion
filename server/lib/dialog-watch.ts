@@ -41,6 +41,9 @@ export interface DialogWatchDeps {
   // An orphaned question picker: try to re-raise it as a structured question
   // card (lib/orphan-question.ts). True = done, false = mirror it as a dialog.
   raiseOrphanQuestion?(s: Session, pane: string): boolean
+  // A question screen parseDialog can't see (the review / Submit screen has
+  // no key-hint footer) — still counts for the orphan clock.
+  isQuestionScreen?(pane: string): boolean
   // The question picker on this session went away.
   onQuestionPickerGone?(key: string): void
   pollMs?: number
@@ -120,8 +123,9 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     // Question pickers are the hooks' business (structured card + driver);
     // mirroring one — e.g. for the second the driver is still typing after
     // the phone answered — would put a stray dialog card on the phone.
-    if (!dialog) { questionGone(s.key); close(s.key); return }
-    if (dialog.kind === "question") {
+    const questionScreen = dialog?.kind === "question" || (pane !== null && !!deps.isQuestionScreen?.(pane))
+    if (!dialog && !questionScreen) { questionGone(s.key); close(s.key); return }
+    if (questionScreen) {
       const since = questionSince.get(s.key) ?? now()
       questionSince.set(s.key, since)
       if (now() - since < QUESTION_ORPHAN_MS) { close(s.key); return }
@@ -131,6 +135,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     } else {
       questionGone(s.key)
     }
+    if (!dialog) { close(s.key); return }
     const sig = dialogSignature(dialog)
     if (open.get(s.key)?.sig === sig) return
     open.set(s.key, { sig, dialog })

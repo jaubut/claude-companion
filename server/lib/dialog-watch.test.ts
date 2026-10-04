@@ -189,6 +189,19 @@ test("an orphan that can't be re-raised falls back to the dialog mirror", async 
   expect(h.opened).toHaveLength(1)
 })
 
+test("a review screen parseDialog can't see still starts the orphan clock and gets re-raised", async () => {
+  let t = 1_000_000
+  const raised: string[] = []
+  const { h, w } = harness({ now: () => t, isQuestionScreen: () => true, raiseOrphanQuestion: (s) => { raised.push(s.key); return true } })
+  h.status = { status: "waiting", waitingFor: "input needed" }
+  h.pane = "Review your answers\nReady to submit your answers?\n❯ 1. Submit answers\n  2. Cancel\n"
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(raised).toEqual([h.sessions[0]!.key])
+  expect(h.opened).toEqual([])
+})
+
 test("a question the hooks already routed is not mirrored", async () => {
   const { h, w } = harness()
   h.status = { status: "waiting", waitingFor: "dialog open" }

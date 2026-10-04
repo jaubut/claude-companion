@@ -12,11 +12,17 @@
 // Ends like any question: answered on the phone, or cancelQuestionsFor from
 // the hooks (PostToolUse / Stop / UserPromptSubmit / SessionEnd) when it was
 // answered at the terminal, or the watcher seeing the picker gone.
+//
+// The picker's last screen ("Review your answers … ❯ 1. Submit answers /
+// 2. Cancel") has no key-hint footer, so parseDialog never sees it and the
+// dialog mirror can't help: a session left there sat invisible on the phone
+// (2026-10-03). It gets its own card — "Submit your answers?" with the chosen
+// answers — and the pick presses Submit or Cancel in the terminal.
 
 import { closeSync, openSync, readSync, statSync } from "node:fs"
 import { companionLog } from "./log"
 import { type QuestionAnswer, type QuestionItem, addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput } from "./questions"
-import { driveQuestionPicker, pickerShowsQuestions } from "./question-driver"
+import { REVIEW_RE, answeredCount, driveQuestionPicker, pickerRegion, pickerShowsQuestions } from "./question-driver"
 import { type InjectTarget, withPickerIO } from "./keyboard-inject"
 import { transcriptPath } from "./session-titles"
 import type { Session } from "./sessions"
@@ -70,10 +76,83 @@ export function openQuestionFromTranscript(path: string, tailBytes = 262_144): O
   return open && !answered.has(open.toolUseId) ? open : null
 }
 
+// The picker's review screen, cursor on its Submit / Cancel rows.
+export function isQuestionReview(pane: string): boolean {
+  const region = pickerRegion(pane)
+  return REVIEW_RE.test(region) && /^\s*(?:❯\s*)?1\.\s*Submit answers/m.test(region) && /^\s*(?:❯\s*)?2\.\s*Cancel/m.test(region)
+}
+
+export const REVIEW_SUBMIT = "Submit answers"
+export const REVIEW_CANCEL = "Cancel"
+
+// "● question / → answer" pairs between "Review your answers" and the prompt.
+export function reviewSummary(pane: string): string {
+  const region = pickerRegion(pane).split("\n")
+  const start = region.findIndex((l) => /Review your answers/.test(l))
+  const end = region.findIndex((l) => REVIEW_RE.test(l))
+  if (start < 0 || end <= start) return ""
+  const out: string[] = []
+  for (const raw of region.slice(start + 1, end)) {
+    const l = raw.replace(/^[\s│]+/, "").trimEnd()
+    if (l.startsWith("●")) out.push(l.slice(1).trim())
+    else if (l.startsWith("→") && out.length) out[out.length - 1] += ` → ${l.slice(1).trim()}`
+    else if (l && out.length) out[out.length - 1] += ` ${l}`
+  }
+  return out.join("\n")
+}
+
+function reviewQuestion(open: OpenQuestionCall, pane: string): QuestionItem {
+  const summary = reviewSummary(pane)
+  return {
+    question: open.questions.length === 1 ? `Submit: ${open.questions[0]!.question}` : "Submit your answers?",
+    header: "Submit",
+    multiSelect: false,
+    options: [
+      { label: REVIEW_SUBMIT, ...(summary ? { description: summary } : {}) },
+      { label: REVIEW_CANCEL, description: "Decline the question; Claude carries on without the answers" },
+    ],
+  }
+}
+
+// The question text of the open call is on the review screen (so it is THIS
+// question's review, not another's).
+function reviewShows(pane: string, open: OpenQuestionCall): boolean {
+  const region = pickerRegion(pane)
+  return open.questions.some((q) => region.includes(q.question.trim().slice(0, 24)))
+}
+
+function defaultDriveReview(target: InjectTarget, choice: string): void {
+  void withPickerIO(target, async (io, via) => {
+    const pane = io.capture ? await io.capture() : null
+    if (pane === null || !isQuestionReview(pane)) {
+      companionLog(`${yellow}late answer not delivered${reset} → ${via} — review screen no longer on screen`)
+      return false
+    }
+    const before = answeredCount(pane)
+    if (choice === REVIEW_CANCEL) {
+      await io.digit(2)
+      await io.sleep(250)
+      const now = io.capture ? await io.capture() : null
+      if (now !== null && isQuestionReview(now) && /^\s*❯\s*2\./m.test(pickerRegion(now))) await io.key("Enter")
+    } else {
+      // The cursor starts on Submit; Enter there is what the driver does too.
+      if (!/^\s*❯\s*1\./m.test(pickerRegion(pane))) await io.digit(1)
+      await io.sleep(120)
+      await io.key("Enter")
+    }
+    await io.sleep(600)
+    const after = io.capture ? await io.capture() : null
+    const ok = after !== null && (!isQuestionReview(after) || answeredCount(after) > before)
+    companionLog(ok ? `${green}review ${choice === REVIEW_CANCEL ? "cancelled" : "submitted"}${reset} → ${via} ${dim}(orphan card)${reset}` : `${red}review press not confirmed${reset} → ${via}`)
+    return ok
+  }).catch(() => { /* logged above */ })
+}
+
 export interface OrphanDeps {
   readOpen?: (s: Session) => OpenQuestionCall | null
   ask?: typeof addQuestionRequest
   drive?: (target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[]) => void
+  driveReview?: (target: InjectTarget, choice: string) => void
 }
 
 // key → the tool call a card was re-raised for (one card per call).
@@ -102,19 +181,25 @@ function defaultDrive(target: InjectTarget, questions: QuestionItem[], answers: 
 export function raiseOrphanQuestion(s: Session, pane: string, deps: OrphanDeps = {}): boolean {
   if (s.agent !== "claude") return false
   const open = (deps.readOpen ?? defaultReadOpen)(s)
-  if (!open || !pickerShowsQuestions(pane, open.questions)) return false
-  if (raised.get(s.key) === open.toolUseId) return true
-  raised.set(s.key, open.toolUseId)
-  companionLog(`${yellow}→ phone${reset} orphaned question re-raised ${dim}${open.questions[0]?.question.slice(0, 80) ?? ""} · ${s.key}${reset}`)
+  if (!open) return false
+  const review = isQuestionReview(pane) && reviewShows(pane, open)
+  if (!review && !pickerShowsQuestions(pane, open.questions)) return false
+  const tag = review ? `${open.toolUseId}:review` : open.toolUseId
+  if (raised.get(s.key) === tag) return true
+  raised.set(s.key, tag)
+  const questions = review ? [reviewQuestion(open, pane)] : open.questions
+  companionLog(`${yellow}→ phone${reset} orphaned question re-raised${review ? " (review screen)" : ""} ${dim}${questions[0]?.question.slice(0, 80) ?? ""} · ${s.key}${reset}`)
   const target: InjectTarget = {
     tmuxPane: s.tmuxPane, tmuxSocket: s.tmuxSocket ?? "", tty: s.tty,
     termProgram: s.termProgram, iTermSessionId: s.iTermSessionId,
   }
   void (deps.ask ?? addQuestionRequest)(
-    { agent: "claude", sessionId: s.sessionId, cwd: s.cwd, questions: open.questions, sessionKey: s.key },
+    { agent: "claude", sessionId: s.sessionId, cwd: s.cwd, questions, sessionKey: s.key },
     { expiryMs: ORPHAN_WINDOW_MS },
   ).then((answers) => {
-    if (answers.length > 0) (deps.drive ?? defaultDrive)(target, open.questions, answers)
+    if (answers.length === 0) return
+    if (review) (deps.driveReview ?? defaultDriveReview)(target, answers[0]?.selected[0] ?? REVIEW_SUBMIT)
+    else (deps.drive ?? defaultDrive)(target, open.questions, answers)
   })
   return true
 }
