@@ -207,7 +207,7 @@
         },
         {
           "path": "lib/approval-history.ts",
-          "lines": 345,
+          "lines": 339,
           "kind": "lib",
           "exports": [
             "HistoryKind",
@@ -252,6 +252,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/db-path.ts",
             "lib/secret-redact.ts",
             "lib/tool-format.ts",
             "lib/pty-manager.ts",
@@ -961,6 +962,23 @@
           "externals": []
         },
         {
+          "path": "lib/db-path.ts",
+          "lines": 14,
+          "kind": "lib",
+          "exports": [
+            "companionDbPath"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dialog-watch.ts",
           "lines": 184,
           "kind": "lib",
@@ -1535,7 +1553,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1758,7 +1778,7 @@
         },
         {
           "path": "lib/orchestrator-db.ts",
-          "lines": 102,
+          "lines": 99,
           "kind": "lib",
           "exports": [
             "db",
@@ -1769,7 +1789,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1906,7 +1928,7 @@
         },
         {
           "path": "lib/push-tokens.ts",
-          "lines": 48,
+          "lines": 46,
           "kind": "lib",
           "exports": [
             "ApnsEnv",
@@ -1923,7 +1945,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -2238,7 +2262,7 @@
         },
         {
           "path": "lib/receipt-qa-store.ts",
-          "lines": 237,
+          "lines": 231,
           "kind": "lib",
           "exports": [
             "QA_STATUSES",
@@ -2271,7 +2295,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -2819,7 +2845,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -5573,6 +5601,17 @@
             "wiring/triage.ts",
             "wiring/trips.ts",
             "ws.ts"
+          ]
+        },
+        "companionDbPath": {
+          "module": "lib/db-path.ts",
+          "callers": [
+            "lib/approval-history.ts",
+            "lib/learned-allow.ts",
+            "lib/orchestrator-db.ts",
+            "lib/push-tokens.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/session-titles.ts"
           ]
         },
         "redactSecrets": {
