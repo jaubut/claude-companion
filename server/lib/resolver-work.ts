@@ -172,7 +172,7 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     if (res.kind === "error") return tried(job, out, ctx, a, res.error)
     seams.attempt?.(src, a.kind, null)
     const summary = a.kind === "answer" ? `Opus answered: ${clip(a.text, 160)}` : a.kind === "close_pr" ? `Opus closed the PR: ${clip(a.reason, 160)}`
-      : a.kind === "reject" ? `Opus rejected it: ${clip(a.reason, 160)}` : `Opus ran ${a.kind} (${plan.reason})`
+      : a.kind === "reject" ? `Opus rejected it: ${clip(a.reason, 160)}` : `Opus ran ${a.kind}: ${clip(out.summary, 150)}`
     if (a.kind === "reject") seams.turn(src, `🤖 ${summary}`)
     await seams.record(src, `resolver:${a.kind}`, summary, meta(job, out, { reason: plan.reason, outcome: "done" }))
     return { kind: "resolved", action: a.kind, summary, outcome: "done" }

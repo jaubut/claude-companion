@@ -5064,6 +5064,7 @@
             "RESOLVER_DISALLOWED",
             "resolverSpec",
             "memoryDirs",
+            "localRepoFor",
             "LiveResolverOpts",
             "liveSeams",
             "LiveResolver",
