@@ -3,7 +3,11 @@
 Server: `server/routes/body.ts` (HTTP), `server/lib/body.ts` (Turso read model,
 30 s cache, brain digest, health-intent predicate), `server/lib/body-alert.ts`
 (validation, push ownership, payload, push gate), `server/wiring/body.ts` (live
-snapshot + alert sink). Auth: the standard `/api/*` bearer gate.
+snapshot + alert sink). Auto-investigation: `server/lib/body-investigate.ts`
+(policy + sqlite store), `server/lib/body-investigator.ts` (read-only `claude -p`
+runner, prompt, parser), `server/lib/body-investigate-engine.ts` (engine, peer,
+report effects), `server/wiring/body-investigate.ts` (live instance + sweeps).
+Auth: the standard `/api/*` bearer gate.
 
 The collectors (separate repo/builder) write three Turso tables; this server
 only **reads** them:
@@ -75,6 +79,26 @@ The id may contain `:` — send it raw or percent-encoded (`mac%3Alaunchd%3Aback
 `vitals` is the latest row (or `null`); `events` is that component's last 50, newest first.
 Not cached.
 
+`investigation` (additive) is this host's latest auto-investigation of the
+component, or `null` when there is none:
+
+```json
+"investigation": {
+  "id": "3f9a1c2e", "status": "done",
+  "startedAt": "2026-10-04T12:00:00.000Z", "finishedAt": "2026-10-04T12:03:10.000Z",
+  "rootCause": "The plist runs a script that was deleted", "confidence": 0.85, "severity": "high",
+  "proposalId": "a1b2c3d4", "error": null
+}
+```
+
+`status` ∈ `running | pending_host | forwarded | done | failed | dropped`
+(`pending_host` = the owning host was unreachable, retried on the next sweep;
+`forwarded` = running on the Mac; `dropped` = it recovered before its host was
+reachable). `proposalId` is the #Body proposal card (`orchestrator_task.taskId`)
+holding the fix, or `null` (no fix, a failure, or — on the Mac — a report that
+went to Zettlab, which holds the card). `rootCause`/`confidence`/`severity` are
+`null` until `done`.
+
 ## `POST /api/body/alert`
 
 ```json
@@ -120,6 +144,106 @@ decision. If an alert ever reaches another server (e.g. a collector pointed at
 the Mac by mistake), that server still records the turn and sends the frame; set
 `COMPANION_BODY_PUSH=0` there to guarantee it never pushes.
 
+## Auto-investigation (`POST /api/body/investigate`)
+
+A component that goes **dead / crash_loop / failing** is investigated with no
+tap: one headless, **read-only** `claude -p` on the host that owns it. Any fix
+comes back as a #Body proposal card; the investigator never changes anything.
+
+**Triggers.** Every `POST /api/body/alert` whose `state` is a problem state, plus
+a sweep of all current problem components 60 s after boot and every 10 min.
+
+**Dedupe + budget.** At most one open investigation per component. After one
+finishes, the same component in the same state waits 12 h — a different state,
+or an alert carrying a real transition (`from_state ≠ state`), starts a new
+one. A failed run retries once after 10 min; two failures in a row wait 12 h.
+Per host: ≤ 3 running and ≤ 10 started per rolling 24 h (the rest wait for a
+later sweep). Records live in companion.db `body_investigations`, so a restart
+never re-runs a finished one (a run cut short by the restart is closed `failed`
+and retried once).
+
+**Kill switch.** `touch ~/.claude-companion/.body-investigate-disabled`, or
+`COMPANION_BODY_INVESTIGATE=0`. Checked on every decision; no restart needed for
+the file.
+
+**Where it runs.** `mac:*` → the Mac; `zettlab:*` and `cloud:*` → Zettlab. Each
+host only runs its own. Zettlab forwards Mac components to the Mac Companion;
+the Mac never forwards (its own sweep covers `mac:*`, and its dedupe makes a
+forward + its sweep idempotent).
+
+```json
+POST /api/body/investigate
+{ "component_id": "mac:launchd:com.x", "state": "dead", "from_state": "ok", "trigger": "forward" }
+→ { "ok": true, "status": "started", "id": "3f9a1c2e" }
+```
+
+`status` ∈ `started | forwarded | pending_host | duplicate | skipped | not_owner | disabled`
+(+ `id`, `reason`). `state` is optional (read from Turso when absent). A request
+with header `x-companion-body-hop: 1` is never forwarded again (`not_owner`).
+
+```json
+POST /api/body/investigate
+{ "report": { "id", "componentId", "host", "state", "status": "done|failed", "attempt", "startedAt", "finishedAt",
+              "runOn", "result": {…} | null, "error": null | "…", "cwd": "/abs/path" | null, "repo": bool } }
+→ { "ok": true, "status": "applied" | "duplicate" }
+```
+
+The Mac sends its finished investigations to Zettlab this way (Zettlab owns
+#Body). A replayed report id is `duplicate` (no second turn or card). 400
+`{ok:false, error}` on a bad body; 503 `turso_unreachable` as elsewhere.
+
+**Peer config** (both hosts):
+
+| env | Zettlab | Mac |
+|---|---|---|
+| `COMPANION_BODY_PEER` | the Mac Companion's base URL (`https://<mac>.ts.net` or `http://100.x.y.z:4245`) | Zettlab's base URL (`https://zettlab.tailfc45f2.ts.net`) |
+| `COMPANION_BODY_PEER_TOKEN` | the Mac's bearer token, when it differs from Zettlab's own | Zettlab's bearer token, when it differs |
+| `COMPANION_BODY_HOST` | optional override (`zettlab`) | optional override (`mac`) |
+
+`COMPANION_BODY_PEER` must be `https://…` or `http://` to loopback / a tailnet
+address (100.64/10, `*.ts.net`); anything else is ignored. Unset on Zettlab →
+Mac components stay `pending_host` (the Mac's own sweep still investigates them
+and reports locally). Unset on the Mac → reports go to the Mac's own #Body.
+
+**The investigator.** `claude -p` (model `COMPANION_INVESTIGATE_MODEL`, default
+`sonnet`; 10 min timeout) in the empty dir `~/.claude-companion/investigate`, prompt on stdin, allowlisted env
+(no Turso / Companion / broker tokens), with `--setting-sources project,local`
+(user settings — auto mode, broad allows, hooks — never load),
+`--settings {"disableAllHooks":true}`, `--strict-mcp-config`,
+`--permission-mode dontAsk`, `--tools Read,Grep,Glob,Bash`, `--add-dir /`,
+`--allowedTools` Read/Grep/Glob + `journalctl`, `systemctl --user
+status|cat|list-timers|show`, `launchctl print|list`, `ls`, `cat`, `head`,
+`tail`, `stat`, `docker ps|logs|inspect`, `git log|status|diff`, `which`,
+`crontab -l`, `ps`, `df`, `du`, `curl -s http://localhost|127.0.0.1…`, and
+`--disallowedTools` Edit, Write, NotebookEdit + secret paths + write flags
+(`curl -X/-d/-o…`, `git --output`, `journalctl --vacuum…`). Its prompt carries
+the component record, latest vitals, last 20 events and the unit / plist / log
+paths derived from the id. It must answer:
+
+```json
+{ "rootCause": "…", "evidence": ["…"], "confidence": 0.85, "severity": "low|med|high|critical",
+  "recommendedFix": { "summary": "…", "steps": ["…"], "risk": "low|med|high", "reversible": true } | null,
+  "retire": false, "notes": "…" }
+```
+
+Fenced or prose-wrapped JSON is accepted; anything else records `failed`. All
+text is passed through the secret redactor before it is stored or posted.
+
+**Report** (on the #Body owner):
+1. Turn in #Body: `🔍 <component> — <rootCause> (confidence N%)`, up to 6
+   `• evidence` lines, then `Fix: <summary> (<risk> risk, reversible)` or
+   `No fix proposed.` A failure posts `🔍 <component> — investigation failed: <error>`.
+2. A non-null fix → the existing proposal card in #Body (`orchestrator_task`
+   frame). Approve files it like any proposal (headless, or `mode:"live"`).
+   Agent `builder` when a git repo is known for the component, else `claude`;
+   cwd = that repo / unit working dir, else `~/.claude`; project note =
+   `COMPANION_BODY_NOTE_ID` (default `projects/2026-06-22-companion-orchestrator`).
+   The task text names the host the fix must run on.
+3. Turso `body_events` row: `kind='investigation'`, `from_state` null,
+   `to_state` = the state, `detail` = `investigation <id>: <rootCause> (N%, severity) · fix proposed [<card>]`.
+4. Push (same sender gate as alerts) only for severity `high`/`critical`, or a
+   second consecutive failed investigation.
+
 ## Orchestrator brain ("brain's face")
 
 `wiring/orchestrator.ts runBrain` calls `bodyDigestFor(channel, text)`: for every
@@ -130,7 +254,9 @@ status", "status of the servers", "is everything ok/up/running", "health check",
 "status" / "status of project X" does not match),
 a ≤ 800-char digest from the cached `GET /api/body` snapshot is added to the
 gate and compose prompts as "Live system context". Turso down → a one-line
-"unreachable" note instead.
+"unreachable" note instead. The same messages also get a ≤ 700-char
+investigations digest (open ones + the last 48 h, latest per component: root
+cause, confidence, proposed card), so "what's dead and why?" answers from them.
 
 ## iOS "Body" view — what to decode
 

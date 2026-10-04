@@ -35,6 +35,7 @@ import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
 import { BODY_CHANNEL, type BodySnapshot } from "../lib/body"
 import { bodyDigestFor } from "./body"
+import { investigationDigestFor } from "./body-investigate"
 import {
   DEFAULT_AGENT, type ProjectRef, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, isLiveLinked, newDispatchId, resolveAgent, toTaskDto,
 } from "../lib/dispatch-tasks"
@@ -395,13 +396,14 @@ export async function applyDecision(
   emitTask(task.taskId)
 }
 
-/** Brain context: Body digest (#Body / health questions) + this view's dispatch digest. */
+/** Brain context: Body digest + investigations (#Body / health questions) + this view's dispatch digest. */
 export async function brainContext(
   channel: OrchChannel, userText: string, dispatch: DispatchWiring = dispatchWiring, snapshot?: BodySnapshot,
 ): Promise<string | null> {
   const body = await bodyDigestFor(channel.id, userText, snapshot)
+  const investigations = investigationDigestFor(channel.id, userText)
   const scope = channel.id === BODY_CHANNEL ? "all projects" : `#${channel.name}`
-  const parts = [body, dispatch.digestFor(channel.id, scope)].filter((p): p is string => !!p?.trim())
+  const parts = [body, investigations, dispatch.digestFor(channel.id, scope)].filter((p): p is string => !!p?.trim())
   return parts.length ? parts.join("\n\n") : null
 }
 

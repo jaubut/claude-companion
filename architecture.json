@@ -372,6 +372,154 @@
           "externals": []
         },
         {
+          "path": "lib/body-investigate-engine.ts",
+          "lines": 354,
+          "kind": "lib",
+          "exports": [
+            "PEER_TIMEOUT_MS",
+            "HOP_HEADER",
+            "DEFAULT_NOTE_ID",
+            "RequestStatus",
+            "RequestOutcome",
+            "ForwardResult",
+            "ConsiderInput",
+            "InvestigatorDeps",
+            "BodyInvestigator",
+            "createBodyInvestigator",
+            "ApplyDeps",
+            "createReportApplier",
+            "investigationPush",
+            "writeInvestigationEvent",
+            "PeerConfig",
+            "bodyPeer",
+            "peerForwarder",
+            "peerReporter",
+            "investigationDigestFor"
+          ],
+          "state": [
+            "PUSH_SEVERITIES: Set"
+          ],
+          "emits": [
+            "orchestrator",
+            "orchestrator_channel",
+            "orchestrator_task"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/apns.ts",
+            "lib/body.ts",
+            "lib/body-alert.ts",
+            "lib/body-investigate.ts",
+            "lib/body-investigator.ts",
+            "lib/auth.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/body-investigate.ts",
+          "lines": 399,
+          "kind": "lib",
+          "exports": [
+            "PROBLEM_STATES",
+            "COOLDOWN_MS",
+            "RETRY_MS",
+            "FORWARD_STALE_MS",
+            "MAX_CONCURRENT",
+            "MAX_PER_DAY",
+            "MAX_ATTEMPTS",
+            "BodyHost",
+            "InvestigationStatus",
+            "OPEN_STATUSES",
+            "RecommendedFix",
+            "InvestigationResult",
+            "InvestigationRecord",
+            "disabledFlagPath",
+            "investigateEnabled",
+            "localBodyHost",
+            "ownerHost",
+            "hostFromId",
+            "Route",
+            "routeFor",
+            "isProblemState",
+            "NewRecord",
+            "RecordPatch",
+            "InvestigationStore",
+            "createInvestigationStore",
+            "Candidate",
+            "GateVerdict",
+            "gate",
+            "InvestigationDto",
+            "investigationDto",
+            "InvestigationReport",
+            "INVESTIGATION_DIGEST_MAX",
+            "investigationDigest"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/body-investigator.ts",
+          "lines": 438,
+          "kind": "lib",
+          "exports": [
+            "INVESTIGATE_TIMEOUT_MS",
+            "DEFAULT_MODEL",
+            "ALLOWED_TOOLS",
+            "DISALLOWED_TOOLS",
+            "KnownPaths",
+            "FsSeams",
+            "realFs",
+            "safeName",
+            "knownPaths",
+            "InvestigationInput",
+            "OUTPUT_SCHEMA",
+            "buildInvestigationPrompt",
+            "investigatorArgs",
+            "investigatorEnv",
+            "RunOutcome",
+            "InvestigatorRunner",
+            "investigateModel",
+            "investigatorCwd",
+            "runInvestigatorCli",
+            "parseInvestigationResult",
+            "InvestigateBody",
+            "parseInvestigateBody",
+            "reportTurnText",
+            "failureTurnText",
+            "proposalPrompt"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/cli-json.ts",
+            "lib/body-investigate.ts",
+            "lib/receipt-sonnet.ts",
+            "lib/secret-redact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/body.ts",
           "lines": 355,
           "kind": "lib",
@@ -2826,7 +2974,7 @@
         },
         {
           "path": "routes/body.ts",
-          "lines": 75,
+          "lines": 108,
           "kind": "route-host",
           "exports": [
             "BodyRouteDeps",
@@ -2851,14 +2999,23 @@
               "method": "POST",
               "path": "/api/body/alert",
               "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/body/investigate",
+              "prefix": false
             }
           ],
           "apiCalls": [],
           "imports": [
             "lib/body.ts",
             "lib/body-alert.ts",
+            "lib/body-investigate.ts",
+            "lib/log.ts",
             "lib/turso.ts",
-            "wiring/body.ts"
+            "wiring/body.ts",
+            "lib/body-investigator.ts",
+            "wiring/body-investigate.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3325,6 +3482,44 @@
           "externals": []
         },
         {
+          "path": "wiring/body-investigate.ts",
+          "lines": 89,
+          "kind": "lib",
+          "exports": [
+            "SWEEP_MS",
+            "BOOT_SWEEP_DELAY_MS",
+            "bodyInvestigator",
+            "investigationDigestFor",
+            "startBodyInvestigate"
+          ],
+          "state": [
+            "let live"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/apns.ts",
+            "lib/body.ts",
+            "lib/body-alert.ts",
+            "lib/body-investigate.ts",
+            "lib/body-investigate-engine.ts",
+            "lib/body-investigator.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-db.ts",
+            "lib/push.ts",
+            "lib/turso.ts",
+            "state.ts",
+            "wiring/body.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/body.ts",
           "lines": 69,
           "kind": "lib",
@@ -3559,7 +3754,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 435,
+          "lines": 437,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -3606,6 +3801,7 @@
             "lib/spawn-session.ts",
             "lib/body.ts",
             "wiring/body.ts",
+            "wiring/body-investigate.ts",
             "lib/dispatch-tasks.ts",
             "lib/turso.ts",
             "wiring/dispatch.ts"
@@ -4005,6 +4201,7 @@
           "module": "lib/log.ts",
           "callers": [
             "lib/approval-history-auto.ts",
+            "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
             "lib/discover.ts",
             "lib/key-gate.ts",
@@ -4026,6 +4223,7 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/feed",
             "routes/attach.ts",
+            "routes/body.ts#POST /api/body/alert",
             "routes/capture.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
@@ -4043,6 +4241,7 @@
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/records.ts",
             "routes/vault.ts",
+            "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
@@ -4055,7 +4254,8 @@
         "redactSecrets": {
           "module": "lib/secret-redact.ts",
           "callers": [
-            "lib/approval-history.ts"
+            "lib/approval-history.ts",
+            "lib/body-investigator.ts"
           ]
         },
         "ApprovalRequest": {
@@ -4097,10 +4297,214 @@
           "module": "lib/apns.ts",
           "callers": [
             "lib/body-alert.ts",
+            "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
             "lib/push.ts",
             "wiring/body.ts",
             "wiring/receipt-qa.ts"
+          ]
+        },
+        "FORWARD_STALE_MS": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "BodyHost": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "InvestigationRecord": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "routes/body.ts"
+          ]
+        },
+        "InvestigationStore": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "InvestigationReport": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "lib/body-investigator.ts"
+          ]
+        },
+        "hostFromId": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "routeFor": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "isProblemState": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "gate": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "investigationDigest": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "KnownPaths": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "buildInvestigationPrompt": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "InvestigatorRunner": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "reportTurnText": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "failureTurnText": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "proposalPrompt": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "BodyComponentDetail": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "lib/body-investigator.ts"
+          ]
+        },
+        "Task": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/orchestrator-queue.ts",
+            "lib/worker-identity.ts",
+            "lib/worker-tail.ts",
+            "routes/orchestrator.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "clampChars": {
+          "module": "lib/body-alert.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "toTaskDto": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "collapseIdFor": {
+          "module": "lib/body-alert.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "ExecFn": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "lib/dispatch-poller.ts",
+            "lib/dispatch-tasks.ts"
+          ]
+        },
+        "getAuthToken": {
+          "module": "lib/auth.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "lib/vault-upstream.ts",
+            "routes/capture.ts"
+          ]
+        },
+        "BODY_CHANNEL": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "lib/dispatch-poller.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "isHealthIntent": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "InvestigationResult": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigator.ts"
+          ]
+        },
+        "resolveClaudeBin": {
+          "module": "lib/receipt-sonnet.ts",
+          "callers": [
+            "lib/body-investigator.ts"
+          ]
+        },
+        "parseCliResult": {
+          "module": "lib/cli-json.ts",
+          "callers": [
+            "lib/body-investigator.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "RecommendedFix": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigator.ts"
           ]
         },
         "Row": {
@@ -4597,13 +5001,6 @@
             "wiring/body.ts"
           ]
         },
-        "ExecFn": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "lib/dispatch-poller.ts",
-            "lib/dispatch-tasks.ts"
-          ]
-        },
         "Turn": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -4630,35 +5027,11 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "BODY_CHANNEL": {
-          "module": "lib/body.ts",
-          "callers": [
-            "lib/dispatch-poller.ts",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "wiring/body.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
         "TaskStatus": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/dispatch-tasks.ts",
             "lib/orchestrator-channels.ts"
-          ]
-        },
-        "Task": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/dispatch-tasks.ts",
-            "lib/orchestrator-brain.ts",
-            "lib/orchestrator-queue.ts",
-            "lib/worker-identity.ts",
-            "lib/worker-tail.ts",
-            "routes/orchestrator.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "SqlArg": {
@@ -4736,13 +5109,6 @@
           "module": "lib/dialogs.ts",
           "callers": [
             "lib/model-control.ts"
-          ]
-        },
-        "parseCliResult": {
-          "module": "lib/cli-json.ts",
-          "callers": [
-            "lib/orchestrator-brain.ts",
-            "lib/receipt-sonnet.ts"
           ]
         },
         "GENERAL_CHANNEL": {
@@ -4861,6 +5227,7 @@
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#GET /api/push/tokens",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts"
@@ -5093,6 +5460,7 @@
             "lib/receipt-qa-worker.ts",
             "routes/body.ts",
             "routes/goals.ts",
+            "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts"
           ]
@@ -5280,6 +5648,7 @@
             "routes/api.ts#POST /api/push/test",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -5560,13 +5929,6 @@
             "routes/vault.ts"
           ]
         },
-        "getAuthToken": {
-          "module": "lib/auth.ts",
-          "callers": [
-            "lib/vault-upstream.ts",
-            "routes/capture.ts"
-          ]
-        },
         "matchUnboundTaskById": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -5679,6 +6041,7 @@
             "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
@@ -5960,7 +6323,8 @@
           "module": "wiring/body.ts",
           "callers": [
             "routes/body.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/body-investigate.ts"
           ]
         },
         "bodyAlertSink": {
@@ -5969,8 +6333,21 @@
             "routes/body.ts"
           ]
         },
+        "bodyInvestigator": {
+          "module": "wiring/body-investigate.ts",
+          "callers": [
+            "routes/body.ts"
+          ]
+        },
         "buildComponentDetail": {
           "module": "lib/body.ts",
+          "callers": [
+            "routes/body.ts#GET /api/body/component/",
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "investigationDto": {
+          "module": "lib/body-investigate.ts",
           "callers": [
             "routes/body.ts#GET /api/body/component/"
           ]
@@ -5981,6 +6358,12 @@
             "routes/body.ts#POST /api/body/alert"
           ]
         },
+        "parseInvestigateBody": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "routes/body.ts#POST /api/body/investigate"
+          ]
+        },
         "createLimiter": {
           "module": "lib/vault-guard.ts",
           "callers": [
@@ -5989,14 +6372,6 @@
           ]
         },
         "UpstreamConfig": {
-          "module": "lib/vault-upstream.ts",
-          "callers": [
-            "routes/capture.ts",
-            "routes/records.ts",
-            "routes/vault.ts"
-          ]
-        },
-        "HOP_HEADER": {
           "module": "lib/vault-upstream.ts",
           "callers": [
             "routes/capture.ts",
@@ -6491,6 +6866,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
             "wiring/live.ts",
@@ -6626,14 +7002,6 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/live.ts"
-          ]
-        },
-        "toTaskDto": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "wiring/orchestrator.ts"
           ]
         },
         "isLiveLinked": {
@@ -6876,6 +7244,120 @@
             "routes/vault.ts"
           ]
         },
+        "DEFAULT_NOTE_ID": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "BodyInvestigator": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "createBodyInvestigator": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "createReportApplier": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "bodyPeer": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "writeInvestigationEvent": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "peerForwarder": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "peerReporter": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "createInvestigationStore": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "localBodyHost": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "investigateEnabled": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "knownPaths": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "runInvestigatorCli": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "BODY_CHANNEL_NAME": {
+          "module": "lib/body.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "ensureChannel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "createProposal": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "bodyPushEnabled": {
+          "module": "lib/body-alert.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "tursoExec": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/dispatch.ts"
+          ]
+        },
         "createBodySnapshot": {
           "module": "lib/body.ts",
           "callers": [
@@ -6890,30 +7372,6 @@
         },
         "createPushGate": {
           "module": "lib/body-alert.ts",
-          "callers": [
-            "wiring/body.ts"
-          ]
-        },
-        "BODY_CHANNEL_NAME": {
-          "module": "lib/body.ts",
-          "callers": [
-            "wiring/body.ts"
-          ]
-        },
-        "ensureChannel": {
-          "module": "lib/orchestrator-channels.ts",
-          "callers": [
-            "wiring/body.ts"
-          ]
-        },
-        "bodyPushEnabled": {
-          "module": "lib/body-alert.ts",
-          "callers": [
-            "wiring/body.ts"
-          ]
-        },
-        "isHealthIntent": {
-          "module": "lib/body.ts",
           "callers": [
             "wiring/body.ts"
           ]
@@ -7011,12 +7469,6 @@
         },
         "createDispatchWiring": {
           "module": "lib/dispatch-poller.ts",
-          "callers": [
-            "wiring/dispatch.ts"
-          ]
-        },
-        "tursoExec": {
-          "module": "lib/turso.ts",
           "callers": [
             "wiring/dispatch.ts"
           ]
@@ -7221,13 +7673,6 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/events.ts"
-          ]
-        },
-        "createProposal": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "setLiveTarget": {
