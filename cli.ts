@@ -95,19 +95,18 @@ if (subcommand === "menubar") {
   process.exit(0)
 }
 
-// Jev front door go-live numbers from the shadow log (companion.db jev_route_log).
+// Jev front door go-live numbers from the shadow log (jev_route_log).
 if (subcommand === "jev-report") {
   const { Database } = await import("bun:sqlite")
   const { existsSync } = await import("node:fs")
-  const { homedir } = await import("node:os")
-  const { join } = await import("node:path")
   const { buildReport, formatReport, readRouteLog } = await import("./server/lib/jev-route-log")
   const { minConfidence } = await import("./server/lib/jev-router")
   const at = process.argv.indexOf("--days")
   const days = at > 0 && Number(process.argv[at + 1]) > 0 ? Number(process.argv[at + 1]) : 30
-  const path = process.env.COMPANION_DB_PATH ?? join(homedir(), ".claude-companion", "companion.db")
+  const { companionDbPath } = await import("./server/lib/db-path")
+  const path = companionDbPath()
   if (!existsSync(path)) {
-    console.log(`no companion.db at ${path}`)
+    console.log(`no Companion db at ${path}`)
     process.exit(0)
   }
   const db = new Database(path, { readonly: true })

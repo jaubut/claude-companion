@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
-import { homedir, hostname, tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { hostname } from "node:os"
+import { dirname } from "node:path"
+import { companionDbPath } from "./db-path"
 import { redactSecrets } from "./secret-redact"
 import { summarize } from "./tool-format"
 import type { ApprovalRequest } from "./pty-manager"
@@ -19,7 +20,7 @@ import type { QuestionAnswer, QuestionRequest } from "./questions"
 // A resolution only ever moves a row OUT of `pending`, so a late exit (e.g. an
 // expiry racing a phone allow) cannot overwrite the first outcome.
 //
-// Storage: the shared companion.db (COMPANION_DB_PATH honoured), opened lazily.
+// Storage: the shared Companion sqlite (db-path.ts), opened lazily.
 // Opening it IS the boot reconciliation: rows still `pending` belong to a
 // previous process whose hooks are gone, so they end `expired` / `server_restart`.
 
@@ -89,16 +90,9 @@ function open(path: string): Database {
   return d
 }
 
-// Under `bun test` with no COMPANION_DB_PATH, never fall through to the real
-// ~/.claude-companion/companion.db: a throwaway file instead.
-function defaultPath(): string {
-  if (process.env.COMPANION_DB_PATH) return process.env.COMPANION_DB_PATH
-  if (process.env.NODE_ENV === "test") return join(tmpdir(), `approval-history-${process.pid}.db`)
-  return join(homedir(), ".claude-companion", "companion.db")
-}
 
 function store(): Database {
-  if (!db) db = open(defaultPath())
+  if (!db) db = open(companionDbPath())
   return db
 }
 

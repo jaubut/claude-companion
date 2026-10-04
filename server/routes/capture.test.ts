@@ -74,7 +74,7 @@ beforeEach(() => {
   writeFileSync(process.env.TLS_SECRETS_FILE, `TLS_DASHBOARD_API_KEY='${DASH_KEY}'  # jeremie.apies.dev\n`)
   process.env.COMPANION_DASHBOARD_URL = `http://127.0.0.1:${dash.port}`
   process.env.COMPANION_RECEIPT_QA = "off"
-  process.env.COMPANION_DB_PATH = join(home, "companion.db")
+  process.env.COMPANION_DB_PATH = join(home, "test.db")
   delete process.env.COMPANION_VAULT_UPSTREAM
   useReceiptQaDb(process.env.COMPANION_DB_PATH)
   hits = []

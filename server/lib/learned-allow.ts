@@ -1,7 +1,7 @@
 // Learned-allow — phone says "yes" once, Companion remembers the shape and
 // auto-approves the same shape next time without bothering the phone.
 //
-// Storage: SQLite at ~/.claude-companion/companion.db (same DB as
+// Storage: the shared Companion sqlite (db-path.ts; same DB as
 // push-tokens; we open our own connection on the same file — Bun's
 // bun:sqlite handles concurrent connections fine for this volume).
 //
@@ -26,8 +26,8 @@
 
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
-import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname } from "node:path"
+import { companionDbPath } from "./db-path"
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS learned_allow (
@@ -41,10 +41,10 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_learned_allow_tool ON learned_allow(tool);
 `
 
-// Opened lazily, on first use, honouring COMPANION_DB_PATH like the other
-// stores — so a test (or an isolated verify server) never touches the real
-// ~/.claude-companion/companion.db. `useLearnedAllowDb` is the explicit seam
-// for tests that cannot control import order.
+// Opened lazily, on first use, at companionDbPath() like the other stores —
+// so a test (or an isolated verify server) never touches the real home db.
+// `useLearnedAllowDb` is the explicit seam for tests that cannot control
+// import order.
 let db: Database | null = null
 
 function open(path: string): Database {
@@ -55,7 +55,7 @@ function open(path: string): Database {
 }
 
 function store(): Database {
-  if (!db) db = open(process.env.COMPANION_DB_PATH ?? join(homedir(), ".claude-companion", "companion.db"))
+  if (!db) db = open(companionDbPath())
   return db
 }
 

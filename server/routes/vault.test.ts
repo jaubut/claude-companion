@@ -152,7 +152,7 @@ test("leak: after add + rotate the value is absent from log, responses and audit
 })
 
 test("leak: `/key` typed in the chat never reaches the log, a WS client, the feed or the response", async () => {
-  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "vault-inject-")), "companion.db")
+  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "vault-inject-")), "test.db")
   const { handleApiRoute } = await import("./api")
   const { clients } = await import("../state")
   const { getFeed } = await import("../lib/feed")
@@ -196,7 +196,7 @@ async function injectKey(peer: string | null, opts: { query?: boolean; xff?: str
 }
 
 test("/api/inject `/key`: untrusted network → 403, `?token=` auth → 401; nothing stored, nothing injected, no value echoed", async () => {
-  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-inject-")), "companion.db")
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-inject-")), "test.db")
   for (const [peer, opts, status, error] of [
     ["192.168.1.20", {}, 403, "forbidden_network"],
     [null, {}, 403, "forbidden_network"],
@@ -218,7 +218,7 @@ test("/api/inject `/key`: untrusted network → 403, `?token=` auth → 401; not
 })
 
 test("WS `input` `/key`: refused unless the socket passed the gate at upgrade; never reaches a pane", async () => {
-  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-ws-")), "companion.db")
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-ws-")), "test.db")
   const { websocket } = await import("../ws")
   const { dialogWatcher } = await import("../wiring/dialogs")
   dialogWatcher.stop()
@@ -368,7 +368,7 @@ test("real Bun.serve: the peer Bun reports for a loopback client passes the gate
 })
 
 test("/api/orchestrator/send `/key`: same gate as inject; a refused /key never reaches the thread", async () => {
-  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-orch-")), "companion.db")
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-orch-")), "test.db")
   const { handleOrchestratorRoute } = await import("./orchestrator")
   const { getThread } = await import("../lib/orchestrator-chat")
   const send = async (peer: string | null, query = false) => {

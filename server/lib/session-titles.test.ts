@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-titles-")), "companion.db")
+process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-titles-")), "test.db")
 const titles = await import("./session-titles")
 
 test("titleFromPrompt names a chat after a real prompt, never a command or fragment", () => {

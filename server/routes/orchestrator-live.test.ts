@@ -13,7 +13,7 @@ import type { Task } from "../lib/orchestrator-chat"
 // "Turso" = in-memory bun:sqlite behind the QueryFn / ExecFn seams, and a fake
 // tmux runner (setLiveRunner) so nothing spawns or kills real tmux.
 
-process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-orch-live-")), "companion.db")
+process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-orch-live-")), "test.db")
 
 const savedHome = process.env.HOME
 const tempHome = mkdtempSync(join(tmpdir(), "cc-orch-live-home-"))
