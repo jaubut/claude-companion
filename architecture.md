@@ -10,13 +10,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/transcript.ts` | 598 | lib | 13 | state: states: Map, busyImages: WeakMap |
+| `lib/transcript.ts` | 599 | lib | 14 | state: states: Map, busyImages: WeakMap |
 | `lib/sessions.ts` | 596 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/keyboard-inject.ts` | 591 | lib | 9 | state: let injectQueue |
 | `routes/hooks.ts` | 582 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/dispatch-tasks.ts` | 581 | lib | 55 |  |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
-| `lib/activity.ts` | 492 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
+| `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `wiring/orchestrator.ts` | 465 | lib | 20 | state: let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `routes/orchestrator.ts` | 464 | route-host | 3 | routes: 10 |

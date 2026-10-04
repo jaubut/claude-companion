@@ -243,6 +243,15 @@ test("reconcileActivityLiveness evicts a dead session's record after the window,
   expect(has(k)).toBe(true)
 })
 
+test("a record first touched by a turn end is still keyed, so it is pruned too", async () => {
+  // After a restart the first hook may be a Stop, not a tool or prompt.
+  await recordTurnEnd({ cwd: A.cwd, tty: A.tty, sessionId: A.sessionId, sessionKey: A.key })
+  const a = getState({ tty: A.tty, cwd: A.cwd })
+  a.lastEventAt = Date.now() - DEAD_STATE_MS - 1
+  reconcileActivityLiveness(live(B.key))
+  expect([...activeStates()].includes(a)).toBe(false)
+})
+
 test("forgetSession clears only that session's pill, weak key included", () => {
   toolStart(A)
   toolStart(B)

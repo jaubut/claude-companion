@@ -60,11 +60,23 @@ const LIVENESS_GRACE_MS = 5_000
 // A PathState outliving its session (SIGKILLed terminal, no session-end hook)
 // is evicted once its last Session.key left the live set and it has had no real
 // event for this long. Generous on purpose: an evicted live session just gets a
-// fresh record, primed silently by its next prompt.
+// fresh record, as after a server restart (primed silently only if its next
+// event is a prompt).
 export const DEAD_STATE_MS = 600_000
 // The last non-empty Session.key each record was written under. Kept here, not
 // on PathState, so it outlives the pill (cleared first) and needs no field there.
 const sessionKeyOf = new WeakMap<PathState, string>()
+// Every hook path goes through here so a record is keyed by its first event,
+// whatever kind (a Stop or PostToolUse can arrive first after a restart).
+function stateFor(args: SessionMeta & { sessionKey: string }): PathState {
+  const s = getState(args)
+  if (args.sessionKey) sessionKeyOf.set(s, args.sessionKey)
+  return s
+}
+// Re-runs the reconcile when the oldest dead record comes due, so eviction
+// does not wait on the next sessions change (which may never come).
+let lastSessions: Session[] = []
+let pruneTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── Live poll ────────────────────────────────────────────────────────────
 // Hooks only fire at tool boundaries and turn end. For text-only turns the
@@ -234,7 +246,6 @@ function emitActivity(key: string): void {
 // never routes through here.
 function setActivity(s: PathState, next: Omit<Activity, "key">, sessionKey: string): void {
   s.activity = { ...next, key: sessionKey }
-  if (sessionKey) sessionKeyOf.set(s, sessionKey)
   s.lastEventAt = Date.now()
   progressFor(s, s.lastEventAt)
   emitActivity(sessionKey)
@@ -265,6 +276,8 @@ export function reconcileActivityLiveness(sessions: Session[]): void {
   agentStatusByKey.clear()
   for (const [k, v] of nextStatus) agentStatusByKey.set(k, v)
   let live: Set<string> | null = null
+  let nextDue = Infinity
+  lastSessions = sessions
   let cleared = expireStaleActivity(now, { emit: false })
   for (const s of activeStates()) {
     // No key = a hook with no cwd, so no Session exists to judge it against.
@@ -283,6 +296,14 @@ export function reconcileActivityLiveness(sessions: Session[]): void {
     }
     // Deleting the current entry mid-iteration is safe for a Map.
     if (age > DEAD_STATE_MS && !s.activity) dropState(s)
+    // Only future deadlines: a due record held by a keyless pill must not spin the timer.
+    else if (age <= DEAD_STATE_MS) nextDue = Math.min(nextDue, s.lastEventAt + DEAD_STATE_MS + 1)
+  }
+  if (pruneTimer) clearTimeout(pruneTimer)
+  pruneTimer = null
+  if (nextDue !== Infinity) {
+    pruneTimer = setTimeout(() => { pruneTimer = null; reconcileActivityLiveness(lastSessions) }, nextDue - now)
+    pruneTimer.unref?.()
   }
   // Emit only on a real clear, or this would broadcast at the dialog-poll rate.
   if (cleared) {
@@ -307,7 +328,7 @@ export function recordToolStart(args: {
   sessionKey: string
 }): void {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   if (!pollTimer) startPoll()
   s.toolStarts.set(toolKey(args.tool, args.input), now)
 
@@ -345,7 +366,7 @@ export function recordToolEnd(args: {
   sessionKey: string
 }): void {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   const key = toolKey(args.tool, args.input)
   const startedAt = s.toolStarts.get(key)
   s.toolStarts.delete(key)
@@ -383,7 +404,7 @@ export function recordUserPrompt(args: {
   sessionKey: string
 }): void {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   s.turnStartedAt = now
   s.lastTokens = 0
   s.toolStarts.clear()
@@ -429,7 +450,7 @@ export async function recordTurnEnd(args: {
   sessionKey: string
 }): Promise<void> {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   const trimmedFinal = args.finalText?.trim() ?? ""
 
   // Two paths for the wrap-up text, branching on whether anything streamed
