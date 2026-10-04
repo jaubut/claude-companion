@@ -35,6 +35,7 @@
 
 import { companionLog } from "./log"
 import { ESC_SETTLE_MS } from "./command-list"
+import { tmuxArgv } from "./tmux-pane"
 
 // How long one turn (normally a single send-keys) may hold a pane's queue.
 // A healthy send-keys returns in a few ms; this is only for a wedged tmux.
@@ -197,7 +198,7 @@ export const keyGate = createKeyGate()
 // fires, the subprocess is killed instead of left holding the pane's queue.
 // Resolves to the exit code; rejects only if tmux could not be spawned.
 export async function runTmux(args: readonly string[], signal?: AbortSignal): Promise<number> {
-  const proc = Bun.spawn(["tmux", ...args], { stdout: "ignore", stderr: "ignore" })
+  const proc = Bun.spawn([...tmuxArgv(), ...args], { stdout: "ignore", stderr: "ignore" })
   const kill = () => { try { proc.kill() } catch { /* already gone */ } }
   if (signal?.aborted) kill()
   signal?.addEventListener("abort", kill, { once: true })

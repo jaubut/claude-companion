@@ -13,7 +13,7 @@ import type { Task } from "../lib/orchestrator-chat"
 // runner. One process plays both hosts: the approve route runs as Zettlab and
 // the fake peer fetch calls the Mac side (runBodyFix with local "mac").
 
-process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-fix-")), "companion.db")
+process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-fix-")), "test.db")
 
 const savedHome = process.env.HOME
 const tempHome = mkdtempSync(join(tmpdir(), "cc-body-fix-home-"))

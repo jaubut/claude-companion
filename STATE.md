@@ -4,6 +4,24 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Opus resolver: Opus 5.5 works every triage item before it reaches Jeremie; code decides what runs
+**Date:** 2026-10-04 (branch `feat/opus-resolver`)
+**Choice:** Between collection and display, each new task / parked PR / proposal / local Body item (never a trip) goes to a resolver run (`lib/resolver*.ts`, `wiring/resolver.ts`): server-gathered evidence (Turso task / note / activity, `gh pr view|diff|checks`) + ONE read-only `claude -p --model claude-opus-5-5` (the `readonly-claude` runner in the repo cwd, memory dirs readable, read-only `gh`) → JSON → `decide()` in code → act through the existing guarded paths (unblock / requeue / gh merge+close / proposal reject / revise / #Body applier), a PR fix run in a worktree on the PR branch (shepherd style; never main, never forced), or a prepared card. While it works the item is hidden from `items` and listed in `resolving[]`. Autonomous only: confident evidence-backed answers (≥ 0.8, `why`=none), transient-failure requeues, closing stale / superseded / task-done non-sensitive PRs (comment first), ONE rescue per PR (fix + `pr:unpark`), rejecting duplicate / stale proposals, Body proposals / explanations. Never: merges, cancels, approvals, sensitive anything — those are Jeremie's card, or `ask_opus` (elevated; merge / cancel need explicit consent words). Budget 2 concurrent / 20 a day / 20 min; kill switch `COMPANION_RESOLVER=0` or `~/.claude-companion/.resolver-disabled`; every failure falls through to the normal card. Activity `resolver:<action>` (agent `opus-resolver`), 🤖 turns, daily #General digest. Contract: `docs/orchestrator-triage-api.md#opus-resolver`.
+**Why:** Jeremie 2026-10-04: every PR review or blocked question ended with him asking Claude to solve it anyway; Opus should do that work first and leave him one decision.
+**Revisit if:** `resolver:answer` rows get corrected by Jeremie (raise `CONFIDENT`, or route that project's questions to cards), rescues loop with the shepherd (the one-per-PR guard is `resolver_runs.ref_key`), the 20/day budget is hit daily, or a closed PR gets reopened by Jeremie.
+
+### Travel log: the server owns an uploaded trip; Jev + history + distance prior file the sure ones, triage asks the rest
+**Date:** 2026-10-04 (branch `feat/trips`)
+**Choice:** `POST /api/trips` stores the upload in companion.db (`trip_uploads`) before anything else, classifies it within an 8 s budget, and pushes it to the dashboard's `/api/trips/ingest`. If the dashboard is down, the phone gets 202 `queued` and a 1-min retry loop pushes it later; 503 only when the server cannot store it. The classifier runs the contract rules first, then one Jev call (business/personal + client), blended in log-odds with the place history (ends within 300 m, human overrides first) and a distance base rate. It files at ≥ `COMPANION_TRIP_AUTOFILE_CONF` (0.85); the rest go in as `unclassified` and become triage `trip` cards, along with the dashboard backlog (unclassified, 60 days, oldest 20). The classifier and triage read Turso read-only; every write goes through the dashboard API. Every decision is logged in `trip_classify_log`; `bun cli.ts trip-report` gives the auto-file rate and the overrides of filed trips.
+**Why:** Jeremie 2026-10-04: replace the CarPlay Shortcut; confident trips filed, the rest confirmed from a card.
+**Revisit if:** `trip-report` shows filed trips being corrected (raise the threshold or drop the distance prior's weight), Nominatim rate-limits the backlog, or a calendar source appears on the dashboard (wire the `calendar` seam).
+
+### Brain triage: one phrased decision card per queue item, actions through the existing guarded paths
+**Date:** 2026-10-04 (branch `feat/brain-triage`)
+**Choice:** `GET /api/orchestrator/triage` + `POST …/triage/<id>/choose` + `orchestrator_triage` frame (contract `docs/orchestrator-triage-api.md`). Sources: blocked / failed-retryable dispatch tasks, every pending proposal (Mac fix cards keep their host routing — approve/reject now live in `wiring/proposals.ts`, shared with the route), PRs the shepherd parked (`pr:needs-human`) + a 48 h safety net, Body components whose diagnosis failed twice. One lean `claude -p --model sonnet` per (item, version), cached in companion.db; GET serves the deterministic fallback at once and the phrased card replaces it in the next frame. Jev may set severity (≥ 0.7), else heuristics. merge/close only through `gh` by full URL with the state read back.
+**Why:** Jeremie 2026-10-04: "the queue should be triaged first, then phrased as a simple problem / action / options for me to choose."
+**Revisit if:** sonnet phrasing drifts (labels clipped, action text contradicting the recommended option), the 48 h PR net is noisy once the shepherd ships, or merges from the phone need a confirm beyond the option tap.
+
 ### Jev front door routes every orchestrator message; shadow until the report clears the bar
 **Date:** 2026-10-04 (branch `feat/brain-jev-frontdoor`)
 **Choice:** `/api/orchestrator/send` → `wiring/front-door.ts`: one Jev call (intent status|quick_look|task|body|chat + project over every project note ∪ REPO_MAP, 2 s timeout). `COMPANION_JEV_ROUTER` = `shadow` (default: logged to companion.db `jev_route_log`, the old Haiku→Opus brain answers), `live` (all routes: status by code, quick_look by a read-only `claude -p` in the repo, task straight to compose, body with the digest forced, chat / < `COMPANION_JEV_MIN_CONF` 0.7 → old brain), `off`. Jeremie flips `live` after `bun cli.ts jev-report` shows ≥ 20 confident decisions and ≥ 75 % intent agreement where the old path is a valid label (status / quick_look / body are new capabilities, not judged against the old "chat"). Shipped regardless of the flag: lean brain `claude -p` flags, all projects + repo map in both brain prompts, no "which repo path?" questions, and a transient "⏳ on it…" turn after 800 ms.
@@ -73,6 +91,180 @@ Last updated: 2026-10-04
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — opus-resolver (2026-10-04)
+**Request (Jeremie):** "for me to open a PR and review it will ultimately fall onto asking you to solve it. So why not put Opus 5.5 back in the loop of 'needs your attention'." Before an item reaches Jeremie, an Opus 5.5 agent works it as far as it safely can; he then sees nothing (resolved) or a card with Opus's finished work and ONE decision.
+**Done when:**
+- A new triage source item (task blocked/failed, parked PR, proposal, Body failed-twice; never trips) goes to the resolver first and is hidden from `items` while Opus works it; it is listed in a new top-level `resolving[]` (compact "Opus is on it" line). Budget: ≤ 2 concurrent, ≤ 20 started per local day, model `claude-opus-5-5` (`COMPANION_RESOLVER_MODEL`), 20 min per run, queue wait ≤ 15 min. Kill switch `COMPANION_RESOLVER=0` or `~/.claude-companion/.resolver-disabled`. Over budget / timeout / unparseable / error / restart → the normal card (with `resolver.status:"failed"` when a run was attempted). Nothing is lost.
+- Policy in CODE (the model only proposes): blocked task → `answer` through `unblockTask` only when confidence ≥ 0.8, `needsJeremie` false and `why` = none; failed task → `requeue` on the same bar; parked PR → read-only review (diff, checks, task) + threat model for SENSITIVE paths; sensitive never merged, problems → one fix run on the PR branch, then a card [Merge] (recommended when safe) · [Ask for changes: …] · [Close]; non-sensitive → close (stale / superseded / task done, PR comment first) or ONE rescue per PR (fix run + `pr:unpark` back to the shepherd), else card; proposal → reject duplicates / stale with the reason, else card with Opus's recommendation; Body → deeper Opus investigation (the investigator's read-only spec, local components only) → a #Body proposal or a plain explanation, recorded as a new investigation.
+- Every resolver action → Turso `agent_activity` `resolver:<action>` (agent `opus-resolver`, one-line reason) + an orchestrator turn in the item's channel; "Opus answered: …" on the task. Daily digest turn in #General: "Opus handled N items today: answered X, closed Y, prepared Z for you".
+- `TriageItem.resolver?` `{status, summary, model, finishedAt}`; `context` = Opus's analysis (≤ 1500 chars on resolver cards); every non-trip card gains option `{id:"opus", action:{kind:"ask_opus"}}` (text = instruction). `ask_opus` re-runs the resolver on that item at elevated autonomy (bypasses the daily cap): it may execute any action allowed for the source; merge and cancel additionally need explicit consent words in the instruction ("do it", "merge", "vas-y"…).
+- `bun cli.ts resolver-dry-run [--limit N]`: the real items, real Opus (read-only), nothing executed; prints what it WOULD do.
+
+**State decisions**
+- companion.db `resolver_runs(id PK, item_id, rkey, source, ref_key, status queued|running|resolved|prepared|failed|skipped, autonomy normal|elevated, instruction, model, summary, phrase_json, severity, action, reason, created_at, started_at, finished_at, day)` + `resolver_meta(key PK, value)` (last digest day) + `resolver_created(task_id PK)` (proposals Opus created — never re-resolved). Boot: queued/running rows → failed "interrupted by restart".
+- Resolver key (not the triage version, so a bumped `updated_at` never burns budget): task = `status|blocker`, PR = last `pr:*` row id, proposal = updatedAt, body = investigation id.
+- Store host only (`!vaultUpstream()`, Zettlab); the Mac runs no resolver.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `GET /api/orchestrator/triage`, frame `orchestrator_triage` | response | + `resolving: ResolvingItem[]` | additive |
+| `TriageItem` | type | + `resolver?` | additive |
+| `TriageAction` | type | + `ask_opus {instruction?}` (option id `opus`) | iOS decodes unknown kinds as `.unsupported` (hidden) |
+| `POST …/triage/<id>/choose` | endpoint | `ask_opus` → 200 `detail {resolver:"resolving"}`; 409 `resolver_disabled` | additive |
+
+**Files — one owner (builder)**
+| file | change |
+|---|---|
+| `server/lib/triage.ts` | `ask_opus`, `ResolverInfo`, `resolver?`, validatePhrase opts (extra kinds, context max) |
+| `server/lib/triage-engine.ts` | resolver hook in render / choose, `resolving[]` |
+| `server/lib/resolver.ts` | NEW pure: config, sensitivity, prompts, output parsing, policy, digest |
+| `server/lib/resolver-store.ts` | NEW: sqlite runs / meta |
+| `server/lib/resolver-engine.ts` | NEW: budget, queue, kill switch, timeout, ask, fall-through |
+| `server/lib/resolver-fix.ts` | NEW: PR fix run in a worktree on the PR branch (seams) |
+| `server/wiring/resolver.ts` | NEW: live context gathering, Opus runner, executor, activity, digest, dry run |
+| `server/wiring/triage.ts` | wire the resolver; executor `by` label |
+| `server/wiring/body-investigate.ts` | export the report applier for the resolver |
+| `cli.ts` | `resolver-dry-run`; start digest tick |
+| `docs/orchestrator-triage-api.md` | resolver section + iOS requirements |
+
+**Risks / failure modes**
+- An Opus answer is wrong → the worker restarts on a wrong premise. Mitigated by the 0.8 bar + `why`=none + every answer visible in the task activity and channel; Jeremie can re-block/requeue.
+- Fix runs push to a PR branch: never main/master/base, never forced; the shepherd's CI gate still decides the merge (non-sensitive) or Jeremie (sensitive).
+- Budget burn from version churn → resolver key ignores `updated_at`.
+- Opus down / slow → 20 min timeout, then the normal card.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated + `--check --lint`.
+2. `bun cli.ts resolver-dry-run` on this Mac against real Turso + real gh, read-only; table in the PR.
+
+**Out of scope:** iOS UI (separate PR — requirements in the doc), deploy, shepherd changes.
+
+**Build notes (2026-10-04, `feat/opus-resolver`):**
+- Shipped as planned, plus `lib/resolver-work.ts` (the run over seams), `lib/resolver-prompt.ts`, `wiring/resolver-dry-run.ts`, and `wiring/body-investigate.ts` exporting the #Body report applier. A resolved item that comes back on a NEW triage version (re-blocked on the same question, a lost race) gets a card-only run, so a resolved row can never hide an item for good.
+- Tests: `lib/resolver.test.ts` (config, routing, key, parsing, policy, card, digest), `lib/resolver-engine.test.ts` (hide / resolved / prepared / failed, budget, ≤ 2 concurrent, queue wait, kill switch, timeout, crash, ask_opus, recurrence, restart, digest, triage integration), `lib/resolver-work.test.ts` (mock model per source + dry run + deadline), `lib/resolver-fix.test.ts` (same-branch push, never main / forced), `routes/resolver.test.ts` (real wiring: guarded unblock, gh merge / close, Turso rows, turns, GET / choose ask_opus).
+- Dry-run smoke on this Mac (real Turso + gh, read-only Opus, a copy of companion.db, nothing executed): 20 items (4 blocked/failed tasks, 16 parked PRs; no proposals or failed-twice Body items here), 17–71 s per item. Would do: 1 autonomous close (`tls-dashboard-v2#157`, superseded by #161), 1 rescue (`claude-config#18`, fix + hand back), 9 sensitive-PR fix runs then a review card, 9 cards (all 4 tasks: host-only / App Store / dependency / stale brief; sensitive money PRs). Zero merges. Opus read the memory files on its own (e.g. `reference_asc_api_tool.md`, schema = 3 files) and found a build-hash mismatch and that `apies-dev-site#10` was already merged.
+- Allowlist gained `gh pr list` / `gh pr status` after the smoke (one run was denied `gh pr list` checking a dependency PR).
+
+### Change Plan — trips (travel log, server side) (2026-10-04)
+**Request (Jeremie):** "travel log in the Companion": replace the CarPlay Shortcut with native auto-logging. Jev auto-classifies, the confident trips are filed, the rest become triage cards he confirms, and they get their own Trips tab. Contract: the shared trips CONTRACT.md (§1, §3, §4 belong to the server). The dashboard builder (`/api/trips/ingest`, …) and the iOS builder work in parallel.
+**Done when:**
+- `POST /api/trips` (Idempotency-Key = clientTripId) validates the upload and persists it in companion.db `trip_uploads`. **Once the server has it, it owns it**: classify, then ingest to the dashboard. 200 = ingested (`filed` or `needs_review`). 202 `status:"queued"` = the dashboard was unreachable; a background retry pushes it later. 409 duplicate replays the stored result. 400 invalid. 503 only when the server could not persist the trip (or, on the Mac, Zettlab is unreachable).
+- `GET /api/trips?from&to&limit` (normalized `Trip[]` + `totals`, with locally queued trips as `status:"queued"`), `GET /api/trips/:id`, `PATCH /api/trips/:id` (classifiedBy human, which feeds the history), `GET /api/trips/clients`. All proxy to the dashboard with the server-held key; the Mac forwards everything to Zettlab.
+- Classifier `lib/trip-classify.ts`. Contract rules run first (a known non-mine vehicle → personal unless the calendar says shoot; a home↔home loop < 2 km → personal). Then one Jev call (`choice` business/personal plus `choice` over candidate clients). The evidence is Nominatim reverse-geocode labels/categories (UA, 1 req/s, sqlite cache by rounded coords), home (configured `COMPANION_TRIP_HOME` + learned from evening trip ends), history (classified trips whose ends are within 300 m, plus human overrides), clients (names, addresses, city), and calendar (seam only, see deviations). History and Jev are blended in log-odds. The trip is filed at ≥ `COMPANION_TRIP_AUTOFILE_CONF` (0.85). Every decision lands in `trip_classify_log`. `bun cli.ts trip-report` reports the auto-file rate and the human overrides.
+- Triage source `trip`: needs_review uploads + the dashboard backfill (unclassified, last 60 days, closed, km ≥ 0.5, oldest 20) with a classifier guess. Phrasing is deterministic ("Trip Granby → Montréal, 82 km, Tue 9:10 — business?" + one evidence line). Options: Business — <client> (`classify`) · Business — other client (`classify_custom`, text = client slug) · Personal (`classify`) · Snooze. A choose PATCHes through the dashboard and is recorded as a human override.
+
+**State decisions**
+- companion.db tables owned by `lib/trip-store.ts`: `trip_uploads` (local queue + result per clientTripId), `trip_geocode` (cache), `trip_classify_log`, `trip_history` (human overrides with coords).
+- Reads for the classifier and triage (history, home learning, the backfill list, the stale check) go **read-only to Turso `trip_entries`**, like the triage PR source. Every write and every phone-facing read goes through the dashboard API.
+- Triage trip version = `unclassified|<guess log id>`. Severity is always `low` (no Jev severity call). No sonnet phrasing.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `/api/trips*` (5 routes) | endpoint NEW | CONTRACT §1/§3 (+ 202 queued) | new |
+| `docs/orchestrator-triage-api.md` | doc | source `trip`, actions `classify` / `classify_custom` | additive; an old iOS build may not decode the new action kinds |
+| dashboard `/api/trips/ingest`, `GET/PATCH /api/trips/:id`, `GET /api/trips/clients` | upstream | consumed with fallbacks (`PATCH /api/trip/:id`, `/api/clients`) | dashboard builder in parallel |
+
+**Files: one owner (builder)**
+| file | change |
+|---|---|
+| `server/lib/trip-model.ts` | NEW pure: upload validation, Trip normalization, geo helpers, formatting |
+| `server/lib/trip-store.ts` | NEW sqlite: uploads queue, geocode cache, classify log, history |
+| `server/lib/trip-geocode.ts` | NEW Nominatim client (UA, 1 req/s, cache) |
+| `server/lib/trip-classify.ts` | NEW classifier (rules, evidence, Jev, blend, threshold) |
+| `server/lib/trip-dashboard.ts` | NEW typed dashboard calls + Turso read-only trip rows |
+| `server/lib/trip-service.ts` | NEW upload flow, retry worker, overrides, triage collect/execute |
+| `server/lib/trip-report.ts` | NEW report |
+| `server/lib/trip-triage.ts` | NEW triage source `trip` (collect with background guesses, stale check, choose → override) |
+| `server/lib/dashboard-client.ts` | `dashboardValue` (array bodies) |
+| `server/lib/triage.ts`, `server/lib/triage-engine.ts` | source `trip`, kinds `classify` / `classify_custom`, trip fallback card, text_required for classify_custom |
+| `server/wiring/trips.ts` | NEW live instance + boot |
+| `server/wiring/triage.ts` | trip collector / current / execute |
+| `server/routes/trips.ts` | NEW the five routes |
+| `server/companion-server.ts`, `cli.ts` | chain the route, start the worker, `trip-report` |
+| `docs/orchestrator-triage-api.md` | trip source + kinds |
+
+**Risks / failure modes**
+- The dashboard endpoints have not shipped yet: ingest 404/405/401 counts as "not there", so the trip stays queued and is retried. Nothing is lost.
+- Nominatim is slow or rate-limited. The classifier has a budget (`COMPANION_TRIP_CLASSIFY_BUDGET_MS`, 8 s). Past the budget the trip goes to needs_review, and triage re-guesses it in the background.
+- Jev is miscalibrated: the threshold is an env knob; `trip-report` plus the smoke table show the accuracy before going live.
+- The repo is public, so the default home stays city-level (45.39,-72.73, 1.5 km). The precise home is learned from the data at runtime.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated plus `--check --lint`.
+2. Smoke on this Mac, read-only: classify the last 10 real trips (and the last 10 classified ones, history restricted to earlier trips). Print the guess vs the stored value. No PATCH.
+
+**Out of scope:** iOS, the dashboard ingest/rate tiers/superseded logic, a calendar source (the dashboard has none for Jeremie yet), push notifications for trip cards.
+
+**Build notes (2026-10-04, `feat/trips`):**
+- Shipped as planned. The dashboard side is tls-dashboard-v2 #175, and the proxy matches its shapes: ingest 201 `{ok,id,trip,superseded[]}` / 409 `{error:"duplicate",trip}` / 400 `{error:"invalid",details[]}`; reads in camelCase + snake_case; GET/PATCH on `/api/trips/:id`. `TLS_DASHBOARD_API_KEY` = the dashboard's `TRIPS_API_KEY` (sha256 compared, never printed).
+- The real smoke changed the classifier:
+  - Jev's `confidence` is not the probability of its choice (brp p 0.93 / confidence 0.89; a 55/45 split / confidence 0.1), so `probabilities[choice]` is used.
+  - Jev alone said 1 % business on work runs to Montréal, so it is tempered to 0.1–0.9 and a distance base rate from Jeremie's own classified trips (<10 km 28 %, 10–40 km 92 %, >40 km 97 % business) joins it.
+  - The 1.5 km city-level default home made half of Granby "home", so learned homes replace it unless `COMPANION_TRIP_HOME` is set.
+  - A client's history share counts only the client-tagged trips, since most past rows have no client.
+  - The prod dashboard answers `/api/trips/clients` with 200 + its SPA page, so the code falls back to `/api/clients`.
+- Smoke (this Mac, read-only: dashboard GET + read-only Turso, scratch sqlite, no PATCH/ingest). On the last 10 real trips, all of them still unclassified on the dashboard, 7 would be filed (6 personal, 1 business), 2 go to review, and 1 open trip has no end. On the last 10 classified trips with coords (history restricted to earlier trips), the class agrees 8/10, and 4 would be auto-filed, all 4 right. The table is in the PR.
+- Two real bugs were found by the tests: a single-flight `??=` whose async body finished synchronously (the retry never ran again), and a collect cache that raced the background guesser. A generation counter fixes the second.
+
+### Change Plan — brain-triage (2026-10-04)
+**Request (Jeremie):** "the queue should be triaged first, then phrased as a simple problem / action / options for me to choose." Contract: `docs/orchestrator-triage-api.md` (copied from the shared triage CONTRACT.md; the iOS builder codes against the same file).
+**Done when:**
+- `GET /api/orchestrator/triage` → `{items, generatedAt}`: blocked tasks, failed-retryable tasks, pending proposals in every channel (Mac fix cards included), PRs the shepherd parked (`agent_activity` `pr:needs-human`) + PRs open > 48 h with no shepherd row, Body components whose investigation failed twice. Urgent first, then oldest.
+- Each item phrased once per (source, refId, underlying version) by ONE lean `claude -p --model sonnet` call (strict JSON, plain words, 2–4 options, recommended first, every option an allowed action for its source), cached in companion.db `triage_phrases`. Invalid output or no model → deterministic fallback. Jev may set severity (confidence ≥ 0.7), else heuristics.
+- `POST /api/orchestrator/triage/<id>/choose {optionId, text?}` + `Idempotency-Key`: the mapped action through the existing guarded paths (unblock / requeue / cancel = `lib/dispatch-tasks.ts`; approve / reject = the proposal route's path, now shared in `wiring/proposals.ts`, so a Mac fix card still forwards to the Mac; merge / close via `gh` on the PR URL with the state verified MERGED / CLOSED; Body requeue = a forced `consider`). Choice records in `triage_choices` replay; 409 stale when the underlying version moved; 422 `text_required`; 503 turso/gh unreachable. Snooze stored locally (`triage_snoozes`).
+- WS `orchestrator_triage {items, generatedAt}` once per change (items compared without generatedAt), recomputed after every dispatch poll, every proposal change and every choose.
+- #General / #Body brain context gains a one-line triage count.
+
+**State decisions**
+- companion.db tables owned by `lib/triage-store.ts` (injected `Database`): `triage_phrases(item_id PK, version, phrase_json, severity, origin model|fallback, created_at)` — a fallback row is retried after 10 min; `triage_snoozes(item_id PK, until)`; `triage_choices(item_id, idem_key, option_id, result_json, created_at, PK(item_id, idem_key))`, pruned after 7 days.
+- Versions: task = `status|updated_at`; proposal = local `updatedAt`; pr = task `updated_at|last pr:* activity id`; body = latest investigation id.
+- `open_url` for a Body component = `companion://body/<componentId>` (new deep link for iOS); for a PR = the PR URL.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `GET /api/orchestrator/triage` | endpoint NEW | items + generatedAt | new |
+| `POST /api/orchestrator/triage/<id>/choose` | endpoint NEW | id percent-encoded (pr ids carry `/` and `#`) | new |
+| `orchestrator_triage` | frame NEW | items + generatedAt | old iOS ignores unknown frames |
+| `POST /api/body/investigate` | endpoint | optional `force: true` (peer hop, triage requeue) | additive |
+
+**Files — one owner (builder)**
+| file | change |
+|---|---|
+| `docs/orchestrator-triage-api.md` | NEW: the contract |
+| `server/lib/triage.ts` | NEW pure: types, allowed actions per source, prompt, validation, fallback, severity heuristics, ordering |
+| `server/lib/triage-store.ts` | NEW: sqlite phrases / snoozes / choices |
+| `server/lib/triage-engine.ts` | NEW: refresh (cache, background phrasing, emit on change), choose (idempotency, stale, snooze) over injected seams |
+| `server/lib/triage-sources.ts` | NEW: collectors (tasks from the poller snapshot, proposals, PR query, Body investigations) |
+| `server/wiring/triage.ts` | NEW: live instance — executor, sonnet phraser, Jev severity, gh |
+| `server/wiring/proposals.ts` | NEW: approve / reject moved out of `routes/orchestrator.ts` (behaviour unchanged) |
+| `server/routes/triage.ts` | NEW: the two endpoints |
+| `server/routes/orchestrator.ts` | proposal route calls `wiring/proposals.ts`; `vetoAuto` moves to wiring |
+| `server/wiring/orchestrator.ts` | `vetoAuto`, triage digest hook in `brainContext`, task-change listener |
+| `server/lib/dispatch-poller.ts`, `server/wiring/dispatch.ts` | `onPolled` listener after each successful poll / applyLocal |
+| `server/lib/orchestrator-brain.ts` | export the lean call (`runBrainCall`) |
+| `server/lib/body-investigate*.ts`, `server/lib/body-investigator.ts` | `force` through gate, forwarder and body parse |
+| `server/companion-server.ts`, `cli.ts` | chain the route, start the engine |
+
+**Risks / failure modes**
+- Sonnet slow or down: GET never waits for it (fallback first, phrased text replaces it in the next frame).
+- `gh` missing or not authenticated on the host → 503 `gh_unreachable`; the merge is verified by `gh pr view --json state` before the task is marked done.
+- A merge that `gh` reports but GitHub has not finished (auto-merge queued) → 502 `merge_unverified`, the task untouched.
+- The PR shepherd may not have shipped yet: only the 48 h safety net shows PRs until it does.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated + `--check --lint`.
+2. Smoke on this Mac, read-only against real Turso: print the triage items for the current queue; never call choose.
+
+**Out of scope:** iOS UI, the PR shepherd itself, pushes for triage items.
+
+**Build notes (2026-10-04, `feat/brain-triage`):**
+- Shipped as planned, plus `lib/triage-pr.ts` (merge/close with injected `gh`) and `orchestrator-chat.listProposals()`.
+- Smoke on this Mac (real Turso read-only, a COPY of companion.db, choose never called): 130 tasks polled; 4 items (all blocked tasks — proposals live on Zettlab, no PR parked or past 48 h yet, no Body component failed twice here). GET with fallbacks 263–524 ms; 3–4 sonnet phrasings in 5.6–12.8 s total in the background. Phrasing follows the item's language (French tasks → French cards); one card came back urgent.
+- Known model quirk: a label over 32 chars is clipped with "…"; once the action sentence did not match the recommended option. Both are cosmetic; validation guarantees every option maps to an allowed action.
 
 ### Change Plan — brain-jev-frontdoor (2026-10-04)
 **Request (Jeremie):** "the orchestrator feels stupid and it's slow to respond. how can we leverage jev speed to help route my asks?"

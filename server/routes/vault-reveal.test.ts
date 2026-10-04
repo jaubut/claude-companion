@@ -193,7 +193,7 @@ test("6th reveal in a minute → 429 + Retry-After; independent from the write b
 })
 
 test("leak: reveal never reaches a WS client, the feed or the log", async () => {
-  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-reveal-db-")), "companion.db")
+  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "vault-reveal-db-")), "test.db")
   const { clients } = await import("../state")
   const { getFeed } = await import("../lib/feed")
   const sent: string[] = []

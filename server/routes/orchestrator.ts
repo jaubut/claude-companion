@@ -1,8 +1,8 @@
 import {
   emitChannel,
   emitTask,
-  fileProposal,
   orchEmit,
+  vetoAuto,
   workerQueue,
   writeCtx,
 } from "../wiring/orchestrator"
@@ -20,11 +20,11 @@ import {
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import {
   ANSWER_MAX, DEFAULT_AGENT, DISPATCH_ID, type DispatchTask, type WriteOutcome,
-  cancelDispatchTask, fileTask, finishLive, getDispatchTask, getNote, getTaskActivity, getTaskResult,
+  cancelDispatchTask, fileTask, getDispatchTask, getNote, getTaskActivity, getTaskResult,
   isLiveLinked, liveOwner, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
 } from "../lib/dispatch-tasks"
-import { type LiveStart, approveLive, cancelLive, dispatchLive } from "../wiring/live"
-import { approveBodyFix } from "../wiring/body-fix"
+import { cancelLive, dispatchLive } from "../wiring/live"
+import { approveProposal, liveResponse, rejectProposal } from "../wiring/proposals"
 import { frontDoor } from "../wiring/front-door"
 import { HOST_INFO } from "../state"
 import { withIdempotency } from "../lib/idempotency"
@@ -179,16 +179,6 @@ async function cancelLocal(task: OrchTask, dispatch: DispatchWiring): Promise<Re
   return Response.json({ ok: true, taskId: task.taskId, status: "cancelled" })
 }
 
-// In an auto channel a cancel is the veto: back to propose-confirm.
-function vetoAuto(channelId: string): void {
-  const ch = getChannel(channelId)
-  if (!ch?.autoDispatch) return
-  const updated = setChannelAuto(ch.id, false)
-  if (!updated) return
-  emitChannel(updated)
-  orchEmit(orchAppendTurn("orchestrator", `auto-dispatch OFF for #${ch.name} — a cancel resets the ramp; flip it back on when ready`, null, ch.id))
-}
-
 type TaskAction = "cancel" | "requeue" | "unblock"
 
 function actionTurn(action: TaskAction, t: DispatchTask, answer: string): string {
@@ -254,46 +244,18 @@ async function taskActionRoute(req: Request, path: string, dispatch: DispatchWir
 
 // POST .../proposal/<id>/{approve|reject}. Approve files the proposal to Turso
 // (P2; replay on `filed` → 200 with the same dispatchTaskId). {mode:"live"} (P4)
-// files it claimed by this host and runs the tmux worker (wiring/live.ts).
+// files it claimed by this host and runs the tmux worker. Both paths live in
+// wiring/proposals.ts (shared with triage).
 async function proposalRoute(req: Request, path: string, dispatch: DispatchWiring): Promise<Response> {
   const [taskId, action] = path.split("/")
   const task = taskId ? getTask(taskId) : null
   if (!task) return Response.json({ ok: false, error: "no such proposal" }, { status: 404 })
-  if (action === "reject") {
-    if (task.status !== "proposed") return Response.json({ ok: false, error: `not proposable (status ${task.status})` }, { status: 409 })
-    setTaskStatus(task.taskId, "rejected")
-    emitTask(task.taskId)
-    orchEmit(orchAppendTurn("orchestrator", `rejected [${task.taskId}] — not dispatched`, task.taskId, task.threadId))
-    // An approve that died after the Turso insert but before markFiled left a
-    // queued row behind: withdraw it (best effort, guarded queued → cancelled).
-    // A live approve that died after its claim left a running row owned here: close that too.
-    if (task.dispatchTaskId) {
-      void writeCtx(dispatch, task.threadId).then(async (ctx) => {
-        const out = await cancelDispatchTask(ctx, task.dispatchTaskId!)
-        if (!out.ok && out.error === "running" && out.task.owner === liveOwner(ctx.host)) await finishLive(ctx, out.task.id, { status: "cancelled" })
-      }).catch(() => {})
-    }
-    return Response.json({ ok: true, taskId: task.taskId, status: "rejected" })
-  }
+  if (action === "reject") return rejectProposal(task, dispatch)
   if (action !== "approve") return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
   return withIdempotency(req, `approve:${task.taskId}`, async () => {
     const body = (await readJson(req)) ?? {}
-    // A #Body fix for a Mac component runs live on the Mac, whatever the mode (wiring/body-fix.ts).
-    const macFix = await approveBodyFix(task, dispatch)
-    if (macFix) return macFix
-    if (body.mode === "live") {
-      return liveResponse(await approveLive(task.taskId, { agent: optStr(body.agent), noteId: optStr(body.noteId), cwd: optStr(body.cwd) }, dispatch))
-    }
-    const out = await fileProposal(task.taskId, { agent: optStr(body.agent), noteId: optStr(body.noteId) }, dispatch)
-    if (!out.ok) return Response.json({ ok: false, error: out.error, taskId: task.taskId }, { status: out.status })
-    return Response.json({ ok: true, taskId: task.taskId, status: "queued", dispatchTaskId: out.dispatchTaskId, replay: out.replay })
+    return approveProposal(task, { mode: body.mode, agent: optStr(body.agent), noteId: optStr(body.noteId), cwd: optStr(body.cwd) }, dispatch)
   })
-}
-
-// Live start (P4) → {ok, taskId, dispatchTaskId, status, mode, replay}; errors keep their extra fields.
-function liveResponse(out: LiveStart): Response {
-  if (!out.ok) return Response.json({ ok: false, error: out.error, ...out.extra }, { status: out.status })
-  return Response.json(out)
 }
 
 // Cancel a live run owned by this host: guarded running → cancelled, then the

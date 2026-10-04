@@ -11,7 +11,7 @@ import { receiptPushPayload, wireReceiptQa } from "../wiring/receipt-qa"
 // Receipt QA worker: Jev pass (code checks + fake System One over HTTP),
 // Sonnet pass (fake runner + one fake `claude` binary), restart resume, kill
 // switch, audit, WS frame + push. Never touches the real dashboard, Jev,
-// claude, Turso or companion.db.
+// claude, Turso or the real Companion db.
 
 const DASH_KEY = "dash-SECRET-key-123456"
 const JEV_KEY = "jev-SECRET-key-654321"
@@ -76,7 +76,7 @@ beforeEach(() => {
   process.env.COMPANION_JEV_URL = `http://127.0.0.1:${server.port}/jev`
   delete process.env.COMPANION_VAULT_UPSTREAM
   delete process.env.COMPANION_RECEIPT_QA
-  dbPath = join(home, "companion.db")
+  dbPath = join(home, "test.db")
   process.env.COMPANION_DB_PATH = dbPath
   useReceiptQaDb(dbPath)
   resetChartCache()

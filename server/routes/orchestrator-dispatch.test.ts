@@ -10,7 +10,7 @@ import { TursoUnreachable } from "../lib/turso"
 // handler built around a test-owned dispatch wiring. The bearer 401 lives in
 // the server's /api/* gate.
 
-process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-orch-dispatch-")), "companion.db")
+process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-orch-dispatch-")), "test.db")
 
 type Routes = typeof import("./orchestrator")
 let routes: Routes

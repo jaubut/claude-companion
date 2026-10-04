@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { readFile, readdir, stat } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
+import { companionDbPath } from "./db-path"
 
 // Session titles — the chat's name on the phone. Taken from the first real
 // prompt of a session (the way chat apps name a thread), persisted by Claude
@@ -10,9 +11,8 @@ import { join } from "node:path"
 // gets the same name back. Before the feature (or when the hook was missed)
 // the title is recovered from the transcript's first user message.
 
-const DB_DIR = join(homedir(), ".claude-companion")
-const DB_PATH = process.env.COMPANION_DB_PATH ?? join(DB_DIR, "companion.db")
-mkdirSync(DB_DIR, { recursive: true })
+const DB_PATH = companionDbPath()
+mkdirSync(dirname(DB_PATH), { recursive: true })
 const db = new Database(DB_PATH)
 db.exec(`
   CREATE TABLE IF NOT EXISTS session_titles (

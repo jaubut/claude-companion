@@ -21,7 +21,7 @@ function session(over: Partial<Session> = {}): Session {
   return {
     key: "claude:tty:/dev/pts/8", agent: "claude", label: "aubut · pts8", title: "", sidConfirmed: true,
     cwd: "/home/aubut", sessionId: "sid", termProgram: "", tty: "/dev/pts/8", iTermSessionId: "",
-    tmuxPane: "%8", taskId: "", waitingSince: 0, waitingKind: "", waitingRef: "", waitingReasons: [],
+    tmuxPane: "%8", tmuxSocket: "", taskId: "", waitingSince: 0, waitingKind: "", waitingRef: "", waitingReasons: [],
     pid: "100", firstSeenAt: 0, lastSeenAt: 0, model: "",
     agentStatus: "", waitingFor: "", ...over,
   }

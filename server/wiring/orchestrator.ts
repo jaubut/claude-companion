@@ -25,7 +25,7 @@ import {
   type Turn as OrchTurn,
   type Task as OrchTask,
 } from "../lib/orchestrator-chat"
-import { getChannel, type Channel as OrchChannel } from "../lib/orchestrator-channels"
+import { getChannel, setChannelAuto, type Channel as OrchChannel } from "../lib/orchestrator-channels"
 import { type BrainDecision, decide as brainDecide } from "../lib/orchestrator-brain"
 import { type Catalog, buildCatalog, catalogLines } from "../lib/project-catalog"
 import { readRepoMapSource } from "../lib/live-repo"
@@ -36,6 +36,7 @@ import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
 import { BODY_CHANNEL, type BodySnapshot } from "../lib/body"
+import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { bodyDigestFor } from "./body"
 import { investigationDigestFor } from "./body-investigate"
 import {
@@ -64,8 +65,22 @@ export function emitTask(taskId: string): void {
   const t = getTask(taskId)
   if (!t) return
   broadcast({ type: "orchestrator_task", task: toTaskDto(t) })
+  for (const fn of taskListeners) fn(t)
   // Not cached yet → the next poll carries it (identity included).
   if (isLiveLinked(t)) dispatchWiring.reemit(t.dispatchTaskId!)
+}
+
+// Triage (wiring/triage.ts) recomputes when a local task (proposal) changes,
+// and adds its count to the #General / #Body brain context. Registered there
+// (it imports this module, not the reverse).
+const taskListeners = new Set<(task: OrchTask) => void>()
+export function onTaskEmitted(fn: (task: OrchTask) => void): () => void {
+  taskListeners.add(fn)
+  return () => taskListeners.delete(fn)
+}
+let triageDigest: (() => string | null) | null = null
+export function setTriageDigest(fn: (() => string | null) | null): void {
+  triageDigest = fn
 }
 
 // Live mode (P4): wiring/live.ts closes the Turso row when a worker dies
@@ -79,6 +94,16 @@ export function onLiveWorkerDead(fn: (task: OrchTask) => void): void {
 // (PRJ-OR1T Phase 6).
 export function emitChannel(channel: OrchChannel): void {
   broadcast({ type: "orchestrator_channel", channel: dispatchWiring.decorate(channel) })
+}
+
+// In an auto channel a cancel is the veto: back to propose-confirm.
+export function vetoAuto(channelId: string): void {
+  const ch = getChannel(channelId)
+  if (!ch?.autoDispatch) return
+  const updated = setChannelAuto(ch.id, false)
+  if (!updated) return
+  emitChannel(updated)
+  orchEmit(orchAppendTurn("orchestrator", `auto-dispatch OFF for #${ch.name} — a cancel resets the ramp; flip it back on when ready`, null, ch.id))
 }
 
 // Backpressure (PRJ-OR1T Phase 7): at most WIP_CAP live workers on this host.
@@ -398,14 +423,15 @@ export async function applyDecision(
   emitTask(task.taskId)
 }
 
-/** Brain context: Body digest + investigations (#Body / health questions) + this view's dispatch digest. */
+/** Brain context: Body digest + investigations (#Body / health questions) + this view's dispatch digest + the triage count (#General / #Body). */
 export async function brainContext(
   channel: OrchChannel, userText: string, dispatch: DispatchWiring = dispatchWiring, snapshot?: BodySnapshot, forceBody = false,
 ): Promise<string | null> {
   const body = await bodyDigestFor(channel.id, userText, snapshot, forceBody)
   const investigations = investigationDigestFor(channel.id, userText)
   const scope = channel.id === BODY_CHANNEL ? "all projects" : `#${channel.name}`
-  const parts = [body, investigations, dispatch.digestFor(channel.id, scope)].filter((p): p is string => !!p?.trim())
+  const triage = channel.id === GENERAL_CHANNEL || channel.id === BODY_CHANNEL ? triageDigest?.() ?? null : null
+  const parts = [body, investigations, dispatch.digestFor(channel.id, scope), triage].filter((p): p is string => !!p?.trim())
   return parts.length ? parts.join("\n\n") : null
 }
 
