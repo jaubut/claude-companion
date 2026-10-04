@@ -2,6 +2,8 @@ import { test, expect } from "bun:test"
 import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, removeSessionByKey, socketForPane, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
 import { metaFromHeaders } from "./hook-common"
 import { drainRemovalCount } from "./session-removal-log"
+import { mergeTmuxSocket } from "./session-identity"
+import type { Session } from "./sessions"
 
 test("Linux pts ttys get a tag like macOS ttys do", () => {
   expect(ttyTag("/dev/ttys017")).toBe("s017")
@@ -453,6 +455,15 @@ test("tmuxSocket: a NEW pane without a socket drops the old pane's socket", () =
   const moved = recordSession({ cwd: "/home/aubut/sock2", tty: "/dev/pts/62", tmuxPane: "%70" })!
   expect(moved.tmuxPane).toBe("%70")
   expect(moved.tmuxSocket).toBe("")
+})
+
+test("tmuxSocket: a NEW process reusing the tty and %N without a socket does not inherit it", () => {
+  const prev = { tmuxPane: "%66", tmuxSocket: "/tmp/tmux-1000/cc", pid: "100" } as Session
+  // same process re-recorded without a socket → sticky
+  expect(mergeTmuxSocket({ tmuxPane: "%66", pid: "100" }, prev)).toBe("/tmp/tmux-1000/cc")
+  expect(mergeTmuxSocket({ tmuxPane: "%66" }, prev)).toBe("/tmp/tmux-1000/cc")
+  // a different claude on the same tty + pane id → legacy default server
+  expect(mergeTmuxSocket({ tmuxPane: "%66", pid: "200" }, prev)).toBe("")
 })
 
 test("tmuxSocket change alone is a meaningful change (emits)", () => {

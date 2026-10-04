@@ -21,12 +21,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `routes/api.ts` | 454 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
-| `lib/discover.ts` | 445 | lib | 16 | state: let firstDone, let firstExpected, let resolveFirst |
+| `lib/discover.ts` | 449 | lib | 16 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/spawn-session.ts` | 431 | lib | 11 |  |
 | `routes/orchestrator.ts` | 426 | route-host | 3 | routes: 10 |
 | `lib/triage.ts` | 418 | lib | 37 | state: DESTRUCTIVE: Set |
 | `lib/questions.ts` | 412 | lib | 28 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
-| `lib/command-scrape.ts` | 403 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
+| `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
@@ -49,7 +49,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage-engine.ts` | 285 | lib | 8 | emits: orchestrator_triage |
 | `lib/apns.ts` | 282 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
-| `lib/command-offpane-launch.ts` | 271 | lib | 20 | state: versionMemo: Map |
+| `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/question-hook.ts` | 263 | lib | 7 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
@@ -63,7 +63,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/command-offpane-cache.ts` | 216 | lib | 14 | state: let launchMemo, warnedOld: Set |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
-| `lib/key-gate.ts` | 210 | lib | 9 |  |
+| `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/dialogs.ts` | 209 | lib | 7 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `lib/trip-triage.ts` | 204 | lib | 10 |  |
@@ -142,7 +142,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/waiting.ts` | 66 | lib | 6 |  |
 | `state.ts` | 65 | lib | 7 |  |
 | `routes/triage.ts` | 61 | lib | 2 |  |
-| `lib/session-identity.ts` | 55 | lib | 6 |  |
+| `lib/session-identity.ts` | 58 | lib | 6 |  |
 | `wiring/dispatch.ts` | 52 | lib | 3 | state: polledListeners: Set |
 | `wiring/proposals.ts` | 50 | lib | 4 |  |
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |

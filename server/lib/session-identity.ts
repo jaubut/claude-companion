@@ -46,9 +46,12 @@ export function makeLabel(cwd: string, tty: string): string {
 
 // The socket travels with the pane: a record that gains a NEW pane without a
 // socket must not keep the old pane's socket (it would address the new id on
-// the wrong server). Same pane, or no pane in this update → sticky.
+// the wrong server). Nor may a NEW process on the reused tty+%N inherit it
+// (different pid = a different claude, possibly on another server). Same
+// pane and process, or no pane in this update → sticky.
 export function mergeTmuxSocket(meta: Partial<Session>, prev: Session | undefined): string {
   if (meta.tmuxSocket) return meta.tmuxSocket
   if (meta.tmuxPane && meta.tmuxPane !== prev?.tmuxPane) return ""
+  if (meta.pid && prev?.pid && meta.pid !== prev.pid) return ""
   return prev?.tmuxSocket ?? ""
 }
