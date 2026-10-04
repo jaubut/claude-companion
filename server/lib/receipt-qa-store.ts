@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
-import { homedir, tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname } from "node:path"
+import { companionDbPath } from "./db-path"
 
-// Receipt QA queue (`receipt_qa` in the shared companion.db, COMPANION_DB_PATH
-// honoured). One row per saved expense. The row is the queue: the worker
+// Receipt QA queue (`receipt_qa` in the shared Companion sqlite, see
+// db-path.ts). One row per saved expense. The row is the queue: the worker
 // (lib/receipt-qa-worker.ts) picks `queued` and `to_review` rows whose
 // next_attempt_at has passed, so a restart resumes where it stopped.
 //
@@ -79,15 +79,9 @@ function open(path: string): Database {
   return d
 }
 
-// Under `bun test` with no COMPANION_DB_PATH, never touch the real companion.db.
-function defaultPath(): string {
-  if (process.env.COMPANION_DB_PATH) return process.env.COMPANION_DB_PATH
-  if (process.env.NODE_ENV === "test") return join(tmpdir(), `receipt-qa-${process.pid}.db`)
-  return join(homedir(), ".claude-companion", "companion.db")
-}
 
 function store(): Database {
-  if (!db) db = open(defaultPath())
+  if (!db) db = open(companionDbPath())
   return db
 }
 

@@ -10,7 +10,7 @@ import { type QueryFn, TursoUnreachable } from "../lib/turso"
 // captured WS frames, fake Turso through the QueryFn seam. The 401 lives in
 // the server's /api/* gate.
 
-process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-")), "companion.db")
+process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-")), "test.db")
 
 type Mod = typeof import("./body")
 type Wiring = typeof import("../wiring/body")

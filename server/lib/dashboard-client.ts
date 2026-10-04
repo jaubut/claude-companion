@@ -67,16 +67,22 @@ async function send(method: string, path: string, body: unknown, timeoutMs: numb
   return res
 }
 
-/** JSON call. 4xx come back as a reply (caller decides); 5xx/network throw. */
-export async function dashboardJson(method: string, path: string, body?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<DashReply> {
+/** Any JSON body (arrays included); `value` is undefined for a non-JSON body. Same error rules as dashboardJson. */
+export async function dashboardValue(method: string, path: string, body?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<{ status: number; value: unknown }> {
   const res = await send(method, path, body, timeoutMs)
   const text = await res.text().catch(() => "")
-  let json: Record<string, unknown> | null = null
   try {
-    const v = JSON.parse(text) as unknown
-    if (v && typeof v === "object" && !Array.isArray(v)) json = v as Record<string, unknown>
-  } catch { /* non-JSON body (e.g. an HTML 404) */ }
-  return { status: res.status, json }
+    return { status: res.status, value: JSON.parse(text) as unknown }
+  } catch {
+    return { status: res.status, value: undefined } // non-JSON body (e.g. an HTML 404)
+  }
+}
+
+/** JSON call. 4xx come back as a reply (caller decides); 5xx/network throw. */
+export async function dashboardJson(method: string, path: string, body?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<DashReply> {
+  const { status, value } = await dashboardValue(method, path, body, timeoutMs)
+  const json = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+  return { status, json }
 }
 
 /** Raw bytes (receipt PDF). null on 404. */

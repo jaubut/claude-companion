@@ -368,7 +368,7 @@ export async function injectText(text: string, target?: InjectTarget, opts: Inje
     // tmux failed (stale pane, no tmux, timed out, queue wedged past the
     // deadline). Fall back to AppleScript only with a tty (targeted,
     // focus-safe); without one the only fallback is a frontmost paste — refuse.
-    companionLog(`${yellow}tmux send-keys failed${reset} pane=${target.tmuxPane} — ${result.reason}`)
+    companionLog(`${yellow}tmux send-keys failed${reset} pane=${paneKey(target.tmuxPane, target.tmuxSocket)} — ${result.reason}`)
     if (!target.tty) {
       companionLog(`${red}deliver failed${reset} — no tty fallback for pane ${target.tmuxPane}`)
       return false
@@ -394,7 +394,7 @@ export async function tmuxSendKeys(args: readonly string[], timeoutMs: number, s
   try {
     // `args` may lead with `-S <socket>` (tmuxSocketFlags): global flags go
     // before the command, so they are passed straight through.
-    const proc = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "pipe" })
+    const proc = Bun.spawn([...tmuxArgv(), ...args], { stdout: "pipe", stderr: "pipe" })
     // Killed on its own timeout AND when the key gate aborts the turn.
     const kill = () => { try { proc.kill() } catch { /* already exited */ } }
     const timer = setTimeout(kill, timeoutMs)

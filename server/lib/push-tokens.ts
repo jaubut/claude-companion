@@ -1,12 +1,10 @@
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname } from "node:path"
+import { companionDbPath } from "./db-path"
 
-const DB_DIR = join(homedir(), ".claude-companion")
-const DB_PATH = join(DB_DIR, "companion.db")
-
-mkdirSync(DB_DIR, { recursive: true })
+const DB_PATH = companionDbPath()
+mkdirSync(dirname(DB_PATH), { recursive: true })
 const db = new Database(DB_PATH)
 db.exec(`
   CREATE TABLE IF NOT EXISTS push_tokens (

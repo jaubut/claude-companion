@@ -21,7 +21,7 @@ import { MASK, setRedactionSources } from "./secret-redact"
 
 // Unit: auto-decision rows — batching, row shape, redaction/caps, filters,
 // stats, retention (auto rows only), error containment, frame throttle.
-// Isolated sqlite per test, never ~/.claude-companion/companion.db.
+// Isolated sqlite per test, never the real Companion db.
 
 const dir = mkdtempSync(join(tmpdir(), "appr-hist-auto-"))
 const SECRET = "zz-auto-secret-value-9876"

@@ -25,7 +25,7 @@
 import { statSync } from "node:fs"
 import { verbFor, summarize, extractToolResult, clampLong } from "./tool-format"
 import { appendFeedEvent, pruneFeedForSession, type Verdict } from "./feed"
-import { getState, identityFor, activeStates, forgetStates, readTranscriptDelta, hashText, type SessionMeta, type PathState } from "./transcript"
+import { getState, identityFor, activeStates, forgetStates, dropState, readTranscriptDelta, hashText, type SessionMeta, type PathState } from "./transcript"
 import type { Session } from "./sessions"
 
 export interface Activity {
@@ -56,6 +56,27 @@ const activityListeners = new Set<ActivityListener>()
 // after the `sessions` emit, so a pill written by an earlier hook can name the
 // pre-collapse key for the few ms before this session's next event refreshes it.
 const LIVENESS_GRACE_MS = 5_000
+
+// A PathState outliving its session (SIGKILLed terminal, no session-end hook)
+// is evicted once its last Session.key left the live set and it has had no real
+// event for this long. Generous on purpose: an evicted live session just gets a
+// fresh record, as after a server restart (primed silently only if its next
+// event is a prompt).
+export const DEAD_STATE_MS = 600_000
+// The last non-empty Session.key each record was written under. Kept here, not
+// on PathState, so it outlives the pill (cleared first) and needs no field there.
+const sessionKeyOf = new WeakMap<PathState, string>()
+// Every hook path goes through here so a record is keyed by its first event,
+// whatever kind (a Stop or PostToolUse can arrive first after a restart).
+function stateFor(args: SessionMeta & { sessionKey: string }): PathState {
+  const s = getState(args)
+  if (args.sessionKey) sessionKeyOf.set(s, args.sessionKey)
+  return s
+}
+// Re-runs the reconcile when the oldest dead record comes due, so eviction
+// does not wait on the next sessions change (which may never come).
+let lastSessions: Session[] = []
+let pruneTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── Live poll ────────────────────────────────────────────────────────────
 // Hooks only fire at tool boundaries and turn end. For text-only turns the
@@ -255,20 +276,34 @@ export function reconcileActivityLiveness(sessions: Session[]): void {
   agentStatusByKey.clear()
   for (const [k, v] of nextStatus) agentStatusByKey.set(k, v)
   let live: Set<string> | null = null
+  let nextDue = Infinity
+  lastSessions = sessions
   let cleared = expireStaleActivity(now, { emit: false })
   for (const s of activeStates()) {
-    const pill = s.activity
     // No key = a hook with no cwd, so no Session exists to judge it against.
     // It clears on that session's turn-end or session-end, exactly as before.
-    if (!pill || !pill.key) continue
+    const key = s.activity?.key || sessionKeyOf.get(s)
+    if (!key) continue
     if (!live) {
       live = new Set<string>()
       for (const sess of sessions) live.add(sess.key)
     }
-    if (live.has(pill.key)) continue
-    if (now - s.lastEventAt <= LIVENESS_GRACE_MS) continue
-    s.activity = null
-    cleared = true
+    if (live.has(key)) continue
+    const age = now - s.lastEventAt
+    if (s.activity?.key && age > LIVENESS_GRACE_MS) {
+      s.activity = null
+      cleared = true
+    }
+    // Deleting the current entry mid-iteration is safe for a Map.
+    if (age > DEAD_STATE_MS && !s.activity) dropState(s)
+    // Only future deadlines: a due record held by a keyless pill must not spin the timer.
+    else if (age <= DEAD_STATE_MS) nextDue = Math.min(nextDue, s.lastEventAt + DEAD_STATE_MS + 1)
+  }
+  if (pruneTimer) clearTimeout(pruneTimer)
+  pruneTimer = null
+  if (nextDue !== Infinity) {
+    pruneTimer = setTimeout(() => { pruneTimer = null; reconcileActivityLiveness(lastSessions) }, nextDue - now)
+    pruneTimer.unref?.()
   }
   // Emit only on a real clear, or this would broadcast at the dialog-poll rate.
   if (cleared) {
@@ -293,7 +328,7 @@ export function recordToolStart(args: {
   sessionKey: string
 }): void {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   if (!pollTimer) startPoll()
   s.toolStarts.set(toolKey(args.tool, args.input), now)
 
@@ -331,7 +366,7 @@ export function recordToolEnd(args: {
   sessionKey: string
 }): void {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   const key = toolKey(args.tool, args.input)
   const startedAt = s.toolStarts.get(key)
   s.toolStarts.delete(key)
@@ -369,7 +404,7 @@ export function recordUserPrompt(args: {
   sessionKey: string
 }): void {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   s.turnStartedAt = now
   s.lastTokens = 0
   s.toolStarts.clear()
@@ -415,7 +450,7 @@ export async function recordTurnEnd(args: {
   sessionKey: string
 }): Promise<void> {
   const now = Date.now()
-  const s = getState(args)
+  const s = stateFor(args)
   const trimmedFinal = args.finalText?.trim() ?? ""
 
   // Two paths for the wrap-up text, branching on whether anything streamed
