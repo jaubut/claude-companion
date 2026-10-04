@@ -119,7 +119,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       }
       if (st.status !== "waiting") { questionGone(s.key); close(s.key); return }
     }
-    if (deps.hasPendingQuestion(s) || deps.questionAnsweredRecently?.(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
+    if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
     const pane = await deps.capture(s.tmuxPane, s.tmuxSocket || undefined)
     if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)
@@ -129,6 +129,10 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     const questionScreen = dialog?.kind === "question" || (pane !== null && !!deps.isQuestionScreen?.(pane))
     if (!dialog && !questionScreen) { questionGone(s.key); close(s.key); return }
     if (questionScreen) {
+      // Just answered from the phone: the driver is still typing into this
+      // picker. Only the question screen is held back — a real /model or
+      // trust dialog in the same window still mirrors.
+      if (deps.questionAnsweredRecently?.(s)) { questionSince.delete(s.key); close(s.key); return }
       const since = questionSince.get(s.key) ?? now()
       questionSince.set(s.key, since)
       if (now() - since < QUESTION_ORPHAN_MS) { close(s.key); return }

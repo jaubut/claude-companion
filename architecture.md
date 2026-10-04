@@ -24,7 +24,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/api.ts` | 454 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/discover.ts` | 445 | lib | 16 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/spawn-session.ts` | 431 | lib | 11 |  |
-| `lib/questions.ts` | 412 | lib | 28 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
+| `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 403 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 399 | lib | 33 |  |
 | `lib/orchestrator-chat.ts` | 389 | lib | 32 |  |
@@ -63,7 +63,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/receipt-checks.ts` | 188 | lib | 20 | state: CURRENCIES: Set |
-| `lib/dialog-watch.ts` | 184 | lib | 5 |  |
+| `lib/dialog-watch.ts` | 191 | lib | 5 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
@@ -74,7 +74,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `lib/receipt-jev.ts` | 165 | lib | 12 | state: let chartCache |
 | `routes/vault.ts` | 162 | lib | 1 |  |
-| `wiring/dialogs.ts` | 160 | lib | 4 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
+| `wiring/dialogs.ts` | 161 | lib | 4 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/body-fix.ts` | 153 | lib | 11 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |

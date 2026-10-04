@@ -189,6 +189,14 @@ test("a picker answered from the phone is not mirrored while the driver types it
   expect(h.opened).toHaveLength(1)
 })
 
+test("the answer grace only holds back question screens — a real dialog still mirrors", async () => {
+  const { h, w } = harness({ questionAnsweredRecently: () => true })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = MODEL_PANE
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+})
+
 test("an orphaned question picker is re-raised as a structured card when possible (no dialog mirror)", async () => {
   let t = 1_000_000
   const raised: string[] = []
