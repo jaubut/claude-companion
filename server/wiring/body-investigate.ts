@@ -19,7 +19,7 @@ import { broadcast } from "../state"
 import { bodySnapshot } from "./body"
 
 // Body auto-investigation, live instance: the engine (lib/body-investigate-engine.ts)
-// wired to companion.db, Turso, the #Body channel, push and the peer host.
+// wired to the Companion sqlite, Turso, the #Body channel, push and the peer host.
 // Built on first use; `startBodyInvestigate()` (cli.ts) starts the sweeps.
 
 export { HOP_HEADER, type BodyInvestigator } from "../lib/body-investigate-engine"
@@ -38,6 +38,24 @@ async function listProblems() {
     .map((c) => ({ id: c.id, host: c.host == null ? null : String(c.host), state: c.state, criticality: c.criticality == null ? null : String(c.criticality) }))
 }
 
+let applier: ReturnType<typeof createReportApplier> | null = null
+/** The #Body report effects (turn, proposal, Turso event, push) — shared by the investigator and the Opus resolver. */
+export function bodyReportApplier(): ReturnType<typeof createReportApplier> {
+  applier ??= createReportApplier({
+    appendTurn: (text, taskId = null) => appendTurn("orchestrator", text, taskId, BODY_CHANNEL),
+    ensureChannel: () => ensureChannel(BODY_CHANNEL, BODY_CHANNEL_NAME),
+    createProposal: (prompt, cwd, reasoning, target) => createProposal(prompt, cwd, reasoning, BODY_CHANNEL, target),
+    broadcast,
+    push: (p) => void pushToAll(p).catch(() => {}),
+    pushEnabled: () => bodyPushEnabled(apnsConfigured()),
+    writeEvent: (id, at, state, detail) => writeInvestigationEvent(tursoExec, id, at, state, detail),
+    noteId: () => process.env.COMPANION_BODY_NOTE_ID?.trim() || DEFAULT_NOTE_ID,
+    home: process.env.HOME || homedir(),
+    recordFixCard: (card) => bodyFixStore.recordCard(card, Date.now()),
+  })
+  return applier
+}
+
 function makeLive(): BodyInvestigator {
   const peer = bodyPeer()
   const local = localBodyHost()
@@ -52,18 +70,7 @@ function makeLive(): BodyInvestigator {
     run: (prompt) => runInvestigatorCli(prompt),
     forward: local === "zettlab" && peer ? peerForwarder(peer) : null,
     sendReport: local === "mac" && peer ? peerReporter(peer) : null,
-    apply: createReportApplier({
-      appendTurn: (text, taskId = null) => appendTurn("orchestrator", text, taskId, BODY_CHANNEL),
-      ensureChannel: () => ensureChannel(BODY_CHANNEL, BODY_CHANNEL_NAME),
-      createProposal: (prompt, cwd, reasoning, target) => createProposal(prompt, cwd, reasoning, BODY_CHANNEL, target),
-      broadcast,
-      push: (p) => void pushToAll(p).catch(() => {}),
-      pushEnabled: () => bodyPushEnabled(apnsConfigured()),
-      writeEvent: (id, at, state, detail) => writeInvestigationEvent(tursoExec, id, at, state, detail),
-      noteId: () => process.env.COMPANION_BODY_NOTE_ID?.trim() || DEFAULT_NOTE_ID,
-      home: process.env.HOME || homedir(),
-      recordFixCard: (card) => bodyFixStore.recordCard(card, Date.now()),
-    }),
+    apply: bodyReportApplier(),
   })
 }
 

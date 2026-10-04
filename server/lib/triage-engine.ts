@@ -1,7 +1,8 @@
 import { ANSWER_MAX } from "./dispatch-tasks"
+import type { AskResult, ResolverView } from "./resolver-engine"
 import {
-  type Phrase, type Severity, type SourceItem, type TriageItem, type TriageOption,
-  buildItem, fallbackPhrase, heuristicSeverity, itemId, orderItems, triageDigest, validatePhrase,
+  type Phrase, type ResolvingItem, type Severity, type SourceItem, type TriageItem, type TriageOption,
+  buildItem, fallbackPhrase, heuristicSeverity, itemId, orderItems, triageDigest, validatePhrase, withAskOpus,
 } from "./triage"
 import type { TriageStore } from "./triage-store"
 import { TursoUnreachable } from "./turso"
@@ -19,6 +20,16 @@ export type ExecOutcome =
   | { kind: "stale"; reason?: string }
   | { kind: "error"; status: number; error: string; extra?: Record<string, unknown> }
 
+/** The Opus resolver as triage sees it (lib/resolver-engine.ts; null = off). */
+export interface TriageResolverHook {
+  enabled(): boolean
+  /** Start pending work / expire waits (once per render). */
+  pump(): void
+  consider(id: string, src: SourceItem): void
+  view(id: string, src: SourceItem): ResolverView | null
+  ask(id: string, src: SourceItem, instruction: string | null): AskResult
+}
+
 export interface TriageEngineDeps {
   /** Everything that needs Jeremie right now (unphrased). */
   collect: () => Promise<SourceItem[]>
@@ -34,6 +45,7 @@ export interface TriageEngineDeps {
   now?: () => number
   log?: (msg: string) => void
   maxConcurrent?: number
+  resolver?: TriageResolverHook | null
 }
 
 export interface ChooseInput { id: string; optionId: string; text?: string | null; idemKey?: string | null }
@@ -47,6 +59,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
   const max = deps.maxConcurrent ?? 2
   let sources = new Map<string, SourceItem>()
   let items: TriageItem[] = []
+  let resolving: ResolvingItem[] = []
   let generatedAt = 0
   let lastKey = ""
   let collected = false
@@ -87,30 +100,58 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     phrasing.set(key, p)
   }
 
-  function publish(next: TriageItem[]): void {
+  function publish(next: TriageItem[], nextResolving: ResolvingItem[]): void {
     items = next
-    const key = JSON.stringify(next)
+    resolving = nextResolving
+    const key = JSON.stringify([next, nextResolving])
     if (key === lastKey) return
     lastKey = key
     generatedAt = now()
-    deps.broadcast({ type: "orchestrator_triage", items, generatedAt })
+    deps.broadcast({ type: "orchestrator_triage", items, resolving, generatedAt })
   }
 
   /** Rebuild the list from the last collection (cache hits, else fallback + schedule). */
   function render(): void {
     const t = now()
     const out: TriageItem[] = []
+    const busy: ResolvingItem[] = []
+    const r = deps.resolver ?? null
+    r?.pump()
+    const ask = r?.enabled() ? withAskOpus : (i: TriageItem) => i
     for (const [id, src] of sources) {
       if (deps.store.snoozedUntil(id, t)) continue
-      const cached = deps.store.phrase(id, src.version, t)
-      if (cached) {
-        out.push(buildItem(src, cached.phrase, cached.severity))
+      r?.consider(id, src)
+      const v = r?.view(id, src) ?? null
+      if (v?.state === "resolving") {
+        busy.push({ id, source: src.source, title: src.title, project: src.project, resolver: v.info })
         continue
       }
-      out.push(buildItem(src, fallbackPhrase(src), heuristicSeverity(src)))
+      if (v?.state === "resolved") continue
+      if (v?.state === "prepared") {
+        out.push(ask(buildItem(src, v.phrase, v.severity ?? heuristicSeverity(src), v.info)))
+        continue
+      }
+      const failed = v?.state === "failed" ? v.info : undefined
+      const cached = deps.store.phrase(id, src.version, t)
+      if (cached) {
+        out.push(ask(buildItem(src, cached.phrase, cached.severity, failed)))
+        continue
+      }
+      out.push(ask(buildItem(src, fallbackPhrase(src), heuristicSeverity(src), failed)))
       schedule(id, src)
     }
-    publish(orderItems(out))
+    publish(orderItems(out), r ? orderBusy(busy, r) : busy)
+  }
+
+  /** Queue places settle once every item was considered; working runs first, then the queue in order. */
+  function orderBusy(busy: ResolvingItem[], r: TriageResolverHook): ResolvingItem[] {
+    const fresh = busy.map((b) => {
+      const src = sources.get(b.id)
+      const v = src ? r.view(b.id, src) : null
+      return v?.state === "resolving" ? { ...b, resolver: v.info } : b
+    })
+    const place = (b: ResolvingItem) => b.resolver.status === "queued" ? b.resolver.queuePosition ?? Number.MAX_SAFE_INTEGER : 0
+    return fresh.sort((x, y) => place(x) - place(y))
   }
 
   let lastPrune = 0
@@ -144,9 +185,9 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     return refreshing
   }
 
-  async function list(): Promise<{ items: TriageItem[]; generatedAt: number }> {
+  async function list(): Promise<{ items: TriageItem[]; resolving: ResolvingItem[]; generatedAt: number }> {
     if (!collected) await refresh()
-    return { items, generatedAt: generatedAt || now() }
+    return { items, resolving, generatedAt: generatedAt || now() }
   }
 
   const fail = (status: number, error: string, extra: Record<string, unknown> = {}): ChooseResult => ({ status, body: { ok: false, error, ...extra } })
@@ -165,12 +206,14 @@ export function createTriageEngine(deps: TriageEngineDeps) {
       item = itemNow(input.id)
     }
     const src = sources.get(input.id)
+    if (!item && resolving.some((r) => r.id === input.id)) return fail(409, "resolving", { id: input.id, next: null })
     if (!item || !src) return fail(404, "no_such_item", { id: input.id })
     const option = item.options.find((o) => o.id === input.optionId)
     if (!option) return fail(400, "unknown_option", { id: input.id })
     const text = input.text?.trim() || null
     if ((option.action.kind === "answer_custom" || option.action.kind === "classify_custom") && !text) return fail(422, "text_required", { id: input.id })
     if (text && text.length > ANSWER_MAX) return fail(400, "text_too_long", { id: input.id })
+    if (option.action.kind === "ask_opus") return askOpus(input, src, option.action.instruction ?? null, text)
     if (option.action.kind === "snooze") {
       deps.store.snooze(input.id, now() + option.action.hours * HOUR_MS)
       render()
@@ -194,6 +237,17 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     log(`[triage] ${input.id} → ${option.action.kind}`)
     await refresh()
     return done(input, out.detail)
+  }
+
+  /** Hand the item back to Opus: the typed text wins over a prefilled instruction. */
+  function askOpus(input: ChooseInput, src: SourceItem, prefilled: string | null, text: string | null): ChooseResult {
+    const r = deps.resolver
+    if (!r) return fail(409, "resolver_disabled", { id: input.id })
+    const out = r.ask(input.id, src, text ?? prefilled)
+    if (!out.ok) return fail(409, out.error, { id: input.id })
+    log(`[triage] ${input.id} → ask_opus`)
+    render()
+    return done(input, { resolver: "resolving" })
   }
 
   function unavailable(err: unknown): ChooseResult {
@@ -229,6 +283,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
   return {
     refresh, list, choose, render,
     items: (): TriageItem[] => items,
+    resolving: (): ResolvingItem[] => resolving,
     digest: (): string | null => triageDigest(items),
     /** Test seam: every background phrasing finished. */
     async idle(): Promise<void> {

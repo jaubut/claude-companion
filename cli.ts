@@ -95,19 +95,18 @@ if (subcommand === "menubar") {
   process.exit(0)
 }
 
-// Jev front door go-live numbers from the shadow log (companion.db jev_route_log).
+// Jev front door go-live numbers from the shadow log (jev_route_log).
 if (subcommand === "jev-report") {
   const { Database } = await import("bun:sqlite")
   const { existsSync } = await import("node:fs")
-  const { homedir } = await import("node:os")
-  const { join } = await import("node:path")
   const { buildReport, formatReport, readRouteLog } = await import("./server/lib/jev-route-log")
   const { minConfidence } = await import("./server/lib/jev-router")
   const at = process.argv.indexOf("--days")
   const days = at > 0 && Number(process.argv[at + 1]) > 0 ? Number(process.argv[at + 1]) : 30
-  const path = process.env.COMPANION_DB_PATH ?? join(homedir(), ".claude-companion", "companion.db")
+  const { companionDbPath } = await import("./server/lib/db-path")
+  const path = companionDbPath()
   if (!existsSync(path)) {
-    console.log(`no companion.db at ${path}`)
+    console.log(`no Companion db at ${path}`)
     process.exit(0)
   }
   const db = new Database(path, { readonly: true })
@@ -119,6 +118,18 @@ if (subcommand === "jev-report") {
     process.exit(0)
   }
   console.log(formatReport(buildReport(rows, minConfidence()), days))
+  process.exit(0)
+}
+
+// Opus resolver dry run: real items, real read-only Opus, nothing executed (point COMPANION_DB_PATH at a copy).
+if (subcommand === "resolver-dry-run") {
+  const { resolverDryRun, formatDryRun } = await import("./server/wiring/resolver-dry-run")
+  const arg = (name: string) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] ?? null : null }
+  const limit = Number(arg("--limit")) > 0 ? Number(arg("--limit")) : 10
+  const concurrency = Number(arg("--concurrency")) > 0 ? Number(arg("--concurrency")) : undefined
+  const rows = await resolverDryRun({ limit, only: arg("--source"), concurrency, log: (m) => console.error(m) })
+  console.log(formatDryRun(rows))
+  if (process.argv.includes("--json")) console.log(JSON.stringify(rows, null, 2))
   process.exit(0)
 }
 
@@ -163,6 +174,8 @@ Usage:
   bun cli.ts menubar <action>  Manage the menu bar app (install/uninstall/status/build)
   bun cli.ts jev-report [--days N]  Jev front-door shadow report (agreement, go-live bar)
   bun cli.ts trip-report [--days N] Trip classifier report (auto-file rate, human overrides)
+  bun cli.ts resolver-dry-run [--limit N] [--source task|pr|proposal|body] [--concurrency N] [--json]
+                                    What the Opus resolver WOULD do with the current items (nothing executed)
 `)
   process.exit(0)
 }

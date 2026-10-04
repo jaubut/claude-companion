@@ -20,7 +20,7 @@ import { MASK, parseSecretValues, redactSecrets, setRedactionSources } from "./s
 
 // Unit: the approval_history store — upsert, one-way transitions, boot
 // reconciliation, redaction, caps, pagination, filters, pruning. Always an
-// isolated sqlite file, never ~/.claude-companion/companion.db.
+// isolated sqlite file, never the real Companion db.
 
 const dir = mkdtempSync(join(tmpdir(), "appr-hist-"))
 let dbPath = ""

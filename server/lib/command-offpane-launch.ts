@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto"
 import { readdir, readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
+import { tmuxArgv } from "./tmux-pane"
 
 export interface TmuxResult { code: number; stdout: string; stderr?: string }
 
@@ -30,7 +31,7 @@ export type TmuxRunner = (args: string[]) => Promise<TmuxResult>
 // killed call reads as code -1 ("unknown"), never as a real tmux exit code.
 export const defaultTmux: TmuxRunner = async (args) => {
   try {
-    const p = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "pipe" })
+    const p = Bun.spawn([...tmuxArgv(), ...args], { stdout: "pipe", stderr: "pipe" })
     let timedOut = false
     const timer = setTimeout(() => { timedOut = true; try { p.kill() } catch { /* gone */ } }, 5_000)
     try {

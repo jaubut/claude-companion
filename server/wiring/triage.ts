@@ -10,7 +10,7 @@ import { appendTurn, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
 import { db } from "../lib/orchestrator-db"
 import { type Phrase, type Severity, type SourceItem, type TriageOption, clip, phrasePrompt } from "../lib/triage"
-import { type ExecOutcome, type TriageEngine, createTriageEngine } from "../lib/triage-engine"
+import { type ExecOutcome, type TriageEngine, type TriageResolverHook, createTriageEngine } from "../lib/triage-engine"
 import { type GhFn, closePr, mergePr, realGh } from "../lib/triage-pr"
 import { type BodyLookup, bodySources, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
 import { type TriageStore, createTriageStore } from "../lib/triage-store"
@@ -21,6 +21,7 @@ import { bodyFixStore, bodyInvestigator, investigationStore } from "./body-inves
 import { type DispatchWiring, dispatchWiring, onDispatchPolled } from "./dispatch"
 import { onTaskEmitted, orchEmit, setTriageDigest, vetoAuto, writeCtx } from "./orchestrator"
 import { approveProposal, rejectProposal } from "./proposals"
+import { type LiveResolver, type ResolverLiveOpts, createLiveResolver, repoMapSelfCheck, startResolverDigest } from "./resolver"
 import { ownsTrips, tripsLive } from "./trips"
 
 // Brain triage, live instance (docs/orchestrator-triage-api.md): collectors
@@ -48,6 +49,10 @@ export interface LiveTriageOpts {
   trips?: Pick<TripTriage, "collect" | "current" | "execute"> | null
   broadcast?: (frame: Record<string, unknown>) => void
   now?: () => number
+  /** The Opus resolver; default = the live one on the store host (never under `bun test`), null = off. */
+  resolver?: TriageResolverHook | null
+  /** Build the live resolver anyway (tests), with seam overrides (e.g. a mock model). */
+  resolverLive?: ResolverLiveOpts
 }
 
 function defaultModel(prompt: string): Promise<string | null> {
@@ -77,11 +82,17 @@ async function jevSeverity(src: SourceItem, phrase: Phrase): Promise<Severity | 
   return a?.type === "choice" && a.confidence >= JEV_MIN_CONF && (a.choice === "urgent" || a.choice === "normal" || a.choice === "low") ? a.choice : null
 }
 
-function actionTurn(kind: string, t: DispatchTask, answer: string | null): string {
+/** `by` = who acted: "triage" (Jeremie's tap) or "Opus" (the resolver). */
+export function actionTurn(kind: string, t: DispatchTask, answer: string | null, by = "triage"): string {
   const who = `[${t.id.slice(0, 8)}] ${t.agent ?? "agent"} — ${t.title}`
-  if (kind === "cancel") return `cancelled ${who} (triage)`
-  if (kind === "requeue") return `requeued ${who} (triage)`
-  return `unblocked ${who} (triage)\nAnswer: ${(answer ?? "").slice(0, 500)}`
+  if (by === "Opus") {
+    if (kind === "cancel") return `🤖 Opus cancelled ${who}`
+    if (kind === "requeue") return `🤖 Opus requeued ${who}`
+    return `🤖 Opus answered ${who}\nAnswer: ${(answer ?? "").slice(0, 500)}`
+  }
+  if (kind === "cancel") return `cancelled ${who} (${by})`
+  if (kind === "requeue") return `requeued ${who} (${by})`
+  return `unblocked ${who} (${by})\nAnswer: ${(answer ?? "").slice(0, 500)}`
 }
 
 export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
@@ -156,7 +167,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     return model(phrasePrompt(item))
   }
 
-  async function taskWrite(kind: "answer" | "requeue" | "cancel", src: SourceItem, text: string | null): Promise<ExecOutcome> {
+  async function taskWrite(kind: "answer" | "requeue" | "cancel", src: SourceItem, text: string | null, by: string): Promise<ExecOutcome> {
     if (src.ref.source !== "task") return { kind: "error", status: 400, error: "wrong_source" }
     const ctx = await writeCtx(dispatch, src.ref.channel)
     const out: WriteOutcome = kind === "cancel" ? await cancelDispatchTask(ctx, src.ref.taskId)
@@ -168,7 +179,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     }
     dispatch.applyLocal(out.task)
     const channelId = dispatch.threadIdFor(out.task)
-    orchEmit(appendTurn("orchestrator", actionTurn(kind, out.task, text), out.task.id, channelId))
+    orchEmit(appendTurn("orchestrator", actionTurn(kind, out.task, text, by), out.task.id, channelId))
     if (kind === "cancel") vetoAuto(channelId)
     return { kind: "done", detail: { dispatchStatus: out.task.status } }
   }
@@ -194,7 +205,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     return { kind: "error", status: 409, error: `investigation_${out.status}`, extra: out.reason ? { reason: out.reason } : {} }
   }
 
-  async function prAction(src: SourceItem, kind: "merge" | "close_pr"): Promise<ExecOutcome> {
+  async function prAction(src: SourceItem, kind: "merge" | "close_pr", by: string): Promise<ExecOutcome> {
     if (src.ref.source !== "pr") return { kind: "error", status: 400, error: "wrong_source" }
     const target = { taskId: src.ref.taskId, prUrl: src.ref.prUrl, number: src.ref.number }
     const deps = { gh, exec: dispatch.exec, host: HOST_INFO.name }
@@ -203,37 +214,51 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
       prCache = null
       const cached = dispatch.cached(target.taskId)
       const channelId = cached ? dispatch.threadIdFor(cached) : "general"
-      orchEmit(appendTurn("orchestrator", `${kind === "merge" ? "merged" : "closed"} ${src.ref.repo}#${target.number} (triage)\n${target.prUrl}`, target.taskId, channelId))
+      orchEmit(appendTurn("orchestrator", `${by === "Opus" ? "🤖 Opus " : ""}${kind === "merge" ? "merged" : "closed"} ${src.ref.repo}#${target.number}${by === "Opus" ? "" : ` (${by})`}\n${target.prUrl}`, target.taskId, channelId))
       void dispatch.poll()
     }
     return out
   }
 
-  async function execute(src: SourceItem, option: TriageOption, text: string | null): Promise<ExecOutcome> {
+  async function execute(src: SourceItem, option: TriageOption, text: string | null, by = "triage"): Promise<ExecOutcome> {
     const a = option.action
     switch (a.kind) {
-      case "answer": return taskWrite("answer", src, a.text)
-      case "answer_custom": return taskWrite("answer", src, text)
-      case "requeue": return src.ref.source === "body" ? requeueBody(src) : taskWrite("requeue", src, null)
-      case "cancel": return taskWrite("cancel", src, null)
+      case "answer": return taskWrite("answer", src, a.text, by)
+      case "answer_custom": return taskWrite("answer", src, text, by)
+      case "requeue": return src.ref.source === "body" ? requeueBody(src) : taskWrite("requeue", src, null, by)
+      case "cancel": return taskWrite("cancel", src, null, by)
       case "approve":
       case "reject": return proposalAction(src, option)
       case "merge":
-      case "close_pr": return prAction(src, a.kind)
+      case "close_pr": return prAction(src, a.kind, by)
       case "open_url": return { kind: "done", detail: { url: a.url } }
       case "snooze": return { kind: "done" }
       case "classify":
       case "classify_custom": return trips ? trips.execute(src, option, text) : { kind: "error", status: 400, error: "wrong_source" }
+      case "ask_opus": return { kind: "error", status: 409, error: "resolver_disabled" } // the engine handles it before execute
     }
   }
 
-  return createTriageEngine({
-    collect, current, phrase, execute, store,
+  let engine: TriageEngine | null = null
+  // A finished run re-collects (its action moved the source); a start only re-renders.
+  const onChange = (finished: boolean) => void (finished ? engine?.refresh() : engine?.render())
+  let resolver: TriageResolverHook | null = opts.resolver ?? null
+  if (opts.resolverLive) {
+    resolver = createLiveResolver({ dispatch, gh, execute, onChange, ...opts.resolverLive }).engine
+  } else if (opts.resolver === undefined && ownsTrips() && process.env.NODE_ENV !== "test") {
+    liveResolver = createLiveResolver({ dispatch, gh, execute, onChange })
+    resolver = liveResolver.engine
+  }
+  engine = createTriageEngine({
+    collect, current, phrase, execute, store, resolver,
     severity: opts.severity ?? jevSeverity,
     broadcast: opts.broadcast ?? wsBroadcast,
     now, log: companionLog,
   })
+  return engine
 }
+
+let liveResolver: LiveResolver | null = null
 
 let live: TriageEngine | null = null
 /** The wired instance (built on first use). */
@@ -247,14 +272,16 @@ export const TRIAGE_TICK_MS = 60_000
 /** Boot (cli.ts): recompute after every dispatch poll, proposal change and minute; feed the brain digest. */
 export function startTriage(): () => void {
   const engine = triageEngine()
+  repoMapSelfCheck(!!liveResolver)
   const offPoll = onDispatchPolled(() => void engine.refresh())
   const offTask = onTaskEmitted(() => void engine.refresh())
   setTriageDigest(() => engine.digest())
   // A new trip guess or a human answer (phone PATCH included) re-collects at once.
   const t = ownsTrips() ? tripsLive() : null
   const offTrips = t ? [t.triage.onGuess(() => void engine.refresh()), t.service.onChange(() => void engine.refresh())] : []
+  const offDigest = liveResolver ? startResolverDigest(liveResolver.store) : () => {}
   const tick = setInterval(() => void engine.refresh(), TRIAGE_TICK_MS)
   ;(tick as unknown as { unref?: () => void }).unref?.()
   void engine.refresh()
-  return () => { offPoll(); offTask(); for (const off of offTrips) off(); setTriageDigest(null); clearInterval(tick) }
+  return () => { offPoll(); offTask(); offDigest(); for (const off of offTrips) off(); setTriageDigest(null); clearInterval(tick) }
 }

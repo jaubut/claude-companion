@@ -209,6 +209,7 @@ export function activeStates(): Iterable<PathState> {
   return states.values()
 }
 
+export function dropState(s: PathState): void { for (const [k, v] of states) if (v === s) states.delete(k) } // activity.ts dead-session prune
 // Drop a session's state when its terminal closed, so the map doesn't grow
 // unbounded. Same match rule as the feed prune. Returns the records it
 // dropped so activity.ts can tell whether any of them held a pill WITHOUT

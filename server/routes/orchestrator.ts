@@ -44,13 +44,6 @@ import { sessionCmdArgv } from "../lib/tmux-pane"
 // writes in lib/dispatch-tasks.ts, #Body vitals header (P2/P3). Contract:
 // docs/orchestrator-dispatch-api.md. Returns null for any other path. Turso
 // failures → 503 {ok:false, error:"turso_unreachable"}.
-//
-// Idempotency-Key (iOS outbox retries, claude-companion-ios#41): every POST the
-// app may resend runs through withIdempotency with the same semantics as
-// /api/inject — only a success is replayed (Idempotent-Replayed: true);
-// refusals (4xx incl. 409), 200 ok:false and 5xx re-run. The scope is the full
-// pathname, so a key never collides across endpoints (nor with "inject"), nor
-// across two tasks/channels on the same action. No header → runs as before.
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/
 const NOTE_ID_MAX = 300
@@ -242,7 +235,7 @@ async function taskActionRoute(req: Request, path: string, dispatch: DispatchWir
   if (!taskId || !TASK_ID.test(taskId)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
   const local = getTask(taskId)
   if (local) {
-    if (action === "cancel") return cancelLocal(local, dispatch)
+    if (action === "cancel") return withIdempotency(req, `task-cancel:${taskId}`, () => cancelLocal(local, dispatch))
     return Response.json({ ok: false, error: `${action} needs a dispatch task` }, { status: 409 })
   }
   if (!DISPATCH_ID.test(taskId)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
@@ -257,7 +250,7 @@ async function proposalRoute(req: Request, path: string, dispatch: DispatchWirin
   const [taskId, action] = path.split("/")
   const task = taskId ? getTask(taskId) : null
   if (!task) return Response.json({ ok: false, error: "no such proposal" }, { status: 404 })
-  if (action === "reject") return rejectProposal(task, dispatch)
+  if (action === "reject") return withIdempotency(req, `reject:${task.taskId}`, async () => rejectProposal(task, dispatch))
   if (action !== "approve") return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
   return withIdempotency(req, `approve:${task.taskId}`, async () => {
     const body = (await readJson(req)) ?? {}
@@ -340,14 +333,14 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     return Response.json({ channels: listChannels().map(dispatch.decorate) })
   }
   if (url.pathname === "/api/orchestrator/channels" && req.method === "POST") {
-    return withIdempotency(req, url.pathname, () => createChannelRoute(req, dispatch))
+    return withIdempotency(req, "orch-channel-create", () => createChannelRoute(req, dispatch))
   }
   // Trust ramp toggle (Phase 7). POST .../channels/<id>/auto { enabled }.
   // The server reports eligibility (trust.eligible); only the user flips it.
   if (url.pathname.startsWith("/api/orchestrator/channels/") && req.method === "POST") {
-    return withIdempotency(req, url.pathname, async () => {
-      const [id, action] = url.pathname.slice("/api/orchestrator/channels/".length).split("/")
-      if (action === "link" && id) return linkChannel(req, id, dispatch)
+    const [id, action] = url.pathname.slice("/api/orchestrator/channels/".length).split("/")
+    if (action === "link" && id) return linkChannel(req, id, dispatch)
+    return withIdempotency(req, `orch-auto:${id}`, async () => {
       if (action !== "auto" || !id) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
       const { enabled } = await req.json() as { enabled?: unknown }
       if (typeof enabled !== "boolean") return Response.json({ ok: false, error: "enabled must be boolean" }, { status: 400 })
@@ -393,7 +386,7 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     return taskDetail(id, dispatch)
   }
   if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
-    return withIdempotency(req, url.pathname, async () => {
+    return withIdempotency(req, "orch-send", async () => {
       const { text, channel } = await req.json() as { text?: string; channel?: string }
       if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
       const ch = resolveChannel(channel)
@@ -428,13 +421,13 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     })
   }
   if (url.pathname === "/api/orchestrator/dispatch" && req.method === "POST") {
-    return withIdempotency(req, url.pathname, () => dispatchRoute(req, dispatch))
+    return withIdempotency(req, "orch-dispatch", () => dispatchRoute(req, dispatch))
   }
   if (url.pathname.startsWith("/api/orchestrator/task/") && req.method === "POST") {
-    return withIdempotency(req, url.pathname, () => taskActionRoute(req, url.pathname.slice("/api/orchestrator/task/".length), dispatch))
+    return taskActionRoute(req, url.pathname.slice("/api/orchestrator/task/".length), dispatch)
   }
   if (url.pathname.startsWith("/api/orchestrator/proposal/") && req.method === "POST") {
-    return withIdempotency(req, url.pathname, () => proposalRoute(req, url.pathname.slice("/api/orchestrator/proposal/".length), dispatch))
+    return proposalRoute(req, url.pathname.slice("/api/orchestrator/proposal/".length), dispatch)
   }
   return null
 }

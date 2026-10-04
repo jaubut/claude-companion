@@ -23,7 +23,7 @@ const sender = fakeWs()
 const bystander = fakeWs()
 
 beforeAll(async () => {
-  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "ws-res-")), "companion.db")
+  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "ws-res-")), "test.db")
   websocket = (await import("./ws")).websocket
   dialogWatcher = (await import("./wiring/dialogs")).dialogWatcher
   clients.add(sender.ws)

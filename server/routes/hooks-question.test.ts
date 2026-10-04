@@ -12,7 +12,7 @@ let handleHookRoute: (req: Request, url: URL) => Promise<Response | null>
 
 beforeAll(async () => {
   // Keep the route's transitive stores off the real ~/.claude-companion.
-  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "hooks-q-")), "companion.db")
+  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "hooks-q-")), "test.db")
   handleHookRoute = (await import("./hooks")).handleHookRoute
 })
 

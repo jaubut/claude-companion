@@ -28,6 +28,9 @@ export interface DialogWatchDeps {
   capture(pane: string, socket?: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
+  // A question just answered from the phone: its picker is still on screen
+  // while the question driver types the answer — still the hooks' business.
+  questionAnsweredRecently?(s: Session): boolean
   // An approval the hooks already routed to the phone: its terminal
   // permission dialog is the hooks' business too (approval card), so it is
   // never mirrored as a second, generic dialog card.
@@ -105,6 +108,11 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
 
   async function check(s: Session): Promise<void> {
     if (!s.tmuxPane) { close(s.key); return }
+    // Status file and pane parser are both Claude Code's. Codex has no
+    // per-session status source (~/.codex/sessions holds rollout event logs
+    // only), and its TUI parsed with Claude picker rules can mis-light a
+    // dialog badge. Add a Codex reader here if Codex ever exposes one.
+    if (s.agent !== "claude") { close(s.key); return }
     if (ours(s.key)) return
     const st = s.pid ? await deps.sessionStatus(s.pid) : null
     if (ours(s.key)) return
@@ -126,6 +134,10 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     const questionScreen = dialog?.kind === "question" || (pane !== null && !!deps.isQuestionScreen?.(pane))
     if (!dialog && !questionScreen) { questionGone(s.key); close(s.key); return }
     if (questionScreen) {
+      // Just answered from the phone: the driver is still typing into this
+      // picker. Only the question screen is held back — a real /model or
+      // trust dialog in the same window still mirrors.
+      if (deps.questionAnsweredRecently?.(s)) { questionSince.delete(s.key); close(s.key); return }
       const since = questionSince.get(s.key) ?? now()
       questionSince.set(s.key, since)
       if (now() - since < QUESTION_ORPHAN_MS) { close(s.key); return }

@@ -76,10 +76,11 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 492,
+          "lines": 527,
           "kind": "lib",
           "exports": [
             "Activity",
+            "DEAD_STATE_MS",
             "ACTIVITY_TTL_MS",
             "BUSY_TTL_MS",
             "IDLE_GRACE_MS",
@@ -96,6 +97,9 @@
           ],
           "state": [
             "activityListeners: Set",
+            "sessionKeyOf: WeakMap",
+            "let lastSessions",
+            "let pruneTimer",
             "let pollTimer",
             "progress: WeakMap",
             "agentStatusByKey: Map"
@@ -207,7 +211,7 @@
         },
         {
           "path": "lib/approval-history.ts",
-          "lines": 345,
+          "lines": 339,
           "kind": "lib",
           "exports": [
             "HistoryKind",
@@ -252,6 +256,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/db-path.ts",
             "lib/secret-redact.ts",
             "lib/tool-format.ts",
             "lib/pty-manager.ts",
@@ -801,7 +806,7 @@
         },
         {
           "path": "lib/command-offpane-launch.ts",
-          "lines": 271,
+          "lines": 272,
           "kind": "lib",
           "exports": [
             "TmuxResult",
@@ -832,7 +837,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/tmux-pane.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -888,7 +895,7 @@
         },
         {
           "path": "lib/command-scrape.ts",
-          "lines": 403,
+          "lines": 404,
           "kind": "lib",
           "exports": [
             "PaneFlow",
@@ -961,8 +968,25 @@
           "externals": []
         },
         {
+          "path": "lib/db-path.ts",
+          "lines": 14,
+          "kind": "lib",
+          "exports": [
+            "companionDbPath"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dialog-watch.ts",
-          "lines": 184,
+          "lines": 196,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -1009,7 +1033,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 445,
+          "lines": 449,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1453,7 +1477,7 @@
         },
         {
           "path": "lib/key-gate.ts",
-          "lines": 210,
+          "lines": 211,
           "kind": "lib",
           "exports": [
             "SEND_TIMEOUT_MS",
@@ -1473,7 +1497,8 @@
           "apiCalls": [],
           "imports": [
             "lib/log.ts",
-            "lib/command-list.ts"
+            "lib/command-list.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1535,19 +1560,26 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 68,
+          "lines": 123,
           "kind": "lib",
           "exports": [
             "RepoEntry",
+            "repoMapCandidates",
+            "locateRepoMap",
             "readRepoMapSource",
             "parseRepoMap",
+            "RepoMapCheck",
+            "checkRepoMap",
+            "repoMapCheckLine",
             "isDir",
             "repoForNote",
             "resolveLiveCwd"
@@ -1758,7 +1790,7 @@
         },
         {
           "path": "lib/orchestrator-db.ts",
-          "lines": 102,
+          "lines": 99,
           "kind": "lib",
           "exports": [
             "db",
@@ -1769,7 +1801,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1906,7 +1940,7 @@
         },
         {
           "path": "lib/push-tokens.ts",
-          "lines": 48,
+          "lines": 46,
           "kind": "lib",
           "exports": [
             "ApnsEnv",
@@ -1923,7 +1957,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -2012,7 +2048,7 @@
         },
         {
           "path": "lib/questions.ts",
-          "lines": 412,
+          "lines": 428,
           "kind": "lib",
           "exports": [
             "QuestionOption",
@@ -2028,6 +2064,8 @@
             "claimParkedQuestion",
             "cancelQuestionsFor",
             "resolveQuestion",
+            "ANSWER_GRACE_MS",
+            "questionAnsweredRecently",
             "getPendingQuestions",
             "onQuestionRequest",
             "onQuestionExpired",
@@ -2052,6 +2090,7 @@
             "resolvedHandlers: Set",
             "parkedAnswers: Map",
             "parkTimers: Map",
+            "answeredAtByKey: Map",
             "recentlyAnswered: Map",
             "recentlyFellThrough: Map"
           ],
@@ -2238,7 +2277,7 @@
         },
         {
           "path": "lib/receipt-qa-store.ts",
-          "lines": 237,
+          "lines": 231,
           "kind": "lib",
           "exports": [
             "QA_STATUSES",
@@ -2271,7 +2310,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -2444,6 +2485,215 @@
           "externals": []
         },
         {
+          "path": "lib/resolver-engine.ts",
+          "lines": 264,
+          "kind": "lib",
+          "exports": [
+            "WorkResult",
+            "Job",
+            "ResolverView",
+            "AskResult",
+            "ResolverEngineDeps",
+            "localDay",
+            "createResolverEngine",
+            "ResolverEngine",
+            "maybeDigest"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/resolver.ts",
+            "lib/resolver-store.ts",
+            "lib/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/resolver-fix.ts",
+          "lines": 145,
+          "kind": "lib",
+          "exports": [
+            "ShResult",
+            "ShFn",
+            "FixInput",
+            "FixOutcome",
+            "FixDeps",
+            "GIT_TIMEOUT_MS",
+            "pushableBranch",
+            "fixPrompt",
+            "fixEnv",
+            "runPrFix",
+            "realSh"
+          ],
+          "state": [
+            "PROTECTED: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/cli-json.ts",
+            "lib/receipt-sonnet.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/resolver-prompt.ts",
+          "lines": 143,
+          "kind": "lib",
+          "exports": [
+            "EvidenceBlock",
+            "ResolverContext",
+            "ResolverJob",
+            "BLOCK_MAX",
+            "OUTPUT_SCHEMA",
+            "buildResolverPrompt",
+            "buildBodyResolverPrompt"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/body-investigator.ts",
+            "lib/resolver.ts",
+            "lib/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/resolver-store.ts",
+          "lines": 198,
+          "kind": "lib",
+          "exports": [
+            "RunStatus",
+            "RunRow",
+            "NewRun",
+            "RunPatch",
+            "errorKey",
+            "GUARD_WINDOW_MS",
+            "ResolverStore",
+            "createResolverStore"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/resolver.ts",
+            "lib/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/resolver-work.ts",
+          "lines": 212,
+          "kind": "lib",
+          "exports": [
+            "BodyOutcome",
+            "WorkSeams",
+            "PlanReport",
+            "BY",
+            "createResolverWork"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body-investigate.ts",
+            "lib/readonly-claude.ts",
+            "lib/resolver.ts",
+            "lib/resolver-engine.ts",
+            "lib/resolver-fix.ts",
+            "lib/resolver-prompt.ts",
+            "lib/triage.ts",
+            "lib/triage-engine.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/resolver.ts",
+          "lines": 476,
+          "kind": "lib",
+          "exports": [
+            "DEFAULT_MODEL",
+            "DEFAULT_MAX_CONCURRENT",
+            "DEFAULT_MAX_PER_DAY",
+            "DEFAULT_TIMEOUT_MS",
+            "QUEUE_MAX_MS",
+            "FIX_RUN_MS",
+            "CONFIDENT",
+            "RESOLVER_CONTEXT_MAX",
+            "SUMMARY_MAX",
+            "RESOLVER_SLUG",
+            "Autonomy",
+            "ResolverConfig",
+            "disabledFlag",
+            "resolverConfig",
+            "routable",
+            "resolverKey",
+            "SENSITIVE_RE",
+            "sensitivePaths",
+            "isSensitivePr",
+            "Consent",
+            "FIX_PREFILL",
+            "RETRY_PREFILL",
+            "consentOf",
+            "consents",
+            "RETRY_RE",
+            "ResolverAction",
+            "ResolverActionKind",
+            "PrReview",
+            "ResolverOutput",
+            "resolverActions",
+            "parseResolverOutput",
+            "PolicyCtx",
+            "Plan",
+            "decide",
+            "reviewLines",
+            "contextText",
+            "preparedPhrase",
+            "resolverInfo",
+            "OutcomeNote",
+            "outcomePhrase",
+            "cardSummary",
+            "digestText"
+          ],
+          "state": [
+            "CLOSABLE: Set",
+            "REJECTABLE: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/scrape-registry.ts",
           "lines": 171,
           "kind": "lib",
@@ -2553,7 +2803,7 @@
         },
         {
           "path": "lib/session-identity.ts",
-          "lines": 55,
+          "lines": 58,
           "kind": "lib",
           "exports": [
             "deriveKey",
@@ -2618,7 +2868,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/db-path.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -2886,7 +3138,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 598,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -2896,6 +3148,7 @@
             "modelFromTranscript",
             "identityFor",
             "activeStates",
+            "dropState",
             "forgetStates",
             "ReadOpts",
             "readTranscriptDelta",
@@ -2925,10 +3178,11 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 241,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
+            "TriageResolverHook",
             "TriageEngineDeps",
             "ChooseInput",
             "ChooseResult",
@@ -2945,6 +3199,7 @@
           "apiCalls": [],
           "imports": [
             "lib/dispatch-tasks.ts",
+            "lib/resolver-engine.ts",
             "lib/triage.ts",
             "lib/triage-store.ts",
             "lib/turso.ts"
@@ -3050,7 +3305,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 371,
+          "lines": 425,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -3058,6 +3313,9 @@
             "TriageAction",
             "ActionKind",
             "TriageOption",
+            "ResolverInfo",
+            "ResolverOutcome",
+            "ResolvingItem",
             "TriageItem",
             "SourceRef",
             "SourceItem",
@@ -3070,17 +3328,23 @@
             "CONTEXT_MAX",
             "ANSWER_TEXT_MAX",
             "SNOOZE_MAX_HOURS",
+            "INSTRUCTION_MAX",
+            "ASK_OPUS_ID",
             "itemId",
             "allowedActions",
             "clip",
+            "KIND_HELP",
             "phrasePrompt",
             "looksFrench",
             "finishOptions",
+            "PhraseOpts",
             "validatePhrase",
+            "validatePhraseObject",
             "fallbackPhrase",
             "heuristicSeverity",
             "orderItems",
             "buildItem",
+            "withAskOpus",
             "triageDigest"
           ],
           "state": [
@@ -4066,7 +4330,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 441,
+          "lines": 434,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -4320,18 +4584,20 @@
         },
         {
           "path": "wiring/body-investigate.ts",
-          "lines": 98,
+          "lines": 105,
           "kind": "lib",
           "exports": [
             "SWEEP_MS",
             "BOOT_SWEEP_DELAY_MS",
             "bodyFixStore",
+            "bodyReportApplier",
             "bodyInvestigator",
             "investigationStore",
             "investigationDigestFor",
             "startBodyInvestigate"
           ],
           "state": [
+            "let applier",
             "let live"
           ],
           "emits": [],
@@ -4398,7 +4664,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 160,
+          "lines": 161,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
@@ -4755,19 +5021,112 @@
           "externals": []
         },
         {
+          "path": "wiring/resolver-dry-run.ts",
+          "lines": 104,
+          "kind": "lib",
+          "exports": [
+            "DryRunRow",
+            "collectReadOnly",
+            "resolverDryRun",
+            "formatDryRun"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-tasks.ts",
+            "lib/dispatch-poller.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/resolver.ts",
+            "lib/resolver-engine.ts",
+            "lib/resolver-store.ts",
+            "lib/resolver-work.ts",
+            "lib/triage.ts",
+            "lib/triage-pr.ts",
+            "lib/triage-sources.ts",
+            "lib/turso.ts",
+            "wiring/body-investigate.ts",
+            "wiring/resolver.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/resolver.ts",
+          "lines": 350,
+          "kind": "lib",
+          "exports": [
+            "RESOLVER_ALLOWED",
+            "RESOLVER_DISALLOWED",
+            "resolverSpec",
+            "memoryDirs",
+            "localRepoFor",
+            "LiveResolverOpts",
+            "liveSeams",
+            "LiveResolver",
+            "ResolverLiveOpts",
+            "createLiveResolver",
+            "repoMapSelfCheck",
+            "DIGEST_TICK_MS",
+            "DIGEST_HOUR",
+            "startResolverDigest"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/body-investigate.ts",
+            "lib/body-investigator.ts",
+            "lib/dispatch-poller.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/live-repo.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-db.ts",
+            "lib/quick-look.ts",
+            "lib/readonly-claude.ts",
+            "lib/resolver.ts",
+            "lib/resolver-engine.ts",
+            "lib/resolver-fix.ts",
+            "lib/resolver-prompt.ts",
+            "lib/resolver-store.ts",
+            "lib/resolver-work.ts",
+            "lib/triage.ts",
+            "lib/triage-engine.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "wiring/body-investigate.ts",
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/triage.ts",
-          "lines": 261,
+          "lines": 288,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
             "JEV_MIN_CONF",
             "LiveTriageOpts",
+            "actionTurn",
             "createLiveTriage",
             "triageEngine",
             "TRIAGE_TICK_MS",
             "startTriage"
           ],
           "state": [
+            "let liveResolver",
             "let live"
           ],
           "emits": [],
@@ -4797,6 +5156,7 @@
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
+            "wiring/resolver.ts",
             "wiring/trips.ts"
           ],
           "listeners": [],
@@ -5066,19 +5426,19 @@
             "companion-server.ts#* /"
           ]
         },
-        "activeStates": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
-        "readTranscriptDelta": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
         "PathState": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "SessionMeta": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "getState": {
           "module": "lib/transcript.ts",
           "callers": [
             "lib/activity.ts"
@@ -5107,7 +5467,19 @@
             "wiring/waiting.ts"
           ]
         },
-        "getState": {
+        "activeStates": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "readTranscriptDelta": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "dropState": {
           "module": "lib/transcript.ts",
           "callers": [
             "lib/activity.ts"
@@ -5155,12 +5527,6 @@
           ]
         },
         "hashText": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
-        "SessionMeta": {
           "module": "lib/transcript.ts",
           "callers": [
             "lib/activity.ts"
@@ -5264,9 +5630,21 @@
             "wiring/front-door.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts",
             "wiring/trips.ts",
             "ws.ts"
+          ]
+        },
+        "companionDbPath": {
+          "module": "lib/db-path.ts",
+          "callers": [
+            "lib/approval-history.ts",
+            "lib/learned-allow.ts",
+            "lib/orchestrator-db.ts",
+            "lib/push-tokens.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/session-titles.ts"
           ]
         },
         "redactSecrets": {
@@ -5337,7 +5715,8 @@
           "callers": [
             "lib/body-investigate-engine.ts",
             "wiring/body-fix.ts",
-            "wiring/body-investigate.ts"
+            "wiring/body-investigate.ts",
+            "wiring/resolver.ts"
           ]
         },
         "FORWARD_STALE_MS": {
@@ -5378,7 +5757,8 @@
         "routeFor": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "wiring/resolver.ts"
           ]
         },
         "isProblemState": {
@@ -5404,13 +5784,15 @@
         "KnownPaths": {
           "module": "lib/body-investigator.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "lib/resolver-prompt.ts"
           ]
         },
         "buildInvestigationPrompt": {
           "module": "lib/body-investigator.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "lib/resolver-prompt.ts"
           ]
         },
         "InvestigatorRunner": {
@@ -5441,7 +5823,8 @@
           "module": "lib/body.ts",
           "callers": [
             "lib/body-investigate-engine.ts",
-            "lib/body-investigator.ts"
+            "lib/body-investigator.ts",
+            "lib/resolver-prompt.ts"
           ]
         },
         "Task": {
@@ -5457,7 +5840,8 @@
             "wiring/body-fix.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
-            "wiring/proposals.ts"
+            "wiring/proposals.ts",
+            "wiring/resolver.ts"
           ]
         },
         "FixCard": {
@@ -5493,7 +5877,8 @@
             "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
-            "lib/triage-pr.ts"
+            "lib/triage-pr.ts",
+            "wiring/resolver-dry-run.ts"
           ]
         },
         "getAuthToken": {
@@ -5515,7 +5900,8 @@
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts"
           ]
         },
         "isHealthIntent": {
@@ -5541,20 +5927,24 @@
         "InvestigationResult": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigator.ts"
+            "lib/body-investigator.ts",
+            "lib/resolver-work.ts",
+            "wiring/resolver.ts"
           ]
         },
         "readonlyCwd": {
           "module": "lib/readonly-claude.ts",
           "callers": [
-            "lib/body-investigator.ts"
+            "lib/body-investigator.ts",
+            "wiring/resolver.ts"
           ]
         },
         "runReadonlyClaude": {
           "module": "lib/readonly-claude.ts",
           "callers": [
             "lib/body-investigator.ts",
-            "lib/quick-look.ts"
+            "lib/quick-look.ts",
+            "wiring/resolver.ts"
           ]
         },
         "RecommendedFix": {
@@ -5582,7 +5972,8 @@
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
             "routes/body.ts",
-            "routes/goals.ts"
+            "routes/goals.ts",
+            "wiring/resolver.ts"
           ]
         },
         "Judgement": {
@@ -6037,7 +6428,8 @@
         "detectColumns": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "wiring/resolver-dry-run.ts"
           ]
         },
         "dispatchToDto": {
@@ -6056,7 +6448,8 @@
         "listDispatchTasks": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "wiring/resolver-dry-run.ts"
           ]
         },
         "listAllProjects": {
@@ -6351,7 +6744,8 @@
           "callers": [
             "lib/orchestrator-brain.ts",
             "lib/readonly-claude.ts",
-            "lib/receipt-sonnet.ts"
+            "lib/receipt-sonnet.ts",
+            "lib/resolver-fix.ts"
           ]
         },
         "GENERAL_CHANNEL": {
@@ -6360,7 +6754,8 @@
             "lib/orchestrator-chat.ts",
             "routes/orchestrator.ts",
             "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts"
           ]
         },
         "listQueued": {
@@ -6473,13 +6868,15 @@
         "isDir": {
           "module": "lib/live-repo.ts",
           "callers": [
-            "lib/project-catalog.ts"
+            "lib/project-catalog.ts",
+            "wiring/resolver.ts"
           ]
         },
         "parseRepoMap": {
           "module": "lib/live-repo.ts",
           "callers": [
-            "lib/project-catalog.ts"
+            "lib/project-catalog.ts",
+            "wiring/resolver.ts"
           ]
         },
         "apnsConfigured": {
@@ -6601,19 +6998,22 @@
         "ReadonlySpec": {
           "module": "lib/readonly-claude.ts",
           "callers": [
-            "lib/quick-look.ts"
+            "lib/quick-look.ts",
+            "wiring/resolver.ts"
           ]
         },
         "ReadonlyRun": {
           "module": "lib/readonly-claude.ts",
           "callers": [
-            "lib/quick-look.ts"
+            "lib/quick-look.ts",
+            "lib/resolver-work.ts"
           ]
         },
         "resolveClaudeBin": {
           "module": "lib/receipt-sonnet.ts",
           "callers": [
-            "lib/readonly-claude.ts"
+            "lib/readonly-claude.ts",
+            "lib/resolver-fix.ts"
           ]
         },
         "ExpenseFields": {
@@ -6747,6 +7147,8 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
             "wiring/trips.ts"
           ]
         },
@@ -6964,6 +7366,314 @@
           "module": "lib/records-store.ts",
           "callers": [
             "lib/records-expiry.ts"
+          ]
+        },
+        "ResolverOutcome": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/resolver-store.ts",
+            "lib/resolver.ts"
+          ]
+        },
+        "Phrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/resolver-store.ts",
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts",
+            "lib/triage-store.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "RunRow": {
+          "module": "lib/resolver-store.ts",
+          "callers": [
+            "lib/resolver-engine.ts"
+          ]
+        },
+        "SourceItem": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/resolver-prompt.ts",
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts",
+            "lib/triage-sources.ts",
+            "lib/trip-triage.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "Autonomy": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/resolver-prompt.ts",
+            "lib/resolver-store.ts"
+          ]
+        },
+        "ResolverInfo": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/resolver.ts"
+          ]
+        },
+        "ResolverStore": {
+          "module": "lib/resolver-store.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "ResolverConfig": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "itemId": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/resolver-store.ts",
+            "lib/triage-engine.ts",
+            "lib/triage-store.ts",
+            "wiring/resolver-dry-run.ts"
+          ]
+        },
+        "heuristicSeverity": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/triage-engine.ts"
+          ]
+        },
+        "resolverInfo": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-engine.ts"
+          ]
+        },
+        "resolverKey": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-engine.ts"
+          ]
+        },
+        "digestText": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-engine.ts"
+          ]
+        },
+        "ResolverActionKind": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-prompt.ts"
+          ]
+        },
+        "ActionKind": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-prompt.ts",
+            "lib/resolver.ts"
+          ]
+        },
+        "resolverActions": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-prompt.ts"
+          ]
+        },
+        "KIND_HELP": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-prompt.ts"
+          ]
+        },
+        "FIX_RUN_MS": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "RESOLVER_CONTEXT_MAX": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "RETRY_PREFILL": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "RETRY_RE": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "ResolverOutput": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "Plan": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "OutcomeNote": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "cardSummary": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "parseResolverOutput": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "preparedPhrase": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "outcomePhrase": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "ResolverContext": {
+          "module": "lib/resolver-prompt.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "ExecOutcome": {
+          "module": "lib/triage-engine.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "lib/triage-pr.ts",
+            "lib/trip-triage.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "TriageAction": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "FixOutcome": {
+          "module": "lib/resolver-fix.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "clip": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-sources.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "Job": {
+          "module": "lib/resolver-engine.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "wiring/resolver-dry-run.ts"
+          ]
+        },
+        "WorkResult": {
+          "module": "lib/resolver-engine.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "buildResolverPrompt": {
+          "module": "lib/resolver-prompt.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "TriageOption": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts",
+            "lib/triage-engine.ts",
+            "lib/trip-triage.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "PROBLEM_MAX": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "ACTION_MAX": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "ANSWER_TEXT_MAX": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "INSTRUCTION_MAX": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "finishOptions": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "validatePhraseObject": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts",
+            "lib/triage-engine.ts"
           ]
         },
         "storePath": {
@@ -7222,12 +7932,10 @@
             "lib/transcript.ts"
           ]
         },
-        "TriageOption": {
+        "ResolvingItem": {
           "module": "lib/triage.ts",
           "callers": [
-            "lib/triage-engine.ts",
-            "lib/trip-triage.ts",
-            "wiring/triage.ts"
+            "lib/triage-engine.ts"
           ]
         },
         "TriageItem": {
@@ -7236,43 +7944,7 @@
             "lib/triage-engine.ts"
           ]
         },
-        "SourceItem": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-engine.ts",
-            "lib/triage-sources.ts",
-            "lib/trip-triage.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "Phrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-engine.ts",
-            "lib/triage-store.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "itemId": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-engine.ts",
-            "lib/triage-store.ts"
-          ]
-        },
         "validatePhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-engine.ts"
-          ]
-        },
-        "fallbackPhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-engine.ts"
-          ]
-        },
-        "heuristicSeverity": {
           "module": "lib/triage.ts",
           "callers": [
             "lib/triage-engine.ts"
@@ -7290,8 +7962,26 @@
             "lib/triage-engine.ts"
           ]
         },
+        "withAskOpus": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
         "triageDigest": {
           "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "ResolverView": {
+          "module": "lib/resolver-engine.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "AskResult": {
+          "module": "lib/resolver-engine.ts",
           "callers": [
             "lib/triage-engine.ts"
           ]
@@ -7308,21 +7998,6 @@
           "callers": [
             "lib/triage-engine.ts",
             "routes/orchestrator.ts"
-          ]
-        },
-        "ExecOutcome": {
-          "module": "lib/triage-engine.ts",
-          "callers": [
-            "lib/triage-pr.ts",
-            "lib/trip-triage.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "clip": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-sources.ts",
-            "wiring/triage.ts"
           ]
         },
         "parseTs": {
@@ -7554,6 +8229,7 @@
             "wiring/body-fix.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
@@ -7640,8 +8316,6 @@
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
-            "routes/orchestrator.ts#POST /api/orchestrator/task/",
-            "routes/orchestrator.ts#POST /api/orchestrator/proposal/",
             "routes/trips.ts"
           ]
         },
@@ -7968,7 +8642,8 @@
           "module": "lib/body.ts",
           "callers": [
             "routes/body.ts#GET /api/body/component/",
-            "wiring/body-investigate.ts"
+            "wiring/body-investigate.ts",
+            "wiring/resolver.ts"
           ]
         },
         "investigationDto": {
@@ -8360,7 +9035,8 @@
             "routes/orchestrator.ts",
             "wiring/body-fix.ts",
             "wiring/live.ts",
-            "wiring/proposals.ts"
+            "wiring/proposals.ts",
+            "wiring/resolver.ts"
           ]
         },
         "orchEmit": {
@@ -8374,6 +9050,7 @@
             "wiring/front-door.ts",
             "wiring/live.ts",
             "wiring/proposals.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
@@ -8513,6 +9190,7 @@
             "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
@@ -8554,6 +9232,8 @@
             "wiring/dispatch.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
@@ -8603,13 +9283,15 @@
             "routes/orchestrator.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
         "getTaskActivity": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/resolver.ts"
           ]
         },
         "getTaskResult": {
@@ -8699,6 +9381,7 @@
           "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
@@ -9079,7 +9762,8 @@
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts"
           ]
         },
         "DEFAULT_NOTE_ID": {
@@ -9136,24 +9820,6 @@
             "wiring/body-investigate.ts"
           ]
         },
-        "investigateEnabled": {
-          "module": "lib/body-investigate.ts",
-          "callers": [
-            "wiring/body-investigate.ts"
-          ]
-        },
-        "knownPaths": {
-          "module": "lib/body-investigator.ts",
-          "callers": [
-            "wiring/body-investigate.ts"
-          ]
-        },
-        "runInvestigatorCli": {
-          "module": "lib/body-investigator.ts",
-          "callers": [
-            "wiring/body-investigate.ts"
-          ]
-        },
         "bodyPushEnabled": {
           "module": "lib/body-alert.ts",
           "callers": [
@@ -9166,6 +9832,26 @@
           "callers": [
             "wiring/body-investigate.ts",
             "wiring/dispatch.ts"
+          ]
+        },
+        "investigateEnabled": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "knownPaths": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "runInvestigatorCli": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/resolver.ts"
           ]
         },
         "createBodySnapshot": {
@@ -9215,6 +9901,12 @@
           "callers": [
             "wiring/dialogs.ts",
             "ws.ts"
+          ]
+        },
+        "questionAnsweredRecently": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "wiring/dialogs.ts"
           ]
         },
         "hasPendingApprovalFor": {
@@ -9274,7 +9966,9 @@
         "DispatchWiring": {
           "module": "lib/dispatch-poller.ts",
           "callers": [
-            "wiring/dispatch.ts"
+            "wiring/dispatch.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts"
           ]
         },
         "createDispatchWiring": {
@@ -9693,7 +10387,8 @@
         "readRepoMapSource": {
           "module": "lib/live-repo.ts",
           "callers": [
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts"
           ]
         },
         "buildCatalog": {
@@ -9738,10 +10433,218 @@
             "wiring/receipt-qa.ts"
           ]
         },
+        "taskSources": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "queryPrRows": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "prSources": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "listProposals": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "proposalSource": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "bodySources": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "investigationStore": {
+          "module": "wiring/body-investigate.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "resolverConfig": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "createResolverStore": {
+          "module": "lib/resolver-store.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "realGh": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "liveSeams": {
+          "module": "wiring/resolver.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts"
+          ]
+        },
+        "WorkSeams": {
+          "module": "lib/resolver-work.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "PlanReport": {
+          "module": "lib/resolver-work.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts"
+          ]
+        },
+        "createResolverWork": {
+          "module": "lib/resolver-work.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "routable": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "ShFn": {
+          "module": "lib/resolver-fix.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "EvidenceBlock": {
+          "module": "lib/resolver-prompt.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
         "GhFn": {
           "module": "lib/triage-pr.ts",
           "callers": [
+            "wiring/resolver.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "realSh": {
+          "module": "lib/resolver-fix.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "repoForNote": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "sensitivePaths": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "isSensitivePr": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "buildBodyResolverPrompt": {
+          "module": "lib/resolver-prompt.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "bodyReportApplier": {
+          "module": "wiring/body-investigate.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "runPrFix": {
+          "module": "lib/resolver-fix.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "RESOLVER_SLUG": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "GUARD_WINDOW_MS": {
+          "module": "lib/resolver-store.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "ResolverEngine": {
+          "module": "lib/resolver-engine.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "createResolverEngine": {
+          "module": "lib/resolver-engine.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "RepoMapCheck": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "checkRepoMap": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "repoMapCheckLine": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "maybeDigest": {
+          "module": "lib/resolver-engine.ts",
+          "callers": [
+            "wiring/resolver.ts"
           ]
         },
         "RequestOutcome": {
@@ -9762,6 +10665,18 @@
             "wiring/triage.ts"
           ]
         },
+        "TriageResolverHook": {
+          "module": "lib/triage-engine.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "ResolverLiveOpts": {
+          "module": "wiring/resolver.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
         "runBrainCall": {
           "module": "lib/orchestrator-brain.ts",
           "callers": [
@@ -9774,32 +10689,8 @@
             "wiring/triage.ts"
           ]
         },
-        "realGh": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "investigationStore": {
-          "module": "wiring/body-investigate.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
         "ownsTrips": {
           "module": "wiring/trips.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "queryPrRows": {
-          "module": "lib/triage-sources.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "prSources": {
-          "module": "lib/triage-sources.ts",
           "callers": [
             "wiring/triage.ts"
           ]
@@ -9810,31 +10701,7 @@
             "wiring/triage.ts"
           ]
         },
-        "proposalSource": {
-          "module": "lib/triage-sources.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "taskSources": {
-          "module": "lib/triage-sources.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "listProposals": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
         "taskSource": {
-          "module": "lib/triage-sources.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "bodySources": {
           "module": "lib/triage-sources.ts",
           "callers": [
             "wiring/triage.ts"
@@ -9858,8 +10725,26 @@
             "wiring/triage.ts"
           ]
         },
+        "createLiveResolver": {
+          "module": "wiring/resolver.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
         "createTriageEngine": {
           "module": "lib/triage-engine.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "LiveResolver": {
+          "module": "wiring/resolver.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "repoMapSelfCheck": {
+          "module": "wiring/resolver.ts",
           "callers": [
             "wiring/triage.ts"
           ]
@@ -9878,6 +10763,12 @@
         },
         "setTriageDigest": {
           "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "startResolverDigest": {
+          "module": "wiring/resolver.ts",
           "callers": [
             "wiring/triage.ts"
           ]
