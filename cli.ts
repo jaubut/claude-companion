@@ -122,6 +122,18 @@ if (subcommand === "jev-report") {
   process.exit(0)
 }
 
+// Opus resolver dry run: real items, real read-only Opus, nothing executed (point COMPANION_DB_PATH at a copy).
+if (subcommand === "resolver-dry-run") {
+  const { resolverDryRun, formatDryRun } = await import("./server/wiring/resolver-dry-run")
+  const arg = (name: string) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] ?? null : null }
+  const limit = Number(arg("--limit")) > 0 ? Number(arg("--limit")) : 10
+  const concurrency = Number(arg("--concurrency")) > 0 ? Number(arg("--concurrency")) : undefined
+  const rows = await resolverDryRun({ limit, only: arg("--source"), concurrency, log: (m) => console.error(m) })
+  console.log(formatDryRun(rows))
+  if (process.argv.includes("--json")) console.log(JSON.stringify(rows, null, 2))
+  process.exit(0)
+}
+
 // Trip classifier accuracy from companion.db trip_classify_log (auto-file rate, human overrides).
 if (subcommand === "trip-report") {
   const { Database } = await import("bun:sqlite")
@@ -163,6 +175,8 @@ Usage:
   bun cli.ts menubar <action>  Manage the menu bar app (install/uninstall/status/build)
   bun cli.ts jev-report [--days N]  Jev front-door shadow report (agreement, go-live bar)
   bun cli.ts trip-report [--days N] Trip classifier report (auto-file rate, human overrides)
+  bun cli.ts resolver-dry-run [--limit N] [--source task|pr|proposal|body] [--concurrency N] [--json]
+                                    What the Opus resolver WOULD do with the current items (nothing executed)
 `)
   process.exit(0)
 }

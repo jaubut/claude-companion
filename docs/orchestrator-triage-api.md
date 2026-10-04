@@ -20,7 +20,9 @@ type TriageItem = {
   action: string             // 1 sentence: what the brain recommends doing
   recommended: string        // option id
   options: TriageOption[]    // 2–4, recommended first
-  context?: string           // optional: 1–3 lines of evidence (blocker text, CI failure, investigation root cause)
+  context?: string           // optional: 1–3 lines of evidence (blocker text, CI failure, investigation root cause);
+                             // on an Opus card: Opus's analysis, up to 1500 chars, line breaks kept
+  resolver?: ResolverInfo    // added 2026-10-04 (Opus resolver) — see "Opus resolver" below
   createdAt: number          // ms
   updatedAt: number          // ms
 }
@@ -46,11 +48,13 @@ type TriageAction =
   | { kind: "snooze"; hours: number }           // hide from triage until then
   | { kind: "classify"; classification: "business" | "personal"; clientSlug?: string }  // trip: file it as is
   | { kind: "classify_custom" }                 // trip: business, phone shows the client picker → POST with text = client slug
+  | { kind: "ask_opus"; instruction?: string }  // hand the item back to Opus (2026-10-04) → POST with optional text = instruction
 ```
 
 ## Endpoints
 
-- `GET /api/orchestrator/triage` → `{ items: TriageItem[], generatedAt: number }`
+- `GET /api/orchestrator/triage` → `{ items: TriageItem[], resolving: ResolvingItem[], generatedAt: number }`
+  (`resolving` added 2026-10-04 — see "Opus resolver")
   Ordered: urgent first, then oldest. Only things that genuinely need Jeremie.
 - `POST /api/orchestrator/triage/<id>/choose` body `{ optionId: string, text?: string }`,
   header `Idempotency-Key`. Performs the mapped action through the EXISTING guarded
@@ -58,7 +62,7 @@ type TriageAction =
   → `{ ok: true, id, result: "done" | "replay", next?: TriageItem | null }`
   Errors: 404 no such item · 409 stale (underlying state moved; item refreshed) ·
   422 `text_required` (answer_custom without text) · 503 turso/gh unreachable.
-- WS frame `{ type: "orchestrator_triage", items: TriageItem[], generatedAt }` on any change.
+- WS frame `{ type: "orchestrator_triage", items: TriageItem[], resolving: ResolvingItem[], generatedAt }` on any change.
 
 ## Sources
 - `task`: dispatch tasks in `blocked` (and `failed` with a retryable cause).
@@ -161,3 +165,97 @@ Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*
   `502 dashboard_error` for another dashboard refusal; `503 dashboard_unreachable` when it is down or the key is missing.
   `detail` = `{ classification, clientSlug? }`.
 
+
+## Opus resolver (2026-10-04 — additive)
+
+Jeremie: "for me to open a PR and review it will ultimately fall onto asking you to solve it. So why not put
+Opus 5.5 back in the loop of 'needs your attention'." Before an item reaches Jeremie, an Opus 5.5 agent works it
+as far as it safely can. Jeremie then sees nothing (Opus resolved it) or a card with Opus's finished work and ONE
+decision. Store host only (Zettlab); a Mac shows no resolver state.
+
+### Wire additions
+
+```ts
+type ResolverInfo = {
+  status: "resolving" | "prepared" | "failed"
+  summary: string            // ≤ 200 chars, one line: what Opus did / recommends ("Opus reviewed: safe to merge because …")
+  model: string              // "claude-opus-5-5"
+  finishedAt: number | null  // ms
+}
+
+type ResolvingItem = {       // an item Opus is working on: NOT in `items`
+  id: string                 // the item id it will have when (if) it comes back as a card
+  source: TriageSource
+  title: string
+  project: string | null
+  resolver: ResolverInfo     // status "resolving"
+}
+```
+
+- `items[]` never holds an item Opus is still working on. Those are in `resolving[]`, for a compact
+  "Opus is on it (N)" line. In `items`, `resolver.status` is `prepared` (Opus's card) or `failed`
+  (the run fell through: the normal card, marked); absent = Opus never touched it (trip, budget, kill switch).
+- Every non-trip card carries, LAST and never recommended, option `{ id: "opus", label: "Ask Opus…",
+  action: { kind: "ask_opus" } }` while the resolver is on. An Opus card may also carry a prefilled one,
+  e.g. `{ label: "Ask for changes", action: { kind: "ask_opus", instruction: "Fix on the PR branch: …" } }`.
+- `POST …/choose` with an `ask_opus` option: `text` (optional) is Jeremie's instruction and wins over a
+  prefilled `instruction`. → `200 { ok, id, result: "done", next, detail: { resolver: "resolving" } }`; the item
+  moves to `resolving[]` in the next frame. `409 resolver_disabled` (kill switch / Mac) · `409 not_routable` (trip).
+  Choosing any option on an item that is in `resolving[]` → `409 resolving` (`next: null`).
+
+### What Opus does per source (the server's policy decides; the model only proposes)
+
+- **Blocked task.** Opus reads the task, the blocker, the project note, STATE.md, the repo and Jeremie's memory
+  files (read-only). Confident (≥ 0.8, nothing that needs Jeremie) → answers it through the guarded unblock;
+  "Opus answered: …" in the task activity (`resolver:answer`) and as a 🤖 orchestrator turn. A genuine preference,
+  money, client-facing wording or anything irreversible → card, Opus's best answer as the recommended option.
+  **Failed task:** requeue only when the failure is clearly transient; else a card.
+- **Parked PR** (shepherd `pr:needs-human`). Opus reviews the diff, the checks and the task.
+  Sensitive (auth / payment / schema / secrets / migrations / CI config — the shepherd's SENSITIVE list): a
+  threat-model review in `context` (What changed / Risk / Could fail in prod / Tests / Problems); problems → one fix
+  run on the PR branch (never main, never forced, then a PR comment); the card says "Opus reviewed: …" with
+  [Merge] (recommended when the review reads safe) · [Ask for changes] · [Close]. **A sensitive PR is never
+  merged without Jeremie** — the card's Merge, or `ask_opus` with explicit words ("do it", "merge", "vas-y"…).
+  Not sensitive: stale / superseded / task done → Opus comments why and closes it; CI failing after the
+  shepherd's 2 fixes → ONE rescue per PR (fix run + `pr:unpark` back to the shepherd, whose CI gate merges);
+  anything else → card.
+- **Proposal.** Duplicate / stale / already done → rejected with the reason; otherwise a card with Opus's
+  recommendation. A proposal Opus created itself is never resolved again.
+- **Body failed twice** (components on this host): a deeper read-only investigation (the investigator's tools,
+  Opus, 20 min) → a #Body fix proposal or a plain explanation; the component's item then leaves triage.
+- **Trip:** never (Jev + Jeremie).
+
+`ask_opus` = elevated autonomy for that item only: Opus may execute any action the source allows
+(merge and cancel only with explicit consent words), outside the daily budget.
+
+### Budget, kill switch, fall-through
+
+≤ 2 runs at once, ≤ 20 started per local day, 20 min per analysis (a PR fix run gets its own 30 min),
+model `COMPANION_RESOLVER_MODEL` (default `claude-opus-5-5`). A run that waited > 15 min for a slot is skipped.
+Kill switch: `COMPANION_RESOLVER=0` or `~/.claude-companion/.resolver-disabled` (waiting items show as normal
+cards at once). Over budget, timeout, crash, unparseable output, server restart → the normal card, so nothing
+is ever lost. Every action → Turso `agent_activity` row `resolver:<action>` (agent `opus-resolver`, one-line
+summary, meta `{item, model, autonomy, instruction?, confidence, category, reason}`): answer · requeue · cancel ·
+merge · close_pr · fix · approve · reject · revise · propose · explain · prepared · failed. A daily #General
+turn after 21:00 (`COMPANION_RESOLVER_DIGEST_HOUR`): "🤖 Opus handled N items today: answered X, closed Y,
+prepared Z for you."
+
+Dry run (nothing executed): `bun cli.ts resolver-dry-run [--limit N] [--source task|pr|proposal|body]`
+(point `COMPANION_DB_PATH` at a copy of companion.db).
+
+### iOS requirements (separate PR)
+
+1. Decode `TriageAction` kind `ask_opus` (`instruction?: String`). Today it decodes as `.unsupported` and is
+   hidden — safe, but Jeremie can't hand anything back.
+2. Render the `opus` option as a secondary "Ask Opus…" control (not a big option button) that opens a sheet with
+   ONE optional text field ("do it", "make it smaller", "just fix it") → `POST …/choose { optionId, text? }`.
+   A prefilled `ask_opus` option (e.g. "Ask for changes") is a normal option button that posts without text;
+   show its `detail`.
+3. Decode `TriageItem.resolver` (optional). When `status == "prepared"`: an "Opus" badge + `summary` above the
+   problem line, and `context` shown as Opus's analysis (multi-line, expandable; up to 1500 chars). When
+   `"failed"`: a muted "Opus couldn't finish: <summary>" line; the card is otherwise normal.
+4. Decode `resolving: [ResolvingItem]` from GET and the `orchestrator_triage` frame (missing = `[]`), and show one
+   compact row "Opus is on it (N)" (expandable to the titles) above the cards. No actions on those rows.
+5. Handle `409 resolving` and `409 resolver_disabled` from choose: toast ("Opus is still on it" /
+   "Opus is off"), refresh the list.
+6. After an `ask_opus` choose: optimistic move of the card into the "Opus is on it" row; the next frame confirms.
