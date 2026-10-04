@@ -1,17 +1,29 @@
 import { checkBearer, unauthorized } from "./lib/auth"
-import { type WsData } from "./state"
+import { type WsData, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { handleApiRoute } from "./routes/api"
 import { handleOrchestratorRoute } from "./routes/orchestrator"
+import { handleTriageRoute } from "./routes/triage"
 import { handleDialogRoute } from "./routes/dialogs"
 import { handleModelRoute } from "./routes/model"
 import { handleCommandRoute } from "./routes/command"
 import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
+import { handleBodyRoute } from "./routes/body"
+import { handleVaultRoute } from "./routes/vault"
+import { handleRecordsRoute } from "./routes/records"
+import { handleCaptureRoute } from "./routes/capture"
+import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
+import { waitForFirstDiscovery } from "./lib/discover"
+
+// How long a /ws upgrade may wait for the boot discovery pass. The phone
+// treats init's `sessions` as authoritative, so an init sent before discovery
+// finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
+const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 
 
 export function createCompanionServer(port: number) {
@@ -23,6 +35,9 @@ export function createCompanionServer(port: number) {
     hostname: "0.0.0.0",
     async fetch(req, server) {
       const url = new URL(req.url)
+      // TCP peer for the vault's network gate and the resolve/WS audit log
+      // (routes only get req + url). Weak map: dies with the Request.
+      recordPeer(req, server.requestIP(req)?.address)
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
@@ -47,8 +62,10 @@ export function createCompanionServer(port: number) {
 
       // ── WebSocket upgrade ──
       if (url.pathname === "/ws") {
+        // Immediate except in the first seconds after boot (lib/discover.ts).
+        await waitForFirstDiscovery(WS_FIRST_DISCOVERY_WAIT_MS)
         const upgraded = server.upgrade(req, {
-          data: { id: crypto.randomUUID() },
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req) },
         })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })
@@ -56,7 +73,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }

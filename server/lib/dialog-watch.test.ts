@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { createDialogWatcher, type SessionStatus } from "./dialog-watch"
+import { QUESTION_ORPHAN_MS, createDialogWatcher, type DialogWatchDeps, type SessionStatus } from "./dialog-watch"
 import type { Session } from "./sessions"
 import type { Dialog } from "./dialogs"
 
@@ -44,6 +44,7 @@ interface H {
   pane: string | null
   status: SessionStatus | null
   pendingQuestion: boolean
+  pendingApproval: boolean
   scraping: boolean
   captures: number
   opened: [string, Dialog][]
@@ -54,10 +55,10 @@ interface H {
   duringCapture: (() => Promise<void>) | null
 }
 
-function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
+function harness(over: Partial<DialogWatchDeps> = {}): { h: H; w: ReturnType<typeof createDialogWatcher> } {
   const h: H = {
     sessions: [session()], pane: IDLE_PANE, status: { status: "idle", waitingFor: "" },
-    pendingQuestion: false, scraping: false, captures: 0, opened: [], closed: [], statuses: [],
+    pendingQuestion: false, pendingApproval: false, scraping: false, captures: 0, opened: [], closed: [], statuses: [],
     duringStatus: null, duringCapture: null,
   }
   const w = createDialogWatcher({
@@ -65,11 +66,13 @@ function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
     capture: async () => { h.captures++; if (h.duringCapture) await h.duringCapture(); return h.pane },
     sessionStatus: async () => { if (h.duringStatus) await h.duringStatus(); return h.status },
     hasPendingQuestion: () => h.pendingQuestion,
+    hasPendingApproval: () => h.pendingApproval,
     isScraping: () => h.scraping,
     onDialog: (k, d) => h.opened.push([k, d]),
     onDialogClosed: (k) => h.closed.push(k),
     onStatus: (k, st) => h.statuses.push([k, st]),
     pollMs: 10,
+    ...over,
   })
   return { h, w }
 }
@@ -101,10 +104,7 @@ test("no status file (older CLI): capture anyway", async () => {
   expect(h.opened).toHaveLength(1)
 })
 
-test("a question picker on screen is never mirrored, even with no pending question", async () => {
-  const { h, w } = harness()
-  h.status = { status: "waiting", waitingFor: "dialog open" }
-  h.pane = `
+const QUESTION_PANE = `
 ❯ ask me
 ────────────────────────
 ←  ☐ Color  ✔ Submit  →
@@ -113,7 +113,92 @@ Pick one color
   2. Green
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 `
+
+test("a fresh question picker with no card is not mirrored (driver may still be typing)", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
   await w.tick()
+  expect(h.opened).toEqual([])
+})
+
+test("an orphaned question picker (no card past QUESTION_ORPHAN_MS) is mirrored once, closed when answered", async () => {
+  let t = 1_000_000
+  const { h, w } = harness({ now: () => t })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  t += QUESTION_ORPHAN_MS - 1
+  await w.tick()
+  expect(h.opened).toEqual([])
+  t += 2
+  await w.tick()
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+  expect(h.opened[0]![1].kind).toBe("question")
+  expect(h.opened[0]![1].items.map((i) => i.text)).toEqual(["Red", "Green"])
+  h.status = { status: "busy", waitingFor: "" }
+  await w.tick()
+  expect(h.closed).toEqual([h.sessions[0]!.key])
+})
+
+test("a question picker with a pending phone card never starts the orphan clock", async () => {
+  let t = 1_000_000
+  const { h, w } = harness({ now: () => t })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  h.pendingQuestion = true
+  await w.tick()
+  t += QUESTION_ORPHAN_MS * 30
+  await w.tick()
+  expect(h.opened).toEqual([])
+  // Card lapses: the clock starts now, not when the picker first appeared.
+  h.pendingQuestion = false
+  await w.tick()
+  expect(h.opened).toEqual([])
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+})
+
+test("an orphaned question picker is re-raised as a structured card when possible (no dialog mirror)", async () => {
+  let t = 1_000_000
+  const raised: string[] = []
+  const gone: string[] = []
+  const { h, w } = harness({ now: () => t, raiseOrphanQuestion: (s) => { raised.push(s.key); return true }, onQuestionPickerGone: (k) => gone.push(k) })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(raised).toEqual([h.sessions[0]!.key])
+  expect(h.opened).toEqual([])
+  h.status = { status: "idle", waitingFor: "" }
+  await w.tick()
+  expect(gone).toContain(h.sessions[0]!.key)
+})
+
+test("an orphan that can't be re-raised falls back to the dialog mirror", async () => {
+  let t = 1_000_000
+  const { h, w } = harness({ now: () => t, raiseOrphanQuestion: () => false })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+})
+
+test("a review screen parseDialog can't see still starts the orphan clock and gets re-raised", async () => {
+  let t = 1_000_000
+  const raised: string[] = []
+  const { h, w } = harness({ now: () => t, isQuestionScreen: () => true, raiseOrphanQuestion: (s) => { raised.push(s.key); return true } })
+  h.status = { status: "waiting", waitingFor: "input needed" }
+  h.pane = "Review your answers\nReady to submit your answers?\n❯ 1. Submit answers\n  2. Cancel\n"
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(raised).toEqual([h.sessions[0]!.key])
   expect(h.opened).toEqual([])
 })
 
@@ -124,6 +209,18 @@ test("a question the hooks already routed is not mirrored", async () => {
   h.pendingQuestion = true
   await w.tick()
   expect(h.opened).toEqual([])
+})
+
+test("an approval the hooks already routed is not mirrored as a second (dialog) card; closes an open one", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = MODEL_PANE
+  await w.tick()
+  expect(h.opened.length).toBe(1)
+  h.pendingApproval = true
+  await w.tick()
+  expect(h.closed).toEqual([h.sessions[0]!.key])
+  expect(h.opened.length).toBe(1)
 })
 
 // The bug this fixes: the companion's /help scrape drives the session's own

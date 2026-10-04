@@ -1,8 +1,11 @@
+import { hostname } from "node:os"
 import { getPending, resolveApproval } from "../lib/pty-manager"
 import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
 import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
+import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
+import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -18,14 +21,16 @@ import {
 } from "../lib/push-tokens"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import { HOST_INFO, broadcast, clients } from "../state"
+import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
 import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 import { withIdempotency } from "../lib/idempotency"
+import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
 // push debug, generic broadcast, inject, learned-allow, SUPER toggle, spawn,
-// status, feed dump. Same paths, methods and responses as before the split.
+// status, feed dump, approval history. Same paths, methods and responses as
+// before the split.
 
 export async function handleApiRoute(req: Request, url: URL): Promise<Response | null> {
   // ── Approval resolve (HTTP — for iOS notification actions) ──
@@ -198,6 +203,11 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ ok: true, app: result.app, cwd, agent })
   }
 
+  // ── Approval history (the phone's Approvals tab) ──
+  if (url.pathname === "/api/approvals/history" && req.method === "GET") return listApprovalHistory(url)
+  if (url.pathname === "/api/approvals/history" && req.method === "DELETE") return pruneApprovalHistory(url)
+  if (url.pathname === "/api/approvals/history/stats" && req.method === "GET") return approvalHistoryStats(url)
+  if (url.pathname.startsWith("/api/approvals/history/") && req.method === "GET") return approvalHistoryItem(url)
 
   // ── Status endpoint ──
   if (url.pathname === "/api/status") {
@@ -231,9 +241,17 @@ async function handleResolve(req: Request): Promise<Response> {
   if (!id || (decision !== "allow" && decision !== "deny")) {
     return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
   }
-  const ok = resolveApproval(id, decision)
+  const ok = resolveApproval(id, decision, { device: clientInfo(req, "").device })
+  logResolve(req, "approval", id, decision, ok)
   if (ok) broadcast({ type: "resolved", id, decision })
-  return Response.json({ ok })
+  return Response.json(ok ? { ok } : { ok, reason: "gone" })
+}
+
+// Audit line for every phone decision: what, which id, and where it came from
+// (transport, peer address, user-agent, X-Companion-Device). Never the token.
+function logResolve(req: Request, what: "approval" | "question", id: string, decision: string, ok: boolean): void {
+  const tag = ok ? "\x1b[36mresolve\x1b[0m" : "\x1b[33mresolve failed (gone)\x1b[0m"
+  companionLog(`${tag} ${what} ${id.slice(0, 8)} → ${decision} ${describeClient("rest", clientInfo(req, originLabel(req)))}`)
 }
 
 async function handleAnswer(req: Request): Promise<Response> {
@@ -250,15 +268,34 @@ async function handleAnswer(req: Request): Promise<Response> {
     selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
     otherText: typeof a.otherText === "string" ? a.otherText : undefined,
   }))
-  const ok = resolveQuestion(id, answers)
+  const ok = resolveQuestion(id, answers, { device: clientInfo(req, "").device })
+  logResolve(req, "question", id, "answered", ok)
   if (ok) broadcast({ type: "resolved", id, decision: "answered" })
-  return Response.json({ ok })
+  return Response.json(ok ? { ok } : { ok, reason: "gone" })
 }
 
 // Inject text from phone into terminal.
 async function handleInject(req: Request): Promise<Response> {
   const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
   if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+
+  // `/key NAME value` goes to secrets.env, never into the pane or a log —
+  // and only from where the vault itself would accept it. A refused /key is
+  // still never injected (the value would land in the pane).
+  if (isKeyCommand(text)) {
+    const gate = keyCommandGate(req)
+    if (!gate.allowed) {
+      const { status, ...refusal } = gate.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
+      companionLog(`/key refused — ${refusal.error} peer=${gate.origin.peer}`)
+      return Response.json({ ok: false, ...refusal }, { status })
+    }
+    const keyed = await handleKeyCommand(text, gate.origin)
+    if (keyed) {
+      companionLog(`/key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
+      const { status, ...body } = keyed
+      return Response.json(body, { status })
+    }
+  }
 
   const lookup = key || cwd || ""
   let target = lookup ? resolveSession(lookup) : null
@@ -367,4 +404,50 @@ async function handleInject(req: Request): Promise<Response> {
   return Response.json(res.ok
     ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}), ...(res.command ? { command: true } : {}) }
     : { ok, error: "deliver_failed", hint: deliveryFailedHint() })
+}
+
+// Approval history — lib/approval-history.ts. Bearer-gated like every /api route.
+//   GET    /api/approvals/history?state=&kind=&q=&limit=&before=
+//   GET    /api/approvals/history/stats?since=<iso>
+//   GET    /api/approvals/history/:id
+//   DELETE /api/approvals/history?before=<iso>   (manual pruning, resolved rows only)
+const HISTORY_ITEM_PREFIX = "/api/approvals/history/"
+const HISTORY_KINDS = new Set(["approval", "question"])
+const HISTORY_FILTERS = new Set<string>([...HISTORY_STATES, "all", "resolved", "auto", "everything"])
+
+function badRequest(error: string): Response {
+  return Response.json({ ok: false, error }, { status: 400 })
+}
+
+function approvalHistoryItem(url: URL): Response {
+  const id = decodeURIComponent(url.pathname.slice(HISTORY_ITEM_PREFIX.length))
+  const item = id && !id.includes("/") ? getHistoryItem(id) : null
+  return item ? Response.json({ ok: true, item }) : Response.json({ ok: false, error: "not_found" }, { status: 404 })
+}
+
+function listApprovalHistory(url: URL): Response {
+  const p = url.searchParams
+  const state = p.get("state") || "all"
+  if (!HISTORY_FILTERS.has(state)) return badRequest("bad_state")
+  const kind = p.get("kind") || ""
+  if (kind && !HISTORY_KINDS.has(kind)) return badRequest("bad_kind")
+  const rawLimit = p.get("limit")
+  const limit = rawLimit ? Number(rawLimit) : undefined
+  if (limit !== undefined && !Number.isFinite(limit)) return badRequest("bad_limit")
+  const { items, next } = listHistory({ state, kind, q: p.get("q") || "", limit, before: p.get("before") || "" })
+  return Response.json({ ok: true, host: hostname(), items, next })
+}
+
+function approvalHistoryStats(url: URL): Response {
+  const raw = url.searchParams.get("since") ?? ""
+  const ms = raw ? Date.parse(raw) : NaN
+  if (raw && !Number.isFinite(ms)) return badRequest("bad_since")
+  return Response.json({ ok: true, counts: historyCounts(raw ? new Date(ms).toISOString() : "") })
+}
+
+function pruneApprovalHistory(url: URL): Response {
+  const raw = url.searchParams.get("before") ?? ""
+  const ms = raw ? Date.parse(raw) : NaN
+  if (!Number.isFinite(ms)) return badRequest("bad_before")
+  return Response.json({ ok: true, deleted: pruneHistory(new Date(ms).toISOString()) })
 }

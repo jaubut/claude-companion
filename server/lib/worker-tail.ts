@@ -18,7 +18,8 @@ const MAX_PANE_MISSES = 3
 const LIVE_STATUSES = new Set(["dispatched", "running"])
 
 export interface WorkerTailDeps {
-  capturePane(sessionName: string): Promise<string | null>
+  // `socket`: the task's recorded tmux server (undefined = default).
+  capturePane(sessionName: string, socket?: string): Promise<string | null>
   getTask(taskId: string): Task | null
   setTaskLogTail(taskId: string, tail: string): void
   // Called when the pane vanished while the task was still live — the worker
@@ -77,7 +78,7 @@ export function createWorkerTailManager(deps: WorkerTailDeps): WorkerTailManager
         return
       }
       if (!task.tmuxSession) return // proposal approved but spawn not recorded yet
-      const pane = await deps.capturePane(task.tmuxSession)
+      const pane = await deps.capturePane(task.tmuxSession, task.tmuxSocket || undefined)
       if (pane === null) {
         w.paneMisses++
         if (w.paneMisses >= MAX_PANE_MISSES) finalize(taskId, true)

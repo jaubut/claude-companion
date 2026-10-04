@@ -9,6 +9,13 @@ import type { Session } from "./sessions"
 // pane is only captured for sessions in that state (or with no status file,
 // older CLIs). AskUserQuestion pickers already routed to the phone by the
 // hooks are skipped — the phone has the structured card for those.
+//
+// An ORPHANED question picker is the exception: once the hook windows lapse
+// (or the server restarted and lost them) the phone card is gone but the
+// picker is still on screen, and the session sat "waiting · input needed"
+// with nothing to tap (2026-10-03: two sessions stuck 1–4 h). A question
+// picker on screen with no pending card for QUESTION_ORPHAN_MS is mirrored
+// as a plain dialog card — rows + hint keys work on it like on /model.
 
 export interface SessionStatus {
   status: string
@@ -16,16 +23,29 @@ export interface SessionStatus {
 }
 
 export interface DialogWatchDeps {
+  now?(): number
   sessions(): Session[]
-  capture(pane: string): Promise<string | null>
+  capture(pane: string, socket?: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
+  // An approval the hooks already routed to the phone: its terminal
+  // permission dialog is the hooks' business too (approval card), so it is
+  // never mirrored as a second, generic dialog card.
+  hasPendingApproval?(s: Session): boolean
   // True while the companion itself is driving that session's pane through
   // /help (lib/command-scrape.ts). The overlay on screen is ours.
   isScraping(key: string): boolean
   onDialog(key: string, dialog: Dialog): void
   onDialogClosed(key: string): void
   onStatus(key: string, status: SessionStatus): void
+  // An orphaned question picker: try to re-raise it as a structured question
+  // card (lib/orphan-question.ts). True = done, false = mirror it as a dialog.
+  raiseOrphanQuestion?(s: Session, pane: string): boolean
+  // A question screen parseDialog can't see (the review / Submit screen has
+  // no key-hint footer) — still counts for the orphan clock.
+  isQuestionScreen?(pane: string): boolean
+  // The question picker on this session went away.
+  onQuestionPickerGone?(key: string): void
   pollMs?: number
 }
 
@@ -39,9 +59,17 @@ export interface DialogWatcher {
 
 const POLL_MS = 2_000
 
+// How long a question picker must sit on screen with no phone card before it
+// is mirrored. Covers the second or two the driver is still typing an answer
+// the phone just gave (that picker must not flash up as a stray card).
+export const QUESTION_ORPHAN_MS = 10_000
+
 export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
   const open = new Map<string, { sig: string; dialog: Dialog }>()
   const lastStatus = new Map<string, string>()
+  // key → when an un-carded question picker was first seen on screen
+  const questionSince = new Map<string, number>()
+  const now = deps.now ?? Date.now
   let timer: ReturnType<typeof setInterval> | null = null
   let ticking = false
 
@@ -64,6 +92,11 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
   // whole scrape. So the test is repeated after each await, and it closes any
   // entry already open for that key rather than leaving it to a later tick
   // that will not come.
+  function questionGone(key: string): void {
+    questionSince.delete(key)
+    deps.onQuestionPickerGone?.(key)
+  }
+
   function ours(key: string): boolean {
     if (!deps.isScraping(key)) return false
     close(key)
@@ -81,16 +114,28 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
         lastStatus.set(s.key, sig)
         deps.onStatus(s.key, st)
       }
-      if (st.status !== "waiting") { close(s.key); return }
+      if (st.status !== "waiting") { questionGone(s.key); close(s.key); return }
     }
-    if (deps.hasPendingQuestion(s)) { close(s.key); return }
-    const pane = await deps.capture(s.tmuxPane)
+    if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
+    const pane = await deps.capture(s.tmuxPane, s.tmuxSocket || undefined)
     if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)
     // Question pickers are the hooks' business (structured card + driver);
     // mirroring one — e.g. for the second the driver is still typing after
     // the phone answered — would put a stray dialog card on the phone.
-    if (!dialog || dialog.kind === "question") { close(s.key); return }
+    const questionScreen = dialog?.kind === "question" || (pane !== null && !!deps.isQuestionScreen?.(pane))
+    if (!dialog && !questionScreen) { questionGone(s.key); close(s.key); return }
+    if (questionScreen) {
+      const since = questionSince.get(s.key) ?? now()
+      questionSince.set(s.key, since)
+      if (now() - since < QUESTION_ORPHAN_MS) { close(s.key); return }
+      // Structured card first (Approvals tab); the dialog mirror is the
+      // fallback when the transcript has no matching open call.
+      if (pane !== null && deps.raiseOrphanQuestion?.(s, pane)) { close(s.key); return }
+    } else {
+      questionGone(s.key)
+    }
+    if (!dialog) { close(s.key); return }
     const sig = dialogSignature(dialog)
     if (open.get(s.key)?.sig === sig) return
     open.set(s.key, { sig, dialog })
@@ -105,6 +150,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       const liveKeys = new Set(live.map((s) => s.key))
       for (const key of [...open.keys()]) if (!liveKeys.has(key)) close(key)
       for (const key of [...lastStatus.keys()]) if (!liveKeys.has(key)) lastStatus.delete(key)
+      for (const key of [...questionSince.keys()]) if (!liveKeys.has(key)) questionSince.delete(key)
       for (const s of live) {
         try { await check(s) } catch { /* one bad pane doesn't stop the sweep */ }
       }

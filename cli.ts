@@ -95,6 +95,33 @@ if (subcommand === "menubar") {
   process.exit(0)
 }
 
+// Jev front door go-live numbers from the shadow log (companion.db jev_route_log).
+if (subcommand === "jev-report") {
+  const { Database } = await import("bun:sqlite")
+  const { existsSync } = await import("node:fs")
+  const { homedir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { buildReport, formatReport, readRouteLog } = await import("./server/lib/jev-route-log")
+  const { minConfidence } = await import("./server/lib/jev-router")
+  const at = process.argv.indexOf("--days")
+  const days = at > 0 && Number(process.argv[at + 1]) > 0 ? Number(process.argv[at + 1]) : 30
+  const path = process.env.COMPANION_DB_PATH ?? join(homedir(), ".claude-companion", "companion.db")
+  if (!existsSync(path)) {
+    console.log(`no companion.db at ${path}`)
+    process.exit(0)
+  }
+  const db = new Database(path, { readonly: true })
+  let rows: ReturnType<typeof readRouteLog> = []
+  try {
+    rows = readRouteLog(db, Date.now() - days * 86_400_000)
+  } catch {
+    console.log("no jev_route_log yet — the server has not routed a message with this build")
+    process.exit(0)
+  }
+  console.log(formatReport(buildReport(rows, minConfidence()), days))
+  process.exit(0)
+}
+
 if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
   console.log(`Claude Companion
 
@@ -106,6 +133,7 @@ Usage:
   bun cli.ts print-token       Print the pairing URL + token without starting the server
   bun cli.ts daemon <action>   Manage the server LaunchAgent (install/uninstall/status/logs)
   bun cli.ts menubar <action>  Manage the menu bar app (install/uninstall/status/build)
+  bun cli.ts jev-report [--days N]  Jev front-door shadow report (agreement, go-live bar)
 `)
   process.exit(0)
 }
@@ -119,21 +147,42 @@ if (subcommand && subcommand.length > 0) {
 
 import { createCompanionServer } from "./server/companion-server"
 import { rehydrateSessions } from "./server/lib/rehydrate"
-import { discoverLiveClaudes } from "./server/lib/discover"
+import { discoverLiveClaudes, expectFirstDiscovery } from "./server/lib/discover"
 import { reapScrapeSessions } from "./server/lib/command-offpane"
 import { startCodexFeedMonitor } from "./server/lib/codex-feed"
 import { getAuthToken, maskToken } from "./server/lib/auth"
 import { secureLogFile } from "./server/lib/log"
 import { startMediaSweeper } from "./server/wiring/media"
+import { startRecordsExpiry } from "./server/lib/records-expiry"
+import { startReceiptQa } from "./server/wiring/receipt-qa"
+import { dispatchWiring } from "./server/wiring/dispatch"
+import { reconcileLiveOnBoot } from "./server/wiring/live"
+import { startBodyInvestigate } from "./server/wiring/body-investigate"
+import { startTriage } from "./server/wiring/triage"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
 // Before anything is logged: companion.log is 0600 from here on.
 secureLogFile()
 
+// Before the server accepts /ws: a phone that reconnects during boot waits
+// (≤3 s) for the first discovery pass instead of receiving `sessions: []`.
+expectFirstDiscovery()
 const server = createCompanionServer(PORT)
 // After loadDefaultDotEnv() above: the age cap must come from the configured value.
 startMediaSweeper()
+// ID-record expiry pushes, store host only (inert when COMPANION_VAULT_UPSTREAM is set).
+startRecordsExpiry()
+// Receipt QA frames/push + queue resume (worker inert upstream or with COMPANION_RECEIPT_QA=off).
+startReceiptQa()
+// Turso dispatch poller (orchestrator-one-queue): every 20 s + /hooks/dispatch-event nudges.
+dispatchWiring.start()
+// Live mode (P4): close this host's claimed Turso rows whose tmux worker did not survive the restart.
+void reconcileLiveOnBoot().catch(() => { /* logged inside; never blocks boot */ })
+// Body auto-investigation: close runs a restart interrupted, sweep in 60 s, then every 10 min.
+startBodyInvestigate()
+// Brain triage: recompute after every dispatch poll / proposal change; phrase new items in the background.
+startTriage()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"

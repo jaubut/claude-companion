@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import {
+import { LATE_HOOK_GRACE_MS,
   type ConfirmDeps,
   type SubmitClock,
   confirmSubmit,
@@ -111,6 +111,8 @@ test("a session boundary never confirms a typed prompt; a boundary elsewhere nev
   noteSessionBoundary({ pane: "%89", tty: "/dev/pts/7" })
   await typed.c.advance(3_000)
   await typed.c.advance(3_000)
+  // A typed prompt whose text left the box gets one late-hook grace window.
+  await typed.c.advance(LATE_HOOK_GRACE_MS)
   const r1 = await p1
   expect(r1.ok).toBe(false)
   typed.watch.close()

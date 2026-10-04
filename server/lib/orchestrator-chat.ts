@@ -1,92 +1,19 @@
-import { Database } from "bun:sqlite"
-import { mkdirSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
 import { randomUUID } from "node:crypto"
+import { GENERAL_CHANNEL, db } from "./orchestrator-db"
 
 // Single-thread orchestrator (PRJ-OR1T Phase 1). One always-open chat thread per
 // host; every user message and every dispatched-worker reply lands in it, tagged
-// by task. Persisted to the same companion.db as push-tokens/learned-allow so the
-// thread survives a server restart — the "always there" property the orchestrator
-// is built on (memory-proof gate, PRJ-OR1T Phase 0).
-
-const DB_DIR = join(homedir(), ".claude-companion")
-// COMPANION_DB_PATH lets tests run against an isolated sqlite file; production
-// uses the real companion.db (shared with push-tokens / learned-allow).
-const DB_PATH = process.env.COMPANION_DB_PATH ?? join(DB_DIR, "companion.db")
-
-mkdirSync(DB_DIR, { recursive: true })
-const db = new Database(DB_PATH)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS orchestrator_turns (
-    id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL DEFAULT 'main',
-    role TEXT NOT NULL,
-    text TEXT NOT NULL,
-    task_id TEXT,
-    created_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_turns_thread ON orchestrator_turns (thread_id, created_at);
-
-  CREATE TABLE IF NOT EXISTS orchestrator_tasks (
-    task_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL DEFAULT 'main',
-    prompt TEXT NOT NULL,
-    cwd TEXT NOT NULL,
-    session_key TEXT,
-    tmux_session TEXT,
-    reasoning TEXT,
-    status TEXT NOT NULL DEFAULT 'dispatched',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_tasks_cwd ON orchestrator_tasks (cwd, status);
-
-  CREATE TABLE IF NOT EXISTS orchestrator_channels (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    cwd TEXT,
-    created_at INTEGER NOT NULL,
-    archived INTEGER NOT NULL DEFAULT 0,
-    auto_dispatch INTEGER NOT NULL DEFAULT 0
-  );
-`)
-// Migrate dbs created before these columns existed. ALTER throws if the column
-// is already present, so swallow that one case per column.
-for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT"]) {
-  try {
-    db.exec(`ALTER TABLE orchestrator_tasks ADD COLUMN ${col}`)
-  } catch {
-    /* column already exists */
-  }
-}
-try {
-  db.exec("ALTER TABLE orchestrator_channels ADD COLUMN auto_dispatch INTEGER NOT NULL DEFAULT 0")
-} catch {
-  /* column already exists */
-}
-
-// Default channel (PRJ-OR1T Phase 6). Was the single hardcoded thread id 'main';
-// now the seeded catch-all channel that holds pre-Phase-6 history and any turn or
-// task sent without an explicit channel.
-export const GENERAL_CHANNEL = "general"
-
-// Seed the General channel and fold the legacy single-thread 'main' history into
-// it. Idempotent: INSERT OR IGNORE no-ops once General exists, and the backfill
-// only rewrites rows still tagged 'main'.
-db.query("INSERT OR IGNORE INTO orchestrator_channels (id, name, cwd, created_at) VALUES (?, 'General', NULL, ?)").run(
-  GENERAL_CHANNEL,
-  Date.now(),
-)
-db.query("UPDATE orchestrator_turns SET thread_id = ? WHERE thread_id = ?").run(GENERAL_CHANNEL, "main")
-db.query("UPDATE orchestrator_tasks SET thread_id = ? WHERE thread_id = ?").run(GENERAL_CHANNEL, "main")
+// by task. Turns and local tasks; the sqlite store is orchestrator-db.ts and the
+// channel roster orchestrator-channels.ts.
 
 export type TurnRole = "user" | "orchestrator" | "worker"
 // proposed → (approve | auto) → dispatched → running → done | error ; (reject) → rejected
 // Backpressure (Phase 7): past the WIP cap an admitted task parks as queued and
 // drains FIFO into dispatched when a live worker exits. cancelled = user pulled a
 // queued/dispatched/running task (its tmux worker is killed).
-export type TaskStatus = "proposed" | "queued" | "dispatched" | "running" | "done" | "error" | "rejected" | "cancelled"
+// filed (orchestrator-one-queue P2) = approved and handed to Turso `tasks`
+// under dispatch_task_id; the local row is history, listTasks hides it.
+export type TaskStatus = "proposed" | "queued" | "dispatched" | "running" | "done" | "error" | "rejected" | "cancelled" | "filed"
 
 // Statuses that hold a worker slot against the WIP cap.
 export const LIVE_STATUSES: readonly TaskStatus[] = ["dispatched", "running"]
@@ -107,12 +34,24 @@ export interface Task {
   cwd: string
   sessionKey: string | null
   tmuxSession: string | null
+  // Socket path of the tmux server holding tmuxSession (COMPANION_TMUX_SOCKET).
+  // null/absent = the default server.
+  tmuxSocket?: string | null
   reasoning: string | null
   logTail: string | null
   status: TaskStatus
   createdAt: number
   updatedAt: number
+  // Proposal target (P2): the Turso project note + agent it files to, and the
+  // Turso id it was (or is being) filed as. Absent on legacy rows.
+  noteId?: string | null
+  agent?: string | null
+  title?: string | null
+  dispatchTaskId?: string | null
 }
+
+/** Where a proposal files to; every field optional (resolved at approve time). */
+export interface ProposalTarget { noteId?: string | null; agent?: string | null; title?: string | null }
 
 interface TurnRow {
   id: string
@@ -130,11 +69,16 @@ interface TaskRow {
   cwd: string
   session_key: string | null
   tmux_session: string | null
+  tmux_socket: string | null
   reasoning: string | null
   log_tail: string | null
   status: TaskStatus
   created_at: number
   updated_at: number
+  note_id: string | null
+  agent: string | null
+  title: string | null
+  dispatch_task_id: string | null
 }
 
 function toTurn(r: TurnRow): Turn {
@@ -149,11 +93,16 @@ function toTask(r: TaskRow): Task {
     cwd: r.cwd,
     sessionKey: r.session_key,
     tmuxSession: r.tmux_session,
+    tmuxSocket: r.tmux_socket ?? null,
     reasoning: r.reasoning,
     logTail: r.log_tail,
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    noteId: r.note_id ?? null,
+    agent: r.agent ?? null,
+    title: r.title ?? null,
+    dispatchTaskId: r.dispatch_task_id ?? null,
   }
 }
 
@@ -197,14 +146,18 @@ export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn
 
 function insertTask(task: Task): void {
   db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, reasoning, log_tail, status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, tmux_socket, reasoning, log_tail, status, created_at, updated_at, note_id, agent, title) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     task.taskId, task.threadId, task.prompt, task.cwd, task.sessionKey,
-    task.tmuxSession, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
+    task.tmuxSession, task.tmuxSocket || null, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
+    task.noteId ?? null, task.agent ?? null, task.title ?? null,
   )
 }
 
+// Legacy (pre-P2) local rows: no production caller since P4 — headless work is
+// filed to Turso and live runs start from a proposal row (createProposal +
+// stampDispatchId). Kept for the legacy-history fixtures in the tests.
 // Direct dispatch (Phase 1, manual /dispatch): task is spawned immediately.
 export function createTask(prompt: string, cwd: string, tmuxSession: string | null = null, threadId: string = GENERAL_CHANNEL): Task {
   const now = Date.now()
@@ -230,24 +183,63 @@ export function createQueuedTask(prompt: string, cwd: string, threadId: string =
 
 // Propose-confirm (Phase 2): the brain proposes a dispatch; nothing spawns until
 // the user approves (setTaskSpawn flips it to dispatched).
-export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL): Task {
+export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL, target: ProposalTarget = {}): Task {
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
     sessionKey: null, tmuxSession: null, reasoning, logTail: null, status: "proposed", createdAt: now, updatedAt: now,
+    noteId: target.noteId ?? null, agent: target.agent ?? null, title: target.title ?? null, dispatchTaskId: null,
   }
   insertTask(task)
   return task
 }
 
-// Approve a proposal: record the spawned worker's tmux session and flip to
-// dispatched so reconcileDispatch picks it up and delivers the prompt.
-export function setTaskSpawn(taskId: string, tmuxSession: string | null): void {
-  db.query("UPDATE orchestrator_tasks SET tmux_session = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?").run(
+// Approve a proposal: record the spawned worker's tmux session (and the server
+// it is on — "" / null = default) and flip to dispatched so reconcileDispatch
+// picks it up and delivers the prompt.
+export function setTaskSpawn(taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null): void {
+  db.query("UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?").run(
     tmuxSession,
+    tmuxSocket || null,
     Date.now(),
     taskId,
   )
+}
+
+// ---- filing (orchestrator-one-queue P2) -------------------------------------
+
+/**
+ * Stamp the Turso id a proposal will be filed as, BEFORE the Turso insert, so a
+ * retried approve reuses it (INSERT OR IGNORE → never two rows). COALESCE keeps
+ * the first id if two approves race. Returns the stamped id, null unless proposed.
+ */
+export function stampDispatchId(taskId: string, freshId: string): string | null {
+  db.query("UPDATE orchestrator_tasks SET dispatch_task_id = COALESCE(dispatch_task_id, ?) WHERE task_id = ? AND status = 'proposed'").run(freshId, taskId)
+  const row = db.query("SELECT dispatch_task_id, status FROM orchestrator_tasks WHERE task_id = ?").get(taskId) as
+    | { dispatch_task_id: string | null; status: TaskStatus }
+    | null
+  return row?.status === "proposed" ? row.dispatch_task_id : null
+}
+
+/** proposed → filed once the Turso row exists. False when it was not proposed. */
+export function markFiled(taskId: string, target: { noteId: string; agent: string }): boolean {
+  const res = db.query(
+    "UPDATE orchestrator_tasks SET status = 'filed', note_id = ?, agent = ?, updated_at = ? WHERE task_id = ? AND status = 'proposed' AND dispatch_task_id IS NOT NULL",
+  ).run(target.noteId, target.agent, Date.now(), taskId)
+  return res.changes > 0
+}
+
+/** Live run (P4): pin the cwd / note / agent a proposal runs with, while still proposed. */
+export function setLiveTarget(taskId: string, target: { cwd: string; noteId: string; agent: string }): boolean {
+  const res = db.query(
+    "UPDATE orchestrator_tasks SET cwd = ?, note_id = ?, agent = ?, updated_at = ? WHERE task_id = ? AND status = 'proposed'",
+  ).run(target.cwd, target.noteId, target.agent, Date.now(), taskId)
+  return res.changes > 0
+}
+
+export function getTaskByDispatchId(dispatchTaskId: string): Task | null {
+  const row = db.query("SELECT * FROM orchestrator_tasks WHERE dispatch_task_id = ?").get(dispatchTaskId) as TaskRow | null
+  return row ? toTask(row) : null
 }
 
 export function getTask(taskId: string): Task | null {
@@ -358,11 +350,27 @@ export function countRunningTasksInCwd(cwd: string): number {
 
 // List tasks, optionally scoped to one channel. threadId omitted → all channels
 // (the Tasks panel's global view); scoped → that channel's dispatched work.
+// Filed proposals are hidden: their Turso task is listed instead (P2). So are
+// live runs (P4): a local worker row linked to a Turso id past `proposed` — the
+// Turso row carries its tmux identity.
+const LISTED = "status != 'filed' AND (dispatch_task_id IS NULL OR status IN ('proposed', 'rejected'))"
+
 export function listTasks(threadId?: string): Task[] {
   const rows = threadId
-    ? (db.query("SELECT * FROM orchestrator_tasks WHERE thread_id = ? ORDER BY created_at DESC LIMIT 100").all(threadId) as TaskRow[])
-    : (db.query("SELECT * FROM orchestrator_tasks ORDER BY created_at DESC LIMIT 100").all() as TaskRow[])
+    ? (db.query(`SELECT * FROM orchestrator_tasks WHERE thread_id = ? AND ${LISTED} ORDER BY created_at DESC LIMIT 100`).all(threadId) as TaskRow[])
+    : (db.query(`SELECT * FROM orchestrator_tasks WHERE ${LISTED} ORDER BY created_at DESC LIMIT 100`).all() as TaskRow[])
   return rows.map(toTask)
+}
+
+// Every pending proposal, any channel, oldest first (triage).
+export function listProposals(limit = 200): Task[] {
+  return (db.query("SELECT * FROM orchestrator_tasks WHERE status = 'proposed' ORDER BY created_at ASC LIMIT ?").all(limit) as TaskRow[]).map(toTask)
+}
+
+// Every local worker row that may still hold a tmux worker (dispatched/running),
+// listed or not — the worker tail resumes these on boot.
+export function listLiveTasks(): Task[] {
+  return (db.query("SELECT * FROM orchestrator_tasks WHERE status IN ('dispatched', 'running') ORDER BY created_at ASC").all() as TaskRow[]).map(toTask)
 }
 
 // ---- backpressure (PRJ-OR1T Phase 7) --------------------------------------
@@ -382,108 +390,4 @@ export function listQueued(): Task[] {
     .query("SELECT * FROM orchestrator_tasks WHERE status = 'queued' ORDER BY created_at ASC")
     .all() as TaskRow[]
   return rows.map(toTask)
-}
-
-// ---- channels (PRJ-OR1T Phase 6) ------------------------------------------
-
-// Trust ramp (Phase 7): how this channel's proposals have fared. approved = the
-// user (or auto mode) let it run; rejected = tapped reject; streak = consecutive
-// approvals since the last reject, newest first. eligible flags a streak long
-// enough that the client may suggest auto-dispatch — the server never flips it.
-export interface ChannelTrust {
-  approved: number
-  rejected: number
-  streak: number
-  eligible: boolean
-}
-
-export const AUTO_ELIGIBLE_STREAK = 5
-
-export interface Channel {
-  id: string
-  name: string
-  cwd: string | null
-  createdAt: number
-  archived: boolean
-  autoDispatch: boolean
-  trust: ChannelTrust
-}
-
-interface ChannelRow {
-  id: string
-  name: string
-  cwd: string | null
-  created_at: number
-  archived: number
-  auto_dispatch: number
-}
-
-// Proposals are the tasks that carry brain reasoning; manual /dispatch tasks
-// don't count toward trust because the user never had a proposal to judge.
-export function channelTrust(threadId: string): ChannelTrust {
-  const rows = db
-    .query(
-      // rowid breaks same-millisecond ties so the streak walks true insertion order.
-      "SELECT status FROM orchestrator_tasks WHERE thread_id = ? AND reasoning IS NOT NULL AND status != 'proposed' ORDER BY created_at DESC, rowid DESC LIMIT 200",
-    )
-    .all(threadId) as { status: TaskStatus }[]
-  let approved = 0
-  let rejected = 0
-  let streak = 0
-  let streakOpen = true
-  for (const r of rows) {
-    if (r.status === "rejected") {
-      rejected++
-      streakOpen = false
-    } else {
-      approved++
-      if (streakOpen) streak++
-    }
-  }
-  return { approved, rejected, streak, eligible: streak >= AUTO_ELIGIBLE_STREAK }
-}
-
-function toChannel(r: ChannelRow): Channel {
-  return {
-    id: r.id, name: r.name, cwd: r.cwd, createdAt: r.created_at, archived: !!r.archived,
-    autoDispatch: !!r.auto_dispatch, trust: channelTrust(r.id),
-  }
-}
-
-// Flip a channel's auto-dispatch. Returns the updated channel, null if unknown.
-export function setChannelAuto(id: string, enabled: boolean): Channel | null {
-  db.query("UPDATE orchestrator_channels SET auto_dispatch = ? WHERE id = ?").run(enabled ? 1 : 0, id)
-  return getChannel(id)
-}
-
-function slugify(name: string): string {
-  return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "channel"
-}
-
-export function listChannels(): Channel[] {
-  const rows = db
-    .query("SELECT * FROM orchestrator_channels WHERE archived = 0 ORDER BY created_at ASC")
-    .all() as ChannelRow[]
-  return rows.map(toChannel)
-}
-
-export function getChannel(id: string): Channel | null {
-  const row = db.query("SELECT * FROM orchestrator_channels WHERE id = ?").get(id) as ChannelRow | null
-  return row ? toChannel(row) : null
-}
-
-// Create a user-defined channel. The id is a slug of the name, disambiguated with
-// a -N suffix on collision so two "TLS Dashboard" channels can coexist.
-export function createChannel(name: string, cwd: string | null = null): Channel {
-  const base = slugify(name)
-  let id = base
-  for (let n = 2; getChannel(id); n++) id = `${base}-${n}`
-  const ch: Channel = {
-    id, name: name.trim(), cwd: cwd?.trim() || null, createdAt: Date.now(), archived: false,
-    autoDispatch: false, trust: { approved: 0, rejected: 0, streak: 0, eligible: false },
-  }
-  db.query("INSERT INTO orchestrator_channels (id, name, cwd, created_at, archived, auto_dispatch) VALUES (?, ?, ?, ?, 0, 0)").run(
-    ch.id, ch.name, ch.cwd, ch.createdAt,
-  )
-  return ch
 }

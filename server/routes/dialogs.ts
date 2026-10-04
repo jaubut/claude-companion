@@ -3,6 +3,7 @@ import { ESC_SETTLE_MS } from "../lib/command-list"
 import { pickKeys } from "../lib/dialogs"
 import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
+import { paneKey, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -23,7 +24,9 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
     const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(name)
     if (!named && [...name].length !== 1) return Response.json({ ok: false, error: "name must be a key name or one character" }, { status: 400 })
-    const args = named ? ["send-keys", "-t", session.tmuxPane, name] : ["send-keys", "-t", session.tmuxPane, "-l", name]
+    const ref = { pane: session.tmuxPane, socket: session.tmuxSocket ?? "" }
+    const gateKey = paneKey(ref.pane, ref.socket)
+    const args = named ? sendKeysArgs(ref, name) : sendKeysArgs(ref, "-l", name)
     try {
       // Through the shared per-pane gate (lib/key-gate.ts). Escape is a
       // meta-chord PREFIX (ESC_SETTLE_MS, lib/command-list.ts): a key arriving
@@ -31,7 +34,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
       // response only serialised one client's taps; the gate spaces EVERY
       // sender on the pane — a second phone, /api/model/cancel, the /help
       // close path — behind the Escape's window.
-      await keyGate.send(session.tmuxPane, name, (signal) => runTmux(args, signal))
+      await keyGate.send(gateKey, name, (signal) => runTmux(args, signal))
     } catch {
       return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
     }
@@ -40,7 +43,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     // with no tmux pane, typed through osascript on the Mac.
     if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
     const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    companionLog(`${cyan}dialog key${reset} ${name} → ${session.tmuxPane}`)
+    companionLog(`${cyan}dialog key${reset} ${name} → ${gateKey}`)
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)
     return Response.json({ ok: true })
   }
@@ -56,9 +59,10 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     const dialog = dialogWatcher.current()[session.key]
     const keys = dialog ? pickKeys(dialog, typeof body.index === "number" ? body.index : -1) : null
     if (!keys) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
+    const ref = { pane: session.tmuxPane, socket: session.tmuxSocket ?? "" }
     try {
       for (const k of keys) {
-        await keyGate.send(session.tmuxPane, k, (signal) => runTmux(["send-keys", "-t", session.tmuxPane!, k], signal))
+        await keyGate.send(paneKey(ref.pane, ref.socket), k, (signal) => runTmux(sendKeysArgs(ref, k), signal))
         await new Promise((r) => setTimeout(r, 40))
       }
     } catch {
