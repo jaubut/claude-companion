@@ -158,6 +158,7 @@ import { startReceiptQa } from "./server/wiring/receipt-qa"
 import { dispatchWiring } from "./server/wiring/dispatch"
 import { reconcileLiveOnBoot } from "./server/wiring/live"
 import { startBodyInvestigate } from "./server/wiring/body-investigate"
+import { startTriage } from "./server/wiring/triage"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -180,6 +181,8 @@ dispatchWiring.start()
 void reconcileLiveOnBoot().catch(() => { /* logged inside; never blocks boot */ })
 // Body auto-investigation: close runs a restart interrupted, sweep in 60 s, then every 10 min.
 startBodyInvestigate()
+// Brain triage: recompute after every dispatch poll / proposal change; phrase new items in the background.
+startTriage()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"

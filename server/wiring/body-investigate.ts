@@ -3,7 +3,7 @@ import { apnsConfigured } from "../lib/apns"
 import { BODY_CHANNEL, BODY_CHANNEL_NAME, buildComponentDetail } from "../lib/body"
 import { bodyPushEnabled } from "../lib/body-alert"
 import { createBodyFixStore } from "../lib/body-fix"
-import { createInvestigationStore, investigateEnabled, isProblemState, localBodyHost } from "../lib/body-investigate"
+import { type InvestigationStore, createInvestigationStore, investigateEnabled, isProblemState, localBodyHost } from "../lib/body-investigate"
 import {
   type BodyInvestigator, DEFAULT_NOTE_ID, bodyPeer, createBodyInvestigator, createReportApplier, investigationDigestFor as engineDigestFor,
   peerForwarder, peerReporter, writeInvestigationEvent,
@@ -72,6 +72,11 @@ let live: BodyInvestigator | null = null
 export function bodyInvestigator(): BodyInvestigator {
   live ??= makeLive()
   return live
+}
+
+/** The investigation records (triage reads the failed-twice components). */
+export function investigationStore(): InvestigationStore {
+  return store
 }
 
 /** #Body / health questions: open + recent investigations for the brain. */

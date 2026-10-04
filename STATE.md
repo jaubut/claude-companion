@@ -4,6 +4,12 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Brain triage: one phrased decision card per queue item, actions through the existing guarded paths
+**Date:** 2026-10-04 (branch `feat/brain-triage`)
+**Choice:** `GET /api/orchestrator/triage` + `POST …/triage/<id>/choose` + `orchestrator_triage` frame (contract `docs/orchestrator-triage-api.md`). Sources: blocked / failed-retryable dispatch tasks, every pending proposal (Mac fix cards keep their host routing — approve/reject now live in `wiring/proposals.ts`, shared with the route), PRs the shepherd parked (`pr:needs-human`) + a 48 h safety net, Body components whose diagnosis failed twice. One lean `claude -p --model sonnet` per (item, version), cached in companion.db; GET serves the deterministic fallback at once and the phrased card replaces it in the next frame. Jev may set severity (≥ 0.7), else heuristics. merge/close only through `gh` by full URL with the state read back.
+**Why:** Jeremie 2026-10-04: "the queue should be triaged first, then phrased as a simple problem / action / options for me to choose."
+**Revisit if:** sonnet phrasing drifts (labels clipped, action text contradicting the recommended option), the 48 h PR net is noisy once the shepherd ships, or merges from the phone need a confirm beyond the option tap.
+
 ### Jev front door routes every orchestrator message; shadow until the report clears the bar
 **Date:** 2026-10-04 (branch `feat/brain-jev-frontdoor`)
 **Choice:** `/api/orchestrator/send` → `wiring/front-door.ts`: one Jev call (intent status|quick_look|task|body|chat + project over every project note ∪ REPO_MAP, 2 s timeout). `COMPANION_JEV_ROUTER` = `shadow` (default: logged to companion.db `jev_route_log`, the old Haiku→Opus brain answers), `live` (all routes: status by code, quick_look by a read-only `claude -p` in the repo, task straight to compose, body with the digest forced, chat / < `COMPANION_JEV_MIN_CONF` 0.7 → old brain), `off`. Jeremie flips `live` after `bun cli.ts jev-report` shows ≥ 20 confident decisions and ≥ 75 % intent agreement where the old path is a valid label (status / quick_look / body are new capabilities, not judged against the old "chat"). Shipped regardless of the flag: lean brain `claude -p` flags, all projects + repo map in both brain prompts, no "which repo path?" questions, and a transient "⏳ on it…" turn after 800 ms.
@@ -73,6 +79,63 @@ Last updated: 2026-10-04
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — brain-triage (2026-10-04)
+**Request (Jeremie):** "the queue should be triaged first, then phrased as a simple problem / action / options for me to choose." Contract: `docs/orchestrator-triage-api.md` (copied from the shared triage CONTRACT.md; the iOS builder codes against the same file).
+**Done when:**
+- `GET /api/orchestrator/triage` → `{items, generatedAt}`: blocked tasks, failed-retryable tasks, pending proposals in every channel (Mac fix cards included), PRs the shepherd parked (`agent_activity` `pr:needs-human`) + PRs open > 48 h with no shepherd row, Body components whose investigation failed twice. Urgent first, then oldest.
+- Each item phrased once per (source, refId, underlying version) by ONE lean `claude -p --model sonnet` call (strict JSON, plain words, 2–4 options, recommended first, every option an allowed action for its source), cached in companion.db `triage_phrases`. Invalid output or no model → deterministic fallback. Jev may set severity (confidence ≥ 0.7), else heuristics.
+- `POST /api/orchestrator/triage/<id>/choose {optionId, text?}` + `Idempotency-Key`: the mapped action through the existing guarded paths (unblock / requeue / cancel = `lib/dispatch-tasks.ts`; approve / reject = the proposal route's path, now shared in `wiring/proposals.ts`, so a Mac fix card still forwards to the Mac; merge / close via `gh` on the PR URL with the state verified MERGED / CLOSED; Body requeue = a forced `consider`). Choice records in `triage_choices` replay; 409 stale when the underlying version moved; 422 `text_required`; 503 turso/gh unreachable. Snooze stored locally (`triage_snoozes`).
+- WS `orchestrator_triage {items, generatedAt}` once per change (items compared without generatedAt), recomputed after every dispatch poll, every proposal change and every choose.
+- #General / #Body brain context gains a one-line triage count.
+
+**State decisions**
+- companion.db tables owned by `lib/triage-store.ts` (injected `Database`): `triage_phrases(item_id PK, version, phrase_json, severity, origin model|fallback, created_at)` — a fallback row is retried after 10 min; `triage_snoozes(item_id PK, until)`; `triage_choices(item_id, idem_key, option_id, result_json, created_at, PK(item_id, idem_key))`, pruned after 7 days.
+- Versions: task = `status|updated_at`; proposal = local `updatedAt`; pr = task `updated_at|last pr:* activity id`; body = latest investigation id.
+- `open_url` for a Body component = `companion://body/<componentId>` (new deep link for iOS); for a PR = the PR URL.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `GET /api/orchestrator/triage` | endpoint NEW | items + generatedAt | new |
+| `POST /api/orchestrator/triage/<id>/choose` | endpoint NEW | id percent-encoded (pr ids carry `/` and `#`) | new |
+| `orchestrator_triage` | frame NEW | items + generatedAt | old iOS ignores unknown frames |
+| `POST /api/body/investigate` | endpoint | optional `force: true` (peer hop, triage requeue) | additive |
+
+**Files — one owner (builder)**
+| file | change |
+|---|---|
+| `docs/orchestrator-triage-api.md` | NEW: the contract |
+| `server/lib/triage.ts` | NEW pure: types, allowed actions per source, prompt, validation, fallback, severity heuristics, ordering |
+| `server/lib/triage-store.ts` | NEW: sqlite phrases / snoozes / choices |
+| `server/lib/triage-engine.ts` | NEW: refresh (cache, background phrasing, emit on change), choose (idempotency, stale, snooze) over injected seams |
+| `server/lib/triage-sources.ts` | NEW: collectors (tasks from the poller snapshot, proposals, PR query, Body investigations) |
+| `server/wiring/triage.ts` | NEW: live instance — executor, sonnet phraser, Jev severity, gh |
+| `server/wiring/proposals.ts` | NEW: approve / reject moved out of `routes/orchestrator.ts` (behaviour unchanged) |
+| `server/routes/triage.ts` | NEW: the two endpoints |
+| `server/routes/orchestrator.ts` | proposal route calls `wiring/proposals.ts`; `vetoAuto` moves to wiring |
+| `server/wiring/orchestrator.ts` | `vetoAuto`, triage digest hook in `brainContext`, task-change listener |
+| `server/lib/dispatch-poller.ts`, `server/wiring/dispatch.ts` | `onPolled` listener after each successful poll / applyLocal |
+| `server/lib/orchestrator-brain.ts` | export the lean call (`runBrainCall`) |
+| `server/lib/body-investigate*.ts`, `server/lib/body-investigator.ts` | `force` through gate, forwarder and body parse |
+| `server/companion-server.ts`, `cli.ts` | chain the route, start the engine |
+
+**Risks / failure modes**
+- Sonnet slow or down: GET never waits for it (fallback first, phrased text replaces it in the next frame).
+- `gh` missing or not authenticated on the host → 503 `gh_unreachable`; the merge is verified by `gh pr view --json state` before the task is marked done.
+- A merge that `gh` reports but GitHub has not finished (auto-merge queued) → 502 `merge_unverified`, the task untouched.
+- The PR shepherd may not have shipped yet: only the 48 h safety net shows PRs until it does.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated + `--check --lint`.
+2. Smoke on this Mac, read-only against real Turso: print the triage items for the current queue; never call choose.
+
+**Out of scope:** iOS UI, the PR shepherd itself, pushes for triage items.
+
+**Build notes (2026-10-04, `feat/brain-triage`):**
+- Shipped as planned, plus `lib/triage-pr.ts` (merge/close with injected `gh`) and `orchestrator-chat.listProposals()`.
+- Smoke on this Mac (real Turso read-only, a COPY of companion.db, choose never called): 130 tasks polled; 4 items (all blocked tasks — proposals live on Zettlab, no PR parked or past 48 h yet, no Body component failed twice here). GET with fallbacks 263–524 ms; 3–4 sonnet phrasings in 5.6–12.8 s total in the background. Phrasing follows the item's language (French tasks → French cards); one card came back urgent.
+- Known model quirk: a label over 32 chars is clipped with "…"; once the action sentence did not match the recommended option. Both are cosmetic; validation guarantees every option maps to an allowed action.
 
 ### Change Plan — brain-jev-frontdoor (2026-10-04)
 **Request (Jeremie):** "the orchestrator feels stupid and it's slow to respond. how can we leverage jev speed to help route my asks?"

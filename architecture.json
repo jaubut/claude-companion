@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 95,
+          "lines": 96,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -53,6 +53,7 @@
             "routes/hooks.ts",
             "routes/api.ts",
             "routes/orchestrator.ts",
+            "routes/triage.ts",
             "routes/dialogs.ts",
             "routes/model.ts",
             "routes/command.ts",
@@ -402,7 +403,7 @@
         },
         {
           "path": "lib/body-investigate-engine.ts",
-          "lines": 365,
+          "lines": 367,
           "kind": "lib",
           "exports": [
             "PEER_TIMEOUT_MS",
@@ -455,7 +456,7 @@
         },
         {
           "path": "lib/body-investigate.ts",
-          "lines": 399,
+          "lines": 402,
           "kind": "lib",
           "exports": [
             "PROBLEM_STATES",
@@ -504,7 +505,7 @@
         },
         {
           "path": "lib/body-investigator.ts",
-          "lines": 386,
+          "lines": 389,
           "kind": "lib",
           "exports": [
             "INVESTIGATE_TIMEOUT_MS",
@@ -1072,7 +1073,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 363,
+          "lines": 375,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -1645,13 +1646,14 @@
         },
         {
           "path": "lib/orchestrator-brain.ts",
-          "lines": 272,
+          "lines": 277,
           "kind": "lib",
           "exports": [
             "BrainDecision",
             "ComposeTargets",
             "DecideOpts",
             "brainArgs",
+            "runBrainCall",
             "contextLines",
             "decide"
           ],
@@ -1703,7 +1705,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 389,
+          "lines": 394,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -1735,6 +1737,7 @@
             "countUnboundTasksInCwd",
             "countRunningTasksInCwd",
             "listTasks",
+            "listProposals",
             "listLiveTasks",
             "countLiveTasks",
             "listQueued"
@@ -2919,6 +2922,178 @@
           "externals": []
         },
         {
+          "path": "lib/triage-engine.ts",
+          "lines": 239,
+          "kind": "lib",
+          "exports": [
+            "ExecOutcome",
+            "TriageEngineDeps",
+            "ChooseInput",
+            "ChooseResult",
+            "HOUR_MS",
+            "createTriageEngine",
+            "TriageEngine"
+          ],
+          "state": [],
+          "emits": [
+            "orchestrator_triage"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-tasks.ts",
+            "lib/triage.ts",
+            "lib/triage-store.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/triage-pr.ts",
+          "lines": 113,
+          "kind": "lib",
+          "exports": [
+            "GhResult",
+            "GhFn",
+            "GhUnreachable",
+            "PrTarget",
+            "PrActionDeps",
+            "PrState",
+            "prState",
+            "mergePr",
+            "closePr",
+            "GH_TIMEOUT_MS",
+            "realGh"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/triage-engine.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/triage-sources.ts",
+          "lines": 177,
+          "kind": "lib",
+          "exports": [
+            "PR_SAFETY_NET_MS",
+            "BODY_WINDOW_MS",
+            "NEEDS_HUMAN",
+            "taskVersion",
+            "taskNeedsHuman",
+            "taskSource",
+            "taskSources",
+            "ProposalInfo",
+            "proposalSource",
+            "PrRef",
+            "parsePrUrl",
+            "PrRows",
+            "queryPrRows",
+            "prSources",
+            "bodyComponentUrl",
+            "BodyLookup",
+            "bodySources"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-tasks.ts",
+            "lib/body-investigate.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/triage.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/triage-store.ts",
+          "lines": 89,
+          "kind": "lib",
+          "exports": [
+            "FALLBACK_RETRY_MS",
+            "CHOICE_TTL_MS",
+            "PHRASE_TTL_MS",
+            "PhraseOrigin",
+            "CachedPhrase",
+            "ChoiceRecord",
+            "TriageStore",
+            "createTriageStore"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/triage.ts",
+          "lines": 334,
+          "kind": "lib",
+          "exports": [
+            "TriageSource",
+            "Severity",
+            "TriageAction",
+            "ActionKind",
+            "TriageOption",
+            "TriageItem",
+            "SourceRef",
+            "SourceItem",
+            "Phrase",
+            "TITLE_MAX",
+            "LABEL_MAX",
+            "DETAIL_MAX",
+            "PROBLEM_MAX",
+            "ACTION_MAX",
+            "CONTEXT_MAX",
+            "ANSWER_TEXT_MAX",
+            "SNOOZE_MAX_HOURS",
+            "itemId",
+            "allowedActions",
+            "clip",
+            "phrasePrompt",
+            "looksFrench",
+            "finishOptions",
+            "validatePhrase",
+            "fallbackPhrase",
+            "heuristicSeverity",
+            "orderItems",
+            "buildItem",
+            "triageDigest"
+          ],
+          "state": [
+            "DESTRUCTIVE: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/turso.ts",
           "lines": 137,
           "kind": "lib",
@@ -3615,7 +3790,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 464,
+          "lines": 426,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -3685,7 +3860,7 @@
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
             "wiring/live.ts",
-            "wiring/body-fix.ts",
+            "wiring/proposals.ts",
             "wiring/front-door.ts",
             "state.ts",
             "lib/idempotency.ts",
@@ -3724,6 +3899,28 @@
             "lib/records-store.ts",
             "lib/vault-guard.ts",
             "lib/vault-upstream.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/triage.ts",
+          "lines": 61,
+          "kind": "lib",
+          "exports": [
+            "createTriageHandler",
+            "handleTriageRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/idempotency.ts",
+            "lib/triage-engine.ts",
+            "wiring/triage.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3814,13 +4011,14 @@
         },
         {
           "path": "wiring/body-investigate.ts",
-          "lines": 93,
+          "lines": 98,
           "kind": "lib",
           "exports": [
             "SWEEP_MS",
             "BOOT_SWEEP_DELAY_MS",
             "bodyFixStore",
             "bodyInvestigator",
+            "investigationStore",
             "investigationDigestFor",
             "startBodyInvestigate"
           ],
@@ -3929,13 +4127,16 @@
         },
         {
           "path": "wiring/dispatch.ts",
-          "lines": 43,
+          "lines": 52,
           "kind": "lib",
           "exports": [
             "dispatchPushEnabled",
+            "onDispatchPolled",
             "dispatchWiring"
           ],
-          "state": [],
+          "state": [
+            "polledListeners: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -4120,13 +4321,16 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 465,
+          "lines": 491,
           "kind": "lib",
           "exports": [
             "orchEmit",
             "emitTask",
+            "onTaskEmitted",
+            "setTriageDigest",
             "onLiveWorkerDead",
             "emitChannel",
+            "vetoAuto",
             "WIP_CAP",
             "workerQueue",
             "workerTail",
@@ -4145,6 +4349,8 @@
             "runBrain"
           ],
           "state": [
+            "taskListeners: Set",
+            "let triageDigest",
             "let liveWorkerDead",
             "let reconcileChain"
           ],
@@ -4172,11 +4378,39 @@
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/body.ts",
+            "lib/orchestrator-db.ts",
             "wiring/body.ts",
             "wiring/body-investigate.ts",
             "lib/dispatch-tasks.ts",
             "lib/turso.ts",
             "wiring/dispatch.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/proposals.ts",
+          "lines": 50,
+          "kind": "lib",
+          "exports": [
+            "ApproveOpts",
+            "liveResponse",
+            "approveProposal",
+            "rejectProposal"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-chat.ts",
+            "lib/dispatch-tasks.ts",
+            "wiring/body-fix.ts",
+            "wiring/dispatch.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4206,6 +4440,53 @@
             "lib/receipt-qa-store.ts",
             "lib/receipt-qa-worker.ts",
             "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/triage.ts",
+          "lines": 248,
+          "kind": "lib",
+          "exports": [
+            "PR_ROWS_TTL_MS",
+            "JEV_MIN_CONF",
+            "LiveTriageOpts",
+            "createLiveTriage",
+            "triageEngine",
+            "TRIAGE_TICK_MS",
+            "startTriage"
+          ],
+          "state": [
+            "let live"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/body-investigate.ts",
+            "lib/body-investigate-engine.ts",
+            "lib/jev.ts",
+            "lib/log.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-db.ts",
+            "lib/triage.ts",
+            "lib/triage-engine.ts",
+            "lib/triage-pr.ts",
+            "lib/triage-sources.ts",
+            "lib/triage-store.ts",
+            "state.ts",
+            "wiring/body.ts",
+            "wiring/body-investigate.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4409,6 +4690,12 @@
         },
         "handleRecordsRoute": {
           "module": "routes/records.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleTriageRoute": {
+          "module": "routes/triage.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -4622,6 +4909,7 @@
             "wiring/front-door.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/triage.ts",
             "ws.ts"
           ]
         },
@@ -4712,7 +5000,10 @@
         "InvestigationStore": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "lib/triage-sources.ts",
+            "wiring/body-investigate.ts",
+            "wiring/triage.ts"
           ]
         },
         "InvestigationReport": {
@@ -4738,7 +5029,8 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts",
-            "wiring/body-investigate.ts"
+            "wiring/body-investigate.ts",
+            "wiring/triage.ts"
           ]
         },
         "gate": {
@@ -4802,12 +5094,14 @@
             "lib/body-investigate-engine.ts",
             "lib/dispatch-tasks.ts",
             "lib/orchestrator-queue.ts",
+            "lib/triage-sources.ts",
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
             "wiring/body-fix.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts"
           ]
         },
         "FixCard": {
@@ -4842,7 +5136,8 @@
           "callers": [
             "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
-            "lib/dispatch-tasks.ts"
+            "lib/dispatch-tasks.ts",
+            "lib/triage-pr.ts"
           ]
         },
         "getAuthToken": {
@@ -4917,6 +5212,7 @@
           "callers": [
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
+            "lib/triage-sources.ts",
             "routes/goals.ts"
           ]
         },
@@ -4926,6 +5222,7 @@
             "lib/body.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
+            "lib/triage-sources.ts",
             "routes/body.ts",
             "routes/goals.ts"
           ]
@@ -5333,8 +5630,10 @@
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
             "lib/status-answer.ts",
+            "lib/triage-sources.ts",
             "routes/orchestrator.ts",
-            "wiring/live.ts"
+            "wiring/live.ts",
+            "wiring/triage.ts"
           ]
         },
         "phaseOf": {
@@ -5347,7 +5646,8 @@
         "DispatchColumns": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "lib/triage-sources.ts"
           ]
         },
         "LiveIdentity": {
@@ -5442,6 +5742,7 @@
           "module": "lib/turso.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/triage-engine.ts",
             "routes/body.ts",
             "routes/goals.ts#GET /api/goals",
             "routes/orchestrator.ts",
@@ -5459,7 +5760,8 @@
         "SqlArg": {
           "module": "lib/turso.ts",
           "callers": [
-            "lib/dispatch-tasks.ts"
+            "lib/dispatch-tasks.ts",
+            "lib/triage-sources.ts"
           ]
         },
         "Catalog": {
@@ -5633,7 +5935,8 @@
         "systemOne": {
           "module": "lib/jev.ts",
           "callers": [
-            "lib/jev-router.ts"
+            "lib/jev-router.ts",
+            "wiring/triage.ts"
           ]
         },
         "paneKey": {
@@ -5693,7 +5996,8 @@
           "callers": [
             "lib/orchestrator-chat.ts",
             "routes/orchestrator.ts",
-            "wiring/dispatch.ts"
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "listQueued": {
@@ -6547,6 +6851,112 @@
             "lib/transcript.ts"
           ]
         },
+        "TriageOption": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "TriageItem": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "SourceItem": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts",
+            "lib/triage-sources.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "Phrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts",
+            "lib/triage-store.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "itemId": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts",
+            "lib/triage-store.ts"
+          ]
+        },
+        "validatePhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "heuristicSeverity": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "orderItems": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "buildItem": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "triageDigest": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-engine.ts"
+          ]
+        },
+        "TriageStore": {
+          "module": "lib/triage-store.ts",
+          "callers": [
+            "lib/triage-engine.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "ANSWER_MAX": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/triage-engine.ts",
+            "routes/orchestrator.ts"
+          ]
+        },
+        "ExecOutcome": {
+          "module": "lib/triage-engine.ts",
+          "callers": [
+            "lib/triage-pr.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "clip": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/triage-sources.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "parseTs": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/triage-sources.ts"
+          ]
+        },
         "checkBearerHeaderOnly": {
           "module": "lib/auth.ts",
           "callers": [
@@ -6577,7 +6987,8 @@
             "routes/orchestrator.ts",
             "wiring/body-fix.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/triage.ts"
           ]
         },
         "matchUnboundTaskByTmuxSession": {
@@ -6677,6 +7088,7 @@
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
             "wiring/receipt-qa.ts",
+            "wiring/triage.ts",
             "wiring/waiting.ts",
             "ws.ts"
           ]
@@ -6763,6 +7175,7 @@
             "routes/orchestrator.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/triage.ts",
             "ws.ts"
           ]
         },
@@ -6939,7 +7352,8 @@
             "routes/body.ts",
             "routes/orchestrator.ts",
             "wiring/body.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/triage.ts"
           ]
         },
         "BodyAlertSink": {
@@ -6960,7 +7374,8 @@
             "routes/body.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/body-investigate.ts",
-            "wiring/front-door.ts"
+            "wiring/front-door.ts",
+            "wiring/triage.ts"
           ]
         },
         "bodyAlertSink": {
@@ -6972,7 +7387,8 @@
         "bodyInvestigator": {
           "module": "wiring/body-investigate.ts",
           "callers": [
-            "routes/body.ts"
+            "routes/body.ts",
+            "wiring/triage.ts"
           ]
         },
         "buildComponentDetail": {
@@ -7353,7 +7769,8 @@
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts"
           ]
         },
         "finishLiveFromStop": {
@@ -7368,7 +7785,8 @@
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
             "wiring/body-fix.ts",
-            "wiring/live.ts"
+            "wiring/live.ts",
+            "wiring/proposals.ts"
           ]
         },
         "orchEmit": {
@@ -7380,7 +7798,9 @@
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/body-fix.ts",
             "wiring/front-door.ts",
-            "wiring/live.ts"
+            "wiring/live.ts",
+            "wiring/proposals.ts",
+            "wiring/triage.ts"
           ]
         },
         "workerQueue": {
@@ -7433,7 +7853,9 @@
             "wiring/body-fix.ts",
             "wiring/front-door.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts",
+            "wiring/triage.ts"
           ]
         },
         "isMediaId": {
@@ -7489,17 +7911,20 @@
             "routes/orchestrator.ts#POST /api/orchestrator/channels/"
           ]
         },
-        "fileProposal": {
+        "vetoAuto": {
           "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/triage.ts"
           ]
         },
         "writeCtx": {
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts"
+            "wiring/live.ts",
+            "wiring/proposals.ts",
+            "wiring/triage.ts"
           ]
         },
         "appendTurn": {
@@ -7512,7 +7937,9 @@
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts",
+            "wiring/triage.ts"
           ]
         },
         "getThread": {
@@ -7534,7 +7961,8 @@
           "module": "lib/orchestrator-channels.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/"
+            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
+            "wiring/orchestrator.ts"
           ]
         },
         "listChannels": {
@@ -7551,7 +7979,8 @@
             "routes/orchestrator.ts",
             "wiring/dispatch.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/triage.ts"
           ]
         },
         "createChannel": {
@@ -7580,12 +8009,6 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "ANSWER_MAX": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "routes/orchestrator.ts"
-          ]
-        },
         "DISPATCH_ID": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -7596,7 +8019,8 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts"
+            "wiring/live.ts",
+            "wiring/triage.ts"
           ]
         },
         "getDispatchTask": {
@@ -7604,7 +8028,8 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/live.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/triage.ts"
           ]
         },
         "getTaskActivity": {
@@ -7637,14 +8062,9 @@
         "cancelDispatchTask": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts"
-          ]
-        },
-        "finishLive": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts"
+            "wiring/proposals.ts",
+            "wiring/triage.ts"
           ]
         },
         "isLiveLinked": {
@@ -7674,20 +8094,23 @@
         "requeueTask": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/triage.ts"
           ]
         },
         "unblockTask": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/triage.ts"
           ]
         },
         "liveOwner": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts"
+            "wiring/live.ts",
+            "wiring/proposals.ts"
           ]
         },
         "sessionCmdArgv": {
@@ -7698,24 +8121,18 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "approveBodyFix": {
-          "module": "wiring/body-fix.ts",
-          "callers": [
-            "routes/orchestrator.ts"
-          ]
-        },
-        "approveLive": {
-          "module": "wiring/live.ts",
+        "rejectProposal": {
+          "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/body-fix.ts"
+            "wiring/triage.ts"
           ]
         },
-        "LiveStart": {
-          "module": "wiring/live.ts",
+        "approveProposal": {
+          "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/body-fix.ts"
+            "wiring/triage.ts"
           ]
         },
         "cancelLive": {
@@ -7726,6 +8143,12 @@
         },
         "dispatchLive": {
           "module": "wiring/live.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "liveResponse": {
+          "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts"
           ]
@@ -7823,6 +8246,25 @@
             "routes/records.ts"
           ]
         },
+        "TriageEngine": {
+          "module": "lib/triage-engine.ts",
+          "callers": [
+            "routes/triage.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "MAX_KEY_LENGTH": {
+          "module": "lib/idempotency.ts",
+          "callers": [
+            "routes/triage.ts"
+          ]
+        },
+        "triageEngine": {
+          "module": "wiring/triage.ts",
+          "callers": [
+            "routes/triage.ts"
+          ]
+        },
         "VaultResult": {
           "module": "lib/secret-store.ts",
           "callers": [
@@ -7916,7 +8358,8 @@
         "bodyFixStore": {
           "module": "wiring/body-investigate.ts",
           "callers": [
-            "wiring/body-fix.ts"
+            "wiring/body-fix.ts",
+            "wiring/triage.ts"
           ]
         },
         "bodyPeer": {
@@ -7924,6 +8367,13 @@
           "callers": [
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts"
+          ]
+        },
+        "LiveStart": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/proposals.ts"
           ]
         },
         "fixRunsElsewhere": {
@@ -7936,6 +8386,13 @@
           "module": "lib/body-fix.ts",
           "callers": [
             "wiring/body-fix.ts"
+          ]
+        },
+        "approveLive": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/proposals.ts"
           ]
         },
         "fixRequestFor": {
@@ -8501,6 +8958,13 @@
             "wiring/live.ts"
           ]
         },
+        "finishLive": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/live.ts",
+            "wiring/proposals.ts"
+          ]
+        },
         "listLiveOwned": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -8615,6 +9079,18 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "approveBodyFix": {
+          "module": "wiring/body-fix.ts",
+          "callers": [
+            "wiring/proposals.ts"
+          ]
+        },
+        "fileProposal": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/proposals.ts"
+          ]
+        },
         "QaItem": {
           "module": "lib/receipt-qa-store.ts",
           "callers": [
@@ -8631,6 +9107,138 @@
           "module": "lib/receipt-qa-worker.ts",
           "callers": [
             "wiring/receipt-qa.ts"
+          ]
+        },
+        "GhFn": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "RequestOutcome": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "ConsiderInput": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "runBrainCall": {
+          "module": "lib/orchestrator-brain.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "createTriageStore": {
+          "module": "lib/triage-store.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "realGh": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "investigationStore": {
+          "module": "wiring/body-investigate.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "queryPrRows": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "prSources": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "BodyLookup": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "proposalSource": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "taskSources": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "listProposals": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "taskSource": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "bodySources": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "phrasePrompt": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "mergePr": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "closePr": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "createTriageEngine": {
+          "module": "lib/triage-engine.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "onDispatchPolled": {
+          "module": "wiring/dispatch.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "onTaskEmitted": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "setTriageDigest": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/triage.ts"
           ]
         },
         "clearSessionWaiting": {
