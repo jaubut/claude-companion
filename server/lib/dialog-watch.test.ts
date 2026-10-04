@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { createDialogWatcher, type SessionStatus } from "./dialog-watch"
+import { QUESTION_ORPHAN_MS, createDialogWatcher, type DialogWatchDeps, type SessionStatus } from "./dialog-watch"
 import type { Session } from "./sessions"
 import type { Dialog } from "./dialogs"
 
@@ -55,7 +55,7 @@ interface H {
   duringCapture: (() => Promise<void>) | null
 }
 
-function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
+function harness(over: Partial<DialogWatchDeps> = {}): { h: H; w: ReturnType<typeof createDialogWatcher> } {
   const h: H = {
     sessions: [session()], pane: IDLE_PANE, status: { status: "idle", waitingFor: "" },
     pendingQuestion: false, pendingApproval: false, scraping: false, captures: 0, opened: [], closed: [], statuses: [],
@@ -72,6 +72,7 @@ function harness(): { h: H; w: ReturnType<typeof createDialogWatcher> } {
     onDialogClosed: (k) => h.closed.push(k),
     onStatus: (k, st) => h.statuses.push([k, st]),
     pollMs: 10,
+    ...over,
   })
   return { h, w }
 }
@@ -103,10 +104,7 @@ test("no status file (older CLI): capture anyway", async () => {
   expect(h.opened).toHaveLength(1)
 })
 
-test("a question picker on screen is never mirrored, even with no pending question", async () => {
-  const { h, w } = harness()
-  h.status = { status: "waiting", waitingFor: "dialog open" }
-  h.pane = `
+const QUESTION_PANE = `
 ❯ ask me
 ────────────────────────
 ←  ☐ Color  ✔ Submit  →
@@ -115,8 +113,52 @@ Pick one color
   2. Green
 Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 `
+
+test("a fresh question picker with no card is not mirrored (driver may still be typing)", async () => {
+  const { h, w } = harness()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
   await w.tick()
   expect(h.opened).toEqual([])
+})
+
+test("an orphaned question picker (no card past QUESTION_ORPHAN_MS) is mirrored once, closed when answered", async () => {
+  let t = 1_000_000
+  const { h, w } = harness({ now: () => t })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  t += QUESTION_ORPHAN_MS - 1
+  await w.tick()
+  expect(h.opened).toEqual([])
+  t += 2
+  await w.tick()
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+  expect(h.opened[0]![1].kind).toBe("question")
+  expect(h.opened[0]![1].items.map((i) => i.text)).toEqual(["Red", "Green"])
+  h.status = { status: "busy", waitingFor: "" }
+  await w.tick()
+  expect(h.closed).toEqual([h.sessions[0]!.key])
+})
+
+test("a question picker with a pending phone card never starts the orphan clock", async () => {
+  let t = 1_000_000
+  const { h, w } = harness({ now: () => t })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  h.pendingQuestion = true
+  await w.tick()
+  t += QUESTION_ORPHAN_MS * 30
+  await w.tick()
+  expect(h.opened).toEqual([])
+  // Card lapses: the clock starts now, not when the picker first appeared.
+  h.pendingQuestion = false
+  await w.tick()
+  expect(h.opened).toEqual([])
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
 })
 
 test("a question the hooks already routed is not mirrored", async () => {
