@@ -28,6 +28,9 @@ export interface DialogWatchDeps {
   capture(pane: string, socket?: string): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
+  // A question just answered from the phone: its picker is still on screen
+  // while the question driver types the answer — still the hooks' business.
+  questionAnsweredRecently?(s: Session): boolean
   // An approval the hooks already routed to the phone: its terminal
   // permission dialog is the hooks' business too (approval card), so it is
   // never mirrored as a second, generic dialog card.
@@ -116,7 +119,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       }
       if (st.status !== "waiting") { questionGone(s.key); close(s.key); return }
     }
-    if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
+    if (deps.hasPendingQuestion(s) || deps.questionAnsweredRecently?.(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
     const pane = await deps.capture(s.tmuxPane, s.tmuxSocket || undefined)
     if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)

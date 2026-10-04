@@ -5,7 +5,7 @@ import { isPaneDirty, isScraping, yieldPane } from "../lib/command-scrape"
 import { isPaneClean } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
-import { getPendingQuestions } from "../lib/questions"
+import { getPendingQuestions, questionAnsweredRecently } from "../lib/questions"
 import { hasPendingApprovalFor } from "../lib/pty-manager"
 import { isQuestionReview, orphanPickerClosed, raiseOrphanQuestion } from "../lib/orphan-question"
 import { capturePane, paneKey } from "../lib/tmux-pane"
@@ -35,6 +35,7 @@ export const dialogWatcher = createDialogWatcher({
   // each other's pickers (an orphan card can stay up for hours).
   hasPendingQuestion: (s) => getPendingQuestions().some((q) =>
     q.sessionKey ? q.sessionKey === s.key : q.sessionId ? q.sessionId === s.sessionId : q.cwd === s.cwd),
+  questionAnsweredRecently: (s) => questionAnsweredRecently(s.key),
   hasPendingApproval: (s) => hasPendingApprovalFor(s.key, s.sessionId),
   isScraping,
   onDialog(key, dialog) {
