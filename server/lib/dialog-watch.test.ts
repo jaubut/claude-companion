@@ -161,6 +161,34 @@ test("a question picker with a pending phone card never starts the orphan clock"
   expect(h.opened).toHaveLength(1)
 })
 
+test("an orphaned question picker is re-raised as a structured card when possible (no dialog mirror)", async () => {
+  let t = 1_000_000
+  const raised: string[] = []
+  const gone: string[] = []
+  const { h, w } = harness({ now: () => t, raiseOrphanQuestion: (s) => { raised.push(s.key); return true }, onQuestionPickerGone: (k) => gone.push(k) })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(raised).toEqual([h.sessions[0]!.key])
+  expect(h.opened).toEqual([])
+  h.status = { status: "idle", waitingFor: "" }
+  await w.tick()
+  expect(gone).toContain(h.sessions[0]!.key)
+})
+
+test("an orphan that can't be re-raised falls back to the dialog mirror", async () => {
+  let t = 1_000_000
+  const { h, w } = harness({ now: () => t, raiseOrphanQuestion: () => false })
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+})
+
 test("a question the hooks already routed is not mirrored", async () => {
   const { h, w } = harness()
   h.status = { status: "waiting", waitingFor: "dialog open" }

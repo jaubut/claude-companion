@@ -38,6 +38,11 @@ export interface DialogWatchDeps {
   onDialog(key: string, dialog: Dialog): void
   onDialogClosed(key: string): void
   onStatus(key: string, status: SessionStatus): void
+  // An orphaned question picker: try to re-raise it as a structured question
+  // card (lib/orphan-question.ts). True = done, false = mirror it as a dialog.
+  raiseOrphanQuestion?(s: Session, pane: string): boolean
+  // The question picker on this session went away.
+  onQuestionPickerGone?(key: string): void
   pollMs?: number
 }
 
@@ -84,6 +89,11 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
   // whole scrape. So the test is repeated after each await, and it closes any
   // entry already open for that key rather than leaving it to a later tick
   // that will not come.
+  function questionGone(key: string): void {
+    questionSince.delete(key)
+    deps.onQuestionPickerGone?.(key)
+  }
+
   function ours(key: string): boolean {
     if (!deps.isScraping(key)) return false
     close(key)
@@ -101,7 +111,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
         lastStatus.set(s.key, sig)
         deps.onStatus(s.key, st)
       }
-      if (st.status !== "waiting") { questionSince.delete(s.key); close(s.key); return }
+      if (st.status !== "waiting") { questionGone(s.key); close(s.key); return }
     }
     if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
     const pane = await deps.capture(s.tmuxPane, s.tmuxSocket || undefined)
@@ -110,13 +120,16 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     // Question pickers are the hooks' business (structured card + driver);
     // mirroring one — e.g. for the second the driver is still typing after
     // the phone answered — would put a stray dialog card on the phone.
-    if (!dialog) { questionSince.delete(s.key); close(s.key); return }
+    if (!dialog) { questionGone(s.key); close(s.key); return }
     if (dialog.kind === "question") {
       const since = questionSince.get(s.key) ?? now()
       questionSince.set(s.key, since)
       if (now() - since < QUESTION_ORPHAN_MS) { close(s.key); return }
+      // Structured card first (Approvals tab); the dialog mirror is the
+      // fallback when the transcript has no matching open call.
+      if (pane !== null && deps.raiseOrphanQuestion?.(s, pane)) { close(s.key); return }
     } else {
-      questionSince.delete(s.key)
+      questionGone(s.key)
     }
     const sig = dialogSignature(dialog)
     if (open.get(s.key)?.sig === sig) return

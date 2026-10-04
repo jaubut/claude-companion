@@ -7,6 +7,7 @@ import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
 import { getPendingQuestions } from "../lib/questions"
 import { hasPendingApprovalFor } from "../lib/pty-manager"
+import { orphanPickerClosed, raiseOrphanQuestion } from "../lib/orphan-question"
 import { capturePane, paneKey } from "../lib/tmux-pane"
 import { markWaiting, unmarkWaiting } from "./waiting"
 
@@ -30,7 +31,10 @@ export const dialogWatcher = createDialogWatcher({
   // server, the old behaviour).
   capture: (pane: string, socket?: string) => capturePane(pane, undefined, { socket: socket ?? socketForPane(pane) }),
   sessionStatus: readSessionStatus,
-  hasPendingQuestion: (s) => getPendingQuestions().some((q) => (q.sessionId && q.sessionId === s.sessionId) || q.cwd === s.cwd),
+  // Most specific identity first: two sessions in one folder must not hide
+  // each other's pickers (an orphan card can stay up for hours).
+  hasPendingQuestion: (s) => getPendingQuestions().some((q) =>
+    q.sessionKey ? q.sessionKey === s.key : q.sessionId ? q.sessionId === s.sessionId : q.cwd === s.cwd),
   hasPendingApproval: (s) => hasPendingApprovalFor(s.key, s.sessionId),
   isScraping,
   onDialog(key, dialog) {
@@ -51,6 +55,8 @@ export const dialogWatcher = createDialogWatcher({
   onStatus(key, st) {
     setSessionStatus(key, st.status, st.waitingFor)
   },
+  raiseOrphanQuestion: (s, pane) => raiseOrphanQuestion(s, pane),
+  onQuestionPickerGone: orphanPickerClosed,
 })
 dialogWatcher.start()
 
