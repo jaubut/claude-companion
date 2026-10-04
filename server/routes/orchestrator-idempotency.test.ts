@@ -1,4 +1,4 @@
-import { test, expect, beforeAll, beforeEach, mock } from "bun:test"
+import { test as bunTest, expect, beforeAll, beforeEach, mock } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -8,11 +8,37 @@ import { resetIdempotency, withIdempotency } from "../lib/idempotency"
 // claude-companion-ios#41). Runs the real route + real sqlite; only the front
 // door is stubbed (it routes to Jev / the brain, i.e. calls the model), with a
 // counter standing in for "the orchestrator turn ran".
+//
+// Isolation: bun test shares one module registry across files, so importing
+// orchestrator-chat here would bind its sqlite singleton (and the front-door
+// mock.module) for every later file — e.g. breaking orchestrator-chat.test.ts's
+// legacy-DB migration fixture. In the shared run this file therefore registers
+// ONE test that re-runs itself in a child `bun test` with its own
+// COMPANION_DB_PATH; the real cases only register inside that child.
+const CHILD = process.env.ORCH_IDEM_CHILD === "1"
+const test = (CHILD ? bunTest : () => {}) as typeof bunTest
+
+if (!CHILD) {
+  bunTest("orchestrator idempotency suite passes in an isolated process", () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), "orch-idem-")), "companion.db")
+    const run = Bun.spawnSync([process.execPath, "test", import.meta.path], {
+      cwd: import.meta.dir,
+      env: { ...process.env, ORCH_IDEM_CHILD: "1", COMPANION_DB_PATH: dbPath },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const out = run.stdout.toString() + run.stderr.toString()
+    if (run.exitCode !== 0) console.error(out)
+    expect(run.exitCode).toBe(0)
+    expect(out).toMatch(/\b0 fail\b/)
+    expect(out).toMatch(/\b[1-9]\d* pass\b/)
+  }, 60_000)
+}
 
 let doorRuns = 0
 let doorThrows = 0
 
-mock.module("../wiring/front-door", () => ({
+if (CHILD) mock.module("../wiring/front-door", () => ({
   frontDoor: {
     handle: () => {
       if (doorThrows > 0) { doorThrows--; throw new Error("door boom") }
@@ -26,13 +52,12 @@ let chat: typeof import("../lib/orchestrator-chat")
 let channels: typeof import("../lib/orchestrator-channels")
 let handleOrchestratorRoute: (req: Request, url: URL) => Promise<Response | null>
 
-beforeAll(async () => {
-  process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "orch-idem-")), "companion.db")
+if (CHILD) beforeAll(async () => {
   chat = await import("../lib/orchestrator-chat")
   channels = await import("../lib/orchestrator-channels")
   handleOrchestratorRoute = (await import("./orchestrator")).handleOrchestratorRoute
 })
-beforeEach(() => {
+if (CHILD) beforeEach(() => {
   resetIdempotency()
   doorRuns = 0
   doorThrows = 0
