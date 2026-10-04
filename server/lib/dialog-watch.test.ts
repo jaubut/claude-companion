@@ -104,6 +104,17 @@ test("no status file (older CLI): capture anyway", async () => {
   expect(h.opened).toHaveLength(1)
 })
 
+test("codex session: a picker-looking pane emits no dialog (no Codex status source)", async () => {
+  const { h, w } = harness()
+  h.sessions = [session({ key: "codex:tty:/dev/pts/9", agent: "codex" })]
+  h.status = null
+  h.pane = MODEL_PANE
+  await w.tick()
+  expect(h.opened).toEqual([])
+  expect(h.captures).toBe(0)
+  expect(w.current()).toEqual({})
+})
+
 const QUESTION_PANE = `
 ❯ ask me
 ────────────────────────

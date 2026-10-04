@@ -76,7 +76,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/trip-dashboard.ts` | 190 | lib | 17 |  |
 | `lib/receipt-checks.ts` | 188 | lib | 20 | state: CURRENCIES: Set |
-| `lib/dialog-watch.ts` | 184 | lib | 5 |  |
+| `lib/dialog-watch.ts` | 189 | lib | 5 |  |
 | `lib/triage-sources.ts` | 177 | lib | 17 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
