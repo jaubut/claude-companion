@@ -105,6 +105,11 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
 
   async function check(s: Session): Promise<void> {
     if (!s.tmuxPane) { close(s.key); return }
+    // Status file and pane parser are both Claude Code's. Codex has no
+    // per-session status source (~/.codex/sessions holds rollout event logs
+    // only), and its TUI parsed with Claude picker rules can mis-light a
+    // dialog badge. Add a Codex reader here if Codex ever exposes one.
+    if (s.agent !== "claude") { close(s.key); return }
     if (ours(s.key)) return
     const st = s.pid ? await deps.sessionStatus(s.pid) : null
     if (ours(s.key)) return
