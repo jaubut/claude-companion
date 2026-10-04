@@ -246,7 +246,8 @@ export async function resolveTmuxRef(
 ): Promise<PaneRef> {
   const env = tmuxRefFromEnv(await (deps.envOf ?? processEnvEntries)(pid))
   if (env.socket && (env.pane || filePane)) return { socket: env.socket, pane: env.pane || filePane }
-  if (env.pane && !env.socket) return { socket: "", pane: env.pane }
+  // $TMUX_PANE without $TMUX (partial/truncated env) names no server — ask
+  // the servers rather than assume the default one.
   const mapped = deps.ttyMap ? (await deps.ttyMap()).get(tty) : undefined
   if (mapped) return mapped
   // No server lists this tty: the file's bare %N has no known server, and

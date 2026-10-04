@@ -51,6 +51,11 @@ test("resolveTmuxRef: env first, then the tty map, then the session file's bare 
   // nothing knows: no address — never the file pane on a guessed (default) server
   expect(await resolveTmuxRef("1", "/dev/pts/1", "%9", { envOf: env(null), ttyMap: map({}) }))
     .toEqual({ socket: "", pane: "" })
+  // partial env (TMUX_PANE, no TMUX): the tty map names the server, never a default-server guess
+  expect(await resolveTmuxRef("1", "/dev/pts/1", "", { envOf: env(["TMUX_PANE=%3"]), ttyMap: map({ "/dev/pts/1": { pane: "%3", socket: "/s/cc" } }) }))
+    .toEqual({ socket: "/s/cc", pane: "%3" })
+  expect(await resolveTmuxRef("1", "/dev/pts/1", "", { envOf: env(["TMUX_PANE=%3"]), ttyMap: map({}) }))
+    .toEqual({ socket: "", pane: "" })
   // not in tmux at all
   expect(await resolveTmuxRef("1", "/dev/ttys001", "", { envOf: env(["HOME=/h"]), ttyMap: map({}) }))
     .toEqual({ socket: "", pane: "" })
