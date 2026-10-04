@@ -36,11 +36,18 @@ export interface TriageOption {
 
 /** What the Opus resolver did with an item (docs/orchestrator-triage-api.md#opus-resolver). */
 export interface ResolverInfo {
-  status: "resolving" | "prepared" | "failed"
+  /** "queued" only in `resolving[]` (waiting for an Opus slot), never on a card. */
+  status: "queued" | "resolving" | "prepared" | "failed"
   summary: string
   model: string
   finishedAt: number | null
+  /** What Opus's run ended with (finished runs): done = it acted · failed = its action did not go through · no_change = nothing to change · planned = a card only. */
+  outcome?: ResolverOutcome
+  /** status "queued": 1-based place in Opus's queue. */
+  queuePosition?: number
 }
+
+export type ResolverOutcome = "done" | "failed" | "no_change" | "planned"
 
 /** An item Opus is working on right now: not in `items`, listed for the compact "Opus is on it" line. */
 export interface ResolvingItem {

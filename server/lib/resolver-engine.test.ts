@@ -211,6 +211,63 @@ describe("scheduler", () => {
   })
 })
 
+describe("backlog (budget starvation)", () => {
+  const failed = (x: string, createdAt: number): SourceItem => ({ ...task(x), createdAt, version: `failed|${x}`, facts: { status: "failed", error: "x" }, ref: { source: "task", taskId: x, status: "failed", channel: "general" } })
+  const aged = (x: string, createdAt: number): SourceItem => ({ ...task(x), createdAt })
+
+  test("waiting items are listed as queued with their place; the backlog drains urgent → low, oldest first", async () => {
+    const e = makeEngine()
+    const [a, b] = [aged("a", 1), aged("b", 2)]
+    e.consider(id(a), a)
+    e.consider(id(b), b)
+    const low = failed("c", 1), young = aged("d", 50), old = aged("e", 10)
+    for (const s of [low, young, old]) e.consider(id(s), s)
+    expect(e.view(id(old), old)).toMatchObject({ state: "resolving", info: { status: "queued", queuePosition: 1, summary: "Opus queued (1)" } })
+    expect(e.view(id(young), young)?.info.queuePosition).toBe(2)
+    expect(e.view(id(low), low)?.info.queuePosition).toBe(3)
+    expect(e.view(id(a), a)?.info.status).toBe("resolving")
+    expect(e.queued()).toBe(3)
+    gates.get("a")!.resolve({ kind: "failed", summary: "x" })
+    gates.get("b")!.resolve({ kind: "failed", summary: "x" })
+    await flush(); await flush()
+    expect(jobs.map((j) => j.src.refId)).toEqual(["a", "b", "e", "d"])
+  })
+
+  test("ask_opus runs never count against the daily budget", async () => {
+    cfg.maxPerDay = 1
+    const e = makeEngine()
+    const a = task("a"), b = task("b"), c = task("c")
+    e.ask(id(a), a, "do it")
+    e.ask(id(b), b, "do it")
+    gates.get("a")!.resolve({ kind: "failed", summary: "x" })
+    gates.get("b")!.resolve({ kind: "failed", summary: "x" })
+    await e.idle()
+    e.consider(id(c), c)
+    expect(jobs.map((j) => j.src.refId)).toEqual(["a", "b", "c"])
+  })
+
+  test("a queued row a restart dropped is queued again on the next render (never a dead card)", () => {
+    cfg.maxConcurrent = 0
+    const e = makeEngine()
+    const a = task("a")
+    e.consider(id(a), a)
+    expect(makeEngine().recover()).toBe(1)
+    const fresh = makeEngine()
+    expect(fresh.view(id(a), a)).toBeNull()
+    fresh.consider(id(a), a)
+    expect(fresh.view(id(a), a)?.info.status).toBe("queued")
+  })
+
+  test("the run's outcome reaches the view", async () => {
+    const e = makeEngine()
+    const a = task("a")
+    e.consider(id(a), a)
+    gates.get("a")!.resolve({ kind: "prepared", phrase: preparedCard(a), summary: "Fix failed: no checkout", outcome: "failed" })
+    await e.idle()
+    expect(e.view(id(a), a)).toMatchObject({ state: "prepared", info: { status: "prepared", summary: "Fix failed: no checkout", outcome: "failed" } })
+  })
+})
+
 describe("digest", () => {
   test("once a day after the hour, with the day's counts", async () => {
     const e = makeEngine()

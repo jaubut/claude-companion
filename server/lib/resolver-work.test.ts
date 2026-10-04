@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import type { InvestigationResult } from "./body-investigate"
 import type { Autonomy } from "./resolver"
 import type { Job } from "./resolver-engine"
 import type { FixOutcome } from "./resolver-fix"
 import type { ResolverContext } from "./resolver-prompt"
+import { createResolverStore } from "./resolver-store"
 import { type PlanReport, type WorkSeams, createResolverWork } from "./resolver-work"
 import type { SourceItem, TriageAction } from "./triage"
 import type { ExecOutcome } from "./triage-engine"
@@ -262,5 +264,75 @@ describe("safety", () => {
     model = "I think you should answer CAD."
     expect(await work()(job(task()))).toMatchObject({ kind: "failed", summary: "Opus output was not the expected JSON" })
     expect(records.map((r) => r.action)).toEqual(["resolver:failed"])
+  })
+})
+
+describe("honest outcome + loop guard", () => {
+  const problems = { whatChanged: "invoice PUT", risk: "paid overwritten", prodFailure: "paid → draft", testsCover: "no", problems: ["status overwrite"], verdict: "changes" }
+
+  function guarded(): WorkSeams {
+    const store = createResolverStore(new Database(":memory:"))
+    return { ...seams(), failures: (s, a) => store.failures(`${s.source}:${s.refId}`, a, 0), attempt: (s, a, e) => store.attempt(`${s.source}:${s.refId}`, a, e, NOW) }
+  }
+
+  test("a failed fix says so first, offers a retry, never 'Ask for changes'; the 2nd identical failure gives up; no 3rd run", async () => {
+    ctx.sensitive = true
+    fixOut = { kind: "failed", error: "no local checkout of jaubut/tls-review on this host" }
+    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, review: problems, summary: "Fix run on the PR branch for your 7 points" })
+    const w = createResolverWork(guarded())
+    const one = await w(job(pr("touches server/lib/auth.ts"), "elevated", "Fix on the PR branch: status overwrite"))
+    expect(one).toMatchObject({ kind: "prepared", outcome: "failed", summary: "Fix failed: no local checkout of jaubut/tls-review on this host" })
+    if (one.kind !== "prepared") throw new Error("not prepared")
+    expect(one.phrase.problem.startsWith("Fix failed: no local checkout")).toBe(true)
+    expect(one.phrase.options[0]).toMatchObject({ label: "Ask Opus to retry", action: { kind: "ask_opus", instruction: "Try the fix again on the PR branch: Protect paid" } })
+    expect(one.phrase.options.some((o) => o.label === "Ask for changes")).toBe(false)
+    const two = await w(job(pr("touches server/lib/auth.ts"), "elevated", "Try the fix again on the PR branch: Protect paid"))
+    expect(two).toMatchObject({ kind: "prepared", outcome: "failed", summary: "Opus tried twice: no local checkout of jaubut/tls-review on this host" })
+    if (two.kind === "prepared") {
+      expect(two.phrase.options[0]!.action).toEqual({ kind: "open_url", url: "https://github.com/jaubut/tls-review/pull/9" })
+      expect(two.phrase.options.some((o) => o.action.kind === "ask_opus")).toBe(false)
+    }
+    calls = []
+    const three = await w(job(pr("touches server/lib/auth.ts"), "elevated", "Fix on the PR branch: status overwrite"))
+    expect(calls.some((c) => c.startsWith("fix:"))).toBe(false)
+    expect(three).toMatchObject({ outcome: "failed", summary: "Opus tried twice: no local checkout of jaubut/tls-review on this host" })
+    // Jeremie's own "retry" lifts the guard.
+    await w(job(pr("touches server/lib/auth.ts"), "elevated", "retry"))
+    expect(calls.some((c) => c.startsWith("fix:"))).toBe(true)
+  })
+
+  test("a pushed fix on a sensitive PR: 'Fix pushed <sha8>: …; CI re-running', Wait for CI first, Merge only once green", async () => {
+    ctx.sensitive = true
+    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, review: problems })
+    const out = await createResolverWork(guarded())(job(pr("touches server/lib/auth.ts")))
+    expect(out).toMatchObject({ kind: "prepared", outcome: "done", summary: "Fix pushed abcdef12: Mocked the clock; CI re-running" })
+    if (out.kind === "prepared") {
+      expect(out.phrase.options[0]!.action).toEqual({ kind: "snooze", hours: 1 })
+      expect(out.phrase.options.find((o) => o.action.kind === "merge")?.detail).toContain("CI is green")
+      expect(out.phrase.options.some((o) => o.label === "Ask for changes")).toBe(false)
+    }
+  })
+
+  test("no change made → 'No change needed: …', outcome no_change", async () => {
+    ctx.sensitive = true
+    fixOut = { kind: "no_changes", summary: "paid is already protected by the WHERE clause" }
+    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, review: problems })
+    const out = await createResolverWork(guarded())(job(pr("touches server/lib/auth.ts")))
+    expect(out).toMatchObject({ kind: "prepared", outcome: "no_change", summary: "No change needed: paid is already protected by the WHERE clause" })
+  })
+
+  test("'Fix it' on a task Opus finds already done: it cancels (closes) it, no card", async () => {
+    const failedTask: SourceItem = { ...task(), version: "failed|x", ref: { source: "task", taskId: "t1", status: "failed", channel: "general" } }
+    model = reply({ action: { kind: "cancel" }, category: "already_done", summary: "The 3 files are already named SKILL.md", consent: true })
+    const out = await createResolverWork(guarded())(job(failedTask, "elevated", "Fix it"))
+    expect(executed).toEqual([{ action: { kind: "cancel" }, by: "Opus" }])
+    expect(out).toMatchObject({ kind: "resolved", action: "cancel", outcome: "done" })
+  })
+
+  test("'just look' only prepares, even what Opus would do on its own", async () => {
+    model = reply({ action: { kind: "answer", text: "Round per line" } })
+    const out = await createResolverWork(guarded())(job(task(), "elevated", "just look, don't answer"))
+    expect(executed).toEqual([])
+    expect(out).toMatchObject({ kind: "prepared", outcome: "planned" })
   })
 })

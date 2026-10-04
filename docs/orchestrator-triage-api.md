@@ -177,10 +177,14 @@ decision. Store host only (Zettlab); a Mac shows no resolver state.
 
 ```ts
 type ResolverInfo = {
-  status: "resolving" | "prepared" | "failed"
-  summary: string            // ≤ 200 chars, one line: what Opus did / recommends ("Opus reviewed: safe to merge because …")
+  status: "queued" | "resolving" | "prepared" | "failed"   // "queued" added 2026-10-04 (resolving[] only, never on a card)
+  summary: string            // ≤ 200 chars, one line, OUTCOME FIRST once Opus acted:
+                             // "Fix failed: …" · "Fix pushed 1a2b3c4d: …; CI re-running" · "No change needed: …" ·
+                             // "Opus tried twice: …"; a card-only run keeps its recommendation ("Opus reviewed: …")
   model: string              // "claude-opus-5-5"
   finishedAt: number | null  // ms
+  outcome?: "done" | "failed" | "no_change" | "planned"   // added 2026-10-04: finished runs only (see below)
+  queuePosition?: number     // added 2026-10-04: status "queued" only, 1-based place in Opus's queue
 }
 
 type ResolvingItem = {       // an item Opus is working on: NOT in `items`
@@ -188,12 +192,21 @@ type ResolvingItem = {       // an item Opus is working on: NOT in `items`
   source: TriageSource
   title: string
   project: string | null
-  resolver: ResolverInfo     // status "resolving"
+  resolver: ResolverInfo     // status "resolving" (Opus is on it) or "queued" (waiting for a slot, with queuePosition)
 }
 ```
 
-- `items[]` never holds an item Opus is still working on. Those are in `resolving[]`, for a compact
-  "Opus is on it (N)" line. In `items`, `resolver.status` is `prepared` (Opus's card) or `failed`
+`resolver.outcome` (additive, 2026-10-04) says how a finished run ended, so a card never reads as done when it
+is not: `done` = Opus acted (answered, closed, pushed a fix…) · `failed` = its action did not go through (the
+summary and the card's `problem` start with the reason; the recommended option is "Ask Opus to retry", or, after
+the same action failed the same way twice, a manual step such as "Open the PR" — never another identical run) ·
+`no_change` = the fix run found nothing to change · `planned` = Opus only prepared the card. After a fix pushed
+on a sensitive PR the card recommends "Wait for CI" (snooze 1 h) with Merge "only once CI is green"; it never
+offers "Ask for changes" right after changes were made.
+
+- `items[]` never holds an item Opus is still working on or has queued. Those are in `resolving[]`, for a
+  compact "Opus is on it (N)" line: N = queued + resolving (working runs first, then the queue in order;
+  a queued row reads "Opus queued (3)"). In `items`, `resolver.status` is `prepared` (Opus's card) or `failed`
   (the run fell through: the normal card, marked); absent = Opus never touched it (trip, budget, kill switch).
 - Every non-trip card carries, LAST and never recommended, option `{ id: "opus", label: "Ask Opus…",
   action: { kind: "ask_opus" } }` while the resolver is on. An Opus card may also carry a prefilled one,
@@ -225,13 +238,25 @@ type ResolvingItem = {       // an item Opus is working on: NOT in `items`
   Opus, 20 min) → a #Body fix proposal or a plain explanation; the component's item then leaves triage.
 - **Trip:** never (Jev + Jeremie).
 
-`ask_opus` = elevated autonomy for that item only: Opus may execute any action the source allows
-(merge and cancel only with explicit consent words), outside the daily budget.
+`ask_opus` = elevated autonomy for that item only: Opus may execute any action the source allows, outside the
+daily budget. **Consent (2026-10-04):** an instruction that tells Opus to act counts as consent to Opus's
+recommended action for THAT item, merge / cancel / close / approve included: the short obvious ones on their own
+("fix it", "do it", "go", "handle it", "ok", "yes", "merge", "close", "cancel", "vas-y", "fais-le", "règle ça"…),
+a longer order only when Opus's JSON also says `consent: true`. Words that limit Opus ("don't merge", "just look",
+"explain", "ne merge pas", a question) → Opus only prepares a card. No instruction → a merge or a cancel still
+waits for Jeremie's tap. If Opus finds the work already done, "fix it" closes the item (task: cancel).
 
 ### Budget, kill switch, fall-through
 
-≤ 2 runs at once, ≤ 20 started per local day, 20 min per analysis (a PR fix run gets its own 30 min),
-model `COMPANION_RESOLVER_MODEL` (default `claude-opus-5-5`). A run that waited > 15 min for a slot is skipped.
+≤ 2 runs at once, ≤ 60 normal runs started per local day (`COMPANION_RESOLVER_DAILY`; `ask_opus` runs never
+count), 20 min per analysis (a PR fix run gets its own 30 min), model `COMPANION_RESOLVER_MODEL` (default
+`claude-opus-5-5`). The backlog drains `ask_opus` first, then urgent → normal → low, oldest first; a normal run
+still queued after 3 h falls through to the normal card. A queued run a restart dropped is queued again.
+Loop guard: the same action failing the same way twice on an item (24 h) is not run a third time unless
+Jeremie's instruction says "retry" / "réessaie".
+Fix runs need a local checkout: the server reads claude-config's REPO_MAP from `~/.claude/tools/repo-map.ts`
+(override `COMPANION_REPO_MAP`; older checkouts: `dispatch-run.ts`) and logs the entry count at boot — 0 entries
+is a loud warning (log + a #Body turn on the store host).
 Kill switch: `COMPANION_RESOLVER=0` or `~/.claude-companion/.resolver-disabled` (waiting items show as normal
 cards at once). Over budget, timeout, crash, unparseable output, server restart → the normal card, so nothing
 is ever lost. Every action → Turso `agent_activity` row `resolver:<action>` (agent `opus-resolver`, one-line
@@ -256,6 +281,9 @@ Dry run (nothing executed): `bun cli.ts resolver-dry-run [--limit N] [--source t
    `"failed"`: a muted "Opus couldn't finish: <summary>" line; the card is otherwise normal.
 4. Decode `resolving: [ResolvingItem]` from GET and the `orchestrator_triage` frame (missing = `[]`), and show one
    compact row "Opus is on it (N)" (expandable to the titles) above the cards. No actions on those rows.
+   N counts queued + resolving; a row whose `resolver.status == "queued"` may read "Opus queued (queuePosition)".
+   (2026-10-04: an unknown `ResolverInfo.status` must not drop the row — today's app ignores `resolver` on these rows.)
+7. Show `resolver.outcome == "failed"` as a failure line ("Opus couldn't finish: <summary>") even on an Opus card.
 5. Handle `409 resolving` and `409 resolver_disabled` from choose: toast ("Opus is still on it" /
    "Opus is off"), refresh the list.
 6. After an `ask_opus` choose: optimistic move of the card into the "Opus is on it" row; the next frame confirms.

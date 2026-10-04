@@ -1,20 +1,22 @@
 import { type Autonomy, FIX_RUN_MS, type ResolverConfig, digestText, resolverInfo, resolverKey } from "./resolver"
 import type { ResolverStore, RunRow } from "./resolver-store"
-import { type Phrase, type ResolverInfo, type Severity, type SourceItem, itemId } from "./triage"
+import { type Phrase, type ResolverInfo, type ResolverOutcome, type Severity, type SourceItem, heuristicSeverity, itemId } from "./triage"
 
 // The resolver's scheduler over injected seams (wiring/resolver.ts is the live
 // work). Triage asks it, per item, on every render:
 //   consider  a new (item, resolver key) → a queued run, within the daily budget
-//   view      resolving (hidden from `items`) | resolved (hidden) | prepared (Opus's card)
-//             | failed (the normal card, marked) | null (the normal card)
+//   view      queued / resolving (hidden from `items`, listed in `resolving[]`) | resolved (hidden)
+//             | prepared (Opus's card) | failed (the normal card, marked) | null (the normal card)
 //   ask       Jeremie's `ask_opus`: an elevated run, outside the daily budget
-// ≤ maxConcurrent runs at once, one per item; a normal run that waited longer
-// than queueMaxMs is skipped (falls through); every run has a deadline. The
+// ≤ maxConcurrent runs at once, one per item. The backlog drains elevated
+// first, then urgent → normal → low, oldest first; a normal run still queued
+// after queueMaxMs falls through. A queued row a restart / the kill switch
+// dropped is queued again on the next render. Every run has a deadline. The
 // kill switch stops new runs and shows every waiting item as a normal card.
 
 export type WorkResult =
-  | { kind: "resolved"; action: string; summary: string; reason?: string }
-  | { kind: "prepared"; phrase: Phrase; severity?: Severity | null; summary: string; action?: string; reason?: string }
+  | { kind: "resolved"; action: string; summary: string; reason?: string; outcome?: ResolverOutcome }
+  | { kind: "prepared"; phrase: Phrase; severity?: Severity | null; summary: string; action?: string; reason?: string; outcome?: ResolverOutcome }
   | { kind: "failed"; summary: string }
 
 export interface Job {
@@ -47,6 +49,8 @@ export interface ResolverEngineDeps {
   onChange: (finished: boolean) => void
   /** The item's stable ref (a PR URL survives version changes); default = the item id. */
   refKey?: (src: SourceItem) => string
+  /** Backlog order: lower first (default: severity rank, then the oldest). */
+  priority?: (src: SourceItem) => [number, number]
   now?: () => number
   log?: (msg: string) => void
 }
@@ -77,9 +81,31 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     })
   }
 
+  const RANK: Record<Severity, number> = { urgent: 0, normal: 1, low: 2 }
+  const priority = deps.priority ?? ((s: SourceItem) => [RANK[heuristicSeverity(s)], s.createdAt] as [number, number])
+
+  /** Queued rows in start order: elevated (Jeremie asked) first, then urgent → low, oldest first. */
+  let order: RunRow[] | null = null
+  function ordered(): RunRow[] {
+    if (order) return order
+    const key = (r: RunRow): [number, number, number, number] => {
+      const src = jobs.get(r.id)
+      const [rank, born] = src ? priority(src) : [9, 0]
+      return [r.autonomy === "elevated" ? 0 : 1, rank, born, r.id]
+    }
+    const keyed = deps.store.queued().map((r) => ({ r, k: key(r) }))
+    keyed.sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1] || a.k[2] - b.k[2] || a.k[3] - b.k[3])
+    order = keyed.map((x) => x.r)
+    return order
+  }
+
   function info(r: RunRow, status: ResolverInfo["status"]): ResolverInfo {
-    const summary = r.summary || (r.status === "queued" ? "Opus will look at it shortly" : "Opus is working on it")
-    return resolverInfo(status, summary, r.model, r.finishedAt)
+    if (status === "queued") {
+      const pos = ordered().findIndex((q) => q.id === r.id) + 1
+      return resolverInfo("queued", r.summary || (pos ? `Opus queued (${pos})` : "Opus will look at it shortly"), r.model, null, { queuePosition: pos || null })
+    }
+    const summary = r.summary || "Opus is working on it"
+    return resolverInfo(status, summary, r.model, r.finishedAt, { outcome: r.outcome })
   }
 
   const repeats = new Set<number>()
@@ -88,22 +114,27 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     const cfg = deps.config()
     const run = deps.store.insert({ itemId: id, rkey: resolverKey(src), version: src.version, source: src.source, refKey: refKey(src), autonomy, instruction, model: cfg.model }, now())
     jobs.set(run.id, src)
+    order = null
     if (repeat) repeats.add(run.id)
     return run
   }
 
   /** Resolved on another version and still here (re-blocked on the same question, a lost race): a recurrence. */
   const recurred = (r: RunRow | null, src: SourceItem): boolean => !!r && r.status === "resolved" && r.version !== src.version
+  /** Dropped before it ever ran (restart, kill switch): take it again. A row that waited too long stays dropped. */
+  const requeueable = (r: RunRow | null): boolean => !!r && r.status === "skipped" && r.reason !== "wait"
 
   function consider(id: string, src: SourceItem): void {
     const cfg = deps.config()
     if (!cfg.enabled || !deps.routable(src)) return
     const last = deps.store.latest(id, resolverKey(src))
-    if (last && !recurred(last, src)) return
+    if (last && !recurred(last, src) && !requeueable(last)) return
+    // The daily budget counts normal runs only: Jeremie's ask_opus runs never starve the backlog.
     const waiting = deps.store.queued().filter((r) => r.autonomy === "normal").length
     if (deps.store.startedOn(localDay(now())) + waiting >= cfg.maxPerDay) return
-    enqueue(id, src, "normal", null, !!last)
-    log(`[resolver] ${id} queued${last ? " (came back after Opus resolved it)" : ""}`)
+    const repeat = !!last && recurred(last, src)
+    enqueue(id, src, "normal", null, repeat)
+    log(`[resolver] ${id} queued${repeat ? " (came back after Opus resolved it)" : ""}`)
     pump()
   }
 
@@ -112,8 +143,9 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     if (!r || recurred(r, src)) return null
     switch (r.status) {
       case "queued":
+        return deps.config().enabled ? { state: "resolving", info: info(r, "queued") } : null
       case "running":
-        return deps.config().enabled || r.status === "running" ? { state: "resolving", info: info(r, "resolving") } : null
+        return { state: "resolving", info: info(r, "resolving") }
       case "resolved": return { state: "resolved", info: info(r, "prepared") }
       case "prepared": return r.phrase ? { state: "prepared", phrase: r.phrase, severity: r.severity, info: info(r, "prepared") } : null
       case "failed": return { state: "failed", info: info(r, "failed") }
@@ -131,9 +163,10 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     return { ok: true, runId: run.id }
   }
 
-  function skip(r: RunRow, why: string): void {
-    deps.store.update(r.id, { status: "skipped", summary: why, finishedAt: now() })
+  function skip(r: RunRow, why: string, reason: "restart" | "disabled" | "wait"): void {
+    deps.store.update(r.id, { status: "skipped", summary: why, reason, finishedAt: now() })
     jobs.delete(r.id)
+    order = null
     log(`[resolver] ${r.itemId} skipped — ${why}`)
   }
 
@@ -141,10 +174,10 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
   function pump(): void {
     const cfg = deps.config()
     let moved = false
-    for (const r of deps.store.queued()) {
-      if (!jobs.has(r.id)) { skip(r, "lost its item (restart)"); moved = true; continue }
-      if (!cfg.enabled) { skip(r, "resolver disabled"); moved = true; continue }
-      if (r.autonomy === "normal" && now() - r.createdAt > cfg.queueMaxMs) { skip(r, "waited too long for a slot"); moved = true; continue }
+    for (const r of [...ordered()]) {
+      if (!jobs.has(r.id)) { skip(r, "lost its item (restart)", "restart"); moved = true; continue }
+      if (!cfg.enabled) { skip(r, "resolver disabled", "disabled"); moved = true; continue }
+      if (r.autonomy === "normal" && now() - r.createdAt > cfg.queueMaxMs) { skip(r, "waited too long for a slot", "wait"); moved = true; continue }
       if (runningItems.size >= cfg.maxConcurrent || runningItems.has(r.itemId)) continue
       start(r, cfg)
       moved = true
@@ -157,6 +190,7 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     const t = now()
     const run = deps.store.update(r.id, { status: "running", startedAt: t, day: localDay(t) })!
     runningItems.add(r.itemId)
+    order = null
     const job: Job = { run, src, autonomy: r.autonomy, instruction: r.instruction, dryRun: cfg.dryRun, model: cfg.model, deadline: t + cfg.timeoutMs, repeat: repeats.has(r.id) }
     let timer: ReturnType<typeof setTimeout> | null = null
     // The deadline gates the analysis and the start of any action; a fix run that started in time gets its own FIX_RUN_MS.
@@ -184,20 +218,21 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
   function finish(r: RunRow, res: WorkResult): void {
     const finishedAt = now()
     if (res.kind === "resolved") {
-      deps.store.update(r.id, { status: "resolved", action: res.action, summary: res.summary, reason: res.reason ?? null, finishedAt })
+      deps.store.update(r.id, { status: "resolved", action: res.action, summary: res.summary, reason: res.reason ?? null, outcome: res.outcome ?? "done", finishedAt })
     } else if (res.kind === "prepared") {
       deps.store.update(r.id, {
         status: "prepared", action: res.action ?? "prepared", summary: res.summary, reason: res.reason ?? null,
-        phrase: res.phrase, severity: res.severity ?? null, finishedAt,
+        phrase: res.phrase, severity: res.severity ?? null, outcome: res.outcome ?? "planned", finishedAt,
       })
     } else {
-      deps.store.update(r.id, { status: "failed", action: "failed", summary: res.summary, finishedAt })
+      deps.store.update(r.id, { status: "failed", action: "failed", summary: res.summary, outcome: "failed", finishedAt })
     }
     log(`[resolver] ${r.itemId} ${res.kind}: ${res.summary.slice(0, 120)}`)
   }
 
-  /** Boot: rows a restart interrupted fall through. */
+  /** Boot: rows a restart interrupted fall through (running) or queue again on the next render (queued). */
   function recover(): number {
+    order = null
     return deps.store.closeInterrupted(now())
   }
 
@@ -205,6 +240,8 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     consider, view, ask, pump, recover,
     enabled: (): boolean => deps.config().enabled,
     running: (): number => runningItems.size,
+    /** Runs waiting for a slot. */
+    queued: (): number => ordered().length,
     /** Test seam: every started run finished. */
     async idle(): Promise<void> {
       while (inflight.size) await Promise.all([...inflight])

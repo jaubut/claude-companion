@@ -1,13 +1,15 @@
 import type { Database } from "bun:sqlite"
 import type { Autonomy } from "./resolver"
-import type { Phrase, Severity } from "./triage"
+import type { Phrase, ResolverOutcome, Severity } from "./triage"
 
 // Opus resolver persistence (companion.db, injected Database so tests use :memory:):
 //   resolver_runs     one row per run of an item (item id + resolver key); the newest row for
 //                     (item, key) is the item's resolver state; started_at's local day is the budget
 //   resolver_meta     key/value (the last digest day)
 //   resolver_created  proposals the resolver created itself (never resolved again)
-// Boot: queued/running rows a restart interrupted → failed (the item falls through).
+//   resolver_attempts one row per action Opus ran on an item ref (error NULL = it went through): the loop guard
+// Boot: running rows a restart interrupted → failed (the item falls through); queued rows (never started) →
+// skipped "restart" (the next render queues the item again).
 
 export type RunStatus = "queued" | "running" | "resolved" | "prepared" | "failed" | "skipped"
 
@@ -29,6 +31,8 @@ export interface RunRow {
   /** What ran: answer | close_pr | fix | … | prepared | failed. */
   action: string | null
   reason: string | null
+  /** Finished runs: what the run ended with (resolver.outcome on the wire). */
+  outcome?: ResolverOutcome | null
   createdAt: number
   startedAt: number | null
   finishedAt: number | null
@@ -36,7 +40,15 @@ export interface RunRow {
 }
 
 export interface NewRun { itemId: string; rkey: string; version: string; source: string; refKey: string; autonomy: Autonomy; instruction: string | null; model: string }
-export type RunPatch = Partial<Pick<RunRow, "status" | "summary" | "phrase" | "severity" | "action" | "reason" | "startedAt" | "finishedAt" | "day">>
+export type RunPatch = Partial<Pick<RunRow, "status" | "summary" | "phrase" | "severity" | "action" | "reason" | "outcome" | "startedAt" | "finishedAt" | "day">>
+
+/** Loop-guard key for an error: case, numbers and hashes do not make two failures different. */
+export function errorKey(error: string): string {
+  return error.toLowerCase().replace(/\b[0-9a-f]{7,40}\b/g, "#").replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 200)
+}
+
+/** Identical failures older than this no longer stop a re-run. */
+export const GUARD_WINDOW_MS = 24 * 60 * 60_000
 
 export interface ResolverStore {
   insert(run: NewRun, now: number): RunRow
@@ -55,15 +67,19 @@ export interface ResolverStore {
   isCreated(taskId: string): boolean
   meta(key: string): string | null
   setMeta(key: string, value: string): void
-  /** queued / running rows → failed "interrupted by restart"; returns how many. */
+  /** running rows → failed "interrupted by restart", queued → skipped "restart"; returns how many. */
   closeInterrupted(now: number): number
+  /** Loop guard: one attempt of `action` on an item ref (error null = it went through). */
+  attempt(refKey: string, action: string, error: string | null, now: number): void
+  /** Loop guard: the newest attempts of `action` since `since`, counted while they failed with the newest one's error. */
+  failures(refKey: string, action: string, since: number): { count: number; error: string } | null
   prune(before: number): void
 }
 
 interface Raw {
   id: number; item_id: string; rkey: string; version: string; source: string; ref_key: string; status: RunStatus; autonomy: Autonomy
   instruction: string | null; model: string; summary: string; phrase_json: string | null; severity: Severity | null
-  action: string | null; reason: string | null; created_at: number; started_at: number | null; finished_at: number | null; day: string | null
+  action: string | null; reason: string | null; outcome: ResolverOutcome | null; created_at: number; started_at: number | null; finished_at: number | null; day: string | null
 }
 
 function toRow(r: Raw): RunRow {
@@ -72,12 +88,12 @@ function toRow(r: Raw): RunRow {
   return {
     id: r.id, itemId: r.item_id, rkey: r.rkey, version: r.version, source: r.source, refKey: r.ref_key, status: r.status, autonomy: r.autonomy,
     instruction: r.instruction, model: r.model, summary: r.summary, phrase, severity: r.severity, action: r.action, reason: r.reason,
-    createdAt: r.created_at, startedAt: r.started_at, finishedAt: r.finished_at, day: r.day,
+    outcome: r.outcome ?? null, createdAt: r.created_at, startedAt: r.started_at, finishedAt: r.finished_at, day: r.day,
   }
 }
 
 const COLS: Record<keyof RunPatch, string> = {
-  status: "status", summary: "summary", phrase: "phrase_json", severity: "severity", action: "action", reason: "reason",
+  status: "status", summary: "summary", phrase: "phrase_json", severity: "severity", action: "action", reason: "reason", outcome: "outcome",
   startedAt: "started_at", finishedAt: "finished_at", day: "day",
 }
 
@@ -93,7 +109,14 @@ export function createResolverStore(db: Database): ResolverStore {
     CREATE INDEX IF NOT EXISTS resolver_runs_day ON resolver_runs (day);
     CREATE TABLE IF NOT EXISTS resolver_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS resolver_created (task_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS resolver_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, ref_key TEXT NOT NULL, action TEXT NOT NULL, error TEXT, error_key TEXT, at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS resolver_attempts_ref ON resolver_attempts (ref_key, action, id);
   `)
+  // Additive column on a companion.db from before resolver.outcome.
+  const cols = db.query("PRAGMA table_info(resolver_runs)").all() as { name: string }[]
+  if (!cols.some((c) => c.name === "outcome")) db.exec("ALTER TABLE resolver_runs ADD COLUMN outcome TEXT")
   const one = (sql: string, ...args: (string | number)[]): RunRow | null => {
     const r = db.query(sql).get(...args) as Raw | null
     return r ? toRow(r) : null
@@ -140,13 +163,34 @@ export function createResolverStore(db: Database): ResolverStore {
       db.query("INSERT OR REPLACE INTO resolver_meta (key, value) VALUES (?, ?)").run(key, value)
     },
     closeInterrupted(now) {
-      return db.query(
-        "UPDATE resolver_runs SET status = 'failed', action = 'failed', summary = 'interrupted by a server restart', finished_at = ? WHERE status IN ('queued', 'running')",
+      const running = db.query(
+        "UPDATE resolver_runs SET status = 'failed', action = 'failed', outcome = 'failed', summary = 'interrupted by a server restart', finished_at = ? WHERE status = 'running'",
       ).run(now).changes
+      const queued = db.query(
+        "UPDATE resolver_runs SET status = 'skipped', reason = 'restart', summary = 'lost its place in the queue (restart)', finished_at = ? WHERE status = 'queued'",
+      ).run(now).changes
+      return running + queued
+    },
+    attempt(refKey, action, error, now) {
+      db.query("INSERT INTO resolver_attempts (ref_key, action, error, error_key, at) VALUES (?, ?, ?, ?, ?)")
+        .run(refKey, action, error, error === null ? null : errorKey(error), now)
+    },
+    failures(refKey, action, since) {
+      const rows = db.query("SELECT error, error_key FROM resolver_attempts WHERE ref_key = ? AND action = ? AND at >= ? ORDER BY id DESC LIMIT 10")
+        .all(refKey, action, since) as { error: string | null; error_key: string | null }[]
+      const head = rows[0]
+      if (!head || head.error_key === null) return null
+      let count = 0
+      for (const r of rows) {
+        if (r.error_key !== head.error_key) break
+        count++
+      }
+      return { count, error: head.error ?? "" }
     },
     prune(before) {
       db.query("DELETE FROM resolver_runs WHERE created_at < ? AND status NOT IN ('queued', 'running')").run(before)
       db.query("DELETE FROM resolver_created WHERE created_at < ?").run(before)
+      db.query("DELETE FROM resolver_attempts WHERE at < ?").run(before)
     },
   }
   return store

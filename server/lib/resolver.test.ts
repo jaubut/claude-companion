@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
-  CONFIDENT, type PolicyCtx, type ResolverOutput, cardSummary, consents, decide, digestText, isSensitivePr, parseResolverOutput,
-  preparedPhrase, resolverConfig, resolverKey, routable,
+  CONFIDENT, type PolicyCtx, type ResolverOutput, cardSummary, consentOf, consents, decide, digestText, isSensitivePr, outcomePhrase,
+  parseResolverOutput, preparedPhrase, resolverConfig, resolverInfo, resolverKey, routable,
 } from "./resolver"
 import type { SourceItem } from "./triage"
 
@@ -57,9 +57,11 @@ function output(over: Partial<ResolverOutput> = {}): ResolverOutput {
 const normal: PolicyCtx = { autonomy: "normal", instruction: null, sensitive: false, rescuedBefore: false }
 
 describe("config + kill switch", () => {
-  test("defaults: on, opus 5.5, 2 concurrent, 20 a day, 20 min", () => {
+  test("defaults: on, opus 5.5, 2 concurrent, 60 a day, 20 min; COMPANION_RESOLVER_DAILY sets the budget", () => {
     const c = resolverConfig({ HOME: "/h" }, () => false)
-    expect(c).toMatchObject({ enabled: true, model: "claude-opus-5-5", maxConcurrent: 2, maxPerDay: 20, timeoutMs: 20 * 60_000, dryRun: false })
+    expect(c).toMatchObject({ enabled: true, model: "claude-opus-5-5", maxConcurrent: 2, maxPerDay: 60, timeoutMs: 20 * 60_000, dryRun: false })
+    expect(resolverConfig({ HOME: "/h", COMPANION_RESOLVER_DAILY: "90" }, () => false).maxPerDay).toBe(90)
+    expect(resolverConfig({ HOME: "/h", COMPANION_RESOLVER_MAX_PER_DAY: "30" }, () => false).maxPerDay).toBe(30)
   })
   test("COMPANION_RESOLVER=0 or the flag file turn it off; the model is configurable", () => {
     expect(resolverConfig({ HOME: "/h", COMPANION_RESOLVER: "0" }, () => false).enabled).toBe(false)
@@ -192,7 +194,7 @@ describe("the prepared card", () => {
   test("consent words", () => {
     expect(consents("do it")).toBe(true)
     expect(consents("fais-le")).toBe(true)
-    expect(consents("just fix it")).toBe(false)
+    expect(consents("just fix it")).toBe(true)
     expect(consents(null)).toBe(false)
   })
   test("isSensitivePr: paths or the shepherd's 'touches' reason", () => {
@@ -207,5 +209,71 @@ describe("digest", () => {
     expect(digestText({ answer: 2, close_pr: 1, reject: 1, prepared: 3 })).toBe("🤖 Opus handled 7 items today: answered 2, closed 2, prepared 3 for you.")
     expect(digestText({ answer: 1, fix: 1, failed: 2 })).toBe("🤖 Opus handled 2 items today: answered 1, closed 0, prepared 0 for you, fixed 1 PR (2 fell through to you).")
     expect(digestText({ failed: 1 })).toBeNull()
+  })
+})
+
+describe("consent (ask_opus)", () => {
+  test("EN / FR go words = explicit; a longer order = imperative; limits = prepare; nothing = none", () => {
+    for (const w of ["Fix it", "fix it!", "do it", "just do it", "go", "go ahead", "handle it", "ok", "yes", "merge", "close", "cancel", "vas-y", "fais-le", "règle ça", "Oui, vas-y", "c'est bon, ferme-le"]) {
+      expect([w, consentOf(w)]).toEqual([w, "explicit"])
+    }
+    expect(consentOf("Fix on the PR branch: why does paid get overwritten?")).toBe("imperative")
+    expect(consentOf("fix the flaky test and merge when green")).toBe("imperative")
+    for (const w of ["don't merge", "just look", "explain", "ne merge pas", "n'y touche pas", "why is it failing?", "juste regarder", "explique-moi"]) {
+      expect([w, consentOf(w)]).toEqual([w, "prepare"])
+    }
+    expect(consentOf("make it smaller")).toBe("other")
+    expect(consentOf(null)).toBe("none")
+    expect(consentOf("  ")).toBe("none")
+  })
+
+  test("a long order needs Opus's consent flag too; the short ones do not", () => {
+    expect(consents("Fix it")).toBe(true)
+    expect(consents("fix the flaky test and merge when green")).toBe(false)
+    expect(consents("fix the flaky test and merge when green", true)).toBe(true)
+    expect(consents("don't merge", true)).toBe(false)
+    expect(parseResolverOutput(JSON.stringify({ analysis: "a", summary: "s", consent: true }), blockedTask())?.consent).toBe(true)
+    expect(parseResolverOutput(JSON.stringify({ analysis: "a", summary: "s" }), blockedTask())?.consent).toBe(false)
+  })
+
+  test("decide: 'Fix it' consents to cancel / close; 'don't merge' only prepares; no instruction keeps the one-tap rule", () => {
+    const elevated = (instruction: string | null): PolicyCtx => ({ ...normal, autonomy: "elevated", instruction })
+    const cancel = output({ action: { kind: "cancel" }, category: "already_done" })
+    expect(decide(blockedTask(), cancel, elevated("Fix it"))).toMatchObject({ kind: "act", action: { kind: "cancel" } })
+    expect(decide(blockedTask(), cancel, elevated("vas-y"))).toMatchObject({ kind: "act" })
+    expect(decide(blockedTask(), cancel, elevated(null)).kind).toBe("card")
+    expect(decide(blockedTask(), cancel, elevated("make it smaller")).kind).toBe("card")
+    const merge = output({ action: { kind: "merge" }, category: "safe" })
+    const sens: PolicyCtx = { ...elevated("don't merge"), sensitive: true }
+    expect(decide(parkedPr(), merge, sens)).toMatchObject({ kind: "card", reason: "Jeremie asked Opus to look, not act" })
+    expect(decide(parkedPr(), merge, { ...sens, instruction: "merge" })).toMatchObject({ kind: "act", action: { kind: "merge" } })
+    expect(decide(parkedPr(), merge, { ...sens, instruction: "review it again and merge if it is fine" }).kind).toBe("card")
+    expect(decide(parkedPr(), { ...merge, consent: true }, { ...sens, instruction: "review it again and merge if it is fine" }).kind).toBe("act")
+    expect(decide(parkedPr(), output({ action: { kind: "close_pr", reason: "done" } }), elevated("just look")).kind).toBe("card")
+    // No ask_opus at all: a sensitive merge / a cancel still wait for Jeremie.
+    expect(decide(parkedPr(), merge, { ...normal, sensitive: true }).kind).toBe("card")
+    expect(decide(blockedTask(), cancel, normal).kind).toBe("card")
+  })
+})
+
+describe("outcome first", () => {
+  const review = { whatChanged: "x", risk: "y", prodFailure: "z", testsCover: "no", problems: ["no expiry check"], verdict: "changes" as const }
+  test("failed: headline first in problem, retry recommended, 'Ask for changes' gone; given up: Open the PR, no retry", () => {
+    const base = preparedPhrase(parkedPr(), output({ review }), { sensitive: true })
+    expect(base.options[0]!.label).toBe("Ask for changes")
+    const f = outcomePhrase(parkedPr(), base, { outcome: "failed", headline: "Fix failed: no local checkout", retry: "Try the fix again on the PR branch: add expiry" })
+    expect(f.problem.startsWith("Fix failed: no local checkout. ")).toBe(true)
+    expect(f.options[0]!.label).toBe("Ask Opus to retry")
+    expect(f.recommended).toBe(f.options[0]!.id)
+    expect(f.options.some((o) => o.label === "Ask for changes")).toBe(false)
+    const g = outcomePhrase(parkedPr(), base, { outcome: "failed", headline: "Opus tried twice: no local checkout", gaveUp: true })
+    expect(g.options[0]!.action.kind).toBe("open_url")
+    expect(g.options.some((o) => o.action.kind === "ask_opus")).toBe(false)
+    expect(outcomePhrase(parkedPr(), base, { outcome: "planned", headline: "" })).toEqual(base)
+  })
+  test("resolverInfo carries outcome and queue position only when set", () => {
+    expect(resolverInfo("prepared", "Fix pushed", "m", 1, { outcome: "done" })).toEqual({ status: "prepared", summary: "Fix pushed", model: "m", finishedAt: 1, outcome: "done" })
+    expect(resolverInfo("queued", "Opus queued (3)", "m", null, { queuePosition: 3 })).toMatchObject({ status: "queued", queuePosition: 3 })
+    expect(resolverInfo("resolving", "x", "m", null)).toEqual({ status: "resolving", summary: "x", model: "m", finishedAt: null })
   })
 })

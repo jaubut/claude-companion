@@ -1,7 +1,8 @@
 import type { InvestigationResult } from "./body-investigate"
 import type { ReadonlyRun } from "./readonly-claude"
 import {
-  FIX_RUN_MS, type Plan, type ResolverOutput, RESOLVER_CONTEXT_MAX, cardSummary, decide, parseResolverOutput, preparedPhrase,
+  FIX_RUN_MS, type OutcomeNote, type Plan, type ResolverOutput, RESOLVER_CONTEXT_MAX, RETRY_PREFILL, RETRY_RE, cardSummary, decide,
+  outcomePhrase, parseResolverOutput, preparedPhrase,
 } from "./resolver"
 import type { Job, WorkResult } from "./resolver-engine"
 import type { FixOutcome } from "./resolver-fix"
@@ -35,6 +36,10 @@ export interface WorkSeams {
   record(src: SourceItem, action: string, summary: string, meta: Record<string, unknown>): Promise<void>
   /** An orchestrator turn in the item's channel. */
   turn(src: SourceItem, text: string): void
+  /** Loop guard: the trailing run of identical failures of this action on this item (recent), or null. */
+  failures?(src: SourceItem, action: string): { count: number; error: string } | null
+  /** Loop guard: one attempt of an action (error = null: it went through). */
+  attempt?(src: SourceItem, action: string, error: string | null): void
   now(): number
   log(msg: string): void
 }
@@ -64,12 +69,16 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     ...(out ? { confidence: out.confidence, category: out.category, why: out.why } : {}), ...extra,
   })
 
-  async function prepared(job: Job, out: ResolverOutput, sensitive: boolean, reason: string, extra: string[] = [], action = "prepared"): Promise<WorkResult> {
+  async function prepared(
+    job: Job, out: ResolverOutput, sensitive: boolean, reason: string, extra: string[] = [], action = "prepared",
+    note: OutcomeNote = { outcome: "planned", headline: "" },
+  ): Promise<WorkResult> {
     const src = job.src
-    const phrase = preparedPhrase(src, out, { sensitive }, extra)
-    const summary = cardSummary(src, out, sensitive)
-    if (!job.dryRun) await seams.record(src, `resolver:${action}`, summary, meta(job, out, { reason }))
-    return { kind: "prepared", phrase, summary, action, reason }
+    const phrase = outcomePhrase(src, preparedPhrase(src, out, { sensitive }, extra), note)
+    // The outcome first: a card after an action never reads as Opus's plan.
+    const summary = note.outcome === "planned" ? cardSummary(src, out, sensitive) : note.headline
+    if (!job.dryRun) await seams.record(src, `resolver:${action}`, summary, meta(job, out, { reason, outcome: note.outcome }))
+    return { kind: "prepared", phrase, summary, action, reason, outcome: note.outcome }
   }
 
   async function failed(job: Job, summary: string): Promise<WorkResult> {
@@ -95,46 +104,78 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     if (late(job)) return failed(job, "deadline passed before acting")
     const proposalId = await seams.applyBody(src, r, job.model)
     await seams.record(src, `resolver:${kind}`, summary, meta(job, null, proposalId ? { proposal: proposalId } : {}))
-    return { kind: "resolved", action: kind, summary }
+    return { kind: "resolved", action: kind, summary, outcome: "done" }
+  }
+
+  const VERB: Record<string, string> = { fix: "Fix", answer: "Answer", requeue: "Retry", cancel: "Cancel", merge: "Merge", close_pr: "Close", approve: "Approve", reject: "Reject", revise: "Rescope" }
+
+  /** Opus tried and it did not go through: the outcome card (retry offered once; the 2nd identical failure gives up). */
+  async function tried(job: Job, out: ResolverOutput, ctx: ResolverContext, a: Extract<Plan, { kind: "act" }>["action"], error: string, headline?: string, extra?: string[]): Promise<WorkResult> {
+    seams.attempt?.(job.src, a.kind, error)
+    const n = seams.failures?.(job.src, a.kind)
+    const gaveUp = !!n && n.count >= 2
+    const retry = a.kind === "fix" ? `${RETRY_PREFILL} ${a.instructions}` : `Do it again (${a.kind}); last time: ${clip(error, 200)}`
+    const note: OutcomeNote = gaveUp
+      ? { outcome: "failed", headline: `Opus tried twice: ${clip(error, 160)}`, gaveUp: true }
+      : { outcome: "failed", headline: headline ?? `${VERB[a.kind] ?? a.kind} failed: ${clip(error, 160)}`, retry }
+    return prepared(job, out, ctx.sensitive, `${a.kind} failed: ${error}`, extra ?? [`Opus tried to ${a.kind} but it did not go through: ${error}`], "prepared", note)
   }
 
   async function act(job: Job, out: ResolverOutput, plan: Extract<Plan, { kind: "act" }>, ctx: ResolverContext): Promise<WorkResult> {
     const src = job.src
     const a = plan.action
-    const tried = (detail: string) => prepared(job, out, ctx.sensitive, `${a.kind} failed: ${detail}`, [`Opus tried to ${a.kind} but it did not go through: ${detail}`])
+    // Loop guard: the same action failed the same way twice → no third identical run (Jeremie's "retry" lifts it).
+    const prior = seams.failures?.(src, a.kind)
+    if (prior && prior.count >= 2 && !RETRY_RE.test(job.instruction ?? "")) {
+      seams.log(`[resolver] ${job.run.itemId}: ${a.kind} not re-run (failed twice: ${prior.error})`)
+      return prepared(job, out, ctx.sensitive, `${a.kind} failed twice`, [`Opus tried to ${a.kind} twice; both times: ${prior.error}`], "prepared",
+        { outcome: "failed", headline: `Opus tried twice: ${clip(prior.error, 160)}`, gaveUp: true })
+    }
     if (a.kind === "fix") {
       const fx = await seams.fix(src, ctx, a.instructions, job.model, FIX_RUN_MS)
-      if (fx.kind === "failed") return tried(fx.error)
-      if (fx.kind === "blocked") return prepared(job, out, ctx.sensitive, "fix agent blocked", [`The fix agent stopped: ${fx.reason}`])
-      if (fx.kind === "no_changes") return prepared(job, out, ctx.sensitive, "fix made no change", ["The fix run changed nothing."])
-      const line = `Opus pushed a fix (${fx.sha.slice(0, 8)}): ${clip(fx.summary, 300)}`
+      if (fx.kind === "failed") return tried(job, out, ctx, a, fx.error)
+      if (fx.kind === "blocked") return tried(job, out, ctx, a, `blocked: ${fx.reason}`, `Fix blocked: ${clip(fx.reason, 160)}`, [`The fix agent stopped: ${fx.reason}`])
+      if (fx.kind === "no_changes") {
+        seams.attempt?.(src, a.kind, "the fix run changed nothing")
+        const n = seams.failures?.(src, a.kind)
+        const note: OutcomeNote = n && n.count >= 2
+          ? { outcome: "failed", headline: "Opus tried twice: the fix run changed nothing", gaveUp: true }
+          : { outcome: "no_change", headline: `No change needed: ${clip(fx.summary || "the fix run found nothing to change", 160)}` }
+        return prepared(job, out, ctx.sensitive, "fix made no change", ["The fix run changed nothing."], "prepared", note)
+      }
+      seams.attempt?.(src, a.kind, null)
+      const sha = fx.sha.slice(0, 8)
+      const line = `Opus pushed a fix (${sha}): ${clip(fx.summary, 300)}`
       await seams.comment(src, `🤖 **Opus resolver** — ${line}\n\nWhy: ${clip(out.analysis, 1200)}`)
       seams.turn(src, `🤖 ${line}\n${src.url ?? ""}`.trim())
+      const headline = `Fix pushed ${sha}: ${clip(fx.summary, 110)}; CI re-running`
       if (plan.then === "unpark") {
         await seams.unpark(src, `Opus rescue: ${clip(a.instructions, 160)}`)
-        const summary = `Opus pushed a fix and handed the PR back to the shepherd`
-        await seams.record(src, "resolver:fix", `${summary}: ${clip(fx.summary, 120)}`, meta(job, out, { sha: fx.sha, then: "unpark" }))
-        return { kind: "resolved", action: "fix", summary }
+        const summary = `${headline}, back with the shepherd`
+        await seams.record(src, "resolver:fix", summary, meta(job, out, { sha: fx.sha, then: "unpark", outcome: "done" }))
+        return { kind: "resolved", action: "fix", summary, outcome: "done" }
       }
-      return prepared(job, out, ctx.sensitive, plan.reason, [`${line}. CI re-runs on the new head.`], "fix")
+      return prepared(job, out, ctx.sensitive, plan.reason, [`${line}. CI re-runs on the new head.`], "fix", { outcome: "done", headline })
     }
     if (a.kind === "revise") {
       const id = await seams.revise(src, a.title, a.prompt, out.summary)
-      if (!id) return tried("the proposal moved")
+      if (!id) return tried(job, out, ctx, a, "the proposal moved")
+      seams.attempt?.(src, a.kind, null)
       const summary = `Opus rescoped the proposal: ${clip(a.title || a.prompt, 120)}`
-      await seams.record(src, "resolver:revise", summary, meta(job, out, { proposal: id }))
-      return { kind: "resolved", action: "revise", summary }
+      await seams.record(src, "resolver:revise", summary, meta(job, out, { proposal: id, outcome: "done" }))
+      return { kind: "resolved", action: "revise", summary, outcome: "done" }
     }
     if (a.kind === "close_pr") await seams.comment(src, `🤖 **Opus resolver** — closing this PR: ${a.reason}`)
     const action: TriageAction = a.kind === "answer" ? { kind: "answer", text: a.text } : { kind: a.kind } as TriageAction
     const res = await seams.execute(src, action, BY)
-    if (res.kind === "stale") return { kind: "resolved", action: "stale", summary: `already moved${res.reason ? ` (${res.reason})` : ""}` }
-    if (res.kind === "error") return tried(res.error)
+    if (res.kind === "stale") return { kind: "resolved", action: "stale", summary: `already moved${res.reason ? ` (${res.reason})` : ""}`, outcome: "no_change" }
+    if (res.kind === "error") return tried(job, out, ctx, a, res.error)
+    seams.attempt?.(src, a.kind, null)
     const summary = a.kind === "answer" ? `Opus answered: ${clip(a.text, 160)}` : a.kind === "close_pr" ? `Opus closed the PR: ${clip(a.reason, 160)}`
-      : a.kind === "reject" ? `Opus rejected it: ${clip(a.reason, 160)}` : `Opus ran ${a.kind} (${plan.reason})`
+      : a.kind === "reject" ? `Opus rejected it: ${clip(a.reason, 160)}` : `Opus ran ${a.kind}: ${clip(out.summary, 150)}`
     if (a.kind === "reject") seams.turn(src, `🤖 ${summary}`)
-    await seams.record(src, `resolver:${a.kind}`, summary, meta(job, out, { reason: plan.reason }))
-    return { kind: "resolved", action: a.kind, summary }
+    await seams.record(src, `resolver:${a.kind}`, summary, meta(job, out, { reason: plan.reason, outcome: "done" }))
+    return { kind: "resolved", action: a.kind, summary, outcome: "done" }
   }
 
   return async function work(job: Job): Promise<WorkResult> {
