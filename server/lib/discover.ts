@@ -235,9 +235,9 @@ export interface TmuxRefDeps {
 
 // Where a discovered claude's pane lives. The process's own $TMUX/$TMUX_PANE
 // first (exact, both halves from one source); else ask every tmux server which
-// pane owns the tty; else the session file's bare pane id on the default
-// server (the pre-socket behaviour). A pane is never paired with a socket
-// that came from a different source than the pane itself.
+// pane owns the tty; else no pane at all (a bare %N with no known server is
+// not an address). A pane is never paired with a socket that came from a
+// different source than the pane itself.
 export async function resolveTmuxRef(
   pid: string,
   tty: string,
@@ -249,7 +249,10 @@ export async function resolveTmuxRef(
   if (env.pane && !env.socket) return { socket: "", pane: env.pane }
   const mapped = deps.ttyMap ? (await deps.ttyMap()).get(tty) : undefined
   if (mapped) return mapped
-  return { socket: "", pane: filePane }
+  // No server lists this tty: the file's bare %N has no known server, and
+  // guessing the default one could address a different pane there. Leave
+  // the pane unset until a hook (or a later tick) supplies the address.
+  return { socket: "", pane: "" }
 }
 
 function memo<T>(fn: () => Promise<T>): () => Promise<T> {

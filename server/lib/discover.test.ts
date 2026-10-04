@@ -48,9 +48,9 @@ test("resolveTmuxRef: env first, then the tty map, then the session file's bare 
   // env unreadable: the tty map names the server
   expect(await resolveTmuxRef("1", "/dev/pts/1", "%9", { envOf: env(null), ttyMap: map({ "/dev/pts/1": { pane: "%9", socket: "/s/cc" } }) }))
     .toEqual({ socket: "/s/cc", pane: "%9" })
-  // nothing knows: the old behaviour (default server, file pane)
+  // nothing knows: no address — never the file pane on a guessed (default) server
   expect(await resolveTmuxRef("1", "/dev/pts/1", "%9", { envOf: env(null), ttyMap: map({}) }))
-    .toEqual({ socket: "", pane: "%9" })
+    .toEqual({ socket: "", pane: "" })
   // not in tmux at all
   expect(await resolveTmuxRef("1", "/dev/ttys001", "", { envOf: env(["HOME=/h"]), ttyMap: map({}) }))
     .toEqual({ socket: "", pane: "" })
