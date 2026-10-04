@@ -5,6 +5,8 @@ import { companionLog } from "../lib/log"
 import { type QueryFn, TursoUnreachable, tursoQuery } from "../lib/turso"
 import { type BodyAlertSink, bodyAlertSink, bodySnapshot } from "../wiring/body"
 import { parseInvestigateBody } from "../lib/body-investigator"
+import { parseFixRequest } from "../lib/body-fix"
+import { runBodyFix } from "../wiring/body-fix"
 import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/body-investigate"
 
 // Body monitor API (living-system nervous system). Auth is the `/api/*` bearer
@@ -14,12 +16,15 @@ import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/b
 //   POST /api/body/alert              collector alert → #Body turn, `body_alert` frame, gated push
 //                                     (+ a problem state triggers an auto-investigation)
 //   POST /api/body/investigate        {component_id,…} investigate on this host / {report} from a peer
+//   POST /api/body/fix                an approved Mac fix forwarded by Zettlab → live run here
 // Turso failures map to 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
 
 export interface BodyRouteDeps {
   query?: QueryFn
   snapshot?: BodySnapshot
   sink?: BodyAlertSink
+  /** Owning-host side of an approved Mac fix (wiring/body-fix.ts). */
+  runFix?: typeof runBodyFix
   /** Lazy: the live investigator is built on first use. */
   investigator?: () => Pick<BodyInvestigator, "consider" | "receiveReport" | "latestFor">
   now?: () => number
@@ -39,6 +44,7 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
   const sink = deps.sink ?? bodyAlertSink
   const now = deps.now ?? Date.now
   const investigator = deps.investigator ?? bodyInvestigator
+  const runFix = deps.runFix ?? runBodyFix
   const latest = (id: string): InvestigationRecord | null => {
     try { return investigator().latestFor(id) } catch { return null }
   }
@@ -82,6 +88,17 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
       void investigator().consider({ componentId: alert.component_id, state: alert.state, fromState: alert.from_state, trigger: "alert" })
         .catch((err) => companionLog(`[body-investigate] alert trigger failed: ${(err as Error)?.message ?? err}`))
       return Response.json({ ok: true })
+    }
+    if (url.pathname === "/api/body/fix" && req.method === "POST") {
+      let raw: unknown
+      try {
+        raw = await req.json()
+      } catch {
+        return Response.json({ ok: false, error: "invalid JSON" }, { status: 400 })
+      }
+      const fix = parseFixRequest(raw)
+      if ("error" in fix) return Response.json({ ok: false, error: fix.error }, { status: 400 })
+      return runFix(fix)
     }
     if (url.pathname === "/api/body/investigate" && req.method === "POST") {
       let raw: unknown

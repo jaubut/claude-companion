@@ -2,6 +2,7 @@ import { homedir } from "node:os"
 import { apnsConfigured } from "../lib/apns"
 import { BODY_CHANNEL, BODY_CHANNEL_NAME, buildComponentDetail } from "../lib/body"
 import { bodyPushEnabled } from "../lib/body-alert"
+import { createBodyFixStore } from "../lib/body-fix"
 import { createInvestigationStore, investigateEnabled, isProblemState, localBodyHost } from "../lib/body-investigate"
 import {
   type BodyInvestigator, DEFAULT_NOTE_ID, bodyPeer, createBodyInvestigator, createReportApplier, investigationDigestFor as engineDigestFor,
@@ -27,6 +28,8 @@ export const SWEEP_MS = 10 * 60_000
 export const BOOT_SWEEP_DELAY_MS = 60_000
 
 const store = createInvestigationStore(db)
+/** Mac fix cards (Zettlab) and forwarded fix runs (Mac) — wiring/body-fix.ts reads it. */
+export const bodyFixStore = createBodyFixStore(db)
 
 async function listProblems() {
   const body = await bodySnapshot.get({ fresh: true })
@@ -59,6 +62,7 @@ function makeLive(): BodyInvestigator {
       writeEvent: (id, at, state, detail) => writeInvestigationEvent(tursoExec, id, at, state, detail),
       noteId: () => process.env.COMPANION_BODY_NOTE_ID?.trim() || DEFAULT_NOTE_ID,
       home: process.env.HOME || homedir(),
+      recordFixCard: (card) => bodyFixStore.recordCard(card, Date.now()),
     }),
   })
 }

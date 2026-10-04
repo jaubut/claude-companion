@@ -234,7 +234,10 @@ text is passed through the secret redactor before it is stored or posted.
    `• evidence` lines, then `Fix: <summary> (<risk> risk, reversible)` or
    `No fix proposed.` A failure posts `🔍 <component> — investigation failed: <error>`.
 2. A non-null fix → the existing proposal card in #Body (`orchestrator_task`
-   frame). Approve files it like any proposal (headless, or `mode:"live"`).
+   frame). For `zettlab:*` / `cloud:*` components, approve files it like any
+   proposal (headless, or `mode:"live"`). For `mac:*` components the fix runs
+   **live on the Mac** — see "Mac fixes" below. The card's turn names the host
+   (`… · host mac` / `Approve to run it live on the mac (in <cwd>).`).
    Agent `builder` when a git repo is known for the component, else `claude`;
    cwd = that repo / unit working dir, else `~/.claude`; project note =
    `COMPANION_BODY_NOTE_ID` (default `projects/2026-06-22-companion-orchestrator`).
@@ -243,6 +246,45 @@ text is passed through the secret redactor before it is stored or posted.
    `to_state` = the state, `detail` = `investigation <id>: <rootCause> (N%, severity) · fix proposed [<card>]`.
 4. Push (same sender gate as alerts) only for severity `high`/`critical`, or a
    second consecutive failed investigation.
+
+## Mac fixes run live on the Mac (`POST /api/body/fix`)
+
+A `mac:*` fix card is recorded (companion.db `body_fix_cards`: card id → host,
+component, cwd, note, agent). Approving it on Zettlab —
+`POST /api/orchestrator/proposal/<id>/approve`, with or without
+`mode:"live"` — never files a headless Turso task (Zettlab's dispatch-run
+could claim it). Zettlab forwards the approval to the Mac over the peer
+channel (`COMPANION_BODY_PEER`, bearer, `x-companion-body-hop: 1`, 30 s):
+
+```json
+POST /api/body/fix
+{ "fixId": "<Zettlab card id>", "host": "mac", "componentId": "mac:launchd:x", "prompt": "…", "title": "…",
+  "cwd": "/Users/…/repo or ~/.claude", "noteId": "projects/…", "agent": "builder|claude", "investigationId": "…" }
+→ { "ok": true, "taskId": "<Mac local id>", "dispatchTaskId": "<32 hex>", "status": "running", "mode": "live", "replay": false, "host": "mac" }
+```
+
+The Mac creates one local #Body proposal row per `fixId` (`body_fix_runs`), then
+runs its normal live path with the fix's cwd as the explicit cwd (never the
+note's mapped repo): `claimLive` (Turso row `running`, owner
+`companion:<mac hostname>`), the tmux worker, stop hook → completed. A component
+the receiving host does not own → 409 `not_owner` (never re-forwarded). Its
+errors are the live path's (`429 live_cap`, `422 no_cwd`, `503 turso_unreachable`, …).
+
+The Zettlab approve answers `{ok, taskId, dispatchTaskId, status:"running", mode:"live", host:"mac", replay}`;
+the card is stamped with the Mac's Turso id and leaves as `filed`; the
+dispatch poller shows the Mac's live row like any other. A repeat approve on
+a filed card replays (same id, no call to the Mac); a concurrent double
+approve reaches the Mac twice and the Mac's per-fix row + live replay keep it
+to one worker and one Turso row. Errors on the Zettlab approve:
+
+| status | error | card |
+|---|---|---|
+| 503 | `host_unreachable` (+`reason`: network, timeout, or no `COMPANION_BODY_PEER`) | stays `proposed`, retryable |
+| 502 | `host_refused` (the Mac answered 401/403: peer token wrong) | stays `proposed` |
+| the Mac's status | the Mac's `error` (`live_cap`, `no_cwd`, `turso_unreachable`, …) | stays `proposed` |
+
+A Mac card that was reported on the Mac itself (no peer) runs live there with
+the same explicit cwd.
 
 ## Orchestrator brain ("brain's face")
 

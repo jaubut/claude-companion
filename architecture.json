@@ -372,8 +372,36 @@
           "externals": []
         },
         {
+          "path": "lib/body-fix.ts",
+          "lines": 135,
+          "kind": "lib",
+          "exports": [
+            "FIX_TIMEOUT_MS",
+            "FixCard",
+            "BodyFixStore",
+            "createBodyFixStore",
+            "fixRunsElsewhere",
+            "FixRequest",
+            "parseFixRequest",
+            "fixRequestFor",
+            "PeerFixResult",
+            "postFix"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body-investigate.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/body-investigate-engine.ts",
-          "lines": 354,
+          "lines": 361,
           "kind": "lib",
           "exports": [
             "PEER_TIMEOUT_MS",
@@ -414,6 +442,7 @@
             "lib/body-investigate.ts",
             "lib/body-investigator.ts",
             "lib/auth.ts",
+            "lib/body-fix.ts",
             "lib/dispatch-tasks.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
@@ -2974,7 +3003,7 @@
         },
         {
           "path": "routes/body.ts",
-          "lines": 108,
+          "lines": 125,
           "kind": "route-host",
           "exports": [
             "BodyRouteDeps",
@@ -3002,6 +3031,11 @@
             },
             {
               "method": "POST",
+              "path": "/api/body/fix",
+              "prefix": false
+            },
+            {
+              "method": "POST",
               "path": "/api/body/investigate",
               "prefix": false
             }
@@ -3015,6 +3049,8 @@
             "lib/turso.ts",
             "wiring/body.ts",
             "lib/body-investigator.ts",
+            "lib/body-fix.ts",
+            "wiring/body-fix.ts",
             "wiring/body-investigate.ts"
           ],
           "listeners": [],
@@ -3323,7 +3359,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 459,
+          "lines": 463,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -3393,6 +3429,7 @@
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
             "wiring/live.ts",
+            "wiring/body-fix.ts",
             "state.ts",
             "lib/idempotency.ts",
             "wiring/body.ts",
@@ -3482,12 +3519,50 @@
           "externals": []
         },
         {
+          "path": "wiring/body-fix.ts",
+          "lines": 112,
+          "kind": "lib",
+          "exports": [
+            "BodyFixDeps",
+            "setBodyFixDeps",
+            "approveBodyFix",
+            "runBodyFix"
+          ],
+          "state": [
+            "let deps"
+          ],
+          "emits": [
+            "orchestrator_channel"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/body-fix.ts",
+            "lib/body-investigate.ts",
+            "lib/body-investigate-engine.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "state.ts",
+            "wiring/body-investigate.ts",
+            "wiring/dispatch.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/body-investigate.ts",
-          "lines": 89,
+          "lines": 93,
           "kind": "lib",
           "exports": [
             "SWEEP_MS",
             "BOOT_SWEEP_DELAY_MS",
+            "bodyFixStore",
             "bodyInvestigator",
             "investigationDigestFor",
             "startBodyInvestigate"
@@ -3503,6 +3578,7 @@
             "lib/apns.ts",
             "lib/body.ts",
             "lib/body-alert.ts",
+            "lib/body-fix.ts",
             "lib/body-investigate.ts",
             "lib/body-investigate-engine.ts",
             "lib/body-investigator.ts",
@@ -4241,6 +4317,7 @@
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/records.ts",
             "routes/vault.ts",
+            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dialogs.ts",
@@ -4304,13 +4381,15 @@
             "wiring/receipt-qa.ts"
           ]
         },
-        "FORWARD_STALE_MS": {
+        "BodyHost": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-fix.ts",
+            "lib/body-investigate-engine.ts",
+            "wiring/body-fix.ts"
           ]
         },
-        "BodyHost": {
+        "FORWARD_STALE_MS": {
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts"
@@ -4420,8 +4499,15 @@
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
+            "wiring/body-fix.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "FixCard": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
           ]
         },
         "clampChars": {
@@ -4469,6 +4555,7 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/orchestrator.ts"
@@ -5949,6 +6036,7 @@
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
+            "wiring/body-fix.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
@@ -6041,6 +6129,7 @@
             "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dialogs.ts",
@@ -6319,6 +6408,12 @@
             "routes/body.ts"
           ]
         },
+        "runBodyFix": {
+          "module": "wiring/body-fix.ts",
+          "callers": [
+            "routes/body.ts"
+          ]
+        },
         "bodySnapshot": {
           "module": "wiring/body.ts",
           "callers": [
@@ -6356,6 +6451,12 @@
           "module": "lib/body-alert.ts",
           "callers": [
             "routes/body.ts#POST /api/body/alert"
+          ]
+        },
+        "parseFixRequest": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "routes/body.ts#POST /api/body/fix"
           ]
         },
         "parseInvestigateBody": {
@@ -6725,6 +6826,7 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
+            "wiring/body-fix.ts",
             "wiring/live.ts"
           ]
         },
@@ -6735,6 +6837,7 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/body-fix.ts",
             "wiring/live.ts"
           ]
         },
@@ -6785,6 +6888,7 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
+            "wiring/body-fix.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
@@ -6866,6 +6970,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
@@ -7055,16 +7160,24 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "approveBodyFix": {
+          "module": "wiring/body-fix.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
         "approveLive": {
           "module": "wiring/live.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/body-fix.ts"
           ]
         },
         "LiveStart": {
           "module": "wiring/live.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/body-fix.ts"
           ]
         },
         "cancelLive": {
@@ -7244,6 +7357,102 @@
             "routes/vault.ts"
           ]
         },
+        "BodyFixStore": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "PeerConfig": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "bodyFixStore": {
+          "module": "wiring/body-investigate.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "localBodyHost": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "bodyPeer": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "fixRunsElsewhere": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "fixRequestFor": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "postFix": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "stampDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "markFiled": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "FixRequest": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "BODY_CHANNEL_NAME": {
+          "module": "lib/body.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "ensureChannel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "createProposal": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "DEFAULT_NOTE_ID": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
@@ -7263,12 +7472,6 @@
           ]
         },
         "createReportApplier": {
-          "module": "lib/body-investigate-engine.ts",
-          "callers": [
-            "wiring/body-investigate.ts"
-          ]
-        },
-        "bodyPeer": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
             "wiring/body-investigate.ts"
@@ -7298,8 +7501,8 @@
             "wiring/body-investigate.ts"
           ]
         },
-        "localBodyHost": {
-          "module": "lib/body-investigate.ts",
+        "createBodyFixStore": {
+          "module": "lib/body-fix.ts",
           "callers": [
             "wiring/body-investigate.ts"
           ]
@@ -7320,28 +7523,6 @@
           "module": "lib/body-investigator.ts",
           "callers": [
             "wiring/body-investigate.ts"
-          ]
-        },
-        "BODY_CHANNEL_NAME": {
-          "module": "lib/body.ts",
-          "callers": [
-            "wiring/body-investigate.ts",
-            "wiring/body.ts"
-          ]
-        },
-        "ensureChannel": {
-          "module": "lib/orchestrator-channels.ts",
-          "callers": [
-            "wiring/body-investigate.ts",
-            "wiring/body.ts"
-          ]
-        },
-        "createProposal": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/body-investigate.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "bodyPushEnabled": {
@@ -7681,13 +7862,6 @@
             "wiring/live.ts"
           ]
         },
-        "stampDispatchId": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
         "claimLive": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -7761,12 +7935,6 @@
           ]
         },
         "listLiveTasks": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "markFiled": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/orchestrator.ts"

@@ -25,6 +25,7 @@ import {
   isLiveLinked, liveOwner, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
 } from "../lib/dispatch-tasks"
 import { type LiveStart, approveLive, cancelLive, dispatchLive } from "../wiring/live"
+import { approveBodyFix } from "../wiring/body-fix"
 import { HOST_INFO } from "../state"
 import { withIdempotency } from "../lib/idempotency"
 import { bodySnapshot } from "../wiring/body"
@@ -277,6 +278,9 @@ async function proposalRoute(req: Request, path: string, dispatch: DispatchWirin
   if (action !== "approve") return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
   return withIdempotency(req, `approve:${task.taskId}`, async () => {
     const body = (await readJson(req)) ?? {}
+    // A #Body fix for a Mac component runs live on the Mac, whatever the mode (wiring/body-fix.ts).
+    const macFix = await approveBodyFix(task, dispatch)
+    if (macFix) return macFix
     if (body.mode === "live") {
       return liveResponse(await approveLive(task.taskId, { agent: optStr(body.agent), noteId: optStr(body.noteId), cwd: optStr(body.cwd) }, dispatch))
     }

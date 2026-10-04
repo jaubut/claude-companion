@@ -257,6 +257,7 @@ describe("report applier", () => {
     const proposals: { prompt: string; cwd: string; reasoning: string; target: unknown }[] = []
     const pushes: unknown[] = []
     const events: unknown[][] = []
+    const cards: unknown[] = []
     let created = true
     const apply = m.createReportApplier({
       appendTurn: (text, taskId = null) => { turns.push({ text, taskId }); return { id: `t${turns.length}` } },
@@ -273,8 +274,9 @@ describe("report applier", () => {
       home: "/Users/j",
       now: () => T0,
       log: () => {},
+      recordFixCard: (c) => cards.push(c),
     })
-    return { apply, turns, frames, proposals, pushes, events }
+    return { apply, turns, frames, proposals, pushes, events, cards }
   }
   const rec = (id = "inv1") => ({ id }) as Parameters<ReturnType<typeof m.createReportApplier>>[1]
   const base: InvestigationReport = {
@@ -289,10 +291,20 @@ describe("report applier", () => {
     expect(a.proposals[0]).toMatchObject({ cwd: "/Users/j/tools", target: { noteId: "projects/x", agent: "builder", title: "Fix mac:launchd:x: restore it" } })
     expect(a.proposals[0]!.prompt).toContain("1. git checkout run.ts")
     expect(a.turns[1]).toMatchObject({ taskId: "prop0001" })
-    expect(a.turns[1]!.text).toContain("Approve to file it.")
+    expect(a.turns[1]!.text).toContain("· host mac")
+    expect(a.turns[1]!.text).toContain("Approve to run it live on the mac (in /Users/j/tools).")
+    // a Mac card remembers its host + cwd, so approval runs live on the Mac
+    expect(a.cards).toEqual([{ taskId: "prop0001", host: "mac", componentId: "mac:launchd:x", cwd: "/Users/j/tools", noteId: "projects/x", agent: "builder", title: "Fix mac:launchd:x: restore it", investigationId: "inv1" }])
     expect(a.frames.map((f) => f.type)).toEqual(["orchestrator_channel", "orchestrator", "orchestrator", "orchestrator_task"])
     expect(a.events).toEqual([["mac:launchd:x", new Date(T0).toISOString(), "dead", "investigation inv1: script deleted (90%, med) · fix proposed [prop0001]"]])
     expect(a.pushes).toHaveLength(0)
+  })
+
+  test("a zettlab / cloud fix keeps the normal card (no host routing record)", async () => {
+    const a = applier()
+    await a.apply({ ...base, componentId: "zettlab:docker:x", host: "zettlab" }, rec())
+    expect(a.cards).toHaveLength(0)
+    expect(a.turns[1]!.text).toContain("Approve to file it.")
   })
 
   test("no fix → no proposal; no repo → claude in ~/.claude; high severity pushes", async () => {

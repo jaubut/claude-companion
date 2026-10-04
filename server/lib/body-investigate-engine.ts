@@ -10,6 +10,7 @@ import {
   type InvestigatorRunner, type KnownPaths, buildInvestigationPrompt, failureTurnText, proposalPrompt, reportTurnText,
 } from "./body-investigator"
 import { getAuthToken } from "./auth"
+import type { FixCard } from "./body-fix"
 import { toTaskDto } from "./dispatch-tasks"
 import { companionLog } from "./log"
 import type { Task } from "./orchestrator-chat"
@@ -231,6 +232,8 @@ export interface ApplyDeps {
   pushEnabled: () => boolean
   writeEvent: (componentId: string, at: string, state: string, detail: string) => Promise<void>
   noteId: () => string
+  /** A Mac component's card: remember host + cwd so approval runs live on the Mac (lib/body-fix.ts). */
+  recordFixCard?: (card: FixCard) => void
   home: string
   now?: () => number
   log?: (msg: string) => void
@@ -258,9 +261,13 @@ export function createReportApplier(deps: ApplyDeps): (r: InvestigationReport, r
         const agent = r.repo ? "builder" : "claude"
         const title = clampChars(`${res.retire ? "Retire" : "Fix"} ${r.componentId}: ${res.recommendedFix.summary}`, 120)
         const reasoning = `Body investigation ${rec.id}: ${res.rootCause} (confidence ${Math.round(res.confidence * 100)}%, ${res.recommendedFix.risk} risk)`
-        const task = deps.createProposal(proposalPrompt({ componentId: r.componentId, host: r.host, state: r.state, investigationId: rec.id, cwd }, res), cwd, reasoning, { noteId: deps.noteId(), agent, title })
+        const noteId = deps.noteId()
+        const task = deps.createProposal(proposalPrompt({ componentId: r.componentId, host: r.host, state: r.state, investigationId: rec.id, cwd }, res), cwd, reasoning, { noteId, agent, title })
         proposalId = task.taskId
-        say(`Proposal [${task.taskId}] — ${agent} · ${r.componentId}\nWhy: ${reasoning}\nTask: ${res.recommendedFix.summary}\nApprove to file it.`, task.taskId)
+        const onMac = r.host === "mac"
+        if (onMac) deps.recordFixCard?.({ taskId: task.taskId, host: r.host, componentId: r.componentId, cwd, noteId, agent, title, investigationId: rec.id })
+        const how = onMac ? `Approve to run it live on the mac (in ${cwd}).` : "Approve to file it."
+        say(`Proposal [${task.taskId}] — ${agent} · ${r.componentId} · host ${r.host}\nWhy: ${reasoning}\nTask: ${res.recommendedFix.summary}\n${how}`, task.taskId)
         deps.broadcast({ type: "orchestrator_task", task: toTaskDto(task) })
       }
       detail = `investigation ${rec.id}: ${res.rootCause} (${Math.round(res.confidence * 100)}%, ${res.severity})${proposalId ? ` · fix proposed [${proposalId}]` : " · no fix"}`
