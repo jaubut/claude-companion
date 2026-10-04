@@ -169,7 +169,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     const option = item.options.find((o) => o.id === input.optionId)
     if (!option) return fail(400, "unknown_option", { id: input.id })
     const text = input.text?.trim() || null
-    if (option.action.kind === "answer_custom" && !text) return fail(422, "text_required", { id: input.id })
+    if ((option.action.kind === "answer_custom" || option.action.kind === "classify_custom") && !text) return fail(422, "text_required", { id: input.id })
     if (text && text.length > ANSWER_MAX) return fail(400, "text_too_long", { id: input.id })
     if (option.action.kind === "snooze") {
       deps.store.snooze(input.id, now() + option.action.hours * HOUR_MS)
@@ -197,7 +197,9 @@ export function createTriageEngine(deps: TriageEngineDeps) {
   }
 
   function unavailable(err: unknown): ChooseResult {
-    const what = err instanceof TursoUnreachable ? "turso_unreachable" : (err as Error)?.name === "GhUnreachable" ? "gh_unreachable" : "unavailable"
+    const name = (err as Error)?.name
+    const what = err instanceof TursoUnreachable ? "turso_unreachable" : name === "GhUnreachable" ? "gh_unreachable"
+      : name === "DashboardUnreachable" || name === "DashboardKeyMissing" ? "dashboard_unreachable" : "unavailable"
     log(`[triage] choose failed: ${(err as Error)?.message ?? err}`)
     return fail(503, what)
   }
