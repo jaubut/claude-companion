@@ -68,6 +68,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function startPoll(): void {
   if (pollTimer) return
+  console.error("DEBUG-LEAK startPoll at", Date.now() % 100000, (new Error().stack ?? "").split("\n").slice(2, 4).join(" | "))
   pollTimer = setInterval(() => {
     const now = Date.now()
     for (const s of activeStates()) {
@@ -188,6 +189,7 @@ function stopPollIfIdle(): void {
   for (const s of activeStates()) if (s.activity) return
   clearInterval(pollTimer)
   pollTimer = null
+  console.error("DEBUG-LEAK stopPoll at", Date.now() % 100000)
 }
 
 export function onActivity(fn: ActivityListener): () => void {

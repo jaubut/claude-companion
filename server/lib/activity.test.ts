@@ -138,6 +138,7 @@ test("the rollup orders on the last real event, newest first", async () => {
 })
 
 test("one heartbeat tick refreshes every pill, emits once, and never re-orders", async () => {
+  console.error("DEBUG-LEAK before", JSON.stringify(listActivities().map(a => [a.key, a.tool, a.cwd])))
   toolStart(A)
   await sleep(5)
   toolStart(B)
@@ -146,9 +147,14 @@ test("one heartbeat tick refreshes every pill, emits once, and never re-orders",
   const beatB = pill(B.key)!.lastBeatAt
 
   const frames: Array<{ rollup: Activity | null; activities: Activity[]; key: string }> = []
-  const off = onActivity((rollup, activities, key) => { frames.push({ rollup, activities, key }) })
+  const t0 = Date.now()
+  const off = onActivity((rollup, activities, key) => {
+    console.error("DEBUG-LEAK frame +" + (Date.now() - t0) + "ms", (new Error().stack ?? "").split("\n").slice(1, 6).join(" | "))
+    frames.push({ rollup, activities, key })
+  })
   await sleep(POLL_MS + 200)
   off()
+  console.error("DEBUG-LEAK frames", JSON.stringify(frames.map(f => [f.key, f.activities.map(a => a.key)])), JSON.stringify(listActivities().map(a => [a.key, a.tool, a.cwd])))
 
   // One frame per tick, not one per session.
   expect(frames).toHaveLength(1)
