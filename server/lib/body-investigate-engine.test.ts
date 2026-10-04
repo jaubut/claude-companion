@@ -251,7 +251,7 @@ describe("sweep", () => {
 })
 
 describe("report applier", () => {
-  function applier(o: { pushEnabled?: boolean } = {}) {
+  function applier(o: { pushEnabled?: boolean; localHost?: "mac" | "zettlab" } = {}) {
     const turns: { text: string; taskId: string | null }[] = []
     const frames: Record<string, unknown>[] = []
     const proposals: { prompt: string; cwd: string; reasoning: string; target: unknown }[] = []
@@ -272,6 +272,8 @@ describe("report applier", () => {
       writeEvent: async (...a) => { events.push(a) },
       noteId: () => "projects/x",
       home: "/Users/j",
+      // Applied on the component's own host (the fixture's base.host): platform-independent.
+      localHost: () => (o.localHost ?? "mac"),
       now: () => T0,
       log: () => {},
       recordFixCard: (c) => cards.push(c),
@@ -305,6 +307,12 @@ describe("report applier", () => {
     await a.apply({ ...base, componentId: "zettlab:docker:x", host: "zettlab" }, rec())
     expect(a.cards).toHaveLength(0)
     expect(a.turns[1]!.text).toContain("Approve to file it.")
+  })
+
+  test("a card for another host gets a host-neutral ~/.claude (the Mac localizes it)", async () => {
+    const a = applier({ localHost: "zettlab" })
+    await a.apply({ ...base, cwd: null, repo: false }, rec())
+    expect(a.proposals[0]).toMatchObject({ cwd: "~/.claude", target: { agent: "claude" } })
   })
 
   test("no fix → no proposal; no repo → claude in ~/.claude; high severity pushes", async () => {
