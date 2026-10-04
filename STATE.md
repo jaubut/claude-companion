@@ -4,6 +4,12 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Travel log: the server owns an uploaded trip; Jev + history + distance prior file the sure ones, triage asks the rest
+**Date:** 2026-10-04 (branch `feat/trips`)
+**Choice:** `POST /api/trips` stores the upload in companion.db (`trip_uploads`) before anything else, classifies it within an 8 s budget, and pushes it to the dashboard's `/api/trips/ingest`. If the dashboard is down, the phone gets 202 `queued` and a 1-min retry loop pushes it later; 503 only when the server cannot store it. The classifier runs the contract rules first, then one Jev call (business/personal + client), blended in log-odds with the place history (ends within 300 m, human overrides first) and a distance base rate. It files at ≥ `COMPANION_TRIP_AUTOFILE_CONF` (0.85); the rest go in as `unclassified` and become triage `trip` cards, along with the dashboard backlog (unclassified, 60 days, oldest 20). The classifier and triage read Turso read-only; every write goes through the dashboard API. Every decision is logged in `trip_classify_log`; `bun cli.ts trip-report` gives the auto-file rate and the overrides of filed trips.
+**Why:** Jeremie 2026-10-04: replace the CarPlay Shortcut; confident trips filed, the rest confirmed from a card.
+**Revisit if:** `trip-report` shows filed trips being corrected (raise the threshold or drop the distance prior's weight), Nominatim rate-limits the backlog, or a calendar source appears on the dashboard (wire the `calendar` seam).
+
 ### Brain triage: one phrased decision card per queue item, actions through the existing guarded paths
 **Date:** 2026-10-04 (branch `feat/brain-triage`)
 **Choice:** `GET /api/orchestrator/triage` + `POST …/triage/<id>/choose` + `orchestrator_triage` frame (contract `docs/orchestrator-triage-api.md`). Sources: blocked / failed-retryable dispatch tasks, every pending proposal (Mac fix cards keep their host routing — approve/reject now live in `wiring/proposals.ts`, shared with the route), PRs the shepherd parked (`pr:needs-human`) + a 48 h safety net, Body components whose diagnosis failed twice. One lean `claude -p --model sonnet` per (item, version), cached in companion.db; GET serves the deterministic fallback at once and the phrased card replaces it in the next frame. Jev may set severity (≥ 0.7), else heuristics. merge/close only through `gh` by full URL with the state read back.
@@ -79,6 +85,68 @@ Last updated: 2026-10-04
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — trips (travel log, server side) (2026-10-04)
+**Request (Jeremie):** "travel log in the Companion": replace the CarPlay Shortcut with native auto-logging. Jev auto-classifies, the confident trips are filed, the rest become triage cards he confirms, and they get their own Trips tab. Contract: the shared trips CONTRACT.md (§1, §3, §4 belong to the server). The dashboard builder (`/api/trips/ingest`, …) and the iOS builder work in parallel.
+**Done when:**
+- `POST /api/trips` (Idempotency-Key = clientTripId) validates the upload and persists it in companion.db `trip_uploads`. **Once the server has it, it owns it**: classify, then ingest to the dashboard. 200 = ingested (`filed` or `needs_review`). 202 `status:"queued"` = the dashboard was unreachable; a background retry pushes it later. 409 duplicate replays the stored result. 400 invalid. 503 only when the server could not persist the trip (or, on the Mac, Zettlab is unreachable).
+- `GET /api/trips?from&to&limit` (normalized `Trip[]` + `totals`, with locally queued trips as `status:"queued"`), `GET /api/trips/:id`, `PATCH /api/trips/:id` (classifiedBy human, which feeds the history), `GET /api/trips/clients`. All proxy to the dashboard with the server-held key; the Mac forwards everything to Zettlab.
+- Classifier `lib/trip-classify.ts`. Contract rules run first (a known non-mine vehicle → personal unless the calendar says shoot; a home↔home loop < 2 km → personal). Then one Jev call (`choice` business/personal plus `choice` over candidate clients). The evidence is Nominatim reverse-geocode labels/categories (UA, 1 req/s, sqlite cache by rounded coords), home (configured `COMPANION_TRIP_HOME` + learned from evening trip ends), history (classified trips whose ends are within 300 m, plus human overrides), clients (names, addresses, city), and calendar (seam only, see deviations). History and Jev are blended in log-odds. The trip is filed at ≥ `COMPANION_TRIP_AUTOFILE_CONF` (0.85). Every decision lands in `trip_classify_log`. `bun cli.ts trip-report` reports the auto-file rate and the human overrides.
+- Triage source `trip`: needs_review uploads + the dashboard backfill (unclassified, last 60 days, closed, km ≥ 0.5, oldest 20) with a classifier guess. Phrasing is deterministic ("Trip Granby → Montréal, 82 km, Tue 9:10 — business?" + one evidence line). Options: Business — <client> (`classify`) · Business — other client (`classify_custom`, text = client slug) · Personal (`classify`) · Snooze. A choose PATCHes through the dashboard and is recorded as a human override.
+
+**State decisions**
+- companion.db tables owned by `lib/trip-store.ts`: `trip_uploads` (local queue + result per clientTripId), `trip_geocode` (cache), `trip_classify_log`, `trip_history` (human overrides with coords).
+- Reads for the classifier and triage (history, home learning, the backfill list, the stale check) go **read-only to Turso `trip_entries`**, like the triage PR source. Every write and every phone-facing read goes through the dashboard API.
+- Triage trip version = `unclassified|<guess log id>`. Severity is always `low` (no Jev severity call). No sonnet phrasing.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `/api/trips*` (5 routes) | endpoint NEW | CONTRACT §1/§3 (+ 202 queued) | new |
+| `docs/orchestrator-triage-api.md` | doc | source `trip`, actions `classify` / `classify_custom` | additive; an old iOS build may not decode the new action kinds |
+| dashboard `/api/trips/ingest`, `GET/PATCH /api/trips/:id`, `GET /api/trips/clients` | upstream | consumed with fallbacks (`PATCH /api/trip/:id`, `/api/clients`) | dashboard builder in parallel |
+
+**Files: one owner (builder)**
+| file | change |
+|---|---|
+| `server/lib/trip-model.ts` | NEW pure: upload validation, Trip normalization, geo helpers, formatting |
+| `server/lib/trip-store.ts` | NEW sqlite: uploads queue, geocode cache, classify log, history |
+| `server/lib/trip-geocode.ts` | NEW Nominatim client (UA, 1 req/s, cache) |
+| `server/lib/trip-classify.ts` | NEW classifier (rules, evidence, Jev, blend, threshold) |
+| `server/lib/trip-dashboard.ts` | NEW typed dashboard calls + Turso read-only trip rows |
+| `server/lib/trip-service.ts` | NEW upload flow, retry worker, overrides, triage collect/execute |
+| `server/lib/trip-report.ts` | NEW report |
+| `server/lib/trip-triage.ts` | NEW triage source `trip` (collect with background guesses, stale check, choose → override) |
+| `server/lib/dashboard-client.ts` | `dashboardValue` (array bodies) |
+| `server/lib/triage.ts`, `server/lib/triage-engine.ts` | source `trip`, kinds `classify` / `classify_custom`, trip fallback card, text_required for classify_custom |
+| `server/wiring/trips.ts` | NEW live instance + boot |
+| `server/wiring/triage.ts` | trip collector / current / execute |
+| `server/routes/trips.ts` | NEW the five routes |
+| `server/companion-server.ts`, `cli.ts` | chain the route, start the worker, `trip-report` |
+| `docs/orchestrator-triage-api.md` | trip source + kinds |
+
+**Risks / failure modes**
+- The dashboard endpoints have not shipped yet: ingest 404/405/401 counts as "not there", so the trip stays queued and is retried. Nothing is lost.
+- Nominatim is slow or rate-limited. The classifier has a budget (`COMPANION_TRIP_CLASSIFY_BUDGET_MS`, 8 s). Past the budget the trip goes to needs_review, and triage re-guesses it in the background.
+- Jev is miscalibrated: the threshold is an env knob; `trip-report` plus the smoke table show the accuracy before going live.
+- The repo is public, so the default home stays city-level (45.39,-72.73, 1.5 km). The precise home is learned from the data at runtime.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated plus `--check --lint`.
+2. Smoke on this Mac, read-only: classify the last 10 real trips (and the last 10 classified ones, history restricted to earlier trips). Print the guess vs the stored value. No PATCH.
+
+**Out of scope:** iOS, the dashboard ingest/rate tiers/superseded logic, a calendar source (the dashboard has none for Jeremie yet), push notifications for trip cards.
+
+**Build notes (2026-10-04, `feat/trips`):**
+- Shipped as planned. The dashboard side is tls-dashboard-v2 #175, and the proxy matches its shapes: ingest 201 `{ok,id,trip,superseded[]}` / 409 `{error:"duplicate",trip}` / 400 `{error:"invalid",details[]}`; reads in camelCase + snake_case; GET/PATCH on `/api/trips/:id`. `TLS_DASHBOARD_API_KEY` = the dashboard's `TRIPS_API_KEY` (sha256 compared, never printed).
+- The real smoke changed the classifier:
+  - Jev's `confidence` is not the probability of its choice (brp p 0.93 / confidence 0.89; a 55/45 split / confidence 0.1), so `probabilities[choice]` is used.
+  - Jev alone said 1 % business on work runs to Montréal, so it is tempered to 0.1–0.9 and a distance base rate from Jeremie's own classified trips (<10 km 28 %, 10–40 km 92 %, >40 km 97 % business) joins it.
+  - The 1.5 km city-level default home made half of Granby "home", so learned homes replace it unless `COMPANION_TRIP_HOME` is set.
+  - A client's history share counts only the client-tagged trips, since most past rows have no client.
+  - The prod dashboard answers `/api/trips/clients` with 200 + its SPA page, so the code falls back to `/api/clients`.
+- Smoke (this Mac, read-only: dashboard GET + read-only Turso, scratch sqlite, no PATCH/ingest). On the last 10 real trips, all of them still unclassified on the dashboard, 7 would be filed (6 personal, 1 business), 2 go to review, and 1 open trip has no end. On the last 10 classified trips with coords (history restricted to earlier trips), the class agrees 8/10, and 4 would be auto-filed, all 4 right. The table is in the PR.
+- Two real bugs were found by the tests: a single-flight `??=` whose async body finished synchronously (the retry never ran again), and a collect cache that raced the background guesser. A generation counter fixes the second.
 
 ### Change Plan — brain-triage (2026-10-04)
 **Request (Jeremie):** "the queue should be triaged first, then phrased as a simple problem / action / options for me to choose." Contract: `docs/orchestrator-triage-api.md` (copied from the shared triage CONTRACT.md; the iOS builder codes against the same file).

@@ -5,7 +5,7 @@
 // lib/triage-sources.ts, the cache lib/triage-store.ts, the loop
 // lib/triage-engine.ts, the live instance wiring/triage.ts.
 
-export type TriageSource = "task" | "proposal" | "pr" | "body"
+export type TriageSource = "task" | "proposal" | "pr" | "body" | "trip"
 export type Severity = "urgent" | "normal" | "low"
 
 export type TriageAction =
@@ -19,6 +19,8 @@ export type TriageAction =
   | { kind: "close_pr" }
   | { kind: "open_url"; url: string }
   | { kind: "snooze"; hours: number }
+  | { kind: "classify"; classification: "business" | "personal"; clientSlug?: string }
+  | { kind: "classify_custom" }
 
 export type ActionKind = TriageAction["kind"]
 
@@ -52,6 +54,10 @@ export type SourceRef =
   | { source: "proposal"; taskId: string; macFix: boolean }
   | { source: "pr"; taskId: string; prUrl: string; repo: string; number: number }
   | { source: "body"; componentId: string; investigationId: string }
+  | {
+    source: "trip"; tripId: string; guess: "business" | "personal" | "unclassified"
+    clientSlug: string | null; clientName: string | null; altSlug: string | null; altName: string | null
+  }
 
 /** One thing that needs Jeremie, before phrasing. */
 export interface SourceItem {
@@ -101,6 +107,7 @@ export function allowedActions(src: Pick<SourceItem, "source" | "ref" | "url">):
     case "proposal": return ["approve", "reject", "snooze"]
     case "pr": return ["merge", "close_pr", "open_url", "snooze"]
     case "body": return src.url ? ["requeue", "open_url", "snooze"] : ["requeue", "snooze"]
+    case "trip": return ["classify", "classify_custom", "snooze"]
   }
 }
 
@@ -122,6 +129,8 @@ const KIND_HELP: Record<ActionKind, string> = {
   close_pr: '{"kind":"close_pr"} — close the PR without merging',
   open_url: '{"kind":"open_url"} — open it to look first (the server fills the link)',
   snooze: '{"kind":"snooze","hours":24} — hide it for a while',
+  classify: '{"kind":"classify","classification":"business"|"personal","clientSlug":"<slug, business only>"} — file the trip',
+  classify_custom: '{"kind":"classify_custom"} — business, Jeremie picks the client',
 }
 
 /** The one sonnet prompt for an item: strict JSON in the contract shape. */
@@ -183,6 +192,11 @@ function toAction(v: unknown, src: SourceItem, allowed: readonly ActionKind[]): 
       return { kind, hours: Math.min(SNOOZE_MAX_HOURS, Math.max(1, h)) }
     }
     case "approve": return o.mode === "live" || o.mode === "headless" ? { kind, mode: o.mode } : { kind }
+    case "classify": {
+      if (o.classification !== "business" && o.classification !== "personal") return null
+      const slug = o.classification === "business" ? str(o.clientSlug) : ""
+      return slug ? { kind, classification: o.classification, clientSlug: slug.slice(0, 120) } : { kind, classification: o.classification }
+    }
     default: return { kind } as TriageAction
   }
 }
@@ -191,7 +205,8 @@ const FRENCH = /[àâçéèêëîïôûùœ]|\b(le|la|les|des|une|est|pas|pour|a
 /** Good enough to pick the language of a label the model left out. */
 export const looksFrench = (text: string): boolean => FRENCH.test(text)
 
-const actionKey = (a: TriageAction): string => (a.kind === "answer" ? `answer:${a.text}` : a.kind)
+const actionKey = (a: TriageAction): string =>
+  a.kind === "answer" ? `answer:${a.text}` : a.kind === "classify" ? `classify:${a.classification}:${a.clientSlug ?? ""}` : a.kind
 
 /** Re-id a..d in order, mark destructive by code; the first option is the recommendation. */
 export function finishOptions(options: Omit<TriageOption, "id">[]): { options: TriageOption[]; recommended: string } {
@@ -248,6 +263,26 @@ export function validatePhrase(raw: string | null, src: SourceItem): Phrase | nu
 
 const snooze = { label: "Snooze for a day", action: { kind: "snooze", hours: 24 } as TriageAction }
 
+/** A trip card (always deterministic): the guess first, then the other answers, then snooze. */
+function tripPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "trip" }>): Phrase {
+  const biz = (slug: string | null, name: string | null): Omit<TriageOption, "id"> => ({
+    label: name ? `Business — ${name}` : "Business (no client)",
+    action: slug ? { kind: "classify", classification: "business", clientSlug: slug } : { kind: "classify", classification: "business" },
+  })
+  const other: Omit<TriageOption, "id"> = { label: "Business — other client", action: { kind: "classify_custom" } }
+  const personal: Omit<TriageOption, "id"> = { label: "Personal", action: { kind: "classify", classification: "personal" } }
+  const options = ref.guess === "personal"
+    ? [personal, biz(ref.altSlug, ref.altName), other, snooze]
+    : [biz(ref.clientSlug ?? ref.altSlug, ref.clientName ?? ref.altName), other, personal, snooze]
+  const done = finishOptions(options)
+  const evidence = src.facts.evidence?.trim()
+  const action = ref.guess === "unclassified" ? "Say whether it was business, and for which client." : `Looks ${ref.guess}${ref.guess === "business" && ref.clientName ? ` (${ref.clientName})` : ""}; confirm or correct it.`
+  return {
+    title: clip(src.title, TITLE_MAX), problem: clip(src.facts.problem || src.title, PROBLEM_MAX), action: clip(action, ACTION_MAX),
+    ...done, ...(evidence ? { context: clip(evidence, CONTEXT_MAX) } : {}),
+  }
+}
+
 /** Deterministic phrasing when the model is unavailable or its output is invalid. */
 export function fallbackPhrase(src: SourceItem): Phrase {
   const f = src.facts
@@ -258,6 +293,7 @@ export function fallbackPhrase(src: SourceItem): Phrase {
     return { title, problem, action, ...done, ...(context ? { context: clip(context, CONTEXT_MAX) } : {}) }
   }
   const ref = src.ref
+  if (ref.source === "trip") return tripPhrase(src, ref)
   if (ref.source === "task" && ref.status === "blocked") {
     return make(why("blocker", "The task is blocked without a reason."), "Answer it so the task restarts, or retry or cancel it.", [
       { label: "Answer it", action: { kind: "answer_custom" } },
@@ -300,6 +336,7 @@ const URGENT_WORDS = /\b(prod(uction)?|outage|down|client|invoice|facture|paymen
 /** Heuristic severity when Jev gives none. */
 export function heuristicSeverity(src: SourceItem): Severity {
   const h = src.hints ?? {}
+  if (src.ref.source === "trip") return "low"
   if (src.ref.source === "body") return /^(critical|high)$/i.test(h.criticality ?? "") ? "urgent" : "normal"
   if (src.ref.source === "proposal" && /^(critical|high)$/i.test(h.bodySeverity ?? "")) return "urgent"
   if (src.ref.source === "pr" && h.safetyNet) return "low"
