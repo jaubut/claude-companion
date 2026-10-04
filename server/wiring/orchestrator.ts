@@ -19,7 +19,7 @@ import {
   findRunningTaskByTmuxSession,
   countUnboundTasksInCwd,
   countRunningTasksInCwd,
-  listTasks,
+  listLiveTasks,
   stampDispatchId,
   markFiled,
   type Turn as OrchTurn,
@@ -35,7 +35,9 @@ import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
 import { BODY_CHANNEL, type BodySnapshot } from "../lib/body"
 import { bodyDigestFor } from "./body"
-import { DEFAULT_AGENT, type ProjectRef, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, newDispatchId, resolveAgent, toTaskDto } from "../lib/dispatch-tasks"
+import {
+  DEFAULT_AGENT, type ProjectRef, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, isLiveLinked, newDispatchId, resolveAgent, toTaskDto,
+} from "../lib/dispatch-tasks"
 import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
 
@@ -53,9 +55,21 @@ export function orchEmit(turn: OrchTurn): void {
 
 // Broadcast a task's current state on every transition (proposed → dispatched →
 // running → done/error/rejected) so the phone's Tasks panel tracks live work.
+// A live run (P4) is shown as its Turso row: re-send that frame too, so the
+// worker's tmux identity (spawn, bind) reaches the phone.
 export function emitTask(taskId: string): void {
   const t = getTask(taskId)
-  if (t) broadcast({ type: "orchestrator_task", task: toTaskDto(t) })
+  if (!t) return
+  broadcast({ type: "orchestrator_task", task: toTaskDto(t) })
+  // Not cached yet → the next poll carries it (identity included).
+  if (isLiveLinked(t)) dispatchWiring.reemit(t.dispatchTaskId!)
+}
+
+// Live mode (P4): wiring/live.ts closes the Turso row when a worker dies
+// without a stop hook. Registered there (it imports this module, not the reverse).
+let liveWorkerDead: ((task: OrchTask) => void) | null = null
+export function onLiveWorkerDead(fn: (task: OrchTask) => void): void {
+  liveWorkerDead = fn
 }
 
 // Broadcast a new/updated channel so every device's channel rail live-updates
@@ -103,6 +117,8 @@ export const workerTail = createWorkerTailManager({
   setTaskLogTail,
   setTaskDead(taskId) {
     setTaskStatus(taskId, "error")
+    const t = getTask(taskId)
+    if (t?.dispatchTaskId) liveWorkerDead?.(t)
     void workerQueue.drain() // the dead worker's slot is free
   },
   onLines(task, lines) {
@@ -112,7 +128,7 @@ export const workerTail = createWorkerTailManager({
     emitTask(taskId) // now carries logTail — clients collapse the live card
   },
 })
-workerTail.resumeAll(listTasks())
+workerTail.resumeAll(listLiveTasks())
 void workerQueue.drain() // queued work left over from before a restart
 
 // Deliver a dispatched prompt straight to the worker's tmux session by name.

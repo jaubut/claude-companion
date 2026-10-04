@@ -878,7 +878,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 334,
+          "lines": 351,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -920,7 +920,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 451,
+          "lines": 566,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -936,8 +936,10 @@
             "seenKey",
             "parseTs",
             "fromRow",
+            "LiveIdentity",
             "dispatchToDto",
             "toTaskDto",
+            "isLiveLinked",
             "detectColumns",
             "POLL_WINDOW_DAYS",
             "POLL_LIMIT",
@@ -966,7 +968,14 @@
             "cancelDispatchTask",
             "requeueTask",
             "unblockMarker",
-            "unblockTask"
+            "unblockTask",
+            "liveOwner",
+            "claimLive",
+            "LiveOutcome",
+            "detectPrUrl",
+            "detectResultRef",
+            "finishLive",
+            "listLiveOwned"
           ],
           "state": [],
           "emits": [],
@@ -1199,6 +1208,27 @@
           "externals": []
         },
         {
+          "path": "lib/live-repo.ts",
+          "lines": 63,
+          "kind": "lib",
+          "exports": [
+            "RepoEntry",
+            "parseRepoMap",
+            "isDir",
+            "repoForNote",
+            "resolveLiveCwd"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/log.ts",
           "lines": 48,
           "kind": "lib",
@@ -1339,7 +1369,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 368,
+          "lines": 389,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -1356,6 +1386,7 @@
             "setTaskSpawn",
             "stampDispatchId",
             "markFiled",
+            "setLiveTarget",
             "getTaskByDispatchId",
             "getTask",
             "bindTaskSession",
@@ -1370,6 +1401,7 @@
             "countUnboundTasksInCwd",
             "countRunningTasksInCwd",
             "listTasks",
+            "listLiveTasks",
             "countLiveTasks",
             "listQueued"
           ],
@@ -2954,7 +2986,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 579,
+          "lines": 582,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -3034,6 +3066,7 @@
             "state.ts",
             "lib/hook-common.ts",
             "wiring/orchestrator.ts",
+            "wiring/live.ts",
             "lib/orchestrator-chat.ts",
             "wiring/dispatch.ts",
             "lib/vault-guard.ts",
@@ -3114,7 +3147,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 442,
+          "lines": 459,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -3183,6 +3216,8 @@
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
+            "wiring/live.ts",
+            "state.ts",
             "lib/idempotency.ts",
             "wiring/body.ts",
             "lib/turso.ts",
@@ -3347,7 +3382,7 @@
         },
         {
           "path": "wiring/dispatch.ts",
-          "lines": 39,
+          "lines": 43,
           "kind": "lib",
           "exports": [
             "dispatchPushEnabled",
@@ -3433,6 +3468,55 @@
           "externals": []
         },
         {
+          "path": "wiring/live.ts",
+          "lines": 329,
+          "kind": "lib",
+          "exports": [
+            "LiveRunner",
+            "tmuxRunner",
+            "setLiveRunner",
+            "setLiveCap",
+            "WORKER_LOST",
+            "liveSlots",
+            "LiveStatus",
+            "LiveStart",
+            "LiveOpts",
+            "approveLive",
+            "dispatchLive",
+            "finishLiveFromStop",
+            "LiveCancel",
+            "cancelLive",
+            "reconcileLiveOnBoot"
+          ],
+          "state": [
+            "let runner",
+            "let capOverride",
+            "let reserved",
+            "spawning: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "state.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/live-repo.ts",
+            "lib/turso.ts",
+            "lib/tmux-pane.ts",
+            "wiring/orchestrator.ts",
+            "wiring/dispatch.ts"
+          ],
+          "listeners": [
+            "onLiveWorkerDead"
+          ],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/media.ts",
           "lines": 35,
           "kind": "lib",
@@ -3456,11 +3540,12 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 419,
+          "lines": 435,
           "kind": "lib",
           "exports": [
             "orchEmit",
             "emitTask",
+            "onLiveWorkerDead",
             "emitChannel",
             "WIP_CAP",
             "workerQueue",
@@ -3476,6 +3561,7 @@
             "runBrain"
           ],
           "state": [
+            "let liveWorkerDead",
             "let reconcileChain"
           ],
           "emits": [
@@ -3942,6 +4028,7 @@
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
           ]
@@ -4417,7 +4504,8 @@
           "callers": [
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/live.ts"
           ]
         },
         "phaseOf": {
@@ -4428,6 +4516,12 @@
           ]
         },
         "DispatchColumns": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "LiveIdentity": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-poller.ts"
@@ -4455,8 +4549,7 @@
         "dispatchToDto": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts",
-            "routes/orchestrator.ts"
+            "lib/dispatch-poller.ts"
           ]
         },
         "effectiveStatus": {
@@ -4514,6 +4607,7 @@
             "routes/body.ts",
             "routes/goals.ts#GET /api/goals",
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -4544,6 +4638,7 @@
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -5336,6 +5431,7 @@
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "wiring/dialogs.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -5465,6 +5561,7 @@
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -5513,7 +5610,8 @@
         "LIVE_STATUSES": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "lib/worker-tail.ts"
+            "lib/worker-tail.ts",
+            "wiring/live.ts"
           ]
         },
         "setTaskLogTail": {
@@ -5644,6 +5742,8 @@
           "module": "state.ts",
           "callers": [
             "routes/api.ts#* /api/status",
+            "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
           ]
@@ -6209,14 +6309,22 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "finishLiveFromStop": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "emitTask": {
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/live.ts"
           ]
         },
         "orchEmit": {
@@ -6225,7 +6333,8 @@
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/send"
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/live.ts"
           ]
         },
         "workerQueue": {
@@ -6275,6 +6384,7 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6347,7 +6457,8 @@
         "writeCtx": {
           "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/live.ts"
           ]
         },
         "appendTurn": {
@@ -6356,13 +6467,8 @@
             "routes/orchestrator.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
-          ]
-        },
-        "createQueuedTask": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts"
           ]
         },
         "getThread": {
@@ -6376,8 +6482,7 @@
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "wiring/orchestrator.ts"
+            "routes/orchestrator.ts"
           ]
         },
         "setChannelAuto": {
@@ -6400,6 +6505,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/dispatch.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6425,6 +6531,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6443,13 +6550,15 @@
         "WriteOutcome": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/live.ts"
           ]
         },
         "getDispatchTask": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6469,6 +6578,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6485,6 +6595,13 @@
             "routes/orchestrator.ts"
           ]
         },
+        "finishLive": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/live.ts"
+          ]
+        },
         "toTaskDto": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -6493,10 +6610,19 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "isLiveLinked": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
         "resolveAgent": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6504,6 +6630,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6519,11 +6646,43 @@
             "routes/orchestrator.ts"
           ]
         },
+        "liveOwner": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/live.ts"
+          ]
+        },
         "sessionCmdArgv": {
           "module": "lib/tmux-pane.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "approveLive": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "LiveStart": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "cancelLive": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "dispatchLive": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "routes/orchestrator.ts"
           ]
         },
         "BodyVitals": {
@@ -6846,6 +7005,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/dispatch.ts",
+            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -6854,6 +7014,13 @@
           "callers": [
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "getTaskByDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/dispatch.ts",
+            "wiring/live.ts"
           ]
         },
         "HistoryItem": {
@@ -7030,16 +7197,84 @@
             "wiring/events.ts"
           ]
         },
+        "createProposal": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "setLiveTarget": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "stampDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "claimLive": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "LiveOutcome": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "detectPrUrl": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "detectResultRef": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "listLiveOwned": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "executeDispatch": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "WIP_CAP": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "resolveLiveCwd": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
+        "onLiveWorkerDead": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/live.ts"
+          ]
+        },
         "sweepMedia": {
           "module": "lib/media.ts",
           "callers": [
             "wiring/media.ts"
-          ]
-        },
-        "createProposal": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
           ]
         },
         "setTaskSpawn": {
@@ -7054,7 +7289,7 @@
             "wiring/orchestrator.ts"
           ]
         },
-        "stampDispatchId": {
+        "listLiveTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/orchestrator.ts"
@@ -7062,6 +7297,18 @@
         },
         "markFiled": {
           "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "agentAllowlist": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "WriteCtx": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]
@@ -7086,12 +7333,6 @@
         },
         "tmuxSessionForPane": {
           "module": "lib/tmux-pane.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "WriteCtx": {
-          "module": "lib/dispatch-tasks.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]

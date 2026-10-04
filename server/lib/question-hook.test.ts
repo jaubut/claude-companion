@@ -1,4 +1,5 @@
-import { test, expect } from "bun:test"
+import { afterAll, test, expect } from "bun:test"
+import { forgetSession } from "./activity"
 import {
   type QuestionAnswer,
   type QuestionItem,
@@ -43,6 +44,11 @@ function hookInput(over: Partial<QuestionHookInput> = {}): QuestionHookInput {
     ...over,
   }
 }
+
+// questionFastPath raises an AskUserQuestion pill (recordToolStart) for every
+// hookInput, which keeps activity's 1.5 s poll running into later files
+// (bun shares modules across files). Drop them when this file ends.
+afterAll(() => forgetSession({ tty: "/dev/pts/77" }))
 
 type Ask = typeof addQuestionRequest
 function fakeAsk(answers: QuestionAnswer[]) {

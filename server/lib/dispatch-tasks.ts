@@ -8,7 +8,8 @@ import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
 // Turso `tasks` as the one work queue (orchestrator-one-queue). P1 = read path:
 // the dispatch task model, the shared task DTO (local + Turso), and the named
 // read queries. P2 = the only Companion writes: file, cancel, requeue, unblock —
-// each a guarded compare-and-set plus one agent_activity row. Every function
+// each a guarded compare-and-set plus one agent_activity row. P4 = live mode:
+// claimLive (filed already running, owner companion:<host>) and finishLive. Every function
 // takes its QueryFn / ExecFn so tests inject a fake.
 // Contract: docs/orchestrator-dispatch-api.md.
 
@@ -64,6 +65,8 @@ export interface TaskDto {
   tmuxSocket?: string | null
   /** Local proposals only: the Turso id it was filed as (status "filed"). */
   dispatchTaskId?: string | null
+  /** Live Turso tasks (P4): the local 8-char id worker output frames and worker turns are tagged with. */
+  localTaskId?: string | null
 }
 
 /** Optional Turso columns (added by P0); absent on an older schema. */
@@ -150,8 +153,26 @@ function prSummary(t: DispatchTask): string | null {
   return `PR ${t.prUrl}${verdict}`
 }
 
-export function dispatchToDto(t: DispatchTask, threadId: string): TaskDto {
+/** The local tmux worker behind a live Turso row (P4): what iOS needs to open its side chat. */
+export interface LiveIdentity {
+  localTaskId: string
+  tmuxSession: string | null
+  tmuxSocket: string | null
+  sessionKey: string | null
+  logTail: string | null
+}
+
+export function dispatchToDto(t: DispatchTask, threadId: string, live: LiveIdentity | null = null): TaskDto {
   const ds = effectiveStatus(t)
+  const dto = dispatchDto(t, threadId, ds)
+  if (!live) return dto
+  return {
+    ...dto, tmuxSession: live.tmuxSession, tmuxSocket: live.tmuxSocket, sessionKey: live.sessionKey,
+    localTaskId: live.localTaskId, logTail: dto.logTail ?? live.logTail,
+  }
+}
+
+function dispatchDto(t: DispatchTask, threadId: string, ds: DispatchStatus | null): TaskDto {
   return {
     taskId: t.id, threadId, prompt: t.title, cwd: t.projectTitle ?? t.noteId, reasoning: null,
     status: legacyStatus(ds), logTail: prSummary(t), sessionKey: null, tmuxSession: null,
@@ -166,13 +187,21 @@ export function dispatchToDto(t: DispatchTask, threadId: string): TaskDto {
 /** A local sqlite task (proposal or legacy tmux worker) in the shared DTO. */
 export function toTaskDto(t: Task): TaskDto {
   const proposal = t.status === "proposed" || t.status === "rejected" || t.status === "filed"
+  // A live run (P4) is represented by its Turso row; the local row reads as
+  // `filed` (the proposal card leaves) and is never listed on its own.
+  const status = isLiveLinked(t) ? "filed" : t.status
   // Spread first: every field the local frame carried before stays (additive).
   return {
-    ...t,
-    source: proposal ? "proposal" : "local", dispatchStatus: null, agent: t.agent ?? null, noteId: t.noteId ?? null,
+    ...t, status,
+    source: proposal || status === "filed" ? "proposal" : "local", dispatchStatus: null, agent: t.agent ?? null, noteId: t.noteId ?? null,
     projectTitle: null, prUrl: null, resultRef: null, blocker: null, dispatchTaskId: t.dispatchTaskId ?? null,
     done: t.status === "done" || t.status === "cancelled", owner: null, mode: "live",
   }
+}
+
+/** A local worker row that runs a claimed Turso task (live mode, P4). */
+export function isLiveLinked(t: Pick<Task, "status" | "dispatchTaskId">): boolean {
+  return !!t.dispatchTaskId && t.status !== "proposed" && t.status !== "rejected" && t.status !== "filed"
 }
 
 // ── reads ────────────────────────────────────────────────────────────────────
@@ -447,4 +476,90 @@ export function unblockTask(ctx: WriteCtx, id: string, answer: string): Promise<
     summary: () => `→queued (unblock): ${answer.trim()}`,
     meta: { op: "unblock" },
   })
+}
+
+// ── live mode (P4) ───────────────────────────────────────────────────────────
+// A live run is a Turso row filed already claimed (`running`, owner
+// `companion:<host>`), worked by the Companion's tmux runner. dispatch-run only
+// picks `queued` rows and its stall reaper skips `companion:%`, so the row is
+// this host's until finishLive / cancelLive moves it — each guarded on
+// `dispatch_status = 'running' AND dispatch_owner = <this host>`.
+
+export const liveOwner = (host: string): string => `companion:${host}`
+
+/**
+ * File a task already claimed by this host under a pre-generated id. INSERT OR
+ * IGNORE: a replay with the same id is a no-op (inserted=false, no ledger row).
+ */
+export async function claimLive(ctx: WriteCtx, input: FileInput): Promise<{ id: string; inserted: boolean }> {
+  const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
+  const { affected } = await ctx.exec(
+    "INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, dispatch_owner, dispatch_started_at, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, 'running', ?, datetime('now'), datetime('now'), datetime('now'))",
+    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`, liveOwner(ctx.host)],
+  )
+  const inserted = affected > 0
+  if (inserted) await ledger(ctx, { id: input.id, agent: input.agent }, "running", `→running (live): ${title}`, { mode: "live", op: "claim", note: input.noteId })
+  return { id: input.id, inserted }
+}
+
+export type LiveOutcome =
+  | { status: "completed"; prUrl?: string | null; resultRef?: string | null }
+  | { status: "failed"; blocker: string }
+  | { status: "cancelled" }
+
+/** The last GitHub PR URL in a worker's final output, if any. */
+export function detectPrUrl(text: string): string | null {
+  const all = text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g)
+  return all ? all[all.length - 1]! : null
+}
+
+/** The last result-note ref code (RES-XXXX) in a worker's final output, if any. */
+export function detectResultRef(text: string): string | null {
+  const all = text.match(/\bRES-[A-Z0-9]{4,8}\b/g)
+  return all ? all[all.length - 1]! : null
+}
+
+function liveSets(cols: DispatchColumns, o: LiveOutcome): { sets: string[]; args: SqlArg[] } {
+  const sets = ["dispatch_status = ?", "updated_at = datetime('now')", "dispatch_completed_at = datetime('now')"]
+  const args: SqlArg[] = [o.status]
+  if (o.status === "cancelled") sets.push("done = 1")
+  if (o.status === "failed") { sets.push("dispatch_blocker = ?"); args.push(o.blocker.slice(0, 500)) }
+  if (o.status === "completed" && o.prUrl && cols.prUrl) { sets.push("dispatch_pr_url = ?"); args.push(o.prUrl) }
+  if (o.status === "completed" && o.resultRef && cols.resultRef) { sets.push("dispatch_result_ref = ?"); args.push(o.resultRef) }
+  return { sets, args }
+}
+
+/**
+ * running (owned by this host) → completed (pr when a PR URL is known) | failed
+ * | cancelled. One guarded UPDATE; the ledger row only when it moved the row,
+ * so a second stop hook, or a stop after a cancel, is a no-op.
+ */
+export async function finishLive(ctx: WriteCtx, id: string, outcome: LiveOutcome): Promise<WriteOutcome> {
+  const query = readVia(ctx.exec)
+  const owner = liveOwner(ctx.host)
+  const { sets, args } = liveSets(ctx.cols, outcome)
+  const { affected } = await ctx.exec(
+    `UPDATE tasks SET ${sets.join(", ")} WHERE id = ? AND dispatch_status = 'running' AND dispatch_owner = ?`,
+    [...args, id, owner],
+  )
+  const after = await getDispatchTask(query, ctx.cols, id)
+  if (!after) return { ok: false, error: "no_such_task" }
+  if (affected === 0) return { ok: false, error: "conflict", task: after.task }
+  // Ledger vocabulary = the Turso state (dispatch.sh's); a PR rides in meta.
+  const why = outcome.status === "failed" ? ` (${outcome.blocker})` : after.task.prUrl ? ` (PR ${after.task.prUrl})` : ""
+  await ledger(ctx, after.task, outcome.status, `→${outcome.status} (live): ${after.task.title}${why}`, {
+    from: "running", mode: "live", op: outcome.status === "cancelled" ? "cancel" : "finish",
+    ...(after.task.prUrl ? { pr: after.task.prUrl } : {}),
+  })
+  return { ok: true, task: after.task }
+}
+
+/** Ids of the running live rows this host owns (boot reconcile). */
+export async function listLiveOwned(query: QueryFn, host: string): Promise<string[]> {
+  const rows = await query(
+    "SELECT id FROM tasks WHERE dispatch_status = 'running' AND dispatch_owner = ? AND done = 0",
+    [liveOwner(host)],
+  )
+  return rows.map((r) => String(r.id))
 }

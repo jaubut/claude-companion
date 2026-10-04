@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, appendFileSync, existsSync, rmSync } from "
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { getState, modelFromTranscript, readTranscriptDelta, hashText, reloadToolResultImage, toolResultImageData } from "./transcript"
-import { recordUserPrompt } from "./activity"
+import { forgetSession, recordUserPrompt } from "./activity"
 import { onFeed, type FeedEvent } from "./feed"
 
 // Pins the contract recordTurnEnd's retry depends on: the delta reader
@@ -189,6 +189,9 @@ describe("images in the feed (RES-L5NG step 3)", () => {
   afterAll(() => {
     rmSync(imgDir, { recursive: true, force: true })
     rmSync(mediaDir, { recursive: true, force: true })
+    // recordUserPrompt below raises a pill (and starts activity's 1.5 s poll);
+    // drop it so neither outlives this file (bun shares modules across files).
+    forgetSession({ tty: "/dev/img8" })
   })
 
   const pngB64 = (color: string) =>

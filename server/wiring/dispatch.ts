@@ -2,7 +2,7 @@ import { apnsConfigured } from "../lib/apns"
 import * as mirror from "../lib/dispatch-mirror"
 import { type DispatchWiring, createDispatchWiring } from "../lib/dispatch-poller"
 import { companionLog } from "../lib/log"
-import { appendTurn, countLiveTasks, listQueued } from "../lib/orchestrator-chat"
+import { appendTurn, countLiveTasks, getTaskByDispatchId, listQueued } from "../lib/orchestrator-chat"
 import { getChannel, linkedNotes } from "../lib/orchestrator-channels"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { wipCap } from "../lib/orchestrator-queue"
@@ -35,4 +35,8 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   log: companionLog,
   getChannel,
   localQueue: () => ({ cap: wipCap(), live: countLiveTasks(), queued: listQueued().length }),
+  liveIdentity: (id) => {
+    const t = getTaskByDispatchId(id)
+    return t ? { localTaskId: t.taskId, tmuxSession: t.tmuxSession, tmuxSocket: t.tmuxSocket ?? null, sessionKey: t.sessionKey, logTail: t.logTail } : null
+  },
 })
