@@ -3,6 +3,7 @@ import { BODY_CHANNEL } from "./body"
 import {
   type DispatchColumns,
   type DispatchTask,
+  type LiveIdentity,
   type ProjectRef,
   type TaskDto,
   detectColumns,
@@ -50,6 +51,8 @@ export interface DispatchWiringDeps {
   linkedNotes: () => Map<string, string>
   getChannel: (id: string) => Channel | null
   localQueue: () => { cap: number; live: number; queued: number }
+  /** Live mode (P4): the local tmux worker behind a Turso id, if any. */
+  liveIdentity?: (dispatchTaskId: string) => LiveIdentity | null
   mirror: Mirror
   /** The catch-all channel id (orchestrator-db GENERAL_CHANNEL). */
   generalChannel: string
@@ -165,9 +168,15 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     return cache.filter((t) => threadIdFor(t, links) === channelId)
   }
 
+  // Live rows (owner companion:*) carry their tmux worker's identity.
+  function toDto(t: DispatchTask, links: Map<string, string>): TaskDto {
+    const live = t.owner?.startsWith("companion:") ? deps.liveIdentity?.(t.id) ?? null : null
+    return dispatchToDto(t, threadIdFor(t, links), live)
+  }
+
   function tasksFor(channelId: string): TaskDto[] {
     const links = deps.linkedNotes()
-    return inChannel(channelId, links).map((t) => dispatchToDto(t, threadIdFor(t, links)))
+    return inChannel(channelId, links).map((t) => toDto(t, links))
   }
 
   function countsFor(channelId: string): DispatchCounts {
@@ -183,7 +192,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
   }
 
   function emitTask(t: DispatchTask, links: Map<string, string>): void {
-    deps.broadcast({ type: "orchestrator_task", task: dispatchToDto(t, threadIdFor(t, links)) })
+    deps.broadcast({ type: "orchestrator_task", task: toDto(t, links) })
   }
 
   // Per-channel count changes → `orchestrator_channel`; global → `orchestrator_queue`.
@@ -327,6 +336,14 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     tasksFor, countsFor, decorate, queueSummary, threadIdFor, digestFor, applyLocal,
     cached: (id: string): DispatchTask | null => cache.find((t) => t.id === id) ?? null,
     relink,
+    /** Re-send a cached task's frame (its live worker identity changed); false when not cached. */
+    reemit(id: string): boolean {
+      const t = cache.find((c) => c.id === id)
+      if (t) emitTask(t, deps.linkedNotes())
+      return !!t
+    },
+    /** The DTO the wire would carry for a task (live identity merged). */
+    dto: (t: DispatchTask): TaskDto => toDto(t, deps.linkedNotes()),
   }
 }
 

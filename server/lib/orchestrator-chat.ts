@@ -155,6 +155,9 @@ function insertTask(task: Task): void {
   )
 }
 
+// Legacy (pre-P2) local rows: no production caller since P4 — headless work is
+// filed to Turso and live runs start from a proposal row (createProposal +
+// stampDispatchId). Kept for the legacy-history fixtures in the tests.
 // Direct dispatch (Phase 1, manual /dispatch): task is spawned immediately.
 export function createTask(prompt: string, cwd: string, tmuxSession: string | null = null, threadId: string = GENERAL_CHANNEL): Task {
   const now = Date.now()
@@ -223,6 +226,14 @@ export function markFiled(taskId: string, target: { noteId: string; agent: strin
   const res = db.query(
     "UPDATE orchestrator_tasks SET status = 'filed', note_id = ?, agent = ?, updated_at = ? WHERE task_id = ? AND status = 'proposed' AND dispatch_task_id IS NOT NULL",
   ).run(target.noteId, target.agent, Date.now(), taskId)
+  return res.changes > 0
+}
+
+/** Live run (P4): pin the cwd / note / agent a proposal runs with, while still proposed. */
+export function setLiveTarget(taskId: string, target: { cwd: string; noteId: string; agent: string }): boolean {
+  const res = db.query(
+    "UPDATE orchestrator_tasks SET cwd = ?, note_id = ?, agent = ?, updated_at = ? WHERE task_id = ? AND status = 'proposed'",
+  ).run(target.cwd, target.noteId, target.agent, Date.now(), taskId)
   return res.changes > 0
 }
 
@@ -339,12 +350,22 @@ export function countRunningTasksInCwd(cwd: string): number {
 
 // List tasks, optionally scoped to one channel. threadId omitted → all channels
 // (the Tasks panel's global view); scoped → that channel's dispatched work.
-// Filed proposals are hidden: their Turso task is listed instead (P2).
+// Filed proposals are hidden: their Turso task is listed instead (P2). So are
+// live runs (P4): a local worker row linked to a Turso id past `proposed` — the
+// Turso row carries its tmux identity.
+const LISTED = "status != 'filed' AND (dispatch_task_id IS NULL OR status IN ('proposed', 'rejected'))"
+
 export function listTasks(threadId?: string): Task[] {
   const rows = threadId
-    ? (db.query("SELECT * FROM orchestrator_tasks WHERE thread_id = ? AND status != 'filed' ORDER BY created_at DESC LIMIT 100").all(threadId) as TaskRow[])
-    : (db.query("SELECT * FROM orchestrator_tasks WHERE status != 'filed' ORDER BY created_at DESC LIMIT 100").all() as TaskRow[])
+    ? (db.query(`SELECT * FROM orchestrator_tasks WHERE thread_id = ? AND ${LISTED} ORDER BY created_at DESC LIMIT 100`).all(threadId) as TaskRow[])
+    : (db.query(`SELECT * FROM orchestrator_tasks WHERE ${LISTED} ORDER BY created_at DESC LIMIT 100`).all() as TaskRow[])
   return rows.map(toTask)
+}
+
+// Every local worker row that may still hold a tmux worker (dispatched/running),
+// listed or not — the worker tail resumes these on boot.
+export function listLiveTasks(): Task[] {
+  return (db.query("SELECT * FROM orchestrator_tasks WHERE status IN ('dispatched', 'running') ORDER BY created_at ASC").all() as TaskRow[]).map(toTask)
 }
 
 // ---- backpressure (PRJ-OR1T Phase 7) --------------------------------------
