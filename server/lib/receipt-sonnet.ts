@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { BOOKS_RULES, checkArithmetic, checkTaxRates, isPersonalPurpose, parseMoney } from "./receipt-checks"
 import type { ChartEntry } from "./receipt-jev"
 import type { ExpenseFields, QaIssue } from "./receipt-qa-store"
+import { parseCliResult } from "./cli-json"
 
 // Second QA pass: `claude -p --model sonnet` headless (Max OAuth), answer-only.
 // Every work tool is disallowed, no MCP server is loaded, and the only thing
@@ -54,9 +55,7 @@ export const runSonnetCli: SonnetRunner = async (prompt, imagePath) => {
     const out = await new Response(proc.stdout as ReadableStream).text()
     const code = await proc.exited
     if (code !== 0) return { kind: "error", reason: `exit ${code}` }
-    const start = out.indexOf('{"type"')
-    const wrapper = JSON.parse(start >= 0 ? out.slice(start) : out) as { result?: unknown }
-    return typeof wrapper.result === "string" ? { kind: "ok", text: wrapper.result } : { kind: "ok", text: "" }
+    return { kind: "ok", text: parseCliResult(out) ?? "" }
   } catch {
     return { kind: "ok", text: "" }
   } finally {

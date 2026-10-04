@@ -437,6 +437,23 @@
           "externals": []
         },
         {
+          "path": "lib/cli-json.ts",
+          "lines": 40,
+          "kind": "lib",
+          "exports": [
+            "parseCliResult"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/codex-feed.ts",
           "lines": 355,
           "kind": "lib",
@@ -1314,7 +1331,7 @@
         },
         {
           "path": "lib/orchestrator-brain.ts",
-          "lines": 246,
+          "lines": 239,
           "kind": "lib",
           "exports": [
             "BrainDecision",
@@ -1328,7 +1345,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/orchestrator-chat.ts"
+            "lib/orchestrator-chat.ts",
+            "lib/cli-json.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1888,7 +1906,7 @@
         },
         {
           "path": "lib/receipt-sonnet.ts",
-          "lines": 139,
+          "lines": 138,
           "kind": "lib",
           "exports": [
             "PATCH_ALLOWLIST",
@@ -1913,7 +1931,8 @@
           "imports": [
             "lib/receipt-checks.ts",
             "lib/receipt-jev.ts",
-            "lib/receipt-qa-store.ts"
+            "lib/receipt-qa-store.ts",
+            "lib/cli-json.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4717,6 +4736,13 @@
           "module": "lib/dialogs.ts",
           "callers": [
             "lib/model-control.ts"
+          ]
+        },
+        "parseCliResult": {
+          "module": "lib/cli-json.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts",
+            "lib/receipt-sonnet.ts"
           ]
         },
         "GENERAL_CHANNEL": {
