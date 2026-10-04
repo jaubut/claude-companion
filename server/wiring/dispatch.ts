@@ -7,7 +7,7 @@ import { getChannel, linkedNotes } from "../lib/orchestrator-channels"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { wipCap } from "../lib/orchestrator-queue"
 import { pushToAll } from "../lib/push"
-import { tursoQuery } from "../lib/turso"
+import { tursoExec, tursoQuery } from "../lib/turso"
 import { broadcast } from "../state"
 
 // The live Turso dispatch poller (orchestrator-one-queue P1): real Turso, the
@@ -24,6 +24,7 @@ export function dispatchPushEnabled(senderConfigured: boolean, env: Record<strin
 
 export const dispatchWiring: DispatchWiring = createDispatchWiring({
   query: tursoQuery,
+  exec: tursoExec,
   broadcast,
   appendTurn: (text, taskId, channelId) => appendTurn("orchestrator", text, taskId, channelId),
   push: (payload) => void pushToAll(payload).catch(() => { /* a failed push never breaks the poll */ }),

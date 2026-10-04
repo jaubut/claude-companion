@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import type { ApnsPayload } from "./apns"
-import { type Mirror, type Seen, createDispatchWiring } from "./dispatch-poller"
+import { type Mirror, type Seen, buildDispatchDigest, createDispatchWiring } from "./dispatch-poller"
 import { type DispatchTask, phaseOf, seenKey } from "./dispatch-tasks"
 import type { Channel } from "./orchestrator-channels"
 import type { Turn } from "./orchestrator-chat"
@@ -255,5 +255,22 @@ describe("dispatch poller", () => {
     expect(r.w.nudge()).toBe(true)
     expect(r.w.nudge()).toBe(false) // inside 2 s: arms one trailing poll instead
     r.w.stop()
+  })
+})
+
+describe("buildDispatchDigest (brain context)", () => {
+  const blocked = (i: number): DispatchTask => ({
+    id: String(i).padStart(32, "0"), noteId: "n", title: `task ${i}`, agent: "builder", status: "blocked", done: false,
+    blocker: "needs   an\nanswer", owner: null, prUrl: null, resultRef: null, projectTitle: "Dash", projectRef: null,
+    createdAt: 0, updatedAt: i, updatedAtRaw: String(i),
+  })
+  test("counts, top 5 blocked with flattened reasons, overflow line, ≤ 800 chars", () => {
+    const d = buildDispatchDigest("all projects", { queued: 2, running: 1, blocked: 7, pr: 1 }, [1, 2, 3, 4, 5, 6, 7].map(blocked))
+    expect(d.split("\n")[0]).toBe("Dispatch queue (all projects): 2 queued · 1 running · 7 blocked · 1 PR open")
+    expect(d).toContain("- [00000000] builder — task 1 (Dash): needs an answer")
+    expect(d).not.toContain("task 6")
+    expect(d).toContain("…and 2 more blocked")
+    expect(buildDispatchDigest("x", { queued: 0, running: 0, blocked: 0, pr: 0 }, [])).toBe("Dispatch queue (x): 0 queued · 0 running · 0 blocked · 0 PR open")
+    expect(buildDispatchDigest("x", { queued: 0, running: 0, blocked: 9, pr: 0 }, [1, 2, 3, 4, 5].map(blocked), 120).length).toBeLessThanOrEqual(120)
   })
 })

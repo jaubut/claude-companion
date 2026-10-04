@@ -1,5 +1,5 @@
 import { companionLog } from "../lib/log"
-import { broadcast } from "../state"
+import { HOST_INFO, broadcast } from "../state"
 import {
   appendTurn as orchAppendTurn,
   getThread,
@@ -20,21 +20,24 @@ import {
   countUnboundTasksInCwd,
   countRunningTasksInCwd,
   listTasks,
+  stampDispatchId,
+  markFiled,
   type Turn as OrchTurn,
   type Task as OrchTask,
 } from "../lib/orchestrator-chat"
 import { getChannel, type Channel as OrchChannel } from "../lib/orchestrator-channels"
-import { decide as brainDecide } from "../lib/orchestrator-brain"
+import { type BrainDecision, decide as brainDecide } from "../lib/orchestrator-brain"
 import { createWorkerTailManager } from "../lib/worker-tail"
 import { createQueue, wipCap } from "../lib/orchestrator-queue"
 import { capturePane, paneInputReady, paneHasDialog, sessionCmdArgv, tmuxSessionForPane } from "../lib/tmux-pane"
 import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
-import { BODY_CHANNEL } from "../lib/body"
+import { BODY_CHANNEL, type BodySnapshot } from "../lib/body"
 import { bodyDigestFor } from "./body"
-import { toTaskDto } from "../lib/dispatch-tasks"
-import { dispatchWiring } from "./dispatch"
+import { DEFAULT_AGENT, type ProjectRef, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, newDispatchId, resolveAgent, toTaskDto } from "../lib/dispatch-tasks"
+import { TursoUnreachable } from "../lib/turso"
+import { type DispatchWiring, dispatchWiring } from "./dispatch"
 
 // Orchestrator wiring (PRJ-OR1T): the always-on pieces that turn a proposal
 // into a running worker and report back — emit helpers, the WIP queue, the
@@ -260,57 +263,156 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
   return { ok: true }
 }
 
-// Run the brain on a user message: answer inline (chat) or stage a dispatch
-// proposal for one-tap approval. Fire-and-forget — never blocks /send. Falls back
-// to a soft note on any model failure so the thread never wedges.
-export async function runBrain(userText: string, channel: OrchChannel): Promise<void> {
-  // History and cwd candidates are scoped to the channel so the brain reasons
-  // within one project's thread. A channel bound to a cwd puts it first so the
-  // brain leans toward that project when composing a dispatch.
-  const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
-  let decision
+// ── Filing to the one queue (orchestrator-one-queue P2) ──
+
+/** Write context for the guarded Turso writes: host + channel go into the ledger meta. */
+export async function writeCtx(dispatch: DispatchWiring, channel: string | null): Promise<WriteCtx> {
+  return { exec: dispatch.exec, cols: await dispatch.columns(), host: HOST_INFO.name, channel, log: companionLog }
+}
+
+export type FileOutcome =
+  | { ok: true; dispatchTaskId: string; replay: boolean; task: OrchTask }
+  | { ok: false; status: number; error: string }
+
+function proposalTitle(t: OrchTask): string {
+  return (t.title?.trim() || t.prompt.split("\n").find((l) => l.trim()) || t.prompt).trim().slice(0, 120)
+}
+
+function proposalDescription(t: OrchTask, channelName: string): string {
+  const why = t.reasoning?.trim() ? `\nWhy: ${t.reasoning.trim()}` : ""
+  return `${t.prompt}\n\n— Filed from Companion #${channelName} (proposal ${t.taskId})${why}`
+}
+
+/**
+ * Approve / auto-dispatch → one Turso agent task (status queued). The Turso id
+ * is stamped on the local row first, so a replayed approve (iOS outbox) reuses
+ * it and INSERT OR IGNORE keeps it to one row; only then proposed → filed.
+ * A Turso failure leaves the proposal proposed (and retryable): 503.
+ */
+export async function fileProposal(
+  taskId: string, opts: { agent?: string | null; noteId?: string | null } = {}, dispatch: DispatchWiring = dispatchWiring,
+): Promise<FileOutcome> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, status: 404, error: "no such proposal" }
+  if (task.status === "filed" && task.dispatchTaskId) return { ok: true, dispatchTaskId: task.dispatchTaskId, replay: true, task }
+  if (task.status !== "proposed") return { ok: false, status: 409, error: `not proposable (status ${task.status})` }
+  const channel = getChannel(task.threadId)
+  const noteId = opts.noteId?.trim() || task.noteId || channel?.noteId || null
+  if (!noteId) return { ok: false, status: 422, error: "no_project" }
+  const agent = resolveAgent(opts.agent || task.agent || DEFAULT_AGENT)
+  if (!agent) return { ok: false, status: 400, error: "unknown_agent" }
+  const id = stampDispatchId(task.taskId, newDispatchId())
+  if (!id) return fileProposalReplay(task.taskId)
   try {
-    // #Body and health questions anywhere get the ≤ 800-char Body digest.
-    const context = await bodyDigestFor(channel.id, userText)
-    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd, context)
+    if (!(await getNote(dispatch.query, noteId))) return { ok: false, status: 404, error: "no such note" }
+    await fileTask(await writeCtx(dispatch, task.threadId), {
+      id, noteId, agent, title: proposalTitle(task), description: proposalDescription(task, channel?.name ?? task.threadId),
+    })
+  } catch (err) {
+    const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`
+    companionLog(`[orchestrator] file [${task.taskId}] failed: ${what}`)
+    return { ok: false, status: 503, error: "turso_unreachable" }
+  }
+  if (!markFiled(task.taskId, { noteId, agent })) return fileProposalReplay(task.taskId)
+  emitTask(task.taskId)
+  orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · queued as ${id.slice(0, 8)}`, task.taskId, task.threadId))
+  await showFiled(id, dispatch)
+  return { ok: true, dispatchTaskId: id, replay: false, task: getTask(task.taskId)! }
+}
+
+// The Turso row exists: push its frame now (the next poll would, ≤ 20 s later).
+async function showFiled(id: string, dispatch: DispatchWiring): Promise<void> {
+  try {
+    const row = await getDispatchTask(dispatch.query, await dispatch.columns(), id)
+    if (row) return dispatch.applyLocal(row.task)
+  } catch { /* the poll picks it up */ }
+  void dispatch.poll()
+}
+
+// A concurrent approve won the race: answer with its id (same Turso row).
+function fileProposalReplay(taskId: string): FileOutcome {
+  const now = getTask(taskId)
+  if (now?.status === "filed" && now.dispatchTaskId) return { ok: true, dispatchTaskId: now.dispatchTaskId, replay: true, task: now }
+  return { ok: false, status: 409, error: `not proposable (status ${now?.status ?? "gone"})` }
+}
+
+// Brain picks are suggestions: a note outside the active projects or an agent
+// dispatch-run cannot start is dropped (the channel's note / builder apply).
+function validatedTarget(d: Extract<BrainDecision, { kind: "proposal" }>, projects: ProjectRef[]) {
+  const note = projects.find((p) => p.noteId === d.noteId) ?? null
+  return { noteId: note?.noteId ?? null, agent: resolveAgent(d.agent), title: d.title, projectTitle: note?.title ?? null }
+}
+
+/**
+ * Stage a brain decision in the channel: a chat reply, or a proposal that waits
+ * for a tap — or, in an auto channel, files straight to Turso (never in #Body).
+ */
+export async function applyDecision(
+  decision: BrainDecision, channel: OrchChannel, projects: ProjectRef[], dispatch: DispatchWiring = dispatchWiring,
+): Promise<void> {
+  if (decision.kind === "chat") {
+    orchEmit(orchAppendTurn("orchestrator", decision.text, null, channel.id))
+    return
+  }
+  const target = validatedTarget(decision, projects)
+  const task = createProposal(decision.prompt, decision.cwd || channel.cwd || "", decision.reasoning, channel.id, target)
+  const where = `${target.agent ?? DEFAULT_AGENT} · ${target.projectTitle ?? channel.noteTitle ?? (target.noteId || channel.noteId || "no project yet")}`
+  // Trust ramp (Phase 7): re-read the channel — the toggle may have flipped
+  // during the brain call. Auto mode skips the tap but never the reasoning:
+  // every auto-dispatch shows why + what in the thread. Cancel is the veto.
+  // #Body never auto-dispatches: an alert must not start work without a tap.
+  if (channel.id !== BODY_CHANNEL && getChannel(channel.id)?.autoDispatch) {
+    orchEmit(orchAppendTurn("orchestrator", `Auto-dispatch [${task.taskId}] — ${where}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}`, task.taskId, channel.id))
+    emitTask(task.taskId)
+    const filed = await fileProposal(task.taskId, {}, dispatch)
+    if (!filed.ok) {
+      orchEmit(orchAppendTurn("orchestrator", `auto-dispatch [${task.taskId}] not filed (${filed.error}) — it stays a proposal; approve it by hand`, task.taskId, channel.id))
+    }
+    return
+  }
+  orchEmit(orchAppendTurn(
+    "orchestrator",
+    `Proposal [${task.taskId}] — ${where}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to file it.`,
+    task.taskId,
+    channel.id,
+  ))
+  emitTask(task.taskId)
+}
+
+/** Brain context: Body digest (#Body / health questions) + this view's dispatch digest. */
+export async function brainContext(
+  channel: OrchChannel, userText: string, dispatch: DispatchWiring = dispatchWiring, snapshot?: BodySnapshot,
+): Promise<string | null> {
+  const body = await bodyDigestFor(channel.id, userText, snapshot)
+  const scope = channel.id === BODY_CHANNEL ? "all projects" : `#${channel.name}`
+  const parts = [body, dispatch.digestFor(channel.id, scope)].filter((p): p is string => !!p?.trim())
+  return parts.length ? parts.join("\n\n") : null
+}
+
+// Run the brain on a user message: answer inline (chat) or stage a proposal.
+// Fire-and-forget — never blocks /send. Falls back to a soft note on any model
+// failure so the thread never wedges.
+export async function runBrain(userText: string, channel: OrchChannel, dispatch: DispatchWiring = dispatchWiring): Promise<void> {
+  // History and cwd candidates are scoped to the channel so the brain reasons
+  // within one project's thread.
+  const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
+  let decision: BrainDecision | null
+  let projects: ProjectRef[] = []
+  try {
+    projects = await dispatch.projects().catch(() => [])
+    const context = await brainContext(channel, userText, dispatch)
+    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd, context, {
+      projects, agents: [...agentAllowlist()].sort(), channelNoteId: channel.noteId,
+    })
   } catch {
     decision = null
   }
   if (!decision) {
     // decide() returns null only after runClaude exhausts its retries — the model
     // call itself kept failing (overload / auth contention), NOT because the
-    // message was unclear. Genuine ambiguity comes back as a chat clarifying
-    // question, not null. So don't tell the user to rephrase a message that was fine.
+    // message was unclear.
     orchEmit(orchAppendTurn("orchestrator", "Couldn't reach the model just now — transient error on my side, not your message. Send that again.", null, channel.id))
     return
   }
-  if (decision.kind === "chat") {
-    orchEmit(orchAppendTurn("orchestrator", decision.text, null, channel.id))
-    return
-  }
-  const task = createProposal(decision.prompt, decision.cwd, decision.reasoning, channel.id)
-  // Trust ramp (Phase 7): re-read the channel — the toggle may have flipped
-  // during the brain call. Auto mode skips the tap but never the reasoning:
-  // every auto-dispatch shows why + what in the thread, so a bad route is
-  // caught at step 2, not step 20. Cancel is the veto.
-  // #Body never auto-dispatches: alerts land there, and an alert must not be
-  // able to start work without a tap.
-  if (channel.id !== BODY_CHANNEL && getChannel(channel.id)?.autoDispatch) {
-    orchEmit(orchAppendTurn(
-      "orchestrator",
-      `Auto-dispatch [${task.taskId}] — worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}`,
-      task.taskId,
-      channel.id,
-    ))
-    emitTask(task.taskId)
-    void workerQueue.admit(task)
-    return
-  }
-  orchEmit(orchAppendTurn(
-    "orchestrator",
-    `Proposal [${task.taskId}] — dispatch a worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to run.`,
-    task.taskId,
-    channel.id,
-  ))
-  emitTask(task.taskId)
+  await applyDecision(decision, channel, projects, dispatch)
 }

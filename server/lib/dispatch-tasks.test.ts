@@ -12,7 +12,9 @@ import {
   listProjects,
   parseTs,
   phaseOf,
+  resolveAgent,
   toTaskDto,
+  unblockMarker,
 } from "./dispatch-tasks"
 import type { Task } from "./orchestrator-chat"
 import type { QueryFn, Row, SqlArg } from "./turso"
@@ -135,5 +137,31 @@ describe("reads", () => {
   test("projects carry their open agent-task count", async () => {
     const { query } = recorder(() => [{ id: "projects/x", ref_code: "PRJ-X", title: "X", open_tasks: 3 }])
     expect(await listProjects(query)).toEqual([{ noteId: "projects/x", ref: "PRJ-X", title: "X", openAgentTasks: 3 }])
+  })
+})
+
+describe("write helpers (P2)", () => {
+  const allow = new Set(["builder", "claude", "researcher"])
+  test("resolveAgent strips agent: prefixes, de-aliases, and refuses anything off the allowlist", () => {
+    expect(resolveAgent("agent:agent:Builder", allow)).toBe("builder")
+    expect(resolveAgent("frontend-design", allow)).toBe("builder")
+    expect(resolveAgent("seo-audit", allow)).toBe("claude")
+    expect(resolveAgent("researcher", allow)).toBe("researcher")
+    expect(resolveAgent("rm -rf", allow)).toBeNull()
+    expect(resolveAgent("ghost", allow)).toBeNull()
+    expect(resolveAgent("", allow)).toBeNull()
+    expect(resolveAgent(null, allow)).toBeNull()
+  })
+
+  test("unblockMarker: blank line, dated UTC marker, trimmed answer", () => {
+    expect(unblockMarker("  use repo X \n", Date.parse("2026-10-03T23:30:00Z"))).toBe("\n\n[unblock 2026-10-03] use repo X")
+  })
+
+  test("toTaskDto: a filed proposal keeps its Turso id, note and agent", () => {
+    const t: Task = {
+      taskId: "abcd1234", threadId: "general", prompt: "p", cwd: "", sessionKey: null, tmuxSession: null, reasoning: "why",
+      logTail: null, status: "filed", createdAt: 1, updatedAt: 2, noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32),
+    }
+    expect(toTaskDto(t)).toMatchObject({ source: "proposal", noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32), done: false })
   })
 })

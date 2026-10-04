@@ -2,7 +2,8 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { readFileSync } from "node:fs"
 
-// Minimal Turso (libSQL Hrana-over-HTTP) client for read-only proxy routes.
+// Minimal Turso (libSQL Hrana-over-HTTP) client: read-only proxy routes, plus
+// the guarded dispatch-task writes (tursoExec, orchestrator-one-queue P2).
 // The phone never holds the Turso token; the server does. Token source is
 // TURSO_AUTH_TOKEN from the shell env, ~/.claude-companion/.env (loaded by
 // cli.ts), or the agent env files ~/.config/tls-agent/{env,secrets.env}. Never log it, and
@@ -12,6 +13,8 @@ import { readFileSync } from "node:fs"
 export type SqlArg = string | number | null
 export type Row = Record<string, string | number | null>
 export type QueryFn = (sql: string, args: SqlArg[]) => Promise<Row[]>
+/** A write: rows (if any) plus the affected row count, for guarded compare-and-set. */
+export type ExecFn = (sql: string, args: SqlArg[]) => Promise<{ rows: Row[]; affected: number }>
 
 export class TursoUnreachable extends Error {
   constructor(reason: string) {
@@ -74,6 +77,7 @@ function fromValue(v: HranaValue): string | number | null {
 interface ExecResult {
   cols: { name: string }[]
   rows: HranaValue[][]
+  affected_row_count?: number
 }
 
 function parseResult(body: unknown): ExecResult {
@@ -98,7 +102,7 @@ async function post(auth: string, sql: string, args: SqlArg[]): Promise<Response
   }
 }
 
-export const tursoQuery: QueryFn = async (sql, args) => {
+async function execute(sql: string, args: SqlArg[]): Promise<{ rows: Row[]; affected: number }> {
   let auth = token()
   if (!auth) throw new TursoUnreachable("no token configured")
   let res = await post(auth, sql, args)
@@ -119,6 +123,14 @@ export const tursoQuery: QueryFn = async (sql, args) => {
   } catch {
     throw new TursoUnreachable("bad response")
   }
-  const { cols, rows } = parseResult(body)
-  return rows.map((row) => Object.fromEntries(cols.map((c, i) => [c.name, fromValue(row[i] ?? { type: "null" })])))
+  const { cols, rows, affected_row_count } = parseResult(body)
+  return {
+    rows: rows.map((row) => Object.fromEntries(cols.map((c, i) => [c.name, fromValue(row[i] ?? { type: "null" })]))),
+    affected: Number(affected_row_count ?? 0),
+  }
 }
+
+export const tursoQuery: QueryFn = async (sql, args) => (await execute(sql, args)).rows
+
+/** Writes only through the named functions in lib/dispatch-tasks.ts — never a generic SQL route. */
+export const tursoExec: ExecFn = execute

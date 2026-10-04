@@ -1,10 +1,15 @@
+import { randomUUID } from "node:crypto"
+import { readdirSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import type { Task, TaskStatus } from "./orchestrator-chat"
-import type { QueryFn, Row } from "./turso"
+import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
 
 // Turso `tasks` as the one work queue (orchestrator-one-queue). P1 = read path:
 // the dispatch task model, the shared task DTO (local + Turso), and the named
-// read queries. Every function takes the QueryFn so tests inject a fake.
-// Writes (file/cancel/requeue/unblock) arrive in P2, here, guarded.
+// read queries. P2 = the only Companion writes: file, cancel, requeue, unblock —
+// each a guarded compare-and-set plus one agent_activity row. Every function
+// takes its QueryFn / ExecFn so tests inject a fake.
 // Contract: docs/orchestrator-dispatch-api.md.
 
 export type DispatchStatus = "queued" | "running" | "blocked" | "pr" | "completed" | "failed" | "cancelled"
@@ -57,6 +62,8 @@ export interface TaskDto {
   mode: TaskMode
   /** Local tasks only: the tmux server holding tmuxSession. */
   tmuxSocket?: string | null
+  /** Local proposals only: the Turso id it was filed as (status "filed"). */
+  dispatchTaskId?: string | null
 }
 
 /** Optional Turso columns (added by P0); absent on an older schema. */
@@ -158,12 +165,12 @@ export function dispatchToDto(t: DispatchTask, threadId: string): TaskDto {
 
 /** A local sqlite task (proposal or legacy tmux worker) in the shared DTO. */
 export function toTaskDto(t: Task): TaskDto {
-  const proposal = t.status === "proposed" || t.status === "rejected"
+  const proposal = t.status === "proposed" || t.status === "rejected" || t.status === "filed"
   // Spread first: every field the local frame carried before stays (additive).
   return {
     ...t,
-    source: proposal ? "proposal" : "local", dispatchStatus: null, agent: null, noteId: null,
-    projectTitle: null, prUrl: null, resultRef: null, blocker: null,
+    source: proposal ? "proposal" : "local", dispatchStatus: null, agent: t.agent ?? null, noteId: t.noteId ?? null,
+    projectTitle: null, prUrl: null, resultRef: null, blocker: null, dispatchTaskId: t.dispatchTaskId ?? null,
     done: t.status === "done" || t.status === "cancelled", owner: null, mode: "live",
   }
 }
@@ -263,4 +270,181 @@ export async function getNote(query: QueryFn, id: string): Promise<{ noteId: str
   const rows = await query("SELECT id, title, ref_code FROM notes WHERE id = ?", [id])
   const r = rows[0]
   return r ? { noteId: String(r.id), title: str(r.title), ref: str(r.ref_code) } : null
+}
+
+// ── writes (P2) ──────────────────────────────────────────────────────────────
+// State machine (dispatch.sh semantics): cancel queued|blocked|failed → cancelled
+// (done=1); requeue blocked|failed|cancelled|completed-not-done → queued (done=0,
+// run fields cleared); unblock blocked → queued with the answer appended to
+// description. A running task is never touched here (it belongs to its runner).
+
+/** Skill names dispatch-run de-aliases (dispatch-run.ts AGENT_ALIASES). */
+export const AGENT_ALIASES: Readonly<Record<string, string>> = {
+  build: "builder", "frontend-design": "builder", "seo-audit": "claude", "business-profiler": "claude",
+}
+export const DEFAULT_AGENT = "builder"
+export const ANSWER_MAX = 4000
+export const TITLE_MAX = 120
+
+function agentsDir(): string {
+  return process.env.COMPANION_AGENTS_DIR || join(process.env.HOME || homedir(), ".claude", "agents")
+}
+
+/** Agents dispatch-run can start: ~/.claude/agents/*.md plus the catch-all `claude`. */
+export function agentAllowlist(dir: string = agentsDir()): Set<string> {
+  const set = new Set(["claude"])
+  try {
+    for (const f of readdirSync(dir)) if (f.endsWith(".md")) set.add(f.slice(0, -3))
+  } catch { /* no agents dir on this host */ }
+  return set
+}
+
+/** "agent:Builder" / "build" → "builder"; null when dispatch-run could not start it. */
+export function resolveAgent(raw: string | null | undefined, allow: ReadonlySet<string> = agentAllowlist()): string | null {
+  const bare = (raw ?? "").trim().toLowerCase().replace(/^(agent:)+/, "")
+  const slug = AGENT_ALIASES[bare] ?? bare
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) && allow.has(slug) ? slug : null
+}
+
+/** A fresh Turso task id: 32 lowercase hex, disjoint from the 8-char local ids. */
+export function newDispatchId(): string {
+  return randomUUID().replace(/-/g, "")
+}
+
+/** A Turso task id: 32-hex (Companion, dispatch tools) or a dashed UUID (dashboard). Local ids are 8 chars. */
+export const DISPATCH_ID = /^[A-Za-z0-9-]{16,64}$/
+
+export interface WriteCtx {
+  exec: ExecFn
+  cols: DispatchColumns
+  host: string
+  /** Channel the command came from (ledger meta). */
+  channel: string | null
+  now?: () => number
+  log?: (msg: string) => void
+}
+
+export type WriteOutcome =
+  | { ok: true; task: DispatchTask }
+  | { ok: false; error: "no_such_task" }
+  /** Refused or lost the compare-and-set: `task` is the current, unchanged row. */
+  | { ok: false; error: "conflict" | "running"; task: DispatchTask }
+
+const readVia = (exec: ExecFn): QueryFn => async (sql, args) => (await exec(sql, args)).rows
+
+// Append-only ledger row. A failed insert is logged and never undoes the
+// transition (dispatch.sh behaves the same).
+async function ledger(ctx: WriteCtx, t: Pick<DispatchTask, "id" | "agent">, to: string, summary: string, extra: Record<string, unknown> = {}): Promise<void> {
+  const meta = JSON.stringify({ source: "companion", host: ctx.host, channel: ctx.channel, ...extra })
+  try {
+    await ctx.exec(
+      "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",
+      [t.agent ?? "unknown", `dispatch:${to}`, "task", t.id, summary.slice(0, 200), meta],
+    )
+  } catch (err) {
+    ctx.log?.(`[dispatch] ledger insert failed for ${t.id.slice(0, 8)} (${(err as Error)?.message ?? "error"})`)
+  }
+}
+
+export interface FileInput { id: string; noteId: string; agent: string; title: string; description: string }
+
+/**
+ * Insert a queued agent task under a pre-generated id. INSERT OR IGNORE: a
+ * replay with the same id is a no-op (inserted=false) and writes no ledger row.
+ */
+export async function fileTask(ctx: WriteCtx, input: FileInput): Promise<{ id: string; inserted: boolean }> {
+  const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
+  const { affected } = await ctx.exec(
+    "INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, 'queued', datetime('now'), datetime('now'))",
+    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`],
+  )
+  const inserted = affected > 0
+  if (inserted) await ledger(ctx, { id: input.id, agent: input.agent }, "queued", `→queued: ${title}`, { op: "file", note: input.noteId })
+  return { id: input.id, inserted }
+}
+
+// Requeue resets exactly what dispatch.sh's `queued` resets; the P0 columns only when present.
+function requeueSets(cols: DispatchColumns): string[] {
+  return [
+    "dispatch_status = 'queued'", "updated_at = datetime('now')", "done = 0", "dispatch_run_id = NULL",
+    "dispatch_started_at = NULL", "dispatch_completed_at = NULL", "dispatch_blocker = NULL", "dispatch_owner = NULL",
+    ...(cols.resultRef ? ["dispatch_result_ref = NULL"] : []),
+    ...(cols.prUrl ? ["dispatch_pr_url = NULL"] : []),
+  ]
+}
+
+interface Transition {
+  to: DispatchStatus
+  /** Pure pre-check on the current row (the SQL guard below is the real CAS). */
+  allowed: (t: DispatchTask) => boolean
+  guard: string
+  guardArgs: SqlArg[]
+  sets: string[]
+  setArgs: SqlArg[]
+  summary: (t: DispatchTask) => string
+  meta?: Record<string, unknown>
+}
+
+async function transition(ctx: WriteCtx, id: string, tr: Transition): Promise<WriteOutcome> {
+  const query = readVia(ctx.exec)
+  const before = await getDispatchTask(query, ctx.cols, id)
+  if (!before) return { ok: false, error: "no_such_task" }
+  if (before.task.status === "running") return { ok: false, error: "running", task: before.task }
+  if (!tr.allowed(before.task)) return { ok: false, error: "conflict", task: before.task }
+  const { affected } = await ctx.exec(
+    `UPDATE tasks SET ${tr.sets.join(", ")} WHERE id = ? AND (${tr.guard})`,
+    [...tr.setArgs, id, ...tr.guardArgs],
+  )
+  const after = await getDispatchTask(query, ctx.cols, id)
+  if (!after) return { ok: false, error: "no_such_task" }
+  // 0 rows: another writer (dispatch-run, dispatch.sh, a second phone) moved it first.
+  if (affected === 0) return { ok: false, error: after.task.status === "running" ? "running" : "conflict", task: after.task }
+  await ledger(ctx, before.task, tr.to, tr.summary(before.task), { from: before.task.status, ...tr.meta })
+  return { ok: true, task: after.task }
+}
+
+const CANCELLABLE: readonly string[] = ["queued", "blocked", "failed"]
+const REQUEUEABLE: readonly string[] = ["blocked", "failed", "cancelled"]
+
+/** queued | blocked | failed → cancelled (done=1). Running → `running` (its runner owns it). */
+export function cancelDispatchTask(ctx: WriteCtx, id: string): Promise<WriteOutcome> {
+  return transition(ctx, id, {
+    to: "cancelled",
+    allowed: (t) => !!t.status && CANCELLABLE.includes(t.status),
+    guard: "dispatch_status IN ('queued', 'blocked', 'failed')", guardArgs: [],
+    sets: ["dispatch_status = 'cancelled'", "updated_at = datetime('now')", "done = 1", "dispatch_completed_at = datetime('now')"],
+    setArgs: [],
+    summary: (t) => `→cancelled: ${t.title}`,
+  })
+}
+
+const requeueAllowed = (t: DispatchTask) => (!!t.status && REQUEUEABLE.includes(t.status)) || (t.status === "completed" && !t.done)
+const REQUEUE_GUARD = "dispatch_status IN ('blocked', 'failed', 'cancelled') OR (dispatch_status = 'completed' AND done = 0)"
+
+/** blocked | failed | cancelled | completed-not-done → queued, done=0, run fields cleared. */
+export function requeueTask(ctx: WriteCtx, id: string): Promise<WriteOutcome> {
+  return transition(ctx, id, {
+    to: "queued", allowed: requeueAllowed, guard: REQUEUE_GUARD, guardArgs: [],
+    sets: requeueSets(ctx.cols), setArgs: [],
+    summary: (t) => `→queued: ${t.title}`, meta: { op: "requeue" },
+  })
+}
+
+/** The text appended to `description`; dispatch-run puts description into the worker's brief. */
+export function unblockMarker(answer: string, nowMs: number): string {
+  return `\n\n[unblock ${new Date(nowMs).toISOString().slice(0, 10)}] ${answer.trim()}`
+}
+
+/** blocked → queued, with the answer appended to description in one guarded UPDATE. */
+export function unblockTask(ctx: WriteCtx, id: string, answer: string): Promise<WriteOutcome> {
+  const marker = unblockMarker(answer, (ctx.now ?? Date.now)())
+  return transition(ctx, id, {
+    to: "queued",
+    allowed: (t) => t.status === "blocked",
+    guard: "dispatch_status = 'blocked'", guardArgs: [],
+    sets: ["description = COALESCE(description, '') || ?", ...requeueSets(ctx.cols)], setArgs: [marker],
+    summary: () => `→queued (unblock): ${answer.trim()}`,
+    meta: { op: "unblock" },
+  })
 }
