@@ -4,6 +4,12 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Jev front door routes every orchestrator message; shadow until the report clears the bar
+**Date:** 2026-10-04 (branch `feat/brain-jev-frontdoor`)
+**Choice:** `/api/orchestrator/send` → `wiring/front-door.ts`: one Jev call (intent status|quick_look|task|body|chat + project over every project note ∪ REPO_MAP, 2 s timeout). `COMPANION_JEV_ROUTER` = `shadow` (default: logged to companion.db `jev_route_log`, the old Haiku→Opus brain answers), `live` (all routes: status by code, quick_look by a read-only `claude -p` in the repo, task straight to compose, body with the digest forced, chat / < `COMPANION_JEV_MIN_CONF` 0.7 → old brain), `off`. Jeremie flips `live` after `bun cli.ts jev-report` shows ≥ 20 confident decisions and ≥ 75 % intent agreement where the old path is a valid label (status / quick_look / body are new capabilities, not judged against the old "chat"). Shipped regardless of the flag: lean brain `claude -p` flags, all projects + repo map in both brain prompts, no "which repo path?" questions, and a transient "⏳ on it…" turn after 800 ms.
+**Why:** Jeremie 2026-10-04: "the orchestrator feels stupid and it's slow". Jev answers in ~200 ms; the old path costs 5–18 s and had no repo knowledge.
+**Revisit if:** the report shows Jev disagreeing on task vs chat, quick_look answers are wrong about the repo they read, or the ack turn proves noisy on the phone.
+
 ### Body API: Turso read model + alerts into #Body, push owned by component host
 **Date:** 2026-10-03 (branch `feat/body-api`)
 **Choice:** `GET /api/body` (30 s cache, `?all=1`, `?fresh=1`), `GET /api/body/component/:id` and `POST /api/body/alert` read the collector-written `body_components` / `body_vitals` / `body_events` Turso tables (read-only here). An alert appends an orchestrator turn in the fixed channel `body` ("Body", created on first alert, never auto-dispatches), sends a `body_alert` frame, and pushes critical (time-sensitive) / warning (active) at most once per component per 15 min with one coalesced trailing push; info never pushes except a "Body report…" title once a day, passive. All collectors (Mac included) post to the Zettlab server, which pushes everything and owns #Body; a server pushes iff it has a sender (APNs direct or broker) and `COMPANION_BODY_PUSH` is not `0`. The brain gets a ≤ 800-char digest for every #Body message and system/body-scoped health questions elsewhere (a bare "status of project X" does not match). Contract: `docs/body-api.md`.
@@ -67,6 +73,72 @@ Last updated: 2026-10-04
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — brain-jev-frontdoor (2026-10-04)
+**Request (Jeremie):** "the orchestrator feels stupid and it's slow to respond. how can we leverage jev speed to help route my asks?"
+**Measured:** each reply = Haiku gate `claude -p` then (task) Opus compose `claude -p`. A trivial `claude -p` here is ~6.4 s wall for ~2.2 s of API — the rest is CLI startup (user settings, hooks, MCP). "Stupid": the brain has no tools, never sees the repo map, and compose sees only the 40 most recent ACTIVE projects, so "is chantalmasse.com on the latest nuxt?" asked for permission, then for a repo path.
+**Done when:**
+- Every message gets one Jev "System One" call (≤ 2 s, `jev-latest`): `intent` ∈ status|quick_look|task|body|chat + `project` over ALL project notes (any status) ∪ REPO_MAP repos, with aliases; any Jev error → today's path.
+- `COMPANION_JEV_ROUTER=shadow` (default): Jev decides + logs to companion.db `jev_route_log`, the old path answers; `live`: all routes act; `off`: no Jev call. `bun cli.ts jev-report` prints agreement / per-intent precision / confident count and the go-live bar (≥ 20 confident, ≥ 75 % agreement where the old path is a valid label).
+- Live routes: status → code-built answer from the dispatch cache + local WIP + Body snapshot (no LLM); quick_look → "🔎 checking <repo>…" turn, then a read-only `claude -p` over the resolved repo (≤ 60 s) → facts in the thread, plus the existing proposal card only if a change is needed; body → old brain with the Body digest forced; task → straight to compose (no Haiku gate) with the resolved note + repo; chat / low confidence (< `COMPANION_JEV_MIN_CONF`, 0.7) → old path.
+- Shipped live regardless of the flag: brain prompts list ALL projects (status + repo) and the repo map; compose may never ask for a repo path or permission; brain `claude -p` calls run lean (no user settings/hooks/MCP, no tools, no session file, prompt on stdin); a transient "⏳ on it…" turn reaches the phone if no reply landed within 800 ms.
+
+**State decisions**
+- `jev_route_log` (companion.db, created by `lib/jev-route-log.ts` on the injected `Database`): one row per message — at, channel, text_hash (sha256), text (redacted, ≤ 200), mode, intent, intent_conf, project, project_conf, project_source (jev|alias|channel|none), route (what answered), old_outcome (chat|task|error|null), old_note_id, jev_ms, total_ms, error. Writer: `wiring/front-door.ts` only. Rows are never updated.
+- Key (`lib/jev.ts#jevKey`, first hit wins; quotes, CR and `export ` stripped): the vault store `~/.config/tls-agent/secrets.env` (what receipt-jev reads; `TLS_SECRETS_FILE`), its `secrets.mirror` sibling, the process env `TYPESAFE_API_KEY`, then `~/.config/tls-agent/env` (`COMPANION_JEV_ENV_FILE`). Checked 2026-10-04 (values never printed): the Mac launchd service env carries no `TYPESAFE_API_KEY` (plist EnvironmentVariables only); the Mac's `tls-agent/env` copy returns HTTP 401 while the `secrets.mirror` copy returns 200 — hence vault first. Zettlab not verifiable from here (tailnet SSH policy).
+- Project catalog (`lib/project-catalog.ts`, pure): notes `folder='projects'` all statuses (active first) + REPO_MAP entries grouped by regex, first existing checkout wins; a repo entry that matches no note becomes its own candidate. Aliases = note slug, slug minus generic tail words (website/site/app/web/ios), ref code, regex alternatives, repo dir name. Code alias match (normalized, ≥ 6 chars, longest wins) backs up a low-confidence Jev pick.
+- Read-only runner generalized into `lib/readonly-claude.ts` (argv/env/spawn); `body-investigator.ts` keeps its exports and uses it. quick_look runs with the repo as cwd and `--setting-sources ""` (no settings file at all, so the repo's own `.claude/settings*.json` allow rules never apply; no `--add-dir`). Allowlist = Read/Grep/Glob + git log|status|diff|show|describe|rev-parse|ls-files|remote -v|branch --show-current|branch -a|tag -l, ls/cat/head/tail/stat/wc/which/jq/grep/sort, `npm view|ls|outdated`, `curl -s https://registry.npmjs.org/…` / `https://api.github.com/…`; deny list = the investigator's base (writes, secrets, mutating curl flags) + npm install/update/publish. Model `COMPANION_QUICKLOOK_MODEL` (sonnet), 60 s timeout.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `orchestrator` | frame | live: new turn texts (status answer, 🔎 ack, quick_look facts); all modes: a transient "⏳ on it…" turn (broadcast, not persisted, `ack-` id) | same shape; iOS appends by id |
+| `orchestrator_task` | frame | quick_look may emit an existing proposal card | unchanged |
+| `GET /api/orchestrator/projects` | endpoint | unchanged (still active only) | — |
+| `jev-report` | CLI NEW | `bun cli.ts jev-report [--days N]` | new |
+| brain prompts | internal | all projects + repo map; never ask for a path | internal |
+
+**Files — one owner (builder)**
+| file | change |
+|---|---|
+| `server/lib/jev.ts` | NEW: key lookup, HTTP client (2 s timeout, never throws), answer parsing |
+| `server/lib/project-catalog.ts` | NEW: candidates, aliases, alias match, Jev criteria |
+| `server/lib/jev-router.ts` | NEW: mode/min-conf env, questions, decision parse, route pick |
+| `server/lib/jev-route-log.ts` | NEW: sqlite log + report math |
+| `server/lib/status-answer.ts` | NEW: templated status answer |
+| `server/lib/readonly-claude.ts` | NEW: shared read-only `claude -p` runner |
+| `server/lib/quick-look.ts` | NEW: allowlist, prompt, output parse, turn text |
+| `server/lib/front-door.ts` | NEW: per-message flow with seams (mode switch, ack, shadow log) |
+| `server/wiring/front-door.ts` | NEW: live instance |
+| `server/lib/body-investigator.ts` | runner moves to readonly-claude (exports kept) |
+| `server/lib/orchestrator-brain.ts` | lean argv on stdin, all-projects + repo-map prompt lines, forced task / resolved project |
+| `server/wiring/orchestrator.ts` | `runBrain` options + outcome, all projects for validation |
+| `server/lib/dispatch-tasks.ts`, `server/lib/dispatch-poller.ts` | `listAllProjects`, `allProjects()`, `snapshot()` |
+| `server/lib/live-repo.ts` | export the REPO_MAP source reader |
+| `server/routes/orchestrator.ts` | `/send` → front door |
+| `cli.ts` | `jev-report` |
+
+**Risks / failure modes**
+- Jev picks a wrong project with high confidence → quick_look reads the wrong repo (answer names the repo, so it's visible) or compose files under the wrong note (still a tap to approve).
+- Jev outage/slow: 2 s timeout then today's path — live adds ≤ 2 s worst case; shadow adds nothing (runs concurrently).
+- `--tools ""` / `--setting-sources` unsupported on an older Zettlab CLI → brain calls fail → "couldn't reach the model". Zettlab is on 2.1.284 where the investigator already uses these flags.
+- quick_look network: `npm view` writes the npm cache under ~/.npm (outside every repo); no repo writes are possible (dontAsk + allowlist).
+- The ack turn is in-memory on the phone only; it disappears on app relaunch.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated + `--check --lint`.
+2. Smoke on this Mac: one real Jev call; one real quick_look with `git status` before/after; gate wall time before/after lean flags.
+3. Jeremie: leave shadow ~a week, run `bun cli.ts jev-report`, flip `COMPANION_JEV_ROUTER=live` when the bar is met.
+
+**Out of scope:** a persistent warm `claude` process (stream-json follow-up), iOS changes, Jev on the Body investigator.
+
+**Build notes (2026-10-04, `feat/brain-jev-frontdoor`):**
+- **quick_look cwd changed during the build.** The planned "empty cwd + `--add-dir <repo>`" cannot read git: in dontAsk mode every `cd <repo> && git log …` compound is denied (verified on 2.1.289). Running IN the repo with `--setting-sources ""` works and loads no settings file. Verified with an attempt-everything harness prompt: `git log`, `git status`, `ls | grep`, Read, `npm view` ok; `touch`, Write, `git commit`, `git branch <name>`, `npm install`, `echo > file`, `curl -X POST` all denied.
+- **Key source changed** (see State decisions): vault first, because the Mac's `tls-agent/env` key is stale (401).
+- **Smoke, this Mac:** Jev on 6 real messages, 166–347 ms each, all routed as expected ("is chantalmasse.com on the latest nuxt?" → quick_look 0.98, project chantal-masse-website 0.98 [a `done` note], repo ~/chantalmasse-website). quick_look on ~/chantalmasse-website: 15 s, "Nuxt 4.4.2 locked, latest 4.5.2" + last commit + an upgrade proposal; on ~/claude-companion: 6 s, "no bun pin". Both: no file newer than the run start, `git status` and HEAD unchanged.
+- **Brain speed:** a trivial gate `claude -p` 6.4 s → 3.0 s wall (API 2.2 s → 2.0 s; the rest was startup). The real `decide()` gate 7.7 s → 5.1 s median (5.4–6.0 s with the 100-line catalog now in its prompt). `--bare` would trim more but forces API-key auth (not usable on Max). User CLAUDE.md still loads under `--setting-sources project,local`.
+- **Old path now answers the motivating question:** "is chantalmasse.com on the latest nuxt?" → Haiku says task → Opus proposes a check with cwd ~/chantalmasse-website, no path or permission question (18 s).
+- **Stream-json follow-up looks viable:** one `claude -p --input-format stream-json --output-format stream-json` process with the lean flags answered a second user message 663 ms after it was written (first turn 1.4 s). Context grows per turn, so a warm gate needs a turn cap / recycle.
 
 ### Change Plan — body-auto-investigate (2026-10-04)
 **Request (Jeremie):** "what's showing as dead on the Body tab should be investigated by the orchestrator right away without my permission. this is part of the holistic, nervous system goal."

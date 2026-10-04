@@ -274,3 +274,32 @@ describe("buildDispatchDigest (brain context)", () => {
     expect(buildDispatchDigest("x", { queued: 0, running: 0, blocked: 9, pr: 0 }, [1, 2, 3, 4, 5].map(blocked), 120).length).toBeLessThanOrEqual(120)
   })
 })
+
+describe("front-door accessors", () => {
+  test("snapshot is null until the first good poll, then the polled list", async () => {
+    rows = [task(1), blocked(2, "2026-10-03 11:00:00")]
+    const r = rig()
+    expect(r.w.snapshot()).toBeNull()
+    await r.w.poll()
+    expect(r.w.snapshot()!.map((t) => t.id)).toEqual([ID(1), ID(2)])
+  })
+
+  test("allProjects: any status, cached", async () => {
+    let n = 0
+    const w = createDispatchWiring({
+      query: async (sql) => {
+        if (!sql.includes("FROM notes n WHERE n.folder = 'projects' ORDER BY")) return []
+        n++
+        return [{ id: "projects/old", ref_code: null, title: "Old", status: "done", open_tasks: 0 }]
+      },
+      broadcast: () => {}, appendTurn: () => ({ id: "x", threadId: "g", role: "orchestrator", text: "", taskId: null, createdAt: 0 }),
+      push: () => {}, pushEnabled: () => false, linkedNotes: () => new Map(), getChannel: channel,
+      localQueue: () => ({ cap: 3, live: 0, queued: 0 }), mirror: memMirror, generalChannel: "general",
+    })
+    expect(await w.allProjects()).toEqual([{ noteId: "projects/old", ref: null, title: "Old", openAgentTasks: 0, status: "done" }])
+    await w.allProjects()
+    expect(n).toBe(1)
+    await w.allProjects(true)
+    expect(n).toBe(2)
+  })
+})

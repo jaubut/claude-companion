@@ -3,7 +3,6 @@ import {
   emitTask,
   fileProposal,
   orchEmit,
-  runBrain,
   workerQueue,
   writeCtx,
 } from "../wiring/orchestrator"
@@ -26,6 +25,7 @@ import {
 } from "../lib/dispatch-tasks"
 import { type LiveStart, approveLive, cancelLive, dispatchLive } from "../wiring/live"
 import { approveBodyFix } from "../wiring/body-fix"
+import { frontDoor } from "../wiring/front-door"
 import { HOST_INFO } from "../state"
 import { withIdempotency } from "../lib/idempotency"
 import { bodySnapshot } from "../wiring/body"
@@ -446,9 +446,10 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     }
     const turn = orchAppendTurn("user", text.trim(), null, ch.id)
     orchEmit(turn)
-    // Brain decides chat-vs-dispatch async; the user message is already
-    // recorded, so /send returns instantly and the reply/proposal streams in.
-    void runBrain(text.trim(), ch)
+    // The front door (Jev route → status / quick look / old brain) answers
+    // async; the user message is already recorded, so /send returns instantly
+    // and the reply/proposal streams in.
+    void frontDoor.handle(text.trim(), ch)
     return Response.json({ ok: true, turn })
   }
   if (url.pathname === "/api/orchestrator/dispatch" && req.method === "POST") return dispatchRoute(req, dispatch)

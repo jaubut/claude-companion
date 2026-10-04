@@ -14,6 +14,15 @@ function dispatchRunPath(): string {
   return process.env.COMPANION_DISPATCH_RUN || join(process.env.HOME || homedir(), ".claude", "tools", "dispatch-run.ts")
 }
 
+/** dispatch-run.ts source text (REPO_MAP lives there), or null when unreadable. */
+export function readRepoMapSource(file: string = dispatchRunPath()): string | null {
+  try {
+    return readFileSync(file, "utf8")
+  } catch {
+    return null
+  }
+}
+
 const ENTRY = /\{\s*match:\s*\/((?:\\.|[^/\\\n])+)\/([a-z]*)\s*,\s*path:\s*`\$\{HOME\}\/([^`$]+)`\s*\}/g
 
 /** REPO_MAP entries parsed from dispatch-run.ts source; [] when unreadable. */
@@ -38,12 +47,8 @@ export function isDir(p: string | null | undefined): p is string {
 
 /** The local repo for a project note (id + title), or null when unmapped here. */
 export function repoForNote(noteId: string, title: string | null, file: string = dispatchRunPath()): string | null {
-  let source: string
-  try {
-    source = readFileSync(file, "utf8")
-  } catch {
-    return null
-  }
+  const source = readRepoMapSource(file)
+  if (source === null) return null
   const hay = `${noteId} ${title ?? ""}`
   for (const { match, path } of parseRepoMap(source)) if (match.test(hay) && isDir(path)) return path
   return null

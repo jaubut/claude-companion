@@ -4,12 +4,14 @@ import {
   type DispatchColumns,
   type DispatchTask,
   type LiveIdentity,
+  type AnyProjectRef,
   type ProjectRef,
   type TaskDto,
   detectColumns,
   dispatchToDto,
   effectiveStatus,
   listDispatchTasks,
+  listAllProjects,
   listProjects,
   phaseOf,
 } from "./dispatch-tasks"
@@ -134,6 +136,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
   let inflight: Promise<boolean> | null = null
   let cols: { value: DispatchColumns; at: number } | null = null
   let projectsCache: { value: ProjectRef[]; at: number } | null = null
+  let allProjectsCache: { value: AnyProjectRef[]; at: number } | null = null
   let lastNudge = -Infinity
   let trailing: ReturnType<typeof setTimeout> | null = null
   let timer: ReturnType<typeof setInterval> | null = null
@@ -331,8 +334,17 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     return projectsCache.value
   }
 
+  /** Every project note, any status (front door + brain); same 5 min cache. */
+  async function allProjects(fresh = false): Promise<AnyProjectRef[]> {
+    if (!fresh && allProjectsCache && now() - allProjectsCache.at < PROJECTS_TTL_MS) return allProjectsCache.value
+    allProjectsCache = { value: await listAllProjects(deps.query), at: now() }
+    return allProjectsCache.value
+  }
+
   return {
-    query: deps.query, exec: deps.exec ?? noExec, columns, poll, nudge, start, stop, projects,
+    query: deps.query, exec: deps.exec ?? noExec, columns, poll, nudge, start, stop, projects, allProjects,
+    /** The last polled task list; null before the first successful poll. */
+    snapshot: (): DispatchTask[] | null => (polledOk ? cache : null),
     tasksFor, countsFor, decorate, queueSummary, threadIdFor, digestFor, applyLocal,
     cached: (id: string): DispatchTask | null => cache.find((t) => t.id === id) ?? null,
     relink,
