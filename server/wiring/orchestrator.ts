@@ -1,5 +1,5 @@
 import { companionLog } from "../lib/log"
-import { broadcast } from "../state"
+import { HOST_INFO, broadcast } from "../state"
 import {
   appendTurn as orchAppendTurn,
   getThread,
@@ -19,19 +19,31 @@ import {
   findRunningTaskByTmuxSession,
   countUnboundTasksInCwd,
   countRunningTasksInCwd,
-  listTasks,
-  getChannel,
+  listLiveTasks,
+  stampDispatchId,
+  markFiled,
   type Turn as OrchTurn,
   type Task as OrchTask,
-  type Channel as OrchChannel,
 } from "../lib/orchestrator-chat"
-import { decide as brainDecide } from "../lib/orchestrator-brain"
+import { getChannel, setChannelAuto, type Channel as OrchChannel } from "../lib/orchestrator-channels"
+import { type BrainDecision, decide as brainDecide } from "../lib/orchestrator-brain"
+import { type Catalog, buildCatalog, catalogLines } from "../lib/project-catalog"
+import { readRepoMapSource } from "../lib/live-repo"
 import { createWorkerTailManager } from "../lib/worker-tail"
-import { createQueue, DEFAULT_WIP_CAP } from "../lib/orchestrator-queue"
-import { capturePane, paneInputReady, paneHasDialog, tmuxSessionForPane } from "../lib/tmux-pane"
+import { createQueue, wipCap } from "../lib/orchestrator-queue"
+import { capturePane, paneInputReady, paneHasDialog, sessionCmdArgv, tmuxSessionForPane } from "../lib/tmux-pane"
 import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
+import { BODY_CHANNEL, type BodySnapshot } from "../lib/body"
+import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
+import { bodyDigestFor } from "./body"
+import { investigationDigestFor } from "./body-investigate"
+import {
+  DEFAULT_AGENT, type ProjectRef, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, isLiveLinked, newDispatchId, resolveAgent, toTaskDto,
+} from "../lib/dispatch-tasks"
+import { TursoUnreachable } from "../lib/turso"
+import { type DispatchWiring, dispatchWiring } from "./dispatch"
 
 // Orchestrator wiring (PRJ-OR1T): the always-on pieces that turn a proposal
 // into a running worker and report back — emit helpers, the WIP queue, the
@@ -47,22 +59,58 @@ export function orchEmit(turn: OrchTurn): void {
 
 // Broadcast a task's current state on every transition (proposed → dispatched →
 // running → done/error/rejected) so the phone's Tasks panel tracks live work.
+// A live run (P4) is shown as its Turso row: re-send that frame too, so the
+// worker's tmux identity (spawn, bind) reaches the phone.
 export function emitTask(taskId: string): void {
   const t = getTask(taskId)
-  if (t) broadcast({ type: "orchestrator_task", task: t })
+  if (!t) return
+  broadcast({ type: "orchestrator_task", task: toTaskDto(t) })
+  for (const fn of taskListeners) fn(t)
+  // Not cached yet → the next poll carries it (identity included).
+  if (isLiveLinked(t)) dispatchWiring.reemit(t.dispatchTaskId!)
+}
+
+// Triage (wiring/triage.ts) recomputes when a local task (proposal) changes,
+// and adds its count to the #General / #Body brain context. Registered there
+// (it imports this module, not the reverse).
+const taskListeners = new Set<(task: OrchTask) => void>()
+export function onTaskEmitted(fn: (task: OrchTask) => void): () => void {
+  taskListeners.add(fn)
+  return () => taskListeners.delete(fn)
+}
+let triageDigest: (() => string | null) | null = null
+export function setTriageDigest(fn: (() => string | null) | null): void {
+  triageDigest = fn
+}
+
+// Live mode (P4): wiring/live.ts closes the Turso row when a worker dies
+// without a stop hook. Registered there (it imports this module, not the reverse).
+let liveWorkerDead: ((task: OrchTask) => void) | null = null
+export function onLiveWorkerDead(fn: (task: OrchTask) => void): void {
+  liveWorkerDead = fn
 }
 
 // Broadcast a new/updated channel so every device's channel rail live-updates
 // (PRJ-OR1T Phase 6).
 export function emitChannel(channel: OrchChannel): void {
-  broadcast({ type: "orchestrator_channel", channel })
+  broadcast({ type: "orchestrator_channel", channel: dispatchWiring.decorate(channel) })
+}
+
+// In an auto channel a cancel is the veto: back to propose-confirm.
+export function vetoAuto(channelId: string): void {
+  const ch = getChannel(channelId)
+  if (!ch?.autoDispatch) return
+  const updated = setChannelAuto(ch.id, false)
+  if (!updated) return
+  emitChannel(updated)
+  orchEmit(orchAppendTurn("orchestrator", `auto-dispatch OFF for #${ch.name} — a cancel resets the ramp; flip it back on when ready`, null, ch.id))
 }
 
 // Backpressure (PRJ-OR1T Phase 7): at most WIP_CAP live workers on this host.
 // Anything admitted past that — approved proposal, auto-dispatch, or a manual
 // /dispatch — parks as queued and drains FIFO when a worker exits (stop hook,
 // dead-pane backstop, cancel), on boot, and on a 30s safety tick.
-export const WIP_CAP = Number(process.env.COMPANION_WIP_CAP) || DEFAULT_WIP_CAP
+export const WIP_CAP = wipCap()
 export const workerQueue = createQueue({
   cap: WIP_CAP,
   countLive: countLiveTasks,
@@ -92,11 +140,13 @@ if (typeof (drainTimer as unknown as { unref?: () => void }).unref === "function
 // while the task is still live means the worker died without a stop hook — the
 // task is marked error instead of sitting in 'running' forever.
 export const workerTail = createWorkerTailManager({
-  capturePane,
+  capturePane: (sessionName, socket) => capturePane(sessionName, undefined, { socket }),
   getTask,
   setTaskLogTail,
   setTaskDead(taskId) {
     setTaskStatus(taskId, "error")
+    const t = getTask(taskId)
+    if (t?.dispatchTaskId) liveWorkerDead?.(t)
     void workerQueue.drain() // the dead worker's slot is free
   },
   onLines(task, lines) {
@@ -106,7 +156,7 @@ export const workerTail = createWorkerTailManager({
     emitTask(taskId) // now carries logTail — clients collapse the live card
   },
 })
-workerTail.resumeAll(listTasks())
+workerTail.resumeAll(listLiveTasks())
 void workerQueue.drain() // queued work left over from before a restart
 
 // Deliver a dispatched prompt straight to the worker's tmux session by name.
@@ -115,15 +165,18 @@ void workerQueue.drain() // queued work left over from before a restart
 // tmux-wrapped worker discovered via ps has no tmuxPane recorded and its client
 // tty has no Terminal tab, so AppleScript/tty inject fails ("no tab for tty").
 // tmux send-keys does not care — it just needs the TUI to be input-ready first.
-async function sendToTmux(sessionName: string, text: string): Promise<void> {
+// `socket` is the server the worker was spawned on (task.tmuxSocket).
+async function sendToTmux(sessionName: string, text: string, socket?: string): Promise<void> {
+  const keys = (...rest: string[]) =>
+    Bun.spawn(sessionCmdArgv(socket, "send-keys", sessionName, ...rest), { stdout: "ignore", stderr: "ignore" }).exited
   let ready = false
   for (let i = 0; i < 30; i++) {
-    const pane = await capturePane(sessionName)
+    const pane = await capturePane(sessionName, undefined, { socket })
     if (pane === null) return // worker session gone
     if (paneHasDialog(pane)) {
       // Dismiss the onboarding dialog (Escape = reject MCP enable / decline
       // trust), then keep polling for the real input box.
-      await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Escape"], { stdout: "ignore", stderr: "ignore" }).exited
+      await keys("Escape")
       await new Promise((r) => setTimeout(r, 1500))
       continue
     }
@@ -136,9 +189,9 @@ async function sendToTmux(sessionName: string, text: string): Promise<void> {
     return
   }
   try {
-    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "-l", text], { stdout: "ignore", stderr: "ignore" }).exited
+    await keys("-l", text)
     await new Promise((r) => setTimeout(r, 300))
-    await Bun.spawn(["tmux", "send-keys", "-t", sessionName, "Enter"], { stdout: "ignore", stderr: "ignore" }).exited
+    await keys("Enter")
     const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     companionLog(`${cyan}orchestrator → tmux${reset} ${sessionName} "${text.slice(0, 50)}"`)
   } catch { /* worker session gone */ }
@@ -201,11 +254,11 @@ async function reconcileOnce(sessions: Session[]): Promise<void> {
     bindTaskSession(pending.taskId, s.key || s.cwd)
     emitTask(pending.taskId)
     orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId, pending.threadId))
-    const { tmuxSession, prompt } = pending
+    const { tmuxSession, tmuxSocket, prompt } = pending
     // sendToTmux self-paces: it polls the pane until the TUI is input-ready
     // before send-keys, so binding the instant ps-discovery sees the worker is
     // fine — the prompt won't land until Claude can actually receive it.
-    if (tmuxSession) void sendToTmux(tmuxSession, prompt)
+    if (tmuxSession) void sendToTmux(tmuxSession, prompt, tmuxSocket || undefined)
   }
 }
 
@@ -245,7 +298,7 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
     companionLog(`${red}dispatch failed${reset} [${task.taskId}] — ${result.error}`)
     return { ok: false, error: result.error }
   }
-  setTaskSpawn(task.taskId, result.sessionName ?? null)
+  setTaskSpawn(task.taskId, result.sessionName ?? null, result.tmuxSocket || null)
   emitTask(task.taskId)
   workerTail.watch(task.taskId)
   companionLog(`${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}`)
@@ -254,53 +307,184 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
   return { ok: true }
 }
 
-// Run the brain on a user message: answer inline (chat) or stage a dispatch
-// proposal for one-tap approval. Fire-and-forget — never blocks /send. Falls back
-// to a soft note on any model failure so the thread never wedges.
-export async function runBrain(userText: string, channel: OrchChannel): Promise<void> {
-  // History and cwd candidates are scoped to the channel so the brain reasons
-  // within one project's thread. A channel bound to a cwd puts it first so the
-  // brain leans toward that project when composing a dispatch.
-  const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
-  let decision
+// ── Filing to the one queue (orchestrator-one-queue P2) ──
+
+/** Write context for the guarded Turso writes: host + channel go into the ledger meta. */
+export async function writeCtx(dispatch: DispatchWiring, channel: string | null): Promise<WriteCtx> {
+  return { exec: dispatch.exec, cols: await dispatch.columns(), host: HOST_INFO.name, channel, log: companionLog }
+}
+
+export type FileOutcome =
+  | { ok: true; dispatchTaskId: string; replay: boolean; task: OrchTask }
+  | { ok: false; status: number; error: string }
+
+function proposalTitle(t: OrchTask): string {
+  return (t.title?.trim() || t.prompt.split("\n").find((l) => l.trim()) || t.prompt).trim().slice(0, 120)
+}
+
+function proposalDescription(t: OrchTask, channelName: string): string {
+  const why = t.reasoning?.trim() ? `\nWhy: ${t.reasoning.trim()}` : ""
+  return `${t.prompt}\n\n— Filed from Companion #${channelName} (proposal ${t.taskId})${why}`
+}
+
+/**
+ * Approve / auto-dispatch → one Turso agent task (status queued). The Turso id
+ * is stamped on the local row first, so a replayed approve (iOS outbox) reuses
+ * it and INSERT OR IGNORE keeps it to one row; only then proposed → filed.
+ * A Turso failure leaves the proposal proposed (and retryable): 503.
+ */
+export async function fileProposal(
+  taskId: string, opts: { agent?: string | null; noteId?: string | null } = {}, dispatch: DispatchWiring = dispatchWiring,
+): Promise<FileOutcome> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, status: 404, error: "no such proposal" }
+  if (task.status === "filed" && task.dispatchTaskId) return { ok: true, dispatchTaskId: task.dispatchTaskId, replay: true, task }
+  if (task.status !== "proposed") return { ok: false, status: 409, error: `not proposable (status ${task.status})` }
+  const channel = getChannel(task.threadId)
+  const noteId = opts.noteId?.trim() || task.noteId || channel?.noteId || null
+  if (!noteId) return { ok: false, status: 422, error: "no_project" }
+  const agent = resolveAgent(opts.agent || task.agent || DEFAULT_AGENT)
+  if (!agent) return { ok: false, status: 400, error: "unknown_agent" }
+  const id = stampDispatchId(task.taskId, newDispatchId())
+  if (!id) return fileProposalReplay(task.taskId)
   try {
-    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd)
+    if (!(await getNote(dispatch.query, noteId))) return { ok: false, status: 404, error: "no such note" }
+    await fileTask(await writeCtx(dispatch, task.threadId), {
+      id, noteId, agent, title: proposalTitle(task), description: proposalDescription(task, channel?.name ?? task.threadId),
+    })
+  } catch (err) {
+    const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`
+    companionLog(`[orchestrator] file [${task.taskId}] failed: ${what}`)
+    return { ok: false, status: 503, error: "turso_unreachable" }
+  }
+  if (!markFiled(task.taskId, { noteId, agent })) return fileProposalReplay(task.taskId)
+  emitTask(task.taskId)
+  orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · queued as ${id.slice(0, 8)}`, task.taskId, task.threadId))
+  await showFiled(id, dispatch)
+  return { ok: true, dispatchTaskId: id, replay: false, task: getTask(task.taskId)! }
+}
+
+// The Turso row exists: push its frame now (the next poll would, ≤ 20 s later).
+async function showFiled(id: string, dispatch: DispatchWiring): Promise<void> {
+  try {
+    const row = await getDispatchTask(dispatch.query, await dispatch.columns(), id)
+    if (row) return dispatch.applyLocal(row.task)
+  } catch { /* the poll picks it up */ }
+  void dispatch.poll()
+}
+
+// A concurrent approve won the race: answer with its id (same Turso row).
+function fileProposalReplay(taskId: string): FileOutcome {
+  const now = getTask(taskId)
+  if (now?.status === "filed" && now.dispatchTaskId) return { ok: true, dispatchTaskId: now.dispatchTaskId, replay: true, task: now }
+  return { ok: false, status: 409, error: `not proposable (status ${now?.status ?? "gone"})` }
+}
+
+// Brain picks are suggestions: a note outside the active projects or an agent
+// dispatch-run cannot start is dropped (the channel's note / builder apply).
+function validatedTarget(d: Extract<BrainDecision, { kind: "proposal" }>, projects: ProjectRef[]) {
+  const note = projects.find((p) => p.noteId === d.noteId) ?? null
+  return { noteId: note?.noteId ?? null, agent: resolveAgent(d.agent), title: d.title, projectTitle: note?.title ?? null }
+}
+
+/**
+ * Stage a brain decision in the channel: a chat reply, or a proposal that waits
+ * for a tap — or, in an auto channel, files straight to Turso (never in #Body).
+ */
+export async function applyDecision(
+  decision: BrainDecision, channel: OrchChannel, projects: ProjectRef[], dispatch: DispatchWiring = dispatchWiring,
+): Promise<void> {
+  if (decision.kind === "chat") {
+    orchEmit(orchAppendTurn("orchestrator", decision.text, null, channel.id))
+    return
+  }
+  const target = validatedTarget(decision, projects)
+  const task = createProposal(decision.prompt, decision.cwd || channel.cwd || "", decision.reasoning, channel.id, target)
+  const where = `${target.agent ?? DEFAULT_AGENT} · ${target.projectTitle ?? channel.noteTitle ?? (target.noteId || channel.noteId || "no project yet")}`
+  // Trust ramp (Phase 7): re-read the channel — the toggle may have flipped
+  // during the brain call. Auto mode skips the tap but never the reasoning:
+  // every auto-dispatch shows why + what in the thread. Cancel is the veto.
+  // #Body never auto-dispatches: an alert must not start work without a tap.
+  if (channel.id !== BODY_CHANNEL && getChannel(channel.id)?.autoDispatch) {
+    orchEmit(orchAppendTurn("orchestrator", `Auto-dispatch [${task.taskId}] — ${where}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}`, task.taskId, channel.id))
+    emitTask(task.taskId)
+    const filed = await fileProposal(task.taskId, {}, dispatch)
+    if (!filed.ok) {
+      orchEmit(orchAppendTurn("orchestrator", `auto-dispatch [${task.taskId}] not filed (${filed.error}) — it stays a proposal; approve it by hand`, task.taskId, channel.id))
+    }
+    return
+  }
+  orchEmit(orchAppendTurn(
+    "orchestrator",
+    `Proposal [${task.taskId}] — ${where}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to file it.`,
+    task.taskId,
+    channel.id,
+  ))
+  emitTask(task.taskId)
+}
+
+/** Brain context: Body digest + investigations (#Body / health questions) + this view's dispatch digest + the triage count (#General / #Body). */
+export async function brainContext(
+  channel: OrchChannel, userText: string, dispatch: DispatchWiring = dispatchWiring, snapshot?: BodySnapshot, forceBody = false,
+): Promise<string | null> {
+  const body = await bodyDigestFor(channel.id, userText, snapshot, forceBody)
+  const investigations = investigationDigestFor(channel.id, userText)
+  const scope = channel.id === BODY_CHANNEL ? "all projects" : `#${channel.name}`
+  const triage = channel.id === GENERAL_CHANNEL || channel.id === BODY_CHANNEL ? triageDigest?.() ?? null : null
+  const parts = [body, investigations, dispatch.digestFor(channel.id, scope), triage].filter((p): p is string => !!p?.trim())
+  return parts.length ? parts.join("\n\n") : null
+}
+
+/** Front-door hints for one brain run (lib/front-door.ts). */
+export interface BrainRunOpts {
+  /** Skip the Haiku gate (Jev said task). */
+  forceTask?: boolean
+  /** Give the brain the Body digest even when the regex health check misses (Jev said body). */
+  forceBodyDigest?: boolean
+  resolved?: { noteId: string | null; title: string; repo: string | null } | null
+  /** Prebuilt projects + catalog (the front door already has them). */
+  prebuilt?: BrainCatalog
+}
+
+/** What the old path did — the shadow log's label. */
+export type BrainOutcome = { kind: "chat" } | { kind: "task"; noteId: string | null } | { kind: "error" }
+
+export interface BrainCatalog { projects: ProjectRef[]; catalog: Catalog }
+
+/** Every project (any status) + the repo map; [] projects when Turso is down. */
+export async function brainCatalog(dispatch: DispatchWiring = dispatchWiring): Promise<BrainCatalog> {
+  const projects = await dispatch.allProjects().catch(() => [])
+  return { projects, catalog: buildCatalog(projects, readRepoMapSource()) }
+}
+
+// Run the brain on a user message: answer inline (chat) or stage a proposal.
+// Fire-and-forget — never blocks /send. Falls back to a soft note on any model
+// failure so the thread never wedges.
+export async function runBrain(
+  userText: string, channel: OrchChannel, dispatch: DispatchWiring = dispatchWiring, opts: BrainRunOpts = {},
+): Promise<BrainOutcome> {
+  // History and cwd candidates are scoped to the channel so the brain reasons
+  // within one project's thread.
+  const cwds = channel.cwd ? [channel.cwd, ...candidateCwds().filter((c) => c !== channel.cwd)] : candidateCwds()
+  let decision: BrainDecision | null
+  let projects: ProjectRef[] = []
+  try {
+    const cat = opts.prebuilt ?? await brainCatalog(dispatch)
+    projects = cat.projects
+    const context = await brainContext(channel, userText, dispatch, undefined, opts.forceBodyDigest)
+    decision = await brainDecide(getThread(channel.id), userText, cwds, channel.cwd, context, {
+      projects, agents: [...agentAllowlist()].sort(), channelNoteId: channel.noteId, catalog: catalogLines(cat.catalog), resolved: opts.resolved ?? null,
+    }, { forceTask: opts.forceTask })
   } catch {
     decision = null
   }
   if (!decision) {
     // decide() returns null only after runClaude exhausts its retries — the model
     // call itself kept failing (overload / auth contention), NOT because the
-    // message was unclear. Genuine ambiguity comes back as a chat clarifying
-    // question, not null. So don't tell the user to rephrase a message that was fine.
+    // message was unclear.
     orchEmit(orchAppendTurn("orchestrator", "Couldn't reach the model just now — transient error on my side, not your message. Send that again.", null, channel.id))
-    return
+    return { kind: "error" }
   }
-  if (decision.kind === "chat") {
-    orchEmit(orchAppendTurn("orchestrator", decision.text, null, channel.id))
-    return
-  }
-  const task = createProposal(decision.prompt, decision.cwd, decision.reasoning, channel.id)
-  // Trust ramp (Phase 7): re-read the channel — the toggle may have flipped
-  // during the brain call. Auto mode skips the tap but never the reasoning:
-  // every auto-dispatch shows why + what in the thread, so a bad route is
-  // caught at step 2, not step 20. Cancel is the veto.
-  if (getChannel(channel.id)?.autoDispatch) {
-    orchEmit(orchAppendTurn(
-      "orchestrator",
-      `Auto-dispatch [${task.taskId}] — worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}`,
-      task.taskId,
-      channel.id,
-    ))
-    emitTask(task.taskId)
-    void workerQueue.admit(task)
-    return
-  }
-  orchEmit(orchAppendTurn(
-    "orchestrator",
-    `Proposal [${task.taskId}] — dispatch a worker in ${decision.cwd}\nWhy: ${decision.reasoning}\nTask: ${decision.prompt}\nApprove to run.`,
-    task.taskId,
-    channel.id,
-  ))
-  emitTask(task.taskId)
+  await applyDecision(decision, channel, projects, dispatch)
+  return decision.kind === "chat" ? { kind: "chat" } : { kind: "task", noteId: validatedTarget(decision, projects).noteId ?? channel.noteId }
 }

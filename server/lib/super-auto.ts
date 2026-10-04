@@ -1,6 +1,6 @@
 // SUPER auto-approval mode — when on, every PreToolUse decision is allowed
 // without phone roundtrip, EXCEPT for a tiny denylist of patterns that would
-// be catastrophic to auto-approve (rm -rf /, force-push to main, DROP TABLE,
+// be catastrophic to auto-approve (rm -rf /, DROP TABLE,
 // fork bombs, dd to /dev, etc.). Those still bounce to the phone.
 //
 // State lives in `~/.claude-companion/super-auto.flag` (presence = enabled)
@@ -18,6 +18,12 @@ let cached: boolean = existsSync(FLAG_PATH)
 
 export function isSuperAuto(): boolean {
   return cached
+}
+
+// Test seam: flip the in-memory mode WITHOUT touching the host's flag file
+// (setSuperAuto would delete/create the real ~/.claude-companion flag).
+export function setSuperAutoInMemoryForTests(enabled: boolean): void {
+  cached = enabled
 }
 
 export function setSuperAuto(enabled: boolean): boolean {
@@ -45,9 +51,8 @@ const CATASTROPHIC_BASH: RegExp[] = [
   /\brm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]?\b[^|;&]*\s+(\/|~\/?$|\$HOME|\/Users\/?(?:\s|$)|\/System\/|\/Library\/|\/private\/)/,
   // sudo rm — privilege escalation + delete is always a stop-and-think
   /\bsudo\s+rm\b/,
-  // Force push to protected branches
-  /\bgit\s+push\s+[^|;&]*(--force|-f)\b[^|;&]*\b(main|master|production|prod|release)\b/i,
-  /\bgit\s+push\s+[^|;&]*\b(main|master|production|prod|release)\b[^|;&]*(--force|-f)\b/i,
+  // (Force push to protected branches was here; removed 2026-10-02 at
+  // Jeremie's request: every git/gh command auto-approves under SUPER.)
   // Database obliteration
   /\bdrop\s+(database|table|schema)\b/i,
   /\btruncate\s+table\b/i,

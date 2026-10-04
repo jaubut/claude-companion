@@ -2,16 +2,19 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { readFileSync } from "node:fs"
 
-// Minimal Turso (libSQL Hrana-over-HTTP) client for read-only proxy routes.
+// Minimal Turso (libSQL Hrana-over-HTTP) client: read-only proxy routes, plus
+// the guarded dispatch-task writes (tursoExec, orchestrator-one-queue P2).
 // The phone never holds the Turso token; the server does. Token source is
 // TURSO_AUTH_TOKEN from the shell env, ~/.claude-companion/.env (loaded by
-// cli.ts), or the agent env file ~/.config/tls-agent/env. Never log it, and
+// cli.ts), or the agent env files ~/.config/tls-agent/{env,secrets.env}. Never log it, and
 // never put SQL or the token into an error message — callers surface
 // `TursoUnreachable` as a generic 503.
 
 export type SqlArg = string | number | null
 export type Row = Record<string, string | number | null>
 export type QueryFn = (sql: string, args: SqlArg[]) => Promise<Row[]>
+/** A write: rows (if any) plus the affected row count, for guarded compare-and-set. */
+export type ExecFn = (sql: string, args: SqlArg[]) => Promise<{ rows: Row[]; affected: number }>
 
 export class TursoUnreachable extends Error {
   constructor(reason: string) {
@@ -31,15 +34,19 @@ let agentEnvRead = false
 function readAgentToken(): string | undefined {
   if (agentEnvRead) return agentToken
   agentEnvRead = true
-  try {
-    const raw = readFileSync(join(homedir(), ".config", "tls-agent", "env"), "utf8")
-    for (const line of raw.split("\n")) {
-      const m = /^\s*(?:export\s+)?TURSO_AUTH_TOKEN\s*=\s*(.*)\s*$/.exec(line)
-      if (!m) continue
-      const v = m[1]!.trim().replace(/^["']|["']$/g, "")
-      if (v) agentToken = v
-    }
-  } catch { /* no agent env on this host */ }
+  // Zettlab keeps the token in secrets.env (the vault store); the Mac in env.
+  for (const file of ["env", "secrets.env"]) {
+    try {
+      const raw = readFileSync(join(homedir(), ".config", "tls-agent", file), "utf8")
+      for (const line of raw.split("\n")) {
+        const m = /^\s*(?:export\s+)?TURSO_AUTH_TOKEN\s*=\s*([^#]*?)\s*(?:#.*)?$/.exec(line)
+        if (!m) continue
+        const v = m[1]!.trim().replace(/^["']|["']$/g, "")
+        if (v) agentToken = v
+      }
+    } catch { /* file absent on this host */ }
+    if (agentToken) break
+  }
   return agentToken
 }
 
@@ -70,6 +77,7 @@ function fromValue(v: HranaValue): string | number | null {
 interface ExecResult {
   cols: { name: string }[]
   rows: HranaValue[][]
+  affected_row_count?: number
 }
 
 function parseResult(body: unknown): ExecResult {
@@ -79,12 +87,9 @@ function parseResult(body: unknown): ExecResult {
   return first.response.result
 }
 
-export const tursoQuery: QueryFn = async (sql, args) => {
-  const auth = token()
-  if (!auth) throw new TursoUnreachable("no token configured")
-  let res: Response
+async function post(auth: string, sql: string, args: SqlArg[]): Promise<Response> {
   try {
-    res = await fetch(`${baseUrl()}/v2/pipeline`, {
+    return await fetch(`${baseUrl()}/v2/pipeline`, {
       method: "POST",
       headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -95,6 +100,22 @@ export const tursoQuery: QueryFn = async (sql, args) => {
   } catch {
     throw new TursoUnreachable("network")
   }
+}
+
+async function execute(sql: string, args: SqlArg[]): Promise<{ rows: Row[]; affected: number }> {
+  let auth = token()
+  if (!auth) throw new TursoUnreachable("no token configured")
+  let res = await post(auth, sql, args)
+  if (res.status === 401) {
+    // Token rotated under us: drop the cached agent token and re-read it once.
+    agentToken = undefined
+    agentEnvRead = false
+    const fresh = token()
+    if (fresh && fresh !== auth) {
+      auth = fresh
+      res = await post(auth, sql, args)
+    }
+  }
   if (!res.ok) throw new TursoUnreachable(`http ${res.status}`)
   let body: unknown
   try {
@@ -102,6 +123,14 @@ export const tursoQuery: QueryFn = async (sql, args) => {
   } catch {
     throw new TursoUnreachable("bad response")
   }
-  const { cols, rows } = parseResult(body)
-  return rows.map((row) => Object.fromEntries(cols.map((c, i) => [c.name, fromValue(row[i] ?? { type: "null" })])))
+  const { cols, rows, affected_row_count } = parseResult(body)
+  return {
+    rows: rows.map((row) => Object.fromEntries(cols.map((c, i) => [c.name, fromValue(row[i] ?? { type: "null" })]))),
+    affected: Number(affected_row_count ?? 0),
+  }
 }
+
+export const tursoQuery: QueryFn = async (sql, args) => (await execute(sql, args)).rows
+
+/** Writes only through the named functions in lib/dispatch-tasks.ts — never a generic SQL route. */
+export const tursoExec: ExecFn = execute

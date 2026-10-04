@@ -7,8 +7,7 @@ import { metaFromHeaders } from "./hook-common"
 import { keyGate } from "./key-gate"
 import { injectText } from "./keyboard-inject"
 import { recordSession, removeSessionByTmuxPane } from "./sessions"
-import { capturePane } from "./tmux-pane"
-import { paneKey, socketFromTmuxEnv, tmuxArgv } from "./tmux-argv"
+import { capturePane, paneKey, tmuxArgv, tmuxSocketFromEnv } from "./tmux-pane"
 
 // Pane ids are per tmux server: %3 on the durable `cc` socket is a different
 // terminal from %3 on the default one. Everything here checks that a pane is
@@ -21,7 +20,10 @@ const B = "/tmp/tmux-1000/default"
 
 function recorder(fail?: (socket?: string) => boolean) {
   const sent: Array<{ args: readonly string[]; socket?: string; at: number }> = []
-  const sendKeys = async (args: readonly string[], _t: number, _s?: AbortSignal, socket?: string) => {
+  // The socket travels as leading global flags (`-S <socket>`) on the argv.
+  const sendKeys = async (argv: readonly string[], _t: number, _s?: AbortSignal) => {
+    const socket = argv[0] === "-S" ? argv[1] : undefined
+    const args = socket ? argv.slice(2) : argv
     sent.push({ args, socket, at: performance.now() })
     return fail?.(socket) ? { ok: false, reason: "can't find pane: %0" } : { ok: true, reason: "" }
   }
@@ -39,18 +41,18 @@ function captureStderr<T>(fn: () => Promise<T>): Promise<{ out: string; value: T
 }
 
 test("argv: -S <socket> when the session has one, plain tmux otherwise", () => {
-  expect(tmuxArgv(A, ["send-keys", "-t", "%3", "Enter"])).toEqual(["tmux", "-S", A, "send-keys", "-t", "%3", "Enter"])
-  expect(tmuxArgv(undefined, ["send-keys", "-t", "%3", "Enter"])).toEqual(["tmux", "send-keys", "-t", "%3", "Enter"])
-  expect(tmuxArgv("", ["list-panes"])).toEqual(["tmux", "list-panes"])
+  expect(tmuxArgv(A)).toEqual(["tmux", "-S", A])
+  expect(tmuxArgv(undefined)).toEqual(["tmux"])
+  expect(tmuxArgv("")).toEqual(["tmux"])
 })
 
 test("socket comes from $TMUX's first comma field; junk is dropped", () => {
-  expect(socketFromTmuxEnv(`${A},12345,0`)).toBe(A)
-  expect(socketFromTmuxEnv("")).toBe("")
-  expect(socketFromTmuxEnv("relative/sock,1,0")).toBe("")
-  const h = (v: string) => new Headers({ "x-companion-tmux-pane": "%3", "x-companion-tmux-socket": v })
-  expect(metaFromHeaders(h(A)).tmuxSocket).toBe(A)
-  expect(metaFromHeaders(h("not-a-path")).tmuxSocket).toBe("")
+  expect(tmuxSocketFromEnv(`${A},12345,0`)).toBe(A)
+  expect(tmuxSocketFromEnv("")).toBe("")
+  expect(tmuxSocketFromEnv("relative/sock,1,0")).toBe("")
+  const h = (v: string) => new Headers({ "x-companion-tmux-pane": "%3", "x-companion-tmux": v })
+  expect(metaFromHeaders(h(`${A},12345,0`)).tmuxSocket).toBe(A)
+  expect(metaFromHeaders(h("not-a-path,1,0")).tmuxSocket).toBe("")
   expect(metaFromHeaders(new Headers({ "x-companion-tmux-pane": "%3" })).tmuxSocket).toBe("")
 })
 
@@ -65,7 +67,7 @@ test("no bare tmux spawn left in server/lib", () => {
   const dir = import.meta.dir
   const offenders: string[] = []
   for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".ts") || f.endsWith(".test.ts") || f === "tmux-argv.ts") continue
+    if (!f.endsWith(".ts") || f.endsWith(".test.ts") || f === "tmux-pane.ts") continue
     readFileSync(join(dir, f), "utf-8").split("\n").forEach((line, i) => {
       if (/\[\s*["'`]tmux["'`]\s*,/.test(line)) offenders.push(`${f}:${i + 1}: ${line.trim()}`)
     })
@@ -86,7 +88,7 @@ test("a %N missing on its socket is refused — never retried on the default ser
     injectText("x", { tmuxPane: "%0", tmuxSocket: A }, { sendKeys: r.sendKeys }))
   expect(value).toBe(false)
   expect(r.sent.every((s) => s.socket === A)).toBe(true)
-  expect(out).toContain(`%0 @ ${A}`)
+  expect(out).toContain(paneKey("%0", A))
 })
 
 test("an Escape window on %0@A does not hold up %0@B", async () => {
@@ -109,7 +111,7 @@ test("no socket header → the old behaviour: plain tmux, bare pane key", async 
 test("companion.log '[delivered (tmux)]' line names the socket", async () => {
   const r = recorder()
   const { out } = await captureStderr(() => injectText("hi", { tmuxPane: "%4", tmuxSocket: A }, { sendKeys: r.sendKeys }))
-  expect(out).toMatch(new RegExp(`delivered \\(tmux\\).*→ %4 @ ${A}`))
+  expect(out).toMatch(new RegExp(`delivered \\(tmux\\).*→ ${A}\\|%4`))
   const plain = await captureStderr(() => injectText("hi", { tmuxPane: "%4" }, { sendKeys: r.sendKeys }))
   expect(plain.out).toMatch(/delivered \(tmux\).*→ %4\n/)
 })

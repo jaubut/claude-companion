@@ -1,25 +1,44 @@
 import { companionLog } from "./lib/log"
-import type { WebSocketHandler } from "bun"
+import type { ServerWebSocket, WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
-import { injectConfirmed } from "./lib/submit-confirm"
+import { deliveryFailedHint, injectConfirmed } from "./lib/submit-confirm"
 import { injectRefusal } from "./lib/inject-guard"
+import { handleKeyCommand, isKeyCommand } from "./lib/secret-store"
 import { isSuperAuto } from "./lib/super-auto"
 import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
-import { clients, broadcast, HOST_INFO, type WsData } from "./state"
+import { clients, broadcast, describeClient, HOST_INFO, type WsData } from "./state"
 import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 
-// WebSocket handlers: on open, replay pending approvals/questions and send the
-// init frame; on message, approve/deny/answer/input/ping; on close, drop the
-// client. Same frames and log lines as before the split.
+// WebSocket handlers: on open, send the init frame, then replay pending
+// approvals/questions; on message, approve/deny/answer/input/ping; on close,
+// drop the client. Same frames and log lines as before the split.
 export const websocket: WebSocketHandler<WsData> = {
   open(ws) {
     clients.add(ws)
+    companionLog(`\x1b[2mws open ${describeClient("ws", ws.data.client)} (${clients.size} client${clients.size === 1 ? "" : "s"})\x1b[0m`)
 
     const pendingList = getPending()
+
+    // init FIRST, replays after: iOS treats init as "this host resynced" and
+    // drops every approval/question it holds from the host (resetHostState).
+    // Replaying before init meant a phone reconnecting mid-question (push
+    // tap from the background) got the question and wiped it a frame later.
+    ws.send(JSON.stringify({
+      type: "init",
+      pending: pendingList.length,
+      ...waitingSummary(),
+      activity: getActivity(),
+      activities: listActivities(),
+      feed: getFeed(),
+      sessions: listSessions(),
+      superAuto: isSuperAuto(),
+      dialogs: dialogWatcher.current(),
+      host: HOST_INFO,
+    }))
     for (const req of pendingList) {
       ws.send(JSON.stringify({
         type: "approval",
@@ -46,19 +65,6 @@ export const websocket: WebSocketHandler<WsData> = {
         questions: q.questions,
       }))
     }
-
-    ws.send(JSON.stringify({
-      type: "init",
-      pending: pendingList.length,
-      ...waitingSummary(),
-      activity: getActivity(),
-      activities: listActivities(),
-      feed: getFeed(),
-      sessions: listSessions(),
-      superAuto: isSuperAuto(),
-      dialogs: dialogWatcher.current(),
-      host: HOST_INFO,
-    }))
   },
   async message(ws, raw) {
     let msg: {
@@ -75,15 +81,17 @@ export const websocket: WebSocketHandler<WsData> = {
 
     switch (msg.type) {
       case "approve":
-        if (msg.id) {
-          resolveApproval(msg.id, "allow")
-          broadcast({ type: "resolved", id: msg.id, decision: "allow" })
-        }
-        break
       case "deny":
         if (msg.id) {
-          resolveApproval(msg.id, "deny")
-          broadcast({ type: "resolved", id: msg.id, decision: "deny" })
+          const decision = msg.type === "approve" ? "allow" : "deny"
+          const ok = resolveApproval(msg.id, decision, { device: ws.data.client?.device })
+          logResolve(ws, "approval", msg.id, decision, ok)
+          // Only a decision that actually reached a waiting hook is announced.
+          // A late/duplicate one (already expired, answered elsewhere, or
+          // decided on another phone) tells only its sender, so no phone
+          // shows OK/DENY for something that never happened.
+          if (ok) broadcast({ type: "resolved", id: msg.id, decision })
+          else resolveFailed(ws, msg.id)
         }
         break
       case "answer":
@@ -92,13 +100,29 @@ export const websocket: WebSocketHandler<WsData> = {
             selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
             otherText: typeof a.otherText === "string" ? a.otherText : undefined,
           }))
-          if (resolveQuestion(msg.id, answers)) {
-            broadcast({ type: "resolved", id: msg.id, decision: "answered" })
-          }
+          const ok = resolveQuestion(msg.id, answers, { device: ws.data.client?.device })
+          logResolve(ws, "question", msg.id, "answered", ok)
+          if (ok) broadcast({ type: "resolved", id: msg.id, decision: "answered" })
+          else resolveFailed(ws, msg.id)
         }
         break
       case "input":
         if (msg.text?.trim()) {
+          // `/key NAME value` goes to secrets.env, never into the pane or a log —
+          // only on a socket that passed the vault's bar at upgrade (trusted
+          // network + header bearer). Refused = reported, never injected.
+          if (isKeyCommand(msg.text) && !ws.data.keyGate?.allowed) {
+            const refusal = ws.data.keyGate?.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
+            companionLog(`ws /key refused — ${refusal.error} peer=${ws.data.keyGate?.origin.peer ?? "?"}`)
+            try { ws.send(JSON.stringify({ type: "key_saved", key: msg.key, cwd: msg.cwd, ok: false, ...refusal })) } catch { /* ignore */ }
+            break
+          }
+          const keyed = isKeyCommand(msg.text) ? await handleKeyCommand(msg.text, ws.data.keyGate?.origin) : null
+          if (keyed) {
+            companionLog(`ws /key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
+            try { ws.send(JSON.stringify({ type: "key_saved", key: msg.key, cwd: msg.cwd, ...keyed })) } catch { /* ignore */ }
+            break
+          }
           const lookup = msg.key || msg.cwd || ""
           const target = lookup ? resolveSession(lookup) : null
           const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
@@ -149,7 +173,10 @@ export const websocket: WebSocketHandler<WsData> = {
             // Every client, so whichever phone shows the bubble marks it undelivered.
             broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? msg.key, cwd: target?.cwd ?? msg.cwd, text: msg.text.trim(), excerpt: res.excerpt })
           } else if (!res.ok) {
-            try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed" })) } catch { /* ignore */ }
+            const hint = deliveryFailedHint()
+            companionLog(`${red}ws inject failed${reset} — delivery failed (${hint})`)
+            // `error` stays the code shipped iOS builds switch on; `hint` is additive.
+            try { ws.send(JSON.stringify({ type: "inject_error", error: "osascript_failed", hint })) } catch { /* ignore */ }
           }
         }
         break
@@ -158,7 +185,19 @@ export const websocket: WebSocketHandler<WsData> = {
         break
     }
   },
-  close(ws) {
+  close(ws, code) {
     clients.delete(ws)
+    companionLog(`\x1b[2mws close ${describeClient("ws", ws.data.client)} code=${code} (${clients.size} left)\x1b[0m`)
   },
+}
+
+// `resolve_failed` goes to the requesting client only: the id is no longer
+// pending (expired, ended elsewhere, or already decided).
+function resolveFailed(ws: ServerWebSocket<WsData>, id: string): void {
+  try { ws.send(JSON.stringify({ type: "resolve_failed", id, reason: "gone" })) } catch { /* ignore */ }
+}
+
+function logResolve(ws: ServerWebSocket<WsData>, what: "approval" | "question", id: string, decision: string, ok: boolean): void {
+  const tag = ok ? "\x1b[36mresolve\x1b[0m" : "\x1b[33mresolve failed (gone)\x1b[0m"
+  companionLog(`${tag} ${what} ${id.slice(0, 8)} → ${decision} ${describeClient("ws", ws.data.client)}`)
 }

@@ -76,3 +76,37 @@ test("inject: waiting on a wedged pane returns an error within its budget and le
   await new Promise((res) => setTimeout(res, 20))
   expect(r.sent.map((s) => s.args[2])).toEqual(["%2", "%2"])
 })
+
+// ── tmux socket (P0, sessions batch 3) ──────────────────────────────────────
+// A session on `tmux -L cc` must be typed into on THAT server: a bare
+// `tmux send-keys -t %3` hits the default server's %3 — another claude.
+
+test("inject: a target on a non-default socket sends `-S <socket>` with every send-keys", async () => {
+  const r = recorder()
+  const ok = await injectText("hi", { tmuxPane: "%3", tmuxSocket: "/tmp/tmux-501/cc" }, { sendKeys: r.sendKeys })
+  expect(ok).toBe(true)
+  expect(r.sent.map((s) => s.args)).toEqual([
+    ["-S", "/tmp/tmux-501/cc", "send-keys", "-t", "%3", "-l", "hi"],
+    ["-S", "/tmp/tmux-501/cc", "send-keys", "-t", "%3", "Enter"],
+  ])
+})
+
+test("inject: no socket keeps the bare default-server argv", async () => {
+  const r = recorder()
+  await injectText("hi", { tmuxPane: "%3" }, { sendKeys: r.sendKeys })
+  expect(r.sent[0]!.args).toEqual(["send-keys", "-t", "%3", "-l", "hi"])
+})
+
+test("inject: the key gate keys a pane by (socket, pane) — an Escape on default %3 does not delay cc %3", async () => {
+  let escAt = 0
+  await keyGate.send("%3", "Escape", async () => { escAt = performance.now() })
+  const r = recorder()
+  const res = await deliverViaTmux("%3", "x", r.sendKeys, Date.now() + 2_000, "/tmp/tmux-501/cc")
+  expect(res.ok).toBe(true)
+  expect(r.sent[0]!.at - escAt).toBeLessThan(ESC_SETTLE_MS - 1)
+  // …while the same id on the same socket does wait the window out.
+  await keyGate.send("/tmp/tmux-501/cc|%3", "Escape", async () => { escAt = performance.now() })
+  const r2 = recorder()
+  await deliverViaTmux("%3", "y", r2.sendKeys, Date.now() + 2_000, "/tmp/tmux-501/cc")
+  expect(r2.sent[0]!.at - escAt).toBeGreaterThanOrEqual(ESC_SETTLE_MS - 1)
+})

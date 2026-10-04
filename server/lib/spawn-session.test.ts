@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { DETACHED_COLS, DETACHED_ROWS, buildInner, detachedNewSessionArgs } from "./spawn-session"
+import { DETACHED_COLS, DETACHED_ROWS, buildInner, buildTmuxLaunch, detachedNewSessionArgs, detachedSpawnArgv, homeSpawnCwd } from "./spawn-session"
 
 // The inner command tmux runs. Both spawn paths build it here — the Mac one
 // wraps it in `tmux new-session -s <sess> '<inner>'` for AppleScript, the Linux
@@ -67,4 +67,66 @@ test("a real dispatch id passes the charset", () => {
   // Task ids are crypto.randomUUID().slice(0, 8) — always 8 hex chars.
   const id = crypto.randomUUID().slice(0, 8)
   expect(buildInner(CWD, "claude", { COMPANION_TASK_ID: id })).toBe(`export COMPANION_TASK_ID=${id}; cd '${CWD}' && claude`)
+})
+
+// Linux: a spawn in the bare home dir moves to ~/work so Claude Code's sandbox
+// stops building a fake ~/.git (see homeSpawnCwd).
+test("linux: home → ~/work, with or without a trailing slash", () => {
+  const env = { platform: "linux", home: "/home/aubut" }
+  expect(homeSpawnCwd("/home/aubut", env)).toBe("/home/aubut/work")
+  expect(homeSpawnCwd("/home/aubut/", env)).toBe("/home/aubut/work")
+})
+
+test("linux: any other dir is left alone, including subdirs of home", () => {
+  const env = { platform: "linux", home: "/home/aubut" }
+  expect(homeSpawnCwd("/home/aubut/claude-companion", env)).toBe("/home/aubut/claude-companion")
+  expect(homeSpawnCwd("/home/aubutx", env)).toBe("/home/aubutx")
+  expect(homeSpawnCwd("/tmp", env)).toBe("/tmp")
+})
+
+test("linux: COMPANION_HOME_SPAWN_DIR overrides the target, ~ expanded", () => {
+  expect(homeSpawnCwd("/home/aubut", { platform: "linux", home: "/home/aubut", override: "~/sessions" }))
+    .toBe("/home/aubut/sessions")
+  expect(homeSpawnCwd("/home/aubut", { platform: "linux", home: "/home/aubut", override: "/srv/cc" }))
+    .toBe("/srv/cc")
+})
+
+test("macOS keeps ~, and no HOME means no remap", () => {
+  expect(homeSpawnCwd("/Users/jeremieaubut", { platform: "darwin", home: "/Users/jeremieaubut" }))
+    .toBe("/Users/jeremieaubut")
+  expect(homeSpawnCwd("/home/aubut", { platform: "linux" })).toBe("/home/aubut")
+})
+
+// ── Spawn server (COMPANION_TMUX_SOCKET) ─────────────────────────────────
+// Unset must be argv-for-argv the pre-socket spawn (the Mac); set, every spawn
+// path lands on `tmux -L <name>` and -f rides only on the creating call.
+
+test("headless spawn argv: unset → bare tmux, sized new-session", () => {
+  expect(detachedSpawnArgv("cc-repo", "cd '/x' && claude", {})).toEqual([
+    "tmux", "new-session", "-d", "-x", "220", "-y", "60", "-s", "cc-repo", "/bin/sh", "-c", "cd '/x' && claude",
+  ])
+})
+
+test("headless spawn argv: set → -L <name> -f <conf> ahead of new-session, size kept", () => {
+  const argv = detachedSpawnArgv("cc-repo", "cd '/x' && claude", {
+    COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/home/a/.tmux/cc.conf",
+  })
+  expect(argv).toEqual([
+    "tmux", "-L", "cc", "-f", "/home/a/.tmux/cc.conf",
+    "new-session", "-d", "-x", "220", "-y", "60", "-s", "cc-repo", "/bin/sh", "-c", "cd '/x' && claude",
+  ])
+})
+
+test("Terminal/iTerm launch line: unset → byte-identical to the pre-socket form", () => {
+  expect(buildTmuxLaunch("/x", "cc-x", "claude", undefined, {})).toBe(
+    `tmux new-session -s 'cc-x' 'cd '\\''/x'\\'' && claude' \\; set-option -t 'cc-x' detach-on-destroy on`,
+  )
+})
+
+test("Terminal/iTerm launch line: set → quoted -L/-f before new-session", () => {
+  const line = buildTmuxLaunch("/x", "cc-x", "claude", undefined, {
+    COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/Users/j/My Conf's/cc.conf",
+  })
+  expect(line.startsWith(`tmux -L 'cc' -f '/Users/j/My Conf'\\''s/cc.conf' new-session -s 'cc-x' `)).toBe(true)
+  expect(line.endsWith(` \\; set-option -t 'cc-x' detach-on-destroy on`)).toBe(true)
 })

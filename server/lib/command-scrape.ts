@@ -225,10 +225,11 @@ export interface YieldOpts {
   verify?: (signal: AbortSignal) => Promise<boolean>
   // Tests only; production uses VERIFY_TIMEOUT_MS.
   verifyTimeoutMs?: number
-  // The tmux pane behind `key`. With it, the hand-over also waits out any
+  // The tmux pane behind `key`, as its key-gate identity paneKey(pane,
+  // socket) (lib/tmux-pane.ts). With it, the hand-over also waits out any
   // Escape window still open on that pane in the shared key gate — an Escape
   // from /api/dialog/key or /api/model/cancel, not only our own close path.
-  // The gate key: paneKey(pane, socket) from lib/tmux-argv.ts.
+  // The gate key: paneKey(pane, socket) from lib/tmux-pane.ts.
   pane?: string
   // The chord window a released Escape opens, and the gate. Injectable for
   // the tests only.

@@ -28,7 +28,6 @@ TTY=$(companion_find_tty)
 CWD=$(pwd -P 2>/dev/null || pwd)
 
 call_server() {
-  local tmux_socket="${TMUX:-}"
   curl -s --max-time "$MAX_TIME" \
     -X POST "$COMPANION_URL/hooks/$ENDPOINT" \
     -H "Content-Type: application/json" \
@@ -39,7 +38,7 @@ call_server() {
     -H "X-Companion-Cwd: ${CWD}" \
     -H "X-Companion-Pid: ${PPID:-}" \
     -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}" \
-    -H "X-Companion-Tmux-Socket: ${tmux_socket%%,*}" \
+    -H "X-Companion-Tmux: ${TMUX:-}" \
     -d "$INPUT" 2>/dev/null
 }
 

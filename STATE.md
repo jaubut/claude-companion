@@ -1,8 +1,51 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-09-24
+Last updated: 2026-10-04
 
 ## Active Decisions
+
+### Brain triage: one phrased decision card per queue item, actions through the existing guarded paths
+**Date:** 2026-10-04 (branch `feat/brain-triage`)
+**Choice:** `GET /api/orchestrator/triage` + `POST …/triage/<id>/choose` + `orchestrator_triage` frame (contract `docs/orchestrator-triage-api.md`). Sources: blocked / failed-retryable dispatch tasks, every pending proposal (Mac fix cards keep their host routing — approve/reject now live in `wiring/proposals.ts`, shared with the route), PRs the shepherd parked (`pr:needs-human`) + a 48 h safety net, Body components whose diagnosis failed twice. One lean `claude -p --model sonnet` per (item, version), cached in companion.db; GET serves the deterministic fallback at once and the phrased card replaces it in the next frame. Jev may set severity (≥ 0.7), else heuristics. merge/close only through `gh` by full URL with the state read back.
+**Why:** Jeremie 2026-10-04: "the queue should be triaged first, then phrased as a simple problem / action / options for me to choose."
+**Revisit if:** sonnet phrasing drifts (labels clipped, action text contradicting the recommended option), the 48 h PR net is noisy once the shepherd ships, or merges from the phone need a confirm beyond the option tap.
+
+### Jev front door routes every orchestrator message; shadow until the report clears the bar
+**Date:** 2026-10-04 (branch `feat/brain-jev-frontdoor`)
+**Choice:** `/api/orchestrator/send` → `wiring/front-door.ts`: one Jev call (intent status|quick_look|task|body|chat + project over every project note ∪ REPO_MAP, 2 s timeout). `COMPANION_JEV_ROUTER` = `shadow` (default: logged to companion.db `jev_route_log`, the old Haiku→Opus brain answers), `live` (all routes: status by code, quick_look by a read-only `claude -p` in the repo, task straight to compose, body with the digest forced, chat / < `COMPANION_JEV_MIN_CONF` 0.7 → old brain), `off`. Jeremie flips `live` after `bun cli.ts jev-report` shows ≥ 20 confident decisions and ≥ 75 % intent agreement where the old path is a valid label (status / quick_look / body are new capabilities, not judged against the old "chat"). Shipped regardless of the flag: lean brain `claude -p` flags, all projects + repo map in both brain prompts, no "which repo path?" questions, and a transient "⏳ on it…" turn after 800 ms.
+**Why:** Jeremie 2026-10-04: "the orchestrator feels stupid and it's slow". Jev answers in ~200 ms; the old path costs 5–18 s and had no repo knowledge.
+**Revisit if:** the report shows Jev disagreeing on task vs chat, quick_look answers are wrong about the repo they read, or the ack turn proves noisy on the phone.
+
+### Body API: Turso read model + alerts into #Body, push owned by component host
+**Date:** 2026-10-03 (branch `feat/body-api`)
+**Choice:** `GET /api/body` (30 s cache, `?all=1`, `?fresh=1`), `GET /api/body/component/:id` and `POST /api/body/alert` read the collector-written `body_components` / `body_vitals` / `body_events` Turso tables (read-only here). An alert appends an orchestrator turn in the fixed channel `body` ("Body", created on first alert, never auto-dispatches), sends a `body_alert` frame, and pushes critical (time-sensitive) / warning (active) at most once per component per 15 min with one coalesced trailing push; info never pushes except a "Body report…" title once a day, passive. All collectors (Mac included) post to the Zettlab server, which pushes everything and owns #Body; a server pushes iff it has a sender (APNs direct or broker) and `COMPANION_BODY_PUSH` is not `0`. The brain gets a ≤ 800-char digest for every #Body message and system/body-scoped health questions elsewhere (a bare "status of project X" does not match). Contract: `docs/body-api.md`.
+**Why:** living-system plan (resources/2026-10-03-living-system-router-nervous-system): alerts and the daily report go to Companion push + the orchestrator chat; Telegram only as fallback.
+**Revisit if:** the rate-limit state (in memory) losing its window on restart causes duplicate pushes, or Zettlab's Companion being down silences every alert (Telegram fallback).
+
+### Quick Capture → TLS inbox; receipts save first, QA after (Jev → Sonnet → phone)
+**Date:** 2026-10-03 (branch `feat/capture-receipts`)
+**Choice:** `POST /api/capture/inbox` forwards to the dashboard's `POST /api/inbox`; `POST /api/capture/receipt` runs dashboard extract then save immediately and queues a `receipt_qa` row (companion.db). A one-at-a-time worker on the store host runs code checks (sum, QC tax rates, date, currency, duplicate via read-only Turso) + Jev (GL choice over the `coa` 5xxx chart ∪ the in-use base chart, grocery / meal / trip nouls) → `jev_ok` | `to_review`. A BLANK saved `category_code` (always, today: the extractor never sets one) is filled by Jev itself when its pick is ≥ 0.9, every code check passes and no grocery/meal flag fires — PATCH + `changes:[{…, by:"jev"}]` + audit with the confidence (Jeremie, 2026-10-03); a non-blank code is never overwritten by Jev; then `claude -p --model sonnet` (work tools denied, no MCP, Read pinned to the one receipt file) → patch gated in code (field allowlist, chart code, amounts must add up; `total` only when arithmetic proves it wrong; duplicates never auto-resolved) → `sonnet_fixed` | `needs_human` (+ APNs). Phone resolves/accepts. Every edit → `~/.config/tls-agent/receipt-qa-audit.jsonl`. Dashboard key = `TLS_DASHBOARD_API_KEY` in secrets.env, read server-side only. `COMPANION_RECEIPT_QA=off` = save only. The Mac forwards everything upstream.
+**Why:** Jeremie 2026-10-03: never lose a receipt to a slow review; spend model calls only on what the cheap pass flags; the human only sees what Sonnet can't settle.
+`changes[].by` is `"jev" | "sonnet" | "human"`.
+**Revisit if:** Jev-filled codes get corrected often (score the audit's `by:"jev"` lines against later human edits), or the extractor's tax-inclusive `subtotal` keeps tripping the sum check.
+
+### Approval history also audits automatic decisions (auto rows, 30-day retention)
+**Date:** 2026-10-02 (branch `feat/history-auto`)
+**Choice:** Every automatic PreToolUse decision — SUPER allow, auto-judge allow/deny (incl. the feature-branch push rule), learned allow, read-only MCP allow; Claude and Codex alike — is written to `approval_history` as `auto_allowed`/`auto_denied` with `decided_via` = `super|auto_judge|learned|mcp_readonly`, resolved_at = created_at, same redaction + caps. The hook only pushes onto an in-memory buffer; `lib/approval-history-auto.ts` flushes it in one transaction every 250 ms or at 50 rows, drops a failed batch and logs at most once a minute. Auto rows are pruned daily after `COMPANION_HISTORY_AUTO_DAYS` (30); phone rows stay permanent. `GET /api/approvals/history` with no state (and `state=all`/`resolved`) still returns phone rows only; `state=auto|auto_allowed|auto_denied|everything` opt in; `GET /api/approvals/history/stats?since=` gives per-state counts. No `approval_history` frame per auto row — one `approval_history_auto {count, since}` frame per 5 s at most.
+**Why:** SUPER runs on every host, so almost nothing reaches the phone; the Approvals tab must be an audit log of everything agents did. ~800+/day on Zettlab, hence batching, retention and the throttled frame; old iOS builds must see no change.
+**Revisit if:** buffered rows lost on a crash/restart (≤ 250 ms worth) start to matter, or volume makes the 30-day table slow (index on `(state, created_at)`).
+
+### Approval history is permanent, phone-escalations only
+**Date:** 2026-10-02 (branch `feat/approvals-history`; auto rows added by the decision above)
+**Choice:** Every approval/question that reached the phone gets one row in `approval_history` (companion sqlite), inserted on escalation and moved out of `pending` exactly once by whichever exit fires (phone allow/deny/answer, expiry, hook gone, PostToolUse, UserPromptSubmit, Stop, SessionEnd). Rows still pending when the store opens end `expired`/`server_restart`. Summary and detail are secret-redacted before they are written. No automatic retention; `DELETE /api/approvals/history?before=` prunes by hand. Live updates go out on a NEW `approval_history` frame; `resolved` is unchanged. Contract: `docs/approvals-history.md`.
+**Why:** the iOS Ideas tab becomes Approvals and needs a durable list with states, not the in-memory pending maps.
+**Revisit if:** the table grows enough to matter (index on `created_at`, `state`), or a second server process shares one companion.db (the boot reconcile would expire its live rows).
+
+### Phone questions answer through updatedInput; no answer falls through to the terminal picker
+**Date:** 2026-09-25 (P1 audit, branch `fix/p1-audit-server-0925`)
+**Choice:** A phone answer goes back to Claude Code as allow + `updatedInput.answers` (question text to label, multi comma-joined). No keystrokes for Claude, and the picker driver is only a checked fallback. With no answer the hook returns no decision, never deny. The phone window is 90 s on PreToolUse when a terminal is attached and 290 s otherwise. A question answered at the terminal clears the phone card on its PostToolUse.
+**Why:** verified live on CC 2.1.282. Its AskUserQuestion schema takes `answers`. An allow without them always opens the picker. PermissionRequest runs while the picker is on screen and must reply with a matching `hookEventName`.
+**Revisit if:** Claude Code drops `answers` from the AskUserQuestion input. The log then says "hook answer not honoured".
 
 ### The browser PWA is retired — the iOS app is the only client
 **Date:** 2026-09-24 (first called 2026-09-13; a 2026-09-23 follow-up still shipped PWA work — PR #48 — because that note was missed)
@@ -36,6 +79,328 @@ Last updated: 2026-09-24
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — brain-triage (2026-10-04)
+**Request (Jeremie):** "the queue should be triaged first, then phrased as a simple problem / action / options for me to choose." Contract: `docs/orchestrator-triage-api.md` (copied from the shared triage CONTRACT.md; the iOS builder codes against the same file).
+**Done when:**
+- `GET /api/orchestrator/triage` → `{items, generatedAt}`: blocked tasks, failed-retryable tasks, pending proposals in every channel (Mac fix cards included), PRs the shepherd parked (`agent_activity` `pr:needs-human`) + PRs open > 48 h with no shepherd row, Body components whose investigation failed twice. Urgent first, then oldest.
+- Each item phrased once per (source, refId, underlying version) by ONE lean `claude -p --model sonnet` call (strict JSON, plain words, 2–4 options, recommended first, every option an allowed action for its source), cached in companion.db `triage_phrases`. Invalid output or no model → deterministic fallback. Jev may set severity (confidence ≥ 0.7), else heuristics.
+- `POST /api/orchestrator/triage/<id>/choose {optionId, text?}` + `Idempotency-Key`: the mapped action through the existing guarded paths (unblock / requeue / cancel = `lib/dispatch-tasks.ts`; approve / reject = the proposal route's path, now shared in `wiring/proposals.ts`, so a Mac fix card still forwards to the Mac; merge / close via `gh` on the PR URL with the state verified MERGED / CLOSED; Body requeue = a forced `consider`). Choice records in `triage_choices` replay; 409 stale when the underlying version moved; 422 `text_required`; 503 turso/gh unreachable. Snooze stored locally (`triage_snoozes`).
+- WS `orchestrator_triage {items, generatedAt}` once per change (items compared without generatedAt), recomputed after every dispatch poll, every proposal change and every choose.
+- #General / #Body brain context gains a one-line triage count.
+
+**State decisions**
+- companion.db tables owned by `lib/triage-store.ts` (injected `Database`): `triage_phrases(item_id PK, version, phrase_json, severity, origin model|fallback, created_at)` — a fallback row is retried after 10 min; `triage_snoozes(item_id PK, until)`; `triage_choices(item_id, idem_key, option_id, result_json, created_at, PK(item_id, idem_key))`, pruned after 7 days.
+- Versions: task = `status|updated_at`; proposal = local `updatedAt`; pr = task `updated_at|last pr:* activity id`; body = latest investigation id.
+- `open_url` for a Body component = `companion://body/<componentId>` (new deep link for iOS); for a PR = the PR URL.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `GET /api/orchestrator/triage` | endpoint NEW | items + generatedAt | new |
+| `POST /api/orchestrator/triage/<id>/choose` | endpoint NEW | id percent-encoded (pr ids carry `/` and `#`) | new |
+| `orchestrator_triage` | frame NEW | items + generatedAt | old iOS ignores unknown frames |
+| `POST /api/body/investigate` | endpoint | optional `force: true` (peer hop, triage requeue) | additive |
+
+**Files — one owner (builder)**
+| file | change |
+|---|---|
+| `docs/orchestrator-triage-api.md` | NEW: the contract |
+| `server/lib/triage.ts` | NEW pure: types, allowed actions per source, prompt, validation, fallback, severity heuristics, ordering |
+| `server/lib/triage-store.ts` | NEW: sqlite phrases / snoozes / choices |
+| `server/lib/triage-engine.ts` | NEW: refresh (cache, background phrasing, emit on change), choose (idempotency, stale, snooze) over injected seams |
+| `server/lib/triage-sources.ts` | NEW: collectors (tasks from the poller snapshot, proposals, PR query, Body investigations) |
+| `server/wiring/triage.ts` | NEW: live instance — executor, sonnet phraser, Jev severity, gh |
+| `server/wiring/proposals.ts` | NEW: approve / reject moved out of `routes/orchestrator.ts` (behaviour unchanged) |
+| `server/routes/triage.ts` | NEW: the two endpoints |
+| `server/routes/orchestrator.ts` | proposal route calls `wiring/proposals.ts`; `vetoAuto` moves to wiring |
+| `server/wiring/orchestrator.ts` | `vetoAuto`, triage digest hook in `brainContext`, task-change listener |
+| `server/lib/dispatch-poller.ts`, `server/wiring/dispatch.ts` | `onPolled` listener after each successful poll / applyLocal |
+| `server/lib/orchestrator-brain.ts` | export the lean call (`runBrainCall`) |
+| `server/lib/body-investigate*.ts`, `server/lib/body-investigator.ts` | `force` through gate, forwarder and body parse |
+| `server/companion-server.ts`, `cli.ts` | chain the route, start the engine |
+
+**Risks / failure modes**
+- Sonnet slow or down: GET never waits for it (fallback first, phrased text replaces it in the next frame).
+- `gh` missing or not authenticated on the host → 503 `gh_unreachable`; the merge is verified by `gh pr view --json state` before the task is marked done.
+- A merge that `gh` reports but GitHub has not finished (auto-merge queued) → 502 `merge_unverified`, the task untouched.
+- The PR shepherd may not have shipped yet: only the 48 h safety net shows PRs until it does.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated + `--check --lint`.
+2. Smoke on this Mac, read-only against real Turso: print the triage items for the current queue; never call choose.
+
+**Out of scope:** iOS UI, the PR shepherd itself, pushes for triage items.
+
+**Build notes (2026-10-04, `feat/brain-triage`):**
+- Shipped as planned, plus `lib/triage-pr.ts` (merge/close with injected `gh`) and `orchestrator-chat.listProposals()`.
+- Smoke on this Mac (real Turso read-only, a COPY of companion.db, choose never called): 130 tasks polled; 4 items (all blocked tasks — proposals live on Zettlab, no PR parked or past 48 h yet, no Body component failed twice here). GET with fallbacks 263–524 ms; 3–4 sonnet phrasings in 5.6–12.8 s total in the background. Phrasing follows the item's language (French tasks → French cards); one card came back urgent.
+- Known model quirk: a label over 32 chars is clipped with "…"; once the action sentence did not match the recommended option. Both are cosmetic; validation guarantees every option maps to an allowed action.
+
+### Change Plan — brain-jev-frontdoor (2026-10-04)
+**Request (Jeremie):** "the orchestrator feels stupid and it's slow to respond. how can we leverage jev speed to help route my asks?"
+**Measured:** each reply = Haiku gate `claude -p` then (task) Opus compose `claude -p`. A trivial `claude -p` here is ~6.4 s wall for ~2.2 s of API — the rest is CLI startup (user settings, hooks, MCP). "Stupid": the brain has no tools, never sees the repo map, and compose sees only the 40 most recent ACTIVE projects, so "is chantalmasse.com on the latest nuxt?" asked for permission, then for a repo path.
+**Done when:**
+- Every message gets one Jev "System One" call (≤ 2 s, `jev-latest`): `intent` ∈ status|quick_look|task|body|chat + `project` over ALL project notes (any status) ∪ REPO_MAP repos, with aliases; any Jev error → today's path.
+- `COMPANION_JEV_ROUTER=shadow` (default): Jev decides + logs to companion.db `jev_route_log`, the old path answers; `live`: all routes act; `off`: no Jev call. `bun cli.ts jev-report` prints agreement / per-intent precision / confident count and the go-live bar (≥ 20 confident, ≥ 75 % agreement where the old path is a valid label).
+- Live routes: status → code-built answer from the dispatch cache + local WIP + Body snapshot (no LLM); quick_look → "🔎 checking <repo>…" turn, then a read-only `claude -p` over the resolved repo (≤ 60 s) → facts in the thread, plus the existing proposal card only if a change is needed; body → old brain with the Body digest forced; task → straight to compose (no Haiku gate) with the resolved note + repo; chat / low confidence (< `COMPANION_JEV_MIN_CONF`, 0.7) → old path.
+- Shipped live regardless of the flag: brain prompts list ALL projects (status + repo) and the repo map; compose may never ask for a repo path or permission; brain `claude -p` calls run lean (no user settings/hooks/MCP, no tools, no session file, prompt on stdin); a transient "⏳ on it…" turn reaches the phone if no reply landed within 800 ms.
+
+**State decisions**
+- `jev_route_log` (companion.db, created by `lib/jev-route-log.ts` on the injected `Database`): one row per message — at, channel, text_hash (sha256), text (redacted, ≤ 200), mode, intent, intent_conf, project, project_conf, project_source (jev|alias|channel|none), route (what answered), old_outcome (chat|task|error|null), old_note_id, jev_ms, total_ms, error. Writer: `wiring/front-door.ts` only. Rows are never updated.
+- Key (`lib/jev.ts#jevKey`, first hit wins; quotes, CR and `export ` stripped): the vault store `~/.config/tls-agent/secrets.env` (what receipt-jev reads; `TLS_SECRETS_FILE`), its `secrets.mirror` sibling, the process env `TYPESAFE_API_KEY`, then `~/.config/tls-agent/env` (`COMPANION_JEV_ENV_FILE`). Checked 2026-10-04 (values never printed): the Mac launchd service env carries no `TYPESAFE_API_KEY` (plist EnvironmentVariables only); the Mac's `tls-agent/env` copy returns HTTP 401 while the `secrets.mirror` copy returns 200 — hence vault first. Zettlab not verifiable from here (tailnet SSH policy).
+- Project catalog (`lib/project-catalog.ts`, pure): notes `folder='projects'` all statuses (active first) + REPO_MAP entries grouped by regex, first existing checkout wins; a repo entry that matches no note becomes its own candidate. Aliases = note slug, slug minus generic tail words (website/site/app/web/ios), ref code, regex alternatives, repo dir name. Code alias match (normalized, ≥ 6 chars, longest wins) backs up a low-confidence Jev pick.
+- Read-only runner generalized into `lib/readonly-claude.ts` (argv/env/spawn); `body-investigator.ts` keeps its exports and uses it. quick_look runs with the repo as cwd and `--setting-sources ""` (no settings file at all, so the repo's own `.claude/settings*.json` allow rules never apply; no `--add-dir`). Allowlist = Read/Grep/Glob + git log|status|diff|show|describe|rev-parse|ls-files|remote -v|branch --show-current|branch -a|tag -l, ls/cat/head/tail/stat/wc/which/jq/grep/sort, `npm view|ls|outdated`, `curl -s https://registry.npmjs.org/…` / `https://api.github.com/…`; deny list = the investigator's base (writes, secrets, mutating curl flags) + npm install/update/publish. Model `COMPANION_QUICKLOOK_MODEL` (sonnet), 60 s timeout.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `orchestrator` | frame | live: new turn texts (status answer, 🔎 ack, quick_look facts); all modes: a transient "⏳ on it…" turn (broadcast, not persisted, `ack-` id) | same shape; iOS appends by id |
+| `orchestrator_task` | frame | quick_look may emit an existing proposal card | unchanged |
+| `GET /api/orchestrator/projects` | endpoint | unchanged (still active only) | — |
+| `jev-report` | CLI NEW | `bun cli.ts jev-report [--days N]` | new |
+| brain prompts | internal | all projects + repo map; never ask for a path | internal |
+
+**Files — one owner (builder)**
+| file | change |
+|---|---|
+| `server/lib/jev.ts` | NEW: key lookup, HTTP client (2 s timeout, never throws), answer parsing |
+| `server/lib/project-catalog.ts` | NEW: candidates, aliases, alias match, Jev criteria |
+| `server/lib/jev-router.ts` | NEW: mode/min-conf env, questions, decision parse, route pick |
+| `server/lib/jev-route-log.ts` | NEW: sqlite log + report math |
+| `server/lib/status-answer.ts` | NEW: templated status answer |
+| `server/lib/readonly-claude.ts` | NEW: shared read-only `claude -p` runner |
+| `server/lib/quick-look.ts` | NEW: allowlist, prompt, output parse, turn text |
+| `server/lib/front-door.ts` | NEW: per-message flow with seams (mode switch, ack, shadow log) |
+| `server/wiring/front-door.ts` | NEW: live instance |
+| `server/lib/body-investigator.ts` | runner moves to readonly-claude (exports kept) |
+| `server/lib/orchestrator-brain.ts` | lean argv on stdin, all-projects + repo-map prompt lines, forced task / resolved project |
+| `server/wiring/orchestrator.ts` | `runBrain` options + outcome, all projects for validation |
+| `server/lib/dispatch-tasks.ts`, `server/lib/dispatch-poller.ts` | `listAllProjects`, `allProjects()`, `snapshot()` |
+| `server/lib/live-repo.ts` | export the REPO_MAP source reader |
+| `server/routes/orchestrator.ts` | `/send` → front door |
+| `cli.ts` | `jev-report` |
+
+**Risks / failure modes**
+- Jev picks a wrong project with high confidence → quick_look reads the wrong repo (answer names the repo, so it's visible) or compose files under the wrong note (still a tap to approve).
+- Jev outage/slow: 2 s timeout then today's path — live adds ≤ 2 s worst case; shadow adds nothing (runs concurrently).
+- `--tools ""` / `--setting-sources` unsupported on an older Zettlab CLI → brain calls fail → "couldn't reach the model". Zettlab is on 2.1.284 where the investigator already uses these flags.
+- quick_look network: `npm view` writes the npm cache under ~/.npm (outside every repo); no repo writes are possible (dontAsk + allowlist).
+- The ack turn is in-memory on the phone only; it disappears on app relaunch.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated + `--check --lint`.
+2. Smoke on this Mac: one real Jev call; one real quick_look with `git status` before/after; gate wall time before/after lean flags.
+3. Jeremie: leave shadow ~a week, run `bun cli.ts jev-report`, flip `COMPANION_JEV_ROUTER=live` when the bar is met.
+
+**Out of scope:** a persistent warm `claude` process (stream-json follow-up), iOS changes, Jev on the Body investigator.
+
+**Build notes (2026-10-04, `feat/brain-jev-frontdoor`):**
+- **quick_look cwd changed during the build.** The planned "empty cwd + `--add-dir <repo>`" cannot read git: in dontAsk mode every `cd <repo> && git log …` compound is denied (verified on 2.1.289). Running IN the repo with `--setting-sources ""` works and loads no settings file. Verified with an attempt-everything harness prompt: `git log`, `git status`, `ls | grep`, Read, `npm view` ok; `touch`, Write, `git commit`, `git branch <name>`, `npm install`, `echo > file`, `curl -X POST` all denied.
+- **Key source changed** (see State decisions): vault first, because the Mac's `tls-agent/env` key is stale (401).
+- **Smoke, this Mac:** Jev on 6 real messages, 166–347 ms each, all routed as expected ("is chantalmasse.com on the latest nuxt?" → quick_look 0.98, project chantal-masse-website 0.98 [a `done` note], repo ~/chantalmasse-website). quick_look on ~/chantalmasse-website: 15 s, "Nuxt 4.4.2 locked, latest 4.5.2" + last commit + an upgrade proposal; on ~/claude-companion: 6 s, "no bun pin". Both: no file newer than the run start, `git status` and HEAD unchanged.
+- **Brain speed:** a trivial gate `claude -p` 6.4 s → 3.0 s wall (API 2.2 s → 2.0 s; the rest was startup). The real `decide()` gate 7.7 s → 5.1 s median (5.4–6.0 s with the 100-line catalog now in its prompt). `--bare` would trim more but forces API-key auth (not usable on Max). User CLAUDE.md still loads under `--setting-sources project,local`.
+- **Old path now answers the motivating question:** "is chantalmasse.com on the latest nuxt?" → Haiku says task → Opus proposes a check with cwd ~/chantalmasse-website, no path or permission question (18 s).
+- **Stream-json follow-up looks viable:** one `claude -p --input-format stream-json --output-format stream-json` process with the lean flags answered a second user message 663 ms after it was written (first turn 1.4 s). Context grows per turn, so a warm gate needs a turn cap / recycle.
+
+### Change Plan — body-auto-investigate (2026-10-04)
+**Request (Jeremie):** "what's showing as dead on the Body tab should be investigated by the orchestrator right away without my permission. this is part of the holistic, nervous system goal."
+**Boundary (decided):** the INVESTIGATION is autonomous — no tap, no permission prompt. Any FIX comes back as a one-tap proposal card in #Body. The investigator never mutates the system.
+**Done when:**
+- A component going dead / crash_loop / failing (alert path) — or already in one of those states (sweep on boot + every 10 min) — gets one headless read-only `claude -p` investigation on the host that owns it, with no tap.
+- The result lands in #Body as "🔍 <component> — <rootCause> (confidence N%)" + evidence + fix summary; a non-null fix becomes the existing proposal card (approve → files a builder/claude task, or live); a Turso `body_events` row `kind='investigation'` is written; `GET /api/body/component/<id>` carries `investigation`; the #Body brain sees open + recent investigations.
+- A restart never re-runs a finished investigation.
+
+**State decisions**
+- Investigation records: Companion sqlite `body_investigations` (companion.db, created in `lib/body-investigate.ts` against the injected `Database`). Statuses `running | pending_host | forwarded | done | failed | dropped`. Open = running/pending_host/forwarded (≤ 1 per component). Writer: `wiring/body-investigate.ts` only. Persistence: sqlite; nothing in memory but the in-flight child processes.
+- Trigger gate (pure, `gate()`): state ∈ dead|crash_loop|failing; no open record; cooldown 12 h after a `done` (or after 2 consecutive `failed`) for the SAME state — a different state, or an alert carrying a real transition (`from_state ≠ state`), breaks it; a single failure retries after 10 min. Budgets (local runs only): ≤ 3 running, ≤ 10 started per rolling 24 h. Kill switch: `~/.claude-companion/.body-investigate-disabled` or `COMPANION_BODY_INVESTIGATE=0` (checked on every decision). A record left `running` by a restart is closed `failed` ("companion restarted") on boot.
+- Host routing: owner = `mac` for `mac:*`, `zettlab` for `zettlab:*`/`cloud:*`. Local host = `COMPANION_BODY_HOST` else darwin→mac, linux→zettlab. Own component → run here. Zettlab + mac component → `POST <COMPANION_BODY_PEER>/api/body/investigate` (bearer = `COMPANION_BODY_PEER_TOKEN` else this server's token; hop header `x-companion-body-hop: 1`, a hopped request is never re-forwarded) → record `forwarded`; unreachable / no peer configured → `pending_host`, re-forwarded on the next sweep; `forwarded` with no report after 30 min → `failed`. The Mac never forwards (its sweep covers only `mac:*`; Mac dedupe makes Zettlab's forward + the Mac's own sweep idempotent).
+- Reports: whoever owns #Body applies them (turn, proposal, Turso event, push). Zettlab applies locally. The Mac POSTs `{report}` to `COMPANION_BODY_PEER` (Zettlab) and falls back to its own #Body when that fails or no peer is set. Zettlab upserts the report onto its forwarded/pending record (or inserts it); a replayed report id is a no-op.
+- Investigator: `claude -p` on the owning host, model `COMPANION_INVESTIGATE_MODEL` (default `sonnet`), 10 min timeout, prompt on stdin, cwd = `~/.claude-companion/investigate` (empty, stable — the CLI leaves one empty `~/.claude/projects/<cwd>/memory` per distinct cwd), env allowlisted (no Turso/Companion/broker tokens). Read-only by construction: `--setting-sources project,local` (user settings carry `defaultMode: auto`, `Bash(launchctl:*)` and hooks — never loaded), `--settings {"disableAllHooks":true}`, `--strict-mcp-config`, `--permission-mode dontAsk` (anything not allowlisted is denied, never prompted), `--tools Read,Grep,Glob,Bash`, `--add-dir /` (paths outside cwd are otherwise refused even for `ls`), `--allowedTools` = Read/Grep/Glob + the diagnostic Bash prefixes, `--disallowedTools` = Edit, Write, NotebookEdit + secret paths + mutating flags (`curl -X/-d/-o…`, `git --output`, `journalctl --vacuum…`), `--no-session-persistence`. Verified on Mac 2.1.289 (`ls` outside cwd ok only with `--add-dir /`; `touch`, `ls > f`, `ls; touch`, `curl -X POST`, `git diff --output=`, `head …/tls-agent/env` all denied). Zettlab 2.1.284 not verifiable from here (tailnet SSH policy) — first Zettlab run is the check.
+- Output: strict JSON `{rootCause, evidence[], confidence 0-1, severity low|med|high|critical, recommendedFix {summary, steps[], risk low|med|high, reversible} | null, retire, notes}`; fenced or prose-wrapped JSON is extracted; anything else → `failed` ("unparseable"). Every text field is passed through `redactSecrets` before it is stored or posted.
+- Proposal: the existing `createProposal` in #Body. noteId = `COMPANION_BODY_NOTE_ID` (default `projects/2026-06-22-companion-orchestrator`, PRJ-OR1T), agent = `builder` when a git repo is known for the component, else `claude`; cwd = that repo / the unit's working dir, else `~/.claude`. Approve uses the existing modes (headless file, or live). #Body never auto-dispatches (unchanged).
+- Push: only severity high/critical, or a second consecutive failed investigation. Same sender gate as alerts (`bodyPushEnabled`).
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `GET /api/body/component/:id` | endpoint | + `investigation: {id, status, startedAt, finishedAt, rootCause, confidence, severity, proposalId, error} \| null` | additive |
+| `POST /api/body/investigate` | endpoint NEW | `{component_id, state?, from_state?, trigger?}` → `{ok, status: started\|forwarded\|pending_host\|duplicate\|skipped\|not_owner\|disabled, id?, reason?}`; `{report}` → `{ok, status: applied\|duplicate}` | new, bearer-gated |
+| `body_events` (Turso) | table | new rows `kind='investigation'` (from_state null, to_state = state, detail = root cause + confidence + proposal) | collectors only read `alert_sent` |
+| `orchestrator` / `orchestrator_task` | frame | report turns + proposal cards in `body` | unchanged shapes |
+| brain context | internal | #Body / health questions also get an investigations digest | internal |
+
+**Files — one owner (builder)**
+| file | change | lines |
+|---|---|---|
+| `server/lib/body-investigate.ts` | NEW: types, kill switch, host routing, `gate()`, sqlite store, DTO, brain digest | ~330 |
+| `server/lib/body-investigator.ts` | NEW: known paths from the id, prompt, argv, env allowlist, runner, JSON parse, turn/proposal text | ~380 |
+| `server/lib/body-investigate-engine.ts` | NEW: engine (`consider`, `sweep`, run, forward, report, `receiveReport`), report applier, peer client — seams only, no sqlite | ~370 |
+| `server/wiring/body-investigate.ts` | NEW: live instance (companion.db, Turso, #Body, push, peer) + `startBodyInvestigate()` + brain digest | ~90 |
+| `server/routes/body.ts` | `POST /api/body/investigate`; alert → `consider`; `investigation` on component detail | 74 → ~120 |
+| `server/wiring/orchestrator.ts` | `brainContext` + investigations digest | +3 |
+| `cli.ts` | `startBodyInvestigate()` | +2 |
+| `scripts/body-investigate.ts` | NEW: one-shot CLI (smoke), prints the JSON, no store / no report | ~70 |
+| `docs/body-api.md` | document both endpoint changes, config, behaviour | +60 |
+| tests: `server/lib/body-investigate.test.ts`, `server/lib/body-investigator.test.ts`, `server/lib/body-investigate-engine.test.ts`, `server/routes/body.test.ts` (+route cases) | NEW / extended | — |
+
+**Risks / failure modes**
+- Zettlab's 2.1.284 may reject a flag (`--tools`, `--permission-mode dontAsk`, `--setting-sources`) → every Zettlab run fails → 2 failures push once per component per 12 h. Mitigation: kill switch; first Zettlab run checked by hand.
+- ~~Approved Mac fixes land on Zettlab's queue~~ — resolved in the same PR: Mac fixes are forwarded and run live on the Mac (build notes). A Mac that is down at approve time → 503, retry later.
+- `--add-dir /` widens Read to the whole disk; secret paths are denied by rule and the output is redacted, but an unknown secret location could still be read into the model context (it never leaves as an edit).
+- Budget 10/day across a mass outage → the rest wait for the next day's window (sweep picks them up).
+
+**Verify**
+1. `bun test server/` green twice (trigger/dedupe, budgets + kill switch, routing local/forward/pending_host, prompt, argv shape, JSON parsing, proposal + no-fix, restart idempotence).
+2. `bunx tsc --noEmit -p .` clean; archmap regenerated.
+3. Real smoke on this Mac: `bun scripts/body-investigate.ts <dead mac component>` → JSON printed; `git status` of the touched dirs unchanged; no file writes outside the temp dir.
+4. Manual (Jeremie, after deploy): set `COMPANION_BODY_PEER` on both hosts; a test dead component on Zettlab gets a 🔍 turn within 10 min; approve its card.
+
+**Out of scope:** auto-applying any fix; investigating `ok`/`dormant`/`stopped`/`unknown`; GitHub/Turso-side probes beyond reading local files; a #Body UI for investigations beyond the existing turn + card.
+
+**Build notes (2026-10-04, `feat/body-auto-investigate`):**
+- **Engine moved to `lib/`.** The plan had the engine in `wiring/body-investigate.ts`; its test loaded `orchestrator-db` and stole `orchestrator-chat.test.ts`'s legacy fixture (the P1 trap — 3 failures). The engine is now `lib/body-investigate-engine.ts` (seams only) and the wiring file is just the live instance, same split as dispatch-poller.
+- **Stable cwd, not a temp dir.** The CLI leaves an empty `~/.claude/projects/<cwd>/memory` per distinct cwd, so a temp dir per run would pile up thousands of them. The investigator runs in `~/.claude-companion/investigate` (empty, ours).
+- **Live instance is off under `bun test`** (`NODE_ENV=test`) so a test that reaches the default route can never spawn a real claude.
+- **Smoke (this Mac, 2.1.289):** `bun scripts/body-investigate.ts mac:launchd:com.openai.atlas.update-helper` → 13 s, root cause "ChatGPT Atlas uninstalled, plist left behind (exit 78 EX_CONFIG)", confidence 0.9, severity low, retire=true, fix = bootout + move the plist aside. Twice, same verdict. `git status` of `~/.claude`, `~/claude-companion` and the worktree, the LaunchAgents listing and `launchctl list` unchanged; no file newer than the run in LaunchAgents / `~/.claude/{tools,hooks,agents,settings.json}`; no Companion hook fired.
+- **Follow-up (Jeremie's choice, same PR): Mac fixes run LIVE ON THE MAC.** A `mac:*` fix card is recorded in companion.db `body_fix_cards` (host, component, cwd, note, agent). On Zettlab its approve (headless or live) is intercepted in `routes/orchestrator.ts` → `wiring/body-fix.ts#approveBodyFix`: it never files a queued Turso row; it POSTs `/api/body/fix` to `COMPANION_BODY_PEER` (bearer, hop header, 30 s). The Mac (`runBodyFix`) makes one local #Body proposal row per fix id (`body_fix_runs`) and runs `approveLive` with the fix's cwd as the explicit cwd — `resolveLiveCwd` returns an explicit cwd before any note → repo mapping, so `~/claude-companion` is never picked. claimLive owner = `companion:<mac hostname>`. Zettlab stamps the Mac's Turso id onto the card and marks it `filed`; the poller surfaces the live row. Mac unreachable / no peer → 503 `host_unreachable`, card stays `proposed` (nothing stamped before success; idempotency only caches successes). The Mac's 401/403 → 502 `host_refused`. zettlab/cloud cards: unchanged. Tests: `server/routes/body-fix.test.ts` (8) + 1 applier case. New files beyond the table: `server/lib/body-fix.ts`, `server/wiring/body-fix.ts`.
+- **Cooldown signal.** `last_ok_at` keeps moving on some dead components (atlas: dead since 23:19, last ok 23:14 then later), so it is NOT used to break the cooldown; only a different state or an alert transition does.
+
+### Change Plan — orchestrator-one-queue (2026-10-03)
+**Request:** "Make the Companion orchestrator the brain's face, merged with dispatch: one queue." Turso `tasks` becomes the only work queue. Orchestrator chat files, shows, unblocks, requeues and cancels Turso agent tasks per channel. #Body brings vitals, alerts and blocked-work triage. Touches ~/claude-companion, ~/.claude/tools (dispatch.sh, dispatch-run.ts, dispatch-reconcile.ts; pm-nightly.py audited, no change), the tls-dashboard-v2 schema, and the iOS app.
+**Done when:**
+- A proposal approved (or auto-filed) in a channel shows up as a Turso task (`agent:<slug>`, `queued`) in /today. No new `orchestrator_tasks` row runs headless.
+- Each channel lists its project's dispatch tasks live: queued/running/blocked/pr/completed/failed/cancelled, with PR link and result ref. Blocked tasks can be answered and requeued from the phone. Cancel works for queued, blocked and failed tasks.
+- The brain in #Body gets the body digest plus the blocked-queue digest. The new iOS build shows vitals and `body_alert` there.
+
+**Target shape & drift**
+- Leader reference: Linear Agents API (developers.linear.app/docs/agents) and GitHub Copilot coding agent ("assign issue → PR"). Mapping: Issue → `tasks` row · Issue.delegate → `assignee agent:<slug>` · AgentSession → one run (`dispatch_run_id`) · session `awaitingInput` + `elicitation` activity → `blocked` + `dispatch_blocker` · the human's reply to the elicitation, which resumes the session → **unblock** (answer appended to `description`, then requeue) · `response` activity → result note (`dispatch_result_ref`) · PR attachment → `dispatch_pr_url` · Project → `notes` (projects/) · agent activity log → `agent_activity`.
+- Reference for this intent: (1) one durable queue as the system of record. Chat, /today, dashboard and Telegram are views that issue commands; no surface owns a private task table. (2) Every writer uses guarded compare-and-set transitions plus an append-only ledger row. (3) Runners claim work atomically: headless dispatch-run, or the Companion live-pane runner. The brain only proposes and files work. (4) Status flows from the record (poll); a push is only a nudge and never carries state. (5) Projects are the grouping key and a channel is a view onto one project. (6) Additive DTOs on one WS.
+- Deviations today: two queues and two state vocabularies (sqlite `orchestrator_tasks` vs Turso). The PR URL and result ref live only in the note body, and dispatch-reconcile regex-parses them. There is no `cancelled` state. `dispatch.sh` UPDATE is unguarded (last writer wins). dispatch-run's prompt is `tasks.text` only, so there is no way to answer a block. Channels map to a project only by `cwd`. `orchestrator-chat.ts` holds db, turns, tasks, channels and trust (508 lines, 36 exports). `reapStalled` assumes every `running` row belongs to dispatch-run. iOS `Models.swift` (775) and `CompanionSocket.swift` (649) are over cap. STATE.md decision "Phase 7 autonomy… Revisit if: hosts need one shared queue" — this is that revisit.
+- This change moves toward (1)–(6) and fixes all the dispatch-side deviations above. Left for follow-up: F1 brain-issued actions (requeue/unblock from a chat sentence) · F2 accept/mark-done from the phone · F3 split dispatch-run.ts (621) into runner + `dispatch-repos.ts` · F4 dispatch-reconcile reads the env token first (today it reads the dashboard .env only) · F5 /today shows `cancelled` and the Companion source · F6 split CompanionSocket.swift · F7 drop legacy local task history after 90 days read-only.
+
+**State decisions**
+- Work queue (status, assignee, blocker, run, PR, result): Turso `tasks`. Writers: dispatch-run.ts/dispatch.sh (claim, run outcome, stall), pm-nightly.py (NULL→queued, orphan close), dispatch-reconcile.ts (merged→done), and Companion `lib/dispatch-tasks.ts`. Companion's operations are file, cancel, requeue, unblock, claimLive, finishLive. Every UPDATE is guarded `AND dispatch_status IN (<expected>)`, and every write has an `agent_activity` row (`dispatch:<state>`, meta `{source:"companion",host,channel}`). The change is announced by the `orchestrator_task` frame, emitted by the `wiring/dispatch.ts` poller. Persistence: Turso.
+- New Turso columns: `dispatch_result_ref`, `dispatch_pr_url` (TEXT, nullable). dispatch-run is the only writer. New state `cancelled` (sets `done=1`; requeue sets it back to `done=0`).
+- Proposals stay in Companion sqlite `orchestrator_tasks` (`proposed|rejected|filed`) with a new column `dispatch_task_id`. Filing flips `proposed→filed` and stamps a pre-generated 32-hex Turso id in one sqlite UPDATE, then runs `INSERT OR IGNORE` into Turso with that id. Retries are therefore idempotent. Rejected drafts never reach Turso, and pm-nightly cannot queue a draft. `listTasks` hides `filed`.
+- Tmux worker runner is **kept as opt-in "live" mode** (Phase 4), not retired. It is the only path with a watchable pane and mid-task phone approvals (29/33 ok). Its record is a Turso row claimed at filing: `running`, `dispatch_owner='companion:<host>'`. dispatch-run only picks `queued` rows and its reaper skips `companion:%`. The local row keeps the tmux identity. The WIP cap of 3 applies to live mode only. Default mode is headless.
+- Legacy history (pre-Phase-2 local tasks) stays read-only in sqlite and is listed with `source:"local"`. There is no migration into Turso: those rows have no note_id, and Turso `note_id` is NOT NULL.
+- Channel ↔ project: `orchestrator_channels.note_id` plus a cached `note_title` and `note_ref`. There is at most one non-archived channel per note_id. Set by create with `noteId` or by `POST channels/<id>/link`; announced by `orchestrator_channel`. A channel's tasks are those whose `note_id` matches. #General shows agent tasks of unlinked notes plus everything filed from General. #Body shows blocked tasks across all notes.
+- Status flow: the Companion polls Turso every 20 s. The poll query covers agent tasks updated since the cursor, plus open ones, over a 7-day window. `/hooks/dispatch-event` (stateless, rate-limited to one call per 2 s) triggers an immediate poll and is called by dispatch.sh after each transition. The diff is keyed on the value `(dispatch_status, updated_at, done, pr_url)`, not on counts. The announce cursor is persisted in sqlite table `dispatch_seen(task_id PK, status, updated_at)`, owned by `lib/dispatch-mirror.ts`, so a restart does not re-announce. A blocked or PR transition appends one orchestrator turn in the owning channel and fires a gated APNs push.
+- Auth: Companion writes with the same `TURSO_AUTH_TOKEN` it already reads (agent env, never logged). Writes go only through named, guarded functions in `lib/dispatch-tasks.ts`; there is no generic SQL route. The phone never sees the token. Every new `/api/orchestrator/*` route stays behind the bearer gate. On HTTP 401 `turso.ts` clears the cached token and re-reads it once (rotation is pending per memory).
+
+**Contracts touched** (map + grep)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `orchestrator_task` | frame | task DTO gains `source, dispatchStatus, agent, noteId, projectTitle, prUrl, resultRef, blocker, done, owner, mode`. Turso tasks are mapped to legacy `status` (queued→queued, running→running, completed/pr→done, blocked/failed→error, cancelled→cancelled). `logTail` carries a "PR <url> · <verdict>" summary and `cwd` carries the project title (display-only for `source:"dispatch"`) | ios WSFrame.swift → AppState+SocketEvents | additive. The shipped build renders, counts and cancels these tasks; unblock and requeue need the new build |
+| `orchestrator_channel` | frame | +`noteId, noteTitle, noteRef, counts{queued,running,blocked,pr}` | ios WSFrame.swift | additive |
+| `orchestrator_queue` | frame NEW | `{cap,live,queued,dispatch:{queued,running,blocked,pr}}` | new iOS build | the shipped build decodes it as `.unknown`, safe |
+| `body_alert` | frame | unchanged; first iOS consumer | new iOS build | safe |
+| `GET /api/orchestrator/thread` | endpoint | `tasks` = proposals + Turso tasks for the channel + legacy local rows; `queue.dispatch` added | ios CompanionClient.swift | additive |
+| `POST /api/orchestrator/proposal/<id>/approve` | endpoint | files a Turso task instead of spawning one. Response adds `dispatchTaskId`, `status:"queued"`. A replay on `filed` returns 200 with the same id. Optional body `{agent?, mode?:"live"}` (live from Phase 4) | ios CompanionClient.swift (ProposalCard, durable outbox) | same shape; idempotent |
+| `POST /api/orchestrator/task/<id>/cancel` | endpoint | also accepts 32-hex Turso ids (queued/blocked/failed). Running dispatch tasks return 409 `running_on_<owner>`; running live tasks keep the tmux kill | ios CompanionClient.swift | same shape |
+| `POST /api/orchestrator/task/<id>/requeue` · `/unblock {answer}` · `GET …/task/<id>` · `POST …/channels/<id>/link {noteId\|null}` · `GET /api/orchestrator/projects` | endpoint NEW | see iOS contract | new iOS build | new |
+| `POST /api/orchestrator/channels` | endpoint | +optional `noteId` | ios CompanionClient.swift | additive |
+| `POST /api/orchestrator/dispatch` | endpoint | files to Turso; body +`noteId, agent`; `cwd` only for `mode:"live"` | none (map) | internal |
+| `POST /hooks/dispatch-event` | hook NEW | `{taskId?}` → 202, nudge only | dispatch.sh (shell; map blind spot) | new |
+| Turso `tasks` | table | +2 columns, +`cancelled`, guarded transitions | dispatch-run.ts, dispatch.sh, pm-nightly.py, dispatch-reconcile.ts, dashboard today-cron.ts / ticket-dispatch.ts | additive. today-cron reads `done=0` only, so cancelled rows drop out |
+
+**iOS contract (exact)** — written to `docs/orchestrator-dispatch-api.md`; all fields decoded permissively.
+- `DispatchTaskDTO` (inside `task` of `orchestrator_task` and in `tasks[]`): `{taskId, threadId, prompt(=title), cwd, reasoning, status(legacy), logTail?, sessionKey?, tmuxSession?, createdAt(ms), updatedAt(ms), source:"dispatch"|"local"|"proposal", dispatchStatus:"queued"|"running"|"blocked"|"pr"|"completed"|"failed"|"cancelled"|null, agent, noteId, projectTitle, prUrl?, resultRef?, blocker?, done:bool, owner?, mode:"headless"|"live"}`. `pr` = completed with prUrl.
+- `GET /api/orchestrator/task/<id>` → `{ok, task: DispatchTaskDTO, description, result?: {ref, title, excerpt(≤4000)}, activity:[{action, summary, ts}](≤20)}`.
+- `POST /api/orchestrator/task/<id>/unblock {answer:string(1..4000)}` → `{ok, task}`; 409 unless `blocked`. Appends `\n\n[unblock <ISO>] <answer>` to `description`, then sets status queued.
+- `POST …/task/<id>/requeue` → `{ok, task}`; allowed from blocked|failed|cancelled|completed-not-done.
+- `POST …/task/<id>/cancel` → `{ok, taskId, status:"cancelled"}` | 409 `{ok:false, error}`.
+- `POST …/channels/<id>/link {noteId: string|null}` → `{ok, channel}`; 409 `note_linked_elsewhere`.
+- `GET /api/orchestrator/projects` → `{projects:[{noteId, ref, title, openAgentTasks}]}` (active `projects/` notes, 5-min cache).
+- Errors: 503 `{ok:false, error:"turso_unreachable"}` on any Turso failure (body-api.md style).
+
+**Files — one owner each** (S = builder-server, T = builder-tools, D = builder-dashboard, I = builder-ios)
+| file | owner | change | lines now → after cap check |
+|---|---|---|---|
+| `server/lib/orchestrator-db.ts` | S | NEW: `db, GENERAL_CHANNEL`. Holds schema and migrations (+`note_id, note_title, note_ref` on channels; +`dispatch_task_id` on tasks; `dispatch_seen`) | 0 → ~110 ✓ |
+| `server/lib/orchestrator-chat.ts` | S | split: db and channels move out. Adds `markFiled, getTaskByDispatchId`; `TaskStatus` +`filed`; listTasks hides filed | 508 → ~360 ✓ |
+| `server/lib/orchestrator-channels.ts` | S | NEW: `Channel, ChannelTrust, AUTO_ELIGIBLE_STREAK, channelTrust, listChannels, getChannel, createChannel, ensureChannel, setChannelAuto, setChannelNote, getChannelByNote` (trust counts `filed` as approved) | 0 → ~190 ✓ |
+| `server/lib/dispatch-tasks.ts` | S | NEW: `DispatchStatus, DispatchTask, toTaskDto, legacyStatus, listDispatchTasks, getDispatchTask, fileTask, cancelDispatchTask, requeueTask, unblockTask, claimLive, finishLive, listProjects, AGENT_ALLOWLIST`. Takes QueryFn/BatchFn as parameters so tests can inject fakes | 0 → ~300 ✓ |
+| `server/lib/dispatch-mirror.ts` | S | NEW: `seenKey, lastSeen, markSeen` (sqlite `dispatch_seen`) | 0 → ~60 ✓ |
+| `server/lib/turso.ts` | S | +`tursoBatch` (multi-statement, returns `affected[]`); clear cache and retry once on 401 | 112 → ~160 ✓ |
+| `server/wiring/dispatch.ts` | S | NEW: `dispatchPoller{start,nudge}, emitDispatchTask, dispatchCounts, dispatchDigestFor, projectCandidates` (+ blocked/pr turn + push) | 0 → ~220 ✓ |
+| `server/wiring/orchestrator.ts` | S | the approve and auto paths call `fileProposal()`. `executeDispatch` is used only for `mode:"live"` (Phase 4). Brain context = body digest + dispatch digest. Imports updated | 316 → ~345 ✓ |
+| `server/lib/orchestrator-brain.ts` | S | compose returns `{noteId, agent, title, prompt, reasoning}` from candidate projects and the agent allowlist; the server validates both | 220 → ~265 ✓ |
+| `server/routes/orchestrator.ts` | S | new routes, Turso-aware cancel, thread merge, withIdempotency on approve/unblock/requeue | 201 → ~340 ✓ |
+| `server/routes/hooks.ts` | S | `/hooks/dispatch-event` → `dispatchPoller.nudge()`. Phase 4: the stop path calls `finishLive` when the task has `dispatch_task_id` | 569 → ~582 ✓ (near cap; any more → split the stop handler) |
+| `server/wiring/body.ts`, `server/routes/body.test.ts`, `server/lib/orchestrator-chat.test.ts`, `server/routes/vault.test.ts` | S | import paths only (ensureChannel/Channel → orchestrator-channels) | ±0 |
+| `server/lib/dispatch-tasks.test.ts`, `server/wiring/dispatch.test.ts`, `server/routes/orchestrator-dispatch.test.ts` | S | NEW tests (fake QueryFn; real sqlite via `COMPANION_DB_PATH`) | new |
+| `docs/orchestrator-dispatch-api.md` | S | NEW contract doc (above) | new |
+| `~/.claude/tools/dispatch.sh` | T | +`cancelled`; `DISPATCH_FROM=<state>` guard (skip the ledger insert and exit 3 when 0 rows are affected); fail-silent nudge `curl -m1 localhost:${COMPANION_PORT:-4245}/hooks/dispatch-event` | 103 → ~125 ✓ |
+| `~/.claude/tools/dispatch-run.ts` | T | SELECT `description` into the prompt; write `dispatch_result_ref/pr_url`; reaper skips `dispatch_owner LIKE 'companion:%'`; final transitions use `DISPATCH_FROM=running` | 621 → ~645 ⚠ over 600. Not split now: the module is unmapped tooling and the change is +24 lines → F3 |
+| `~/.claude/tools/dispatch-reconcile.ts` | T | read `dispatch_pr_url` first, body regex as fallback | 117 → ~122 ✓ |
+| `~/.claude/tools/pm-nightly.py` | T | **no change**. Step 3 only touches `dispatch_status IS NULL`; Companion inserts `queued`; drafts never reach Turso | 115 |
+| `tls-dashboard-v2/server/lib/data/schema.sql` + `tests/_helpers/test-db.ts` + live ALTER | D | +2 columns, update the state comment (three-file rule) | additive |
+| iOS `Models.swift` → `OrchestratorModels.swift` | I | NEW file takes all Orchestrator* types + `DispatchInfo, ProjectRef, TaskDetail` | 775 → ~490 / 0 → ~330 ✓ |
+| iOS `CompanionClient.swift`, `AppState+Orchestrator.swift`, `OrchestratorTaskRow.swift`, `WSFrame.swift` (+`orchestrator_queue`, `body_alert`), `UnblockSheet.swift` NEW, `BodyVitalsHeader.swift` NEW, `ChannelLinkPicker.swift` NEW | I | status chip by `dispatchStatus`, PR link, blocker, requeue/unblock/cancel, link picker, #Body vitals + alert banner. `CompanionSocket.swift` gets 0 lines: route the new cases via AppState+SocketEvents, else split first (F6) | each < 600 ✓ |
+
+**Fan-in paths to guard**
+- `fileProposal()` is reached from `POST /proposal/<id>/approve` (iOS taps and durable-outbox replays) and from `runBrain` auto mode. The filed id is stamped in sqlite before the Turso `INSERT OR IGNORE`; a replay on `filed` returns the same id. Never two Turso rows.
+- `orchestrator_task` frames come from `emitTask` (local) and `emitDispatchTask` (Turso). Both use the one `toTaskDto`. Id spaces are disjoint (8-char vs 32-hex), so iOS upsert-by-id cannot collide.
+- Turso transitions come from 4 writers. Cancel vs dispatch-run's final `completed/blocked`: whichever guarded UPDATE lands first wins, and the loser no-ops (dispatch.sh exit 3, no ledger row). The **guard line is in dispatch.sh**, and dispatch-run must pass `DISPATCH_FROM=running`.
+- `setTaskStatus/emitTask/orchEmit/workerQueue` from the `hooks.ts#POST /hooks/stop` path: in live mode `finishLive` is guarded `WHERE dispatch_status='running' AND dispatch_owner=?`, so a second stop is a no-op.
+- `tursoQuery()` fan-in (receipt-qa-worker, routes/body, routes/goals, wiring/body): the 401 retry must keep `TursoUnreachable` generic, with no SQL or token in errors.
+- `channelTrust()`: `filed` counts as approved, so auto eligibility survives the switch.
+
+**Risks**
+- The Companion host's token may lack write scope, or be missing on the Mac → filing returns 503. Mitigation: Verify 2 on both hosts before Phase 2 ships.
+- Phase 2 shipped before Phase 0 would give workers the title only (dispatch-run reads `text`). Mitigation: hard gate, and Phase 2's checklist confirms `description` is in the prompt.
+- The stall reaper would re-run a long live task headless. Mitigation: the `companion:%` skip, plus a test.
+- A brain-picked agent slug or note that cannot dispatch → `not found` / `no repo mapped` blocks. Mitigation: server-side allowlist (agents dir + AGENT_ALIASES), notes from `/projects`; the blocker is surfaced and answerable.
+- Restart re-announce or push storm. Mitigation: `dispatch_seen` is persisted, and the first poll after boot seeds it silently.
+- Two hosts poll the same queue and both announce. Mitigation: each host appends turns only to its own sqlite (that is fine), but push only from the host whose `COMPANION_DISPATCH_PUSH=1` (Zettlab).
+- Map blind spots (archmap adapter bugs to file): the shell caller of `/hooks/dispatch-event`; iOS consumers of `receipt_qa`/`approval_history` (CompanionSocket emits `.receiptQA`/`.approvalHistory`, but the map shows none); the dead iOS alias `orchestrator_proposal`.
+- kb: touched modules have no third-party externals (bun:sqlite and node builtins only), so no external gotchas were checked.
+
+**Rollout — each phase shippable**
+- **P0 tools+schema (T, D):** columns, `cancelled`, guarded dispatch.sh, dispatch-run (description, ref/pr columns, reaper skip), reconcile, nudge. Benefits /today on its own.
+- **P1 read path (S):** db/channels split, dispatch-tasks reads, poller, DTO, link + projects routes, thread merge, blocked/pr turns. The shipped iOS app already sees dispatch tasks.
+- **P2 write path (S, then I):** approve/auto/dispatch file to Turso; cancel/requeue/unblock routes. iOS build N+1 adds actions, link picker and the models split. The local headless spawn path is off from here.
+- **P3 #Body triage (S, I):** dispatch digest in brain context, `orchestrator_queue` frame, iOS vitals header + `body_alert` banner.
+- **P4 live mode (S, I):** `mode:"live"` claims the Turso row, then runs the tmux runner; stop hook → `finishLive`. iOS "Run live" on the proposal card. Remove `createTask`/`createQueuedTask` headless callers.
+
+**Verify**
+1. `bun test server/` green, including new: fileProposal twice gives one Turso insert; legacy status map per state; poller emits once per value change, not on a count-only change; the cancel-vs-complete race (fake) gives one winner.
+2. On each host (Mac, Zettlab): `curl -X POST /api/orchestrator/task/<test-id>/requeue` against a scratch task → 200, the Turso row is `queued`, and an `agent_activity` row has `source:"companion"`.
+3. `DISPATCH_FROM=running dispatch.sh <id> completed` on a `cancelled` row → exit 3, row unchanged, no ledger row.
+4. `bun dispatch-run.ts --mock --task <id>` → `dispatch_result_ref` set; the `--mock-status pr` variant sets `dispatch_pr_url`; the prompt log shows the description.
+5. Seed a `running` row with owner `companion:test` and started_at −2 h → `reapStalled` leaves it.
+6. Restart Companion → no duplicate blocked/pr turns, no push.
+7. **Manual pass by Jeremie on the running build** (shipped build after P1, build N+1 after P2/P3): (a) #General Tasks panel lists this week's dispatch tasks; blocked/failed show as error, PR tasks show done with the PR line. (b) Link a channel to PRJ-WCLS → only dashboard tasks appear, with counts on the rail. (c) Ask for a small dashboard fix → proposal card → Approve → card leaves, task appears `queued` within 20 s and shows up in /today. Drain → chip `running` → `pr` with a tappable PR link and one push. (d) Answer a blocked task → its row goes `queued`; after the next drain the result note quotes your answer. (e) Cancel a queued task → `cancelled`, gone from /today. Cancel a running one → refusal names the host. (f) #Body: vitals header, a test `POST /api/body/alert` shows a banner and a turn, and "what's blocked?" lists blocked tasks with reasons. (g) Auto-dispatch ON in a linked channel → filing has no tap, and the reasoning turn is visible. The plan is not shipped until this pass is clean.
+
+**Out of scope:** F1–F7; brain executing requeue/unblock itself; Telegram/dispatch-cron notification changes; migrating legacy local tasks into Turso; dashboard UI for Companion-filed tasks; multi-host live-mode scheduling.
+
+**P1 notes (read path, 2026-10-03):** shipped on `feat/orch-p1-read`. One deviation from the file table: the poller policy lives in `server/lib/dispatch-poller.ts` (pure, seams only) and `server/wiring/dispatch.ts` is just the live instance; its test is `server/lib/dispatch-poller.test.ts`. Reason: bun shares one module registry across test files, so a `wiring/` test that imports sqlite would load `orchestrator-db` before `orchestrator-chat.test.ts` seeds its legacy fixture. The sqlite cursor, link and route tests live in `server/routes/orchestrator-dispatch.test.ts`. Announce rules: the first-ever poll (empty `dispatch_seen`) seeds silently. After a restart, the first poll appends catch-up turns for real transitions but never pushes. Turns fire on blocked / pr / completed / done (failed and cancelled stay silent). Pushes fire on blocked / pr only, at most 3 per poll plus one overflow push, and only with `COMPANION_DISPATCH_PUSH=1`. The P0 columns are probed via `pragma_table_info`, re-probed every 10 min and after any failed poll. `/hooks/dispatch-event` takes loopback, or any peer with the bearer. Turso 401 → re-read the agent token once. Not in P1 (P2): `fileProposal`, `markFiled`, `listTasks` hiding `filed`, Turso-aware cancel/requeue/unblock, create channel with `noteId`, brain context. In P1 the shipped build shows dispatch tasks but cannot cancel them: the cancel route still 404s on Turso ids.
+
+**P2/P3 notes (write path + #Body triage, 2026-10-03):** shipped on `feat/orch-p2-write`. Deviations from the plan:
+- **Filing order.** The Turso id is stamped with COALESCE while the row is still `proposed`. Then comes `INSERT OR IGNORE` with that id, and only then `proposed→filed`. The plan had one UPDATE flipping to `filed` first. The change means a Turso failure leaves the card `proposed` and retryable, not hidden. A replay reuses the stamped id, so there is still never a second row. If an approve dies after the insert and the card is then rejected, the reject withdraws that row (best-effort guarded `queued→cancelled`).
+- **Proposal target columns.** `orchestrator_tasks` gains `note_id, agent, title`. Compose now offers the active projects and the agent allowlist. The brain's `noteId` is kept only if it is one of `/projects`, and `agent` only if dispatch-run can start it. Otherwise the channel's note and `builder` apply. With no note at all, approve → 422 `no_project`.
+- **Writes.** `turso.ts` gains `tursoExec` (rows + `affected_row_count`) rather than a multi-statement `tursoBatch`. Each write is a pre-read, the guarded UPDATE, a re-read, then the ledger row only when 1 row was affected.
+- **Turso ids.** They are 32-hex or a dashed UUID (dashboard-made tasks): `DISPATCH_ID = /^[A-Za-z0-9-]{16,64}$/`. Local ids are checked first.
+- **Unblock marker.** `\n\n[unblock YYYY-MM-DD] <answer>` (UTC date). dispatch-run reads `description` verbatim and has no marker parser.
+- **Live mode.** `approve {mode:"live"}` and `POST /dispatch {mode:"live"}` keep the pre-P4 tmux path, with no Turso row yet. P4 adds `claimLive/finishLive`.
+- **#Body thread.** `vitals` was added to `/thread?channel=body`. The `body_alert` frame is unchanged; the banner contract is in `docs/orchestrator-dispatch-api.md`.
+
+Tests: `server/routes/orchestrator-write.test.ts` (fake Turso = in-memory bun:sqlite behind the QueryFn/ExecFn seams), plus additions in `lib/dispatch-tasks.test.ts`, `lib/dispatch-poller.test.ts`, `lib/turso.test.ts`. Not yet done in P2: the brain issuing requeue/unblock itself (F1), and live mode (P4).
+
+**P4 notes (live mode, 2026-10-03):** built on `feat/orch-p4-live` (server only; iOS "Run live" is a separate build). `claimLive` / `finishLive` / `listLiveOwned` are in `lib/dispatch-tasks.ts`; the live flow (cap, cwd, claim, spawn, stop, cancel, boot reconcile) is in a new `server/wiring/live.ts` behind a `LiveRunner` seam (`tmuxRunner` = `executeDispatch` + tmux kill / capture). dispatch-run's reaper skip of `companion:%` is confirmed (`reapStalled`, dispatch-run.ts:158-161). Deviations from the plan:
+- **New files.** `server/wiring/live.ts` (the file table put live mode in `wiring/orchestrator.ts`, which would have gone past 560 lines) and `server/lib/live-repo.ts`. dispatch-run's `REPO_MAP` is not exported (the file runs when imported), so it is parsed as text, read-only. cwd order: body `cwd` (must exist) → the note's mapped repo → the proposal's cwd → the channel's cwd → 422 `no_cwd`.
+- **Spawn gate.** Turso `INSERT OR IGNORE` keeps it to one row. One worker is guaranteed by the local row still being `proposed` plus an in-process `spawning` set (checked and set with no await in between). There is no extra sqlite state: flipping to `dispatched` before the tmux session exists would let the cwd binder grab the row.
+- **Cap.** `countLiveTasks()` + slots reserved between the cap check and the spawn. Over cap → 429, with no FIFO parking for live (Phase 7's queue no longer admits anything). `workerQueue.drain` stays only for legacy `queued` rows left over from before P4.
+- **`POST /dispatch {mode:"live"}`** claims first, then creates its local worker row as a proposal row (`createProposal` + `stampDispatchId`), so it shares the approve path. If Turso fails, nothing local is left behind.
+- **`createTask` / `createQueuedTask`** have no production caller left (the last one, `dispatchLive`, is gone). The functions stay as legacy-history fixtures for `orchestrator-chat.test.ts`.
+- **DTO.** The live Turso row carries `tmuxSession, tmuxSocket, sessionKey` and a new `localTaskId` (worker output frames and worker reply turns use the local id). The local worker row is hidden from `listTasks`, and on the wire it reads `status:"filed"`, so the proposal card leaves and there is no duplicate card. `workerTail.resumeAll` now uses `listLiveTasks()` (unlimited, includes hidden live rows).
+- **Ledger.** finishLive writes `dispatch:completed` (dispatch.sh vocabulary) with `meta.pr` when a PR URL was found, not `dispatch:pr`. The PR URL is the last `github.com/<o>/<r>/pull/<n>` in the worker's final message. The result ref is the last `RES-XXXX` in that message.
+- **Boot reconcile** goes beyond "failed": if the local row already says `done` / `cancelled` and only the Turso write was lost, the row goes `completed` / `cancelled`. Otherwise it is `failed`, blocker "companion restarted; worker lost", with one turn. A pane that vanished mid-run (worker tail) → `failed`, "worker exited without a stop hook".
+- **Finish = first turn-end**, the Phase 1 semantics. The first stop hook closes the local task, so the Turso row completes then too. A worker that needs several turns (phone approvals mid-task do not end the turn) still completes at its first real turn-end.
+
+Tests: `server/routes/orchestrator-live.test.ts` (fake Turso + fake runner) and `server/lib/live-repo.test.ts`. Smoke: `bun cli.ts` on port 4392 with a temp HOME and DB, and `TURSO_DATABASE_URL` pointed at a local fake Hrana server. Boot reconcile failed the orphan row owned here and left `companion:zettlab` and headless rows alone. `/dispatch` live → 422 `no_project` / `no_cwd`. Cancel of another host's row → 409 `running_on_companion:zettlab`. Cancel of a row owned here → 200 `cancelled`, `done=1`, and a replay → 409. `/thread` shows `mode:"live"` / `"headless"`. Not exercised for real: a tmux + Claude spawn and the real stop hook (the server has no fake runner switch), and the 429 over HTTP.
 
 ### Change Plan — images-in-feed-server (2026-09-23) — ✅ shipped #41 (`321cab7`), both hosts deployed 2026-09-23 with sharp 0.34.5; Codex HIGH (unbounded pending buffers) fixed post-review in `05316b0`; drift CLEAN
 **Request:** RES-L5NG step 3, server half. Forward `tool_result` image blocks (base64: Read on a PNG, MCP screenshots) to the feed as a new `FeedEvent` kind `"image"`. Downscale to 1024px long edge JPEG q80 into `~/.claude-companion/media/<sha>.jpg`. Serve via `GET /api/media/:id`. Prune with the 200-event feed cap plus a 200 MB dir cap. Replay on reconnect. Older clients ignore the kind. `![alt](path)` refs in assistant text if cheap.

@@ -1,6 +1,7 @@
 import type { SpawnAgent } from "./spawn-session"
 import type { Session } from "./sessions"
-import { validSocket } from "./tmux-argv"
+import { isScrapeTarget, tmuxServerPidOf } from "./scrape-registry"
+import { tmuxSocketFromEnv } from "./tmux-pane"
 
 // Helpers shared by every hook endpoint and the event wiring: which agent a
 // hook came from, the cwd it reports, the decision envelope each hook event
@@ -19,22 +20,30 @@ export function cwdFromPayload(payloadCwd: string | undefined, headers: Headers)
   return payloadCwd || headers.get("x-companion-cwd") || ""
 }
 
+// `updatedInput` (allow only) replaces the tool input. For AskUserQuestion it
+// carries the phone's `answers`, which is what lets Claude Code skip its
+// picker: an allow WITHOUT it leaves the tool's user-interaction floor in
+// place and the picker opens anyway (verified live on CC 2.1.282).
+// hookEventName must match the hook that called: a PreToolUse-shaped body
+// returned to a PermissionRequest hook is ignored outright.
 export function hookDecisionResponse(
   agent: SpawnAgent,
   eventName: "PreToolUse" | "PermissionRequest",
   decision: "allow" | "deny",
   reason: string,
+  updatedInput?: Record<string, unknown>,
 ): Response {
   if (agent === "codex") {
     // Codex hook compatibility: empty stdout continues; blocking is explicit.
     if (decision === "allow") return new Response("")
     return Response.json({ decision: "block", reason })
   }
+  const withInput = decision === "allow" && updatedInput ? { updatedInput } : {}
   if (eventName === "PermissionRequest") {
     return Response.json({
       hookSpecificOutput: {
         hookEventName: "PermissionRequest",
-        decision: { behavior: decision },
+        decision: { behavior: decision, ...withInput },
       },
     })
   }
@@ -43,8 +52,16 @@ export function hookDecisionResponse(
       hookEventName: "PreToolUse",
       permissionDecision: decision,
       permissionDecisionReason: reason,
+      ...withInput,
     },
   })
+}
+
+// No decision at all: Claude Code runs its normal flow. For a question that
+// means its own picker in the terminal — the right fallback when the phone
+// did not answer (a deny made Claude carry on without the answer).
+export function hookPassthroughResponse(agent: SpawnAgent): Response {
+  return agent === "codex" ? new Response("") : Response.json({})
 }
 
 // "claude-companion", "tls-dashboard-v2", or undefined when cwd is the
@@ -89,9 +106,19 @@ export function metaFromHeaders(headers: Headers): Partial<Session> {
     tty: raw("x-companion-tty"),
     iTermSessionId: raw("x-companion-iterm-session-id"),
     tmuxPane: raw("x-companion-tmux-pane"),
-    // $TMUX's socket path. A malformed value is dropped (default server).
-    tmuxSocket: validSocket(raw("x-companion-tmux-socket")),
+    // X-Companion-Tmux is the hook's $TMUX ("<socket>,<pid>,<idx>"): the pane
+    // above is only unique on that socket's server.
+    tmuxSocket: tmuxSocketFromEnv(headers.get("x-companion-tmux")),
     taskId: raw("x-companion-task-id"),
     pid: raw("x-companion-pid"),
   }
+}
+
+// A hook from the companion's own hidden /help enumeration session
+// (lib/command-offpane.ts) gets a bare passthrough and nothing else — no
+// registration, no push, no card. Normally hooks/_lib.sh already stopped it
+// (COMPANION_SCRAPE=1); this covers hook scripts installed before that guard.
+export function scrapeHookPassthrough(headers: Headers): Response | null {
+  const meta = { ...metaFromHeaders(headers), tmuxServerPid: tmuxServerPidOf(headers.get("x-companion-tmux")) }
+  return isScrapeTarget(meta) ? hookPassthroughResponse(agentFromHeaders(headers)) : null
 }

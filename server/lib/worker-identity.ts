@@ -33,8 +33,8 @@ export interface WorkerIdentityDeps {
   countRunningTasksInCwd(cwd: string): number
   matchUnboundTaskByCwd(cwd: string): Task | null
   findRunningTaskByCwd(cwd: string): Task | null
-  // %N pane id → tmux session name. Only called when the cwd is ambiguous.
-  // Asked on the pane's own server (socket); empty socket = default server.
+  // %N pane id (on `socket`'s server, "" = default) → tmux session name.
+  // Only called when the cwd is ambiguous.
   tmuxSessionForPane(pane: string, socket?: string): Promise<string | null>
   now(): number
   log(msg: string): void
@@ -43,6 +43,7 @@ export interface WorkerIdentityDeps {
 export interface WorkerIdentityInput {
   taskId?: string
   tmuxPane?: string
+  // The server that pane is on ($TMUX's socket); a pane id alone is ambiguous.
   tmuxSocket?: string
   cwd: string
 }

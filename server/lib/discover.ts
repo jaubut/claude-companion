@@ -11,7 +11,10 @@ import { join, basename } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
 import { recordSession } from "./sessions"
-import { socketFromTmuxEnv } from "./tmux-argv"
+import { drainRemovalCount } from "./session-removal-log"
+import { envHasScrapeVar, isScrapeTarget } from "./scrape-registry"
+import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
+import { companionLog } from "./log"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
@@ -39,18 +42,28 @@ async function run(cmd: string, args: string[]): Promise<string> {
   return out
 }
 
+// No controlling terminal: macOS ps prints "??", Linux procps prints "?",
+// some BSDs "-". Linux's "?" used to slip through and register every ttyless
+// claude as `claude:tty:/dev/?` — one phantom row they all collapsed into.
+export function isNoTty(tty: string): boolean {
+  return tty === "??" || tty === "?" || tty === "-"
+}
+
 async function listAgentPids(): Promise<DiscoveredAgent[]> {
   // `ps -axo pid=,tty=,command=` includes kernel/agent threads; filter for
   // exact CLI entrypoints, not child procs or our own companion server.
-  const raw = await run("ps", ["-axo", "pid=,tty=,command="])
+  return parseAgentPs(await run("ps", ["-axo", "pid=,tty=,command="]))
+}
+
+export function parseAgentPs(raw: string): DiscoveredAgent[] {
   const out: DiscoveredAgent[] = []
   for (const line of raw.split("\n")) {
     const m = line.match(/^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/)
     if (!m) continue
     const [, pid, tty, command] = m
     if (!pid || !tty || !command) continue
-    // Real tty only — skip ?? (detached)
-    if (tty === "??" || tty === "-") continue
+    // Real tty only — skip detached processes.
+    if (isNoTty(tty)) continue
     // Exact CLI match — `claude`/`codex` or an absolute path ending in that
     // binary name.
     const trimmed = command.trim()
@@ -65,6 +78,51 @@ async function listAgentPids(): Promise<DiscoveredAgent[]> {
     out.push({ agent: base, pid, tty: `/dev/${tty}`, cwd: "", command: trimmed })
   }
   return out
+}
+
+// A process's environment as NAME=value entries. Linux: /proc/<pid>/environ.
+// macOS/BSD: `ps eww` prints the argv followed by the env; the argv (from a
+// plain `ps ww`) is cut off first, so nothing typed on the command line is
+// ever read as environment. null when unreadable.
+export async function processEnvEntries(pid: string, platform: NodeJS.Platform = process.platform): Promise<string[] | null> {
+  try {
+    if (platform === "linux") return (await readFile(`/proc/${pid}/environ`, "latin1")).split("\0")
+    const [argv, withEnv] = await Promise.all([
+      run("ps", ["-ww", "-o", "command=", "-p", pid]),
+      run("ps", ["eww", "-o", "command=", "-p", pid]),
+    ])
+    const a = argv.replace(/\n$/, ""), e = withEnv.replace(/\n$/, "")
+    if (!a || !e.startsWith(a)) return null
+    return e.slice(a.length).trim().split(/\s+/).filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+async function ttyOwnedByMe(tty: string): Promise<boolean> {
+  const uid = process.getuid?.()
+  if (uid === undefined) return false
+  try {
+    return (await stat(tty.startsWith("/dev/") ? tty : `/dev/${tty}`)).uid === uid
+  } catch {
+    return false
+  }
+}
+
+export interface ScrapeProcessDeps {
+  ownsTty?: (tty: string) => Promise<boolean>
+  envOf?: (pid: string) => Promise<string[] | null>
+}
+
+// Is this the companion's own hidden /help enumeration claude? By its tty
+// (registered while the session lives, lib/scrape-registry.ts), else by a
+// scrape var in its ENVIRONMENT — read only for a tty this user owns (the
+// hidden session's pty always is). Never by its command line.
+export async function isScrapeProcess(pid: string, tty: string, deps: ScrapeProcessDeps = {}): Promise<boolean> {
+  if (isScrapeTarget({ tty })) return true
+  if (!(await (deps.ownsTty ?? ttyOwnedByMe)(tty))) return false
+  const env = await (deps.envOf ?? processEnvEntries)(pid)
+  return env ? envHasScrapeVar(env) : false
 }
 
 async function findCwdForPid(pid: string): Promise<string> {
@@ -141,7 +199,7 @@ interface ClaudeSessionFile {
   waitingFor?: string
 }
 
-async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | null> {
+export async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | null> {
   try {
     const text = await readFile(join(homedir(), ".claude", "sessions", `${pid}.json`), "utf-8")
     const j = JSON.parse(text) as ClaudeSessionFile
@@ -151,26 +209,52 @@ async function readClaudeSessionFile(pid: string): Promise<ClaudeSessionFile | n
   }
 }
 
-// The pane's tmux server, from the process's own $TMUX. The session file names
-// the pane but not the server, and a %N without its server is an ambiguous
-// address. Linux only (/proc); elsewhere "" and a hook supplies it.
-// ponytail: macOS discovery can't see the socket — a cc-socket session there is
-// addressed on the default server until its first hook lands; read `ps eww` if
-// the cc socket is ever used on the Mac.
-async function tmuxSocketOfPid(pid: string): Promise<string> {
-  if (process.platform !== "linux") return ""
-  try {
-    const env = await readFile(`/proc/${pid}/environ`, "utf-8")
-    const tmux = env.split("\0").find((kv) => kv.startsWith("TMUX="))
-    return socketFromTmuxEnv(tmux?.slice(5))
-  } catch {
-    return ""
-  }
-}
-
-function tmuxPaneFromSessionFile(tmux: string | undefined): string {
+// The session file's `tmux` is "<session>:@<win>.%<pane>" — a pane id but
+// no server, so it can never say WHICH tmux the pane is on.
+export function tmuxPaneFromSessionFile(tmux: string | undefined): string {
   const m = (tmux ?? "").match(/(%\d+)$/)
   return m?.[1] ?? ""
+}
+
+// (socket, pane) from a process environment: $TMUX's first field and
+// $TMUX_PANE. Either may be "" (not in tmux, or a partial env).
+export function tmuxRefFromEnv(env: readonly string[] | null): PaneRef {
+  let socket = "", pane = ""
+  for (const e of env ?? []) {
+    if (e.startsWith("TMUX=")) socket = tmuxSocketFromEnv(e.slice(5))
+    else if (e.startsWith("TMUX_PANE=")) pane = /^%\d+$/.test(e.slice(10)) ? e.slice(10) : ""
+  }
+  return { socket, pane }
+}
+
+export interface TmuxRefDeps {
+  envOf?: (pid: string) => Promise<string[] | null>
+  // tty → (socket, pane) across every tmux server; memoised per discovery tick.
+  ttyMap?: () => Promise<Map<string, PaneRef>>
+}
+
+// Where a discovered claude's pane lives. The process's own $TMUX/$TMUX_PANE
+// first (exact, both halves from one source); else ask every tmux server which
+// pane owns the tty; else the session file's bare pane id on the default
+// server (the pre-socket behaviour). A pane is never paired with a socket
+// that came from a different source than the pane itself.
+export async function resolveTmuxRef(
+  pid: string,
+  tty: string,
+  filePane: string,
+  deps: TmuxRefDeps = {},
+): Promise<PaneRef> {
+  const env = tmuxRefFromEnv(await (deps.envOf ?? processEnvEntries)(pid))
+  if (env.socket && (env.pane || filePane)) return { socket: env.socket, pane: env.pane || filePane }
+  if (env.pane && !env.socket) return { socket: "", pane: env.pane }
+  const mapped = deps.ttyMap ? (await deps.ttyMap()).get(tty) : undefined
+  if (mapped) return mapped
+  return { socket: "", pane: filePane }
+}
+
+function memo<T>(fn: () => Promise<T>): () => Promise<T> {
+  let p: Promise<T> | null = null
+  return () => (p ??= fn())
 }
 
 async function findProcessStartMs(pid: string): Promise<number> {
@@ -237,15 +321,79 @@ async function findCodexThreadForPid(pid: string, cwd: string, command: string):
   }
 }
 
+// ── Boot readiness ───────────────────────────────────────────────────────
+//
+// A phone that reconnects right after a restart gets an `init` frame whose
+// `sessions` list it treats as authoritative. Sent before the first discovery
+// finished, that list is [] and the phone drops every row. The startup file
+// calls expectFirstDiscovery() before it starts serving, and the /ws upgrade
+// awaits waitForFirstDiscovery() (bounded) before sending init.
+let firstDone = false
+let firstExpected = false
+let resolveFirst: () => void = () => {}
+export let firstDiscovery: Promise<void> = new Promise((r) => { resolveFirst = r })
+
+function markFirstDiscoveryDone(): void {
+  if (firstDone) return
+  firstDone = true
+  resolveFirst()
+}
+
+// Call once at boot, before the server accepts connections.
+export function expectFirstDiscovery(): void {
+  firstExpected = true
+}
+
+// Resolves when the first discovery pass has finished, or after `maxMs`,
+// whichever comes first. Immediate when no boot discovery was announced
+// (tests, embedders) or it already ran. True when discovery had finished.
+export async function waitForFirstDiscovery(maxMs = 3_000): Promise<boolean> {
+  if (firstDone || !firstExpected) return firstDone || !firstExpected
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timedOut = new Promise<boolean>((r) => { timer = setTimeout(() => r(false), maxMs) })
+  try {
+    return await Promise.race([firstDiscovery.then(() => true), timedOut])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Tests only.
+export function resetFirstDiscovery(expected = false): void {
+  firstExpected = expected
+  firstDone = false
+  firstDiscovery = new Promise((r) => { resolveFirst = r })
+}
+export function markFirstDiscoveryDoneForTest(): void {
+  markFirstDiscoveryDone()
+}
+
 export async function discoverLiveClaudes(): Promise<{ registered: number }> {
+  try {
+    return await discoverOnce()
+  } finally {
+    markFirstDiscoveryDone()
+    const removed = drainRemovalCount()
+    if (removed > 0) {
+      const dim = "\x1b[2m"; const reset = "\x1b[0m"
+      companionLog(`${dim}discovery tick: ${removed} session${removed === 1 ? "" : "s"} removed since the last tick${reset}`)
+    }
+  }
+}
+
+async function discoverOnce(): Promise<{ registered: number }> {
   let registered = 0
   let pids: DiscoveredAgent[]
   try {
     pids = await listAgentPids()
   } catch { return { registered: 0 } }
+  const ttyMap = memo(() => mapTtysToPanes())
 
   await Promise.all(pids.map(async (p) => {
     try {
+      // The companion's own hidden /help enumeration claude (lib/command-offpane.ts):
+      // by its registered tty, or by the scrape var in its environment.
+      if (await isScrapeProcess(p.pid, p.tty)) return
       const [cwd, termProgram] = await Promise.all([
         findCwdForPid(p.pid),
         findTermProgramForPid(p.pid),
@@ -264,12 +412,13 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
         }, { provisional: true })
       } else {
         const file = await readClaudeSessionFile(p.pid)
+        const ref = await resolveTmuxRef(p.pid, p.tty, tmuxPaneFromSessionFile(file?.tmux), { ttyMap })
         if (file) {
           recordSession(
             {
               agent: p.agent, cwd, sessionId: file.sessionId!, tty: p.tty, pid: p.pid, termProgram,
-              tmuxPane: tmuxPaneFromSessionFile(file.tmux),
-              tmuxSocket: file.tmux ? await tmuxSocketOfPid(p.pid) : "",
+              tmuxPane: ref.pane,
+              tmuxSocket: ref.socket,
               firstSeenAt: file.startedAt || undefined,
               agentStatus: file.status ?? "",
               waitingFor: file.waitingFor ?? "",
@@ -279,7 +428,10 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
         } else {
           const [sessionId, startedAt] = await Promise.all([findClaudeSessionIdForCwd(cwd), findProcessStartMs(p.pid)])
           recordSession(
-            { agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram, firstSeenAt: startedAt || undefined },
+            {
+              agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram, firstSeenAt: startedAt || undefined,
+              tmuxPane: ref.pane, tmuxSocket: ref.socket,
+            },
             { provisional: true, sessionIdConfirmed: false },
           )
         }

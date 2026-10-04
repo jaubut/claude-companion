@@ -13,8 +13,8 @@
 // terminal window mirroring the first (tmux mirrors any session attached
 // from multiple clients in real time, which looked like a "copy" bug).
 
-import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs"
-import { tmuxArgv } from "./tmux-argv"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs"
+import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -91,6 +91,9 @@ export interface SpawnResult {
   ok: boolean
   app?: "Terminal" | "iTerm" | "tmux"
   sessionName?: string
+  // Socket path of the tmux server the session landed on ("" = the default
+  // server). Same form discovery records from $TMUX, so `-S` reaches it.
+  tmuxSocket?: string
   error?: string
 }
 
@@ -146,17 +149,32 @@ async function isAppRunning(appName: string): Promise<boolean> {
 // containing apostrophes survive intact. tmux runs the inner command via
 // /bin/sh so standard POSIX quoting applies.
 //
+// With COMPANION_TMUX_SOCKET set the line leads with `-L '<name>'` (and
+// `-f '<conf>'`), so the window attaches to that server; the chained
+// set-option rides the same client and so the same server. Unset → the exact
+// pre-socket string.
+//
 // detach-on-destroy=on is forced per-session: when claude exits, the tmux
 // client detaches cleanly and Terminal returns to its parent shell. Without
 // this, a global `detach-on-destroy off` (Jeremie's setup) makes the client
 // switch to a sibling tmux session — a stray `cc-…` from a cmd+W'd window
 // or an unrelated long-lived session — which surfaces as "an emulation of
 // another tmux terminal" appearing right when the user expected a clean exit.
-function buildTmuxLaunch(cwd: string, sessionName: string, agent: SpawnAgent, env?: Record<string, string>): string {
+export function buildTmuxLaunch(
+  cwd: string,
+  sessionName: string,
+  agent: SpawnAgent,
+  env?: Record<string, string>,
+  serverEnv: Record<string, string | undefined> = process.env,
+): string {
   const sessEscaped = escapeForShellSingleQuoted(sessionName)
   const innerEscaped = escapeForShellSingleQuoted(buildInner(cwd, agent, env))
+  const server = spawnNewSessionFlags(serverEnv)
+    .map((f) => (f.startsWith("-") ? f : `'${escapeForShellSingleQuoted(f)}'`))
+    .map((f) => `${f} `)
+    .join("")
   return (
-    `tmux new-session -s '${sessEscaped}' '${innerEscaped}'`
+    `tmux ${server}new-session -s '${sessEscaped}' '${innerEscaped}'`
     + ` \\; set-option -t '${sessEscaped}' detach-on-destroy on`
   )
 }
@@ -177,14 +195,28 @@ export const DETACHED_COLS = 220
 export const DETACHED_ROWS = 60
 
 // Exported for the test: the argv of the headless spawn, size included.
-export function detachedNewSessionArgs(sessionName: string, inner: string): string[] {
+// `printFormat` adds `-P -F <fmt>` so the caller learns the new pane's id/tty
+// from the same call (the hidden /help enumeration needs it before claude
+// boots — lib/command-offpane.ts).
+export function detachedNewSessionArgs(sessionName: string, inner: string, printFormat?: string): string[] {
   return [
     "new-session", "-d",
+    ...(printFormat ? ["-P", "-F", printFormat] : []),
     "-x", String(DETACHED_COLS),
     "-y", String(DETACHED_ROWS),
     "-s", sessionName,
     "/bin/sh", "-c", inner,
   ]
+}
+
+// The full argv of the headless spawn: the spawn server's flags (incl. -f) and
+// the sized new-session. Exported for the test.
+export function detachedSpawnArgv(
+  sessionName: string,
+  inner: string,
+  serverEnv: Record<string, string | undefined> = process.env,
+): string[] {
+  return [...tmuxArgv(), ...spawnNewSessionFlags(serverEnv), ...detachedNewSessionArgs(sessionName, inner)]
 }
 
 function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
@@ -194,17 +226,11 @@ function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
   return `${prefix}-${safe}`
 }
 
-// Phone-spawned sessions stay on the DEFAULT tmux server, by design (see the
-// comments in ~/.tmux/cc.conf): only terminal sessions started through the
-// shell's claude() wrapper live on the durable `cc` socket. Their hooks still
-// report the default socket path, so the rest of the companion addresses them
-// correctly either way.
-const DEFAULT_SOCKET = undefined
-
 // `=name` forces an exact match — without it, tmux treats the target as a
 // prefix and `cc-foo` would falsely report existing because `cc-foo-2` is.
+// Probed on the spawn server: that is where the new session will land.
 async function tmuxSessionExists(name: string): Promise<boolean> {
-  const proc = Bun.spawn(tmuxArgv(DEFAULT_SOCKET, ["has-session", "-t", `=${name}`]), {
+  const proc = Bun.spawn([...tmuxArgv(), ...spawnServerFlags(), "has-session", "-t", `=${name}`], {
     stdout: "ignore",
     stderr: "ignore",
   })
@@ -240,7 +266,7 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent, env?: Record<stri
     return "OK"
   `)
   if (!r.ok) return { ok: false, app: "Terminal", error: r.stderr || "Terminal spawn failed" }
-  return { ok: true, app: "Terminal", sessionName }
+  return { ok: true, app: "Terminal", sessionName, tmuxSocket: spawnSocketPath() }
 }
 
 // Headless tmux spawn — the Linux/server path. No GUI Terminal to open;
@@ -251,7 +277,8 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent, env?: Record<stri
 // path.
 //
 // Attaching from a human shell (when you want to peek): ssh aubut@<linux-host>
-// then `tmux attach -t cc-<name>`. detach-on-destroy=on so claude exiting
+// then `tmux attach -t cc-<name>` (`tmux -L <COMPANION_TMUX_SOCKET> attach …`
+// when a spawn server is configured). detach-on-destroy=on so claude exiting
 // cleanly drops you back to the shell instead of switching sessions.
 async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
   const sessionName = await uniqueTmuxSessionName(cwd, agent)
@@ -262,7 +289,7 @@ async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<
   // tmux passes through $TMUX/$TMUX_PANE so the session-start hook fires the
   // moment claude initializes.
   const create = Bun.spawn(
-    tmuxArgv(DEFAULT_SOCKET, detachedNewSessionArgs(sessionName, inner)),
+    detachedSpawnArgv(sessionName, inner),
     { stdout: "pipe", stderr: "pipe" },
   )
   let timedOut = false
@@ -281,12 +308,13 @@ async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<
   // tmux switching them to some unrelated sibling session. Best-effort:
   // failure here is non-fatal, the session still works.
   const opt = Bun.spawn(
-    tmuxArgv(DEFAULT_SOCKET, ["set-option", "-t", sessionName, "detach-on-destroy", "on"]),
+    [...tmuxArgv(), ...spawnServerFlags(), "set-option", "-t", sessionName, "detach-on-destroy", "on"],
     { stdout: "ignore", stderr: "ignore" },
   )
   await opt.exited
 
-  return { ok: true, app: "tmux", sessionName }
+  // Socket path resolved after the create: the server (and its dir) now exist.
+  return { ok: true, app: "tmux", sessionName, tmuxSocket: spawnSocketPath() }
 }
 
 async function spawnInIterm(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
@@ -306,7 +334,29 @@ async function spawnInIterm(cwd: string, agent: SpawnAgent, env?: Record<string,
     return "OK"
   `)
   if (!r.ok) return { ok: false, app: "iTerm", error: r.stderr || "iTerm spawn failed" }
-  return { ok: true, app: "iTerm", sessionName }
+  return { ok: true, app: "iTerm", sessionName, tmuxSocket: spawnSocketPath() }
+}
+
+// A spawn in the bare home dir moves to ~/work on Linux. Claude Code's Linux
+// sandbox (bwrap) masks .git/config, .git/hooks and .git/info/exclude of the cwd
+// even when it isn't a repo, so every session started in ~ built a fake ~/.git
+// full of 0-byte read-only stubs and appended its 19-line exclude block again
+// (83 copies on Zettlab by 2026-09-29). Tools that walk up to the nearest .git
+// then took ~ for a project root. macOS's sandbox doesn't do this, so the Mac
+// keeps ~. Override with COMPANION_HOME_SPAWN_DIR.
+export function homeSpawnCwd(
+  resolved: string,
+  env: { platform: string; home?: string; override?: string } = {
+    platform: process.platform,
+    home: process.env.HOME,
+    override: process.env.COMPANION_HOME_SPAWN_DIR,
+  },
+): string {
+  if (env.platform === "darwin" || !env.home) return resolved
+  const strip = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p)
+  if (strip(resolved) !== strip(env.home)) return resolved
+  const target = env.override?.trim() || `${strip(env.home)}/work`
+  return target.startsWith("~") ? target.replace(/^~/, strip(env.home)) : target
 }
 
 export async function spawnCompanionSession(opts: {
@@ -323,9 +373,17 @@ export async function spawnCompanionSession(opts: {
     return { ok: false, error: "cwd must be absolute" }
   }
   // Expand ~ manually — osascript runs outside a shell so ~ isn't expanded.
-  const resolved = cwd.startsWith("~")
+  const expanded = cwd.startsWith("~")
     ? cwd.replace(/^~/, process.env.HOME ?? "")
     : cwd
+  const resolved = homeSpawnCwd(expanded)
+  if (resolved !== expanded) {
+    try {
+      mkdirSync(resolved, { recursive: true })
+    } catch (err) {
+      return { ok: false, error: `cannot create ${resolved}: ${(err as Error).message}` }
+    }
+  }
   if (!existsSync(resolved)) {
     return { ok: false, error: `cwd does not exist: ${resolved}` }
   }

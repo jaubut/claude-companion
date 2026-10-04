@@ -8,6 +8,11 @@ import type { Task } from "./orchestrator-chat"
 
 export const DEFAULT_WIP_CAP = 3
 
+/** The host's cap: COMPANION_WIP_CAP, else the default. */
+export function wipCap(env: Record<string, string | undefined> = process.env): number {
+  return Number(env.COMPANION_WIP_CAP) || DEFAULT_WIP_CAP
+}
+
 export interface QueueDeps {
   cap: number
   countLive(): number

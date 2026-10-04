@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { type SubmitClock, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
+import { type ConfirmDeps, type SubmitClock, LATE_HOOK_GRACE_MS, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
 
 // A manual clock: timers fire only when the test advances time.
 function fakeClock() {
@@ -40,7 +40,7 @@ function harness(panes: string | Array<string | null>) {
   const presses: number[] = []
   const seq = Array.isArray(panes) ? panes : [panes]
   let captures = 0
-  const deps = {
+  const deps: ConfirmDeps = {
     watch,
     text: "hello there",
     clock: c.clock,
@@ -105,6 +105,8 @@ test("empty box with a dim predicted reply: text went elsewhere, no Enter, not_s
   const h = harness(GHOST)
   const result = confirmSubmit(h.deps)
   await h.c.advance(SUBMIT_WINDOW_MS)
+  // Text left the box: one late-hook grace window before calling it lost.
+  await h.c.advance(LATE_HOOK_GRACE_MS)
   const r = await result
   expect(r.ok).toBe(false)
   expect(h.presses).toEqual([])
@@ -135,8 +137,40 @@ test("busy Claude but our text nowhere: a loss, not 'queued'", async () => {
   const h = harness(BUSY_NOT_QUEUED)
   const result = confirmSubmit(h.deps)
   await h.c.advance(SUBMIT_WINDOW_MS)
+  // Text left the box: one late-hook grace window before calling it lost.
+  await h.c.advance(LATE_HOOK_GRACE_MS)
   expect((await result).ok).toBe(false)
   expect(h.presses).toEqual([])
+  h.watch.close()
+})
+
+test("session file says busy, text not on screen: queued (hook fires at the next tool boundary)", async () => {
+  const h = harness(BUSY_NOT_QUEUED)
+  h.deps.busy = async () => true
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  expect(await result).toEqual({ ok: true, confirmed: false, queued: true })
+  expect(h.presses).toEqual([])
+  h.watch.close()
+})
+
+test("session file says busy but a picker is up: still not_submitted", async () => {
+  const h = harness(PICKER)
+  h.deps.busy = async () => true
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  expect((await result).ok).toBe(false)
+  h.watch.close()
+})
+
+test("session file says idle: an empty box is a loss", async () => {
+  const h = harness(GHOST)
+  h.deps.busy = async () => false
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  // Text left the box: one late-hook grace window before calling it lost.
+  await h.c.advance(LATE_HOOK_GRACE_MS)
+  expect((await result).ok).toBe(false)
   h.watch.close()
 })
 
@@ -182,4 +216,46 @@ test("echoPromptOnInject: only an unconfirmable delivery is echoed into the feed
   expect(echoPromptOnInject({ ok: true, confirmed: false, queued: true })).toBe(false)  // hook fires at turn end
   expect(echoPromptOnInject({ ok: false, error: "not_submitted", excerpt: "" })).toBe(false)
   expect(echoPromptOnInject({ ok: false, error: "deliver_failed" })).toBe(false)
+})
+
+// 2026-10-03, Zettlab: the hook landed 6.6 s after the Enter — after the 3 s
+// window — and a delivered prompt was reported "not sent".
+test("late hook: text left the box, hook lands inside the grace window → confirmed, no Enter", async () => {
+  const h = harness(GHOST)
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  await h.c.advance(3_600)
+  noteUserPromptSubmit({ key: ID.key })
+  await h.c.advance(0)
+  expect(await result).toEqual({ ok: true, confirmed: true, retried: false })
+  expect(h.presses).toEqual([])
+  h.watch.close()
+})
+
+test("late hook after the grace window: still not_submitted (the phone self-heals on the echo)", async () => {
+  const h = harness(GHOST)
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  await h.c.advance(LATE_HOOK_GRACE_MS)
+  expect((await result).ok).toBe(false)
+  h.watch.close()
+})
+
+test("no grace when our text is still typed in the box (that is the Enter-retry path)", async () => {
+  const h = harness(STUCK)
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  const r = await result
+  expect(r.ok).toBe(false)
+  expect(h.presses).toEqual([1])
+  h.watch.close()
+})
+
+test("no grace with a picker on screen: the text went into it", async () => {
+  const h = harness(PICKER)
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  expect((await result).ok).toBe(false)
+  h.watch.close()
 })

@@ -7,6 +7,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { secureLogFile } from "../server/lib/log"
 
 // macOS launchd integration so the companion server auto-starts at login
 // and restarts if it crashes.
@@ -51,6 +52,9 @@ export async function daemonInstall(): Promise<void> {
 
   mkdirSync(dirname(PLIST_PATH), { recursive: true })
   mkdirSync(dirname(LOG_PATH), { recursive: true })
+  // launchd opens the log with its own umask; pre-create it owner-only (the
+  // server re-applies 0600 at every start — lib/log.ts secureLogFile).
+  secureLogFile(LOG_PATH)
 
   const bun = process.execPath
   const plist = renderPlist({ bun, cliPath: CLI_PATH, workingDir: REPO_ROOT, logPath: LOG_PATH })

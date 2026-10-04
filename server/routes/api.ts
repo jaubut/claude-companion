@@ -1,8 +1,11 @@
+import { hostname } from "node:os"
 import { getPending, resolveApproval } from "../lib/pty-manager"
 import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
-import { echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
+import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
 import { injectRefusal } from "../lib/inject-guard"
+import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
+import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -18,13 +21,16 @@ import {
 } from "../lib/push-tokens"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import { HOST_INFO, broadcast, clients } from "../state"
+import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
 import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
+import { withIdempotency } from "../lib/idempotency"
+import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
 // push debug, generic broadcast, inject, learned-allow, SUPER toggle, spawn,
-// status, feed dump. Same paths, methods and responses as before the split.
+// status, feed dump, approval history. Same paths, methods and responses as
+// before the split.
 
 export async function handleApiRoute(req: Request, url: URL): Promise<Response | null> {
   // ── Approval resolve (HTTP — for iOS notification actions) ──
@@ -32,15 +38,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // notification-action handlers have ~30s of background runtime and a
   // single POST is faster + cheaper than negotiating a WS.
   if (url.pathname === "/api/resolve" && req.method === "POST") {
-    const body = await req.json() as { id?: string; decision?: "allow" | "deny" }
-    const id = (body.id ?? "").trim()
-    const decision = body.decision
-    if (!id || (decision !== "allow" && decision !== "deny")) {
-      return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
-    }
-    const ok = resolveApproval(id, decision)
-    if (ok) broadcast({ type: "resolved", id, decision })
-    return Response.json({ ok })
+    return withIdempotency(req, "resolve", () => handleResolve(req))
   }
 
   // ── AskUserQuestion answer (HTTP) ──
@@ -49,22 +47,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // entry per question, in order. Resolves the pending question; the
   // PreToolUse hook handler then drives the local picker via tmux.
   if (url.pathname === "/api/answer" && req.method === "POST") {
-    const body = await req.json() as {
-      id?: string
-      answers?: Array<{ selected?: string[]; otherText?: string }>
-    }
-    const id = (body.id ?? "").trim()
-    const rawAnswers = body.answers
-    if (!id || !Array.isArray(rawAnswers) || rawAnswers.length === 0) {
-      return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
-    }
-    const answers: QuestionAnswer[] = rawAnswers.map((a) => ({
-      selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
-      otherText: typeof a.otherText === "string" ? a.otherText : undefined,
-    }))
-    const ok = resolveQuestion(id, answers)
-    if (ok) broadcast({ type: "resolved", id, decision: "answered" })
-    return Response.json({ ok })
+    return withIdempotency(req, "answer", () => handleAnswer(req))
   }
 
   // ── Device token registration (iOS companion app) ──
@@ -159,114 +142,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Inject text from phone into terminal ──
   if (url.pathname === "/api/inject" && req.method === "POST") {
-    const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
-    if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
-
-    const lookup = key || cwd || ""
-    let target = lookup ? resolveSession(lookup) : null
-    // The target the caller actually named, captured before the fallback below
-    // reassigns `target`. Only this one may have its waiting badge cleared:
-    // the fallback is a delivery convenience and picks whichever session was
-    // active last, which is not the session the text was addressed to.
-    const explicit = target
-
-    // No explicit target: pick the most-recently-active registered
-    // session as "frontmost". On Linux this is the only sane fallback —
-    // the legacy pbcopy + Cmd+V path is macOS-only and ENOENTs on Bun
-    // under Linux. On macOS this is also a safer default than blind
-    // System Events paste into whatever app happens to be frontmost
-    // (Cursor, Safari, anything). Caller that truly wants the
-    // System-Events fallback can still send key="" + cwd="" on a
-    // server with no registered sessions; injectText handles that.
-    if (!lookup) {
-      const recent = listSessions().find(s => !!s.tty)
-      if (recent) target = recent
-    }
-
-    // A dialog the COMPANION opened (the /help command scrape) is ours to
-    // close, not the user's problem — stop it and take the pane back before
-    // the refusal check even looks. If we could NOT take it back, the pane is
-    // in an unknown state (the scrape may still have its modal up and the
-    // watcher is still skipping that session, so the dialog check below would
-    // pass on a stale null): it is a `busy_flow` refusal below, not a blind
-    // send-keys.
-    const paneFree = await yieldPaneForInject(target)
-
-    // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
-    // target not registered, no live tty, or a dialog in the way. A dialog is
-    // modal in the pane — typing into one answers it instead of reaching the
-    // input box — so it is a refusal, not a delivery problem.
-    // With the pane still held there is nothing to learn from the watcher —
-    // it is skipping that session for the duration of the flow.
-    // Last, the pane itself: an input box that is on screen and empty, or a
-    // refusal (pane_not_ready) — the agents panel, the shortcuts overlay and a
-    // late /help take keys without ever becoming a Dialog.
-    const refusal = injectRefusal({
-      lookup, target, paneFree,
-      dialog: paneFree ? await openDialogFor(target) : null,
-      pane: paneFree ? await paneSnapshotFor(target) : undefined,
-    })
-    if (refusal) {
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-      // label is often empty (a session with no resolved title), so fall back
-      // to the key — an unnamed refusal reads as "inject refused — has a
-      // dialog open", which names nothing.
-      const who = target?.label || target?.key || lookup
-      const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
-        : refusal.error === "target_idle" ? `target ${who} has no live tty`
-        : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
-        : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
-        : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
-      companionLog(`${red}inject refused${reset} — ${why}`)
-      // 409 for the dialog and for a pane we could not take back: the request
-      // is fine and the target is alive, it just can't accept text yet. 410
-      // stays the "this target is gone" code the phone already maps to a
-      // re-pin prompt.
-      const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" ? 409 : 410
-      return Response.json({
-        ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt,
-      }, { status })
-    }
-
-    const dim = "\x1b[2m"
-    const reset = "\x1b[0m"
-    const cyan = "\x1b[36m"
-    const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
-    companionLog(`${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"`)
-
-    // Clear only what the caller named, and only its turn-end reason: typed
-    // text answers neither a pending approval nor an open dialog. With no
-    // explicit target and more than one session waiting on a turn-end, clear
-    // nothing rather than blank the wrong badge.
-    const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
-    announceWaiting(cleared)
-    if (!cleared && refused > 0) {
-      companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
-    }
-
-    const res = await injectConfirmed(text, target ?? undefined)
-    if (!res.ok && res.error === "not_submitted") {
-      // Typed but never submitted (no UserPromptSubmit after Enter + one
-      // retry). Tell every client so the bubble is marked undelivered, and
-      // answer 409 like the other "target alive, text not accepted" cases.
-      broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? key, cwd: target?.cwd ?? cwd, text, excerpt: res.excerpt })
-      return Response.json({ ok: false, error: "not_submitted", excerpt: res.excerpt, key, cwd }, { status: 409 })
-    }
-    const ok = res.ok
-    if (!ok) {
-      companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (tmux send-keys, or osascript: Accessibility permission?)`)
-    } else if (target && echoPromptOnInject(res)) {
-      // Unconfirmable delivery only (see echoPromptOnInject): the hook is
-      // the source of truth everywhere it can be observed.
-      recordUserPrompt({
-        text,
-        cwd: target.cwd,
-        sessionId: target.sessionId,
-        tty: target.tty,
-        sessionKey: target.key,
-      })
-    }
-    return Response.json(res.ok ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}) } : { ok })
+    return withIdempotency(req, "inject", () => handleInject(req))
   }
 
   // ── Learned-allow management ──
@@ -327,6 +203,11 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ ok: true, app: result.app, cwd, agent })
   }
 
+  // ── Approval history (the phone's Approvals tab) ──
+  if (url.pathname === "/api/approvals/history" && req.method === "GET") return listApprovalHistory(url)
+  if (url.pathname === "/api/approvals/history" && req.method === "DELETE") return pruneApprovalHistory(url)
+  if (url.pathname === "/api/approvals/history/stats" && req.method === "GET") return approvalHistoryStats(url)
+  if (url.pathname.startsWith("/api/approvals/history/") && req.method === "GET") return approvalHistoryItem(url)
 
   // ── Status endpoint ──
   if (url.pathname === "/api/status") {
@@ -351,4 +232,222 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     })
   }
   return null
+}
+
+async function handleResolve(req: Request): Promise<Response> {
+  const body = await req.json() as { id?: string; decision?: "allow" | "deny" }
+  const id = (body.id ?? "").trim()
+  const decision = body.decision
+  if (!id || (decision !== "allow" && decision !== "deny")) {
+    return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
+  }
+  const ok = resolveApproval(id, decision, { device: clientInfo(req, "").device })
+  logResolve(req, "approval", id, decision, ok)
+  if (ok) broadcast({ type: "resolved", id, decision })
+  return Response.json(ok ? { ok } : { ok, reason: "gone" })
+}
+
+// Audit line for every phone decision: what, which id, and where it came from
+// (transport, peer address, user-agent, X-Companion-Device). Never the token.
+function logResolve(req: Request, what: "approval" | "question", id: string, decision: string, ok: boolean): void {
+  const tag = ok ? "\x1b[36mresolve\x1b[0m" : "\x1b[33mresolve failed (gone)\x1b[0m"
+  companionLog(`${tag} ${what} ${id.slice(0, 8)} → ${decision} ${describeClient("rest", clientInfo(req, originLabel(req)))}`)
+}
+
+async function handleAnswer(req: Request): Promise<Response> {
+  const body = await req.json() as {
+    id?: string
+    answers?: Array<{ selected?: string[]; otherText?: string }>
+  }
+  const id = (body.id ?? "").trim()
+  const rawAnswers = body.answers
+  if (!id || !Array.isArray(rawAnswers) || rawAnswers.length === 0) {
+    return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
+  }
+  const answers: QuestionAnswer[] = rawAnswers.map((a) => ({
+    selected: Array.isArray(a.selected) ? a.selected.filter((s) => typeof s === "string") : [],
+    otherText: typeof a.otherText === "string" ? a.otherText : undefined,
+  }))
+  const ok = resolveQuestion(id, answers, { device: clientInfo(req, "").device })
+  logResolve(req, "question", id, "answered", ok)
+  if (ok) broadcast({ type: "resolved", id, decision: "answered" })
+  return Response.json(ok ? { ok } : { ok, reason: "gone" })
+}
+
+// Inject text from phone into terminal.
+async function handleInject(req: Request): Promise<Response> {
+  const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
+  if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
+
+  // `/key NAME value` goes to secrets.env, never into the pane or a log —
+  // and only from where the vault itself would accept it. A refused /key is
+  // still never injected (the value would land in the pane).
+  if (isKeyCommand(text)) {
+    const gate = keyCommandGate(req)
+    if (!gate.allowed) {
+      const { status, ...refusal } = gate.refusal ?? { status: 403, error: "forbidden_network", message: "/key refusé. Rien enregistré." }
+      companionLog(`/key refused — ${refusal.error} peer=${gate.origin.peer}`)
+      return Response.json({ ok: false, ...refusal }, { status })
+    }
+    const keyed = await handleKeyCommand(text, gate.origin)
+    if (keyed) {
+      companionLog(`/key ${keyed.name ?? "?"} → ${keyed.ok ? "saved" : keyed.error}`)
+      const { status, ...body } = keyed
+      return Response.json(body, { status })
+    }
+  }
+
+  const lookup = key || cwd || ""
+  let target = lookup ? resolveSession(lookup) : null
+  // The target the caller actually named, captured before the fallback below
+  // reassigns `target`. Only this one may have its waiting badge cleared:
+  // the fallback is a delivery convenience and picks whichever session was
+  // active last, which is not the session the text was addressed to.
+  const explicit = target
+
+  // No explicit target: pick the most-recently-active registered
+  // session as "frontmost". On Linux this is the only sane fallback —
+  // the legacy pbcopy + Cmd+V path is macOS-only and ENOENTs on Bun
+  // under Linux. On macOS this is also a safer default than blind
+  // System Events paste into whatever app happens to be frontmost
+  // (Cursor, Safari, anything). Caller that truly wants the
+  // System-Events fallback can still send key="" + cwd="" on a
+  // server with no registered sessions; injectText handles that.
+  if (!lookup) {
+    const recent = listSessions().find(s => !!s.tty)
+    if (recent) target = recent
+  }
+
+  // A dialog the COMPANION opened (the /help command scrape) is ours to
+  // close, not the user's problem — stop it and take the pane back before
+  // the refusal check even looks. If we could NOT take it back, the pane is
+  // in an unknown state (the scrape may still have its modal up and the
+  // watcher is still skipping that session, so the dialog check below would
+  // pass on a stale null): it is a `busy_flow` refusal below, not a blind
+  // send-keys.
+  const paneFree = await yieldPaneForInject(target)
+
+  // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
+  // target not registered, no live tty, or a dialog in the way. A dialog is
+  // modal in the pane — typing into one answers it instead of reaching the
+  // input box — so it is a refusal, not a delivery problem.
+  // With the pane still held there is nothing to learn from the watcher —
+  // it is skipping that session for the duration of the flow.
+  // Last, the pane itself: an input box that is on screen and empty, or a
+  // refusal (pane_not_ready) — the agents panel, the shortcuts overlay and a
+  // late /help take keys without ever becoming a Dialog.
+  const refusal = injectRefusal({
+    lookup, target, paneFree,
+    dialog: paneFree ? await openDialogFor(target) : null,
+    pane: paneFree ? await paneSnapshotFor(target) : undefined,
+  })
+  if (refusal) {
+    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
+    // label is often empty (a session with no resolved title), so fall back
+    // to the key — an unnamed refusal reads as "inject refused — has a
+    // dialog open", which names nothing.
+    const who = target?.label || target?.key || lookup
+    const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
+      : refusal.error === "target_idle" ? `target ${who} has no live tty`
+      : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
+      : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
+      : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
+    companionLog(`${red}inject refused${reset} — ${why}`)
+    // 409 for the dialog and for a pane we could not take back: the request
+    // is fine and the target is alive, it just can't accept text yet. 410
+    // stays the "this target is gone" code the phone already maps to a
+    // re-pin prompt.
+    const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" ? 409 : 410
+    return Response.json({
+      ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt,
+    }, { status })
+  }
+
+  const dim = "\x1b[2m"
+  const reset = "\x1b[0m"
+  const cyan = "\x1b[36m"
+  const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
+  companionLog(`${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"`)
+
+  // Clear only what the caller named, and only its turn-end reason: typed
+  // text answers neither a pending approval nor an open dialog. With no
+  // explicit target and more than one session waiting on a turn-end, clear
+  // nothing rather than blank the wrong badge.
+  const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
+  announceWaiting(cleared)
+  if (!cleared && refused > 0) {
+    companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
+  }
+
+  const res = await injectConfirmed(text, target ?? undefined)
+  if (!res.ok && res.error === "not_submitted") {
+    // Typed but never submitted (no UserPromptSubmit after Enter + one
+    // retry). Tell every client so the bubble is marked undelivered, and
+    // answer 409 like the other "target alive, text not accepted" cases.
+    broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? key, cwd: target?.cwd ?? cwd, text, excerpt: res.excerpt })
+    return Response.json({ ok: false, error: "not_submitted", excerpt: res.excerpt, key, cwd }, { status: 409 })
+  }
+  const ok = res.ok
+  if (!ok) {
+    companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (${deliveryFailedHint()})`)
+  } else if (target && echoPromptOnInject(res)) {
+    // Unconfirmable delivery only (see echoPromptOnInject): the hook is
+    // the source of truth everywhere it can be observed.
+    recordUserPrompt({
+      text,
+      cwd: target.cwd,
+      sessionId: target.sessionId,
+      tty: target.tty,
+      sessionKey: target.key,
+    })
+  }
+  return Response.json(res.ok
+    ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}), ...(res.command ? { command: true } : {}) }
+    : { ok, error: "deliver_failed", hint: deliveryFailedHint() })
+}
+
+// Approval history — lib/approval-history.ts. Bearer-gated like every /api route.
+//   GET    /api/approvals/history?state=&kind=&q=&limit=&before=
+//   GET    /api/approvals/history/stats?since=<iso>
+//   GET    /api/approvals/history/:id
+//   DELETE /api/approvals/history?before=<iso>   (manual pruning, resolved rows only)
+const HISTORY_ITEM_PREFIX = "/api/approvals/history/"
+const HISTORY_KINDS = new Set(["approval", "question"])
+const HISTORY_FILTERS = new Set<string>([...HISTORY_STATES, "all", "resolved", "auto", "everything"])
+
+function badRequest(error: string): Response {
+  return Response.json({ ok: false, error }, { status: 400 })
+}
+
+function approvalHistoryItem(url: URL): Response {
+  const id = decodeURIComponent(url.pathname.slice(HISTORY_ITEM_PREFIX.length))
+  const item = id && !id.includes("/") ? getHistoryItem(id) : null
+  return item ? Response.json({ ok: true, item }) : Response.json({ ok: false, error: "not_found" }, { status: 404 })
+}
+
+function listApprovalHistory(url: URL): Response {
+  const p = url.searchParams
+  const state = p.get("state") || "all"
+  if (!HISTORY_FILTERS.has(state)) return badRequest("bad_state")
+  const kind = p.get("kind") || ""
+  if (kind && !HISTORY_KINDS.has(kind)) return badRequest("bad_kind")
+  const rawLimit = p.get("limit")
+  const limit = rawLimit ? Number(rawLimit) : undefined
+  if (limit !== undefined && !Number.isFinite(limit)) return badRequest("bad_limit")
+  const { items, next } = listHistory({ state, kind, q: p.get("q") || "", limit, before: p.get("before") || "" })
+  return Response.json({ ok: true, host: hostname(), items, next })
+}
+
+function approvalHistoryStats(url: URL): Response {
+  const raw = url.searchParams.get("since") ?? ""
+  const ms = raw ? Date.parse(raw) : NaN
+  if (raw && !Number.isFinite(ms)) return badRequest("bad_since")
+  return Response.json({ ok: true, counts: historyCounts(raw ? new Date(ms).toISOString() : "") })
+}
+
+function pruneApprovalHistory(url: URL): Response {
+  const raw = url.searchParams.get("before") ?? ""
+  const ms = raw ? Date.parse(raw) : NaN
+  if (!Number.isFinite(ms)) return badRequest("bad_before")
+  return Response.json({ ok: true, deleted: pruneHistory(new Date(ms).toISOString()) })
 }

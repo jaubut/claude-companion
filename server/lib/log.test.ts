@@ -29,3 +29,24 @@ test("a single-line message is unchanged in shape", () => {
   const now = new Date("2026-09-24T12:34:56.789Z")
   expect(formatLogLines("ok", now)).toBe(`${logPrefix(now)} ok\n`)
 })
+
+test("secureLogFile creates a missing log 0600 and narrows an existing one", async () => {
+  const { mkdtempSync, statSync, writeFileSync, chmodSync, rmSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { secureLogFile } = await import("./log")
+  const dir = mkdtempSync(join(tmpdir(), "companion-log-"))
+  try {
+    const fresh = join(dir, "sub", "companion.log")
+    expect(secureLogFile(fresh)).toBe(true)
+    expect(statSync(fresh).mode & 0o777).toBe(0o600)
+
+    const loose = join(dir, "loose.log")
+    writeFileSync(loose, "boot banner\n")
+    chmodSync(loose, 0o644)
+    expect(secureLogFile(loose)).toBe(true)
+    expect(statSync(loose).mode & 0o777).toBe(0o600)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
