@@ -800,7 +800,7 @@
         },
         {
           "path": "lib/command-offpane-launch.ts",
-          "lines": 271,
+          "lines": 272,
           "kind": "lib",
           "exports": [
             "TmuxResult",
@@ -831,7 +831,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/tmux-pane.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -887,7 +889,7 @@
         },
         {
           "path": "lib/command-scrape.ts",
-          "lines": 403,
+          "lines": 404,
           "kind": "lib",
           "exports": [
             "PaneFlow",
@@ -1007,7 +1009,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 445,
+          "lines": 449,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1451,7 +1453,7 @@
         },
         {
           "path": "lib/key-gate.ts",
-          "lines": 210,
+          "lines": 211,
           "kind": "lib",
           "exports": [
             "SEND_TIMEOUT_MS",
@@ -1471,7 +1473,8 @@
           "apiCalls": [],
           "imports": [
             "lib/log.ts",
-            "lib/command-list.ts"
+            "lib/command-list.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2551,7 +2554,7 @@
         },
         {
           "path": "lib/session-identity.ts",
-          "lines": 55,
+          "lines": 58,
           "kind": "lib",
           "exports": [
             "deriveKey",
