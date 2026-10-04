@@ -2,6 +2,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { Turn } from "./orchestrator-chat"
+import { parseCliResult } from "./cli-json"
 
 // Orchestrator brain (PRJ-OR1T). Decides whether to answer a user message inline
 // (chat) or propose dispatching a worker Claude (proposal). Phase 3 tiers the
@@ -83,16 +84,8 @@ async function runClaudeOnce(model: string, prompt: string): Promise<string | nu
   } finally {
     clearTimeout(timer)
   }
-  // The CLI may print a warning before the JSON wrapper, so parse from the result
-  // object, not byte 0.
-  const jsonStart = out.indexOf('{"type"')
-  if (jsonStart < 0) return null
-  try {
-    const w = JSON.parse(out.slice(jsonStart)) as { result?: string }
-    return typeof w.result === "string" ? w.result : null
-  } catch {
-    return null
-  }
+  // Field order and leading warnings vary across CLI versions — see cli-json.ts.
+  return parseCliResult(out)
 }
 
 // Retry the headless call before giving up. The dominant failure in the wild was
