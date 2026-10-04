@@ -31,7 +31,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 389 | lib | 32 |  |
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `lib/submit-confirm.ts` | 375 | lib | 19 | state: watches: Set, paneLocks: Map |
-| `lib/body-investigate-engine.ts` | 361 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
+| `lib/body-investigate-engine.ts` | 365 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 355 | lib | 25 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/dispatch-poller.ts` | 351 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
@@ -73,6 +73,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-jev.ts` | 165 | lib | 12 | state: let chartCache |
 | `routes/vault.ts` | 162 | lib | 1 |  |
 | `wiring/dialogs.ts` | 160 | lib | 4 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
+| `lib/body-fix.ts` | 153 | lib | 11 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/feed.ts` | 149 | lib | 10 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
@@ -80,7 +81,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 138 | lib | 11 | state: MONEY_FIELDS: Set |
 | `lib/turso.ts` | 137 | lib | 7 | state: let agentToken, let agentEnvRead |
-| `lib/body-fix.ts` | 135 | lib | 10 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/vault-guard.ts` | 134 | lib | 17 | state: peers: WeakMap |
 | `lib/worker-identity.ts` | 130 | lib | 6 |  |
@@ -294,6 +294,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `clampLong()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/codex-feed.ts`, `lib/transcript.ts` |
 | `ApnsEnv()` | `lib/push-tokens.ts` | `lib/apns.ts`, `routes/api.ts`, `routes/api.ts#POST /api/register-token` |
 | `BodyHost()` | `lib/body-investigate.ts` | `lib/body-fix.ts`, `lib/body-investigate-engine.ts`, `wiring/body-fix.ts` |
+| `localBodyHost()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `wiring/body-fix.ts`, `wiring/body-investigate.ts` |
 | `ExecFn()` | `lib/turso.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-tasks.ts` |
 | `getAuthToken()` | `lib/auth.ts` | `lib/body-investigate-engine.ts`, `lib/vault-upstream.ts`, `routes/capture.ts` |
 | `parseCliResult()` | `lib/cli-json.ts` | `lib/body-investigator.ts`, `lib/orchestrator-brain.ts`, `lib/receipt-sonnet.ts` |
@@ -433,7 +434,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `Limiter()` | `lib/vault-guard.ts` | `routes/records.ts`, `routes/vault.ts` |
 | `UpstreamReply()` | `lib/vault-upstream.ts` | `routes/records.ts`, `routes/vault.ts` |
 | `clientOrigin()` | `lib/vault-guard.ts` | `routes/records.ts`, `routes/vault.ts` |
-| `localBodyHost()` | `lib/body-investigate.ts` | `wiring/body-fix.ts`, `wiring/body-investigate.ts` |
 | `bodyPeer()` | `lib/body-investigate-engine.ts` | `wiring/body-fix.ts`, `wiring/body-investigate.ts` |
 | `markFiled()` | `lib/orchestrator-chat.ts` | `wiring/body-fix.ts`, `wiring/orchestrator.ts` |
 | `bodyPushEnabled()` | `lib/body-alert.ts` | `wiring/body-investigate.ts`, `wiring/body.ts` |

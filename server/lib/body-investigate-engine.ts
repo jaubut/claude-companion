@@ -3,6 +3,7 @@ import type { ApnsPayload } from "./apns"
 import { BODY_CHANNEL, type BodyComponentDetail, isHealthIntent } from "./body"
 import { clampChars, collapseIdFor } from "./body-alert"
 import {
+  localBodyHost,
   type BodyHost, type InvestigationRecord, type InvestigationReport, type InvestigationStore, FORWARD_STALE_MS, MAX_ATTEMPTS,
   gate, hostFromId, investigationDigest, isProblemState, routeFor,
 } from "./body-investigate"
@@ -235,6 +236,8 @@ export interface ApplyDeps {
   /** A Mac component's card: remember host + cwd so approval runs live on the Mac (lib/body-fix.ts). */
   recordFixCard?: (card: FixCard) => void
   home: string
+  /** This host (defaults to the platform): a card for another host gets a host-neutral `~/.claude`. */
+  localHost?: () => BodyHost
   now?: () => number
   log?: (msg: string) => void
 }
@@ -257,7 +260,8 @@ export function createReportApplier(deps: ApplyDeps): (r: InvestigationReport, r
       const res = r.result
       say(reportTurnText(r.componentId, res))
       if (res.recommendedFix) {
-        const cwd = r.cwd || join(deps.home, ".claude")
+        // A Mac fix runs on the Mac: write a host-neutral path; the Mac localizes it (lib/body-fix.ts localizeCwd).
+        const cwd = r.cwd || (r.host !== (deps.localHost?.() ?? localBodyHost()) ? "~/.claude" : join(deps.home, ".claude"))
         const agent = r.repo ? "builder" : "claude"
         const title = clampChars(`${res.retire ? "Retire" : "Fix"} ${r.componentId}: ${res.recommendedFix.summary}`, 120)
         const reasoning = `Body investigation ${rec.id}: ${res.rootCause} (confidence ${Math.round(res.confidence * 100)}%, ${res.recommendedFix.risk} risk)`

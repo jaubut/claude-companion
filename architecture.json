@@ -373,13 +373,14 @@
         },
         {
           "path": "lib/body-fix.ts",
-          "lines": 135,
+          "lines": 153,
           "kind": "lib",
           "exports": [
             "FIX_TIMEOUT_MS",
             "FixCard",
             "BodyFixStore",
             "createBodyFixStore",
+            "localizeCwd",
             "fixRunsElsewhere",
             "FixRequest",
             "parseFixRequest",
@@ -401,7 +402,7 @@
         },
         {
           "path": "lib/body-investigate-engine.ts",
-          "lines": 361,
+          "lines": 365,
           "kind": "lib",
           "exports": [
             "PEER_TIMEOUT_MS",
@@ -4389,6 +4390,14 @@
             "wiring/body-fix.ts"
           ]
         },
+        "localBodyHost": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts"
+          ]
+        },
         "FORWARD_STALE_MS": {
           "module": "lib/body-investigate.ts",
           "callers": [
@@ -7375,13 +7384,6 @@
             "wiring/body-fix.ts"
           ]
         },
-        "localBodyHost": {
-          "module": "lib/body-investigate.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/body-investigate.ts"
-          ]
-        },
         "bodyPeer": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
@@ -7390,6 +7392,12 @@
           ]
         },
         "fixRunsElsewhere": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-fix.ts"
+          ]
+        },
+        "localizeCwd": {
           "module": "lib/body-fix.ts",
           "callers": [
             "wiring/body-fix.ts"

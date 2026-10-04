@@ -1,4 +1,7 @@
 import type { Database } from "bun:sqlite"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import type { BodyHost } from "./body-investigate"
 
 // Body fixes for MAC components run LIVE ON THE MAC (Jeremie, 2026-10-04).
@@ -65,6 +68,21 @@ export function createBodyFixStore(db: Database): BodyFixStore {
 }
 
 /** Does approving this card have to run on another host? */
+/**
+ * A fix's cwd as it exists on THIS host. Cards are written on Zettlab for Mac
+ * components, so a path may carry `~` or the other host's home
+ * (/home/aubut/… vs /Users/jeremieaubut/…): expand `~`, keep a path that exists,
+ * else re-root a foreign home prefix onto this host's home.
+ */
+export function localizeCwd(cwd: string, home: string = homedir(), exists: (p: string) => boolean = existsSync): string {
+  const c = cwd.trim()
+  if (c === "~") return home
+  if (c.startsWith("~/")) return join(home, c.slice(2))
+  if (exists(c)) return c
+  const m = c.match(/^\/(?:home|Users)\/[^/]+(\/.*)?$/)
+  return m ? home + (m[1] ?? "") : c
+}
+
 export function fixRunsElsewhere(card: FixCard | null, local: BodyHost): boolean {
   return !!card && card.host === "mac" && local !== "mac"
 }

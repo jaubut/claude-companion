@@ -1,5 +1,5 @@
 import { BODY_CHANNEL, BODY_CHANNEL_NAME } from "../lib/body"
-import { type BodyFixStore, type FixRequest, fixRequestFor, fixRunsElsewhere, postFix } from "../lib/body-fix"
+import { type BodyFixStore, type FixRequest, fixRequestFor, fixRunsElsewhere, localizeCwd, postFix } from "../lib/body-fix"
 import { type BodyHost, localBodyHost } from "../lib/body-investigate"
 import { type PeerConfig, bodyPeer } from "../lib/body-investigate-engine"
 import { companionLog } from "../lib/log"
@@ -57,7 +57,7 @@ export async function approveBodyFix(task: Task, dispatch: DispatchWiring = disp
   if (!card || card.host !== "mac") return null
   // The card lives on the Mac itself (reported locally): run it live here, in its cwd.
   if (!fixRunsElsewhere(card, deps.localHost())) {
-    return liveJson(await approveLive(task.taskId, { cwd: card.cwd, noteId: card.noteId, agent: card.agent }, dispatch), card.host)
+    return liveJson(await approveLive(task.taskId, { cwd: localizeCwd(card.cwd), noteId: card.noteId, agent: card.agent }, dispatch), card.host)
   }
   const base = { taskId: task.taskId, host: card.host }
   if (task.status === "filed" && task.dispatchTaskId) {
@@ -101,11 +101,11 @@ export async function runBodyFix(req: FixRequest, dispatch: DispatchWiring = dis
     const { channel, created } = ensureChannel(BODY_CHANNEL, BODY_CHANNEL_NAME)
     if (created) broadcast({ type: "orchestrator_channel", channel })
     // create + record with no await in between: a replayed forward finds this row.
-    const t = createProposal(req.prompt, req.cwd, `Body fix approved on Zettlab (card ${req.fixId}, investigation ${req.investigationId || "?"})`, BODY_CHANNEL, {
+    const t = createProposal(req.prompt, localizeCwd(req.cwd), `Body fix approved on Zettlab (card ${req.fixId}, investigation ${req.investigationId || "?"})`, BODY_CHANNEL, {
       noteId: req.noteId, agent: req.agent, title: req.title,
     })
     deps.store.recordRun(req.fixId, t.taskId, deps.now())
     taskId = t.taskId
   }
-  return liveJson(await approveLive(taskId, { cwd: req.cwd, noteId: req.noteId, agent: req.agent }, dispatch), req.host)
+  return liveJson(await approveLive(taskId, { cwd: localizeCwd(req.cwd), noteId: req.noteId, agent: req.agent }, dispatch), req.host)
 }
