@@ -4016,7 +4016,7 @@
         },
         {
           "path": "wiring/front-door.ts",
-          "lines": 67,
+          "lines": 72,
           "kind": "lib",
           "exports": [
             "frontDoor"

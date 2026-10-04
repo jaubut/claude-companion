@@ -111,10 +111,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
 | `routes/dialogs.ts` | 76 | route-host | 1 | routes: 2 |
+| `wiring/front-door.ts` | 72 | lib | 1 | emits: orchestrator |
 | `wiring/body.ts` | 69 | lib | 7 | emits: orchestrator_channel, orchestrator, body_alert |
 | `lib/live-repo.ts` | 68 | lib | 6 |  |
 | `routes/attach.ts` | 67 | route-host | 1 | route: POST /api/attach |
-| `wiring/front-door.ts` | 67 | lib | 1 | emits: orchestrator |
 | `lib/waiting.ts` | 66 | lib | 6 |  |
 | `state.ts` | 65 | lib | 7 |  |
 | `lib/session-identity.ts` | 55 | lib | 6 |  |

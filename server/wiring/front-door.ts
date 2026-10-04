@@ -52,8 +52,13 @@ export const frontDoor = createFrontDoor({
   emitTurn: (text, channelId) => orchEmit(appendTurn("orchestrator", text, null, channelId)),
   // Same frame as a real turn, so the shipped iOS build renders it; never persisted,
   // so it is not in the thread history (or the brain's prompt) after a reload.
-  emitTransient: (text, channelId) =>
-    broadcast({ type: "orchestrator", turn: { id: `ack-${randomUUID().slice(0, 8)}`, threadId: channelId, role: "orchestrator", text, taskId: null, createdAt: Date.now() } }),
+  // OFF by default: shipped iOS builds merge turns by id and never drop an `ack-`
+  // turn, so it would stay under the real answer until relaunch. Enable with
+  // COMPANION_BRAIN_ACK=1 once the app clears `ack-` turns on the next real one.
+  emitTransient: (text, channelId) => {
+    if (process.env.COMPANION_BRAIN_ACK !== "1") return
+    broadcast({ type: "orchestrator", turn: { id: `ack-${randomUUID().slice(0, 8)}`, threadId: channelId, role: "orchestrator", text, taskId: null, createdAt: Date.now() } })
+  },
   stageProposal: (d, channel, projects) => applyDecision(d, channel, projects),
   log(row) {
     try {
