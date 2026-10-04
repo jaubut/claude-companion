@@ -110,7 +110,7 @@ export function buildResolverPrompt(src: SourceItem, ctx: ResolverContext, job: 
     "",
     "## Rules",
     ...(SOURCE_RULES[sourceKey(src)] ?? []),
-    `- Read-only. ${ctx.repo ? `The cwd is the repository ${ctx.repo} (no cd): Read/Grep/Glob, git log|show|diff|status, ls, cat, head, tail, grep, wc, jq; gh pr view|diff|checks <url> and gh run view <id> (read-only).` : "No local checkout of this project here: use the evidence below."}`,
+    `- Read-only. ${ctx.repo ? `The cwd is the repository ${ctx.repo} (no cd): Read/Grep/Glob, git log|show|diff|status, ls, cat, head, tail, grep, wc, jq; gh pr view|diff|checks <url>, gh pr list, gh run view <id> (read-only).` : "No local checkout of this project here: use the evidence below."}`,
     ...(ctx.readableDirs.length ? [`- Memory files (Jeremie's standing rules and decisions) are readable under: ${ctx.readableDirs.join(", ")}. Read the index (MEMORY.md) first when a preference might be recorded.`] : []),
     "- Never edit, write, push, merge, close or comment yourself — the server does what your action says, if its policy allows. Never print secrets.",
     "- Write in the language the item is written in (French or English). Plain words, no ids or hashes on the card.",

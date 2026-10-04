@@ -44,7 +44,7 @@ const SYSTEM =
 
 export const RESOLVER_ALLOWED: readonly string[] = [
   ...QUICK_LOOK_ALLOWED,
-  "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh pr checks *)", "Bash(gh run view *)",
+  "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh pr checks *)", "Bash(gh pr list *)", "Bash(gh pr status*)", "Bash(gh run view *)",
 ]
 export const RESOLVER_DISALLOWED: readonly string[] = [...QUICK_LOOK_DISALLOWED, "Bash(gh * --web*)"]
 

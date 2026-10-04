@@ -141,6 +141,12 @@ Last updated: 2026-10-04
 
 **Out of scope:** iOS UI (separate PR — requirements in the doc), deploy, shepherd changes.
 
+**Build notes (2026-10-04, `feat/opus-resolver`):**
+- Shipped as planned, plus `lib/resolver-work.ts` (the run over seams), `lib/resolver-prompt.ts`, `wiring/resolver-dry-run.ts`, and `wiring/body-investigate.ts` exporting the #Body report applier. A resolved item that comes back on a NEW triage version (re-blocked on the same question, a lost race) gets a card-only run, so a resolved row can never hide an item for good.
+- Tests: `lib/resolver.test.ts` (config, routing, key, parsing, policy, card, digest), `lib/resolver-engine.test.ts` (hide / resolved / prepared / failed, budget, ≤ 2 concurrent, queue wait, kill switch, timeout, crash, ask_opus, recurrence, restart, digest, triage integration), `lib/resolver-work.test.ts` (mock model per source + dry run + deadline), `lib/resolver-fix.test.ts` (same-branch push, never main / forced), `routes/resolver.test.ts` (real wiring: guarded unblock, gh merge / close, Turso rows, turns, GET / choose ask_opus).
+- Dry-run smoke on this Mac (real Turso + gh, read-only Opus, a copy of companion.db, nothing executed): 20 items (4 blocked/failed tasks, 16 parked PRs; no proposals or failed-twice Body items here), 17–71 s per item. Would do: 1 autonomous close (`tls-dashboard-v2#157`, superseded by #161), 1 rescue (`claude-config#18`, fix + hand back), 9 sensitive-PR fix runs then a review card, 9 cards (all 4 tasks: host-only / App Store / dependency / stale brief; sensitive money PRs). Zero merges. Opus read the memory files on its own (e.g. `reference_asc_api_tool.md`, schema = 3 files) and found a build-hash mismatch and that `apies-dev-site#10` was already merged.
+- Allowlist gained `gh pr list` / `gh pr status` after the smoke (one run was denied `gh pr list` checking a dependency PR).
+
 ### Change Plan — trips (travel log, server side) (2026-10-04)
 **Request (Jeremie):** "travel log in the Companion": replace the CarPlay Shortcut with native auto-logging. Jev auto-classifies, the confident trips are filed, the rest become triage cards he confirms, and they get their own Trips tab. Contract: the shared trips CONTRACT.md (§1, §3, §4 belong to the server). The dashboard builder (`/api/trips/ingest`, …) and the iOS builder work in parallel.
 **Done when:**
