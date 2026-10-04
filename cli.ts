@@ -122,6 +122,34 @@ if (subcommand === "jev-report") {
   process.exit(0)
 }
 
+// Trip classifier accuracy from companion.db trip_classify_log (auto-file rate, human overrides).
+if (subcommand === "trip-report") {
+  const { Database } = await import("bun:sqlite")
+  const { existsSync } = await import("node:fs")
+  const { homedir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { readLogSince } = await import("./server/lib/trip-store")
+  const { buildTripReport, formatTripReport } = await import("./server/lib/trip-report")
+  const { autofileThreshold } = await import("./server/lib/trip-classify")
+  const at = process.argv.indexOf("--days")
+  const days = at > 0 && Number(process.argv[at + 1]) > 0 ? Number(process.argv[at + 1]) : 30
+  const path = process.env.COMPANION_DB_PATH ?? join(homedir(), ".claude-companion", "companion.db")
+  if (!existsSync(path)) {
+    console.log(`no companion.db at ${path}`)
+    process.exit(0)
+  }
+  const db = new Database(path, { readonly: true })
+  let rows: ReturnType<typeof readLogSince> = []
+  try {
+    rows = readLogSince(db, Date.now() - days * 86_400_000)
+  } catch {
+    console.log("no trip_classify_log yet — the server has not classified a trip with this build")
+    process.exit(0)
+  }
+  console.log(formatTripReport(buildTripReport(rows), days, autofileThreshold()))
+  process.exit(0)
+}
+
 if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
   console.log(`Claude Companion
 
@@ -134,6 +162,7 @@ Usage:
   bun cli.ts daemon <action>   Manage the server LaunchAgent (install/uninstall/status/logs)
   bun cli.ts menubar <action>  Manage the menu bar app (install/uninstall/status/build)
   bun cli.ts jev-report [--days N]  Jev front-door shadow report (agreement, go-live bar)
+  bun cli.ts trip-report [--days N] Trip classifier report (auto-file rate, human overrides)
 `)
   process.exit(0)
 }
@@ -159,6 +188,7 @@ import { dispatchWiring } from "./server/wiring/dispatch"
 import { reconcileLiveOnBoot } from "./server/wiring/live"
 import { startBodyInvestigate } from "./server/wiring/body-investigate"
 import { startTriage } from "./server/wiring/triage"
+import { startTrips } from "./server/wiring/trips"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -183,6 +213,7 @@ void reconcileLiveOnBoot().catch(() => { /* logged inside; never blocks boot */ 
 startBodyInvestigate()
 // Brain triage: recompute after every dispatch poll / proposal change; phrase new items in the background.
 startTriage()
+startTrips()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"
