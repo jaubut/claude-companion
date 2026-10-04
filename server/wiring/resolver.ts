@@ -7,7 +7,7 @@ import { type InvestigationResult, localBodyHost, routeFor } from "../lib/body-i
 import { knownPaths, runInvestigatorCli } from "../lib/body-investigator"
 import { type DispatchWiring } from "../lib/dispatch-poller"
 import { getDispatchTask, getTaskActivity } from "../lib/dispatch-tasks"
-import { isDir, parseRepoMap, readRepoMapSource, repoForNote } from "../lib/live-repo"
+import { type RepoMapCheck, checkRepoMap, isDir, parseRepoMap, readRepoMapSource, repoForNote, repoMapCheckLine } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn, createProposal, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
@@ -19,7 +19,7 @@ import { type ResolverEngine, createResolverEngine, maybeDigest } from "../lib/r
 import { type ShFn, realSh, runPrFix } from "../lib/resolver-fix"
 import type { EvidenceBlock, ResolverContext } from "../lib/resolver-prompt"
 import { buildBodyResolverPrompt } from "../lib/resolver-prompt"
-import { type ResolverStore, createResolverStore } from "../lib/resolver-store"
+import { GUARD_WINDOW_MS, type ResolverStore, createResolverStore } from "../lib/resolver-store"
 import { type WorkSeams, createResolverWork } from "../lib/resolver-work"
 import type { SourceItem, TriageAction, TriageOption } from "../lib/triage"
 import type { ExecOutcome } from "../lib/triage-engine"
@@ -68,7 +68,7 @@ const DIFF_MAX = 60_000
 interface PrView { title?: string; body?: string; headRefName?: string; baseRefName?: string; files?: { path: string; additions: number; deletions: number }[] }
 
 /** A local checkout of `owner/repo`: the note's REPO_MAP entry first, then any mapped path whose origin matches. */
-async function localRepoFor(slug: string, hay: string, sh: ShFn): Promise<string | null> {
+export async function localRepoFor(slug: string, hay: string, sh: ShFn): Promise<string | null> {
   const source = readRepoMapSource()
   if (!source) return null
   const entries = parseRepoMap(source)
@@ -264,10 +264,15 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
       const { channel, taskId } = channelOf(src)
       orchEmit(appendTurn("orchestrator", text, taskId, channel))
     },
+    failures: (src, action) => o.store.failures(itemRef(src), action, Date.now() - GUARD_WINDOW_MS),
+    attempt: (src, action, error) => o.store.attempt(itemRef(src), action, error, Date.now()),
     now: Date.now,
     log: companionLog,
   }
 }
+
+/** The resolver's stable ref for an item (the engine's refKey; a PR URL's refId survives version changes). */
+const itemRef = (src: SourceItem): string => `${src.source}:${src.refId}`
 
 /** A Body component this host can investigate itself (Mac components stay with the normal card on Zettlab). */
 function bodyLocal(src: SourceItem): boolean {
@@ -291,13 +296,37 @@ export function createLiveResolver(o: Omit<LiveResolverOpts, "store"> & Resolver
     store, work,
     config: o.config ?? (() => resolverConfig()),
     routable: (src) => routable(src, { createdByResolver: (id) => store.isCreated(id), bodyLocal: () => bodyLocal(src) }),
-    refKey: (src) => `${src.source}:${src.refId}`,
+    refKey: itemRef,
     onChange: o.onChange,
     log: companionLog,
   })
   const closed = engine.recover()
   if (closed) companionLog(`[resolver] ${closed} run(s) a restart interrupted fall through to cards`)
   return { engine, store }
+}
+
+// ── REPO_MAP self-check ──────────────────────────────────────────────────────
+
+/**
+ * Boot: log where REPO_MAP comes from and how many entries parsed. 0 entries =
+ * every fix run / live cwd / catalog lookup fails ("no local checkout"), so it
+ * is loud: a warning in the log and, on the store host, a turn in #Body.
+ */
+export function repoMapSelfCheck(postToBody: boolean): RepoMapCheck {
+  const c = checkRepoMap()
+  const line = repoMapCheckLine(c)
+  companionLog(line.text)
+  if (line.warn) {
+    console.warn(line.text)
+    if (postToBody) {
+      try {
+        orchEmit(appendTurn("orchestrator", `⚠️ ${line.text.replace(/^\[repo-map\] /, "")}. Set COMPANION_REPO_MAP to the repo-map.ts path.`, null, BODY_CHANNEL))
+      } catch (err) {
+        companionLog(`[repo-map] #Body warning failed: ${(err as Error)?.message ?? err}`)
+      }
+    }
+  }
+  return c
 }
 
 // ── daily digest ─────────────────────────────────────────────────────────────

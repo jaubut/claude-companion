@@ -1569,12 +1569,17 @@
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 68,
+          "lines": 123,
           "kind": "lib",
           "exports": [
             "RepoEntry",
+            "repoMapCandidates",
+            "locateRepoMap",
             "readRepoMapSource",
             "parseRepoMap",
+            "RepoMapCheck",
+            "checkRepoMap",
+            "repoMapCheckLine",
             "isDir",
             "repoForNote",
             "resolveLiveCwd"
@@ -2481,7 +2486,7 @@
         },
         {
           "path": "lib/resolver-engine.ts",
-          "lines": 227,
+          "lines": 264,
           "kind": "lib",
           "exports": [
             "WorkResult",
@@ -2542,7 +2547,7 @@
         },
         {
           "path": "lib/resolver-prompt.ts",
-          "lines": 141,
+          "lines": 143,
           "kind": "lib",
           "exports": [
             "EvidenceBlock",
@@ -2570,13 +2575,15 @@
         },
         {
           "path": "lib/resolver-store.ts",
-          "lines": 154,
+          "lines": 198,
           "kind": "lib",
           "exports": [
             "RunStatus",
             "RunRow",
             "NewRun",
             "RunPatch",
+            "errorKey",
+            "GUARD_WINDOW_MS",
             "ResolverStore",
             "createResolverStore"
           ],
@@ -2595,7 +2602,7 @@
         },
         {
           "path": "lib/resolver-work.ts",
-          "lines": 171,
+          "lines": 212,
           "kind": "lib",
           "exports": [
             "BodyOutcome",
@@ -2625,7 +2632,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 369,
+          "lines": 476,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -2647,8 +2654,12 @@
             "SENSITIVE_RE",
             "sensitivePaths",
             "isSensitivePr",
-            "CONSENT_RE",
+            "Consent",
+            "FIX_PREFILL",
+            "RETRY_PREFILL",
+            "consentOf",
             "consents",
+            "RETRY_RE",
             "ResolverAction",
             "ResolverActionKind",
             "PrReview",
@@ -2662,6 +2673,8 @@
             "contextText",
             "preparedPhrase",
             "resolverInfo",
+            "OutcomeNote",
+            "outcomePhrase",
             "cardSummary",
             "digestText"
           ],
@@ -3165,7 +3178,7 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 285,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
@@ -3292,7 +3305,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 418,
+          "lines": 425,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -3301,6 +3314,7 @@
             "ActionKind",
             "TriageOption",
             "ResolverInfo",
+            "ResolverOutcome",
             "ResolvingItem",
             "TriageItem",
             "SourceRef",
@@ -5043,7 +5057,7 @@
         },
         {
           "path": "wiring/resolver.ts",
-          "lines": 321,
+          "lines": 350,
           "kind": "lib",
           "exports": [
             "RESOLVER_ALLOWED",
@@ -5055,6 +5069,7 @@
             "LiveResolver",
             "ResolverLiveOpts",
             "createLiveResolver",
+            "repoMapSelfCheck",
             "DIGEST_TICK_MS",
             "DIGEST_HOUR",
             "startResolverDigest"
@@ -5097,7 +5112,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 287,
+          "lines": 288,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -7352,6 +7367,14 @@
             "lib/records-expiry.ts"
           ]
         },
+        "ResolverOutcome": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/resolver-store.ts",
+            "lib/resolver.ts"
+          ]
+        },
         "Phrase": {
           "module": "lib/triage.ts",
           "callers": [
@@ -7424,6 +7447,13 @@
             "wiring/resolver-dry-run.ts"
           ]
         },
+        "heuristicSeverity": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-engine.ts",
+            "lib/triage-engine.ts"
+          ]
+        },
         "resolverInfo": {
           "module": "lib/resolver.ts",
           "callers": [
@@ -7479,13 +7509,19 @@
             "lib/resolver-work.ts"
           ]
         },
-        "ResolverOutput": {
+        "RETRY_PREFILL": {
           "module": "lib/resolver.ts",
           "callers": [
             "lib/resolver-work.ts"
           ]
         },
-        "parseResolverOutput": {
+        "RETRY_RE": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "ResolverOutput": {
           "module": "lib/resolver.ts",
           "callers": [
             "lib/resolver-work.ts"
@@ -7497,13 +7533,31 @@
             "lib/resolver-work.ts"
           ]
         },
-        "preparedPhrase": {
+        "OutcomeNote": {
           "module": "lib/resolver.ts",
           "callers": [
             "lib/resolver-work.ts"
           ]
         },
         "cardSummary": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "parseResolverOutput": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "preparedPhrase": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/resolver-work.ts"
+          ]
+        },
+        "outcomePhrase": {
           "module": "lib/resolver.ts",
           "callers": [
             "lib/resolver-work.ts"
@@ -7578,7 +7632,25 @@
             "wiring/triage.ts"
           ]
         },
+        "PROBLEM_MAX": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "ACTION_MAX": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
         "ANSWER_TEXT_MAX": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts"
+          ]
+        },
+        "INSTRUCTION_MAX": {
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
@@ -7872,12 +7944,6 @@
           ]
         },
         "validatePhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-engine.ts"
-          ]
-        },
-        "heuristicSeverity": {
           "module": "lib/triage.ts",
           "callers": [
             "lib/triage-engine.ts"
@@ -10534,6 +10600,12 @@
             "wiring/resolver.ts"
           ]
         },
+        "GUARD_WINDOW_MS": {
+          "module": "lib/resolver-store.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
         "ResolverEngine": {
           "module": "lib/resolver-engine.ts",
           "callers": [
@@ -10542,6 +10614,24 @@
         },
         "createResolverEngine": {
           "module": "lib/resolver-engine.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "RepoMapCheck": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "checkRepoMap": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "repoMapCheckLine": {
+          "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver.ts"
           ]
@@ -10643,6 +10733,12 @@
           ]
         },
         "LiveResolver": {
+          "module": "wiring/resolver.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "repoMapSelfCheck": {
           "module": "wiring/resolver.ts",
           "callers": [
             "wiring/triage.ts"

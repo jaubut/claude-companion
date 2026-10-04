@@ -21,7 +21,7 @@ import { bodyFixStore, bodyInvestigator, investigationStore } from "./body-inves
 import { type DispatchWiring, dispatchWiring, onDispatchPolled } from "./dispatch"
 import { onTaskEmitted, orchEmit, setTriageDigest, vetoAuto, writeCtx } from "./orchestrator"
 import { approveProposal, rejectProposal } from "./proposals"
-import { type LiveResolver, type ResolverLiveOpts, createLiveResolver, startResolverDigest } from "./resolver"
+import { type LiveResolver, type ResolverLiveOpts, createLiveResolver, repoMapSelfCheck, startResolverDigest } from "./resolver"
 import { ownsTrips, tripsLive } from "./trips"
 
 // Brain triage, live instance (docs/orchestrator-triage-api.md): collectors
@@ -272,6 +272,7 @@ export const TRIAGE_TICK_MS = 60_000
 /** Boot (cli.ts): recompute after every dispatch poll, proposal change and minute; feed the brain digest. */
 export function startTriage(): () => void {
   const engine = triageEngine()
+  repoMapSelfCheck(!!liveResolver)
   const offPoll = onDispatchPolled(() => void engine.refresh())
   const offTask = onTaskEmitted(() => void engine.refresh())
   setTriageDigest(() => engine.digest())

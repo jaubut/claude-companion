@@ -82,7 +82,7 @@ export const OUTPUT_SCHEMA =
   '{"analysis":"<3-8 short lines: what is going on and the evidence (file / command / note it came from)>",' +
   '"summary":"<one line for the card: what you did or recommend, and why>","confidence":0.0,"needsJeremie":true,' +
   '"why":"none|preference|money|client_wording|irreversible|ambiguous|insufficient_evidence","category":"<see rules>",' +
-  '"action":{"kind":"none"},"review":null,' +
+  '"action":{"kind":"none"},"review":null,"consent":false,' +
   '"card":{"title":"<= 80 chars","problem":"1-2 short sentences","action":"1 sentence: what you recommend","options":[{"label":"<= 32 chars, verb first","detail":"optional <= 90 chars","action":{}}]}}'
 
 function block(b: EvidenceBlock): string {
@@ -98,7 +98,9 @@ export function buildResolverPrompt(src: SourceItem, ctx: ResolverContext, job: 
     "",
     ...(job.autonomy === "elevated"
       ? [`Jeremie handed this item back to you himself${job.instruction ? ` with this instruction: "${job.instruction}"` : " (no instruction: finish it the way you recommend)"}.`,
-        "Follow it: pick the action that does what he asked. \"do it\" = execute your recommended action. Set needsJeremie false when his words settle it.", ""]
+        "Follow it: pick the action that does what he asked. \"do it\" / \"fix it\" / \"vas-y\" = execute your recommended action. Set needsJeremie false when his words settle it.",
+        "If the work turns out to be already done, his go means: close the item the way this source allows (task: cancel; PR: close_pr; proposal: reject) and say so.",
+        "Set \"consent\": true when his words tell you to go ahead with your recommended action (merge / cancel / close included); false when they only ask you to look, explain, or limit you (\"don't merge\", \"just look\").", ""]
       : []),
     `## Item (${src.source})`,
     `title: ${src.title}`,

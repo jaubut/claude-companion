@@ -2,8 +2,8 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import {
-  type ActionKind, type Phrase, type ResolverInfo, type SourceItem, type TriageAction, type TriageOption,
-  ANSWER_TEXT_MAX, clip, fallbackPhrase, finishOptions, validatePhraseObject,
+  type ActionKind, type Phrase, type ResolverInfo, type ResolverOutcome, type SourceItem, type TriageAction, type TriageOption,
+  ACTION_MAX, ANSWER_TEXT_MAX, INSTRUCTION_MAX, PROBLEM_MAX, clip, fallbackPhrase, finishOptions, validatePhraseObject,
 } from "./triage"
 
 // The Opus resolver (docs/orchestrator-triage-api.md#opus-resolver): before a
@@ -15,9 +15,10 @@ import {
 
 export const DEFAULT_MODEL = "claude-opus-5-5"
 export const DEFAULT_MAX_CONCURRENT = 2
-export const DEFAULT_MAX_PER_DAY = 20
+export const DEFAULT_MAX_PER_DAY = 60
 export const DEFAULT_TIMEOUT_MS = 20 * 60_000
-export const QUEUE_MAX_MS = 15 * 60_000
+/** A normal run still queued after this long (the backlog did not drain) falls through to the normal card. */
+export const QUEUE_MAX_MS = 3 * 60 * 60_000
 /** A fix run on a PR branch (the shepherd's budget); it may start up to the analysis deadline. */
 export const FIX_RUN_MS = 30 * 60_000
 export const CONFIDENT = 0.8
@@ -53,7 +54,7 @@ export function resolverConfig(
     enabled: !off && !exists(disabledFlag(home ?? env.HOME ?? homedir())),
     model: env.COMPANION_RESOLVER_MODEL?.trim() || DEFAULT_MODEL,
     maxConcurrent: posInt(env.COMPANION_RESOLVER_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT),
-    maxPerDay: posInt(env.COMPANION_RESOLVER_MAX_PER_DAY, DEFAULT_MAX_PER_DAY),
+    maxPerDay: posInt(env.COMPANION_RESOLVER_DAILY ?? env.COMPANION_RESOLVER_MAX_PER_DAY, DEFAULT_MAX_PER_DAY),
     timeoutMs: posInt(env.COMPANION_RESOLVER_TIMEOUT_MIN, DEFAULT_TIMEOUT_MS / 60_000) * 60_000,
     queueMaxMs: QUEUE_MAX_MS,
     dryRun: /^(1|true|yes)$/i.test(env.COMPANION_RESOLVER_DRY_RUN?.trim() ?? ""),
@@ -105,9 +106,51 @@ export function isSensitivePr(paths: string[], parkReason: string): boolean {
   return sensitivePaths(paths).length > 0 || /^touches\b/i.test(parkReason.trim())
 }
 
-/** Jeremie's explicit words on THIS item allow a merge / cancel (his standing one-tap rule otherwise holds). */
-export const CONSENT_RE = /\b(do it|just do it|merge( it)?|ship( it)?|go ahead|approve( it)?|cancel( it)?|vas-?y|fais[- ]le|merge-le|go)\b/i
-export const consents = (instruction: string | null | undefined): boolean => CONSENT_RE.test(instruction ?? "")
+// ── consent (ask_opus) ───────────────────────────────────────────────────────
+// Jeremie's ask_opus instruction on THIS item. An imperative to act ("fix it",
+// "vas-y") = consent to Opus's recommended action, merge / cancel / close /
+// approve included. Words that limit Opus ("don't merge", "just look",
+// "explain") = Opus only prepares. No instruction = his one-tap rule holds:
+// a merge or cancel waits for him.
+
+/** "explicit": a short obvious go (the matcher alone is enough) · "imperative": a longer order (Opus's `consent` must agree) · "prepare": he limited Opus · "other" / "none". */
+export type Consent = "explicit" | "imperative" | "prepare" | "other" | "none"
+
+const FILLER = /\b(?:please|pls|plz|now|then|thanks|thank you|merci|stp|svp|s'il te pla[iî]t|maintenant|alors|juste|just)\b/gi
+const GO_PHRASES = [
+  "fix it", "fix", "do it", "go", "go ahead", "go for it", "handle it", "ok", "okay", "yes", "yep", "yup", "sure", "ship it", "proceed",
+  "merge", "merge it", "close", "close it", "cancel", "cancel it", "approve", "approve it", "drop it", "retry", "try again", "do that",
+  "oui", "vas-y", "vasy", "vas y", "go vas-y", "fais-le", "fais le", "fais-ça", "fais ça", "fais ca", "règle ça", "regle ca", "règle-le", "règle le",
+  "d'accord", "c'est bon", "ferme", "ferme-le", "annule", "annule-le", "approuve", "approuve-le", "merge-le", "corrige", "corrige-le",
+  "corrige ça", "répare", "répare-le", "réessaie", "lance", "lance-le",
+]
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+const GO_RE = new RegExp(`^(?:(?:${GO_PHRASES.sort((a, b) => b.length - a.length).map(esc).join("|")})\\s*)+$`, "i")
+const LIMIT_RE = /\?|\b(?:don'?t|do not|never|no merge|not (?:merge|close|cancel)|(?:just|only) (?:look|check|review|explain|tell)|look only|explain|why|wait|hold off|hold)\b|\bne\b[^.]*\bpas\b|\bn'[a-zà-ÿ]+\b[^.]*\bpas\b|\bpas (?:de|encore)\b|\bjuste (?:regarde|regarder|vérifie|vérifier|explique|expliquer)\b|\bexplique|\bpourquoi\b|\battends?\b|\bsans (?:merger|merge|fermer|annuler)\b/i
+export const FIX_PREFILL = "Fix on the PR branch:"
+export const RETRY_PREFILL = "Try the fix again on the PR branch:"
+const PREFILLED_RE = /^(?:Fix on the PR branch|Try the fix again on the PR branch):/i
+const IMPERATIVE_RE = /\b(?:fix|do|handle|merge|close|cancel|approve|ship|go|proceed|retry|rebase|vas-?y|fais|règle|regle|ferme|annule|approuve|corrige|répare|repare|réessaie|lance)\b/i
+
+export function consentOf(instruction: string | null | undefined): Consent {
+  const raw = (instruction ?? "").trim()
+  if (!raw) return "none"
+  // The card's own prefilled orders (the problem list after the colon is Opus's text, not Jeremie's words).
+  if (PREFILLED_RE.test(raw)) return "imperative"
+  if (LIMIT_RE.test(raw)) return "prepare"
+  const words = raw.toLowerCase().replace(/[!.,;:]+/g, " ").replace(FILLER, " ").replace(/\s+/g, " ").trim()
+  if (words && words.split(" ").length <= 5 && GO_RE.test(words)) return "explicit"
+  return IMPERATIVE_RE.test(raw) ? "imperative" : "other"
+}
+
+/** Consent to Opus's recommended action: the short obvious words alone, or an imperative Opus also read as consent. */
+export function consents(instruction: string | null | undefined, opusConsent = false): boolean {
+  const c = consentOf(instruction)
+  return c === "explicit" || (c === "imperative" && opusConsent)
+}
+
+/** Jeremie's explicit retry words lift the loop guard once. */
+export const RETRY_RE = /\b(?:retry|try again|réessaie|essaie encore|encore une fois)\b/i
 
 // ── output ───────────────────────────────────────────────────────────────────
 
@@ -147,6 +190,8 @@ export interface ResolverOutput {
   review: PrReview | null
   /** The raw card object (validated against the source when the card is built). */
   card: Record<string, unknown> | null
+  /** ask_opus only: Opus reads Jeremie's instruction as consent to act (merge / cancel included). */
+  consent?: boolean
 }
 
 /** The actions Opus may name for a source (the policy below still decides what runs). */
@@ -216,6 +261,7 @@ export function parseResolverOutput(text: string, src: Pick<SourceItem, "ref">):
       category: str(o.category, 40).toLowerCase(), action,
       review: src.ref.source === "pr" ? toReview(o.review) : null,
       card: o.card && typeof o.card === "object" && !Array.isArray(o.card) ? o.card as Record<string, unknown> : null,
+      consent: o.consent === true,
     }
   }
   return null
@@ -252,7 +298,11 @@ export function decide(src: Pick<SourceItem, "ref">, out: ResolverOutput, ctx: P
   if (a.kind === "none") return card(out.needsJeremie ? `needs Jeremie (${out.why})` : "nothing to do without Jeremie")
   const isPr = src.ref.source === "pr"
   if (ctx.autonomy === "elevated") {
-    if ((a.kind === "merge" || a.kind === "cancel") && !consents(ctx.instruction)) return card(`${a.kind} needs Jeremie's explicit words`)
+    const c = consentOf(ctx.instruction)
+    if (c === "prepare") return card("Jeremie asked Opus to look, not act")
+    if ((a.kind === "merge" || a.kind === "cancel") && !consents(ctx.instruction, out.consent)) {
+      return card(c === "imperative" ? `${a.kind}: Opus did not read "${clip(ctx.instruction ?? "", 60)}" as consent` : `${a.kind} needs Jeremie's explicit words`)
+    }
     if (a.kind === "fix") return { kind: "act", action: a, then: ctx.sensitive ? "card" : "unpark", reason: "Jeremie asked Opus" }
     return { kind: "act", action: a, then: "resolved", reason: "Jeremie asked Opus" }
   }
@@ -332,14 +382,71 @@ function prCardOrder(phrase: Phrase, out: ResolverOutput, sensitive: boolean): P
   const m: Omit<TriageOption, "id"> = merge ? (({ id: _id, ...o }) => o)(merge) : { label: "Merge", action: { kind: "merge" } as TriageAction }
   if (safe) return { ...phrase, ...finishOptions([m, ...others]) }
   const ask = out.review?.problems.length
-    ? [{ label: "Ask for changes", detail: clip(out.review.problems.join("; "), 90), action: { kind: "ask_opus", instruction: `Fix on the PR branch: ${out.review.problems.join("; ")}` } as TriageAction }]
+    ? [{ label: "Ask for changes", detail: clip(out.review.problems.join("; "), 90), action: { kind: "ask_opus", instruction: `${FIX_PREFILL} ${out.review.problems.join("; ")}` } as TriageAction }]
     : []
   const rest = others.filter((o) => !(o.action.kind === "ask_opus" && ask.length))
   return { ...phrase, ...finishOptions([...ask, ...rest, ...(sensitive || merge ? [m] : [])].slice(0, 4)) }
 }
 
-export function resolverInfo(status: ResolverInfo["status"], summary: string, model: string, finishedAt: number | null): ResolverInfo {
-  return { status, summary: clip(summary, SUMMARY_MAX), model, finishedAt }
+export function resolverInfo(
+  status: ResolverInfo["status"], summary: string, model: string, finishedAt: number | null,
+  extra: { outcome?: ResolverOutcome | null; queuePosition?: number | null } = {},
+): ResolverInfo {
+  return {
+    status, summary: clip(summary, SUMMARY_MAX), model, finishedAt,
+    ...(extra.outcome ? { outcome: extra.outcome } : {}),
+    ...(extra.queuePosition ? { queuePosition: extra.queuePosition } : {}),
+  }
+}
+
+// ── the outcome, first ───────────────────────────────────────────────────────
+// A card after Opus ACTED (or tried to) says what happened before anything
+// else, and its recommended option follows from it: never "Ask for changes"
+// right after Opus pushed changes, never a silent re-run of what just failed.
+
+export interface OutcomeNote {
+  outcome: ResolverOutcome
+  /** "Fix failed: …" / "Fix pushed 1a2b3c4d: …; CI re-running" / "No change needed: …". */
+  headline: string
+  /** failed: the same action failed twice — no retry offered. */
+  gaveUp?: boolean
+  /** failed (not given up): the ask_opus instruction behind "Ask Opus to retry". */
+  retry?: string | null
+}
+
+const isFixAsk = (o: TriageOption): boolean => o.action.kind === "ask_opus" && /^(?:Fix on the PR branch|Try the fix again on the PR branch):/i.test(o.action.instruction ?? "")
+const strip = ({ id: _id, ...o }: TriageOption): Omit<TriageOption, "id"> => o
+
+/** The card after an action: outcome first in `problem`, options consistent with it. `planned` = unchanged. */
+export function outcomePhrase(src: Pick<SourceItem, "ref" | "url">, phrase: Phrase, note: OutcomeNote): Phrase {
+  if (note.outcome === "planned") return phrase
+  const rest = phrase.options.filter((o) => !isFixAsk(o)).map(strip)
+  const first: Omit<TriageOption, "id">[] = []
+  let action = phrase.action
+  const openPr = src.ref.source === "pr" && src.url ? [{ label: "Open the PR", detail: "Look at it yourself", action: { kind: "open_url", url: src.url } as TriageAction }] : []
+  if (note.outcome === "failed") {
+    if (!note.gaveUp && note.retry) {
+      first.push({ label: "Ask Opus to retry", detail: clip(note.headline, 90), action: { kind: "ask_opus", instruction: clip(note.retry, INSTRUCTION_MAX) } })
+      action = "Let Opus try again, or handle it yourself."
+    } else {
+      first.push(...openPr)
+      action = "Opus stopped retrying: handle it yourself, or tell Opus what to change."
+    }
+  } else if (note.outcome === "done") {
+    if (src.ref.source === "pr") {
+      first.push({ label: "Wait for CI", detail: "Snooze 1 h, then merge once CI is green", action: { kind: "snooze", hours: 1 } })
+      const merge = rest.find((o) => o.action.kind === "merge")
+      if (merge) merge.detail = "Only once CI is green on the new commit"
+      action = "Wait for CI on the new commit, then merge."
+    }
+  } else if (note.outcome === "no_change") {
+    first.push(...openPr)
+    action = "Nothing was changed: look at it yourself or close it."
+  }
+  const seen = new Set(first.map((o) => o.action.kind === "open_url" ? "open_url" : ""))
+  const options = [...first, ...rest.filter((o) => !(o.action.kind === "open_url" && seen.has("open_url")))]
+  const problem = clip(`${note.headline.replace(/[.\s]+$/, "")}. ${phrase.problem}`, PROBLEM_MAX)
+  return { ...phrase, problem, action: clip(action, ACTION_MAX), ...finishOptions(options.slice(0, 4)) }
 }
 
 /** The card's one-line summary: a sensitive PR reads "Opus reviewed: …". */

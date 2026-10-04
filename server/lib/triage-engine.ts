@@ -140,7 +140,18 @@ export function createTriageEngine(deps: TriageEngineDeps) {
       out.push(ask(buildItem(src, fallbackPhrase(src), heuristicSeverity(src), failed)))
       schedule(id, src)
     }
-    publish(orderItems(out), busy)
+    publish(orderItems(out), r ? orderBusy(busy, r) : busy)
+  }
+
+  /** Queue places settle once every item was considered; working runs first, then the queue in order. */
+  function orderBusy(busy: ResolvingItem[], r: TriageResolverHook): ResolvingItem[] {
+    const fresh = busy.map((b) => {
+      const src = sources.get(b.id)
+      const v = src ? r.view(b.id, src) : null
+      return v?.state === "resolving" ? { ...b, resolver: v.info } : b
+    })
+    const place = (b: ResolvingItem) => b.resolver.status === "queued" ? b.resolver.queuePosition ?? Number.MAX_SAFE_INTEGER : 0
+    return fresh.sort((x, y) => place(x) - place(y))
   }
 
   let lastPrune = 0
