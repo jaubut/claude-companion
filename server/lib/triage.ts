@@ -21,6 +21,8 @@ export type TriageAction =
   | { kind: "snooze"; hours: number }
   | { kind: "classify"; classification: "business" | "personal"; clientSlug?: string }
   | { kind: "classify_custom" }
+  /** Hand the item back to the Opus resolver (lib/resolver*.ts); instruction = a prefilled one, else the POST text. */
+  | { kind: "ask_opus"; instruction?: string }
 
 export type ActionKind = TriageAction["kind"]
 
@@ -30,6 +32,23 @@ export interface TriageOption {
   detail?: string
   action: TriageAction
   destructive?: boolean
+}
+
+/** What the Opus resolver did with an item (docs/orchestrator-triage-api.md#opus-resolver). */
+export interface ResolverInfo {
+  status: "resolving" | "prepared" | "failed"
+  summary: string
+  model: string
+  finishedAt: number | null
+}
+
+/** An item Opus is working on right now: not in `items`, listed for the compact "Opus is on it" line. */
+export interface ResolvingItem {
+  id: string
+  source: TriageSource
+  title: string
+  project: string | null
+  resolver: ResolverInfo
 }
 
 export interface TriageItem {
@@ -44,6 +63,7 @@ export interface TriageItem {
   recommended: string
   options: TriageOption[]
   context?: string
+  resolver?: ResolverInfo
   createdAt: number
   updatedAt: number
 }
@@ -95,6 +115,9 @@ export const ACTION_MAX = 200
 export const CONTEXT_MAX = 300
 export const ANSWER_TEXT_MAX = 500
 export const SNOOZE_MAX_HOURS = 168
+export const INSTRUCTION_MAX = 500
+/** The generic "Ask Opus" option every non-trip card carries while the resolver is on. */
+export const ASK_OPUS_ID = "opus"
 const OPTION_IDS = ["a", "b", "c", "d"] as const
 const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(["cancel", "close_pr", "reject"])
 
@@ -118,7 +141,7 @@ export function clip(text: string, max: number): string {
 
 // ── prompt ───────────────────────────────────────────────────────────────────
 
-const KIND_HELP: Record<ActionKind, string> = {
+export const KIND_HELP: Record<ActionKind, string> = {
   answer: '{"kind":"answer","text":"<the concrete answer the worker gets>"} — answer the blocker question; the task restarts with it',
   answer_custom: '{"kind":"answer_custom"} — Jeremie types his own answer',
   requeue: '{"kind":"requeue"} — run it again as is',
@@ -131,6 +154,7 @@ const KIND_HELP: Record<ActionKind, string> = {
   snooze: '{"kind":"snooze","hours":24} — hide it for a while',
   classify: '{"kind":"classify","classification":"business"|"personal","clientSlug":"<slug, business only>"} — file the trip',
   classify_custom: '{"kind":"classify_custom"} — business, Jeremie picks the client',
+  ask_opus: '{"kind":"ask_opus","instruction":"<what Opus should do next, e.g. the specific changes to make>"} — hand it back to Opus',
 }
 
 /** The one sonnet prompt for an item: strict JSON in the contract shape. */
@@ -192,6 +216,10 @@ function toAction(v: unknown, src: SourceItem, allowed: readonly ActionKind[]): 
       return { kind, hours: Math.min(SNOOZE_MAX_HOURS, Math.max(1, h)) }
     }
     case "approve": return o.mode === "live" || o.mode === "headless" ? { kind, mode: o.mode } : { kind }
+    case "ask_opus": {
+      const instruction = str(o.instruction)
+      return instruction ? { kind, instruction: instruction.slice(0, INSTRUCTION_MAX) } : { kind }
+    }
     case "classify": {
       if (o.classification !== "business" && o.classification !== "personal") return null
       const slug = o.classification === "business" ? str(o.clientSlug) : ""
@@ -206,7 +234,8 @@ const FRENCH = /[àâçéèêëîïôûùœ]|\b(le|la|les|des|une|est|pas|pour|a
 export const looksFrench = (text: string): boolean => FRENCH.test(text)
 
 const actionKey = (a: TriageAction): string =>
-  a.kind === "answer" ? `answer:${a.text}` : a.kind === "classify" ? `classify:${a.classification}:${a.clientSlug ?? ""}` : a.kind
+  a.kind === "answer" ? `answer:${a.text}` : a.kind === "classify" ? `classify:${a.classification}:${a.clientSlug ?? ""}`
+    : a.kind === "ask_opus" ? `ask_opus:${a.instruction ?? ""}` : a.kind
 
 /** Re-id a..d in order, mark destructive by code; the first option is the recommendation. */
 export function finishOptions(options: Omit<TriageOption, "id">[]): { options: TriageOption[]; recommended: string } {
@@ -219,15 +248,25 @@ export function finishOptions(options: Omit<TriageOption, "id">[]): { options: T
   return { options: out, recommended: out[0]?.id ?? "a" }
 }
 
+export interface PhraseOpts {
+  /** Kinds allowed on top of the source's own (the resolver adds ask_opus). */
+  extraKinds?: readonly ActionKind[]
+  contextMax?: number
+}
+
 /** The model's text → a Phrase that only uses this source's allowed actions; null = use the fallback. */
-export function validatePhrase(raw: string | null, src: SourceItem): Phrase | null {
+export function validatePhrase(raw: string | null, src: SourceItem, opts: PhraseOpts = {}): Phrase | null {
   if (!raw) return null
   const o = parseJsonObject(raw)
-  if (!o) return null
+  return o ? validatePhraseObject(o, src, opts) : null
+}
+
+/** Same as validatePhrase over an already-parsed object (the resolver's `card`). */
+export function validatePhraseObject(o: Record<string, unknown>, src: SourceItem, opts: PhraseOpts = {}): Phrase | null {
   const problem = str(o.problem)
   const action = str(o.action)
   if (!problem || !action || !Array.isArray(o.options)) return null
-  const allowed = allowedActions(src)
+  const allowed = [...allowedActions(src), ...(opts.extraKinds ?? [])]
   const seen = new Set<string>()
   const options: Omit<TriageOption, "id">[] = []
   for (const raw of o.options) {
@@ -255,7 +294,7 @@ export function validatePhrase(raw: string | null, src: SourceItem): Phrase | nu
     action: clip(action, ACTION_MAX),
     options: finished,
     recommended,
-    ...(context ? { context: clip(context, CONTEXT_MAX) } : {}),
+    ...(context ? { context: clip(context, opts.contextMax ?? CONTEXT_MAX) } : {}),
   }
 }
 
@@ -352,13 +391,21 @@ export function orderItems(items: TriageItem[]): TriageItem[] {
   return [...items].sort((a, b) => RANK[a.severity] - RANK[b.severity] || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
 }
 
-export function buildItem(src: SourceItem, phrase: Phrase, severity: Severity): TriageItem {
+export function buildItem(src: SourceItem, phrase: Phrase, severity: Severity, resolver?: ResolverInfo): TriageItem {
   return {
     id: itemId(src.source, src.refId), source: src.source, refId: src.refId, title: phrase.title, project: src.project,
     severity, problem: phrase.problem, action: phrase.action, recommended: phrase.recommended, options: phrase.options,
     ...(phrase.context ? { context: phrase.context } : {}),
+    ...(resolver ? { resolver } : {}),
     createdAt: src.createdAt, updatedAt: src.updatedAt,
   }
+}
+
+/** The card with the generic "Ask Opus" option last (never the recommendation; trips never get one). */
+export function withAskOpus(item: TriageItem): TriageItem {
+  if (item.source === "trip" || item.options.some((o) => o.id === ASK_OPUS_ID)) return item
+  const label = looksFrench(`${item.problem} ${item.action}`) ? "Demander à Opus…" : "Ask Opus…"
+  return { ...item, options: [...item.options, { id: ASK_OPUS_ID, label, detail: "Hand it back with an instruction", action: { kind: "ask_opus" } }] }
 }
 
 /** One line for the brain's #General / #Body context; null when nothing waits. */

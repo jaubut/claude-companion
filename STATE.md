@@ -4,6 +4,12 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Opus resolver: Opus 5.5 works every triage item before it reaches Jeremie; code decides what runs
+**Date:** 2026-10-04 (branch `feat/opus-resolver`)
+**Choice:** Between collection and display, each new task / parked PR / proposal / local Body item (never a trip) goes to a resolver run (`lib/resolver*.ts`, `wiring/resolver.ts`): server-gathered evidence (Turso task / note / activity, `gh pr view|diff|checks`) + ONE read-only `claude -p --model claude-opus-5-5` (the `readonly-claude` runner in the repo cwd, memory dirs readable, read-only `gh`) → JSON → `decide()` in code → act through the existing guarded paths (unblock / requeue / gh merge+close / proposal reject / revise / #Body applier), a PR fix run in a worktree on the PR branch (shepherd style; never main, never forced), or a prepared card. While it works the item is hidden from `items` and listed in `resolving[]`. Autonomous only: confident evidence-backed answers (≥ 0.8, `why`=none), transient-failure requeues, closing stale / superseded / task-done non-sensitive PRs (comment first), ONE rescue per PR (fix + `pr:unpark`), rejecting duplicate / stale proposals, Body proposals / explanations. Never: merges, cancels, approvals, sensitive anything — those are Jeremie's card, or `ask_opus` (elevated; merge / cancel need explicit consent words). Budget 2 concurrent / 20 a day / 20 min; kill switch `COMPANION_RESOLVER=0` or `~/.claude-companion/.resolver-disabled`; every failure falls through to the normal card. Activity `resolver:<action>` (agent `opus-resolver`), 🤖 turns, daily #General digest. Contract: `docs/orchestrator-triage-api.md#opus-resolver`.
+**Why:** Jeremie 2026-10-04: every PR review or blocked question ended with him asking Claude to solve it anyway; Opus should do that work first and leave him one decision.
+**Revisit if:** `resolver:answer` rows get corrected by Jeremie (raise `CONFIDENT`, or route that project's questions to cards), rescues loop with the shepherd (the one-per-PR guard is `resolver_runs.ref_key`), the 20/day budget is hit daily, or a closed PR gets reopened by Jeremie.
+
 ### Travel log: the server owns an uploaded trip; Jev + history + distance prior file the sure ones, triage asks the rest
 **Date:** 2026-10-04 (branch `feat/trips`)
 **Choice:** `POST /api/trips` stores the upload in companion.db (`trip_uploads`) before anything else, classifies it within an 8 s budget, and pushes it to the dashboard's `/api/trips/ingest`. If the dashboard is down, the phone gets 202 `queued` and a 1-min retry loop pushes it later; 503 only when the server cannot store it. The classifier runs the contract rules first, then one Jev call (business/personal + client), blended in log-odds with the place history (ends within 300 m, human overrides first) and a distance base rate. It files at ≥ `COMPANION_TRIP_AUTOFILE_CONF` (0.85); the rest go in as `unclassified` and become triage `trip` cards, along with the dashboard backlog (unclassified, 60 days, oldest 20). The classifier and triage read Turso read-only; every write goes through the dashboard API. Every decision is logged in `trip_classify_log`; `bun cli.ts trip-report` gives the auto-file rate and the overrides of filed trips.
@@ -85,6 +91,55 @@ Last updated: 2026-10-04
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — opus-resolver (2026-10-04)
+**Request (Jeremie):** "for me to open a PR and review it will ultimately fall onto asking you to solve it. So why not put Opus 5.5 back in the loop of 'needs your attention'." Before an item reaches Jeremie, an Opus 5.5 agent works it as far as it safely can; he then sees nothing (resolved) or a card with Opus's finished work and ONE decision.
+**Done when:**
+- A new triage source item (task blocked/failed, parked PR, proposal, Body failed-twice; never trips) goes to the resolver first and is hidden from `items` while Opus works it; it is listed in a new top-level `resolving[]` (compact "Opus is on it" line). Budget: ≤ 2 concurrent, ≤ 20 started per local day, model `claude-opus-5-5` (`COMPANION_RESOLVER_MODEL`), 20 min per run, queue wait ≤ 15 min. Kill switch `COMPANION_RESOLVER=0` or `~/.claude-companion/.resolver-disabled`. Over budget / timeout / unparseable / error / restart → the normal card (with `resolver.status:"failed"` when a run was attempted). Nothing is lost.
+- Policy in CODE (the model only proposes): blocked task → `answer` through `unblockTask` only when confidence ≥ 0.8, `needsJeremie` false and `why` = none; failed task → `requeue` on the same bar; parked PR → read-only review (diff, checks, task) + threat model for SENSITIVE paths; sensitive never merged, problems → one fix run on the PR branch, then a card [Merge] (recommended when safe) · [Ask for changes: …] · [Close]; non-sensitive → close (stale / superseded / task done, PR comment first) or ONE rescue per PR (fix run + `pr:unpark` back to the shepherd), else card; proposal → reject duplicates / stale with the reason, else card with Opus's recommendation; Body → deeper Opus investigation (the investigator's read-only spec, local components only) → a #Body proposal or a plain explanation, recorded as a new investigation.
+- Every resolver action → Turso `agent_activity` `resolver:<action>` (agent `opus-resolver`, one-line reason) + an orchestrator turn in the item's channel; "Opus answered: …" on the task. Daily digest turn in #General: "Opus handled N items today: answered X, closed Y, prepared Z for you".
+- `TriageItem.resolver?` `{status, summary, model, finishedAt}`; `context` = Opus's analysis (≤ 1500 chars on resolver cards); every non-trip card gains option `{id:"opus", action:{kind:"ask_opus"}}` (text = instruction). `ask_opus` re-runs the resolver on that item at elevated autonomy (bypasses the daily cap): it may execute any action allowed for the source; merge and cancel additionally need explicit consent words in the instruction ("do it", "merge", "vas-y"…).
+- `bun cli.ts resolver-dry-run [--limit N]`: the real items, real Opus (read-only), nothing executed; prints what it WOULD do.
+
+**State decisions**
+- companion.db `resolver_runs(id PK, item_id, rkey, source, ref_key, status queued|running|resolved|prepared|failed|skipped, autonomy normal|elevated, instruction, model, summary, phrase_json, severity, action, reason, created_at, started_at, finished_at, day)` + `resolver_meta(key PK, value)` (last digest day) + `resolver_created(task_id PK)` (proposals Opus created — never re-resolved). Boot: queued/running rows → failed "interrupted by restart".
+- Resolver key (not the triage version, so a bumped `updated_at` never burns budget): task = `status|blocker`, PR = last `pr:*` row id, proposal = updatedAt, body = investigation id.
+- Store host only (`!vaultUpstream()`, Zettlab); the Mac runs no resolver.
+
+**Contracts touched**
+| contract | kind | change | compat |
+|---|---|---|---|
+| `GET /api/orchestrator/triage`, frame `orchestrator_triage` | response | + `resolving: ResolvingItem[]` | additive |
+| `TriageItem` | type | + `resolver?` | additive |
+| `TriageAction` | type | + `ask_opus {instruction?}` (option id `opus`) | iOS decodes unknown kinds as `.unsupported` (hidden) |
+| `POST …/triage/<id>/choose` | endpoint | `ask_opus` → 200 `detail {resolver:"resolving"}`; 409 `resolver_disabled` | additive |
+
+**Files — one owner (builder)**
+| file | change |
+|---|---|
+| `server/lib/triage.ts` | `ask_opus`, `ResolverInfo`, `resolver?`, validatePhrase opts (extra kinds, context max) |
+| `server/lib/triage-engine.ts` | resolver hook in render / choose, `resolving[]` |
+| `server/lib/resolver.ts` | NEW pure: config, sensitivity, prompts, output parsing, policy, digest |
+| `server/lib/resolver-store.ts` | NEW: sqlite runs / meta |
+| `server/lib/resolver-engine.ts` | NEW: budget, queue, kill switch, timeout, ask, fall-through |
+| `server/lib/resolver-fix.ts` | NEW: PR fix run in a worktree on the PR branch (seams) |
+| `server/wiring/resolver.ts` | NEW: live context gathering, Opus runner, executor, activity, digest, dry run |
+| `server/wiring/triage.ts` | wire the resolver; executor `by` label |
+| `server/wiring/body-investigate.ts` | export the report applier for the resolver |
+| `cli.ts` | `resolver-dry-run`; start digest tick |
+| `docs/orchestrator-triage-api.md` | resolver section + iOS requirements |
+
+**Risks / failure modes**
+- An Opus answer is wrong → the worker restarts on a wrong premise. Mitigated by the 0.8 bar + `why`=none + every answer visible in the task activity and channel; Jeremie can re-block/requeue.
+- Fix runs push to a PR branch: never main/master/base, never forced; the shepherd's CI gate still decides the merge (non-sensitive) or Jeremie (sensitive).
+- Budget burn from version churn → resolver key ignores `updated_at`.
+- Opus down / slow → 20 min timeout, then the normal card.
+
+**Verify**
+1. `bun test server/` green twice; `bunx tsc --noEmit -p .`; archmap regenerated + `--check --lint`.
+2. `bun cli.ts resolver-dry-run` on this Mac against real Turso + real gh, read-only; table in the PR.
+
+**Out of scope:** iOS UI (separate PR — requirements in the doc), deploy, shepherd changes.
 
 ### Change Plan — trips (travel log, server side) (2026-10-04)
 **Request (Jeremie):** "travel log in the Companion": replace the CarPlay Shortcut with native auto-logging. Jev auto-classifies, the confident trips are filed, the rest become triage cards he confirms, and they get their own Trips tab. Contract: the shared trips CONTRACT.md (§1, §3, §4 belong to the server). The dashboard builder (`/api/trips/ingest`, …) and the iOS builder work in parallel.
