@@ -58,6 +58,8 @@ export interface DispatchWiringDeps {
   mirror: Mirror
   /** The catch-all channel id (orchestrator-db GENERAL_CHANNEL). */
   generalChannel: string
+  /** After every successful poll and every applied local write (triage recomputes on it). */
+  onPolled?: () => void
   now?: () => number
   log?: (msg: string) => void
   pollMs?: number
@@ -265,6 +267,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
       lastPrune = now()
       mirror.pruneSeen(new Set(list.map((t) => t.id)), SEEN_MAX_AGE_MS, now())
     }
+    notifyPolled()
     return true
   }
 
@@ -317,6 +320,15 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     mirror.markSeen(t, now())
     emitTask(t, links)
     emitAggregates(links)
+    notifyPolled()
+  }
+
+  function notifyPolled(): void {
+    try {
+      deps.onPolled?.()
+    } catch (err) {
+      log(`[dispatch] onPolled listener failed (${(err as Error)?.message ?? "error"})`)
+    }
   }
 
   // Blocked tasks in this view (#Body: every note), oldest block first.

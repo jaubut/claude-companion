@@ -300,7 +300,7 @@ export function parseInvestigationResult(text: string): InvestigationResult | nu
 // ── POST /api/body/investigate body ──────────────────────────────────────────
 
 export type InvestigateBody =
-  | { kind: "request"; request: { componentId: string; state: string | null; fromState: string | null; trigger: "forward" | "manual" } }
+  | { kind: "request"; request: { componentId: string; state: string | null; fromState: string | null; trigger: "forward" | "manual"; force?: boolean } }
   | { kind: "report"; report: InvestigationReport }
 
 const ID_RE = /^[A-Za-z0-9-]{1,64}$/
@@ -333,7 +333,7 @@ function parseReport(v: unknown): Parsed {
   } }
 }
 
-/** `{component_id, state?, from_state?, trigger?}` or `{report}`; an error string for the 400. */
+/** `{component_id, state?, from_state?, trigger?, force?}` or `{report}`; an error string for the 400. */
 export function parseInvestigateBody(raw: unknown): InvestigateBody | { error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: "body must be a JSON object" }
   const o = raw as Record<string, unknown>
@@ -348,7 +348,10 @@ export function parseInvestigateBody(raw: unknown): InvestigateBody | { error: s
   }
   return {
     kind: "request",
-    request: { componentId, state: optStr(o.state, 32), fromState: optStr(o.from_state, 32), trigger: o.trigger === "manual" ? "manual" : "forward" },
+    request: {
+      componentId, state: optStr(o.state, 32), fromState: optStr(o.from_state, 32), trigger: o.trigger === "manual" ? "manual" : "forward",
+      ...(o.force === true ? { force: true } : {}),
+    },
   }
 }
 

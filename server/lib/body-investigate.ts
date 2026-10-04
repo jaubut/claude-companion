@@ -282,9 +282,10 @@ export type GateVerdict =
 /**
  * May this component be investigated now? `budget` is checked only for local
  * runs (a forward spends the owner's budget, not ours). A `pending_host`
- * record is handed back as `retry` so the caller re-forwards it.
+ * record is handed back as `retry` so the caller re-forwards it. `force`
+ * skips the failed-streak cooldown and retry delay (never the budget).
  */
-export function gate(store: InvestigationStore, c: Candidate, now: number, opts: { budget: boolean }): GateVerdict {
+export function gate(store: InvestigationStore, c: Candidate, now: number, opts: { budget: boolean; force?: boolean }): GateVerdict {
   if (!isProblemState(c.state)) return { ok: false, reason: "not a problem state" }
   const open = store.open(c.componentId)
   if (open) {
@@ -298,7 +299,9 @@ export function gate(store: InvestigationStore, c: Candidate, now: number, opts:
     const since = now - (last.finishedAt ?? last.createdAt)
     const fails = store.consecutiveFailures(c.componentId, c.state)
     if (last.status === "done" && since < COOLDOWN_MS) return { ok: false, reason: "cooldown" }
-    if (last.status === "failed") {
+    // force (a human asked again from triage): a failed streak never blocks; the budget still applies.
+    if (last.status === "failed" && opts.force) attempt = fails >= MAX_ATTEMPTS ? 1 : fails + 1
+    else if (last.status === "failed") {
       if (fails >= MAX_ATTEMPTS && since < COOLDOWN_MS) return { ok: false, reason: "cooldown (failed twice)" }
       if (since < RETRY_MS) return { ok: false, reason: "retry later" }
       attempt = fails >= MAX_ATTEMPTS ? 1 : fails + 1
