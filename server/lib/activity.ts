@@ -25,7 +25,7 @@
 import { statSync } from "node:fs"
 import { verbFor, summarize, extractToolResult, clampLong } from "./tool-format"
 import { appendFeedEvent, pruneFeedForSession, type Verdict } from "./feed"
-import { getState, identityFor, activeStates, forgetStates, readTranscriptDelta, hashText, type SessionMeta, type PathState } from "./transcript"
+import { getState, identityFor, activeStates, forgetStates, dropState, readTranscriptDelta, hashText, type SessionMeta, type PathState } from "./transcript"
 import type { Session } from "./sessions"
 
 export interface Activity {
@@ -56,6 +56,15 @@ const activityListeners = new Set<ActivityListener>()
 // after the `sessions` emit, so a pill written by an earlier hook can name the
 // pre-collapse key for the few ms before this session's next event refreshes it.
 const LIVENESS_GRACE_MS = 5_000
+
+// A PathState outliving its session (SIGKILLed terminal, no session-end hook)
+// is evicted once its last Session.key left the live set and it has had no real
+// event for this long. Generous on purpose: an evicted live session just gets a
+// fresh record, primed silently by its next prompt.
+export const DEAD_STATE_MS = 600_000
+// The last non-empty Session.key each record was written under. Kept here, not
+// on PathState, so it outlives the pill (cleared first) and needs no field there.
+const sessionKeyOf = new WeakMap<PathState, string>()
 
 // ── Live poll ────────────────────────────────────────────────────────────
 // Hooks only fire at tool boundaries and turn end. For text-only turns the
@@ -225,6 +234,7 @@ function emitActivity(key: string): void {
 // never routes through here.
 function setActivity(s: PathState, next: Omit<Activity, "key">, sessionKey: string): void {
   s.activity = { ...next, key: sessionKey }
+  if (sessionKey) sessionKeyOf.set(s, sessionKey)
   s.lastEventAt = Date.now()
   progressFor(s, s.lastEventAt)
   emitActivity(sessionKey)
@@ -257,18 +267,22 @@ export function reconcileActivityLiveness(sessions: Session[]): void {
   let live: Set<string> | null = null
   let cleared = expireStaleActivity(now, { emit: false })
   for (const s of activeStates()) {
-    const pill = s.activity
     // No key = a hook with no cwd, so no Session exists to judge it against.
     // It clears on that session's turn-end or session-end, exactly as before.
-    if (!pill || !pill.key) continue
+    const key = s.activity?.key || sessionKeyOf.get(s)
+    if (!key) continue
     if (!live) {
       live = new Set<string>()
       for (const sess of sessions) live.add(sess.key)
     }
-    if (live.has(pill.key)) continue
-    if (now - s.lastEventAt <= LIVENESS_GRACE_MS) continue
-    s.activity = null
-    cleared = true
+    if (live.has(key)) continue
+    const age = now - s.lastEventAt
+    if (s.activity?.key && age > LIVENESS_GRACE_MS) {
+      s.activity = null
+      cleared = true
+    }
+    // Deleting the current entry mid-iteration is safe for a Map.
+    if (age > DEAD_STATE_MS && !s.activity) dropState(s)
   }
   // Emit only on a real clear, or this would broadcast at the dialog-poll rate.
   if (cleared) {

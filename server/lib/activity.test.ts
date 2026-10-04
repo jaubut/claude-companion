@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   ACTIVITY_TTL_MS,
   BUSY_TTL_MS,
+  DEAD_STATE_MS,
   IDLE_GRACE_MS,
   expireStaleActivity,
   forgetSession,
@@ -18,7 +19,7 @@ import {
   reconcileActivityLiveness,
   type Activity,
 } from "./activity"
-import { getState } from "./transcript"
+import { activeStates, getState } from "./transcript"
 import type { Session } from "./sessions"
 
 // The pill is per session (PRJ-OR1T Phase 10): every hook writes only the
@@ -213,6 +214,33 @@ test("a keyless pill is never judged by the reconcile", () => {
   reconcileActivityLiveness(live(B.key))
 
   expect(listActivities().some(a => a.key === "" && a.tty === A.tty)).toBe(true)
+})
+
+test("reconcileActivityLiveness evicts a dead session's record after the window, sparing live and keyless ones", async () => {
+  toolStart(A)
+  toolStart(B)
+  await recordTurnEnd({ cwd: A.cwd, tty: A.tty, sessionId: A.sessionId, sessionKey: A.key })
+  const a = getState({ tty: A.tty, cwd: A.cwd })
+  const b = getState({ tty: B.tty, cwd: B.cwd })
+  const has = (s: object) => [...activeStates()].includes(s as never)
+
+  // A was SIGKILLed: pill already gone, key not live, but only just past the pill grace.
+  a.lastEventAt = Date.now() - 6_000
+  reconcileActivityLiveness(live(B.key))
+  expect(has(a)).toBe(true)
+
+  // Past the window: the dead record goes, the live one (equally old) stays.
+  a.lastEventAt = Date.now() - DEAD_STATE_MS - 1
+  b.lastEventAt = Date.now() - DEAD_STATE_MS - 1
+  reconcileActivityLiveness(live(B.key))
+  expect(has(a)).toBe(false)
+  expect(has(b)).toBe(true)
+
+  // A record that never carried a key (cwd-less hooks) is never evicted.
+  const k = getState({ tty: A.tty, cwd: A.cwd })
+  k.lastEventAt = Date.now() - DEAD_STATE_MS - 1
+  reconcileActivityLiveness(live(B.key))
+  expect(has(k)).toBe(true)
 })
 
 test("forgetSession clears only that session's pill, weak key included", () => {
