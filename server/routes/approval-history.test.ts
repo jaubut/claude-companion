@@ -22,7 +22,7 @@ const fake = { send: (m: string) => { frames.push(JSON.parse(m)) } } as unknown 
 
 beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), "appr-hist-route-"))
-  process.env.COMPANION_DB_PATH = join(dir, "companion.db")
+  process.env.COMPANION_DB_PATH = join(dir, "test.db")
   useLearnedAllowDb(join(dir, "learned.db"))
   useApprovalHistoryDb(join(dir, "history.db"))
   await import("../wiring/events")

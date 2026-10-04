@@ -7,7 +7,7 @@ import { join } from "node:path"
 // Seed a legacy (pre-Phase-6) DB with 'main'-thread rows and NO channels table,
 // BEFORE importing the module — so importing it exercises the real seed + the
 // 'main' → 'general' backfill against a genuine sqlite file (no mocks).
-const dbPath = join(mkdtempSync(join(tmpdir(), "cc-orch-")), "companion.db")
+const dbPath = join(mkdtempSync(join(tmpdir(), "cc-orch-")), "test.db")
 {
   const seed = new Database(dbPath)
   seed.exec(`

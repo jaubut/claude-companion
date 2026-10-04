@@ -1,20 +1,17 @@
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname } from "node:path"
+import { companionDbPath } from "./db-path"
 
 // Orchestrator sqlite store: the one connection, the schema and its migrations,
 // and the seeded General channel. Turns/tasks live in orchestrator-chat.ts,
 // channels in orchestrator-channels.ts; both read and write through `db`.
-// Persisted to the same companion.db as push-tokens/learned-allow so the
+// Persisted to the shared Companion sqlite (db-path.ts) so the
 // thread survives a server restart (PRJ-OR1T Phase 0 memory-proof gate).
 
-const DB_DIR = join(homedir(), ".claude-companion")
-// COMPANION_DB_PATH lets tests run against an isolated sqlite file; production
-// uses the real companion.db (shared with push-tokens / learned-allow).
-const DB_PATH = process.env.COMPANION_DB_PATH ?? join(DB_DIR, "companion.db")
+const DB_PATH = companionDbPath()
 
-mkdirSync(DB_DIR, { recursive: true })
+mkdirSync(dirname(DB_PATH), { recursive: true })
 export const db = new Database(DB_PATH)
 db.exec(`
   CREATE TABLE IF NOT EXISTS orchestrator_turns (

@@ -10,7 +10,7 @@ import type { RunOutcome } from "./body-investigator"
 import type { Task } from "./orchestrator-chat"
 
 // Engine level: in-memory store, fake Turso detail, fake runner, fake peer.
-// The engine is seams-only (no companion.db), so it is imported statically —
+// The engine is seams-only (no sqlite), so it is imported statically —
 // a test that loaded orchestrator-db here would steal orchestrator-chat.test's
 // legacy fixture (STATE.md, P1 notes).
 

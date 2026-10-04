@@ -14,7 +14,7 @@ import { addApprovalRequest, getPending } from "../lib/pty-manager"
 let handleApiRoute: (req: Request, url: URL) => Promise<Response | null>
 
 beforeAll(async () => {
-  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "api-idem-")), "companion.db")
+  process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "api-idem-")), "test.db")
   handleApiRoute = (await import("./api")).handleApiRoute
 })
 beforeEach(() => resetIdempotency())

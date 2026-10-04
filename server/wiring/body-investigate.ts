@@ -19,7 +19,7 @@ import { broadcast } from "../state"
 import { bodySnapshot } from "./body"
 
 // Body auto-investigation, live instance: the engine (lib/body-investigate-engine.ts)
-// wired to companion.db, Turso, the #Body channel, push and the peer host.
+// wired to the Companion sqlite, Turso, the #Body channel, push and the peer host.
 // Built on first use; `startBodyInvestigate()` (cli.ts) starts the sweeps.
 
 export { HOP_HEADER, type BodyInvestigator } from "../lib/body-investigate-engine"
