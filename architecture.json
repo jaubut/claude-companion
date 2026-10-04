@@ -74,7 +74,7 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 492,
+          "lines": 494,
           "kind": "lib",
           "exports": [
             "Activity",

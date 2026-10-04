@@ -16,7 +16,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/hooks.ts` | 582 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/dispatch-tasks.ts` | 566 | lib | 53 |  |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
-| `lib/activity.ts` | 492 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
+| `lib/activity.ts` | 494 | lib | 14 | state: activityListeners: Set, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `routes/orchestrator.ts` | 459 | route-host | 3 | routes: 10 |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
