@@ -76,10 +76,11 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 492,
+          "lines": 527,
           "kind": "lib",
           "exports": [
             "Activity",
+            "DEAD_STATE_MS",
             "ACTIVITY_TTL_MS",
             "BUSY_TTL_MS",
             "IDLE_GRACE_MS",
@@ -96,6 +97,9 @@
           ],
           "state": [
             "activityListeners: Set",
+            "sessionKeyOf: WeakMap",
+            "let lastSessions",
+            "let pruneTimer",
             "let pollTimer",
             "progress: WeakMap",
             "agentStatusByKey: Map"
@@ -3118,7 +3122,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 598,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -3128,6 +3132,7 @@
             "modelFromTranscript",
             "identityFor",
             "activeStates",
+            "dropState",
             "forgetStates",
             "ReadOpts",
             "readTranscriptDelta",
@@ -5402,19 +5407,19 @@
             "companion-server.ts#* /"
           ]
         },
-        "activeStates": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
-        "readTranscriptDelta": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
         "PathState": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "SessionMeta": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "getState": {
           "module": "lib/transcript.ts",
           "callers": [
             "lib/activity.ts"
@@ -5443,7 +5448,19 @@
             "wiring/waiting.ts"
           ]
         },
-        "getState": {
+        "activeStates": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "readTranscriptDelta": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
+        "dropState": {
           "module": "lib/transcript.ts",
           "callers": [
             "lib/activity.ts"
@@ -5491,12 +5508,6 @@
           ]
         },
         "hashText": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
-        "SessionMeta": {
           "module": "lib/transcript.ts",
           "callers": [
             "lib/activity.ts"
