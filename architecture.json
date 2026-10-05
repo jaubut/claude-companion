@@ -316,18 +316,22 @@
         },
         {
           "path": "lib/auto-compact.ts",
-          "lines": 467,
+          "lines": 587,
           "kind": "lib",
           "exports": [
-            "DEFAULT_THRESHOLD",
             "IDLE_MS",
             "CANCEL_MS",
             "COOLDOWN_MS",
             "TYPING_POLL_MS",
             "BOUNDARY_POLL_MS",
             "BOUNDARY_WAIT_MS",
+            "BG_MAX_AGE_MS",
+            "TAIL_START_BYTES",
+            "TAIL_MAX_BYTES",
             "COMPACT_TEXT",
             "thresholdFromEnv",
+            "Entry",
+            "parseLines",
             "contextTokens",
             "CompactBoundary",
             "compactBoundaries",
@@ -337,7 +341,7 @@
             "GateInput",
             "GateReason",
             "GateVerdict",
-            "gate",
+            "compactGate",
             "CompactTarget",
             "PushKind",
             "AutoCompactDeps",
@@ -4783,7 +4787,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 116,
+          "lines": 125,
           "kind": "lib",
           "exports": [
             "realAutoCompactDeps",
@@ -6086,6 +6090,12 @@
             "lib/body-investigate-engine.ts",
             "wiring/body-investigate.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "gate": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
           ]
         },
         "investigationDigest": {

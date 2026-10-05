@@ -14,13 +14,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 596 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `routes/hooks.ts` | 593 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/keyboard-inject.ts` | 591 | lib | 9 | state: let injectQueue |
+| `lib/auto-compact.ts` | 587 | lib | 29 |  |
 | `lib/dispatch-tasks.ts` | 581 | lib | 55 |  |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/resolver.ts` | 482 | lib | 45 | state: CLOSABLE: Set, REJECTABLE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
-| `lib/auto-compact.ts` | 467 | lib | 25 |  |
 | `lib/triage.ts` | 465 | lib | 44 | state: DESTRUCTIVE: Set |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `routes/api.ts` | 454 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
@@ -115,10 +115,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/hook-common.ts` | 125 | lib | 9 |  |
 | `routes/body.ts` | 125 | route-host | 3 | routes: 5 |
+| `wiring/auto-compact.ts` | 125 | lib | 3 |  |
 | `lib/worker-tail.ts` | 121 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/dashboard-client.ts` | 118 | lib | 16 |  |
 | `wiring/resolver-peer.ts` | 117 | lib | 7 | state: let store, let deps |
-| `wiring/auto-compact.ts` | 116 | lib | 3 |  |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `wiring/body-fix.ts` | 112 | lib | 4 | state: let deps · emits: orchestrator_channel |
