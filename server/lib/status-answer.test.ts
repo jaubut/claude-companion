@@ -11,7 +11,7 @@ const task = (id: string, over: Partial<DispatchTask>): DispatchTask => ({
 
 const body = (dead: number): BodyResponse => ({
   ok: true, generated_at: "2026-10-04T12:00:00Z",
-  summary: { ok: 40, failing: 0, dead, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 40 + dead },
+  summary: { ok: 40, warning: 0, failing: 0, dead, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 40 + dead },
   components: dead ? [{ id: "mac:launchd:x", host: "mac", kind: "launchd", name: "x", criticality: null, state: "dead", last_run_at: null, last_ok_at: null, last_exit: 78, consecutive_failures: 3, detail: "exit 78", depends_on: [], dependents_count: 0 }] : [],
   recent_events: [],
 })

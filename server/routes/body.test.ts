@@ -172,7 +172,7 @@ describe("auto-investigation routes", () => {
 describe("GET /api/body + /api/body/component/:id", () => {
   const snapshotBody: BodyResponse = {
     ok: true, generated_at: "2026-10-03T12:00:00.000Z", components: [], recent_events: [],
-    summary: { ok: 0, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 0 },
+    summary: { ok: 0, warning: 0, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 0 },
   }
 
   test("passes all/fresh to the snapshot", async () => {
@@ -219,7 +219,7 @@ describe("brain digest wiring", () => {
   const body: BodyResponse = {
     ok: true, generated_at: "g", recent_events: [],
     components: [{ id: "zettlab:systemd:kb-api", host: "zettlab", kind: "systemd", name: "kb-api", criticality: "high", state: "dead", last_run_at: null, last_ok_at: null, last_exit: 1, consecutive_failures: 2, detail: null, depends_on: [], dependents_count: 0 }],
-    summary: { ok: 0, failing: 0, dead: 1, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 1 },
+    summary: { ok: 0, warning: 0, failing: 0, dead: 1, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 1 },
   }
   const snap: BodySnapshot = { get: async () => body }
 

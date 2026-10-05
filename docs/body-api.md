@@ -18,8 +18,10 @@ body_vitals(component_id, observed_at, state, last_exit, last_run_at, last_ok_at
 body_events(id, component_id, at, kind, from_state, to_state, detail)
 ```
 
-`state` ∈ `ok | failing | dead | crash_loop | dormant | stopped | unknown`. A
-component with no vitals row, or a state outside that list, reads `unknown`.
+`state` ∈ `ok | warning | failing | dead | crash_loop | dormant | stopped | unknown`.
+`warning` (e.g. a token-burn spike on `zettlab:tokens:burn`) is shown amber and
+never counts as a failure: not in `problems`, not auto-investigated; its alerts
+arrive at `warning` severity. A component with no vitals row, or a state outside that list, reads `unknown`.
 Timestamps and other cells are passed through as Turso returns them (string,
 number or `null`) — the server does not reformat them.
 
@@ -31,7 +33,7 @@ Query: `?all=1` includes retired components; `?fresh=1` bypasses the 30 s cache.
 {
   "ok": true,
   "generated_at": "2026-10-03T12:00:00.000Z",
-  "summary": { "ok": 38, "failing": 1, "dead": 1, "crash_loop": 0, "dormant": 2, "stopped": 0, "unknown": 1, "total": 43 },
+  "summary": { "ok": 38, "warning": 0, "failing": 1, "dead": 1, "crash_loop": 0, "dormant": 2, "stopped": 0, "unknown": 1, "total": 43 },
   "components": [
     {
       "id": "mac:launchd:backup", "host": "mac", "kind": "launchd", "name": "backup",
@@ -147,7 +149,7 @@ the Mac by mistake), that server still records the turn and sends the frame; set
 ## Auto-investigation (`POST /api/body/investigate`)
 
 A component that goes **dead / crash_loop / failing** is investigated with no
-tap: one headless, **read-only** `claude -p` on the host that owns it. Any fix
+tap (`warning` and every other state is skipped): one headless, **read-only** `claude -p` on the host that owns it. Any fix
 comes back as a #Body proposal card; the investigator never changes anything.
 
 **Triggers.** Every `POST /api/body/alert` whose `state` is a problem state, plus
