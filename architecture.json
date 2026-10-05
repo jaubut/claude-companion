@@ -11480,7 +11480,7 @@
       },
       "packages": {
         "sharp": {
-          "version": "0.34.5",
+          "version": "0.35.5",
           "modules": [
             "lib/media.ts",
             "lib/receipt-capture.ts"
