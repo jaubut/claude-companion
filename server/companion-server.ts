@@ -12,6 +12,7 @@ import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
 import { handleBodyRoute } from "./routes/body"
+import { handleResolverRoute } from "./routes/resolver"
 import { handleVaultRoute } from "./routes/vault"
 import { handleRecordsRoute } from "./routes/records"
 import { handleCaptureRoute } from "./routes/capture"
@@ -74,7 +75,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleResolverRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }

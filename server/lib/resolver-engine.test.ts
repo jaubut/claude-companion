@@ -359,3 +359,42 @@ describe("triage integration", () => {
     expect(l.items[0]!.options.some((o) => o.action.kind === "ask_opus")).toBe(false)
   })
 })
+
+describe("transient re-queue", () => {
+  test("a run whose fix never ran (Mac unreachable) is queued again after the delay, at most 3 a day", async () => {
+    const e = makeEngine()
+    const a = task("a")
+    const finishTransient = async () => {
+      gates.get("a")!.resolve({ kind: "prepared", phrase: preparedCard(a), summary: "Fix not run: Mac unreachable", reason: "transient: fix: Mac unreachable", outcome: "failed" })
+      await e.idle()
+    }
+    e.consider(id(a), a)
+    await finishTransient()
+    expect(e.view(id(a), a)?.state).toBe("prepared")
+    e.consider(id(a), a)
+    expect(jobs).toHaveLength(1)
+    clock += 31 * 60_000
+    e.consider(id(a), a)
+    expect(jobs).toHaveLength(2)
+    await finishTransient()
+    clock += 31 * 60_000
+    e.consider(id(a), a)
+    expect(jobs).toHaveLength(3)
+    await finishTransient()
+    clock += 31 * 60_000
+    e.consider(id(a), a)
+    expect(jobs).toHaveLength(3)
+    expect(e.view(id(a), a)?.state).toBe("prepared")
+  })
+
+  test("a non-transient prepared card is never re-queued on its own", async () => {
+    const e = makeEngine()
+    const a = task("a")
+    e.consider(id(a), a)
+    gates.get("a")!.resolve({ kind: "prepared", phrase: preparedCard(a), summary: "Fix failed: x", reason: "fix failed: x", outcome: "failed" })
+    await e.idle()
+    clock += 2 * 60 * 60_000
+    e.consider(id(a), a)
+    expect(jobs).toHaveLength(1)
+  })
+})

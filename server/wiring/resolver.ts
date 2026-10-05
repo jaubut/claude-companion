@@ -7,7 +7,7 @@ import { type InvestigationResult, localBodyHost, routeFor } from "../lib/body-i
 import { knownPaths, runInvestigatorCli } from "../lib/body-investigator"
 import { type DispatchWiring } from "../lib/dispatch-poller"
 import { getDispatchTask, getTaskActivity } from "../lib/dispatch-tasks"
-import { type RepoMapCheck, checkRepoMap, isDir, parseRepoMap, readRepoMapSource, repoForNote, repoMapCheckLine } from "../lib/live-repo"
+import { type RepoMapCheck, checkRepoMap, isDir, localRepoFor, repoForNote, repoMapCheckLine } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn, createProposal, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
@@ -27,6 +27,7 @@ import type { GhFn } from "../lib/triage-pr"
 import { tursoQuery } from "../lib/turso"
 import type { QueryFn } from "../lib/turso"
 import { bodyReportApplier, investigationStore } from "./body-investigate"
+import { fixOnPeer } from "./resolver-peer"
 import { emitTask, orchEmit } from "./orchestrator"
 import { rejectProposal } from "./proposals"
 
@@ -65,23 +66,9 @@ export function memoryDirs(home: string = process.env.HOME || homedir(), env: Re
 const PR_JSON = "title,body,state,isDraft,headRefName,baseRefName,files,mergeable,mergeStateStatus,updatedAt,createdAt,statusCheckRollup"
 const DIFF_MAX = 60_000
 
-interface PrView { title?: string; body?: string; headRefName?: string; baseRefName?: string; files?: { path: string; additions: number; deletions: number }[] }
+export { localRepoFor }
 
-/** A local checkout of `owner/repo`: the note's REPO_MAP entry first, then any mapped path whose origin matches. */
-export async function localRepoFor(slug: string, hay: string, sh: ShFn): Promise<string | null> {
-  const source = readRepoMapSource()
-  if (!source) return null
-  const entries = parseRepoMap(source)
-  const ordered = [...entries.filter((e) => e.match.test(hay)), ...entries.filter((e) => !e.match.test(hay))]
-  const seen = new Set<string>()
-  for (const e of ordered) {
-    if (seen.has(e.path) || !isDir(e.path)) continue
-    seen.add(e.path)
-    const r = await sh("git", ["-C", e.path, "remote", "get-url", "origin"], { cwd: e.path, timeoutMs: 10_000 })
-    if (r.ok && r.out.trim().toLowerCase().replace(/\.git$/, "").endsWith(slug.toLowerCase())) return e.path
-  }
-  return null
-}
+interface PrView { title?: string; body?: string; headRefName?: string; baseRefName?: string; files?: { path: string; additions: number; deletions: number }[] }
 
 async function noteBlock(q: QueryFn, noteId: string | null | undefined): Promise<{ block: EvidenceBlock | null; title: string | null }> {
   if (!noteId) return { block: null, title: null }
@@ -224,9 +211,16 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
       const r = await o.gh(["pr", "comment", src.ref.prUrl, "--body", body]).catch(() => null)
       return r?.code === 0
     },
-    async fix(src, ctx, instructions, model, timeoutMs) {
+    async fix(src, ctx, instructions, model, timeoutMs, attempt) {
       if (src.ref.source !== "pr" || !ctx.pr) return { kind: "failed", error: "not a PR" }
-      if (!ctx.repo) return { kind: "failed", error: `no local checkout of ${src.ref.repo} on this host` }
+      if (!ctx.repo) {
+        // Mac-only repos (tls-review, the iOS apps): the same fix run, on the peer (wiring/resolver-peer.ts).
+        const remote = await fixOnPeer({
+          itemId: itemRef(src), prUrl: src.ref.prUrl, slug: src.ref.repo, branch: ctx.pr.head, base: ctx.pr.base, title: ctx.pr.title,
+          taskText: ctx.pr.taskText, instructions, model, timeoutMs, attempt: attempt ?? 0,
+        })
+        return remote ?? { kind: "failed", error: `no local checkout of ${src.ref.repo} on this host or the peer` }
+      }
       return runPrFix({
         prUrl: src.ref.prUrl, number: ctx.pr.number, title: ctx.pr.title, repo: ctx.repo, head: ctx.pr.head, base: ctx.pr.base,
         instructions, taskText: ctx.pr.taskText, model, timeoutMs,

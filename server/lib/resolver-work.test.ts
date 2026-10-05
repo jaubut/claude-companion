@@ -336,3 +336,31 @@ describe("honest outcome + loop guard", () => {
     expect(out).toMatchObject({ kind: "prepared", outcome: "planned" })
   })
 })
+
+describe("transient fix failures (Mac unreachable)", () => {
+  test("a card that says so, a retry offered, the reason marked transient, and never a loop-guard count", async () => {
+    const store = createResolverStore(new Database(":memory:"))
+    const s: WorkSeams = { ...seams(), failures: (x, a) => store.failures(`${x.source}:${x.refId}`, a, 0), attempt: (x, a, e) => store.attempt(`${x.source}:${x.refId}`, a, e, NOW) }
+    fixOut = { kind: "failed", error: "Mac unreachable (TimeoutError)", transient: true }
+    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, category: "ci_failing" })
+    const w = createResolverWork(s)
+    for (let i = 0; i < 3; i++) {
+      calls = []
+      const out = await w(job(pr(), "elevated", "Fix on the PR branch: protect paid"))
+      expect(calls.some((c) => c.startsWith("fix:"))).toBe(true)
+      expect(out).toMatchObject({ kind: "prepared", outcome: "failed", reason: "transient: fix: Mac unreachable (TimeoutError)" })
+      if (out.kind !== "prepared") throw new Error("not prepared")
+      expect(out.summary).toBe("Fix not run: Mac unreachable (TimeoutError); Opus retries later")
+      expect(out.phrase.options[0]).toMatchObject({ label: "Ask Opus to retry" })
+    }
+    expect(store.failures("pr:jaubut/tls-review#9", "fix", 0)).toBeNull()
+  })
+
+  test("the fix seam gets the run id as the peer's attempt key", async () => {
+    let seen: number | undefined
+    const s: WorkSeams = { ...seams(), fix: async (_s, _c, _i, _m, _t, attempt) => { seen = attempt; return fixOut } }
+    model = reply({ action: { kind: "fix", instructions: "x" }, category: "ci_failing" })
+    await createResolverWork(s)(job(pr()))
+    expect(seen).toBe(1)
+  })
+})

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import type { ShFn } from "./resolver-fix"
 
 // The project → repo table (REPO_MAP), read as text, read-only, from
 // claude-config's tools: `repo-map.ts` (claude-config #21 moved it there:
@@ -119,4 +120,20 @@ export function resolveLiveCwd(c: {
   if (c.explicit) return isDir(c.explicit) ? c.explicit : null
   const mapped = c.noteId ? repoForNote(c.noteId, c.noteTitle ?? null) : null
   return [mapped, c.taskCwd, c.channelCwd].find(isDir) ?? null
+}
+
+/** A local checkout of `owner/repo`: the note's REPO_MAP entry first, then any mapped path whose origin matches. */
+export async function localRepoFor(slug: string, hay: string, sh: ShFn): Promise<string | null> {
+  const source = readRepoMapSource()
+  if (!source) return null
+  const entries = parseRepoMap(source)
+  const ordered = [...entries.filter((e) => e.match.test(hay)), ...entries.filter((e) => !e.match.test(hay))]
+  const seen = new Set<string>()
+  for (const e of ordered) {
+    if (seen.has(e.path) || !isDir(e.path)) continue
+    seen.add(e.path)
+    const r = await sh("git", ["-C", e.path, "remote", "get-url", "origin"], { cwd: e.path, timeoutMs: 10_000 })
+    if (r.ok && r.out.trim().toLowerCase().replace(/\.git$/, "").endsWith(slug.toLowerCase())) return e.path
+  }
+  return null
 }

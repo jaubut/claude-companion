@@ -1,4 +1,6 @@
-import { type Autonomy, FIX_RUN_MS, type ResolverConfig, digestText, resolverInfo, resolverKey } from "./resolver"
+import {
+  type Autonomy, FIX_RUN_MS, type ResolverConfig, TRANSIENT_MAX_PER_DAY, TRANSIENT_REASON, TRANSIENT_RETRY_MS, digestText, resolverInfo, resolverKey,
+} from "./resolver"
 import type { ResolverStore, RunRow } from "./resolver-store"
 import { type Phrase, type ResolverInfo, type ResolverOutcome, type Severity, type SourceItem, heuristicSeverity, itemId } from "./triage"
 
@@ -122,7 +124,11 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
   /** Resolved on another version and still here (re-blocked on the same question, a lost race): a recurrence. */
   const recurred = (r: RunRow | null, src: SourceItem): boolean => !!r && r.status === "resolved" && r.version !== src.version
   /** Dropped before it ever ran (restart, kill switch): take it again. A row that waited too long stays dropped. */
-  const requeueable = (r: RunRow | null): boolean => !!r && r.status === "skipped" && r.reason !== "wait"
+  const requeueable = (r: RunRow | null): boolean => !!r && ((r.status === "skipped" && r.reason !== "wait") || retryDue(r))
+  /** Its action never ran for a passing reason (the Mac unreachable): once the retry delay passed, within the daily cap. */
+  const retryDue = (r: RunRow): boolean =>
+    r.status === "prepared" && !!r.reason?.startsWith(TRANSIENT_REASON) && now() - (r.finishedAt ?? r.createdAt) >= TRANSIENT_RETRY_MS
+    && deps.store.countReason(r.itemId, r.rkey, TRANSIENT_REASON, now() - 24 * 60 * 60_000) < TRANSIENT_MAX_PER_DAY
 
   function consider(id: string, src: SourceItem): void {
     const cfg = deps.config()

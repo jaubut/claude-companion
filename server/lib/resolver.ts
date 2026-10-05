@@ -21,6 +21,12 @@ export const DEFAULT_TIMEOUT_MS = 20 * 60_000
 export const QUEUE_MAX_MS = 3 * 60 * 60_000
 /** A fix run on a PR branch (the shepherd's budget); it may start up to the analysis deadline. */
 export const FIX_RUN_MS = 30 * 60_000
+/** A run's reason prefix when its action never ran for a passing reason (the Mac unreachable): re-queued later. */
+export const TRANSIENT_REASON = "transient:"
+/** A transient run is re-queued this long after it finished … */
+export const TRANSIENT_RETRY_MS = 30 * 60_000
+/** … at most this many transient runs of one item a day (then the card's "Ask Opus to retry" only). */
+export const TRANSIENT_MAX_PER_DAY = 3
 export const CONFIDENT = 0.8
 export const RESOLVER_CONTEXT_MAX = 1500
 export const SUMMARY_MAX = 200

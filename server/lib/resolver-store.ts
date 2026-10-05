@@ -73,6 +73,8 @@ export interface ResolverStore {
   attempt(refKey: string, action: string, error: string | null, now: number): void
   /** Loop guard: the newest attempts of `action` since `since`, counted while they failed with the newest one's error. */
   failures(refKey: string, action: string, since: number): { count: number; error: string } | null
+  /** Runs of this item + key since `since` whose reason starts with `prefix` (transient re-queues). */
+  countReason(itemId: string, rkey: string, prefix: string, since: number): number
   prune(before: number): void
 }
 
@@ -186,6 +188,10 @@ export function createResolverStore(db: Database): ResolverStore {
         count++
       }
       return { count, error: head.error ?? "" }
+    },
+    countReason(itemId, rkey, prefix, since) {
+      return (db.query("SELECT COUNT(*) AS n FROM resolver_runs WHERE item_id = ? AND rkey = ? AND created_at >= ? AND substr(reason, 1, ?) = ?")
+        .get(itemId, rkey, since, prefix.length, prefix) as { n: number }).n
     },
     prune(before) {
       db.query("DELETE FROM resolver_runs WHERE created_at < ? AND status NOT IN ('queued', 'running')").run(before)
