@@ -7,7 +7,7 @@ import { type InvestigationResult, localBodyHost, routeFor } from "../lib/body-i
 import { knownPaths, runInvestigatorCli } from "../lib/body-investigator"
 import { type DispatchWiring } from "../lib/dispatch-poller"
 import { getDispatchTask, getTaskActivity } from "../lib/dispatch-tasks"
-import { type RepoMapCheck, checkRepoMap, isDir, localRepoFor, repoForNote, repoMapCheckLine } from "../lib/live-repo"
+import { type RepoMapCheck, checkRepoMap, fixRepoHere, isDir, localRepoFor, repoForNote, repoMapCheckLine } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn, createProposal, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
@@ -213,7 +213,9 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
     },
     async fix(src, ctx, instructions, model, timeoutMs, attempt) {
       if (src.ref.source !== "pr" || !ctx.pr) return { kind: "failed", error: "not a PR" }
-      if (!ctx.repo) {
+      // An Xcode repo on a host without Xcode counts as "no checkout here" even with a clone (repo-map `requires`).
+      const repo = fixRepoHere(ctx.repo)
+      if (!repo) {
         // Mac-only repos (tls-review, the iOS apps): the same fix run, on the peer (wiring/resolver-peer.ts).
         const remote = await fixOnPeer({
           itemId: itemRef(src), prUrl: src.ref.prUrl, slug: src.ref.repo, branch: ctx.pr.head, base: ctx.pr.base, title: ctx.pr.title,
@@ -222,7 +224,7 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
         return remote ?? { kind: "failed", error: `no local checkout of ${src.ref.repo} on this host or the peer` }
       }
       return runPrFix({
-        prUrl: src.ref.prUrl, number: ctx.pr.number, title: ctx.pr.title, repo: ctx.repo, head: ctx.pr.head, base: ctx.pr.base,
+        prUrl: src.ref.prUrl, number: ctx.pr.number, title: ctx.pr.title, repo, head: ctx.pr.head, base: ctx.pr.base,
         instructions, taskText: ctx.pr.taskText, model, timeoutMs,
       }, { sh })
     },

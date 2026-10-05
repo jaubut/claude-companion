@@ -295,6 +295,13 @@ bearer `COMPANION_BODY_PEER_TOKEN`, else this server's own token). Every call ca
 `x-companion-body-hop: 1`; the peer runs the job on itself and never forwards it again. All three endpoints sit
 behind the `/api/*` bearer gate.
 
+**Xcode repos (2026-10-05).** A REPO_MAP entry with `requires: ["xcode"]` (claude-config: companion-ios,
+tls-video-assist, tls-viewer-ios) is buildable only on a host with macOS + `xcodebuild` on PATH. On any other
+host its clone does not count: `localRepoFor` skips it and the fix seam treats a gathered `ctx.repo` pointing at it
+as "no local checkout" (`fixRepoHere`), so the job is forwarded to the Mac even though Zettlab has a clone. The
+parser reads `requires` (and `platform: "darwin"` as xcode), ignores unknown extra fields, and still reads both
+the repo-map.ts and the legacy dispatch-run.ts formats.
+
 | Endpoint | Body / query | Answer |
 |---|---|---|
 | `GET /api/resolver/has-repo?slug=owner/repo` | | `{ ok, slug, hasRepo, host }` — this host's REPO_MAP checkout whose `origin` is that repo |

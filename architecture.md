@@ -37,7 +37,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body-investigate-engine.ts` | 367 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 355 | lib | 25 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
-| `wiring/resolver.ts` | 344 | lib | 13 |  |
+| `wiring/resolver.ts` | 346 | lib | 13 |  |
 | `lib/trip-classify.ts` | 340 | lib | 31 |  |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/live.ts` | 329 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
@@ -54,6 +54,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/question-hook.ts` | 263 | lib | 7 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
+| `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
@@ -103,7 +104,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev.ts` | 143 | lib | 16 |  |
 | `lib/resolver-prompt.ts` | 143 | lib | 7 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
-| `lib/live-repo.ts` | 140 | lib | 12 |  |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
 | `lib/receipt-sonnet.ts` | 138 | lib | 11 | state: MONEY_FIELDS: Set |
 | `lib/turso.ts` | 137 | lib | 7 | state: let agentToken, let agentEnvRead |
