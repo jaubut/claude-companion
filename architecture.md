@@ -170,7 +170,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 | package | version | modules | targets |
 |---|---|---|---|
-| `sharp` | 0.34.5 | 2 | server |
+| `sharp` | 0.35.5 | 2 | server |
 
 ## Referenced maps (joined by reference — regenerate the sibling to refresh)
 
