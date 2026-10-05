@@ -20,13 +20,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/resolver.ts` | 482 | lib | 45 | state: CLOSABLE: Set, REJECTABLE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
+| `lib/triage.ts` | 465 | lib | 44 | state: DESTRUCTIVE: Set |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `routes/api.ts` | 454 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/discover.ts` | 449 | lib | 16 | state: let firstDone, let firstExpected, let resolveFirst |
 | `routes/orchestrator.ts` | 434 | route-host | 3 | routes: 10 |
 | `lib/spawn-session.ts` | 431 | lib | 11 |  |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
-| `lib/triage.ts` | 425 | lib | 38 | state: DESTRUCTIVE: Set |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |
@@ -40,25 +40,27 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/resolver.ts` | 346 | lib | 13 |  |
 | `lib/trip-classify.ts` | 340 | lib | 31 |  |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
+| `wiring/triage.ts` | 332 | lib | 9 | state: let liveResolver, let live |
 | `wiring/live.ts` | 329 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
+| `lib/triage-engine.ts` | 325 | lib | 8 | emits: orchestrator_triage |
 | `lib/receipt-qa-worker.ts` | 308 | lib | 12 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/tmux-pane.ts` | 304 | lib | 22 |  |
-| `lib/triage-engine.ts` | 296 | lib | 8 | emits: orchestrator_triage |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
-| `wiring/triage.ts` | 288 | lib | 8 | state: let liveResolver, let live |
 | `lib/apns.ts` | 282 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/question-hook.ts` | 263 | lib | 7 |  |
+| `lib/triage-sources.ts` | 262 | lib | 22 | state: HOLDS: Set |
+| `lib/triage-pr.ts` | 256 | lib | 20 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
+| `lib/resolver-work.ts` | 227 | lib | 5 |  |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
-| `lib/resolver-work.ts` | 221 | lib | 5 |  |
 | `lib/trip-service.ts` | 220 | lib | 11 |  |
 | `lib/trip-store.ts` | 220 | lib | 13 |  |
 | `lib/orphan-question.ts` | 218 | lib | 11 | state: raised: Map |
@@ -82,7 +84,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/trip-dashboard.ts` | 190 | lib | 17 |  |
 | `lib/receipt-checks.ts` | 188 | lib | 20 | state: CURRENCIES: Set |
-| `lib/triage-sources.ts` | 177 | lib | 17 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
@@ -118,7 +119,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/resolver-peer.ts` | 117 | lib | 7 | state: let store, let deps |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
-| `lib/triage-pr.ts` | 113 | lib | 11 |  |
 | `wiring/body-fix.ts` | 112 | lib | 4 | state: let deps · emits: orchestrator_channel |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
@@ -484,6 +484,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `WaitingKind()` | `lib/waiting.ts` | `lib/sessions.ts`, `wiring/waiting.ts` |
 | `BodyResponse()` | `lib/body.ts` | `lib/status-answer.ts`, `wiring/front-door.ts` |
 | `Activity()` | `lib/activity.ts` | `lib/transcript.ts`, `wiring/events.ts` |
+| `ResolvingItem()` | `lib/triage.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |
 | `TriageStore()` | `lib/triage-store.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |
 | `ANSWER_MAX()` | `lib/dispatch-tasks.ts` | `lib/triage-engine.ts`, `routes/orchestrator.ts` |
 | `GeoEntry()` | `lib/trip-store.ts` | `lib/trip-classify.ts`, `lib/trip-geocode.ts` |

@@ -17,6 +17,8 @@ import { TursoUnreachable } from "./turso"
 
 export type ExecOutcome =
   | { kind: "done"; detail?: Record<string, unknown> }
+  /** Accepted, lands later (merge intent: approval recorded, the PR shepherd merges) → 202 `queued`. */
+  | { kind: "queued"; detail: Record<string, unknown> }
   | { kind: "stale"; reason?: string }
   | { kind: "error"; status: number; error: string; extra?: Record<string, unknown> }
 
@@ -46,6 +48,8 @@ export interface TriageEngineDeps {
   log?: (msg: string) => void
   maxConcurrent?: number
   resolver?: TriageResolverHook | null
+  /** Rows for the "Opus is on it" line that are not resolver runs (approved merges waiting on GitHub). */
+  pending?: () => ResolvingItem[]
 }
 
 export interface ChooseInput { id: string; optionId: string; text?: string | null; idemKey?: string | null }
@@ -140,7 +144,9 @@ export function createTriageEngine(deps: TriageEngineDeps) {
       out.push(ask(buildItem(src, fallbackPhrase(src), heuristicSeverity(src), failed)))
       schedule(id, src)
     }
-    publish(orderItems(out), r ? orderBusy(busy, r) : busy)
+    const shown = new Set([...out.map((i) => i.id), ...busy.map((b) => b.id)])
+    const waiting = (deps.pending?.() ?? []).filter((p) => !shown.has(p.id))
+    publish(orderItems(out), [...(r ? orderBusy(busy, r) : busy), ...waiting])
   }
 
   /** Queue places settle once every item was considered; working runs first, then the queue in order. */
@@ -198,7 +204,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     return fail(409, "stale", { id, next: itemNow(id) })
   }
 
-  async function runChoice(input: ChooseInput): Promise<ChooseResult> {
+  async function runChoice(input: ChooseInput, seen: { kind: string }): Promise<ChooseResult> {
     if (!collected) await refresh()
     let item = itemNow(input.id)
     if (!item) {
@@ -210,6 +216,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     if (!item || !src) return fail(404, "no_such_item", { id: input.id })
     const option = item.options.find((o) => o.id === input.optionId)
     if (!option) return fail(400, "unknown_option", { id: input.id })
+    seen.kind = option.action.kind
     const text = input.text?.trim() || null
     if ((option.action.kind === "answer_custom" || option.action.kind === "classify_custom") && !text) return fail(422, "text_required", { id: input.id })
     if (text && text.length > ANSWER_MAX) return fail(400, "text_too_long", { id: input.id })
@@ -234,8 +241,8 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     }
     if (out.kind === "stale") return stale(input.id)
     if (out.kind === "error") return fail(out.status, out.error, { id: input.id, ...out.extra })
-    log(`[triage] ${input.id} → ${option.action.kind}`)
     await refresh()
+    if (out.kind === "queued") return done(input, out.detail, 202, "queued")
     return done(input, out.detail)
   }
 
@@ -245,7 +252,6 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     if (!r) return fail(409, "resolver_disabled", { id: input.id })
     const out = r.ask(input.id, src, text ?? prefilled)
     if (!out.ok) return fail(409, out.error, { id: input.id })
-    log(`[triage] ${input.id} → ask_opus`)
     render()
     return done(input, { resolver: "resolving" })
   }
@@ -258,24 +264,47 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     return fail(503, what)
   }
 
-  function done(input: ChooseInput, detail?: Record<string, unknown>): ChooseResult {
+  function done(input: ChooseInput, detail?: Record<string, unknown>, status = 200, result: "done" | "queued" = "done"): ChooseResult {
     const next = items.find((i) => i.id !== input.id) ?? null
-    const body = { ok: true, id: input.id, result: "done", next, ...(detail ? { detail } : {}) }
+    const body = { ok: true, id: input.id, result, next, ...(detail ? { detail } : {}) }
     if (input.idemKey) {
       deps.store.saveChoice({ itemId: input.id, idemKey: input.idemKey, optionId: input.optionId, result: body, createdAt: now() })
     }
-    return { status: 200, body }
+    return { status, body }
+  }
+
+  /** One line per choose, whatever the outcome: item, option + action, HTTP status, result or error code. */
+  function logChoice(input: ChooseInput, kind: string, res: ChooseResult): void {
+    const b = res.body
+    const what = b.ok === false ? `error=${String(b.error ?? "?")}` : `result=${String(b.result ?? "?")}`
+    const reason = b.detail && typeof b.detail === "object" ? (b.detail as Record<string, unknown>).reason : undefined
+    log(`[triage] choose ${input.id} option=${input.optionId} → ${kind} · ${res.status} ${what}${reason ? ` reason=${String(reason)}` : ""}`)
   }
 
   /** At most once per (id, Idempotency-Key): a stored success replays; a concurrent repeat shares the run. */
   async function choose(input: ChooseInput): Promise<ChooseResult> {
-    if (!input.idemKey) return runChoice(input)
-    const rec = deps.store.choice(input.id, input.idemKey)
-    if (rec) return { status: 200, body: { ...rec.result, result: "replay" } }
+    if (input.idemKey) {
+      const rec = deps.store.choice(input.id, input.idemKey)
+      if (rec) {
+        const res = { status: 200, body: { ...rec.result, result: "replay" } }
+        logChoice(input, "replay", res)
+        return res
+      }
+      const inflight = choosing.get(`${input.id}\n${input.idemKey}`)
+      if (inflight) return inflight
+    }
+    const seen = { kind: "?" }
+    const run = runChoice(input, seen)
+      .then((res) => {
+        logChoice(input, seen.kind, res)
+        return res
+      }, (err: unknown) => {
+        log(`[triage] choose ${input.id} option=${input.optionId} → ${seen.kind} · threw: ${(err as Error)?.message ?? err}`)
+        throw err
+      })
+    if (!input.idemKey) return run
     const key = `${input.id}\n${input.idemKey}`
-    const inflight = choosing.get(key)
-    if (inflight) return inflight
-    const p = runChoice(input).finally(() => choosing.delete(key))
+    const p = run.finally(() => choosing.delete(key))
     choosing.set(key, p)
     return p
   }

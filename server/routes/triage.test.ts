@@ -101,9 +101,12 @@ const peerFetch = (async (_url: string, init: RequestInit) => {
 }) as unknown as typeof fetch
 
 let ghState = "OPEN"
+/** `gh pr view --json mergeable,…` (merge intent); {} = GitHub reports nothing. */
+let ghReady: Record<string, unknown> = {}
 const ghCalls: string[][] = []
 const gh: GhFn = async (args) => {
   ghCalls.push(args)
+  if (args[1] === "view" && String(args[4]).startsWith("mergeable")) return { code: 0, stdout: JSON.stringify(ghReady), stderr: "" }
   if (args[1] === "view") return { code: 0, stdout: JSON.stringify({ state: ghState }), stderr: "" }
   if (args[1] === "merge") ghState = "MERGED"
   if (args[1] === "close") ghState = "CLOSED"
@@ -210,6 +213,7 @@ beforeEach(() => {
   considered.length = 0
   frames.length = 0
   ghState = "OPEN"
+  ghReady = {}
   modelFor = new Set()
   invStore = invLib.createInvestigationStore(new Database(":memory:"))
   live.setLiveCap(chat.countLiveTasks() + 3)
@@ -340,6 +344,39 @@ describe("choose → the existing guarded paths", () => {
     expect((await choose(ci.id, { optionId: opt(ci, "close_pr") })).status).toBe(200)
     expect(turso.query("SELECT action FROM agent_activity WHERE target_id = ? AND action LIKE 'outcome:%'").all(c)).toEqual([{ action: "outcome:rejected" }])
     expect(await itemOf("pr:jaubut/x#4")).toBeUndefined()
+  })
+
+  test("merge intent (#164): a conflicting PR's card says so; Merge → 202 queued, approval row, card moves to the queued row", async () => {
+    const url = "https://github.com/jaubut/dash/pull/164"
+    // Own id (not hex()): the shared companion.db keys thread turns by task id across route test files.
+    const id = "d164".padEnd(32, "d")
+    turso.query("INSERT INTO tasks (id, note_id, text, assignee, dispatch_status, dispatch_pr_url) VALUES (?, 'projects/dash', ?, 'agent:builder', 'completed', ?)")
+      .run(id, "Quotes out of the books: safe to merge", url)
+    const park = () => turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
+      .run(id, JSON.stringify({ reason: "touches src/lib/books — needs your review", repo: "dash", pr: 164, url }))
+    park()
+    ghReady = { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", headRefOid: "feed164", statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }] }
+    await sync()
+    const item = await itemOf("pr:jaubut/dash#164")
+    expect(item.title).toBe("Quotes out of the books: merge after the conflict fix")
+    expect(item.options.find((o: any) => o.action.kind === "merge").label).toBe("Approve — merge after the conflict fix")
+    const res = await choose(item.id, { optionId: opt(item, "merge") }, "k-164")
+    expect(res.status).toBe(202)
+    expect(res.json).toMatchObject({ ok: true, id: item.id, result: "queued", detail: { state: "approved_pending", reason: "conflict" } })
+    expect(ghCalls.some((c) => c[1] === "merge")).toBe(false)
+    const approval = turso.query("SELECT target_kind, target_id, meta FROM agent_activity WHERE action = 'pr:approved-merge'").all() as Record<string, string>[]
+    expect(approval).toHaveLength(1)
+    expect(approval[0]).toMatchObject({ target_kind: "task", target_id: id })
+    expect(JSON.parse(String(approval[0]?.meta))).toMatchObject({ repo: "dash", pr: 164, url, approvedHeadSha: "feed164", by: "jeremie", via: "triage" })
+    expect(row(id).done).toBe(0)
+    const body = await get() as unknown as { items: any[]; resolving: any[] }
+    expect(body.items.find((i) => i.id === item.id)).toBeUndefined()
+    const queued = body.resolving.find((r) => r.id === item.id)
+    expect(queued).toMatchObject({ source: "pr", approval: { state: "approved_pending", reason: "conflict", approvedHeadSha: "feed164" }, resolver: { status: "queued" } })
+    expect(queued.title.startsWith("Approved — merging once the conflict clears")).toBe(true)
+    // A replay of the same tap answers from the stored choice; no second row.
+    expect((await choose(item.id, { optionId: opt(item, "merge") }, "k-164")).json.result).toBe("replay")
+    expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action = 'pr:approved-merge'").get()).toEqual({ n: 1 })
   })
 
   test("a Body component whose diagnosis failed twice: requeue forces a new investigation", async () => {

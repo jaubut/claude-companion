@@ -2704,7 +2704,7 @@
         },
         {
           "path": "lib/resolver-work.ts",
-          "lines": 221,
+          "lines": 227,
           "kind": "lib",
           "exports": [
             "BodyOutcome",
@@ -3283,7 +3283,7 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 296,
+          "lines": 325,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
@@ -3315,7 +3315,7 @@
         },
         {
           "path": "lib/triage-pr.ts",
-          "lines": 113,
+          "lines": 256,
           "kind": "lib",
           "exports": [
             "GhResult",
@@ -3325,6 +3325,15 @@
             "PrActionDeps",
             "PrState",
             "prState",
+            "HoldReason",
+            "ChecksState",
+            "PrReadiness",
+            "rollupState",
+            "holdReason",
+            "prReadiness",
+            "APPROVED_MERGE",
+            "ApprovalInput",
+            "approvalRow",
             "mergePr",
             "closePr",
             "GH_TIMEOUT_MS",
@@ -3345,12 +3354,14 @@
         },
         {
           "path": "lib/triage-sources.ts",
-          "lines": 177,
+          "lines": 262,
           "kind": "lib",
           "exports": [
             "PR_SAFETY_NET_MS",
             "BODY_WINDOW_MS",
             "NEEDS_HUMAN",
+            "APPROVED_MERGE",
+            "APPROVAL_TTL_MS",
             "taskVersion",
             "taskNeedsHuman",
             "taskSource",
@@ -3361,12 +3372,17 @@
             "parsePrUrl",
             "PrRows",
             "queryPrRows",
+            "approvalTime",
             "prSources",
+            "ApprovedPr",
+            "prApprovals",
             "bodyComponentUrl",
             "BodyLookup",
             "bodySources"
           ],
-          "state": [],
+          "state": [
+            "HOLDS: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -3410,7 +3426,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 425,
+          "lines": 465,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -3420,6 +3436,9 @@
             "TriageOption",
             "ResolverInfo",
             "ResolverOutcome",
+            "MergeHold",
+            "MergeApproval",
+            "approvalSummary",
             "ResolvingItem",
             "TriageItem",
             "SourceRef",
@@ -3448,6 +3467,9 @@
             "fallbackPhrase",
             "heuristicSeverity",
             "orderItems",
+            "CONFLICT_MERGE_LABEL",
+            "conflictPhrase",
+            "prConflicting",
             "buildItem",
             "withAskOpus",
             "triageDigest"
@@ -5286,10 +5308,11 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 288,
+          "lines": 332,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
+            "PR_READY_TTL_MS",
             "JEV_MIN_CONF",
             "LiveTriageOpts",
             "actionTurn",
@@ -8165,7 +8188,8 @@
         "ResolvingItem": {
           "module": "lib/triage.ts",
           "callers": [
-            "lib/triage-engine.ts"
+            "lib/triage-engine.ts",
+            "wiring/triage.ts"
           ]
         },
         "TriageItem": {
@@ -8232,6 +8256,12 @@
         },
         "parseTs": {
           "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/triage-sources.ts"
+          ]
+        },
+        "MergeHold": {
+          "module": "lib/triage.ts",
           "callers": [
             "lib/triage-sources.ts"
           ]
@@ -11015,6 +11045,42 @@
         },
         "ownsTrips": {
           "module": "wiring/trips.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "PrReadiness": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "prReadiness": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "holdReason": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "ApprovedPr": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "approvalSummary": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "prApprovals": {
+          "module": "lib/triage-sources.ts",
           "callers": [
             "wiring/triage.ts"
           ]

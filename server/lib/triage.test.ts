@@ -4,9 +4,9 @@ import { createInvestigationStore } from "./body-investigate"
 import type { DispatchTask } from "./dispatch-tasks"
 import type { Task } from "./orchestrator-chat"
 import {
-  type SourceItem, type TriageItem, allowedActions, buildItem, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
+  type SourceItem, type TriageItem, CONFLICT_MERGE_LABEL, allowedActions, approvalSummary, buildItem, conflictPhrase, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
 } from "./triage"
-import { NEEDS_HUMAN, PR_SAFETY_NET_MS, bodyComponentUrl, bodySources, parsePrUrl, prSources, proposalSource, taskSources } from "./triage-sources"
+import { APPROVAL_TTL_MS, APPROVED_MERGE, NEEDS_HUMAN, PR_SAFETY_NET_MS, bodyComponentUrl, bodySources, parsePrUrl, prApprovals, prSources, proposalSource, taskSources } from "./triage-sources"
 
 // Pure triage: collection per source, phrasing validation + fallback,
 // severity heuristics, ordering. No sqlite-bound module (the investigation
@@ -205,5 +205,68 @@ describe("severity + ordering", () => {
     const item = buildItem(blockedSrc(), fallbackPhrase(blockedSrc()), "urgent")
     expect(triageDigest([])).toBeNull()
     expect(triageDigest([item, { ...item, id: "x", severity: "normal" }])).toStartWith("Triage: 2 items wait for Jeremie (1 urgent)")
+  })
+})
+
+describe("merge intent (2026-10-05)", () => {
+  const URL = "https://github.com/jaubut/tls-dashboard-v2/pull/164"
+  const task = { id: "t164", text: "Quotes out of the books: safe to merge", updated_at: ts(NOW - 60_000), created_at: ts(NOW - 60_000), dispatch_status: "completed", dispatch_blocker: "", dispatch_pr_url: URL, note_title: "Dashboard" }
+  const act = (id: number, action: string, meta: Record<string, unknown> = {}, at = NOW - 500) => ({ id, target_id: "t164", action, meta: JSON.stringify({ url: URL, ...meta }), ts: ts(at) })
+  const approve = (id: number, at: number, reason = "conflict") => act(id, APPROVED_MERGE, { approvedHeadSha: "abc", approvedAt: new Date(at).toISOString(), reason, by: "jeremie" }, at)
+
+  test("a live approval newer than the park: no card, one approved row with the reason", () => {
+    const rows = { tasks: [task], activity: [act(1, NEEDS_HUMAN, { reason: "touches books" }), approve(2, NOW - 1000)] }
+    expect(prSources(rows, NOW)).toEqual([])
+    expect(prApprovals(rows, NOW)).toEqual([{
+      id: "pr:jaubut/tls-dashboard-v2#164", taskId: "t164", url: URL, title: task.text, project: "Dashboard",
+      reason: "conflict", approvedAt: NOW - 1000, approvedHeadSha: "abc",
+    }])
+  })
+
+  test("shepherd activity after the approval (fix attempts) keeps it approved, not a card", () => {
+    const rows = { tasks: [task], activity: [act(1, NEEDS_HUMAN), approve(2, NOW - 1000), act(3, "pr:fix-attempt", { kind: "conflict" })] }
+    expect(prSources(rows, NOW)).toEqual([])
+    expect(prApprovals(rows, NOW)).toHaveLength(1)
+  })
+
+  test("re-parked after the approval (changed after your approval): the card is back, no approved row", () => {
+    const rows = { tasks: [task], activity: [act(1, NEEDS_HUMAN), approve(2, NOW - 2000), act(3, NEEDS_HUMAN, { reason: "changed after your approval: src/x.ts" })] }
+    expect(prSources(rows, NOW).map((i) => i.facts.reason)).toEqual(["changed after your approval: src/x.ts"])
+    expect(prApprovals(rows, NOW)).toEqual([])
+  })
+
+  test("an approval older than 7 days: the park holds again, the card says the approval expired", () => {
+    const old = NOW - APPROVAL_TTL_MS - 60_000
+    const rows = { tasks: [task], activity: [act(1, NEEDS_HUMAN, { reason: "touches books" }, old - 1000), approve(2, old)] }
+    expect(prApprovals(rows, NOW)).toEqual([])
+    const items = prSources(rows, NOW)
+    expect(items).toHaveLength(1)
+    expect(items[0]!.facts.reason).toBe("Your merge approval expired (7 days). touches books")
+  })
+
+  test("merged by the shepherd (outcome after the approval): neither a card nor a row", () => {
+    const rows = { tasks: [task], activity: [act(1, NEEDS_HUMAN), approve(2, NOW - 1000), act(3, "outcome:merged")] }
+    expect(prSources(rows, NOW)).toEqual([])
+    expect(prApprovals(rows, NOW)).toEqual([])
+  })
+
+  test("a conflicting PR's card: headline and merge option say so, whatever the phrasing said", () => {
+    const rows = { tasks: [task], activity: [act(1, NEEDS_HUMAN, { reason: "touches books" })] }
+    const src = prSources(rows, NOW)[0]!
+    const phrase = { ...fallbackPhrase(src), title: "Quotes out of the books: safe to merge", action: "Merge it: safe to merge." }
+    const plain = buildItem(src, phrase, "normal")
+    expect(plain.title).toBe("Quotes out of the books: safe to merge")
+    const item = buildItem({ ...src, facts: { ...src.facts, mergeable: "CONFLICTING" } }, phrase, "normal")
+    expect(item.title).toBe("Quotes out of the books: merge after the conflict fix")
+    expect(item.action).toBe("Merge it: merge after the conflict fix.")
+    expect(item.problem.startsWith("GitHub reports a merge conflict")).toBe(true)
+    expect(item.options.find((o) => o.action.kind === "merge")!.label).toBe(CONFLICT_MERGE_LABEL)
+    expect(conflictPhrase({ ...phrase, title: "Ship it" }).title).toBe("Ship it — conflicting now")
+  })
+
+  test("approvalSummary", () => {
+    expect(approvalSummary("conflict")).toBe("Approved — merging once the conflict clears")
+    expect(approvalSummary("ci_pending")).toBe("Approved — merging once pending CI clears")
+    expect(approvalSummary(null)).toBe("Approved — merging on the PR shepherd's next pass")
   })
 })

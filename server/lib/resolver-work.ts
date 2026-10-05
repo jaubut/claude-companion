@@ -180,6 +180,12 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     if (res.kind === "stale") return { kind: "resolved", action: "stale", summary: `already moved${res.reason ? ` (${res.reason})` : ""}`, outcome: "no_change" }
     if (res.kind === "error") return tried(job, out, ctx, a, res.error)
     seams.attempt?.(src, a.kind, null)
+    if (res.kind === "queued") {
+      // Merge intent: GitHub could not merge yet; the approval is recorded and the PR shepherd lands it.
+      const summary = `Opus approved the merge; it lands once ${String(res.detail.reason ?? "GitHub allows it").replace("_", " ")} clears`
+      await seams.record(src, `resolver:${a.kind}`, summary, meta(job, out, { reason: plan.reason, outcome: "done", queued: res.detail }))
+      return { kind: "resolved", action: a.kind, summary, outcome: "done" }
+    }
     const summary = a.kind === "answer" ? `Opus answered: ${clip(a.text, 160)}` : a.kind === "close_pr" ? `Opus closed the PR: ${clip(a.reason, 160)}`
       : a.kind === "reject" ? `Opus rejected it: ${clip(a.reason, 160)}` : `Opus ran ${a.kind}: ${clip(out.summary, 150)}`
     if (a.kind === "reject") seams.turn(src, `🤖 ${summary}`)
