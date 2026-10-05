@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { checkRepoMap, locateRepoMap, parseRepoMap, repoForNote, repoMapCandidates, repoMapCheckLine, resolveLiveCwd } from "./live-repo"
+import {
+  type HostProbe, XCODE_LIVE_REASON, checkRepoMap, fixRepoHere, hostCan, localRepoFor, locateRepoMap, parseRepoMap, parseRequires, repoForNote,
+  repoMapCandidates, repoMapCheckLine, resolveLiveCwd, resolveLiveCwdWhy,
+} from "./live-repo"
 import { detectPrUrl, detectResultRef } from "./dispatch-tasks"
 
 // Live-mode cwd resolution (P4): dispatch-run.ts's REPO_MAP read as text.
@@ -136,5 +139,128 @@ describe("worker output detection", () => {
     expect(detectResultRef(text)).toBe("RES-CD34")
     expect(detectPrUrl("no pr")).toBeNull()
     expect(detectResultRef("PRJ-WCLS only")).toBeNull()
+  })
+})
+
+// claude-config `requires: ["xcode"]` (2026-10-05): the iOS apps run code only on a host with Xcode.
+const XCODE_MAP_TS = `
+export interface RepoEntry { name: string; match: RegExp; path: string; project: string; requires?: Capability[] }
+
+export function buildRepoMap(home: string = homedir()): RepoEntry[] {
+  return [
+    { name: "tls-dashboard-v2", match: /dashboard|PRJ-WCLS|tls-dashboard/i, path: \`\${home}/tls-dashboard-v2\`, project: "PRJ-WCLS" },
+    { name: "companion-ios", match: /companion-ios|companion-rich-feed/i, path: \`\${home}/apps/claude companion\`, project: "projects/2026-09-30-companion-ios-vault", requires: ["xcode"] },
+    { name: "claude-companion", match: /companion-orchestrator|claude-companion/i, path: \`\${home}/claude-companion\`, project: "PRJ-OR1T" },
+    { name: "tls-viewer-ios", match: /tls-viewer-ios|ndi-wireless/i, path: \`\${home}/apps/NDI WIRELESS\`, project: "PRJ-94TA", requires: ["xcode"] },
+    { name: "tls-viewer-ios", match: /tls-viewer-ios|ndi-wireless/i, path: \`\${home}/lanes/ndi-wireless\`, project: "PRJ-94TA", requires: ["xcode"], },
+  ];
+}
+`
+
+const LINUX: HostProbe = { platform: "linux", hasBin: () => true }
+const MAC: HostProbe = { platform: "darwin", hasBin: (b) => b === "xcodebuild" }
+const MAC_NO_XCODE: HostProbe = { platform: "darwin", hasBin: () => false }
+
+describe("repo-map requires (xcode)", () => {
+  test("parser reads requires; entries without it parse as before; old formats still parse", () => {
+    const map = parseRepoMap(XCODE_MAP_TS, "/h")
+    expect(map.map((e) => [e.name, e.requires ?? null])).toEqual([
+      ["tls-dashboard-v2", null], ["companion-ios", ["xcode"]], ["claude-companion", null], ["tls-viewer-ios", ["xcode"]], ["tls-viewer-ios", ["xcode"]],
+    ])
+    expect(map[3]).toMatchObject({ path: "/h/apps/NDI WIRELESS", project: "PRJ-94TA" })
+    expect(parseRepoMap(REPO_MAP_TS, "/h")).toHaveLength(6)
+    expect(parseRepoMap(REPO_MAP_TS, "/h").every((e) => e.requires === undefined)).toBe(true)
+    expect(parseRepoMap(SOURCE, "/h")).toHaveLength(3)
+  })
+
+  test("tolerant: platform darwin, unknown fields, requires without project / before project, single quotes", () => {
+    const src = [
+      '{ name: "a", match: /a/i, path: `${home}/a`, project: "P", platform: "darwin" }',
+      '{ name: "b", match: /b/i, path: `${home}/b`, project: "P", future: true, requires: ["XCODE"] }',
+      '{ match: /c/i, path: `${HOME}/c`, requires: [\'xcode\'] }',
+      '{ name: "d", match: /d/i, path: `${home}/d`, requires: ["xcode"], project: "PD" }',
+      '{ name: "e", match: /e/i, path: `${home}/e`, project: "P", requires: [] }',
+    ].join("\n")
+    const map = parseRepoMap(src, "/h")
+    expect(map.map((e) => [e.name ?? "-", e.requires ?? null, e.project ?? null])).toEqual([
+      ["a", ["xcode"], "P"], ["b", ["xcode"], "P"], ["-", ["xcode"], null], ["d", ["xcode"], "PD"], ["e", null, "P"],
+    ])
+    expect(parseRequires("")).toEqual([])
+  })
+
+  test("hostCan: darwin + xcodebuild only; no requires → any host", () => {
+    expect(hostCan({ requires: ["xcode"] }, MAC)).toBe(true)
+    expect(hostCan({ requires: ["xcode"] }, MAC_NO_XCODE)).toBe(false)
+    expect(hostCan({ requires: ["xcode"] }, LINUX)).toBe(false)
+    expect(hostCan({ requires: ["gpu"] }, MAC)).toBe(false) // unknown capability is never assumed
+    expect(hostCan({}, LINUX)).toBe(true)
+    expect(hostCan(null, LINUX)).toBe(true)
+  })
+})
+
+describe("Xcode repo on a host without Xcode", () => {
+  function fixture() {
+    const home = mkdtempSync(join(tmpdir(), "cc-xcode-"))
+    for (const d of ["lanes/ndi-wireless", "tls-dashboard-v2", "claude-companion"]) mkdirSync(join(home, d), { recursive: true })
+    const file = join(home, "repo-map.ts")
+    writeFileSync(file, XCODE_MAP_TS)
+    const saved = { home: process.env.HOME, map: process.env.COMPANION_REPO_MAP }
+    process.env.HOME = home
+    process.env.COMPANION_REPO_MAP = file
+    const restore = () => {
+      process.env.HOME = saved.home
+      if (saved.map === undefined) delete process.env.COMPANION_REPO_MAP
+      else process.env.COMPANION_REPO_MAP = saved.map
+    }
+    return { home, file, restore }
+  }
+  const origins = (home: string) => async (_cmd: string, args: string[]) => {
+    const dir = args[1] ?? ""
+    const url = dir.endsWith("ndi-wireless") ? "https://github.com/jaubut/NDI-WIRELESS.git" : `https://github.com/jaubut/${dir.slice(home.length + 1)}.git`
+    return { ok: true, out: `${url}\n`, err: "", code: 0 }
+  }
+
+  test("localRepoFor: linux skips the clone (→ the caller forwards to the Mac); darwin with Xcode finds it", async () => {
+    const f = fixture()
+    try {
+      const sh = origins(f.home) as never
+      expect(await localRepoFor("jaubut/NDI-WIRELESS", "projects/ndi-wireless x", sh, LINUX)).toBeNull()
+      expect(await localRepoFor("jaubut/NDI-WIRELESS", "projects/ndi-wireless x", sh, MAC_NO_XCODE)).toBeNull()
+      expect(await localRepoFor("jaubut/NDI-WIRELESS", "projects/ndi-wireless x", sh, MAC)).toBe(join(f.home, "lanes", "ndi-wireless"))
+      expect(await localRepoFor("jaubut/tls-dashboard-v2", "", sh, LINUX)).toBe(join(f.home, "tls-dashboard-v2"))
+    } finally {
+      f.restore()
+    }
+  })
+
+  test("fixRepoHere: the seam's local checkout only where the repo can be built", () => {
+    const f = fixture()
+    try {
+      const clone = join(f.home, "lanes", "ndi-wireless")
+      expect(fixRepoHere(clone, LINUX)).toBeNull()
+      expect(fixRepoHere(`${clone}/`, LINUX)).toBeNull()
+      expect(fixRepoHere(clone, MAC)).toBe(clone)
+      expect(fixRepoHere(join(f.home, "tls-dashboard-v2"), LINUX)).toBe(join(f.home, "tls-dashboard-v2"))
+      expect(fixRepoHere(null, MAC)).toBeNull()
+    } finally {
+      f.restore()
+    }
+  })
+
+  test("live cwd: Xcode note / explicit path / fallback cwd on linux → no_cwd with the reason; darwin → the clone", () => {
+    const f = fixture()
+    try {
+      const clone = join(f.home, "lanes", "ndi-wireless")
+      const other = join(f.home, "claude-companion")
+      expect(resolveLiveCwdWhy({ noteId: "projects/ndi-wireless", noteTitle: "NDI", channelCwd: other }, LINUX)).toEqual({ cwd: null, reason: XCODE_LIVE_REASON })
+      expect(resolveLiveCwdWhy({ explicit: clone }, LINUX)).toEqual({ cwd: null, reason: XCODE_LIVE_REASON })
+      expect(resolveLiveCwdWhy({ noteId: "projects/misc", noteTitle: "Misc", taskCwd: clone }, LINUX)).toEqual({ cwd: null, reason: XCODE_LIVE_REASON })
+      expect(resolveLiveCwdWhy({ noteId: "projects/misc", noteTitle: "Misc", taskCwd: clone, channelCwd: other }, LINUX)).toEqual({ cwd: other, reason: null })
+      expect(resolveLiveCwd({ noteId: "projects/ndi-wireless", noteTitle: "NDI" }, MAC)).toBe(clone)
+      expect(resolveLiveCwdWhy({ noteId: "projects/d", noteTitle: "TLS Dashboard" }, LINUX)).toEqual({ cwd: join(f.home, "tls-dashboard-v2"), reason: null })
+      expect(resolveLiveCwdWhy({ noteId: "projects/misc", noteTitle: "Misc" }, LINUX)).toEqual({ cwd: null, reason: null })
+    } finally {
+      f.restore()
+    }
   })
 })

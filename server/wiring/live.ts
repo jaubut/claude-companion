@@ -9,7 +9,7 @@ import {
   DEFAULT_AGENT, type DispatchTask, type LiveOutcome, type WriteOutcome, claimLive, detectPrUrl, detectResultRef,
   finishLive, getDispatchTask, getNote, isLiveLinked, listLiveOwned, liveOwner, newDispatchId, resolveAgent,
 } from "../lib/dispatch-tasks"
-import { resolveLiveCwd } from "../lib/live-repo"
+import { resolveLiveCwdWhy } from "../lib/live-repo"
 import { TursoUnreachable } from "../lib/turso"
 import { capturePane, sessionCmdArgv } from "../lib/tmux-pane"
 import { WIP_CAP, emitTask, executeDispatch, onLiveWorkerDead, orchEmit, writeCtx } from "./orchestrator"
@@ -137,8 +137,8 @@ export async function approveLive(taskId: string, opts: LiveOpts = {}, dispatch:
       return unreachable(err)
     }
     if (!note) return fail(404, "no such note")
-    const cwd = resolveLiveCwd({ explicit: opts.cwd, noteId, noteTitle: note.title, taskCwd: task.cwd, channelCwd: channel?.cwd })
-    if (!cwd) return fail(422, "no_cwd")
+    const { cwd, reason } = resolveLiveCwdWhy({ explicit: opts.cwd, noteId, noteTitle: note.title, taskCwd: task.cwd, channelCwd: channel?.cwd })
+    if (!cwd) return fail(422, "no_cwd", reason ? { reason } : undefined)
     const id = stampDispatchId(task.taskId, newDispatchId())
     if (!id || !setLiveTarget(task.taskId, { cwd, noteId, agent })) return replayOf(getTask(task.taskId)) ?? fail(409, "not proposable")
     const claimed = await claim(dispatch, task.threadId, {
@@ -171,8 +171,8 @@ export async function dispatchLive(
       return unreachable(err)
     }
     if (!note) return fail(404, "no such note")
-    const cwd = resolveLiveCwd({ explicit: input.cwd, noteId, noteTitle: note.title, channelCwd: channel?.cwd })
-    if (!cwd) return fail(422, "no_cwd")
+    const { cwd, reason } = resolveLiveCwdWhy({ explicit: input.cwd, noteId, noteTitle: note.title, channelCwd: channel?.cwd })
+    if (!cwd) return fail(422, "no_cwd", reason ? { reason } : undefined)
     const id = newDispatchId()
     const title = (input.title?.trim() || input.prompt.split("\n")[0]!).slice(0, 120)
     const claimed = await claim(dispatch, input.channelId, {

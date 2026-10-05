@@ -1570,23 +1570,37 @@
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 140,
+          "lines": 251,
           "kind": "lib",
           "exports": [
             "RepoEntry",
             "repoMapCandidates",
             "locateRepoMap",
             "readRepoMapSource",
+            "parseRequires",
             "parseRepoMap",
+            "HostProbe",
+            "realHost",
+            "setHostProbe",
+            "hostHas",
+            "hostCan",
+            "pathBlockedHere",
+            "noteBlockedHere",
+            "XCODE_LIVE_REASON",
+            "fixRepoHere",
             "RepoMapCheck",
             "checkRepoMap",
             "repoMapCheckLine",
             "isDir",
             "repoForNote",
+            "LiveCwdInput",
+            "resolveLiveCwdWhy",
             "resolveLiveCwd",
             "localRepoFor"
           ],
-          "state": [],
+          "state": [
+            "let probe"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -5216,7 +5230,7 @@
         },
         {
           "path": "wiring/resolver.ts",
-          "lines": 344,
+          "lines": 346,
           "kind": "lib",
           "exports": [
             "RESOLVER_ALLOWED",
@@ -10560,7 +10574,7 @@
             "wiring/live.ts"
           ]
         },
-        "resolveLiveCwd": {
+        "resolveLiveCwdWhy": {
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/live.ts"
@@ -10893,6 +10907,12 @@
         },
         "bodyReportApplier": {
           "module": "wiring/body-investigate.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "fixRepoHere": {
+          "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver.ts"
           ]

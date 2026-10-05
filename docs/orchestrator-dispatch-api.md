@@ -164,7 +164,9 @@ Opt-in: `approve {mode:"live"}` or `POST /dispatch {mode:"live"}`. Default mode 
   `dispatch_task_id`. dispatch-run only picks `queued` rows and its stall reaper skips `companion:%`.
 - **cwd.** Body `cwd` (must be a directory on this host), else the note's repo from dispatch-run's
   `REPO_MAP` (read as text from `~/.claude/tools/dispatch-run.ts`, first existing path), else the
-  proposal's cwd, else the channel's. None → 422 `no_cwd`, nothing filed.
+  proposal's cwd, else the channel's. None → 422 `no_cwd`, nothing filed. An Xcode repo (REPO_MAP
+  `requires: ["xcode"]`: the note's repo, the explicit cwd or a fallback cwd) on a host without Xcode →
+  422 `no_cwd` with `reason: "Xcode repo — run live from the Mac"`.
 - **Errors.** 429 `{ok:false, error:"live_cap", cap, live}` when this host already runs `cap` live
   workers (`COMPANION_WIP_CAP`, default 3; headless filing is not capped) — nothing filed.
   422 `no_cwd` · 422 `no_project` · 400 `unknown_agent` · 404 `no such note` · 409 `conflict` (the

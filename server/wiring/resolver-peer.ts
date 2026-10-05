@@ -108,7 +108,7 @@ export async function fixOnPeer(f: PeerFixInput): Promise<FixOutcome | null> {
   if (has.kind === "unreachable") return { kind: "failed", error: `Mac unreachable (${has.reason})`, transient: true }
   if (has.kind === "refused") return { kind: "failed", error: `the Mac refused the checkout lookup (http ${has.status})` }
   if (has.kind === "no") return null
-  companionLog(`[resolver-peer] ${f.slug} not checked out here → fix run on the peer (${f.itemId}, attempt ${f.attempt})`)
+  companionLog(`[resolver-peer] ${f.slug} not checked out (or not buildable: Xcode) here → fix run on the peer (${f.itemId}, attempt ${f.attempt})`)
   return runFixOnPeer(peer, {
     itemId: f.itemId, prUrl: f.prUrl, branch: f.branch, instructions: f.instructions, model: f.model, timeoutMs: f.timeoutMs, attempt: f.attempt,
     base: f.base, title: f.title, taskText: f.taskText.slice(0, 4000),

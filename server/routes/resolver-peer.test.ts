@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtempSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { FixInput, FixOutcome } from "../lib/resolver-fix"
@@ -127,5 +127,36 @@ describe("the resolver's fix seam with no local checkout", () => {
     peerWiring.setResolverPeerDeps({ peer: () => null })
     expect(await seams().fix(pr(), ctx, "x", "m", 60_000, 1)).toMatchObject({ kind: "failed", error: expect.stringContaining("no local checkout") })
     expect(hops).toEqual([])
+  })
+})
+
+describe("Xcode repo (repo-map requires xcode) with a clone on a host without Xcode", () => {
+  test("linux + checkout present → still forwarded to the Mac peer, never run here", async () => {
+    const live = await import("../lib/live-repo")
+    const home = mkdtempSync(join(tmpdir(), "cc-xcode-fwd-"))
+    const clone = join(home, "lanes", "ndi-wireless")
+    mkdirSync(clone, { recursive: true })
+    const map = join(home, "repo-map.ts")
+    writeFileSync(map, `[\n  { name: "tls-viewer-ios", match: /ndi-wireless/i, path: \`\${home}/lanes/ndi-wireless\`, project: "PRJ-94TA", requires: ["xcode"] },\n]`)
+    const saved = { map: process.env.COMPANION_REPO_MAP, home: process.env.HOME }
+    process.env.COMPANION_REPO_MAP = map
+    process.env.HOME = home
+    live.setHostProbe({ platform: "linux", hasBin: () => true })
+    peerWiring.setResolverPeerDeps({ localRepo: async (slug) => (slug === "jaubut/NDI-WIRELESS" ? "/Users/me/apps/NDI WIRELESS" : null) })
+    try {
+      expect(live.fixRepoHere(clone)).toBeNull()
+      const out = await seams().fix(pr("jaubut/NDI-WIRELESS"), { ...ctx, repo: clone } as never, "Fix the build", "claude-opus-5-5", 60_000, 3)
+      expect(out).toEqual({ kind: "pushed", sha: "abc12345def", summary: "Fixed on the Mac" })
+      expect(runs).toHaveLength(1)
+      expect(runs[0]).toMatchObject({ repo: "/Users/me/apps/NDI WIRELESS", head: "dispatch/ab12" })
+      expect(hops.length).toBeGreaterThan(1)
+      // The Mac (darwin + xcodebuild) keeps the same clone as its local checkout.
+      expect(live.fixRepoHere(clone, { platform: "darwin", hasBin: (b) => b === "xcodebuild" })).toBe(clone)
+    } finally {
+      live.setHostProbe(null)
+      if (saved.map === undefined) delete process.env.COMPANION_REPO_MAP
+      else process.env.COMPANION_REPO_MAP = saved.map
+      process.env.HOME = saved.home
+    }
   })
 })
