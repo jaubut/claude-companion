@@ -9,10 +9,10 @@ import { runBrainCall } from "../lib/orchestrator-brain"
 import { appendTurn, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
 import { db } from "../lib/orchestrator-db"
-import { type Phrase, type Severity, type SourceItem, type TriageOption, clip, phrasePrompt } from "../lib/triage"
+import { type Phrase, type ResolvingItem, type Severity, type SourceItem, type TriageOption, approvalSummary, clip, phrasePrompt } from "../lib/triage"
 import { type ExecOutcome, type TriageEngine, type TriageResolverHook, createTriageEngine } from "../lib/triage-engine"
-import { type GhFn, closePr, mergePr, realGh } from "../lib/triage-pr"
-import { type BodyLookup, bodySources, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
+import { type GhFn, type PrReadiness, closePr, holdReason, mergePr, prReadiness, realGh } from "../lib/triage-pr"
+import { type ApprovedPr, type BodyLookup, bodySources, prApprovals, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
 import { type TriageStore, createTriageStore } from "../lib/triage-store"
 import type { TripTriage } from "../lib/trip-triage"
 import { HOST_INFO, broadcast as wsBroadcast } from "../state"
@@ -30,6 +30,8 @@ import { ownsTrips, tripsLive } from "./trips"
 // severity; every option executed through the existing guarded paths.
 
 export const PR_ROWS_TTL_MS = 60_000
+/** A PR card's mergeable state is re-read from GitHub at most this often (stale "safe to merge" cards). */
+export const PR_READY_TTL_MS = 2 * 60_000
 export const JEV_MIN_CONF = 0.7
 const TRIAGE_MODEL = process.env.COMPANION_TRIAGE_MODEL || "sonnet"
 
@@ -106,11 +108,44 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   const now = opts.now ?? Date.now
   const trips = opts.trips !== undefined ? opts.trips : ownsTrips() && process.env.NODE_ENV !== "test" ? tripsLive().triage : null
   let prCache: { at: number; items: SourceItem[] } | null = null
+  let approved: ResolvingItem[] = []
+  const readyCache = new Map<string, { at: number; ready: PrReadiness | null }>()
+
+  async function readyOf(url: string): Promise<PrReadiness | null> {
+    const hit = readyCache.get(url)
+    if (hit && now() - hit.at < PR_READY_TTL_MS) return hit.ready
+    const ready = await prReadiness(gh, url).catch(() => null)
+    readyCache.set(url, { at: now(), ready })
+    return ready
+  }
+
+  /** The card carries GitHub's mergeable state now (facts only: the item version does not move). */
+  async function withReadiness(src: SourceItem): Promise<SourceItem> {
+    if (src.ref.source !== "pr") return src
+    const ready = await readyOf(src.ref.prUrl)
+    if (!ready) return src
+    const hold = holdReason(ready)
+    const mergeable = hold === "conflict" ? "CONFLICTING" : ready.mergeable
+    return { ...src, facts: { ...src.facts, ...(mergeable ? { mergeable } : {}), ...(ready.checks !== "none" ? { checks: ready.checks } : {}) } }
+  }
+
+  async function approvedRow(a: ApprovedPr): Promise<ResolvingItem> {
+    const ready = await readyOf(a.url)
+    const reason = ready ? holdReason(ready) : a.reason
+    const summary = approvalSummary(reason)
+    return {
+      id: a.id, source: "pr", title: clip(`${summary} · ${a.title}`, 120), project: a.project,
+      resolver: { status: "queued", summary, model: "pr-shepherd", finishedAt: null },
+      approval: { state: "approved_pending", reason, approvedAt: a.approvedAt, approvedHeadSha: a.approvedHeadSha },
+    }
+  }
 
   async function prItems(fresh = false): Promise<SourceItem[]> {
     if (!fresh && prCache && now() - prCache.at < PR_ROWS_TTL_MS) return prCache.items
     try {
-      const items = prSources(await queryPrRows(dispatch.query, await dispatch.columns()), now())
+      const rows = await queryPrRows(dispatch.query, await dispatch.columns())
+      const items = await Promise.all(prSources(rows, now()).map(withReadiness))
+      approved = await Promise.all(prApprovals(rows, now()).map(approvedRow))
       prCache = { at: now(), items }
       return items
     } catch (err) {
@@ -210,6 +245,14 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     const target = { taskId: src.ref.taskId, prUrl: src.ref.prUrl, number: src.ref.number }
     const deps = { gh, exec: dispatch.exec, host: HOST_INFO.name }
     const out = kind === "merge" ? await mergePr(deps, target) : await closePr(deps, target)
+    if (out.kind === "queued") {
+      prCache = null
+      readyCache.delete(target.prUrl)
+      const cached = dispatch.cached(target.taskId)
+      const channelId = cached ? dispatch.threadIdFor(cached) : "general"
+      const reason = (out.detail.reason as Parameters<typeof approvalSummary>[0]) ?? null
+      orchEmit(appendTurn("orchestrator", `${by === "Opus" ? "🤖 Opus " : ""}approved the merge of ${src.ref.repo}#${target.number} (${by}) — ${approvalSummary(reason).replace(/^Approved — /, "")}\n${target.prUrl}`, target.taskId, channelId))
+    }
     if (out.kind === "done") {
       prCache = null
       const cached = dispatch.cached(target.taskId)
@@ -252,6 +295,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   engine = createTriageEngine({
     collect, current, phrase, execute, store, resolver,
     severity: opts.severity ?? jevSeverity,
+    pending: () => approved,
     broadcast: opts.broadcast ?? wsBroadcast,
     now, log: companionLog,
   })

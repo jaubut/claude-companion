@@ -49,6 +49,24 @@ export interface ResolverInfo {
 
 export type ResolverOutcome = "done" | "failed" | "no_change" | "planned"
 
+/** Why an approved merge waits (lib/triage-pr.ts holdReason); null = GitHub would merge it now. */
+export type MergeHold = "conflict" | "behind" | "ci_pending" | "ci_failing"
+
+/** Jeremie tapped Merge; the PR shepherd lands it once GitHub can merge it (merge intent, 2026-10-05). */
+export interface MergeApproval {
+  state: "approved_pending"
+  reason: MergeHold | null
+  approvedAt: number
+  approvedHeadSha: string
+}
+
+const HOLD_TEXT: Record<MergeHold, string> = { conflict: "the conflict", behind: "the branch update", ci_pending: "pending CI", ci_failing: "the CI failure" }
+
+/** The line an approved, not yet merged PR shows under "Opus is on it". */
+export function approvalSummary(reason: MergeHold | null): string {
+  return reason ? `Approved — merging once ${HOLD_TEXT[reason]} clears` : "Approved — merging on the PR shepherd's next pass"
+}
+
 /** An item Opus is working on right now: not in `items`, listed for the compact "Opus is on it" line. */
 export interface ResolvingItem {
   id: string
@@ -56,6 +74,8 @@ export interface ResolvingItem {
   title: string
   project: string | null
   resolver: ResolverInfo
+  /** Set on an approved merge waiting for GitHub (not an Opus run). */
+  approval?: MergeApproval
 }
 
 export interface TriageItem {
@@ -398,7 +418,27 @@ export function orderItems(items: TriageItem[]): TriageItem[] {
   return [...items].sort((a, b) => RANK[a.severity] - RANK[b.severity] || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
 }
 
-export function buildItem(src: SourceItem, phrase: Phrase, severity: Severity, resolver?: ResolverInfo): TriageItem {
+export const CONFLICT_MERGE_LABEL = "Approve — merge after the conflict fix"
+const SAFE_TO_MERGE = /safe to merge/gi
+
+/**
+ * A PR card whose PR conflicts NOW (re-read from GitHub, src.facts.mergeable): the headline and the
+ * merge option say so, whatever an older phrasing ("safe to merge") said.
+ */
+export function conflictPhrase(p: Phrase): Phrase {
+  const fix = (t: string) => t.replace(SAFE_TO_MERGE, "merge after the conflict fix")
+  const title = /safe to merge/i.test(p.title) ? fix(p.title) : `${p.title} — conflicting now`
+  const problem = /conflict/i.test(p.problem) ? p.problem : `GitHub reports a merge conflict with the base branch now. ${p.problem}`
+  const options = p.options.map((o): TriageOption => o.action.kind === "merge"
+    ? { ...o, label: CONFLICT_MERGE_LABEL, detail: "The conflict gets fixed first, then it merges on its own" }
+    : { ...o, label: fix(o.label), ...(o.detail ? { detail: fix(o.detail) } : {}) })
+  return { ...p, title: clip(title, TITLE_MAX), problem: clip(problem, PROBLEM_MAX), action: clip(fix(p.action), ACTION_MAX), options }
+}
+
+export const prConflicting = (src: SourceItem): boolean => src.ref.source === "pr" && src.facts.mergeable === "CONFLICTING"
+
+export function buildItem(src: SourceItem, given: Phrase, severity: Severity, resolver?: ResolverInfo): TriageItem {
+  const phrase = prConflicting(src) ? conflictPhrase(given) : given
   return {
     id: itemId(src.source, src.refId), source: src.source, refId: src.refId, title: phrase.title, project: src.project,
     severity, problem: phrase.problem, action: phrase.action, recommended: phrase.recommended, options: phrase.options,

@@ -60,6 +60,7 @@ type TriageAction =
   header `Idempotency-Key`. Performs the mapped action through the EXISTING guarded
   functions (unblock/requeue/cancel/approve/reject; merge/close via `gh`).
   → `{ ok: true, id, result: "done" | "replay", next?: TriageItem | null }`
+  (`202 { ok: true, id, result: "queued", next, detail }` added 2026-10-05 — see "Merge intent")
   Errors: 404 no such item · 409 stale (underlying state moved; item refreshed) ·
   422 `text_required` (answer_custom without text) · 503 turso/gh unreachable.
 - WS frame `{ type: "orchestrator_triage", items: TriageItem[], resolving: ResolvingItem[], generatedAt }` on any change.
@@ -125,7 +126,8 @@ text, options = answer_custom / requeue / cancel).
   `body`: the component's latest investigation `failed`, ≥ 2 consecutive failures, no
   proposal, nothing open, and the component not healthy again.
 - **merge / close_pr.** `gh pr view <url> --json state` must read `OPEN` first (else 409
-  stale); `gh pr merge <url> --squash` / `gh pr close <url>`; then the state must read
+  stale); merge then reads GitHub's readiness (see "Merge intent": not mergeable now → 202
+  `queued`, no `gh pr merge`); `gh pr merge <url> --squash` / `gh pr close <url>`; then the state must read
   `MERGED` / `CLOSED`. Merge then sets the task `done=1` (guarded) and ledgers
   `outcome:merged "PR #n merged"`; close ledgers `outcome:rejected "PR #n closed unmerged"`
   (dispatch-reconcile's wording).
@@ -136,6 +138,56 @@ text, options = answer_custom / requeue / cancel).
   `COMPANION_TRIAGE_JEV=0` off), else heuristics (Body critical/high → urgent; words like
   prod / down / client / invoice / payment / deadline / security → urgent; failed task and
   safety-net PR → low).
+
+<a id="merge-intent"></a>
+## Merge intent (2026-10-05 — additive)
+
+Incident 2026-10-05 02:26: Jeremie tapped Merge on a sensitive PR whose card was prepared when it was
+mergeable; meanwhile other merges made it CONFLICTING, `gh pr merge` failed (`502 merge_unverified`), the card
+stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land THIS PR**:
+
+- **choose `merge`.** After the `OPEN` check the server reads
+  `gh pr view <url> --json mergeable,mergeStateStatus,headRefOid,statusCheckRollup`.
+  `MERGEABLE` (or not reported) and checks green / none → merge now, exactly as before (`200 done`).
+  Otherwise the reason is, first match wins: `conflict` (`CONFLICTING` / `DIRTY`) · `ci_failing` (a check
+  failed) · `ci_pending` (a check is running) · `behind` (`BEHIND`). No `gh pr merge` runs; the approval is
+  recorded in Turso and the answer is
+
+  ```json
+  202 { "ok": true, "id": "pr:…", "result": "queued", "next": TriageItem | null,
+        "detail": { "state": "approved_pending", "reason": "conflict" | "behind" | "ci_pending" | "ci_failing",
+                    "approvedHeadSha": "<sha>" } }
+  ```
+
+  A `gh pr merge` that GitHub refuses and that is followed by one of those reasons is also answered `202
+  queued` (the approval recorded); any other refusal is still `502 merge_unverified`. Stored under the
+  Idempotency-Key like a success (a replay answers `200 result: "replay"` with the same `detail`).
+- **The approval row** (the PR shepherd honours it — claude-config `tools/pr-shepherd-approval.ts`):
+  `agent_activity` `action = 'pr:approved-merge'`, `target_kind = 'task'`, `target_id` = the dispatch task id
+  (an orphan PR: `target_kind = 'pr'`, `target_id` = the PR URL, as the shepherd's park rows), `meta =
+  { repo, pr, url, approvedHeadSha, approvedAt (ISO), by: "jeremie", via: "triage" | "cli", reason?, host }`.
+  The same row comes from `bun ~/.claude/tools/pr-shepherd.ts --approve <repo>#<n>`.
+- **The card leaves `items`.** A PR whose newest `pr:approved-merge` is newer than its newest `pr:needs-human`
+  and younger than 7 days is not a card; it is listed in `resolving[]` (the "Opus is on it" line) with
+  `resolver.status: "queued"`, `resolver.model: "pr-shepherd"`, `title` = `"Approved — merging once the conflict
+  clears · <PR title>"` (reason text: the conflict · the branch update · pending CI · the CI failure; GitHub
+  green now → `"Approved — merging on the PR shepherd's next pass"`) and the additive field
+  `approval: { state: "approved_pending", reason: … | null, approvedAt: ms, approvedHeadSha }` (reason re-read
+  from GitHub, ≤ 2 min old). It disappears when the shepherd merges (`outcome:merged`). The card comes back
+  when the shepherd parks the PR again (e.g. "changed after your approval: <files>") or the approval expires
+  (problem prefixed "Your merge approval expired (7 days).").
+- **Stale cards.** A PR card's mergeable state is re-read from GitHub when the item list is built (cached ≤ 2
+  min; the item `version` does not move, so a choose is not `409 stale` because of it). CONFLICTING now → the
+  title's "safe to merge" becomes "merge after the conflict fix" (else " — conflicting now" is appended), the
+  problem starts "GitHub reports a merge conflict with the base branch now.", and the merge option reads
+  **"Approve — merge after the conflict fix"** (it may exceed the 32-char label cap).
+- **Logs.** Every choose writes one line, success or not:
+  `[triage] choose <item id> option=<id> → <action kind> · <HTTP status> result=<done|queued|replay>|error=<code> [reason=<hold>]`.
+- **iOS.** A 202 with `ok: true` is already a success (`OrchestratorActionPolicy.classify`: any 2xx without
+  `ok: false` → `.done`): the card is removed and the next frame shows the row. Nice to have (separate PR): toast
+  from `result == "queued"` + `detail.reason` ("Approved · merges once the conflict clears") instead of the
+  merge's "Merge started", and show `approval` / `resolver.summary` on the row (today's row shows `title` +
+  `project` only, which is why the title carries the line).
 
 ## Source `trip` (travel log, 2026-10-04 — additive)
 

@@ -223,3 +223,56 @@ describe("choose", () => {
     expect(e.items().map((i) => i.id)).toEqual(["task:f1"])
   })
 })
+
+describe("merge intent: queued outcome, pending rows, one log line per choose", () => {
+  const pr = (id: string): SourceItem => ({
+    source: "pr", refId: id, version: "v1", title: `PR ${id}`, project: "Dash", createdAt: 5, updatedAt: 5,
+    facts: { reason: "touches books" }, url: `https://github.com/o/r/pull/${id}`, ref: { source: "pr", taskId: `t${id}`, prUrl: `https://github.com/o/r/pull/${id}`, repo: "o/r", number: 1 },
+  })
+
+  test("a queued execute → 202 { result: queued, detail }, logged with its status", async () => {
+    const logs: string[] = []
+    sources = [pr("1")]
+    execOut = { kind: "queued", detail: { state: "approved_pending", reason: "conflict" } }
+    const e = createTriageEngine({
+      collect: async () => sources, phrase: async () => null, current: async (s) => s,
+      execute: async () => execOut, store: createTriageStore(new Database(":memory:")), broadcast: () => {}, now: () => clock, log: (m) => logs.push(m),
+    })
+    await e.refresh()
+    const item = e.items()[0]!
+    const merge = item.options.find((o) => o.action.kind === "merge")!
+    const r = await e.choose({ id: item.id, optionId: merge.id })
+    expect(r).toMatchObject({ status: 202, body: { ok: true, id: item.id, result: "queued", detail: { state: "approved_pending", reason: "conflict" } } })
+    expect(logs).toContain(`[triage] choose ${item.id} option=${merge.id} → merge · 202 result=queued reason=conflict`)
+  })
+
+  test("refusals and errors are logged too (status + code)", async () => {
+    const logs: string[] = []
+    sources = [pr("2")]
+    execOut = { kind: "error", status: 502, error: "merge_unverified" }
+    const e = createTriageEngine({
+      collect: async () => sources, phrase: async () => null, current: async (s) => s,
+      execute: async () => execOut, store: createTriageStore(new Database(":memory:")), broadcast: () => {}, now: () => clock, log: (m) => logs.push(m),
+    })
+    await e.refresh()
+    const item = e.items()[0]!
+    const merge = item.options.find((o) => o.action.kind === "merge")!
+    expect((await e.choose({ id: item.id, optionId: merge.id })).status).toBe(502)
+    expect(logs).toContain(`[triage] choose ${item.id} option=${merge.id} → merge · 502 error=merge_unverified`)
+    await e.choose({ id: "pr:nope", optionId: "a" })
+    expect(logs.at(-1)).toBe("[triage] choose pr:nope option=a → ? · 404 error=no_such_item")
+  })
+
+  test("pending rows join `resolving` after the resolver's, never twice and never next to a card", async () => {
+    sources = [pr("3")]
+    const row = (id: string) => ({ id, source: "pr" as const, title: "Approved — merging once the conflict clears · x", project: "Dash", resolver: { status: "queued" as const, summary: "Approved", model: "pr-shepherd", finishedAt: null } })
+    const e = createTriageEngine({
+      collect: async () => sources, phrase: async () => null, current: async (s) => s,
+      execute: async () => execOut, store: createTriageStore(new Database(":memory:")), broadcast: (f) => frames.push(f), now: () => clock,
+      pending: () => [row("pr:9"), row("pr:3")],
+    })
+    await e.refresh()
+    expect(e.resolving().map((r) => r.id)).toEqual(["pr:9"])
+    expect(frames.at(-1)).toMatchObject({ resolving: [{ id: "pr:9" }] })
+  })
+})
