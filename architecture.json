@@ -315,8 +315,36 @@
           "externals": []
         },
         {
+          "path": "lib/auto-compact-transcript.ts",
+          "lines": 219,
+          "kind": "lib",
+          "exports": [
+            "BG_MAX_AGE_MS",
+            "Entry",
+            "parseLines",
+            "entryTime",
+            "isBoundary",
+            "contextTokens",
+            "contextSettled",
+            "CompactBoundary",
+            "compactBoundaries",
+            "BackgroundScan",
+            "openBackgroundTasks",
+            "lastHumanPromptAt"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/auto-compact.ts",
-          "lines": 587,
+          "lines": 482,
           "kind": "lib",
           "exports": [
             "IDLE_MS",
@@ -325,18 +353,11 @@
             "TYPING_POLL_MS",
             "BOUNDARY_POLL_MS",
             "BOUNDARY_WAIT_MS",
-            "BG_MAX_AGE_MS",
             "TAIL_START_BYTES",
             "TAIL_MAX_BYTES",
+            "SCAN_CHUNK_BYTES",
             "COMPACT_TEXT",
             "thresholdFromEnv",
-            "Entry",
-            "parseLines",
-            "contextTokens",
-            "CompactBoundary",
-            "compactBoundaries",
-            "openBackgroundTasks",
-            "lastHumanPromptAt",
             "InputState",
             "GateInput",
             "GateReason",
@@ -354,7 +375,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/auto-compact-transcript.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -5997,6 +6020,78 @@
             "lib/question-hook.ts",
             "routes/api.ts#* /api/feed",
             "ws.ts"
+          ]
+        },
+        "Entry": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "contextTokens": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "contextSettled": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "CompactBoundary": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "compactBoundaries": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "BackgroundScan": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "parseLines": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "entryTime": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "isBoundary": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "lastHumanPromptAt": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "BG_MAX_AGE_MS": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "openBackgroundTasks": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
           ]
         },
         "isLearned": {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   AutoCompactor,
   type AutoCompactDeps,
+  BackgroundScan,
   CANCEL_MS,
   COMPACT_TEXT,
   BG_MAX_AGE_MS,
@@ -9,6 +10,7 @@ import {
   type GateInput,
   IDLE_MS,
   type InputState,
+  SCAN_CHUNK_BYTES,
   TAIL_START_BYTES,
   compactBoundaries,
   compactGate as gate,
@@ -94,6 +96,12 @@ describe("transcript parsing", () => {
     expect(openBackgroundTasks(lines(bgLaunch("toolu_a", old), bgResult("toolu_a", "x")))).toEqual([])
     expect(openBackgroundTasks(lines(bgLaunch("toolu_a", fresh), bgResult("toolu_a", "x")))).toEqual(["x"])
   })
+  test("a launch with no timestamp ages from when it was scanned", () => {
+    const scan = new BackgroundScan()
+    scan.feed(parseLines(lines(bgLaunch("toolu_a"), bgResult("toolu_a", "x"))), NOW)
+    expect(scan.open(NOW + BG_MAX_AGE_MS)).toEqual(["x"])
+    expect(scan.open(NOW + BG_MAX_AGE_MS + 1)).toEqual([])
+  })
   test("last human prompt ignores tool results and task notifications", () => {
     const t = lines(userPrompt("do it", "2026-10-05T10:00:00Z"), bgResult("toolu_a", "x"), userPrompt("<task-notification>…</task-notification>", "2026-10-05T11:00:00Z"))
     expect(lastHumanPromptAt(t)).toBe(Date.parse("2026-10-05T10:00:00Z"))
@@ -169,7 +177,7 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
     log: (l) => logs.push(l),
   }
   const c = new AutoCompactor(deps)
-  const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
+  const flush = async () => { for (let i = 0; i < 500; i++) await Promise.resolve() }
   async function advance(ms: number): Promise<void> {
     const end = now + ms
     for (;;) {
@@ -364,5 +372,69 @@ describe("AutoCompactor", () => {
     await h.advance(IDLE_MS + CANCEL_MS)
     expect(h.pushes.filter((p) => p.kind === "countdown").length).toBe(1)
     expect(h.injects.length).toBe(1)
+  })
+
+  // A young (< BG_MAX_AGE_MS), boundary-less session far bigger than the tail
+  // cap: launches anywhere in it are seen, and nothing is parsed twice.
+  const filler = JSON.stringify({ type: "user", timestamp: "2026-10-05T11:30:00Z", message: { content: [{ type: "tool_result", tool_use_id: "toolu_f", content: "x".repeat(10_000) }] } })
+  const HUGE = Array.from({ length: 2_000 }, () => filler) // ~20 MB
+
+  test("huge young session with no launches is compacted (not refused as background_tasks)", async () => {
+    const h = harness({ transcript: lines(OLD_PROMPT, ...HUGE, assistant(1, 650_000, 0)) })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    expect(h.reads.every(([a, b]) => b - a <= SCAN_CHUNK_BYTES * 16)).toBe(true)
+  })
+
+  test("a launch at the top of a huge session still blocks", async () => {
+    const h = harness({ transcript: lines(OLD_PROMPT, bgLaunch("toolu_a"), bgResult("toolu_a", "b1"), ...HUGE, assistant(1, 650_000, 0)) })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS * 2)
+    expect(h.injects).toEqual([])
+    expect(h.logs.some((l) => l.includes("background_tasks"))).toBe(true)
+  })
+
+  test("the background scan reads only bytes appended since the last check", async () => {
+    const h = harness({ transcript: lines(OLD_PROMPT, ...HUGE, assistant(1, 650_000, 0)) })
+    await h.c.onStop(h.target)
+    await h.advance(0) // evaluate: full scan
+    const scanned = Buffer.byteLength(h.state.transcript)
+    h.state.transcript += lines(assistant(1, 650_100, 0))
+    h.reads.length = 0
+    await h.advance(CANCEL_MS) // fire: tail + appended bytes only
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    expect(h.reads).toContainEqual([scanned, Buffer.byteLength(h.state.transcript)])
+    expect(h.reads.every(([a]) => a >= Buffer.byteLength(h.state.transcript) - TAIL_START_BYTES || a >= scanned)).toBe(true)
+  })
+
+  test("tail windows grow without re-reading parsed bytes", async () => {
+    const h = harness({ transcript: lines(OLD_PROMPT, assistant(1, 650_000, 0), ...Array.from({ length: 200 }, () => filler)) })
+    await h.c.onStop(h.target)
+    const size = Buffer.byteLength(h.state.transcript)
+    expect(h.reads[0]).toEqual([size - TAIL_START_BYTES, size])
+    for (let i = 1; i < h.reads.length; i++) expect(h.reads[i]![1]).toBeLessThanOrEqual(h.reads[i - 1]![0] + 20_000)
+    expect(h.c.status().map((s) => s.tokens)).toEqual([650_001])
+  })
+
+  test("a transcript rewritten shorter with the new boundary still completes", async () => {
+    const h = harness({ transcript: BIG + lines(...HUGE.slice(0, 50)) })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    const at = new Date(h.nowAt()).toISOString()
+    const fresh = JSON.stringify({ type: "system", subtype: "compact_boundary", uuid: "b2", timestamp: at, compactMetadata: { trigger: "manual", preTokens: 650_001, postTokens: 30_000 } })
+    h.state.transcript = lines(boundary(900_000, 20_000, "old"), fresh)
+    await h.advance(15_000)
+    expect(h.pushes[1]).toEqual({ kind: "done", title: "compacted wt: 650k -> 30k tokens" })
+  })
+
+  test("a rewritten transcript holding only the old boundary does not complete", async () => {
+    const h = harness({ transcript: BIG + lines(...HUGE.slice(0, 50)) })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    h.state.transcript = lines(boundary(900_000, 20_000, "old"))
+    await h.advance(15_000 * 2)
+    expect(h.pushes.map((p) => p.kind)).toEqual(["countdown"])
   })
 })

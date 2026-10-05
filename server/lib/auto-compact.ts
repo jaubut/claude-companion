@@ -16,13 +16,27 @@
 // cancels it. A per-session cooldown starts at the countdown push, so a
 // cancel also holds the next attempt off for COOLDOWN_MS.
 //
-// Transcripts of >600k sessions are tens of MB: nothing here reads or parses a
-// whole file. Checks read a growing tail window (TAIL_START_BYTES ×4 up to
-// TAIL_MAX_BYTES) and parse it once; the boundary watch reads only the bytes
-// appended since its last poll.
+// Transcripts of >600k sessions are tens of MB: no check parses a whole file
+// in one go. Context size reads a growing tail window (TAIL_START_BYTES ×4 up
+// to TAIL_MAX_BYTES), each byte parsed once. Background tasks are tracked by an
+// incremental per-session scan: the first gate check walks the file forward in
+// SCAN_CHUNK_BYTES reads (async I/O between chunks), later ones only the bytes
+// appended since. The boundary watch reads only the bytes appended since its
+// last poll (a rewritten, shorter file is rescanned from the top).
 //
-// Pure gating + transcript parsing here; the real deps (tmux, APNs, Claude's
+// Gating + controller here; transcript parsing in lib/auto-compact-transcript.ts;
+// the real deps (tmux, APNs, Claude's
 // session file) are wired in wiring/auto-compact.ts.
+
+import {
+  BackgroundScan, type CompactBoundary, type Entry, compactBoundaries, contextSettled, contextTokens,
+  entryTime, isBoundary, lastHumanPromptAt, parseLines,
+} from "./auto-compact-transcript"
+
+export {
+  BG_MAX_AGE_MS, BackgroundScan, type CompactBoundary, type Entry, compactBoundaries, contextTokens,
+  lastHumanPromptAt, openBackgroundTasks, parseLines,
+} from "./auto-compact-transcript"
 
 export const IDLE_MS = 3 * 60_000
 export const CANCEL_MS = 60_000
@@ -30,216 +44,15 @@ export const COOLDOWN_MS = 30 * 60_000
 export const TYPING_POLL_MS = 20_000
 export const BOUNDARY_POLL_MS = 15_000
 export const BOUNDARY_WAIT_MS = 15 * 60_000
-// A background launch older than this no longer blocks (its end may have left
-// no trace we recognise).
-export const BG_MAX_AGE_MS = 2 * 60 * 60_000
 export const TAIL_START_BYTES = 256 * 1024
 export const TAIL_MAX_BYTES = 16 * 1024 * 1024
+export const SCAN_CHUNK_BYTES = 1024 * 1024
 export const COMPACT_TEXT = "/compact keep: current task, open PRs/branches, decisions made, next steps"
 
 // AUTO_COMPACT_TOKENS: unset/blank/garbage/0/negative → off (0). Opt-in only.
 export function thresholdFromEnv(env: Record<string, string | undefined> = process.env): number {
   const n = Number((env.AUTO_COMPACT_TOKENS ?? "").trim())
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
-}
-
-// ── Transcript parsing ────────────────────────────────────────────────────
-
-export type Entry = Record<string, unknown>
-
-export function parseLines(text: string): Entry[] {
-  const out: Entry[] = []
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue
-    try {
-      const e = JSON.parse(line) as unknown
-      if (e && typeof e === "object") out.push(e as Entry)
-    } catch { /* partial / corrupt line */ }
-  }
-  return out
-}
-
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0
-}
-
-function entryTime(e: Entry): number {
-  const t = typeof e.timestamp === "string" ? Date.parse(e.timestamp) : NaN
-  return Number.isFinite(t) ? t : NaN
-}
-
-function isBoundary(e: Entry): boolean {
-  return e.type === "system" && e.subtype === "compact_boundary"
-}
-
-function usageTotal(e: Entry): number {
-  const msg = e.message as Entry | undefined
-  const u = msg?.usage as Entry | undefined
-  if (!u) return 0
-  return num(u.input_tokens) + num(u.cache_read_input_tokens) + num(u.cache_creation_input_tokens)
-}
-
-// Context size = the last main-chain assistant turn's prompt size. Sidechain
-// (subagent) entries and synthetic zero-usage messages are skipped. Nothing
-// after the latest compact_boundary → the post-compact size is unknown → null.
-export function contextTokens(entries: Entry[]): number | null {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i]!
-    if (isBoundary(e)) return null
-    if (e.type !== "assistant" || e.isSidechain === true) continue
-    const total = usageTotal(e)
-    if (total > 0) return total
-  }
-  return null
-}
-
-// True when `entries` alone settle contextTokens (a usage turn or a boundary
-// is in the window) — the tail need not grow.
-function contextSettled(entries: Entry[]): boolean {
-  return contextTokens(entries) !== null || entries.some(isBoundary)
-}
-
-export interface CompactBoundary {
-  uuid: string
-  timestamp: string
-  preTokens: number
-  postTokens: number
-  trigger: string
-}
-
-export function compactBoundaries(entries: Entry[]): CompactBoundary[] {
-  const out: CompactBoundary[] = []
-  for (const e of entries) {
-    if (!isBoundary(e)) continue
-    const meta = (e.compactMetadata ?? {}) as Entry
-    out.push({
-      uuid: typeof e.uuid === "string" ? e.uuid : "",
-      timestamp: typeof e.timestamp === "string" ? e.timestamp : "",
-      preTokens: num(meta.preTokens),
-      postTokens: num(meta.postTokens),
-      trigger: typeof meta.trigger === "string" ? meta.trigger : "",
-    })
-  }
-  return out
-}
-
-const NOTIFY_TOOL_USE_RE = /<task-notification>[\s\S]*?<tool-use-id>(toolu_[A-Za-z0-9_-]+)<\/tool-use-id>/g
-const LAUNCH_ID_RE = /(?:with ID|agentId|task_id|shell_id)[:=]\s*"?([A-Za-z0-9_-]+)/i
-const STOP_TOOL_RE = /^(KillShell|KillBash|TaskStop)$/
-// Claude Code's success text: "Successfully stopped task: <id> (…)" /
-// "Successfully killed shell: <id>".
-const STOP_OK_RE = /\bsuccessfully (stopped|killed)\b/i
-
-function contentBlocks(e: Entry): Entry[] {
-  const c = (e.message as Entry | undefined)?.content
-  return Array.isArray(c) ? (c as Entry[]) : []
-}
-
-function blockText(b: Entry): string {
-  if (typeof b.text === "string") return b.text
-  if (typeof b.content === "string") return b.content
-  if (Array.isArray(b.content)) {
-    return (b.content as Entry[]).map((x) => (typeof x.text === "string" ? x.text : "")).join("\n")
-  }
-  return ""
-}
-
-// Every string a <task-notification> can sit in: a queue-operation's
-// content, a user message's string content or its text / tool_result blocks.
-function entryTexts(e: Entry): string[] {
-  const out: string[] = []
-  if (typeof e.content === "string") out.push(e.content)
-  const c = (e.message as Entry | undefined)?.content
-  if (typeof c === "string") out.push(c)
-  for (const b of contentBlocks(e)) out.push(blockText(b))
-  return out
-}
-
-// Entries after the latest compact_boundary — earlier history is summarised
-// away and must not keep a task "open" forever.
-function sinceLastBoundary(entries: Entry[]): Entry[] {
-  for (let i = entries.length - 1; i >= 0; i--) if (isBoundary(entries[i]!)) return entries.slice(i + 1)
-  return entries
-}
-
-// Background work Claude launched in this session (Bash / Agent with
-// run_in_background) that has not reported back. Only launches after the
-// latest compact_boundary and younger than BG_MAX_AGE_MS count. Done = a
-// <task-notification> naming its tool_use id, or a KillShell / TaskStop /
-// KillBash naming its task id whose result CONFIRMS the stop (not is_error,
-// "Successfully stopped/killed"). Unknown shapes err towards "running" — the
-// cost is a skipped compaction, never a compaction under a live agent.
-export function openBackgroundTasks(entries: Entry[], now: number): string[] {
-  const launched = new Map<string, string>() // tool_use id → task id ("" until the result names it)
-  const stopCalls = new Map<string, string>() // stop tool_use id → task id it targets
-  const doneToolUse = new Set<string>()
-  const stoppedTask = new Set<string>()
-  for (const e of sinceLastBoundary(entries)) {
-    for (const t of entryTexts(e)) {
-      if (t.includes("<task-notification>")) for (const m of t.matchAll(NOTIFY_TOOL_USE_RE)) doneToolUse.add(m[1]!)
-    }
-    if (e.isSidechain === true) continue
-    const t = entryTime(e)
-    const tooOld = Number.isFinite(t) && now - t > BG_MAX_AGE_MS
-    for (const b of contentBlocks(e)) {
-      if (b.type === "tool_use" && typeof b.id === "string") {
-        const input = (b.input ?? {}) as Entry
-        if (input.run_in_background === true && !tooOld) launched.set(b.id, "")
-        if (STOP_TOOL_RE.test(typeof b.name === "string" ? b.name : "")) {
-          const k = ["shell_id", "task_id", "bash_id", "id"].find((x) => typeof input[x] === "string")
-          if (k) stopCalls.set(b.id, input[k] as string)
-        }
-      } else if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
-        if (launched.has(b.tool_use_id)) {
-          const m = blockText(b).match(LAUNCH_ID_RE)
-          if (m) launched.set(b.tool_use_id, m[1]!)
-        }
-        const target = stopCalls.get(b.tool_use_id)
-        if (target && b.is_error !== true && STOP_OK_RE.test(blockText(b))) stoppedTask.add(target)
-      }
-    }
-  }
-  const open: string[] = []
-  for (const [toolUse, taskId] of launched) {
-    if (doneToolUse.has(toolUse)) continue
-    if (taskId && stoppedTask.has(taskId)) continue
-    open.push(taskId || toolUse)
-  }
-  return open
-}
-
-// True when the window holds everything openBackgroundTasks needs: the latest
-// boundary, or an entry older than BG_MAX_AGE_MS (launches before it are aged
-// out anyway).
-function backgroundSettled(entries: Entry[], now: number): boolean {
-  return entries.some((e) => isBoundary(e) || now - entryTime(e) > BG_MAX_AGE_MS)
-}
-
-function isHumanPrompt(e: Entry): boolean {
-  if (e.type !== "user" || e.isSidechain === true || e.isMeta === true) return false
-  const c = (e.message as Entry | undefined)?.content
-  if (typeof c === "string") return !c.includes("<task-notification>")
-  if (!Array.isArray(c)) return false
-  return (c as Entry[]).some((b) => b.type === "text" && typeof b.text === "string" && !b.text.includes("<task-notification>"))
-}
-
-// Last human prompt's time (ms) — the idle-window fallback when the server
-// restarted and missed the UserPromptSubmit hook. `fromStart` = the entries
-// begin at the top of the file; otherwise a prompt-less tail window means the
-// prompt predates it, so its first timestamp is a safe (late) bound.
-export function lastHumanPromptAt(entries: Entry[], fromStart = true): number {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i]!
-    if (!isHumanPrompt(e)) continue
-    const t = entryTime(e)
-    return Number.isFinite(t) ? t : 0
-  }
-  if (fromStart) return 0
-  for (const e of entries) {
-    const t = entryTime(e)
-    if (Number.isFinite(t)) return t
-  }
-  return 0
 }
 
 // ── Gate ──────────────────────────────────────────────────────────────────
@@ -321,13 +134,23 @@ interface Pending {
   typingTimer: unknown
   tokens: number
   offset: number // transcript bytes already scanned by the boundary watch
+  injectedAt: number
+  // 0, or (after the file was rewritten and rescanned from the top) the inject
+  // time: boundaries older than it are pre-inject history, not our result.
+  minBoundaryAt: number
   boundaryDeadline: number
 }
 
 interface Tail {
   entries: Entry[]
   fromStart: boolean
-  settled: boolean // `enough` held (or the window reached the top of the file)
+}
+
+interface BgState {
+  path: string
+  offset: number // bytes fed to `scan` (always at a line start)
+  scan: BackgroundScan
+  running: Promise<BackgroundScan | null> | null
 }
 
 export interface AutoCompactStatus {
@@ -347,6 +170,7 @@ export class AutoCompactor {
   private pending = new Map<string, Pending>()
   private lastActivity = new Map<string, number>()
   private lastAttempt = new Map<string, number>()
+  private bg = new Map<string, BgState>()
 
   constructor(private deps: AutoCompactDeps) {}
 
@@ -375,6 +199,7 @@ export class AutoCompactor {
     const p = this.pending.get(key)
     if (p) this.clear(key, p)
     this.lastActivity.delete(key)
+    this.bg.delete(key)
   }
 
   async onStop(target: CompactTarget): Promise<void> {
@@ -398,7 +223,7 @@ export class AutoCompactor {
     const wait = Math.max(0, activity + IDLE_MS - now)
     const p: Pending = {
       phase: "scheduled", target, tokens, timer: null, typingTimer: null,
-      offset: 0, boundaryDeadline: 0,
+      offset: 0, injectedAt: 0, minBoundaryAt: 0, boundaryDeadline: 0,
     }
     this.pending.set(target.key, p)
     p.timer = this.deps.setTimer(() => { void this.evaluate(target.key, p) }, wait)
@@ -417,32 +242,91 @@ export class AutoCompactor {
     return Math.max(this.lastActivity.get(key) ?? 0, lastHumanPromptAt(tail.entries, tail.fromStart))
   }
 
-  // Parse the transcript's last bytes once: start at TAIL_START_BYTES and grow
-  // ×4 until `enough(entries)` or TAIL_MAX_BYTES. The first (cut) line of a
-  // window is dropped; a half-written last line fails to parse and is skipped.
+  // Parse the transcript's last bytes: start at TAIL_START_BYTES and grow ×4
+  // until `enough(entries)` or TAIL_MAX_BYTES. Each step reads and parses only
+  // the bytes in front of what is already parsed. The first (cut) line of a
+  // window is left for the next step; a half-written last line fails to parse
+  // and is skipped.
   private async readTail(path: string, enough: (entries: Entry[]) => boolean): Promise<Tail | null> {
     const size = await this.deps.transcriptSize(path)
     if (size === null) return null
+    let entries: Entry[] = []
+    let end = size // bytes [end, size) are parsed; `end` is a line start
     for (let n = TAIL_START_BYTES; ; n *= 4) {
       const start = Math.max(0, size - n)
-      const text = await this.deps.readTranscript(path, start, size)
-      if (text === null) return null
-      const entries = parseLines(start === 0 ? text : text.slice(text.indexOf("\n") + 1))
+      if (start < end) {
+        const text = await this.deps.readTranscript(path, start, end)
+        if (text === null) return null
+        let body = text
+        if (start > 0) {
+          const i = text.indexOf("\n")
+          body = i < 0 ? "" : text.slice(i + 1) // one line longer than the window: grow
+        }
+        // The suffix after a newline decodes cleanly, so its byte length is exact.
+        end = start === 0 ? 0 : end - Buffer.byteLength(body, "utf8")
+        entries = parseLines(body).concat(entries)
+      }
       const fromStart = start === 0
-      if (fromStart || enough(entries)) return { entries, fromStart, settled: true }
-      if (n >= TAIL_MAX_BYTES) return { entries, fromStart, settled: false }
+      if (fromStart || enough(entries) || n >= TAIL_MAX_BYTES) return { entries, fromStart }
     }
   }
 
+  // Complete lines in [from, to) in SCAN_CHUNK_BYTES reads, each chunk parsed
+  // once and handed to `fn`. Returns the offset after the last complete line
+  // (a half-written last line is left for the next call), null if unreadable.
+  private async forEachChunk(path: string, from: number, to: number, fn: (entries: Entry[]) => void): Promise<number | null> {
+    let offset = from
+    let chunk = SCAN_CHUNK_BYTES
+    while (offset < to) {
+      const end = Math.min(to, offset + chunk)
+      const text = await this.deps.readTranscript(path, offset, end)
+      if (text === null) return null
+      const cut = text.lastIndexOf("\n")
+      if (cut < 0) {
+        if (end >= to) break
+        chunk *= 2 // a single line longer than the chunk
+        continue
+      }
+      const complete = text.slice(0, cut + 1)
+      offset += Buffer.byteLength(complete, "utf8")
+      chunk = SCAN_CHUNK_BYTES
+      fn(parseLines(complete))
+    }
+    return offset
+  }
+
+  // Bring the session's BackgroundScan up to the transcript's current end.
+  private scanBackground(key: string, path: string): Promise<BackgroundScan | null> {
+    let st = this.bg.get(key)
+    if (!st || st.path !== path) {
+      st = { path, offset: 0, scan: new BackgroundScan(), running: null }
+      this.bg.set(key, st)
+    }
+    if (st.running) return st.running
+    const s = st
+    s.running = (async () => {
+      const size = await this.deps.transcriptSize(path)
+      if (size === null) return null
+      if (size < s.offset) { s.offset = 0; s.scan = new BackgroundScan() } // rewritten → rescan
+      const offset = await this.forEachChunk(path, s.offset, size, (es) => s.scan.feed(es, this.deps.now()))
+      if (offset === null) return null
+      s.offset = offset
+      return s.scan
+    })().finally(() => { s.running = null })
+    return s.running
+  }
+
   private async currentGate(key: string, p: Pending): Promise<{ verdict: GateVerdict; tokens: number | null }> {
-    const now = this.deps.now()
-    const tail = await this.readTail(p.target.transcriptPath, (es) => contextSettled(es) && backgroundSettled(es, now))
+    const [tail, scan] = await Promise.all([
+      this.readTail(p.target.transcriptPath, contextSettled),
+      this.scanBackground(key, p.target.transcriptPath),
+    ])
     if (!tail) return { verdict: { ok: false, reason: "below_threshold" }, tokens: null }
+    const now = this.deps.now()
     const tokens = contextTokens(tail.entries)
-    // Window capped before it covered the background-task horizon: launches
-    // may hide above it — refuse rather than compact under a live task.
-    const backgroundTasks = tail.settled ? openBackgroundTasks(tail.entries, now).length : 1
-    if (!tail.settled) this.deps.log(`auto-compact ${p.target.name}: tail window capped at ${TAIL_MAX_BYTES >> 20}MB — background tasks unknown`)
+    // Unreadable history: launches may hide in it — refuse rather than compact
+    // under a live task.
+    const backgroundTasks = scan ? scan.open(now).length : 1
     const [agentStatus, input] = await Promise.all([this.deps.agentStatus(key), this.deps.inputState(key)])
     const verdict = compactGate({
       threshold: this.deps.threshold(),
@@ -499,6 +383,7 @@ export class AutoCompactor {
       return
     }
     p.offset = offset
+    p.injectedAt = this.deps.now()
     p.phase = "injecting"
     this.stopTypingWatch(p)
     const res = await this.deps.inject(key, COMPACT_TEXT)
@@ -518,10 +403,10 @@ export class AutoCompactor {
     if (this.pending.get(key) !== p) return
     const fresh = await this.readAppended(p)
     if (this.pending.get(key) !== p) return
-    const b = compactBoundaries(fresh).pop()
+    const b = fresh.boundary
     if (b) {
       const pre = b.preTokens || p.tokens
-      const post = b.postTokens || contextTokens(fresh) || 0
+      const post = b.postTokens || fresh.post || 0
       this.deps.log(`auto-compact ${p.target.name}: compact_boundary ${formatTokens(pre)} -> ${formatTokens(post)}`)
       this.clear(key, p)
       void this.deps.push("done", p.target, `compacted ${p.target.name}: ${formatTokens(pre)} -> ${formatTokens(post)} tokens`, "Context compacted between tasks.")
@@ -538,19 +423,29 @@ export class AutoCompactor {
     p.timer = this.deps.setTimer(() => { void this.checkBoundary(key, p) }, BOUNDARY_POLL_MS)
   }
 
-  // Complete lines appended since p.offset; advances p.offset past them. A
-  // shrunk file (rewritten) restarts from its current end.
-  private async readAppended(p: Pending): Promise<Entry[]> {
-    const size = await this.deps.transcriptSize(p.target.transcriptPath)
-    if (size === null) return []
-    if (size < p.offset) { p.offset = size; return [] }
-    const start = p.offset
-    if (size === start) return []
-    const text = await this.deps.readTranscript(p.target.transcriptPath, start, size)
-    if (text === null) return []
-    const complete = text.slice(0, text.lastIndexOf("\n") + 1)
-    p.offset = start + Buffer.byteLength(complete, "utf8")
-    return parseLines(complete)
+  // The latest compact_boundary in the complete lines appended since p.offset
+  // (and the context size after it); advances p.offset past them. A shrunk
+  // (rewritten) file is rescanned from the top, keeping only boundaries
+  // stamped at or after the inject.
+  private async readAppended(p: Pending): Promise<{ boundary?: CompactBoundary; post: number | null }> {
+    const out: { boundary?: CompactBoundary; post: number | null } = { post: null }
+    const path = p.target.transcriptPath
+    const size = await this.deps.transcriptSize(path)
+    if (size === null) return out
+    if (size < p.offset) { p.offset = 0; p.minBoundaryAt = p.injectedAt }
+    const offset = await this.forEachChunk(path, p.offset, size, (es) => {
+      for (const e of es) {
+        if (isBoundary(e)) {
+          if (p.minBoundaryAt > 0 && !(entryTime(e) >= p.minBoundaryAt)) continue
+          out.boundary = compactBoundaries([e])[0]
+          out.post = null
+        } else if (out.boundary) {
+          out.post = contextTokens([e]) ?? out.post
+        }
+      }
+    })
+    if (offset !== null) p.offset = offset
+    return out
   }
 
   // Typing without submitting fires no hook; the pane is the only witness.
