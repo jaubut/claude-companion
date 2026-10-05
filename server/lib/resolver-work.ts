@@ -1,7 +1,7 @@
 import type { InvestigationResult } from "./body-investigate"
 import type { ReadonlyRun } from "./readonly-claude"
 import {
-  FIX_RUN_MS, type OutcomeNote, type Plan, type ResolverOutput, RESOLVER_CONTEXT_MAX, RETRY_PREFILL, RETRY_RE, cardSummary, decide,
+  FIX_RUN_MS, type OutcomeNote, type Plan, type ResolverOutput, RESOLVER_CONTEXT_MAX, RETRY_PREFILL, RETRY_RE, TRANSIENT_REASON, cardSummary, decide,
   outcomePhrase, parseResolverOutput, preparedPhrase,
 } from "./resolver"
 import type { Job, WorkResult } from "./resolver-engine"
@@ -27,7 +27,8 @@ export interface WorkSeams {
   /** The triage executor (the guarded paths), `by` names the actor in turns. */
   execute(src: SourceItem, action: TriageAction, by: string): Promise<ExecOutcome>
   comment(src: SourceItem, body: string): Promise<boolean>
-  fix(src: SourceItem, ctx: ResolverContext, instructions: string, model: string, timeoutMs: number): Promise<FixOutcome>
+  /** `attempt` = the resolver run id: the peer's idempotency key with the item id (a Mac-only repo runs on the Mac). */
+  fix(src: SourceItem, ctx: ResolverContext, instructions: string, model: string, timeoutMs: number, attempt?: number): Promise<FixOutcome>
   /** PR: hand it back to the shepherd (`pr:unpark`). */
   unpark(src: SourceItem, reason: string): Promise<void>
   /** Proposal: reject it and file the rescoped one (never resolved again); returns the new proposal id. */
@@ -121,6 +122,13 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     return prepared(job, out, ctx.sensitive, `${a.kind} failed: ${error}`, extra ?? [`Opus tried to ${a.kind} but it did not go through: ${error}`], "prepared", note)
   }
 
+  /** A fix that never ran for a passing reason (the Mac unreachable): a card, no loop-guard count; the engine re-queues it later. */
+  async function transient(job: Job, out: ResolverOutput, ctx: ResolverContext, a: Extract<Plan, { kind: "act" }>["action"], error: string): Promise<WorkResult> {
+    const retry = a.kind === "fix" ? `${RETRY_PREFILL} ${a.instructions}` : `Do it again (${a.kind})`
+    const note: OutcomeNote = { outcome: "failed", headline: `${VERB[a.kind] ?? a.kind} not run: ${clip(error, 140)}; Opus retries later`, retry }
+    return prepared(job, out, ctx.sensitive, `${TRANSIENT_REASON} ${a.kind}: ${error}`, [`Opus could not ${a.kind} yet: ${error}. It will try again later.`], "prepared", note)
+  }
+
   async function act(job: Job, out: ResolverOutput, plan: Extract<Plan, { kind: "act" }>, ctx: ResolverContext): Promise<WorkResult> {
     const src = job.src
     const a = plan.action
@@ -132,7 +140,8 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
         { outcome: "failed", headline: `Opus tried twice: ${clip(prior.error, 160)}`, gaveUp: true })
     }
     if (a.kind === "fix") {
-      const fx = await seams.fix(src, ctx, a.instructions, job.model, FIX_RUN_MS)
+      const fx = await seams.fix(src, ctx, a.instructions, job.model, FIX_RUN_MS, job.run.id)
+      if (fx.kind === "failed" && fx.transient) return transient(job, out, ctx, a, fx.error)
       if (fx.kind === "failed") return tried(job, out, ctx, a, fx.error)
       if (fx.kind === "blocked") return tried(job, out, ctx, a, `blocked: ${fx.reason}`, `Fix blocked: ${clip(fx.reason, 160)}`, [`The fix agent stopped: ${fx.reason}`])
       if (fx.kind === "no_changes") {

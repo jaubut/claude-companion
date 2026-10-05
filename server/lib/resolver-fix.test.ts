@@ -3,6 +3,7 @@ import { type FixInput, type ShFn, fixEnv, pushableBranch, runPrFix } from "./re
 
 // The PR fix run over a fake shell: worktree on the PR head, the builder run,
 // commit + push to the SAME branch (never forced, never main), cleanup always.
+// Real git (fetch / rebase / push races, the guards): resolver-fix-git.test.ts.
 
 let cmds: string[][]
 let reply: string
@@ -19,6 +20,7 @@ const sh: ShFn = async (cmd, args) => {
   cmds.push([cmd, ...args])
   const sub = args[2]
   if (cmd === "claude") return { ok: true, code: 0, out: JSON.stringify({ type: "result", result: reply }), err: "" }
+  if (sub === "rev-parse" && args[3] === "--verify") return { ok: true, code: 0, out: "start-sha\n", err: "" }
   if (sub === "rev-parse") return { ok: true, code: 0, out: cmds.some((c) => c.includes("commit")) ? headAfter : "start-sha", err: "" }
   if (sub === "status") return { ok: true, code: 0, out: dirty ? " M src/upload.ts\n" : "", err: "" }
   return { ok: true, code: 0, out: "", err: "" }
@@ -40,13 +42,13 @@ describe("runPrFix", () => {
     expect(out).toEqual({ kind: "pushed", sha: "new-sha-123", summary: "Injected the clock into the upload test." })
     const push = cmds.find((c) => c.includes("push"))!
     expect(push).toEqual(["git", "-C", "/tmp/opus-x/wt", "push", "origin", "HEAD:refs/heads/dispatch/ab12cd34"])
-    const forced = cmds.filter((c) => !(c.includes("worktree") && c.includes("remove"))).filter((c) => c.some((a) => a === "-f" || a.startsWith("--force")))
+    const forced = cmds.filter((c) => c[0] === "git").filter((c) => c.some((a) => a === "-f" || a.startsWith("--force")))
     expect(forced).toEqual([])
-    expect(cmds.find((c) => c.includes("add") && c.includes("--detach"))).toContain("origin/dispatch/ab12cd34")
+    expect(cmds.find((c) => c.includes("add") && c.includes("--detach"))).toContain("refs/remotes/origin/dispatch/ab12cd34")
     const claude = cmds.find((c) => c[0] === "claude")!
     expect(claude).toContain("--agent")
     expect(claude[claude.indexOf("--model") + 1]).toBe("claude-opus-5-5")
-    expect(cmds.at(-1)).toEqual(["git", "-C", "/repo", "worktree", "remove", "--force", "/tmp/opus-x/wt"])
+    expect(cmds.at(-1)).toEqual(["git", "-C", "/repo", "worktree", "prune"])
     expect(cleaned).toEqual(["/tmp/opus-x"])
   })
 
