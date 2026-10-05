@@ -79,7 +79,10 @@ export interface ApnsPayload {
   /** One-line context shown between title and body on iOS banners. */
   subtitle?: string
   body: string
-  category: "approval" | "question" | "waiting_input" | "briefing" | "body_alert" | "dispatch_task"
+  // auto_compact: userInfo.cancelPath for a future iOS "Cancel" action (not
+  // registered yet — a tap just opens the app; the push body says to type in
+  // the pane). Contract: docs/auto-compact-api.md.
+  category: "approval" | "question" | "waiting_input" | "briefing" | "body_alert" | "dispatch_task" | "auto_compact" | "auto_compact_done"
   /**
    * Overrides the category-derived level (approval/question → time-sensitive,
    * everything else → passive). `passive` = no sound, priority 5; `active` and

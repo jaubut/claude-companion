@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 98,
+          "lines": 99,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -66,6 +66,7 @@
             "routes/records.ts",
             "routes/capture.ts",
             "routes/trips.ts",
+            "routes/auto-compact.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -141,7 +142,7 @@
         },
         {
           "path": "lib/apns.ts",
-          "lines": 282,
+          "lines": 285,
           "kind": "lib",
           "exports": [
             "brokerConfigured",
@@ -309,6 +310,74 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/auto-compact-transcript.ts",
+          "lines": 219,
+          "kind": "lib",
+          "exports": [
+            "BG_MAX_AGE_MS",
+            "Entry",
+            "parseLines",
+            "entryTime",
+            "isBoundary",
+            "contextTokens",
+            "contextSettled",
+            "CompactBoundary",
+            "compactBoundaries",
+            "BackgroundScan",
+            "openBackgroundTasks",
+            "lastHumanPromptAt"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/auto-compact.ts",
+          "lines": 482,
+          "kind": "lib",
+          "exports": [
+            "IDLE_MS",
+            "CANCEL_MS",
+            "COOLDOWN_MS",
+            "TYPING_POLL_MS",
+            "BOUNDARY_POLL_MS",
+            "BOUNDARY_WAIT_MS",
+            "TAIL_START_BYTES",
+            "TAIL_MAX_BYTES",
+            "SCAN_CHUNK_BYTES",
+            "COMPACT_TEXT",
+            "thresholdFromEnv",
+            "InputState",
+            "GateInput",
+            "GateReason",
+            "GateVerdict",
+            "compactGate",
+            "CompactTarget",
+            "PushKind",
+            "AutoCompactDeps",
+            "AutoCompactStatus",
+            "formatTokens",
+            "AutoCompactor"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auto-compact-transcript.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4135,6 +4204,38 @@
           "externals": []
         },
         {
+          "path": "routes/auto-compact.ts",
+          "lines": 25,
+          "kind": "route-host",
+          "exports": [
+            "handleAutoCompactRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "GET",
+              "path": "/api/auto-compact",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/auto-compact/cancel",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auto-compact.ts",
+            "lib/log.ts",
+            "wiring/auto-compact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/body.ts",
           "lines": 138,
           "kind": "route-host",
@@ -4337,7 +4438,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 582,
+          "lines": 593,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -4421,7 +4522,8 @@
             "lib/orchestrator-chat.ts",
             "wiring/dispatch.ts",
             "lib/vault-guard.ts",
-            "lib/auth.ts"
+            "lib/auth.ts",
+            "wiring/auto-compact.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4743,6 +4845,35 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/auto-compact.ts",
+          "lines": 125,
+          "kind": "lib",
+          "exports": [
+            "realAutoCompactDeps",
+            "autoCompactor",
+            "compactTargetFor"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auto-compact.ts",
+            "lib/log.ts",
+            "lib/sessions.ts",
+            "lib/discover.ts",
+            "lib/inject-guard.ts",
+            "lib/submit-confirm.ts",
+            "lib/apns.ts",
+            "lib/push.ts",
+            "wiring/dialogs.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -5581,6 +5712,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleAutoCompactRoute": {
+          "module": "routes/auto-compact.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleBodyRoute": {
           "module": "routes/body.ts",
           "callers": [
@@ -5707,6 +5844,7 @@
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts",
             "wiring/events.ts",
             "wiring/orchestrator.ts",
             "wiring/waiting.ts"
@@ -5736,6 +5874,12 @@
             "lib/activity.ts",
             "lib/codex-feed.ts",
             "lib/transcript.ts"
+          ]
+        },
+        "identityFor": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
           ]
         },
         "verbFor": {
@@ -5847,6 +5991,7 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/feed",
             "routes/attach.ts",
+            "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/body.ts#POST /api/body/alert",
             "routes/capture.ts",
             "routes/command.ts",
@@ -5866,6 +6011,7 @@
             "routes/records.ts",
             "routes/trips.ts",
             "routes/vault.ts",
+            "wiring/auto-compact.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -5923,6 +6069,78 @@
             "lib/question-hook.ts",
             "routes/api.ts#* /api/feed",
             "ws.ts"
+          ]
+        },
+        "Entry": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "contextTokens": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "contextSettled": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "CompactBoundary": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "compactBoundaries": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "BackgroundScan": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "parseLines": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "entryTime": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "isBoundary": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "lastHumanPromptAt": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "BG_MAX_AGE_MS": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "openBackgroundTasks": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
           ]
         },
         "isLearned": {
@@ -6160,6 +6378,13 @@
             "wiring/body.ts"
           ]
         },
+        "BASE_DISALLOWED": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/body-investigator.ts",
+            "lib/quick-look.ts"
+          ]
+        },
         "readonlyArgs": {
           "module": "lib/readonly-claude.ts",
           "callers": [
@@ -6373,6 +6598,15 @@
           "module": "lib/command-offpane.ts",
           "callers": [
             "lib/command-offpane-cache.ts"
+          ]
+        },
+        "tmuxArgv": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/command-offpane-launch.ts",
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/spawn-session.ts"
           ]
         },
         "helpTab": {
@@ -7151,6 +7385,7 @@
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#GET /api/push/tokens",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
@@ -7602,6 +7837,7 @@
             "routes/api.ts#POST /api/push/test",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
@@ -7770,6 +8006,12 @@
             "lib/resolver-fix-guard.ts"
           ]
         },
+        "conflictPolicyLines": {
+          "module": "lib/resolver-fix-policy.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
         "GitFn": {
           "module": "lib/resolver-fix-guard.ts",
           "callers": [
@@ -7778,6 +8020,12 @@
         },
         "guardFixRange": {
           "module": "lib/resolver-fix-guard.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
+        "fixDisallowed": {
+          "module": "lib/resolver-fix-policy.ts",
           "callers": [
             "lib/resolver-fix.ts"
           ]
@@ -7801,6 +8049,12 @@
           "callers": [
             "lib/resolver-prompt.ts",
             "lib/resolver.ts"
+          ]
+        },
+        "allowedActions": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-prompt.ts"
           ]
         },
         "resolverActions": {
@@ -7922,6 +8176,14 @@
             "lib/resolver-work.ts"
           ]
         },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts"
+          ]
+        },
         "buildResolverPrompt": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -7972,13 +8234,6 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
-          ]
-        },
-        "fallbackPhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver.ts",
-            "lib/triage-engine.ts"
           ]
         },
         "storePath": {
@@ -8089,6 +8344,12 @@
             "lib/spawn-session.ts"
           ]
         },
+        "spawnServerFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
         "spawnSocketPath": {
           "module": "lib/tmux-pane.ts",
           "callers": [
@@ -8149,7 +8410,8 @@
         "readClaudeSessionFile": {
           "module": "lib/discover.ts",
           "callers": [
-            "lib/submit-confirm.ts"
+            "lib/submit-confirm.ts",
+            "wiring/auto-compact.ts"
           ]
         },
         "Activity": {
@@ -8504,6 +8766,12 @@
             "lib/trip-triage.ts"
           ]
         },
+        "uploadInput": {
+          "module": "lib/trip-service.ts",
+          "callers": [
+            "lib/trip-triage.ts"
+          ]
+        },
         "rowInput": {
           "module": "lib/trip-service.ts",
           "callers": [
@@ -8713,6 +8981,13 @@
             "ws.ts"
           ]
         },
+        "waitingSummary": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "ws.ts"
+          ]
+        },
         "dialogWatcher": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -8815,6 +9090,7 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8822,6 +9098,7 @@
           "module": "lib/inject-guard.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8829,6 +9106,7 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8836,6 +9114,7 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8857,6 +9136,7 @@
           "module": "lib/submit-confirm.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8881,6 +9161,12 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
+        "HISTORY_STATES": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
         "getHistoryItem": {
           "module": "lib/approval-history.ts",
           "callers": [
@@ -8903,6 +9189,24 @@
           "module": "lib/approval-history.ts",
           "callers": [
             "routes/api.ts#* /api/feed"
+          ]
+        },
+        "thresholdFromEnv": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "routes/auto-compact.ts#GET /api/auto-compact",
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "autoCompactor": {
+          "module": "wiring/auto-compact.ts",
+          "callers": [
+            "routes/auto-compact.ts#GET /api/auto-compact",
+            "routes/auto-compact.ts#POST /api/auto-compact/cancel",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
         "BodySnapshot": {
@@ -9406,6 +9710,12 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
+        "compactTargetFor": {
+          "module": "wiring/auto-compact.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
         "noteSessionBoundary": {
           "module": "lib/submit-confirm.ts",
           "callers": [
@@ -9537,7 +9847,8 @@
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
         "setChannelAuto": {
@@ -10020,6 +10331,49 @@
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"
+          ]
+        },
+        "getSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/waiting.ts"
+          ]
+        },
+        "InputState": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "paneNotReady": {
+          "module": "lib/inject-guard.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "CompactTarget": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "PushKind": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "AutoCompactDeps": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "AutoCompactor": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
           ]
         },
         "BodyFixStore": {
@@ -10975,6 +11329,18 @@
             "wiring/resolver.ts"
           ]
         },
+        "QUICK_LOOK_ALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "QUICK_LOOK_DISALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
         "EvidenceBlock": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -11366,12 +11732,6 @@
             "wiring/waiting.ts"
           ]
         },
-        "getSessionByKey": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "wiring/waiting.ts"
-          ]
-        },
         "setSessionWaiting": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -11381,7 +11741,7 @@
       },
       "packages": {
         "sharp": {
-          "version": "0.34.5",
+          "version": "0.35.5",
           "modules": [
             "lib/media.ts",
             "lib/receipt-capture.ts"

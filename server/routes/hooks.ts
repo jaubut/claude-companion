@@ -45,6 +45,7 @@ import { appendTurn as orchAppendTurn, setTaskStatus } from "../lib/orchestrator
 import { dispatchWiring } from "../wiring/dispatch"
 import { isLoopback, peerOf } from "../lib/vault-guard"
 import { checkBearer } from "../lib/auth"
+import { autoCompactor, compactTargetFor } from "../wiring/auto-compact"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -314,6 +315,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       : null
     // Proof of submission for any phone inject waiting on this session.
     noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty })
+    // Resets the auto-compact idle window and cancels a pending countdown.
+    if (session) autoCompactor.noteUserActivity(session.key)
     // A new prompt means the picker is gone (e.g. "Chat about this").
     closeQuestionsFor(body.session_id, session?.key, "expired", "new prompt in that session", "user_prompt")
     closeApprovalsFor({ sessionId: body.session_id, sessionKey: session?.key }, "new prompt in that session", "user_prompt")
@@ -492,6 +495,12 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // cwd still sends the legacy keyless frame.
     if (session) markWaiting(session.key, "turn-end")
     else announceKeylessWaiting()
+    // Smart auto-compact (lib/auto-compact.ts): one attempt per Stop, gated
+    // on size, idle window, status, background tasks and cooldown.
+    if (session && !body.stop_hook_active) {
+      const target = compactTargetFor(session, body.transcript_path, body.session_id)
+      if (target) void autoCompactor.onStop(target).catch(() => { /* logged inside */ })
+    }
     const reset = "\x1b[0m"
     const magenta = "\x1b[35m"
     companionLog(`${magenta}waiting for input${reset} — phone can respond`)
@@ -527,7 +536,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (cwd) {
       // recordSession fires onSessions → reconcileDispatch binds this worker
       // to its dispatch task and sends the prompt. No inline binding needed.
-      recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
+      const started = recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
+      if (started && body.source === "compact") void autoCompactor.onCompacted(started.key)
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       companionLog(`${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}`)
     }
@@ -555,6 +565,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       by = "pid"
     }
     const removedKeys = victims.map((s) => s.key).filter((k) => removeSessionByKey(k))
+    for (const k of removedKeys) autoCompactor.forget(k)
     const removed = removedKeys.length > 0
     {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
