@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 98,
+          "lines": 99,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -66,6 +66,7 @@
             "routes/records.ts",
             "routes/capture.ts",
             "routes/trips.ts",
+            "routes/auto-compact.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -141,7 +142,7 @@
         },
         {
           "path": "lib/apns.ts",
-          "lines": 282,
+          "lines": 285,
           "kind": "lib",
           "exports": [
             "brokerConfigured",
@@ -304,6 +305,47 @@
           "state": [
             "let cached"
           ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/auto-compact.ts",
+          "lines": 467,
+          "kind": "lib",
+          "exports": [
+            "DEFAULT_THRESHOLD",
+            "IDLE_MS",
+            "CANCEL_MS",
+            "COOLDOWN_MS",
+            "TYPING_POLL_MS",
+            "BOUNDARY_POLL_MS",
+            "BOUNDARY_WAIT_MS",
+            "COMPACT_TEXT",
+            "thresholdFromEnv",
+            "contextTokens",
+            "CompactBoundary",
+            "compactBoundaries",
+            "openBackgroundTasks",
+            "lastHumanPromptAt",
+            "InputState",
+            "GateInput",
+            "GateReason",
+            "GateVerdict",
+            "gate",
+            "CompactTarget",
+            "PushKind",
+            "AutoCompactDeps",
+            "AutoCompactStatus",
+            "formatTokens",
+            "AutoCompactor"
+          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -4100,6 +4142,38 @@
           "externals": []
         },
         {
+          "path": "routes/auto-compact.ts",
+          "lines": 25,
+          "kind": "route-host",
+          "exports": [
+            "handleAutoCompactRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "GET",
+              "path": "/api/auto-compact",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/auto-compact/cancel",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auto-compact.ts",
+            "lib/log.ts",
+            "wiring/auto-compact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/body.ts",
           "lines": 125,
           "kind": "route-host",
@@ -4296,7 +4370,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 582,
+          "lines": 593,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -4380,7 +4454,8 @@
             "lib/orchestrator-chat.ts",
             "wiring/dispatch.ts",
             "lib/vault-guard.ts",
-            "lib/auth.ts"
+            "lib/auth.ts",
+            "wiring/auto-compact.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4702,6 +4777,35 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/auto-compact.ts",
+          "lines": 116,
+          "kind": "lib",
+          "exports": [
+            "realAutoCompactDeps",
+            "autoCompactor",
+            "compactTargetFor"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auto-compact.ts",
+            "lib/log.ts",
+            "lib/sessions.ts",
+            "lib/discover.ts",
+            "lib/inject-guard.ts",
+            "lib/submit-confirm.ts",
+            "lib/apns.ts",
+            "lib/push.ts",
+            "wiring/dialogs.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -5538,6 +5642,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleAutoCompactRoute": {
+          "module": "routes/auto-compact.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleBodyRoute": {
           "module": "routes/body.ts",
           "callers": [
@@ -5664,6 +5774,7 @@
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts",
             "wiring/events.ts",
             "wiring/orchestrator.ts",
             "wiring/waiting.ts"
@@ -5804,6 +5915,7 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/feed",
             "routes/attach.ts",
+            "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/body.ts#POST /api/body/alert",
             "routes/capture.ts",
             "routes/command.ts",
@@ -5823,6 +5935,7 @@
             "routes/records.ts",
             "routes/trips.ts",
             "routes/vault.ts",
+            "wiring/auto-compact.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -5973,12 +6086,6 @@
             "lib/body-investigate-engine.ts",
             "wiring/body-investigate.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "gate": {
-          "module": "lib/body-investigate.ts",
-          "callers": [
-            "lib/body-investigate-engine.ts"
           ]
         },
         "investigationDigest": {
@@ -7099,6 +7206,7 @@
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#GET /api/push/tokens",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
@@ -7550,6 +7658,7 @@
             "routes/api.ts#POST /api/push/test",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
@@ -8097,7 +8206,8 @@
         "readClaudeSessionFile": {
           "module": "lib/discover.ts",
           "callers": [
-            "lib/submit-confirm.ts"
+            "lib/submit-confirm.ts",
+            "wiring/auto-compact.ts"
           ]
         },
         "Activity": {
@@ -8763,6 +8873,7 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8770,6 +8881,7 @@
           "module": "lib/inject-guard.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8777,6 +8889,7 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8784,6 +8897,7 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8805,6 +8919,7 @@
           "module": "lib/submit-confirm.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -8851,6 +8966,24 @@
           "module": "lib/approval-history.ts",
           "callers": [
             "routes/api.ts#* /api/feed"
+          ]
+        },
+        "thresholdFromEnv": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "routes/auto-compact.ts#GET /api/auto-compact",
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "autoCompactor": {
+          "module": "wiring/auto-compact.ts",
+          "callers": [
+            "routes/auto-compact.ts#GET /api/auto-compact",
+            "routes/auto-compact.ts#POST /api/auto-compact/cancel",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
         "BodySnapshot": {
@@ -9331,6 +9464,12 @@
         },
         "announceKeylessWaiting": {
           "module": "wiring/waiting.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
+        "compactTargetFor": {
+          "module": "wiring/auto-compact.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop"
           ]
@@ -9949,6 +10088,49 @@
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"
+          ]
+        },
+        "getSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/waiting.ts"
+          ]
+        },
+        "InputState": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "paneNotReady": {
+          "module": "lib/inject-guard.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "CompactTarget": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "PushKind": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "AutoCompactDeps": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "AutoCompactor": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
           ]
         },
         "BodyFixStore": {
@@ -11284,12 +11466,6 @@
           ]
         },
         "clearSessionWaitingByRef": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "wiring/waiting.ts"
-          ]
-        },
-        "getSessionByKey": {
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/waiting.ts"
