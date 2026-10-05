@@ -99,6 +99,55 @@ holding the fix, or `null` (no fix, a failure, or — on the Mac — a report th
 went to Zettlab, which holds the card). `rootCause`/`confidence`/`severity` are
 `null` until `done`.
 
+## `GET /api/body/tokens`
+
+Fleet token usage for the Body "Token burn" card. Server: `server/lib/body-tokens.ts`
+(read model + cache). Reads the token-burn collector's Turso table (claude-config
+`tools/body/`, every 5 min per host); this server never writes it:
+
+```
+token_usage(host, day, session_id, source, model, input, output, cache_read, cache_creation, turns,
+            PRIMARY KEY(host, day, session_id, source, model))
+```
+
+`day` is the collector host's local `YYYY-MM-DD`; `source` is `main`,
+`agent:<type>` or `skill:<name>`.
+
+Query: `?range=today|7d|30d` (default `today`; anything else → 400
+`{ok:false, error}`); `?fresh=1` bypasses the 30 s cache (one slot per range).
+
+```json
+{
+  "ok": true,
+  "generated_at": "2026-10-05T12:00:00.000Z",
+  "range": "7d",
+  "since": "2026-09-29",
+  "totals": { "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615 },
+  "by_host": [ { "host": "zettlab", "input": 910, "output": 0, "cache_read": 2000, "cache_creation": 0, "total": 2910 } ],
+  "by_day": [ { "day": "2026-10-05", "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615 } ],
+  "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "host": "mac", "total": 1705 } ],
+  "top_agents": [ { "name": "builder", "total": 500 } ],
+  "top_skills": [ { "name": "today", "total": 40 } ]
+}
+```
+
+- `since`: first day included, inclusive — `today` = today, `7d` = today and the
+  6 days before, `30d` = today and the 29 before (this server's local calendar).
+  Rows are filtered on `day >= since`.
+- `total` = `input + output + cache_read + cache_creation`, everywhere. All
+  counts are numbers (`0` when absent).
+- `by_host`: total descending, then host. `by_day`: ascending by day; days with
+  no rows are absent (the client fills gaps).
+- `top_sessions` (≤ 10): total descending, then `session_id`, summed over all
+  sources and models. `name` is the live session's name from this host's
+  `~/.claude/sessions/*.json`, else `null` (ended sessions and other hosts'
+  sessions).
+- `top_agents` / `top_skills` (≤ 10): `source` rows with prefix `agent:` /
+  `skill:`, prefix stripped into `name`; total descending, then name. `main`
+  appears in neither.
+- No `token_usage` table yet (collector not deployed) → the same shape with zero
+  totals and empty lists, not an error. Turso down → 503 `turso_unreachable`.
+
 ## `POST /api/body/alert`
 
 ```json
@@ -305,6 +354,8 @@ cause, confidence, proposed card), so "what's dead and why?" answers from them.
 - List: `GET /api/body` → header from `summary`, rows from `components`
   (badge `state`, sort problems first client-side), a feed from `recent_events`.
 - Detail: `GET /api/body/component/<percent-encoded id>`.
+- Token burn card: `GET /api/body/tokens?range=today|7d|30d`; card state from the
+  `<host>:tokens:burn` component in `components`.
 - Live: `body_alert` frame → refresh the list (or patch the row by `component_id` + `state`).
 - Push tap: userInfo `kind == "body_alert"` → open the detail for `component_id`.
 - The `#Body` channel is a normal orchestrator channel (`id:"body"`).

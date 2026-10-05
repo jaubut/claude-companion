@@ -626,6 +626,41 @@
           "externals": []
         },
         {
+          "path": "lib/body-tokens.ts",
+          "lines": 187,
+          "kind": "lib",
+          "exports": [
+            "TOKEN_RANGES",
+            "TokenRange",
+            "TOP_LIMIT",
+            "TokenTotals",
+            "TokenSession",
+            "TokenSource",
+            "TokensResponse",
+            "parseRange",
+            "localDay",
+            "rangeSince",
+            "emptyTotals",
+            "liveSessionNames",
+            "BuildTokensOpts",
+            "buildTokens",
+            "TokensSnapshot",
+            "createTokensSnapshot"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/body.ts",
           "lines": 355,
           "kind": "lib",
@@ -4202,7 +4237,7 @@
         },
         {
           "path": "routes/body.ts",
-          "lines": 125,
+          "lines": 138,
           "kind": "route-host",
           "exports": [
             "BodyRouteDeps",
@@ -4216,6 +4251,11 @@
             {
               "method": "GET",
               "path": "/api/body",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/body/tokens",
               "prefix": false
             },
             {
@@ -4243,6 +4283,7 @@
           "imports": [
             "lib/body.ts",
             "lib/body-alert.ts",
+            "lib/body-tokens.ts",
             "lib/body-investigate.ts",
             "lib/log.ts",
             "lib/turso.ts",
@@ -4919,10 +4960,11 @@
         },
         {
           "path": "wiring/body.ts",
-          "lines": 69,
+          "lines": 71,
           "kind": "lib",
           "exports": [
             "bodySnapshot",
+            "tokensSnapshot",
             "BodyAlertSinkDeps",
             "BodyAlertSink",
             "createBodyAlertSink",
@@ -4943,6 +4985,7 @@
             "lib/apns.ts",
             "lib/body-alert.ts",
             "lib/body.ts",
+            "lib/body-tokens.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
@@ -5833,6 +5876,12 @@
             "lib/transcript.ts"
           ]
         },
+        "identityFor": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
         "verbFor": {
           "module": "lib/tool-format.ts",
           "callers": [
@@ -6329,6 +6378,13 @@
             "wiring/body.ts"
           ]
         },
+        "BASE_DISALLOWED": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/body-investigator.ts",
+            "lib/quick-look.ts"
+          ]
+        },
         "readonlyArgs": {
           "module": "lib/readonly-claude.ts",
           "callers": [
@@ -6374,6 +6430,7 @@
         "Row": {
           "module": "lib/turso.ts",
           "callers": [
+            "lib/body-tokens.ts",
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
             "lib/triage-sources.ts",
@@ -6384,6 +6441,7 @@
         "QueryFn": {
           "module": "lib/turso.ts",
           "callers": [
+            "lib/body-tokens.ts",
             "lib/body.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
@@ -6392,6 +6450,20 @@
             "routes/body.ts",
             "routes/goals.ts",
             "wiring/resolver.ts"
+          ]
+        },
+        "SqlArg": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/body-tokens.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/triage-sources.ts"
+          ]
+        },
+        "BODY_CACHE_TTL_MS": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/body-tokens.ts"
           ]
         },
         "Judgement": {
@@ -6526,6 +6598,15 @@
           "module": "lib/command-offpane.ts",
           "callers": [
             "lib/command-offpane-cache.ts"
+          ]
+        },
+        "tmuxArgv": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/command-offpane-launch.ts",
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/spawn-session.ts"
           ]
         },
         "helpTab": {
@@ -6924,13 +7005,6 @@
           "callers": [
             "lib/dispatch-tasks.ts",
             "lib/orchestrator-channels.ts"
-          ]
-        },
-        "SqlArg": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "lib/dispatch-tasks.ts",
-            "lib/triage-sources.ts"
           ]
         },
         "Catalog": {
@@ -7932,6 +8006,12 @@
             "lib/resolver-fix-guard.ts"
           ]
         },
+        "conflictPolicyLines": {
+          "module": "lib/resolver-fix-policy.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
         "GitFn": {
           "module": "lib/resolver-fix-guard.ts",
           "callers": [
@@ -7940,6 +8020,12 @@
         },
         "guardFixRange": {
           "module": "lib/resolver-fix-guard.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
+        "fixDisallowed": {
+          "module": "lib/resolver-fix-policy.ts",
           "callers": [
             "lib/resolver-fix.ts"
           ]
@@ -7963,6 +8049,12 @@
           "callers": [
             "lib/resolver-prompt.ts",
             "lib/resolver.ts"
+          ]
+        },
+        "allowedActions": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-prompt.ts"
           ]
         },
         "resolverActions": {
@@ -8084,6 +8176,14 @@
             "lib/resolver-work.ts"
           ]
         },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts"
+          ]
+        },
         "buildResolverPrompt": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -8134,13 +8234,6 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
-          ]
-        },
-        "fallbackPhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver.ts",
-            "lib/triage-engine.ts"
           ]
         },
         "storePath": {
@@ -8246,6 +8339,12 @@
           ]
         },
         "spawnNewSessionFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "spawnServerFlags": {
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/spawn-session.ts"
@@ -8667,6 +8766,12 @@
             "lib/trip-triage.ts"
           ]
         },
+        "uploadInput": {
+          "module": "lib/trip-service.ts",
+          "callers": [
+            "lib/trip-triage.ts"
+          ]
+        },
         "rowInput": {
           "module": "lib/trip-service.ts",
           "callers": [
@@ -8876,6 +8981,13 @@
             "ws.ts"
           ]
         },
+        "waitingSummary": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "ws.ts"
+          ]
+        },
         "dialogWatcher": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -9049,6 +9161,12 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
+        "HISTORY_STATES": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
         "getHistoryItem": {
           "module": "lib/approval-history.ts",
           "callers": [
@@ -9101,6 +9219,13 @@
             "wiring/triage.ts"
           ]
         },
+        "TokensSnapshot": {
+          "module": "lib/body-tokens.ts",
+          "callers": [
+            "routes/body.ts",
+            "wiring/body.ts"
+          ]
+        },
         "BodyAlertSink": {
           "module": "wiring/body.ts",
           "callers": [
@@ -9123,6 +9248,12 @@
             "wiring/triage.ts"
           ]
         },
+        "tokensSnapshot": {
+          "module": "wiring/body.ts",
+          "callers": [
+            "routes/body.ts"
+          ]
+        },
         "bodyAlertSink": {
           "module": "wiring/body.ts",
           "callers": [
@@ -9134,6 +9265,12 @@
           "callers": [
             "routes/body.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "parseRange": {
+          "module": "lib/body-tokens.ts",
+          "callers": [
+            "routes/body.ts#GET /api/body/tokens"
           ]
         },
         "buildComponentDetail": {
@@ -9710,7 +9847,8 @@
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
         "setChannelAuto": {
@@ -10441,6 +10579,12 @@
         },
         "createBodySnapshot": {
           "module": "lib/body.ts",
+          "callers": [
+            "wiring/body.ts"
+          ]
+        },
+        "createTokensSnapshot": {
+          "module": "lib/body-tokens.ts",
           "callers": [
             "wiring/body.ts"
           ]
@@ -11182,6 +11326,18 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver-peer.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "QUICK_LOOK_ALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "QUICK_LOOK_DISALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
             "wiring/resolver.ts"
           ]
         },

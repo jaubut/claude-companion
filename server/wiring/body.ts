@@ -2,6 +2,7 @@ import type { ApnsPayload } from "../lib/apns"
 import { apnsConfigured } from "../lib/apns"
 import { type BodyAlert, bodyPushEnabled, createPushGate } from "../lib/body-alert"
 import { BODY_CHANNEL, BODY_CHANNEL_NAME, type BodySnapshot, buildBodyDigest, createBodySnapshot, isHealthIntent } from "../lib/body"
+import { type TokensSnapshot, createTokensSnapshot } from "../lib/body-tokens"
 import { companionLog } from "../lib/log"
 import { type Turn, appendTurn } from "../lib/orchestrator-chat"
 import { type Channel, ensureChannel } from "../lib/orchestrator-channels"
@@ -13,6 +14,7 @@ import { broadcast } from "../state"
 // alert sink — Body-channel turn, `body_alert` WS frame, gated APNs push.
 
 export const bodySnapshot: BodySnapshot = createBodySnapshot(tursoQuery)
+export const tokensSnapshot: TokensSnapshot = createTokensSnapshot(tursoQuery)
 
 export interface BodyAlertSinkDeps {
   appendTurn: (text: string) => Turn
