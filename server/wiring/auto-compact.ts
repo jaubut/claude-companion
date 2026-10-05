@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { type FileHandle, open, stat } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { type AutoCompactDeps, AutoCompactor, type CompactTarget, type InputState, type PushKind, thresholdFromEnv } from "../lib/auto-compact"
 import { companionLog } from "../lib/log"
@@ -92,8 +92,17 @@ export const realAutoCompactDeps: AutoCompactDeps = {
   },
   clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   threshold: () => thresholdFromEnv(),
-  readTranscript: async (path) => {
-    try { return await readFile(path, "utf8") } catch { return null }
+  transcriptSize: async (path) => {
+    try { return (await stat(path)).size } catch { return null }
+  },
+  readTranscript: async (path, start, end) => {
+    let fh: FileHandle | undefined
+    try {
+      fh = await open(path, "r")
+      const buf = Buffer.alloc(Math.max(0, end - start))
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start)
+      return buf.subarray(0, bytesRead).toString("utf8")
+    } catch { return null } finally { await fh?.close() }
   },
   agentStatus,
   inputState,
