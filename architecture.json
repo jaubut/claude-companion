@@ -557,6 +557,41 @@
           "externals": []
         },
         {
+          "path": "lib/body-tokens.ts",
+          "lines": 187,
+          "kind": "lib",
+          "exports": [
+            "TOKEN_RANGES",
+            "TokenRange",
+            "TOP_LIMIT",
+            "TokenTotals",
+            "TokenSession",
+            "TokenSource",
+            "TokensResponse",
+            "parseRange",
+            "localDay",
+            "rangeSince",
+            "emptyTotals",
+            "liveSessionNames",
+            "BuildTokensOpts",
+            "buildTokens",
+            "TokensSnapshot",
+            "createTokensSnapshot"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/body.ts",
           "lines": 355,
           "kind": "lib",
@@ -4101,7 +4136,7 @@
         },
         {
           "path": "routes/body.ts",
-          "lines": 125,
+          "lines": 138,
           "kind": "route-host",
           "exports": [
             "BodyRouteDeps",
@@ -4115,6 +4150,11 @@
             {
               "method": "GET",
               "path": "/api/body",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/body/tokens",
               "prefix": false
             },
             {
@@ -4142,6 +4182,7 @@
           "imports": [
             "lib/body.ts",
             "lib/body-alert.ts",
+            "lib/body-tokens.ts",
             "lib/body-investigate.ts",
             "lib/log.ts",
             "lib/turso.ts",
@@ -4788,10 +4829,11 @@
         },
         {
           "path": "wiring/body.ts",
-          "lines": 69,
+          "lines": 71,
           "kind": "lib",
           "exports": [
             "bodySnapshot",
+            "tokensSnapshot",
             "BodyAlertSinkDeps",
             "BodyAlertSink",
             "createBodyAlertSink",
@@ -4812,6 +4854,7 @@
             "lib/apns.ts",
             "lib/body-alert.ts",
             "lib/body.ts",
+            "lib/body-tokens.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
@@ -6162,6 +6205,7 @@
         "Row": {
           "module": "lib/turso.ts",
           "callers": [
+            "lib/body-tokens.ts",
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
             "lib/triage-sources.ts",
@@ -6172,6 +6216,7 @@
         "QueryFn": {
           "module": "lib/turso.ts",
           "callers": [
+            "lib/body-tokens.ts",
             "lib/body.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
@@ -6180,6 +6225,20 @@
             "routes/body.ts",
             "routes/goals.ts",
             "wiring/resolver.ts"
+          ]
+        },
+        "SqlArg": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/body-tokens.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/triage-sources.ts"
+          ]
+        },
+        "BODY_CACHE_TTL_MS": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/body-tokens.ts"
           ]
         },
         "Judgement": {
@@ -6712,13 +6771,6 @@
           "callers": [
             "lib/dispatch-tasks.ts",
             "lib/orchestrator-channels.ts"
-          ]
-        },
-        "SqlArg": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "lib/dispatch-tasks.ts",
-            "lib/triage-sources.ts"
           ]
         },
         "Catalog": {
@@ -8863,6 +8915,13 @@
             "wiring/triage.ts"
           ]
         },
+        "TokensSnapshot": {
+          "module": "lib/body-tokens.ts",
+          "callers": [
+            "routes/body.ts",
+            "wiring/body.ts"
+          ]
+        },
         "BodyAlertSink": {
           "module": "wiring/body.ts",
           "callers": [
@@ -8885,6 +8944,12 @@
             "wiring/triage.ts"
           ]
         },
+        "tokensSnapshot": {
+          "module": "wiring/body.ts",
+          "callers": [
+            "routes/body.ts"
+          ]
+        },
         "bodyAlertSink": {
           "module": "wiring/body.ts",
           "callers": [
@@ -8896,6 +8961,12 @@
           "callers": [
             "routes/body.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "parseRange": {
+          "module": "lib/body-tokens.ts",
+          "callers": [
+            "routes/body.ts#GET /api/body/tokens"
           ]
         },
         "buildComponentDetail": {
@@ -10154,6 +10225,12 @@
         },
         "createBodySnapshot": {
           "module": "lib/body.ts",
+          "callers": [
+            "wiring/body.ts"
+          ]
+        },
+        "createTokensSnapshot": {
+          "module": "lib/body-tokens.ts",
           "callers": [
             "wiring/body.ts"
           ]
