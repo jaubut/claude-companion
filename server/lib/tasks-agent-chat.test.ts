@@ -138,4 +138,13 @@ describe("chat tool", () => {
     const s = setup(() => null)
     expect(await s.chat.confirmReply("yes", "general")).toBe(false)
   })
+
+  test('only "confirm"/"cancel" answer a held card; "yes"/"ok" pass through to the brain', async () => {
+    const s = setup(() => `{"op":"move","taskIds":${JSON.stringify(ids(5))},"due":"2026-10-09"}`)
+    seedGranby(s.t, 5)
+    await s.chat.handle("move everything Granby to Friday", "general")
+    for (const w of ["yes", "ok", "go", "oui", "no"]) expect(await s.chat.confirmReply(w, "general")).toBe(false)
+    expect(s.chat.pendingCount()).toBe(1)
+    expect(s.t.activities().length).toBe(0)
+  })
 })

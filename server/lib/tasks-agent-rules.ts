@@ -78,6 +78,9 @@ export function duplicateMatch(a: string, b: string): "exact" | "near" | null {
   const nb = normalizeText(b)
   if (!na || !nb) return null
   if (na === nb) return "exact"
+  // "Invoice 1041" vs "Invoice 1042", "[Week 3]" vs "[Week 4]": a different number is a different task.
+  const nums = (x: string): string => (x.match(/\d+/g) ?? []).join(" ")
+  if (nums(na) !== nums(nb)) return null
   const ta = new Set(na.split(" "))
   const tb = new Set(nb.split(" "))
   if (ta.size >= 4 && tb.size >= 4) {

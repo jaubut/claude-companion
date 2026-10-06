@@ -183,21 +183,18 @@ describe("tasks tool (PRJ-CT4M WP5)", () => {
     await h.fd.handle("x", CH)
     expect(t.seen.handle.length).toBe(1)
     expect(h.calls.brain.length).toBe(1)
+    expect(h.logs[0]).toMatchObject({ route: "brain", oldOutcome: "task" })
   })
 
-  test("shadow + off: only the hint routes (Jev still logged in shadow)", async () => {
+  test("shadow + off: never routed to the tasks tool, even on a hint (kill switch / no answer change)", async () => {
     const t = tasks({ hint: true })
     const s = harness("shadow", decided("my_tasks"), { tasks: t.route })
     await s.fd.handle("what's on my plate", CH)
-    expect([t.seen.handle.length, s.calls.brain.length, s.logs[0]!.route]).toEqual([1, 0, "my_tasks"])
-    const quiet = tasks({ hint: false })
-    const s2 = harness("shadow", decided("my_tasks"), { tasks: quiet.route })
-    await s2.fd.handle("hello", CH)
-    expect([quiet.seen.handle.length, s2.calls.brain.length]).toEqual([0, 1])
+    expect([t.seen.handle.length, s.calls.brain.length, s.logs[0]!.route]).toEqual([0, 1, "brain"])
     const off = tasks({ hint: true })
     const o = harness("off", decided("chat"), { tasks: off.route })
     await o.fd.handle("what's on my plate", CH)
-    expect([off.seen.handle.length, o.calls.brain.length, o.calls.decide]).toEqual([1, 0, 0])
+    expect([off.seen.handle.length, o.calls.brain.length, o.calls.decide]).toEqual([0, 1, 0])
   })
 
   test("a confirm reply to a held card is consumed before any routing", async () => {

@@ -135,7 +135,12 @@ export async function dueHistory(query: QueryFn, ids: string[]): Promise<DueChan
       `SELECT target_id, meta, summary FROM agent_activity WHERE target_kind = 'task' AND action = 'due_changed' AND target_id IN (${marks(chunk.length)}) ORDER BY id`,
       chunk,
     )
-    for (const r of rows) { const c = toDueChange(r); if (c) out.push(c) }
+    for (const r of rows) {
+      // An accepted reschedule proposal is the fix, not another slip.
+      if (parseMeta(r.meta)?.proposal !== undefined) continue
+      const c = toDueChange(r)
+      if (c) out.push(c)
+    }
   }
   return out
 }
@@ -251,7 +256,7 @@ export async function setTaskAssignee(exec: ExecFn, t: RawTask, assignee: string
 }
 
 /** Log first, then insert the subtask (Jeremie's, undated, under `parent`). A failed insert removes the log row. */
-export async function insertSubtask(exec: ExecFn, parent: RawTask, text: string, offset: number): Promise<string> {
+export async function insertSubtask(exec: ExecFn, parent: RawTask, text: string, position: number): Promise<string> {
   const id = randomUUID().replace(/-/g, "")
   const ins = await exec(
     "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'subtask_created', 'task', ?, ?, ?) RETURNING id",
@@ -261,7 +266,7 @@ export async function insertSubtask(exec: ExecFn, parent: RawTask, text: string,
   try {
     await exec(
       "INSERT INTO tasks (id, note_id, parent_id, text, description, done, due_date, position, assignee) VALUES (?, ?, ?, ?, '', 0, '', ?, ?)",
-      [id, parent.noteId, parent.id, text, parent.position + offset, parent.assignee ?? MINE[0] ?? "human:jeremie"],
+      [id, parent.noteId, parent.id, text, position, parent.assignee ?? MINE[0] ?? "human:jeremie"],
     )
   } catch (err) {
     if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => { /* best effort */ })
@@ -290,6 +295,7 @@ export async function undoActivity(exec: ExecFn, activityId: number): Promise<Un
 
   if (spec.field === "created") {
     if (!t) return { ok: false, status: 409, error: "changed_since" }
+    if (!isMine(t.assignee)) return { ok: false, status: 404, error: "no_such_task" }
     if (t.done || t.text !== spec.to || t.parentId !== spec.parentId) return { ok: false, status: 409, error: "changed_since" }
     const ins = await exec(
       "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'undo', 'task', ?, ?, ?) RETURNING id",
@@ -308,8 +314,12 @@ export async function undoActivity(exec: ExecFn, activityId: number): Promise<Un
   }
 
   if (!t) return { ok: false, status: 404, error: "no_such_task" }
-  // Due / done undo only on Jeremie's own or unassigned tasks; agent tasks belong to dispatch.
-  if (spec.field !== "assignee" && t.assignee !== null && !isMine(t.assignee)) return { ok: false, status: 404, error: "no_such_task" }
+  // Same scope as the digest. Due / done: his own or unassigned tasks (agent tasks belong to dispatch);
+  // assignee: only a reassignment that is, was or moved to his.
+  const inScope = spec.field === "assignee"
+    ? isMine(t.assignee) || isMine(spec.from) || isMine(spec.to)
+    : t.assignee === null || isMine(t.assignee)
+  if (!inScope) return { ok: false, status: 404, error: "no_such_task" }
   const current = spec.field === "due" ? t.due : spec.field === "done" ? t.done : t.assignee
   if (current !== spec.to) return { ok: false, status: 409, error: "changed_since" }
   const col: Col = spec.field === "due" ? "due_date" : spec.field === "done" ? "done" : "assignee"
@@ -420,6 +430,9 @@ export function createTasksAgent(deps: TasksAgentDeps) {
     }
     if (p.kind === "merge") {
       const keepId = String(p.suggestion.keepId)
+      // Never close the last open copy: the kept task must still be open, in the same note.
+      const keep = await readTask(deps.exec, keepId)
+      if (!keep || keep.done || keep.noteId !== t.noteId) return { ok: false, status: 409, error: "changed_since" }
       const r = await setTaskDone(deps.exec, t, true, { proposal: p.id, merged_into: keepId })
       return r.ok ? done({ closed: t.id, kept: keepId }) : r
     }
@@ -433,8 +446,20 @@ export function createTasksAgent(deps: TasksAgentDeps) {
     }
     const subtasks = Array.isArray(body.subtasks) ? cleanSubtasks(body.subtasks) : null
     if (!subtasks) return { ok: false, status: 400, error: "subtasks_must_be_2_to_5_strings" }
+    // After the note's last task, so no sibling position is shared.
+    const { rows: mx } = await deps.exec("SELECT MAX(position) AS p FROM tasks WHERE note_id = ?", [t.noteId])
+    let pos = Math.max(Number(mx[0]?.p ?? 0) || 0, t.position)
     const ids: string[] = []
-    for (const [i, text] of subtasks.entries()) ids.push(await insertSubtask(deps.exec, t, text, i + 1))
+    try {
+      for (const text of subtasks) ids.push(await insertSubtask(deps.exec, t, text, ++pos))
+    } catch (err) {
+      // All or nothing: a failure midway removes the subtasks (and their log rows) already written, so a retry starts clean.
+      for (const id of ids) {
+        await deps.exec("DELETE FROM tasks WHERE id = ?", [id]).catch(() => { /* best effort */ })
+        await deps.exec("DELETE FROM agent_activity WHERE agent_slug = ? AND action = 'subtask_created' AND target_id = ?", [AGENT_SLUG, id]).catch(() => { /* best effort */ })
+      }
+      throw err
+    }
     return done({ parentId: t.id, subtaskIds: ids })
   }
 

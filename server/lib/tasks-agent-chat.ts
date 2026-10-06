@@ -32,8 +32,9 @@ export function tasksHint(text: string): boolean {
   return PLATE.test(text) || MOVE.test(text) || MARK_DONE.test(text)
 }
 
-const YES = /^\s*(yes|y|yep|confirm|confirmed|ok|okay|go|go ahead|do it|oui|vas-y|confirme)\s*[.!]*\s*$/i
-const NO = /^\s*(no|nope|cancel|stop|non|annule|laisse faire)\s*[.!]*\s*$/i
+// Only the exact words the card asks for: a bare "yes"/"ok" may answer something else in the channel.
+const YES = /^\s*(confirm|confirmed|confirme[rz]?)\s*[.!]*\s*$/i
+const NO = /^\s*(cancel|annule[rz]?)\s*[.!]*\s*$/i
 
 export type ChatPlan =
   | { op: "list"; from: string; to: string; project: string | null }

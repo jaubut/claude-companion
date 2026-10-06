@@ -96,6 +96,9 @@ describe("rule: merge (duplicates in one note)", () => {
     expect(duplicateMatch("Créer la facture", "creer la facture.")).toBe("exact")
     expect(duplicateMatch("Book the studio for the Granby shoot", "Book studio for the Granby shoot")).toBe("near")
     expect(duplicateMatch("Call Marie", "Call Pierre")).toBeNull()
+    // A different number is a different task, however close the text.
+    expect(duplicateMatch("Invoice 1041", "Invoice 1042")).toBeNull()
+    expect(duplicateMatch("[Week 3] copy for the newsletter", "[Week 4] copy for the newsletter")).toBeNull()
   })
 
   test("same note only; keeps the first by position; a parent is never merged away", () => {

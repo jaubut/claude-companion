@@ -156,6 +156,14 @@ describe("POST /api/tasks/agent/undo", () => {
     expect(s.t.get(B)!.assignee).toBe("human:jeremie")
   })
 
+  test("undo is scoped like the digest: a reassignment between agents is refused, untouched", async () => {
+    const s = setup()
+    s.t.task({ id: B, assignee: "agent:builder" })
+    const other = s.t.activity({ agent: "pm", action: "assignee_changed", target: B, meta: { from: "agent:researcher", to: "agent:builder" } })
+    expect((await s.post("/api/tasks/agent/undo", { activityId: other })).status).toBe(404)
+    expect(s.t.get(B)!.assignee).toBe("agent:builder")
+  })
+
   test("no old value in meta → 409 not_undoable; changed since → 409 changed_since, nothing written", async () => {
     const s = setup()
     s.t.task({ id: A, due_date: "2026-10-25" })
@@ -208,6 +216,15 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     expect(s.t.get(A)!.due_date).toBe("2026-10-01")
   })
 
+  test("reschedule: the accepted date change does not count as another slip", async () => {
+    const s = setup()
+    slipped(s, A)
+    await s.post(`/api/tasks/agent/proposals/slip:${A}`, { action: "accept" })
+    s.t.activity({ agent: "companion", action: "due_changed", target: A, meta: { from: "2026-10-13", to: "2026-10-20" } })
+    // 3 real slips vs 2 at decision time: still hidden (re-proposes after SLIP_REPROPOSE more).
+    expect((await s.get()).body.proposals.items).toEqual([])
+  })
+
   test("reschedule: drop the date (due null), or a bad date → 400", async () => {
     const s = setup()
     slipped(s, A)
@@ -235,6 +252,33 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     expect(r.body.detail).toEqual({ closed: B, kept: A })
     expect([s.t.get(A)!.done, s.t.get(B)!.done]).toEqual([0, 1])
     expect(JSON.parse(String(s.t.activities().at(-1)!.meta))).toMatchObject({ from: "open", to: "done", merged_into: A })
+  })
+
+  test("merge: refused when the kept task was closed meanwhile (never closes the last copy)", async () => {
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("SELECT id, note_id") && args[0] === A) await base("UPDATE tasks SET done = 1 WHERE id = ?", [A])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: "Export the final cut", position: 1 })
+    s.t.task({ id: B, text: "export the final cut!", position: 2 })
+    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect(s.t.get(B)!.done).toBe(0)
+  })
+
+  test("split: a mid-way failure rolls back (no log, no subtask); the retry inserts once, after the note's last task", async () => {
+    let fail = true
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("INSERT INTO tasks") && args[3] === "Pick the photos" && fail) { fail = false; throw new Error("blip") }
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: VAGUE, position: 4 })
+    s.t.task({ id: B, text: "Next sibling", position: 5 })
+    const body = { action: "accept", subtasks: ["Draft the site map", "Pick the photos"] }
+    expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, body)).status).toBe(503)
+    expect([s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A), s.t.activities().length]).toEqual([{ n: 0 }, 0])
+    expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, body)).status).toBe(200)
+    expect(s.t.db.query("SELECT text, position FROM tasks WHERE parent_id = ? ORDER BY position").all(A))
+      .toEqual([{ text: "Draft the site map", position: 6 }, { text: "Pick the photos", position: 7 }])
   })
 
   test("split: accept drafts subtasks (nothing written), accept with subtasks inserts them under the parent; each undoable", async () => {

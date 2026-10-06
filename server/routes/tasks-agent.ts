@@ -13,7 +13,7 @@ import { TursoUnreachable } from "../lib/turso"
 
 const PROPOSAL = /^\/api\/tasks\/agent\/proposals\/([^/]+)$/
 const CHAT = /^\/api\/tasks\/agent\/chat\/([A-Za-z0-9]{8,64})$/
-const PROPOSAL_ID = /^(slip|assign|split):[A-Za-z0-9-]{8,64}$|^merge:[A-Za-z0-9-]{8,64}:[A-Za-z0-9-]{8,64}$/
+const PROPOSAL_ID = /^(slip|assign|split):[\w.-]{1,64}$|^merge:[\w.-]{1,64}:[\w.-]{1,64}$/
 
 export interface TasksAgentRouteDeps {
   agent: TasksAgent
