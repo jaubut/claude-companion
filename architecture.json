@@ -1413,7 +1413,7 @@
         },
         {
           "path": "lib/front-door.ts",
-          "lines": 200,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "BrainHints",
@@ -1924,7 +1924,7 @@
         },
         {
           "path": "lib/my-tasks.ts",
-          "lines": 253,
+          "lines": 254,
           "kind": "lib",
           "exports": [
             "MINE",
@@ -1947,6 +1947,7 @@
             "listMine",
             "fingerprint",
             "WriteResult",
+            "readBack",
             "setDone",
             "setDue"
           ],
@@ -3450,7 +3451,7 @@
         },
         {
           "path": "lib/tasks-agent-chat.ts",
-          "lines": 218,
+          "lines": 249,
           "kind": "lib",
           "exports": [
             "CONFIRM_OVER",
@@ -3586,11 +3587,12 @@
         },
         {
           "path": "lib/tasks-agent-testdb.test-util.ts",
-          "lines": 66,
+          "lines": 82,
           "kind": "lib",
           "exports": [
             "TaskSeed",
             "testDb",
+            "txOver",
             "tid"
           ],
           "state": [],
@@ -3607,7 +3609,7 @@
         },
         {
           "path": "lib/tasks-agent.ts",
-          "lines": 517,
+          "lines": 524,
           "kind": "lib",
           "exports": [
             "AGENT_SLUG",
@@ -3634,7 +3636,7 @@
             "setTaskDue",
             "setTaskDone",
             "setTaskAssignee",
-            "insertSubtask",
+            "insertSubtasks",
             "UndoResult",
             "undoActivity",
             "Splitter",
@@ -4280,16 +4282,19 @@
         },
         {
           "path": "lib/turso.ts",
-          "lines": 137,
+          "lines": 168,
           "kind": "lib",
           "exports": [
             "SqlArg",
             "Row",
             "QueryFn",
             "ExecFn",
+            "Stmt",
+            "TxFn",
             "TursoUnreachable",
             "tursoQuery",
-            "tursoExec"
+            "tursoExec",
+            "tursoTx"
           ],
           "state": [
             "let agentToken",
@@ -6086,7 +6091,7 @@
         },
         {
           "path": "wiring/tasks-agent.ts",
-          "lines": 39,
+          "lines": 40,
           "kind": "lib",
           "exports": [
             "tasksAgent",
@@ -9179,6 +9184,19 @@
             "routes/my-tasks.ts#* /api/tasks/mine"
           ]
         },
+        "readBack": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "TxFn": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/tasks-agent-testdb.test-util.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
         "MINE": {
           "module": "lib/my-tasks.ts",
           "callers": [
@@ -9193,6 +9211,12 @@
         },
         "DueChange": {
           "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "Stmt": {
+          "module": "lib/turso.ts",
           "callers": [
             "lib/tasks-agent.ts"
           ]
@@ -12468,6 +12492,12 @@
         },
         "createTasksAgent": {
           "module": "lib/tasks-agent.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "tursoTx": {
+          "module": "lib/turso.ts",
           "callers": [
             "wiring/tasks-agent.ts"
           ]

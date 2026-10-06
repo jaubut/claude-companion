@@ -17,7 +17,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/tasks-agent.ts` | 517 | lib | 38 |  |
+| `lib/tasks-agent.ts` | 524 | lib | 38 |  |
 | `lib/resolver.ts` | 496 | lib | 45 | state: CLOSABLE: Set, REJECTABLE: Set |
 | `lib/auto-compact.ts` | 491 | lib | 22 |  |
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
@@ -62,8 +62,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage-sources.ts` | 262 | lib | 22 | state: HOLDS: Set |
 | `lib/triage-pr.ts` | 256 | lib | 20 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
-| `lib/my-tasks.ts` | 253 | lib | 22 |  |
+| `lib/my-tasks.ts` | 254 | lib | 23 |  |
 | `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
+| `lib/tasks-agent-chat.ts` | 249 | lib | 14 |  |
 | `lib/resolver-work.ts` | 238 | lib | 5 |  |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
@@ -72,7 +73,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-store.ts` | 220 | lib | 13 |  |
 | `lib/auto-compact-transcript.ts` | 219 | lib | 12 |  |
 | `lib/orphan-question.ts` | 218 | lib | 11 | state: raised: Map |
-| `lib/tasks-agent-chat.ts` | 218 | lib | 14 |  |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/command-offpane-cache.ts` | 216 | lib | 14 | state: let launchMemo, warnedOld: Set |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
@@ -85,9 +85,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver-store.ts` | 204 | lib | 8 |  |
 | `lib/trip-triage.ts` | 204 | lib | 10 |  |
 | `ws.ts` | 204 | lib | 1 | emits: init, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
+| `lib/front-door.ts` | 203 | lib | 8 |  |
 | `routes/command.ts` | 202 | route-host | 1 | routes: 2 |
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `lib/front-door.ts` | 200 | lib | 8 |  |
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/resolver-fix.ts` | 197 | lib | 14 | state: PROTECTED: Set |
 | `lib/dialog-watch.ts` | 196 | lib | 5 |  |
@@ -102,6 +102,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/inject-guard.ts` | 169 | lib | 7 |  |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
+| `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `lib/receipt-jev.ts` | 165 | lib | 12 | state: let chartCache |
 | `routes/vault.ts` | 162 | lib | 1 |  |
@@ -119,7 +120,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
 | `lib/receipt-sonnet.ts` | 138 | lib | 11 | state: MONEY_FIELDS: Set |
 | `routes/body.ts` | 138 | route-host | 3 | routes: 6 |
-| `lib/turso.ts` | 137 | lib | 7 | state: let agentToken, let agentEnvRead |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/vault-guard.ts` | 134 | lib | 17 | state: peers: WeakMap |
@@ -148,6 +148,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-queue.ts` | 84 | lib | 6 |  |
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
+| `lib/tasks-agent-testdb.test-util.ts` | 82 | lib | 4 |  |
 | `lib/super-auto.ts` | 81 | lib | 4 | state: let cached |
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
@@ -158,7 +159,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-report.ts` | 70 | lib | 3 |  |
 | `lib/resolver-fix-guard.ts` | 69 | lib | 4 |  |
 | `routes/attach.ts` | 67 | route-host | 1 | route: POST /api/attach |
-| `lib/tasks-agent-testdb.test-util.ts` | 66 | lib | 3 |  |
 | `lib/waiting.ts` | 66 | lib | 6 |  |
 | `state.ts` | 65 | lib | 7 |  |
 | `lib/tasks-agent-store.ts` | 61 | lib | 4 |  |
@@ -175,7 +175,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/push-tokens.ts` | 46 | lib | 6 | state: db: Database |
 | `wiring/gauge.ts` | 43 | lib | 3 | emits: gauge |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
-| `wiring/tasks-agent.ts` | 39 | lib | 2 |  |
+| `wiring/tasks-agent.ts` | 40 | lib | 2 |  |
 | `lib/agent-pid.ts` | 37 | lib | 2 |  |
 | `routes/media.ts` | 36 | route-host | 1 | route: GET /api/media/ |
 | `wiring/media.ts` | 35 | lib | 2 | state: let timer |
@@ -531,6 +531,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `WaitingKind()` | `lib/waiting.ts` | `lib/sessions.ts`, `wiring/waiting.ts` |
 | `BodyResponse()` | `lib/body.ts` | `lib/status-answer.ts`, `wiring/front-door.ts` |
 | `readClaudeSessionFile()` | `lib/discover.ts` | `lib/submit-confirm.ts`, `wiring/auto-compact.ts` |
+| `TxFn()` | `lib/turso.ts` | `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts` |
 | `Activity()` | `lib/activity.ts` | `lib/transcript.ts`, `wiring/events.ts` |
 | `ResolvingItem()` | `lib/triage.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |
 | `TriageStore()` | `lib/triage-store.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |
