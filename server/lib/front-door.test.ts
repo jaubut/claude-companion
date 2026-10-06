@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ACK_TEXT, type BrainHints, type BrainResult, type FrontDoorDeps, createFrontDoor } from "./front-door"
+import { ACK_TEXT, type BrainHints, type BrainResult, type FrontDoorDeps, type TasksRoute, createFrontDoor } from "./front-door"
 import type { Decided, Intent, RouterMode } from "./jev-router"
 import type { RouteLogRow } from "./jev-route-log"
 import type { Channel } from "./orchestrator-channels"
@@ -146,5 +146,99 @@ describe("ack", () => {
     await fast.fd.handle("x", CH)
     await Bun.sleep(50)
     expect(fast.transient).toEqual([])
+  })
+})
+
+describe("tasks tool (PRJ-CT4M WP5)", () => {
+  function tasks(o: { hint?: boolean; handled?: boolean; confirm?: boolean } = {}) {
+    const seen = { handle: [] as string[], recent: [] as string[][], source: [] as string[], confirm: 0 }
+    const route: TasksRoute = {
+      hint: () => o.hint ?? false,
+      handle: async (text, _ch, recent, source) => { seen.handle.push(text); seen.recent.push(recent); seen.source.push(source); return o.handled ?? true },
+      confirmReply: async () => { seen.confirm++; return o.confirm ?? false },
+    }
+    return { route, seen }
+  }
+
+  test("live: Jev my_tasks → the tasks tool answers, no brain; logged as my_tasks", async () => {
+    const t = tasks()
+    const h = harness("live", decided("my_tasks", 0.9, false), { tasks: t.route })
+    await h.fd.handle("what is on my plate this week", CH)
+    expect(t.seen.handle).toEqual(["what is on my plate this week"])
+    expect(h.calls.brain.length).toBe(0)
+    expect(h.logs[0]).toMatchObject({ route: "my_tasks", intent: "my_tasks" })
+  })
+
+  test("live: the keyword hint routes even when Jev says chat", async () => {
+    const t = tasks({ hint: true })
+    const h = harness("live", decided("chat"), { tasks: t.route })
+    await h.fd.handle("move everything Granby to Friday", CH)
+    expect(t.seen.handle.length).toBe(1)
+    expect(t.seen.source).toEqual(["hint"])
+    expect(h.calls.brain.length).toBe(0)
+  })
+
+  test("source: my_tasks → jev; the hint also after a Jev failure, but never over a task/status/quick_look/body pick", async () => {
+    const j = tasks({ hint: true })
+    await harness("live", decided("my_tasks", 0.9, false), { tasks: j.route }).fd.handle("what's on my plate", CH)
+    expect(j.seen.source).toEqual(["jev"])
+    const f = tasks({ hint: true })
+    await harness("live", { ok: false, error: "timeout", jevMs: 2000 }, { tasks: f.route }).fd.handle("what's on my plate", CH)
+    expect(f.seen.source).toEqual(["hint"])
+    for (const intent of ["task", "status", "quick_look", "body"] as Intent[]) {
+      const t = tasks({ hint: true })
+      const h = harness("live", decided(intent), { tasks: t.route })
+      await h.fd.handle("move everything Granby to Friday", CH)
+      expect(t.seen.handle.length).toBe(0)
+    }
+  })
+
+  test("not_tasks hands back to the normal path", async () => {
+    const t = tasks({ handled: false })
+    const h = harness("live", decided("my_tasks", 0.9, false), { tasks: t.route })
+    await h.fd.handle("x", CH)
+    expect(t.seen.handle.length).toBe(1)
+    expect(h.calls.brain.length).toBe(1)
+    expect(h.logs[0]).toMatchObject({ route: "brain", oldOutcome: "task" })
+  })
+
+  test("shadow + off: never routed to the tasks tool, even on a hint (kill switch / no answer change)", async () => {
+    const t = tasks({ hint: true })
+    const s = harness("shadow", decided("my_tasks"), { tasks: t.route })
+    await s.fd.handle("what's on my plate", CH)
+    expect([t.seen.handle.length, s.calls.brain.length, s.logs[0]!.route]).toEqual([0, 1, "brain"])
+    const off = tasks({ hint: true })
+    const o = harness("off", decided("chat"), { tasks: off.route })
+    await o.fd.handle("what's on my plate", CH)
+    expect([off.seen.handle.length, o.calls.brain.length, o.calls.decide]).toEqual([0, 1, 0])
+  })
+
+  test("off: a confirm reply never reaches the tasks tool (kill switch writes nothing)", async () => {
+    const t = tasks({ confirm: true })
+    const h = harness("off", decided("chat"), { tasks: t.route })
+    await h.fd.handle("confirm", CH)
+    expect([t.seen.confirm, h.calls.brain.length]).toEqual([0, 1])
+  })
+
+  test("shadow: a confirm reply never applies a held plan (shadow does not change the answer)", async () => {
+    const t = tasks({ confirm: true })
+    const h = harness("shadow", decided("chat"), { tasks: t.route })
+    await h.fd.handle("confirm", CH)
+    expect([t.seen.confirm, h.calls.brain.length]).toEqual([0, 1])
+  })
+
+  test("a confirm reply to a held card is consumed before any routing", async () => {
+    const t = tasks({ confirm: true })
+    const h = harness("live", decided("chat"), { tasks: t.route })
+    await h.fd.handle("confirm", CH)
+    expect([t.seen.confirm, t.seen.handle.length, h.calls.decide, h.calls.brain.length]).toEqual([1, 0, 0, 0])
+  })
+
+  test("a tasks tool crash falls through to the brain", async () => {
+    const h = harness("live", decided("my_tasks", 0.9, false), {
+      tasks: { hint: () => false, confirmReply: async () => false, handle: async () => { throw new Error("turso down") } },
+    })
+    await h.fd.handle("x", CH)
+    expect(h.calls.brain.length).toBe(1)
   })
 })

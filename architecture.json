@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 101,
+          "lines": 104,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -69,6 +69,8 @@
             "routes/auto-compact.ts",
             "routes/gauge.ts",
             "routes/my-tasks.ts",
+            "routes/tasks-agent.ts",
+            "wiring/tasks-agent.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -1509,11 +1511,12 @@
         },
         {
           "path": "lib/front-door.ts",
-          "lines": 165,
+          "lines": 204,
           "kind": "lib",
           "exports": [
             "BrainHints",
             "BrainResult",
+            "TasksRoute",
             "FrontDoorDeps",
             "ACK_TEXT",
             "ACK_DELAY_MS",
@@ -1605,6 +1608,24 @@
           "externals": []
         },
         {
+          "path": "lib/hrana-stub.test-util.ts",
+          "lines": 95,
+          "kind": "lib",
+          "exports": [
+            "HranaStubOptions",
+            "installHranaStub"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/idempotency.ts",
           "lines": 83,
           "kind": "lib",
@@ -1690,7 +1711,7 @@
         },
         {
           "path": "lib/jev-router.ts",
-          "lines": 145,
+          "lines": 149,
           "kind": "lib",
           "exports": [
             "INTENTS",
@@ -2019,7 +2040,7 @@
         },
         {
           "path": "lib/my-tasks.ts",
-          "lines": 253,
+          "lines": 260,
           "kind": "lib",
           "exports": [
             "MINE",
@@ -2039,9 +2060,12 @@
             "sectionFor",
             "fromRow",
             "buildCascade",
+            "OPEN_MINE_SQL",
+            "openMine",
             "listMine",
             "fingerprint",
             "WriteResult",
+            "readBack",
             "setDone",
             "setDue"
           ],
@@ -3544,6 +3568,262 @@
           "externals": []
         },
         {
+          "path": "lib/tasks-agent-chat.ts",
+          "lines": 272,
+          "kind": "lib",
+          "exports": [
+            "CONFIRM_OVER",
+            "PLAN_TTL_MS",
+            "LIST_MAX_LINES",
+            "PROMPT_MAX_TASKS",
+            "tasksChatModel",
+            "tasksHint",
+            "ChatPlan",
+            "planPrompt",
+            "parsePlan",
+            "renderList",
+            "TasksChatDeps",
+            "ConfirmResult",
+            "createTasksChat",
+            "TasksChat"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/my-tasks.ts",
+            "lib/tasks-agent.ts",
+            "lib/tasks-agent-row.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/tasks-agent-load.ts",
+          "lines": 211,
+          "kind": "lib",
+          "exports": [
+            "LOAD_DAYS",
+            "MAX_TASKS_PER_DAY",
+            "MAX_BUSY_HOURS",
+            "CAL_CACHE_MS",
+            "LoadDay",
+            "LoadResponse",
+            "tzOffsetMs",
+            "zonedDayStart",
+            "Interval",
+            "busyHoursByDay",
+            "buildLoad",
+            "eventIntervals",
+            "gcalTokenPath",
+            "CalendarDeps",
+            "createCalendarBusy",
+            "CalendarBusy"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/my-tasks.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/tasks-agent-row.ts",
+          "lines": 114,
+          "kind": "lib",
+          "exports": [
+            "RawValue",
+            "ROW_COLUMNS",
+            "RowColumn",
+            "RowRaw",
+            "RawTask",
+            "rowVersion",
+            "rowGuard",
+            "TASK_COLUMNS",
+            "toRawTask",
+            "versionOf",
+            "readTask",
+            "readTasks",
+            "StaleOutcome",
+            "guardedWrite",
+            "parseRowVersions"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/my-tasks.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/tasks-agent-rules.ts",
+          "lines": 276,
+          "kind": "lib",
+          "exports": [
+            "SLIP_MIN",
+            "VAGUE_WORDS",
+            "NEAR_JACCARD",
+            "NEAR_EDIT_RATIO",
+            "SLIP_REPROPOSE",
+            "RESCHEDULE_DAYS",
+            "ProposalKind",
+            "ScopeTask",
+            "Proposal",
+            "DueChange",
+            "normalizeText",
+            "levenshtein",
+            "duplicateMatch",
+            "ACTION_VERBS",
+            "isVague",
+            "AssignRule",
+            "pmAssignPath",
+            "parseAssignRules",
+            "loadAssignRules",
+            "agentFor",
+            "isSlip",
+            "slipCounts",
+            "RuleInput",
+            "slipProposals",
+            "assignProposals",
+            "mergeProposals",
+            "splitProposals",
+            "allProposals",
+            "hiddenBy"
+          ],
+          "state": [
+            "let ruleCache"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/my-tasks.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/tasks-agent-store.ts",
+          "lines": 61,
+          "kind": "lib",
+          "exports": [
+            "OPEN_GAP_MS",
+            "Decision",
+            "createTasksAgentStore",
+            "TasksAgentStore"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/tasks-agent-testdb.test-util.ts",
+          "lines": 82,
+          "kind": "lib",
+          "exports": [
+            "TaskSeed",
+            "testDb",
+            "txOver",
+            "tid"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/tasks-agent.ts",
+          "lines": 546,
+          "kind": "lib",
+          "exports": [
+            "AGENT_SLUG",
+            "DIGEST_LIMIT",
+            "DIGEST_FIRST_OPEN_HOURS",
+            "PROPOSAL_CAP",
+            "SCOPE_LIMIT",
+            "SNAPSHOT_TTL_MS",
+            "SUBTASKS_MIN",
+            "SUBTASKS_MAX",
+            "DIGEST_ACTIONS",
+            "parseMeta",
+            "sqliteToIso",
+            "UndoSpec",
+            "undoSpec",
+            "listScope",
+            "toDueChange",
+            "dueHistory",
+            "DigestItem",
+            "Digest",
+            "maxActivityId",
+            "buildDigest",
+            "WriteOutcome",
+            "setTaskDue",
+            "setTaskDone",
+            "setTaskAssignee",
+            "insertSubtasks",
+            "UndoResult",
+            "undoActivity",
+            "Splitter",
+            "TasksAgentDeps",
+            "ProposalsView",
+            "AgentResponse",
+            "AcceptBody",
+            "parentVersion",
+            "DecideResult",
+            "createTasksAgent",
+            "TasksAgent",
+            "cleanSubtasks",
+            "splitPrompt",
+            "parseSplit"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/my-tasks.ts",
+            "lib/tasks-agent-rules.ts",
+            "lib/tasks-agent-load.ts",
+            "lib/tasks-agent-row.ts",
+            "lib/tasks-agent-store.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/tmux-pane.ts",
           "lines": 304,
           "kind": "lib",
@@ -4158,16 +4438,19 @@
         },
         {
           "path": "lib/turso.ts",
-          "lines": 137,
+          "lines": 168,
           "kind": "lib",
           "exports": [
             "SqlArg",
             "Row",
             "QueryFn",
             "ExecFn",
+            "Stmt",
+            "TxFn",
             "TursoUnreachable",
             "tursoQuery",
-            "tursoExec"
+            "tursoExec",
+            "tursoTx"
           ],
           "state": [
             "let agentToken",
@@ -5186,6 +5469,30 @@
           "externals": []
         },
         {
+          "path": "routes/tasks-agent.ts",
+          "lines": 100,
+          "kind": "lib",
+          "exports": [
+            "TasksAgentRouteDeps",
+            "deviceOf",
+            "createTasksAgentRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/tasks-agent.ts",
+            "lib/tasks-agent-chat.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/triage.ts",
           "lines": 61,
           "kind": "lib",
@@ -5576,7 +5883,7 @@
         },
         {
           "path": "wiring/front-door.ts",
-          "lines": 72,
+          "lines": 74,
           "kind": "lib",
           "exports": [
             "frontDoor"
@@ -5601,7 +5908,8 @@
             "state.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/tasks-agent.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5957,6 +6265,37 @@
           "externals": []
         },
         {
+          "path": "wiring/tasks-agent.ts",
+          "lines": 41,
+          "kind": "lib",
+          "exports": [
+            "tasksAgent",
+            "tasksChat"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-db.ts",
+            "lib/tasks-agent.ts",
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent-load.ts",
+            "lib/tasks-agent-rules.ts",
+            "lib/tasks-agent-store.ts",
+            "lib/turso.ts",
+            "state.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/triage.ts",
           "lines": 343,
           "kind": "lib",
@@ -6116,6 +6455,50 @@
         }
       ],
       "fanIn": {
+        "createTasksAgentRoute": {
+          "module": "routes/tasks-agent.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "broadcast": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#* /api/feed",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/my-tasks.ts",
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts",
+            "wiring/dialogs.ts",
+            "wiring/dispatch.ts",
+            "wiring/events.ts",
+            "wiring/front-door.ts",
+            "wiring/gauge.ts",
+            "wiring/orchestrator.ts",
+            "wiring/receipt-qa.ts",
+            "wiring/tasks-agent.ts",
+            "wiring/triage.ts",
+            "wiring/waiting.ts",
+            "ws.ts"
+          ]
+        },
+        "tasksAgent": {
+          "module": "wiring/tasks-agent.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "tasksChat": {
+          "module": "wiring/tasks-agent.ts",
+          "callers": [
+            "companion-server.ts",
+            "wiring/front-door.ts"
+          ]
+        },
         "disableAutoSelectFamily": {
           "module": "lib/apns.ts",
           "callers": [
@@ -6498,6 +6881,7 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/records.ts",
+            "routes/tasks-agent.ts",
             "routes/trips.ts",
             "routes/vault.ts",
             "wiring/auto-compact.ts",
@@ -6512,6 +6896,7 @@
             "wiring/orchestrator.ts",
             "wiring/resolver-peer.ts",
             "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
             "wiring/triage.ts",
             "wiring/trips.ts",
             "ws.ts"
@@ -6907,6 +7292,10 @@
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent-row.ts",
+            "lib/tasks-agent-testdb.test-util.ts",
+            "lib/tasks-agent.ts",
             "lib/triage-pr.ts",
             "routes/my-tasks.ts",
             "wiring/resolver-dry-run.ts"
@@ -7003,6 +7392,9 @@
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
+            "lib/tasks-agent-row.ts",
+            "lib/tasks-agent-testdb.test-util.ts",
+            "lib/tasks-agent.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
             "routes/goals.ts",
@@ -7018,6 +7410,9 @@
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent-testdb.test-util.ts",
+            "lib/tasks-agent.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
             "routes/body.ts",
@@ -7037,6 +7432,9 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/dispatch-tasks.ts",
+            "lib/tasks-agent-row.ts",
+            "lib/tasks-agent-testdb.test-util.ts",
+            "lib/tasks-agent.ts",
             "lib/triage-sources.ts"
           ]
         },
@@ -7562,11 +7960,13 @@
           "module": "lib/turso.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/tasks-agent-testdb.test-util.ts",
             "lib/triage-engine.ts",
             "routes/body.ts",
             "routes/goals.ts#GET /api/goals",
             "routes/my-tasks.ts",
             "routes/orchestrator.ts",
+            "routes/tasks-agent.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
@@ -7813,7 +8213,8 @@
         "TaskRow": {
           "module": "lib/my-tasks.ts",
           "callers": [
-            "lib/mytask-triage.ts"
+            "lib/mytask-triage.ts",
+            "lib/tasks-agent-chat.ts"
           ]
         },
         "SourceItem": {
@@ -7836,6 +8237,8 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "lib/mytask-triage.ts",
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts",
             "routes/my-tasks.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
           ]
@@ -7844,6 +8247,7 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "lib/mytask-triage.ts",
+            "lib/tasks-agent-chat.ts",
             "routes/my-tasks.ts"
           ]
         },
@@ -7879,7 +8283,10 @@
         "addDays": {
           "module": "lib/my-tasks.ts",
           "callers": [
-            "lib/mytask-triage.ts"
+            "lib/mytask-triage.ts",
+            "lib/tasks-agent-load.ts",
+            "lib/tasks-agent-rules.ts",
+            "lib/tasks-agent.ts"
           ]
         },
         "setDue": {
@@ -8307,6 +8714,7 @@
             "wiring/dispatch.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
             "wiring/triage.ts",
             "wiring/trips.ts"
           ]
@@ -9020,6 +9428,208 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "normDate": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent-row.ts",
+            "lib/tasks-agent.ts",
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "TxFn": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent-testdb.test-util.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "guardedWrite": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "MINE": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts",
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "setTaskDue": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "setTaskDone": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "readTasks": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "openMine": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "versionOf": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "parseRowVersions": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "RowRaw": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "ROW_COLUMNS": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "RawTask": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "readTask": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "ScopeTask": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "toRawTask": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "DueChange": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "Stmt": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "rowGuard": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "rowVersion": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "TasksAgentStore": {
+          "module": "lib/tasks-agent-store.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "AssignRule": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "ProposalKind": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "Proposal": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "LoadResponse": {
+          "module": "lib/tasks-agent-load.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "slipCounts": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "allProposals": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "hiddenBy": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "LOAD_DAYS": {
+          "module": "lib/tasks-agent-load.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "buildLoad": {
+          "module": "lib/tasks-agent-load.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "agentFor": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "duplicateMatch": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
         "Activity": {
           "module": "lib/activity.ts",
           "callers": [
@@ -9591,29 +10201,6 @@
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
             "routes/trips.ts"
-          ]
-        },
-        "broadcast": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#POST /api/super-auto",
-            "routes/api.ts#* /api/feed",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/my-tasks.ts",
-            "wiring/body-fix.ts",
-            "wiring/body-investigate.ts",
-            "wiring/body.ts",
-            "wiring/dialogs.ts",
-            "wiring/dispatch.ts",
-            "wiring/events.ts",
-            "wiring/front-door.ts",
-            "wiring/gauge.ts",
-            "wiring/orchestrator.ts",
-            "wiring/receipt-qa.ts",
-            "wiring/triage.ts",
-            "wiring/waiting.ts",
-            "ws.ts"
           ]
         },
         "listLearned": {
@@ -10490,6 +11077,7 @@
             "wiring/live.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
             "wiring/triage.ts"
           ]
         },
@@ -10598,6 +11186,7 @@
             "routes/my-tasks.ts",
             "wiring/body-investigate.ts",
             "wiring/dispatch.ts",
+            "wiring/tasks-agent.ts",
             "wiring/triage.ts"
           ]
         },
@@ -10617,12 +11206,6 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "routes/my-tasks.ts"
-          ]
-        },
-        "normDate": {
-          "module": "lib/my-tasks.ts",
-          "callers": [
-            "routes/my-tasks.ts#* /api/tasks/mine"
           ]
         },
         "emitChannel": {
@@ -10661,6 +11244,7 @@
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
             "wiring/triage.ts"
           ]
         },
@@ -10737,14 +11321,6 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts"
-          ]
-        },
-        "WriteOutcome": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "wiring/live.ts",
-            "wiring/triage.ts"
           ]
         },
         "getDispatchTask": {
@@ -11001,6 +11577,18 @@
             "routes/resolver.ts#POST /api/resolver/fix"
           ]
         },
+        "TasksAgent": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "routes/tasks-agent.ts"
+          ]
+        },
+        "TasksChat": {
+          "module": "lib/tasks-agent-chat.ts",
+          "callers": [
+            "routes/tasks-agent.ts"
+          ]
+        },
         "TriageEngine": {
           "module": "lib/triage-engine.ts",
           "callers": [
@@ -11219,12 +11807,6 @@
         },
         "KeepNote": {
           "module": "lib/auto-compact-keep.ts",
-          "callers": [
-            "wiring/auto-compact.ts"
-          ]
-        },
-        "MINE": {
-          "module": "lib/my-tasks.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
@@ -12314,6 +12896,67 @@
             "wiring/resolver.ts"
           ]
         },
+        "createCalendarBusy": {
+          "module": "lib/tasks-agent-load.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "createTasksAgent": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "tursoTx": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "createTasksAgentStore": {
+          "module": "lib/tasks-agent-store.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "runBrainCall": {
+          "module": "lib/orchestrator-brain.ts",
+          "callers": [
+            "wiring/tasks-agent.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "splitPrompt": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "parseSplit": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "loadAssignRules": {
+          "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "createTasksChat": {
+          "module": "lib/tasks-agent-chat.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "tasksChatModel": {
+          "module": "lib/tasks-agent-chat.ts",
+          "callers": [
+            "wiring/tasks-agent.ts"
+          ]
+        },
         "RequestOutcome": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
@@ -12346,12 +12989,6 @@
         },
         "ResolverLiveOpts": {
           "module": "wiring/resolver.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "runBrainCall": {
-          "module": "lib/orchestrator-brain.ts",
           "callers": [
             "wiring/triage.ts"
           ]

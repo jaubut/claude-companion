@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "./lib/auth"
-import { type WsData, clientInfo } from "./state"
+import { type WsData, broadcast, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { handleApiRoute } from "./routes/api"
@@ -20,6 +20,8 @@ import { handleTripsRoute } from "./routes/trips"
 import { handleAutoCompactRoute } from "./routes/auto-compact"
 import { handleGaugeRoute } from "./routes/gauge"
 import { handleMyTasksRoute } from "./routes/my-tasks"
+import { createTasksAgentRoute } from "./routes/tasks-agent"
+import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
@@ -30,6 +32,7 @@ import { waitForFirstDiscovery } from "./lib/discover"
 // finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
 const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 
+const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 
 export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
@@ -78,7 +81,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleResolverRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleMyTasksRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleResolverRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleTasksAgentRoute, handleMyTasksRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }

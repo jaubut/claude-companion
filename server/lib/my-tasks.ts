@@ -186,11 +186,17 @@ export function buildCascade(rows: TaskRow[], today: string, nowMs: number, tz =
 
 const marks = (n: number): string => Array.from({ length: n }, () => "?").join(", ")
 
+/** The WHERE fragment of "open and his" (listMine's SQL); `openMine` below is the same rule on a row already read. */
+export const OPEN_MINE_SQL = `t.done = 0 AND t.assignee IN (${MINE.map(() => "?").join(", ")})`
+
+/** Same eligibility as OPEN_MINE_SQL, for re-checking a task read a second time (a snapshot). Keep the two in step. */
+export const openMine = (t: { done: boolean; assignee: string | null }): boolean => !t.done && !!t.assignee && MINE.includes(t.assignee)
+
 export async function listMine(query: QueryFn): Promise<TaskRow[]> {
   const rows = await query(
     "SELECT t.id, t.note_id, t.parent_id, t.text, t.description, t.due_date, t.position, " +
       "n.title AS note_title, n.ref_code AS note_ref, n.folder AS note_folder " +
-      `FROM tasks t LEFT JOIN notes n ON n.id = t.note_id WHERE t.done = 0 AND t.assignee IN (${marks(MINE.length)}) ` +
+      `FROM tasks t LEFT JOIN notes n ON n.id = t.note_id WHERE ${OPEN_MINE_SQL} ` +
       "ORDER BY t.note_id, t.position LIMIT ?",
     [...MINE, MINE_LIMIT],
   )
@@ -218,7 +224,8 @@ async function ledger(exec: ExecFn, id: string, action: string, summary: string,
   } catch { /* observability only — never undo the write */ }
 }
 
-async function readBack(exec: ExecFn, id: string): Promise<{ done: boolean; due: string | null; text: string } | null> {
+/** The task as it is now, only if it is still his (null otherwise). */
+export async function readBack(exec: ExecFn, id: string): Promise<{ done: boolean; due: string | null; text: string } | null> {
   const { rows } = await exec(`SELECT done, due_date, text FROM tasks WHERE id = ? AND assignee IN (${marks(MINE.length)})`, [id, ...MINE])
   const r = rows[0]
   return r ? { done: Number(r.done ?? 0) === 1, due: normDate(r.due_date), text: str(r.text) ?? "" } : null
@@ -231,7 +238,7 @@ export async function setDone(exec: ExecFn, id: string, done: boolean): Promise<
   )
   const after = await readBack(exec, id)
   if (!after) return { ok: false, error: "no_such_task" }
-  if (affected > 0) await ledger(exec, id, "status_changed", done ? `marked done: ${after.text}` : `reopened: ${after.text}`, { to: done ? "done" : "open" })
+  if (affected > 0) await ledger(exec, id, "status_changed", done ? `marked done: ${after.text}` : `reopened: ${after.text}`, { from: done ? "open" : "done", to: done ? "done" : "open" })
   return { ok: true, done: after.done, due: after.due }
 }
 
