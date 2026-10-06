@@ -1,3 +1,5 @@
+import { STALE_DAYS, mytaskOptions } from "./mytask-triage"
+
 // Brain triage (docs/orchestrator-triage-api.md): what in the queue needs
 // Jeremie, phrased as problem / action / options. Pure: types, the allowed
 // actions per source, the phrasing prompt, validation of the model's JSON,
@@ -5,7 +7,7 @@
 // lib/triage-sources.ts, the cache lib/triage-store.ts, the loop
 // lib/triage-engine.ts, the live instance wiring/triage.ts.
 
-export type TriageSource = "task" | "proposal" | "pr" | "body" | "trip"
+export type TriageSource = "task" | "proposal" | "pr" | "body" | "trip" | "mytask"
 export type Severity = "urgent" | "normal" | "low"
 
 export type TriageAction =
@@ -13,7 +15,8 @@ export type TriageAction =
   | { kind: "answer_custom" }
   | { kind: "requeue" }
   | { kind: "cancel" }
-  | { kind: "approve"; mode?: "headless" | "live" }
+  /** `task` = a mytask op (Done / Next week / Drop the date); iOS shows it as a plain approve. */
+  | { kind: "approve"; mode?: "headless" | "live"; task?: "done" | "next_week" | "undate" }
   | { kind: "reject" }
   | { kind: "merge" }
   | { kind: "close_pr" }
@@ -105,6 +108,7 @@ export type SourceRef =
     source: "trip"; tripId: string; guess: "business" | "personal" | "unclassified"
     clientSlug: string | null; clientName: string | null; altSlug: string | null; altName: string | null
   }
+  | { source: "mytask"; taskIds: string[]; noteId: string; oldestDue: string; lateDays: number }
 
 /** One thing that needs Jeremie, before phrasing. */
 export interface SourceItem {
@@ -158,6 +162,7 @@ export function allowedActions(src: Pick<SourceItem, "source" | "ref" | "url">):
     case "pr": return ["merge", "close_pr", "open_url", "snooze"]
     case "body": return src.url ? ["requeue", "open_url", "snooze"] : ["requeue", "snooze"]
     case "trip": return ["classify", "classify_custom", "snooze"]
+    case "mytask": return ["approve", "snooze"]
   }
 }
 
@@ -262,7 +267,7 @@ export const looksFrench = (text: string): boolean => FRENCH.test(text)
 
 const actionKey = (a: TriageAction): string =>
   a.kind === "answer" ? `answer:${a.text}` : a.kind === "classify" ? `classify:${a.classification}:${a.clientSlug ?? ""}`
-    : a.kind === "ask_opus" ? `ask_opus:${a.instruction ?? ""}` : a.kind
+    : a.kind === "ask_opus" ? `ask_opus:${a.instruction ?? ""}` : a.kind === "approve" && a.task ? `approve:${a.task}` : a.kind
 
 /** Re-id a..d in order, mark destructive by code; the first option is the recommendation. */
 export function finishOptions(options: Omit<TriageOption, "id">[]): { options: TriageOption[]; recommended: string } {
@@ -349,6 +354,21 @@ function tripPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "trip" }>
   }
 }
 
+function mytaskPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "mytask" }>): Phrase {
+  const batch = ref.taskIds.length > 1
+  // Money / client / deadline work is never quietly un-dated, however late.
+  const keep = URGENT_WORDS.test(`${src.title} ${src.facts.evidence ?? ""}`)
+  const done = finishOptions(mytaskOptions(keep ? 0 : ref.lateDays, batch, snooze))
+  const action = !keep && ref.lateDays > STALE_DAYS
+    ? `Long past due: drop the date${batch ? "s" : ""} unless ${batch ? "they're" : "it's"} still real.`
+    : `Move ${batch ? "them" : "it"} to next week, or mark ${batch ? "them" : "it"} done.`
+  const evidence = src.facts.evidence?.trim()
+  return {
+    title: clip(src.title, TITLE_MAX), problem: clip(src.facts.problem || src.title, PROBLEM_MAX), action: clip(action, ACTION_MAX),
+    ...done, ...(evidence ? { context: clip(evidence, CONTEXT_MAX) } : {}),
+  }
+}
+
 /** Deterministic phrasing when the model is unavailable or its output is invalid. */
 export function fallbackPhrase(src: SourceItem): Phrase {
   const f = src.facts
@@ -360,6 +380,7 @@ export function fallbackPhrase(src: SourceItem): Phrase {
   }
   const ref = src.ref
   if (ref.source === "trip") return tripPhrase(src, ref)
+  if (ref.source === "mytask") return mytaskPhrase(src, ref)
   if (ref.source === "task" && ref.status === "blocked") {
     return make(why("blocker", "The task is blocked without a reason."), "Answer it so the task restarts, or retry or cancel it.", [
       { label: "Answer it", action: { kind: "answer_custom" } },
@@ -403,6 +424,7 @@ const URGENT_WORDS = /\b(prod(uction)?|outage|down|client|invoice|facture|paymen
 export function heuristicSeverity(src: SourceItem): Severity {
   const h = src.hints ?? {}
   if (src.ref.source === "trip") return "low"
+  if (src.ref.source === "mytask") return URGENT_WORDS.test(`${src.title} ${src.facts.evidence ?? ""}`) ? "urgent" : src.ref.lateDays > STALE_DAYS ? "low" : "normal"
   if (src.ref.source === "body") return /^(critical|high)$/i.test(h.criticality ?? "") ? "urgent" : "normal"
   if (src.ref.source === "proposal" && /^(critical|high)$/i.test(h.bodySeverity ?? "")) return "urgent"
   if (src.ref.source === "pr" && h.safetyNet) return "low"
@@ -450,7 +472,7 @@ export function buildItem(src: SourceItem, given: Phrase, severity: Severity, re
 
 /** The card with the generic "Ask Opus" option last (never the recommendation; trips never get one). */
 export function withAskOpus(item: TriageItem): TriageItem {
-  if (item.source === "trip" || item.options.some((o) => o.id === ASK_OPUS_ID)) return item
+  if (item.source === "trip" || item.source === "mytask" || item.options.some((o) => o.id === ASK_OPUS_ID)) return item
   const label = looksFrench(`${item.problem} ${item.action}`) ? "Demander à Opus…" : "Ask Opus…"
   return { ...item, options: [...item.options, { id: ASK_OPUS_ID, label, detail: "Hand it back with an instruction", action: { kind: "ask_opus" } }] }
 }

@@ -1,9 +1,10 @@
 import { type BodySnapshot, buildComponentDetail } from "../lib/body"
 import { validateAlert } from "../lib/body-alert"
+import { type TokensSnapshot, parseRange } from "../lib/body-tokens"
 import { type InvestigationRecord, investigationDto } from "../lib/body-investigate"
 import { companionLog } from "../lib/log"
 import { type QueryFn, TursoUnreachable, tursoQuery } from "../lib/turso"
-import { type BodyAlertSink, bodyAlertSink, bodySnapshot } from "../wiring/body"
+import { type BodyAlertSink, bodyAlertSink, bodySnapshot, tokensSnapshot } from "../wiring/body"
 import { parseInvestigateBody } from "../lib/body-investigator"
 import { parseFixRequest } from "../lib/body-fix"
 import { runBodyFix } from "../wiring/body-fix"
@@ -12,6 +13,7 @@ import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/b
 // Body monitor API (living-system nervous system). Auth is the `/api/*` bearer
 // gate in companion-server.ts. Contract: docs/body-api.md.
 //   GET  /api/body                    summary + components + last 50 events (30 s cache; ?all=1, ?fresh=1)
+//   GET  /api/body/tokens             fleet token usage (token_usage rollups; ?range=today|7d|30d, 30 s cache, ?fresh=1)
 //   GET  /api/body/component/:id      one component + latest vitals + last 50 events (id URL-decoded)
 //   POST /api/body/alert              collector alert → #Body turn, `body_alert` frame, gated push
 //                                     (+ a problem state triggers an auto-investigation)
@@ -22,6 +24,7 @@ import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/b
 export interface BodyRouteDeps {
   query?: QueryFn
   snapshot?: BodySnapshot
+  tokens?: TokensSnapshot
   sink?: BodyAlertSink
   /** Owning-host side of an approved Mac fix (wiring/body-fix.ts). */
   runFix?: typeof runBodyFix
@@ -41,6 +44,7 @@ function unreachable(err: unknown): Response {
 export function createBodyHandler(deps: BodyRouteDeps = {}) {
   const query = deps.query ?? tursoQuery
   const snapshot = deps.snapshot ?? bodySnapshot
+  const tokens = deps.tokens ?? tokensSnapshot
   const sink = deps.sink ?? bodyAlertSink
   const now = deps.now ?? Date.now
   const investigator = deps.investigator ?? bodyInvestigator
@@ -54,6 +58,15 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
       try {
         const all = url.searchParams.get("all") === "1"
         return Response.json(await snapshot.get({ all, fresh: url.searchParams.get("fresh") === "1" }))
+      } catch (err) {
+        return unreachable(err)
+      }
+    }
+    if (url.pathname === "/api/body/tokens" && req.method === "GET") {
+      const range = parseRange(url.searchParams.get("range"))
+      if (!range) return Response.json({ ok: false, error: "range must be today, 7d or 30d" }, { status: 400 })
+      try {
+        return Response.json(await tokens.get(range, { fresh: url.searchParams.get("fresh") === "1" }))
       } catch (err) {
         return unreachable(err)
       }

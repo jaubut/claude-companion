@@ -231,6 +231,15 @@ export class AutoCompactor {
     this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(threshold)} — check in ${Math.round(wait / 1000)}s`)
   }
 
+  // The session's current context size from the same tail read onStop uses
+  // (the context gauge's fallback). null = unreadable or unknown since the
+  // last compact.
+  async contextTokensOf(transcriptPath: string): Promise<number | null> {
+    if (!transcriptPath) return null
+    const tail = await this.readTail(transcriptPath, contextSettled)
+    return tail ? contextTokens(tail.entries) : null
+  }
+
   // SessionStart(source=compact) — a compaction just finished somewhere;
   // settle the boundary watch now instead of on the next poll.
   async onCompacted(key: string): Promise<void> {

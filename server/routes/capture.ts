@@ -6,6 +6,7 @@ import { captureReceipt } from "../lib/receipt-capture"
 import { QA_STATUSES, type QaStatus, getQaRow, listQa } from "../lib/receipt-qa-store"
 import { acceptByHuman, kickReceiptQa, resolveByHuman } from "../lib/receipt-qa-worker"
 import { createLimiter } from "../lib/vault-guard"
+import { type Outcome, voiceAudio, voiceChunk, voiceDiscard, voiceFinalize, voiceGet, voiceList, voiceProjects, voiceStart, voiceTranscribe, voiceValidate } from "../lib/voice-memo"
 import { HOP_HEADER, type UpstreamConfig, forwardVault, forwardedDevice, vaultUpstream } from "../lib/vault-upstream"
 
 // Quick Capture + receipt QA (Jeremie, 2026-10-03). Behind the standard /api
@@ -16,7 +17,18 @@ import { HOP_HEADER, type UpstreamConfig, forwardVault, forwardedDevice, vaultUp
 //   GET  /api/receipts/qa/:id/image                                → receipt bytes (private, max-age=300)
 //   POST /api/receipts/qa/:id/resolve  {fields, note?}             → {ok}
 //   POST /api/receipts/qa/:id/accept                               → {ok}
-// :id is the dashboard expense id (`accounting/2026-10/…`), URL-encoded or not.
+//   POST /api/capture/voice/start      {mime}                      → {ok, id, filename}
+//   POST /api/capture/voice/:id/chunk  {seq, audio(base64 ≤ 512 KB)} → {ok, seq, bytes}
+//   POST /api/capture/voice/:id/finalize                           → {ok, bytes, transcript|null}
+//   POST /api/capture/voice/:id/transcribe                         → {ok, transcript}
+//   GET  /api/capture/voice?status=pending                         → {ok, items:[VoiceMemo]}
+//   GET  /api/capture/voice/:id                                    → {ok, item}
+//   GET  /api/capture/voice/:id/audio                              → audio bytes (Range ok)
+//   POST /api/capture/voice/:id/validate {transcript, title?, project?} → {ok, note_id}
+//   POST /api/capture/voice/:id/discard                            → {ok}
+//   GET  /api/capture/projects                                     → {ok, items:[{id, ref_code, title}]}
+// :id is the dashboard expense id (`accounting/2026-10/…`), URL-encoded or not;
+// for voice memos the numeric inbox_entries id (lib/voice-memo.ts).
 // Upstream mode (COMPANION_VAULT_UPSTREAM, the Mac): everything is forwarded
 // to the store host, which alone talks to the dashboard and runs the QA queue.
 // Never logged: the capture text, receipt fields, the key.
@@ -28,10 +40,20 @@ const QA_PREFIX = "/api/receipts/qa/"
 const TEXT_MAX = 10_000
 const HINT_MAX = 64
 const RECEIPT_UPSTREAM_TIMEOUT_MS = 180_000
+const VOICE = "/api/capture/voice"
+const VOICE_PREFIX = "/api/capture/voice/"
+const PROJECTS = "/api/capture/projects"
+// finalize waits on Deepgram, transcribe runs it, audio can be ~30 MB.
+const VOICE_SLOW_UPSTREAM_TIMEOUT_MS = 150_000
+const VOICE_CHUNK_UPSTREAM_TIMEOUT_MS = 30_000
+const VOICE_ACTIONS = ["chunk", "finalize", "transcribe", "audio", "validate", "discard"] as const
+type VoiceAction = typeof VOICE_ACTIONS[number]
 const ACTIONS = ["image", "resolve", "accept"] as const
 type Action = typeof ACTIONS[number]
 
 export const captureLimiter = createLimiter(30, 60_000)
+// A 30-min memo is ~30 chunks, plus retries: chunks get their own, looser budget.
+export const voiceChunkLimiter = createLimiter(300, 60_000)
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store", ...headers } })
@@ -50,8 +72,8 @@ function device(req: Request): string {
   return (req.headers.get("x-companion-device") || req.headers.get("user-agent") || "unknown").replace(/[^\x20-\x7e]/g, "").slice(0, 64)
 }
 
-function limited(): Response | null {
-  const wait = captureLimiter.take()
+function limited(limiter = captureLimiter): Response | null {
+  const wait = limiter.take()
   return wait === null ? null : json({ ok: false, error: "rate_limited", retry_after: wait }, 429, { "Retry-After": String(wait) })
 }
 
@@ -75,6 +97,23 @@ async function forwardImage(up: UpstreamConfig, req: Request, path: string): Pro
     const headers: Record<string, string> = { "Cache-Control": res.headers.get("cache-control") || "private, max-age=300" }
     headers["content-type"] = res.headers.get("content-type") || "application/octet-stream"
     return new Response(await res.arrayBuffer(), { status: res.status, headers })
+  } catch {
+    return fail(502, "upstream_unreachable")
+  }
+}
+
+/** Audio from the store host, fetched whole so Range can be served locally. */
+async function forwardAudio(up: UpstreamConfig, req: Request, path: string): Promise<Response> {
+  try {
+    const res = await fetch(up.base + path, {
+      headers: { authorization: `Bearer ${getAuthToken()}`, "x-companion-device": forwardedDevice(device(req)), [HOP_HEADER]: "1" },
+      redirect: "manual", signal: AbortSignal.timeout(VOICE_SLOW_UPSTREAM_TIMEOUT_MS),
+    })
+    if (res.status >= 300 && res.status < 400) { void res.body?.cancel(); return fail(502, "upstream_unreachable") }
+    const mime = res.headers.get("content-type") || "application/octet-stream"
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    if (res.status !== 200) return new Response(bytes, { status: res.status, headers: { "Cache-Control": "no-store", "content-type": mime } })
+    return audioResponse(req, bytes, mime)
   } catch {
     return fail(502, "upstream_unreachable")
   }
@@ -150,6 +189,84 @@ async function act(req: Request, id: string, action: Action): Promise<Response> 
   return r.ok ? json({ ok: true }) : fail(r.status, r.error)
 }
 
+// ── Voice memos ──
+
+function outcome(o: Outcome): Response {
+  return o.ok ? json(o.body) : json({ ok: false, error: o.error, ...o.extra }, o.status)
+}
+
+/** Whole bytes, or one `Range: bytes=a-b` slice (AVPlayer streams with ranges). */
+export function audioResponse(req: Request, bytes: Uint8Array, mime: string): Response {
+  const headers: Record<string, string> = { "Content-Type": mime, "Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes" }
+  const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range")?.trim() ?? "")
+  if (!m || (!m[1] && !m[2])) return new Response(bytes, { headers })
+  const len = bytes.byteLength
+  let start = m[1] ? Number(m[1]) : Math.max(0, len - Number(m[2]))
+  let end = m[1] && m[2] ? Math.min(Number(m[2]), len - 1) : len - 1
+  if (!m[1]) end = len - 1
+  if (start >= len || start > end) return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${len}` } })
+  start = Math.max(0, start)
+  return new Response(bytes.subarray(start, end + 1), { status: 206, headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${len}` } })
+}
+
+/** `/api/capture/voice/<id>[/<action>]` → parts. `start` is not an id. */
+export function parseVoicePath(pathname: string): { id: number; action: VoiceAction | null } | null {
+  const m = /^\/api\/capture\/voice\/(\d{1,12})(?:\/([a-z]+))?$/.exec(pathname)
+  if (!m) return null
+  const action = (m[2] ?? null) as VoiceAction | null
+  if (action !== null && !VOICE_ACTIONS.includes(action)) return null
+  return { id: Number(m[1]), action }
+}
+
+async function voiceAudioLocal(req: Request, id: number): Promise<Response> {
+  const r = await voiceAudio(id)
+  return r.ok ? audioResponse(req, r.bytes, r.mime) : fail(r.status, r.error)
+}
+
+async function handleVoice(req: Request, url: URL, up: UpstreamConfig | null): Promise<Response> {
+  const p = url.pathname
+  if (p === PROJECTS || p === VOICE) {
+    if (req.method !== "GET") return fail(405, "method_not_allowed")
+    if (up) return forwardJson(up, req, `${p}${url.search}`)
+    return outcome(p === PROJECTS ? await voiceProjects() : await voiceList(url.searchParams.get("status") ?? "pending"))
+  }
+  if (p === `${VOICE_PREFIX}start`) {
+    if (req.method !== "POST") return fail(405, "method_not_allowed")
+    const wait = limited()
+    if (wait) return wait
+    const body = await readBody(req)
+    if (!body) return fail(400, "bad_json")
+    return withIdempotency(req, "capture-voice-start", async () => up ? forwardJson(up, req, p, body) : outcome(await voiceStart(body)))
+  }
+  const item = parseVoicePath(p)
+  if (!item) return fail(404, "not_found")
+  const { id, action } = item
+  if (action === null || action === "audio") {
+    if (req.method !== "GET") return fail(405, "method_not_allowed")
+    if (action === "audio") return up ? forwardAudio(up, req, p) : voiceAudioLocal(req, id)
+    return up ? forwardJson(up, req, p) : outcome(await voiceGet(id))
+  }
+  if (req.method !== "POST") return fail(405, "method_not_allowed")
+  const wait = limited(action === "chunk" ? voiceChunkLimiter : captureLimiter)
+  if (wait) return wait
+  const body = action === "chunk" || action === "validate" ? await readBody(req) : undefined
+  if (body === null) return fail(400, "bad_json")
+  const run = async (): Promise<Response> => {
+    if (up) {
+      const timeout = action === "chunk" ? VOICE_CHUNK_UPSTREAM_TIMEOUT_MS : action === "finalize" || action === "transcribe" ? VOICE_SLOW_UPSTREAM_TIMEOUT_MS : undefined
+      return forwardJson(up, req, p, body, timeout)
+    }
+    switch (action) {
+      case "chunk": return outcome(await voiceChunk(id, body!))
+      case "finalize": return outcome(await voiceFinalize(id))
+      case "transcribe": return outcome(await voiceTranscribe(id))
+      case "validate": return outcome(await voiceValidate(id, body!))
+      case "discard": return outcome(await voiceDiscard(id))
+    }
+  }
+  return action === "validate" ? withIdempotency(req, "capture-voice-validate", run) : run()
+}
+
 /** `/api/receipts/qa/<id>/<action>` → parts; id may be encoded or carry raw slashes. */
 export function parseItemPath(pathname: string): { id: string; action: Action } | null {
   const rest = pathname.slice(QA_PREFIX.length)
@@ -166,10 +283,12 @@ export function parseItemPath(pathname: string): { id: string; action: Action } 
 export async function handleCaptureRoute(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname
   const isCapture = p === INBOX || p === RECEIPT
-  if (!isCapture && p !== QA && !p.startsWith(QA_PREFIX)) return null
+  const isVoice = p === VOICE || p.startsWith(VOICE_PREFIX) || p === PROJECTS
+  if (!isCapture && !isVoice && p !== QA && !p.startsWith(QA_PREFIX)) return null
 
   const up = vaultUpstream()
   if (up && req.headers.get(HOP_HEADER)) return fail(508, "upstream_loop")
+  if (isVoice) return handleVoice(req, url, up)
 
   if (isCapture) {
     if (req.method !== "POST") return fail(405, "method_not_allowed")

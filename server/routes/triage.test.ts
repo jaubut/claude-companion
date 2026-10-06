@@ -117,6 +117,18 @@ const considered: ConsiderInput[] = []
 let invStore: import("../lib/body-investigate").InvestigationStore
 let modelFor: Set<string>
 const frames: Record<string, unknown>[] = []
+// Source `mytask` (Jeremie's overdue tasks): a fake, empty unless a test fills it.
+let mytaskItems: import("../lib/triage").SourceItem[] = []
+const mytaskCalls: { refId: string; action: unknown }[] = []
+const mytasks = {
+  collect: async () => mytaskItems,
+  current: async (src: import("../lib/triage").SourceItem) => mytaskItems.find((i) => i.refId === src.refId) ?? null,
+  execute: async (src: import("../lib/triage").SourceItem, option: import("../lib/triage").TriageOption) => {
+    mytaskCalls.push({ refId: src.refId, action: option.action })
+    mytaskItems = []
+    return { kind: "done" as const, detail: { op: option.action.kind === "approve" ? option.action.task : null } }
+  },
+}
 
 function makeHarness() {
   const w = poller.createDispatchWiring({
@@ -141,6 +153,7 @@ function makeHarness() {
     investigations: () => invStore,
     consider: async (input) => { considered.push(input); return { status: "started", id: "inv-new" } },
     body: { get: async () => ({ components: [] }) } as never,
+    mytasks,
     broadcast: (f) => frames.push(f),
   })
   return { w, engine, handler: triageRoute.createTriageHandler(() => engine) }
@@ -394,5 +407,27 @@ describe("choose → the existing guarded paths", () => {
   test("404 for an unknown id", async () => {
     await sync()
     expect((await choose("task:nope", { optionId: "a" })).status).toBe(404)
+  })
+})
+
+describe("source mytask (Jeremie's overdue tasks)", () => {
+  test("deterministic batch card, no Ask Opus; choose runs the task op, not the proposal path", async () => {
+    const { overdueItems } = await import("../lib/mytask-triage")
+    const row = (id: string, due: string) => ({
+      id, noteId: "projects/p1", parentId: null, text: `post ${id}`, description: null, due, position: 0,
+      noteTitle: "Cage au Sport", noteRef: null, noteFolder: "projects",
+    })
+    mytaskItems = overdueItems([row("a", "2026-05-01"), row("b", "2026-05-02"), row("c", "2026-05-03")], "2026-10-06", Date.parse("2026-10-06T15:00:00Z"))
+    await sync()
+    const item = await itemOf("mytask:p:projects/p1")
+    expect(item.title).toBe("3 overdue tasks in Cage au Sport")
+    expect(item.severity).toBe("low")
+    expect(item.options.map((o: any) => o.label)).toEqual(["Drop the date", "Move to next week", "Mark all done", "Snooze for a day"])
+    expect(item.options.some((o: any) => o.action.kind === "ask_opus")).toBe(false)
+    const r = await choose(item.id, { optionId: item.recommended })
+    expect(r.status).toBe(200)
+    expect(mytaskCalls).toEqual([{ refId: "p:projects/p1", action: { kind: "approve", task: "undate" } }])
+    await sync()
+    expect(await itemOf("mytask:p:projects/p1")).toBeUndefined()
   })
 })

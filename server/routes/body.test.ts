@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ApnsPayload } from "../lib/apns"
 import type { BodyResponse, BodySnapshot } from "../lib/body"
+import type { TokenRange, TokensResponse, TokensSnapshot } from "../lib/body-tokens"
 import { type QueryFn, TursoUnreachable } from "../lib/turso"
 
 // Route level: real orchestrator store (isolated sqlite), fake push sender,
@@ -212,6 +213,38 @@ describe("GET /api/body + /api/body/component/:id", () => {
       expect(res?.status).toBe(503)
       expect(await res!.json()).toEqual({ ok: false, error: "turso_unreachable" })
     }
+  })
+})
+
+describe("GET /api/body/tokens", () => {
+  const empty = (range: TokenRange): TokensResponse => ({
+    ok: true, generated_at: "2026-10-05T12:00:00.000Z", range, since: "2026-10-05", pricing_as_of: "2026-10-06",
+    totals: { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0, usd: null, unpriced_tokens: 0 },
+    by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [],
+  })
+
+  test("passes range (default today) and fresh to the tokens snapshot", async () => {
+    const seen: unknown[] = []
+    const tokens: TokensSnapshot = { get: async (range, o) => { seen.push([range, o]); return empty(range) } }
+    const handler = routes.createBodyHandler({ tokens, query: async () => [] })
+    const res = await call(handler, "GET", "/api/body/tokens?range=30d&fresh=1")
+    expect(res?.status).toBe(200)
+    expect(await res!.json()).toEqual(empty("30d"))
+    await call(handler, "GET", "/api/body/tokens")
+    await call(handler, "GET", "/api/body/tokens?range=7d")
+    expect(seen).toEqual([["30d", { fresh: true }], ["today", { fresh: false }], ["7d", { fresh: false }]])
+  })
+
+  test("bad range → 400; Turso down → 503; POST → null", async () => {
+    const tokens: TokensSnapshot = { get: async () => { throw new TursoUnreachable("network") } }
+    const handler = routes.createBodyHandler({ tokens, query: async () => [] })
+    const bad = await call(handler, "GET", "/api/body/tokens?range=1y")
+    expect(bad?.status).toBe(400)
+    expect(((await bad!.json()) as { ok: boolean }).ok).toBe(false)
+    const down = await call(handler, "GET", "/api/body/tokens?range=7d")
+    expect(down?.status).toBe(503)
+    expect(await down!.json()).toEqual({ ok: false, error: "turso_unreachable" })
+    expect(await call(handler, "POST", "/api/body/tokens")).toBeNull()
   })
 })
 
