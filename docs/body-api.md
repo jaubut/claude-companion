@@ -105,12 +105,17 @@ went to Zettlab, which holds the card). `rootCause`/`confidence`/`severity` are
 
 Fleet token usage for the Body "Token burn" card. Server: `server/lib/body-tokens.ts`
 (read model + cache). Reads the token-burn collector's Turso table (claude-config
-`tools/body/`, every 5 min per host); this server never writes it:
+`tools/body/`, every 5 min per host); this server never writes them:
 
 ```
 token_usage(host, day, session_id, source, model, input, output, cache_read, cache_creation, turns,
             PRIMARY KEY(host, day, session_id, source, model))
+token_sessions(host, session_id, name, tmux, cwd, first_seen, last_seen)
 ```
+
+Either table may be missing (collector not deployed / older collector): no
+`token_usage` → the empty view below with zero totals; no `token_sessions` →
+names fall back to the live lookup.
 
 `day` is the collector host's local `YYYY-MM-DD`; `source` is `main`,
 `agent:<type>` or `skill:<name>`.
@@ -128,7 +133,7 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   "totals": { "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615, "usd": 0.0071, "unpriced_tokens": 0 },
   "by_host": [ { "host": "zettlab", "input": 910, "output": 0, "cache_read": 2000, "cache_creation": 0, "total": 2910, "usd": 0.0040, "unpriced_tokens": 0 } ],
   "by_day": [ { "day": "2026-10-05", "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615, "usd": 0.0071, "unpriced_tokens": 0 } ],
-  "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "host": "mac", "total": 1705, "usd": 0.0031, "unpriced_tokens": 0 } ],
+  "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "tmux": "main:2", "host": "mac", "total": 1705, "usd": 0.0031, "unpriced_tokens": 0 } ],
   "top_agents": [ { "name": "builder", "total": 500, "usd": 0.0008, "unpriced_tokens": 0 } ],
   "top_skills": [ { "name": "today", "total": 40, "usd": null, "unpriced_tokens": 40 } ]
 }
@@ -142,9 +147,12 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
 - `by_host`: total descending, then host. `by_day`: ascending by day; days with
   no rows are absent (the client fills gaps).
 - `top_sessions` (≤ 10): total descending, then `session_id`, summed over all
-  sources and models. `name` is the live session's name from this host's
-  `~/.claude/sessions/*.json`, else `null` (ended sessions and other hosts'
-  sessions).
+  sources and models. `name` comes from `token_sessions` (joined on
+  `(host, session_id)`; any host, kept after the session ends); when that table,
+  the row or its name is missing it falls back to the live session's name from
+  this host's `~/.claude/sessions/*.json`, else `null`. `tmux` (optional, additive)
+  is `token_sessions.tmux`; the key is absent when unknown.
+  When `token_sessions` has several rows for a session, the newest non-blank one (by `last_seen`) wins.
 - `top_agents` / `top_skills` (≤ 10): `source` rows with prefix `agent:` /
   `skill:`, prefix stripped into `name`; total descending, then name. `main`
   appears in neither.

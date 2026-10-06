@@ -63,6 +63,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/my-tasks.ts` | 253 | lib | 22 |  |
 | `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
 | `lib/resolver-work.ts` | 238 | lib | 5 |  |
+| `lib/body-tokens.ts` | 236 | lib | 16 |  |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
@@ -73,7 +74,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/command-offpane-cache.ts` | 216 | lib | 14 | state: let launchMemo, warnedOld: Set |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
-| `lib/body-tokens.ts` | 213 | lib | 16 |  |
 | `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/resolver-peer.ts` | 211 | lib | 19 |  |
 | `lib/dialogs.ts` | 209 | lib | 7 |  |
