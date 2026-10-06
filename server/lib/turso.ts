@@ -15,6 +15,9 @@ export type Row = Record<string, string | number | null>
 export type QueryFn = (sql: string, args: SqlArg[]) => Promise<Row[]>
 /** A write: rows (if any) plus the affected row count, for guarded compare-and-set. */
 export type ExecFn = (sql: string, args: SqlArg[]) => Promise<{ rows: Row[]; affected: number }>
+export interface Stmt { sql: string; args: SqlArg[] }
+/** Statements run in ONE transaction: all commit or none (any failure rolls back and throws). */
+export type TxFn = (stmts: Stmt[]) => Promise<{ rows: Row[]; affected: number }[]>
 
 export class TursoUnreachable extends Error {
   constructor(reason: string) {
@@ -87,14 +90,12 @@ function parseResult(body: unknown): ExecResult {
   return first.response.result
 }
 
-async function post(auth: string, sql: string, args: SqlArg[]): Promise<Response> {
+async function post(auth: string, request: unknown): Promise<Response> {
   try {
     return await fetch(`${baseUrl()}/v2/pipeline`, {
       method: "POST",
       headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        requests: [{ type: "execute", stmt: { sql, args: args.map(toArg) } }, { type: "close" }],
-      }),
+      body: JSON.stringify({ requests: [request, { type: "close" }] }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
   } catch {
@@ -102,10 +103,11 @@ async function post(auth: string, sql: string, args: SqlArg[]): Promise<Response
   }
 }
 
-async function execute(sql: string, args: SqlArg[]): Promise<{ rows: Row[]; affected: number }> {
+/** One pipeline request (execute or batch) → the parsed body. */
+async function send(request: unknown): Promise<unknown> {
   let auth = token()
   if (!auth) throw new TursoUnreachable("no token configured")
-  let res = await post(auth, sql, args)
+  let res = await post(auth, request)
   if (res.status === 401) {
     // Token rotated under us: drop the cached agent token and re-read it once.
     agentToken = undefined
@@ -113,24 +115,53 @@ async function execute(sql: string, args: SqlArg[]): Promise<{ rows: Row[]; affe
     const fresh = token()
     if (fresh && fresh !== auth) {
       auth = fresh
-      res = await post(auth, sql, args)
+      res = await post(auth, request)
     }
   }
   if (!res.ok) throw new TursoUnreachable(`http ${res.status}`)
-  let body: unknown
   try {
-    body = await res.json()
+    return await res.json()
   } catch {
     throw new TursoUnreachable("bad response")
   }
-  const { cols, rows, affected_row_count } = parseResult(body)
-  return {
-    rows: rows.map((row) => Object.fromEntries(cols.map((c, i) => [c.name, fromValue(row[i] ?? { type: "null" })]))),
-    affected: Number(affected_row_count ?? 0),
-  }
+}
+
+const toRows = ({ cols, rows, affected_row_count }: ExecResult): { rows: Row[]; affected: number } => ({
+  rows: rows.map((row) => Object.fromEntries(cols.map((c, i) => [c.name, fromValue(row[i] ?? { type: "null" })]))),
+  affected: Number(affected_row_count ?? 0),
+})
+
+async function execute(sql: string, args: SqlArg[]): Promise<{ rows: Row[]; affected: number }> {
+  return toRows(parseResult(await send({ type: "execute", stmt: { sql, args: args.map(toArg) } })))
+}
+
+// Hrana batch as a transaction: BEGIN, each statement only if the previous one
+// succeeded, COMMIT only if the last one did, ROLLBACK if the COMMIT didn't run
+// or failed (the same step conditions the libsql client uses).
+async function transaction(stmts: Stmt[]): Promise<{ rows: Row[]; affected: number }[]> {
+  const n = stmts.length
+  const ok = (step: number) => ({ type: "ok", step })
+  const steps = [
+    { stmt: { sql: "BEGIN" } },
+    ...stmts.map((s, i) => ({ stmt: { sql: s.sql, args: s.args.map(toArg) }, condition: ok(i) })),
+    { stmt: { sql: "COMMIT" }, condition: ok(n) },
+    { stmt: { sql: "ROLLBACK" }, condition: { type: "not", cond: ok(n + 1) } },
+  ]
+  const body = await send({ type: "batch", batch: { steps } })
+  const first = (body as { results?: unknown[] })?.results?.[0] as
+    | { type?: string; response?: { result?: { step_results?: (ExecResult | null)[]; step_errors?: (unknown | null)[] } } }
+    | undefined
+  const r = first?.type === "ok" ? first.response?.result : undefined
+  const results = r?.step_results ?? []
+  // Committed only if every statement and the COMMIT itself returned a result.
+  if (!r || results.length < n + 2 || results.slice(0, n + 2).some((x) => !x)) throw new TursoUnreachable("transaction failed")
+  return results.slice(1, n + 1).map((x) => toRows(x!))
 }
 
 export const tursoQuery: QueryFn = async (sql, args) => (await execute(sql, args)).rows
 
 /** Writes only through the named functions in lib/dispatch-tasks.ts — never a generic SQL route. */
 export const tursoExec: ExecFn = execute
+
+/** All-or-nothing writes (tasks agent: the activity row and its mutation commit together). */
+export const tursoTx: TxFn = transaction

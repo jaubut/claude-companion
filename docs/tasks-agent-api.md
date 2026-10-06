@@ -16,12 +16,12 @@ Code:
 
 **Scope.** "Mine" means the same assignees as in tasks-api.md (`human:jeremie`, `human`). The proposal rules also look at unassigned open tasks (`assignee` NULL or `''`). Tasks assigned to agents (`agent:*`) are never edited here, with one exception: an Undo can restore the assignee that an assignment overwrote (including an assign proposal Jeremie accepted here).
 
-**Rule: no log, no mutation.** Every write by this agent works in four steps:
+**Rule: no log, no mutation.** Every write by this agent is one Turso transaction (`tursoTx`, a Hrana batch: BEGIN … COMMIT, ROLLBACK on any failure):
 
-1. Insert one `agent_activity` row (`agent_slug='tasks-agent'`, `target_kind='task'`). Its meta carries the old value and the new value: `{"source":"companion","by":"jeremie","from":…,"to":…,…}`.
-2. If that insert fails, nothing else happens.
-3. Run one compare-and-set `UPDATE` against the task row as it was just read.
-4. If the task changed in between, delete the log row and answer `409 changed_since`.
+1. One compare-and-set write against the task row as it was just read (`UPDATE`, or for a split the subtask `INSERT`s, guarded on "the parent has no subtasks yet").
+2. One `agent_activity` row (`agent_slug='tasks-agent'`, `target_kind='task'`), inserted only if the write changed a row (`changes() > 0`). Its meta carries the old value and the new value: `{"source":"companion","by":"jeremie","from":…,"to":…,…}`.
+3. Both commit or neither does: a failed log insert rolls the write back, and a failed write leaves no log row (so a retried Undo is never `already_undone`).
+4. If the task changed in between, nothing is written and the answer is `409 changed_since`. A split accept is all-or-nothing the same way; a concurrent accept that already added subtasks gets `409 changed_since`.
 
 ## GET /api/tasks/agent
 

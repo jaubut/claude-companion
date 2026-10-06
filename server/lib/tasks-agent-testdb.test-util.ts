@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
+import type { ExecFn, QueryFn, Row, SqlArg, TxFn } from "./turso"
 import { TursoUnreachable } from "./turso"
 
 // Test-only: a real SQLite (bun:sqlite, in memory) with the Turso `tasks`,
@@ -59,7 +59,23 @@ export function testDb() {
   }
   const get = (id: string) => db.query("SELECT * FROM tasks WHERE id = ?").get(id) as Record<string, unknown> | null
   const activities = () => db.query("SELECT * FROM agent_activity ORDER BY id").all() as Record<string, unknown>[]
-  return { db, query, exec, note, task, activity, get, activities, setDown: (v: boolean) => { down = v } }
+  return { db, query, exec, tx: txOver(exec), note, task, activity, get, activities, setDown: (v: boolean) => { down = v } }
+}
+
+/** A TxFn over an ExecFn on one SQLite connection (BEGIN … COMMIT, ROLLBACK + rethrow on any failure), like tursoTx. */
+export function txOver(exec: ExecFn): TxFn {
+  return async (stmts) => {
+    await exec("BEGIN", [])
+    try {
+      const out: { rows: Row[]; affected: number }[] = []
+      for (const s of stmts) out.push(await exec(s.sql, s.args))
+      await exec("COMMIT", [])
+      return out
+    } catch (err) {
+      await exec("ROLLBACK", []).catch(() => { /* already rolled back */ })
+      throw err
+    }
+  }
 }
 
 export const tid = (n: number | string): string => `t${String(n).padStart(9, "0")}`

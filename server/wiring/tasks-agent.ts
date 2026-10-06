@@ -7,7 +7,7 @@ import { createTasksChat, tasksChatModel } from "../lib/tasks-agent-chat"
 import { createCalendarBusy } from "../lib/tasks-agent-load"
 import { loadAssignRules } from "../lib/tasks-agent-rules"
 import { createTasksAgentStore } from "../lib/tasks-agent-store"
-import { tursoExec, tursoQuery } from "../lib/turso"
+import { tursoExec, tursoQuery, tursoTx } from "../lib/turso"
 import { broadcast } from "../state"
 import { orchEmit } from "./orchestrator"
 
@@ -20,6 +20,7 @@ const calendar = createCalendarBusy({ log: companionLog })
 export const tasksAgent = createTasksAgent({
   query: tursoQuery,
   exec: tursoExec,
+  tx: tursoTx,
   store: createTasksAgentStore(db),
   busy: (days, tz) => calendar.busy(days, tz),
   splitter: async (task) => parseSplit(await runBrainCall(SPLIT_MODEL, splitPrompt(task))),

@@ -3,14 +3,15 @@ import { MINE, TASKS_TZ, addDays, localDay, normDate } from "./my-tasks"
 import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, allProposals, hiddenBy, slipCounts } from "./tasks-agent-rules"
 import { type LoadResponse, LOAD_DAYS, buildLoad } from "./tasks-agent-load"
 import type { TasksAgentStore } from "./tasks-agent-store"
-import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
+import type { ExecFn, QueryFn, Row, SqlArg, Stmt, TxFn } from "./turso"
 
 // Tasks agent core (PRJ-CT4M WP5): DIGEST (what agents changed on Jeremie's
 // tasks since his last open, with Undo), PROPOSALS (deterministic rules in
 // tasks-agent-rules.ts; accept / dismiss) and LOAD (tasks-agent-load.ts).
-// Every mutation here writes its agent_activity row FIRST, carrying the old
-// value (rule: no log, no mutation), then one compare-and-set UPDATE against
-// the row as just read; a lost race deletes the log row and reports
+// Every mutation here is one transaction: a compare-and-set write against the
+// row as just read, plus its agent_activity row carrying the old value, inserted
+// only if the write changed a row (`changes() > 0`). Both commit or neither
+// (rule: no log, no mutation); a lost race writes nothing and reports
 // `changed_since`. Contract: docs/tasks-agent-api.md.
 
 export const AGENT_SLUG = "tasks-agent"
@@ -222,78 +223,75 @@ type Col = "due_date" | "done" | "assignee"
 /** Extra SQL condition ANDed into the CAS (fixed text, args bound). */
 type Guard = { sql: string; args: SqlArg[] }
 
-const dropLog = async (exec: ExecFn, logId: number): Promise<void> => {
-  if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => { /* best effort */ })
-}
+/** The activity row, inserted only if the statement just before it changed a row. */
+const logIfChanged = (action: string, targetId: string, summary: string, meta: Record<string, unknown>): Stmt => ({
+  sql: "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) SELECT ?, ?, 'task', ?, ?, ? WHERE changes() > 0 RETURNING id",
+  args: [AGENT_SLUG, action, targetId, summary.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", ...meta })],
+})
 
-/** Log first (RETURNING id), then CAS on the whole row as read; lost race or failed write → log row removed. */
+/** CAS on the whole row as read + its log row, in one transaction; lost race → nothing written. */
 async function mutate(
-  exec: ExecFn, before: RawTask, col: Col, value: SqlArg, action: string, summary: string, meta: Record<string, unknown>, guard?: Guard,
+  tx: TxFn, before: RawTask, col: Col, value: SqlArg, action: string, summary: string, meta: Record<string, unknown>, guard?: Guard,
 ): Promise<WriteOutcome> {
-  const ins = await exec(
-    "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, 'task', ?, ?, ?) RETURNING id",
-    [AGENT_SLUG, action, before.id, summary.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", ...meta })],
-  )
-  const logId = Number(ins.rows[0]?.id)
   // `col` comes from the fixed Col union, never from input.
-  let affected: number
-  try {
-    ;({ affected } = await exec(
-      `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND done = ? AND COALESCE(due_date, '') = ? AND COALESCE(assignee, '') = ? AND text = ?${guard ? ` AND ${guard.sql}` : ""}`,
-      [value, before.id, before.done ? 1 : 0, before.dueRaw, before.assigneeRaw, before.text, ...(guard?.args ?? [])],
-    ))
-  } catch (err) {
-    // No mutation → no log (a stale 'undo' row would make a retry say already_undone).
-    await dropLog(exec, logId)
-    throw err
-  }
-  if (affected > 0) return { ok: true }
-  await dropLog(exec, logId)
+  const [upd, log] = await tx([
+    {
+      sql: `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND done = ? AND COALESCE(due_date, '') = ? AND COALESCE(assignee, '') = ? AND text = ?${guard ? ` AND ${guard.sql}` : ""}`,
+      args: [value, before.id, before.done ? 1 : 0, before.dueRaw, before.assigneeRaw, before.text, ...(guard?.args ?? [])],
+    },
+    logIfChanged(action, before.id, summary, meta),
+  ])
+  if (upd!.affected > 0 && log!.rows.length > 0) return { ok: true }
   return conflict("changed_since")
 }
 
-export async function setTaskDue(exec: ExecFn, t: RawTask, due: string | null, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
+export async function setTaskDue(tx: TxFn, t: RawTask, due: string | null, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
   if (t.due === due) return { ok: true }
-  return mutate(exec, t, "due_date", due ?? "", "due_changed", `due ${t.due ?? "none"} → ${due ?? "none"}: ${t.text}`, { from: t.due, to: due, ...extra })
+  return mutate(tx, t, "due_date", due ?? "", "due_changed", `due ${t.due ?? "none"} → ${due ?? "none"}: ${t.text}`, { from: t.due, to: due, ...extra })
 }
 
-export async function setTaskDone(exec: ExecFn, t: RawTask, done: boolean, extra: Record<string, unknown> = {}, guard?: Guard): Promise<WriteOutcome> {
+export async function setTaskDone(tx: TxFn, t: RawTask, done: boolean, extra: Record<string, unknown> = {}, guard?: Guard): Promise<WriteOutcome> {
   if (t.done === done) return { ok: true }
   const from = t.done ? "done" : "open"
   const to = done ? "done" : "open"
-  return mutate(exec, t, "done", done ? 1 : 0, "status_changed", `${done ? "closed" : "reopened"}: ${t.text}`, { from, to, ...extra }, guard)
+  return mutate(tx, t, "done", done ? 1 : 0, "status_changed", `${done ? "closed" : "reopened"}: ${t.text}`, { from, to, ...extra }, guard)
 }
 
-export async function setTaskAssignee(exec: ExecFn, t: RawTask, assignee: string | null, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
+export async function setTaskAssignee(tx: TxFn, t: RawTask, assignee: string | null, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
   if (t.assignee === assignee) return { ok: true }
-  return mutate(exec, t, "assignee", assignee, "assignee_changed", `assignee ${t.assignee ?? "none"} → ${assignee ?? "none"}: ${t.text}`, { from: t.assignee, to: assignee, ...extra })
+  return mutate(tx, t, "assignee", assignee, "assignee_changed", `assignee ${t.assignee ?? "none"} → ${assignee ?? "none"}: ${t.text}`, { from: t.assignee, to: assignee, ...extra })
 }
 
-/** Log first, then insert the subtask (Jeremie's, undated, under `parent`). A failed insert removes the log row. */
-export async function insertSubtask(exec: ExecFn, parent: RawTask, text: string, position: number): Promise<string> {
-  const id = randomUUID().replace(/-/g, "")
-  const ins = await exec(
-    "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'subtask_created', 'task', ?, ?, ?) RETURNING id",
-    [AGENT_SLUG, id, `subtask of "${parent.text}": ${text}`.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", from: null, to: text, created: true, parent: parent.id })],
-  )
-  const logId = Number(ins.rows[0]?.id)
-  try {
-    await exec(
-      "INSERT INTO tasks (id, note_id, parent_id, text, description, done, due_date, position, assignee) VALUES (?, ?, ?, ?, '', 0, '', ?, ?)",
-      [id, parent.noteId, parent.id, text, position, parent.assignee ?? MINE[0] ?? "human:jeremie"],
-    )
-  } catch (err) {
-    await dropLog(exec, logId)
-    throw err
-  }
-  return id
+/**
+ * Subtasks under `parent` (his, undated), each with its log row, in ONE transaction. The first insert
+ * only happens while the parent is still open, unchanged and has no subtasks; every later statement
+ * only if the one before changed a row. So it is all or nothing, and two concurrent accepts insert once.
+ * null = the parent changed (or got subtasks) meanwhile.
+ */
+export async function insertSubtasks(tx: TxFn, parent: RawTask, texts: string[], firstPosition: number): Promise<string[] | null> {
+  const ids = texts.map(() => randomUUID().replace(/-/g, ""))
+  const assignee = parent.assignee ?? MINE[0] ?? "human:jeremie"
+  const stmts: Stmt[] = []
+  texts.forEach((text, i) => {
+    const id = ids[i]!
+    const cond = i === 0
+      ? "EXISTS (SELECT 1 FROM tasks p WHERE p.id = ? AND p.done = 0 AND p.text = ? AND COALESCE(p.assignee, '') = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)"
+      : "changes() > 0"
+    stmts.push({
+      sql: `INSERT INTO tasks (id, note_id, parent_id, text, description, done, due_date, position, assignee) SELECT ?, ?, ?, ?, '', 0, '', ?, ? WHERE ${cond}`,
+      args: [id, parent.noteId, parent.id, text, firstPosition + i, assignee, ...(i === 0 ? [parent.id, parent.text, parent.assigneeRaw, parent.id] : [])],
+    })
+    stmts.push(logIfChanged("subtask_created", id, `subtask of "${parent.text}": ${text}`, { from: null, to: text, created: true, parent: parent.id }))
+  })
+  const res = await tx(stmts)
+  return res.every((r) => r.affected > 0 || r.rows.length > 0) ? ids : null
 }
 
 // ── undo ─────────────────────────────────────────────────────────────────────
 
 export type UndoResult = { ok: true; taskId: string; field: UndoSpec["field"]; restored: unknown } | { ok: false; status: number; error: string }
 
-export async function undoActivity(exec: ExecFn, activityId: number): Promise<UndoResult> {
+export async function undoActivity(exec: ExecFn, tx: TxFn, activityId: number): Promise<UndoResult> {
   const { rows } = await exec("SELECT id, agent_slug, action, target_kind, target_id, meta FROM agent_activity WHERE id = ?", [activityId])
   const a = rows[0]
   if (!a || a.target_kind !== "task" || !str(a.target_id)) return { ok: false, status: 404, error: "no_such_activity" }
@@ -312,25 +310,14 @@ export async function undoActivity(exec: ExecFn, activityId: number): Promise<Un
     if (!t) return { ok: false, status: 409, error: "changed_since" }
     if (!isMine(t.assignee)) return { ok: false, status: 404, error: "no_such_task" }
     if (t.done || t.text !== spec.to || t.parentId !== spec.parentId) return { ok: false, status: 409, error: "changed_since" }
-    const ins = await exec(
-      "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'undo', 'task', ?, ?, ?) RETURNING id",
-      [AGENT_SLUG, taskId, `undo subtask: ${t.text}`.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", undoes: activityId, field: "created", from: t.text, to: null })],
-    )
-    const logId = Number(ins.rows[0]?.id)
-    let affected: number
-    try {
-      ;({ affected } = await exec(
-        "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
-        [taskId, spec.to, spec.parentId, taskId],
-      ))
-    } catch (err) {
-      await dropLog(exec, logId)
-      throw err
-    }
-    if (affected === 0) {
-      await dropLog(exec, logId)
-      return { ok: false, status: 409, error: "changed_since" }
-    }
+    const [del, log] = await tx([
+      {
+        sql: "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
+        args: [taskId, spec.to, spec.parentId, taskId],
+      },
+      logIfChanged("undo", taskId, `undo subtask: ${t.text}`, { undoes: activityId, field: "created", from: t.text, to: null }),
+    ])
+    if (del!.affected === 0 || log!.rows.length === 0) return { ok: false, status: 409, error: "changed_since" }
     return { ok: true, taskId, field: "created", restored: null }
   }
 
@@ -346,7 +333,7 @@ export async function undoActivity(exec: ExecFn, activityId: number): Promise<Un
   if (current !== spec.to) return { ok: false, status: 409, error: "changed_since" }
   const col: Col = spec.field === "due" ? "due_date" : spec.field === "done" ? "done" : "assignee"
   const value: SqlArg = spec.field === "due" ? spec.from ?? "" : spec.field === "done" ? (spec.from ? 1 : 0) : spec.from
-  const r = await mutate(exec, t, col, value, "undo", `undo ${spec.field} ${String(spec.to ?? "none")} → ${String(spec.from ?? "none")}: ${t.text}`,
+  const r = await mutate(tx, t, col, value, "undo", `undo ${spec.field} ${String(spec.to ?? "none")} → ${String(spec.from ?? "none")}: ${t.text}`,
     { undoes: activityId, field: spec.field, from: spec.to, to: spec.from })
   return r.ok ? { ok: true, taskId, field: spec.field, restored: spec.from } : r
 }
@@ -359,6 +346,8 @@ export type Splitter = (task: { text: string; description: string | null; projec
 export interface TasksAgentDeps {
   query: QueryFn
   exec: ExecFn
+  /** All-or-nothing writes (tursoTx). */
+  tx: TxFn
   store: TasksAgentStore
   /** Busy hours per day (null = calendar unavailable). */
   busy: (days: string[], tz: string) => Promise<Map<string, number> | null>
@@ -441,13 +430,13 @@ export function createTasksAgent(deps: TasksAgentDeps) {
         due = normDate(body.due)
         if (!due || due !== body.due) return { ok: false, status: 400, error: "due_must_be_yyyy_mm_dd_or_null" }
       }
-      const r = await setTaskDue(deps.exec, t, due, { proposal: p.id })
+      const r = await setTaskDue(deps.tx, t, due, { proposal: p.id })
       return r.ok ? done({ due }) : r
     }
     if (p.kind === "assign") {
       if (t.assignee !== null) return { ok: false, status: 409, error: "changed_since" }
       const assignee = String(p.suggestion.assignee)
-      const r = await setTaskAssignee(deps.exec, t, assignee, { proposal: p.id })
+      const r = await setTaskAssignee(deps.tx, t, assignee, { proposal: p.id })
       return r.ok ? done({ assignee }) : r
     }
     if (p.kind === "merge") {
@@ -456,7 +445,7 @@ export function createTasksAgent(deps: TasksAgentDeps) {
       // with open subtasks: both checked inside the closing UPDATE, so no race between check and write.
       const keep = await readTask(deps.exec, keepId)
       if (!keep || keep.done || keep.noteId !== t.noteId) return { ok: false, status: 409, error: "changed_since" }
-      const r = await setTaskDone(deps.exec, t, true, { proposal: p.id, merged_into: keepId }, {
+      const r = await setTaskDone(deps.tx, t, true, { proposal: p.id, merged_into: keepId }, {
         sql: "EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND k.done = 0 AND k.note_id = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)",
         args: [keepId, t.noteId, t.id],
       })
@@ -474,18 +463,10 @@ export function createTasksAgent(deps: TasksAgentDeps) {
     if (!subtasks) return { ok: false, status: 400, error: "subtasks_must_be_2_to_5_strings" }
     // After the note's last task, so no sibling position is shared.
     const { rows: mx } = await deps.exec("SELECT MAX(position) AS p FROM tasks WHERE note_id = ?", [t.noteId])
-    let pos = Math.max(Number(mx[0]?.p ?? 0) || 0, t.position)
-    const ids: string[] = []
-    try {
-      for (const text of subtasks) ids.push(await insertSubtask(deps.exec, t, text, ++pos))
-    } catch (err) {
-      // All or nothing: a failure midway removes the subtasks (and their log rows) already written, so a retry starts clean.
-      for (const id of ids) {
-        await deps.exec("DELETE FROM tasks WHERE id = ?", [id]).catch(() => { /* best effort */ })
-        await deps.exec("DELETE FROM agent_activity WHERE agent_slug = ? AND action = 'subtask_created' AND target_id = ?", [AGENT_SLUG, id]).catch(() => { /* best effort */ })
-      }
-      throw err
-    }
+    const pos = Math.max(Number(mx[0]?.p ?? 0) || 0, t.position) + 1
+    // One transaction, guarded on "no subtasks yet": a failure or a concurrent accept writes nothing.
+    const ids = await insertSubtasks(deps.tx, t, subtasks, pos)
+    if (!ids) return { ok: false, status: 409, error: "changed_since" }
     return done({ parentId: t.id, subtaskIds: ids })
   }
 
@@ -502,7 +483,7 @@ export function createTasksAgent(deps: TasksAgentDeps) {
   }
 
   async function undo(activityId: number): Promise<UndoResult> {
-    const r = await undoActivity(deps.exec, activityId)
+    const r = await undoActivity(deps.exec, deps.tx, activityId)
     if (r.ok) snap = null
     return r
   }

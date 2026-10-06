@@ -4,7 +4,7 @@ import { createTasksAgent, undoSpec } from "../lib/tasks-agent"
 import { createTasksChat } from "../lib/tasks-agent-chat"
 import { parseAssignRules } from "../lib/tasks-agent-rules"
 import { createTasksAgentStore } from "../lib/tasks-agent-store"
-import { testDb } from "../lib/tasks-agent-testdb.test-util"
+import { testDb, txOver } from "../lib/tasks-agent-testdb.test-util"
 import type { ExecFn } from "../lib/turso"
 import { createTasksAgentRoute } from "./tasks-agent"
 
@@ -27,7 +27,7 @@ function setup(o: Opts = {}) {
   const splitCalls: string[] = []
   const exec = o.exec ? o.exec(t.exec) : t.exec
   const agent = createTasksAgent({
-    query: t.query, exec, store, rules: () => RULES, now: () => now,
+    query: t.query, exec, tx: txOver(exec), store, rules: () => RULES, now: () => now,
     busy: async () => (o.busy === undefined ? new Map([["2026-10-07", 7]]) : o.busy),
     splitter: async (task) => { splitCalls.push(task.text); return o.split === undefined ? ["Draft the site map", "Pick the photos", "Write the blog post"] : o.split },
   })
@@ -204,6 +204,20 @@ describe("POST /api/tasks/agent/undo", () => {
     expect((await s.post("/api/tasks/agent/undo", { activityId: act })).status).toBe(503)
     expect(s.t.get(A)!.due_date).toBe("2026-10-20")
   })
+
+  test("atomic: the log insert failing after the UPDATE rolls the UPDATE back; the retry is not already_undone", async () => {
+    let fail = true
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("INSERT INTO agent_activity") && fail) { fail = false; throw new Error("blip") }
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, due_date: "2026-10-20" })
+    const act = s.t.activity({ agent: "pm", action: "due_changed", target: A, meta: { from: "2026-10-08", to: "2026-10-20" } })
+    expect((await s.post("/api/tasks/agent/undo", { activityId: act })).status).toBe(503)
+    expect([s.t.get(A)!.due_date, s.t.activities().length]).toEqual(["2026-10-20", 1])
+    expect((await s.post("/api/tasks/agent/undo", { activityId: act })).status).toBe(200)
+    expect([s.t.get(A)!.due_date, s.t.activities().length]).toEqual(["2026-10-08", 2])
+  })
 })
 
 describe("POST /api/tasks/agent/proposals/:id", () => {
@@ -326,6 +340,20 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, body)).status).toBe(200)
     expect(s.t.db.query("SELECT text, position FROM tasks WHERE parent_id = ? ORDER BY position").all(A))
       .toEqual([{ text: "Draft the site map", position: 6 }, { text: "Pick the photos", position: 7 }])
+  })
+
+  test("split: a concurrent accept that already inserted subtasks → 409, nothing inserted twice", async () => {
+    const C = "cccccccccc"
+    const s = setup({ exec: (base) => async (sql, args) => {
+      // The other accept commits its subtasks between our read and our insert transaction.
+      if (sql.startsWith("SELECT MAX(position)")) await base("INSERT INTO tasks (id, note_id, parent_id, text, assignee) VALUES (?, 'projects/p1', ?, 'Draft the site map', 'human:jeremie')", [C, A])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: VAGUE, position: 4 })
+    const body = { action: "accept", subtasks: ["Draft the site map", "Pick the photos"] }
+    expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, body))).toEqual({ status: 409, body: { error: "changed_since" } })
+    expect(s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 1 })
+    expect(s.t.activities().length).toBe(0)
   })
 
   test("split: accept drafts subtasks (nothing written), accept with subtasks inserts them under the parent; each undoable", async () => {
