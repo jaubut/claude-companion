@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { MINE, TASKS_TZ, type TaskRow, listMine, localDay, normDate } from "./my-tasks"
-import { readTask, setTaskDone, setTaskDue } from "./tasks-agent"
+import { setTaskDone, setTaskDue } from "./tasks-agent"
+import { guardedWrite, readTasks, versionOf } from "./tasks-agent-row"
 import type { ExecFn, QueryFn, TxFn } from "./turso"
 
 // Tasks agent CHAT (PRJ-CT4M WP5): "what is on my plate this week" / "move
@@ -127,8 +128,8 @@ export function renderList(tasks: TaskRow[], plan: Extract<ChatPlan, { op: "list
 
 interface Pending {
   id: string; channelId: string; op: "move" | "done"; taskIds: string[]; due: string | null; at: number
-  /** Each task's state when the plan was made. */
-  seen: Map<string, { due: string | null; done: boolean }>
+  /** Each task's rowVersion (every tracked field, tasks-agent-row.ts) when the plan was made. */
+  seen: Map<string, string>
   applying?: boolean
 }
 
@@ -168,14 +169,18 @@ export function createTasksChat(deps: TasksChatDeps) {
     for (const id of p.taskIds) {
       try {
         const was = p.seen.get(id)
-        const cur = await readTask(deps.exec, id)
-        if (!cur || !was || !cur.assignee || !MINE.includes(cur.assignee)) { gone++; continue }
-        if (cur.due !== was.due || cur.done !== was.done) { skipped.push(cur.text); continue }
-        // The CAS inside the write is on the row as read just above, i.e. as planned: an edit landing
-        // in between makes it a conflict (skipped), never an overwrite.
-        const r = p.op === "move" ? await setTaskDue(deps.tx, cur, p.due, { via: "chat" }) : await setTaskDone(deps.tx, cur, true, { via: "chat" })
+        if (!was) { gone++; continue }
+        // The task must still be exactly the row the plan was made on (any edit: text, project, date, notes, assignee…),
+        // else it is skipped; the write pins that same row inside its transaction.
+        const r = await guardedWrite<{ ok: boolean; gone?: boolean; text?: string }>(deps.exec, id, was, async (cur) => {
+          if (!cur.assignee || !MINE.includes(cur.assignee)) return { ok: false, gone: true }
+          const w = p.op === "move" ? await setTaskDue(deps.tx, cur, p.due, { via: "chat" }) : await setTaskDone(deps.tx, cur, true, { via: "chat" })
+          return w.ok ? { ok: true } : { ok: false, text: cur.text }
+        })
         if (r.ok) changed++
-        else skipped.push(cur.text)
+        else if ("fresh" in r && r.fresh) { if (r.fresh.assignee && MINE.includes(r.fresh.assignee)) skipped.push(r.fresh.text); else gone++ }
+        else if (("gone" in r && r.gone) || !("text" in r)) gone++
+        else skipped.push(String(r.text))
       } catch { failed++ }
     }
     if (changed) deps.notify({ type: "tasks_changed", why: p.op === "move" ? "due" : "done" })
@@ -205,7 +210,8 @@ export function createTasksChat(deps: TasksChatDeps) {
     if (plan.op === "list") { deps.emitTurn(renderList(tasks, plan, today), channelId); return true }
 
     const byId = new Map(tasks.map((x) => [x.id, x]))
-    const seen = new Map(plan.taskIds.map((id) => [id, { due: byId.get(id)!.due, done: false }]))
+    const rawNow = await readTasks(deps.exec, plan.taskIds)
+    const seen = new Map([...rawNow].map(([id, raw]) => [id, versionOf(raw)]))
     const p: Pending = { id: randomUUID().replace(/-/g, "").slice(0, 16), channelId, op: plan.op, taskIds: plan.taskIds, due: plan.op === "move" ? plan.due : null, at: t, seen }
     if (p.taskIds.length <= CONFIRM_OVER) { await apply(p); return true }
 

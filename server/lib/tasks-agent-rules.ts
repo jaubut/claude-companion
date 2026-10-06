@@ -34,6 +34,8 @@ export interface ScopeTask {
   mine: boolean
   project: string
   folder: string | null
+  /** rowVersion of the task as read (tasks-agent-row.ts). */
+  version?: string
 }
 
 export interface Proposal {
@@ -48,6 +50,8 @@ export interface Proposal {
   suggestion: Record<string, unknown>
   /** What a stored decision is matched against (see hiddenBy). */
   version: string
+  /** rowVersion of every task it was derived from; accept refuses (409 stale) unless each still matches. */
+  rowVersions?: Record<string, string>
 }
 
 export interface DueChange { taskId: string; from: string | null; to: string | null }
@@ -256,7 +260,11 @@ export function splitProposals(i: RuleInput): Proposal[] {
 }
 
 export function allProposals(i: RuleInput): Proposal[] {
-  return [...slipProposals(i), ...mergeProposals(i), ...assignProposals(i), ...splitProposals(i)]
+  const byId = new Map(i.tasks.map((t) => [t.id, t.version]))
+  return [...slipProposals(i), ...mergeProposals(i), ...assignProposals(i), ...splitProposals(i)].map((p): Proposal => {
+    const versions = p.taskIds.flatMap((id): [string, string][] => { const v = byId.get(id); return v ? [[id, v]] : [] })
+    return versions.length ? { ...p, rowVersions: Object.fromEntries(versions) } : p
+  })
 }
 
 /** A stored decision hides a proposal while its version still matches (a slip: until it slipped SLIP_REPROPOSE more times). */

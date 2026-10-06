@@ -3549,7 +3549,7 @@
         },
         {
           "path": "lib/tasks-agent-chat.ts",
-          "lines": 254,
+          "lines": 260,
           "kind": "lib",
           "exports": [
             "CONFIRM_OVER",
@@ -3575,6 +3575,7 @@
           "imports": [
             "lib/my-tasks.ts",
             "lib/tasks-agent.ts",
+            "lib/tasks-agent-row.ts",
             "lib/turso.ts"
           ],
           "listeners": [],
@@ -3616,8 +3617,41 @@
           "externals": []
         },
         {
+          "path": "lib/tasks-agent-row.ts",
+          "lines": 103,
+          "kind": "lib",
+          "exports": [
+            "RawTask",
+            "RowFields",
+            "rowKey",
+            "rowVersion",
+            "rowKeySql",
+            "TASK_COLUMNS",
+            "toRawTask",
+            "fieldsOf",
+            "versionOf",
+            "keyOf",
+            "readTask",
+            "readTasks",
+            "StaleOutcome",
+            "guardedWrite"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/my-tasks.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/tasks-agent-rules.ts",
-          "lines": 268,
+          "lines": 276,
           "kind": "lib",
           "exports": [
             "SLIP_MIN",
@@ -3708,7 +3742,7 @@
         },
         {
           "path": "lib/tasks-agent.ts",
-          "lines": 535,
+          "lines": 538,
           "kind": "lib",
           "exports": [
             "AGENT_SLUG",
@@ -3724,8 +3758,6 @@
             "sqliteToIso",
             "UndoSpec",
             "undoSpec",
-            "RawTask",
-            "readTask",
             "listScope",
             "toDueChange",
             "dueHistory",
@@ -3762,6 +3794,7 @@
             "lib/my-tasks.ts",
             "lib/tasks-agent-rules.ts",
             "lib/tasks-agent-load.ts",
+            "lib/tasks-agent-row.ts",
             "lib/tasks-agent-store.ts",
             "lib/turso.ts"
           ],
@@ -7239,6 +7272,7 @@
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
             "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent-row.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
             "lib/triage-pr.ts",
@@ -7337,6 +7371,7 @@
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
+            "lib/tasks-agent-row.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
             "lib/triage-sources.ts",
@@ -9375,6 +9410,7 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent-row.ts",
             "lib/tasks-agent.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
           ]
@@ -9387,10 +9423,11 @@
             "lib/tasks-agent.ts"
           ]
         },
-        "readTask": {
-          "module": "lib/tasks-agent.ts",
+        "guardedWrite": {
+          "module": "lib/tasks-agent-row.ts",
           "callers": [
-            "lib/tasks-agent-chat.ts"
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts"
           ]
         },
         "MINE": {
@@ -9413,8 +9450,39 @@
             "lib/tasks-agent-chat.ts"
           ]
         },
+        "readTasks": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "versionOf": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "RawTask": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "readTask": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
         "ScopeTask": {
           "module": "lib/tasks-agent-rules.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "rowVersion": {
+          "module": "lib/tasks-agent-row.ts",
           "callers": [
             "lib/tasks-agent.ts"
           ]
@@ -9427,6 +9495,24 @@
         },
         "Stmt": {
           "module": "lib/turso.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "rowKeySql": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "keyOf": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "rowKey": {
+          "module": "lib/tasks-agent-row.ts",
           "callers": [
             "lib/tasks-agent.ts"
           ]
@@ -9487,6 +9573,12 @@
         },
         "buildLoad": {
           "module": "lib/tasks-agent-load.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "agentFor": {
+          "module": "lib/tasks-agent-rules.ts",
           "callers": [
             "lib/tasks-agent.ts"
           ]

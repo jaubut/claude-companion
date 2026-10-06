@@ -208,4 +208,17 @@ describe("chat tool", () => {
     expect(t.get(ids(1)[0]!)!.due_date).toBe("2026-10-07")
     expect(turns.at(-1)).toContain("failed to save")
   })
+
+  test("confirming an old card skips tasks renamed or moved to another project since the plan", async () => {
+    const s = setup(() => `{"op":"move","taskIds":${JSON.stringify(ids(5))},"due":"2026-10-09"}`)
+    seedGranby(s.t, 5)
+    await s.chat.handle("move everything Granby to Friday", "general")
+    const [renamed, moved, ...rest] = ids(5)
+    s.t.db.query("UPDATE tasks SET text = 'Something else now' WHERE id = ?").run(renamed!)
+    s.t.db.query("UPDATE tasks SET note_id = 'projects/other' WHERE id = ?").run(moved!)
+    expect(await s.chat.confirmReply("confirm", "general")).toBe(true)
+    expect([renamed!, moved!].map((id) => s.t.get(id)!.due_date)).toEqual(["2026-10-07", "2026-10-07"])
+    expect(rest.every((id) => s.t.get(id)!.due_date === "2026-10-09")).toBe(true)
+    expect(s.turns.at(-1)!.text).toContain("skipped 2 changed since the plan")
+  })
 })

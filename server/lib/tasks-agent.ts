@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { MINE, TASKS_TZ, addDays, localDay, normDate } from "./my-tasks"
-import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, allProposals, duplicateMatch, hiddenBy, slipCounts } from "./tasks-agent-rules"
+import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, agentFor, allProposals, duplicateMatch, hiddenBy, slipCounts } from "./tasks-agent-rules"
 import { type LoadResponse, LOAD_DAYS, buildLoad } from "./tasks-agent-load"
+import { type RawTask, guardedWrite, keyOf, readTask, rowKey, rowKeySql, rowVersion, versionOf } from "./tasks-agent-row"
 import type { TasksAgentStore } from "./tasks-agent-store"
 import type { ExecFn, QueryFn, Row, SqlArg, Stmt, TxFn } from "./turso"
 
@@ -56,7 +57,7 @@ export type UndoSpec =
   | { field: "due"; from: string | null; to: string | null }
   | { field: "done"; from: boolean; to: boolean }
   | { field: "assignee"; from: string | null; to: string | null }
-  | { field: "created"; from: null; to: string; parentId: string }
+  | { field: "created"; from: null; to: string; parentId: string; key: string }
 
 /** Only rows whose meta carries the old value (`from`) are undoable. */
 export function undoSpec(action: string, meta: Record<string, unknown> | null): UndoSpec | null {
@@ -76,27 +77,17 @@ export function undoSpec(action: string, meta: Record<string, unknown> | null): 
       if ((from !== null && typeof from !== "string") || (to !== null && typeof to !== "string")) return null
       return { field: "assignee", from: str(from), to: str(to) }
     case "subtask_created":
-      return meta.created === true && from === null && typeof to === "string" && typeof meta.parent === "string"
-        ? { field: "created", from: null, to, parentId: meta.parent } : null
+      // `rowKey` = the subtask's whole row as created (tasks-agent-row.ts): undo only deletes it while it still is exactly that.
+      return meta.created === true && from === null && typeof to === "string" && typeof meta.parent === "string" && typeof meta.rowKey === "string"
+        ? { field: "created", from: null, to, parentId: meta.parent, key: meta.rowKey } : null
     default:
       return null
   }
 }
 
+export { readTask, type RawTask }
+
 // ── reads ────────────────────────────────────────────────────────────────────
-
-export interface RawTask { id: string; noteId: string; parentId: string | null; text: string; done: boolean; dueRaw: string; due: string | null; assigneeRaw: string; assignee: string | null; position: number }
-
-export async function readTask(exec: ExecFn, id: string): Promise<RawTask | null> {
-  const { rows } = await exec("SELECT id, note_id, parent_id, text, done, due_date, assignee, position FROM tasks WHERE id = ?", [id])
-  const r = rows[0]
-  if (!r) return null
-  return {
-    id: String(r.id), noteId: str(r.note_id) ?? "", parentId: str(r.parent_id), text: str(r.text) ?? "", done: Number(r.done ?? 0) === 1,
-    dueRaw: typeof r.due_date === "string" ? r.due_date : "", due: normDate(r.due_date),
-    assigneeRaw: typeof r.assignee === "string" ? r.assignee : "", assignee: str(r.assignee), position: Number(r.position ?? 0) || 0,
-  }
-}
 
 export async function listScope(query: QueryFn): Promise<ScopeTask[]> {
   const rows = await query(
@@ -110,6 +101,11 @@ export async function listScope(query: QueryFn): Promise<ScopeTask[]> {
     return {
       id: String(r.id), noteId: str(r.note_id) ?? "", parentId: str(r.parent_id), text: str(r.text) ?? "", description: str(r.description),
       due: normDate(r.due_date), position: Number(r.position ?? 0) || 0, assignee, mine: isMine(assignee),
+      version: rowVersion({
+        text: str(r.text) ?? "", description: typeof r.description === "string" ? r.description : "", noteId: str(r.note_id) ?? "",
+        parentRaw: typeof r.parent_id === "string" ? r.parent_id : "", dueRaw: typeof r.due_date === "string" ? r.due_date : "", done: false,
+        assigneeRaw: typeof r.assignee === "string" ? r.assignee : "",
+      }),
       project: str(r.note_title) ?? (str(r.note_id) || "No project"), folder: str(r.note_folder),
     }
   })
@@ -229,15 +225,15 @@ const logIfChanged = (action: string, targetId: string, summary: string, meta: R
   args: [AGENT_SLUG, action, targetId, summary.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", ...meta })],
 })
 
-/** CAS on the whole row as read + its log row, in one transaction; lost race → nothing written. */
+/** CAS on the WHOLE row as read (every tracked field, tasks-agent-row.ts) + its log row, in one transaction; lost race → nothing written. */
 async function mutate(
   tx: TxFn, before: RawTask, col: Col, value: SqlArg, action: string, summary: string, meta: Record<string, unknown>, guard?: Guard,
 ): Promise<WriteOutcome> {
   // `col` comes from the fixed Col union, never from input.
   const [upd, log] = await tx([
     {
-      sql: `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND done = ? AND COALESCE(due_date, '') = ? AND COALESCE(assignee, '') = ? AND text = ? AND note_id = ?${guard ? ` AND ${guard.sql}` : ""}`,
-      args: [value, before.id, before.done ? 1 : 0, before.dueRaw, before.assigneeRaw, before.text, before.noteId, ...(guard?.args ?? [])],
+      sql: `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND ${rowKeySql()} = ?${guard ? ` AND ${guard.sql}` : ""}`,
+      args: [value, before.id, keyOf(before), ...(guard?.args ?? [])],
     },
     logIfChanged(action, before.id, summary, meta),
   ])
@@ -264,7 +260,7 @@ export async function setTaskAssignee(tx: TxFn, t: RawTask, assignee: string | n
 
 /**
  * Subtasks under `parent` (his, undated), each with its log row, in ONE transaction. The first insert
- * only happens while the parent is still open, unchanged and has no subtasks; every later statement
+ * only happens while the parent row is still exactly as read (every tracked field) and has no subtasks; every later statement
  * only if the one before changed a row. So it is all or nothing, and two concurrent accepts insert once.
  * null = the parent changed (or got subtasks) meanwhile.
  */
@@ -275,13 +271,16 @@ export async function insertSubtasks(tx: TxFn, parent: RawTask, texts: string[],
   texts.forEach((text, i) => {
     const id = ids[i]!
     const cond = i === 0
-      ? "EXISTS (SELECT 1 FROM tasks p WHERE p.id = ? AND p.done = 0 AND p.text = ? AND p.note_id = ? AND COALESCE(p.assignee, '') = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)"
+      ? `EXISTS (SELECT 1 FROM tasks p WHERE p.id = ? AND ${rowKeySql("p.")} = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)`
       : "changes() > 0"
     stmts.push({
       sql: `INSERT INTO tasks (id, note_id, parent_id, text, description, done, due_date, position, assignee) SELECT ?, ?, ?, ?, '', 0, '', ?, ? WHERE ${cond}`,
-      args: [id, parent.noteId, parent.id, text, firstPosition + i, assignee, ...(i === 0 ? [parent.id, parent.text, parent.noteId, parent.assigneeRaw, parent.id] : [])],
+      args: [id, parent.noteId, parent.id, text, firstPosition + i, assignee, ...(i === 0 ? [parent.id, keyOf(parent), parent.id] : [])],
     })
-    stmts.push(logIfChanged("subtask_created", id, `subtask of "${parent.text}": ${text}`, { from: null, to: text, created: true, parent: parent.id }))
+    stmts.push(logIfChanged("subtask_created", id, `subtask of "${parent.text}": ${text}`, {
+      from: null, to: text, created: true, parent: parent.id,
+      rowKey: rowKey({ text, description: "", noteId: parent.noteId, parentRaw: parent.id, dueRaw: "", done: false, assigneeRaw: assignee }),
+    }))
   })
   const res = await tx(stmts)
   return res.every((r) => r.affected > 0 || r.rows.length > 0) ? ids : null
@@ -309,13 +308,13 @@ export async function undoActivity(exec: ExecFn, tx: TxFn, activityId: number): 
   if (spec.field === "created") {
     if (!t) return { ok: false, status: 409, error: "changed_since" }
     if (!isMine(t.assignee)) return { ok: false, status: 404, error: "no_such_task" }
-    if (t.done || t.text !== spec.to || t.parentId !== spec.parentId) return { ok: false, status: 409, error: "changed_since" }
+    // Deleted only while the row is EXACTLY as created (spec.key): any edit since (text, date, description, project,
+    // parent, assignee, done) keeps it. Checked on the read row, and again inside the DELETE.
+    if (keyOf(t) !== spec.key || t.parentId !== spec.parentId) return { ok: false, status: 409, error: "changed_since" }
     const [del, log] = await tx([
       {
-        // The assignee as read, and the creation state (no date, no description: how insertSubtasks wrote it) are part of the
-        // predicate: a reassignment or an edit between the scope check and the DELETE wins, nothing is lost.
-        sql: "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND COALESCE(assignee, '') = ? AND COALESCE(due_date, '') = '' AND COALESCE(description, '') = '' AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
-        args: [taskId, spec.to, spec.parentId, t.assigneeRaw, taskId],
+        sql: `DELETE FROM tasks WHERE id = ? AND ${rowKeySql()} = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)`,
+        args: [taskId, spec.key, taskId],
       },
       logIfChanged("undo", taskId, `undo subtask: ${t.text}`, { undoes: activityId, field: "created", from: t.text, to: null }),
     ])
@@ -371,8 +370,9 @@ export interface AgentResponse {
 
 export type AcceptBody = { due?: unknown; subtasks?: unknown; parentVersion?: unknown }
 
-/** What a split draft is bound to: the parent's text and note as read. insertSubtasks pins both again inside its transaction. */
-export const parentVersion = (t: { noteId: string; text: string }): string => createHash("sha1").update(`${t.noteId}\n${t.text}`).digest("hex").slice(0, 16)
+/** What a split draft is bound to: the parent's row version (every tracked field, description included). insertSubtasks pins the same row inside its transaction. */
+export const parentVersion = (t: RawTask): string => versionOf(t)
+
 export type DecideResult =
   | { ok: true; decision: "accept" | "dismiss"; proposalId: string; taskIds: string[]; detail?: Record<string, unknown> }
   | { ok: true; stage: "confirm"; proposalId: string; subtasks: string[]; parentVersion: string }
@@ -421,64 +421,67 @@ export function createTasksAgent(deps: TasksAgentDeps) {
       snap = null
       return { ok: true, decision: "accept", proposalId: p.id, taskIds: p.taskIds, detail }
     }
-    const t = await readTask(deps.exec, p.taskIds[p.kind === "merge" ? 1 : 0]!)
-    if (!t || t.done) return { ok: false, status: 409, error: "changed_since" }
-    // Same scope as the rules: reschedule / split on his own tasks, merge on his or unassigned.
-    if ((p.kind === "reschedule" || p.kind === "split") && !isMine(t.assignee)) return { ok: false, status: 409, error: "changed_since" }
-    if (p.kind === "merge" && t.assignee !== null && !isMine(t.assignee)) return { ok: false, status: 409, error: "changed_since" }
+    // The task acted on (merge: the duplicate). guardedWrite refuses it (409 stale) unless it is exactly the
+    // row the proposal was derived from; every write below pins that same row again inside its transaction.
+    const subject = p.taskIds[p.kind === "merge" ? 1 : 0]!
+    return guardedWrite<DecideResult>(deps.exec, subject, p.rowVersions?.[subject], async (t) => {
+      if (t.done) return { ok: false, status: 409, error: "changed_since" }
+      // Same scope as the rules: reschedule / split on his own tasks, merge on his or unassigned.
+      if ((p.kind === "reschedule" || p.kind === "split") && !isMine(t.assignee)) return { ok: false, status: 409, error: "changed_since" }
+      if (p.kind === "merge" && t.assignee !== null && !isMine(t.assignee)) return { ok: false, status: 409, error: "changed_since" }
 
-    if (p.kind === "reschedule") {
-      let due: string | null
-      if (body.due === undefined) due = String(p.suggestion.suggestedDue ?? addDays(today, 7))
-      else if (body.due === null) due = null
-      else {
-        due = normDate(body.due)
-        if (!due || due !== body.due) return { ok: false, status: 400, error: "due_must_be_yyyy_mm_dd_or_null" }
+      if (p.kind === "reschedule") {
+        let due: string | null
+        if (body.due === undefined) due = String(p.suggestion.suggestedDue ?? addDays(today, 7))
+        else if (body.due === null) due = null
+        else {
+          due = normDate(body.due)
+          if (!due || due !== body.due) return { ok: false, status: 400, error: "due_must_be_yyyy_mm_dd_or_null" }
+        }
+        const r = await setTaskDue(deps.tx, t, due, { proposal: p.id })
+        return r.ok ? done({ due }) : r
       }
-      const r = await setTaskDue(deps.tx, t, due, { proposal: p.id })
-      return r.ok ? done({ due }) : r
-    }
-    if (p.kind === "assign") {
-      if (t.assignee !== null) return { ok: false, status: 409, error: "changed_since" }
-      const assignee = String(p.suggestion.assignee)
-      const r = await setTaskAssignee(deps.tx, t, assignee, { proposal: p.id })
-      return r.ok ? done({ assignee }) : r
-    }
-    if (p.kind === "merge") {
-      const keepId = String(p.suggestion.keepId)
-      // Never close the last open copy (the kept task must still be open, in the same note) nor a parent
-      // with open subtasks: both checked inside the closing UPDATE, so no race between check and write.
-      const keep = await readTask(deps.exec, keepId)
-      if (!keep || keep.done || keep.noteId !== t.noteId) return { ok: false, status: 409, error: "changed_since" }
-      // Still duplicates as of now (either text may have been edited since the proposal), and the kept
-      // task's text as read is pinned in the UPDATE (the closed task's is pinned by the row check).
-      if (!duplicateMatch(t.text, keep.text)) return { ok: false, status: 409, error: "changed_since" }
-      const r = await setTaskDone(deps.tx, t, true, { proposal: p.id, merged_into: keepId }, {
-        sql: "EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND k.done = 0 AND k.note_id = ? AND k.text = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)",
-        args: [keepId, t.noteId, keep.text, t.id],
-      })
-      return r.ok ? done({ closed: t.id, kept: keepId }) : r
-    }
-    // split: no subtasks yet → Haiku drafts them (nothing written); with subtasks → insert.
-    if (body.subtasks === undefined) {
-      const st = snap?.tasks.find((x) => x.id === t.id)
-      const drafted = await deps.splitter({ text: t.text, description: st?.description ?? null, project: p.project }).catch(() => null)
-      const clean = drafted ? cleanSubtasks(drafted) : null
-      if (!clean) return { ok: false, status: 502, error: "split_unavailable" }
-      return { ok: true, stage: "confirm", proposalId: p.id, subtasks: clean, parentVersion: parentVersion(t) }
-    }
-    const subtasks = Array.isArray(body.subtasks) ? cleanSubtasks(body.subtasks) : null
-    if (!subtasks) return { ok: false, status: 400, error: "subtasks_must_be_2_to_5_strings" }
-    if (typeof body.parentVersion !== "string") return { ok: false, status: 400, error: "parent_version_required" }
-    // The draft was made for another version of this task (text edited or moved): refuse, ask for a new draft.
-    if (body.parentVersion !== parentVersion(t)) return { ok: false, status: 409, error: "draft_stale" }
-    // After the note's last task, so no sibling position is shared.
-    const { rows: mx } = await deps.exec("SELECT MAX(position) AS p FROM tasks WHERE note_id = ?", [t.noteId])
-    const pos = Math.max(Number(mx[0]?.p ?? 0) || 0, t.position) + 1
-    // One transaction, guarded on "no subtasks yet": a failure or a concurrent accept writes nothing.
-    const ids = await insertSubtasks(deps.tx, t, subtasks, pos)
-    if (!ids) return { ok: false, status: 409, error: "changed_since" }
-    return done({ parentId: t.id, subtaskIds: ids })
+      if (p.kind === "assign") {
+        if (t.assignee !== null) return { ok: false, status: 409, error: "changed_since" }
+        // The rule is run again on the row as it is now (inside the transaction it is pinned), not trusted from the proposal.
+        const hit = agentFor(t.text, deps.rules())
+        if (!hit || hit.assignee !== p.suggestion.assignee) return { ok: false, status: 409, error: "stale" }
+        const r = await setTaskAssignee(deps.tx, t, hit.assignee, { proposal: p.id })
+        return r.ok ? done({ assignee: hit.assignee }) : r
+      }
+      if (p.kind === "merge") {
+        const keepId = String(p.suggestion.keepId)
+        // Never close the last open copy: the kept task must be exactly the row the proposal saw (so still open, same
+        // note) and still a duplicate; a parent with open subtasks is never closed. All pinned inside the closing UPDATE.
+        return guardedWrite<DecideResult>(deps.exec, keepId, p.rowVersions?.[keepId], async (keep) => {
+          if (keep.done || keep.noteId !== t.noteId || !duplicateMatch(t.text, keep.text)) return { ok: false, status: 409, error: "changed_since" }
+          const r = await setTaskDone(deps.tx, t, true, { proposal: p.id, merged_into: keepId }, {
+            sql: `EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND ${rowKeySql("k.")} = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)`,
+            args: [keepId, keyOf(keep), t.id],
+          })
+          return r.ok ? done({ closed: t.id, kept: keepId }) : r
+        })
+      }
+      // split: no subtasks yet → Haiku drafts them (nothing written); with subtasks → insert.
+      if (body.subtasks === undefined) {
+        const drafted = await deps.splitter({ text: t.text, description: t.description || null, project: p.project }).catch(() => null)
+        const clean = drafted ? cleanSubtasks(drafted) : null
+        if (!clean) return { ok: false, status: 502, error: "split_unavailable" }
+        return { ok: true, stage: "confirm", proposalId: p.id, subtasks: clean, parentVersion: parentVersion(t) }
+      }
+      const subtasks = Array.isArray(body.subtasks) ? cleanSubtasks(body.subtasks) : null
+      if (!subtasks) return { ok: false, status: 400, error: "subtasks_must_be_2_to_5_strings" }
+      if (typeof body.parentVersion !== "string") return { ok: false, status: 400, error: "parent_version_required" }
+      // The draft was made for another version of this task (any tracked field, description included): ask for a new draft.
+      if (body.parentVersion !== parentVersion(t)) return { ok: false, status: 409, error: "draft_stale" }
+      // After the note's last task, so no sibling position is shared.
+      const { rows: mx } = await deps.exec("SELECT MAX(position) AS p FROM tasks WHERE note_id = ?", [t.noteId])
+      const pos = Math.max(Number(mx[0]?.p ?? 0) || 0, t.position) + 1
+      // One transaction, the parent pinned as read and "no subtasks yet": a failure or a concurrent accept writes nothing.
+      const ids = await insertSubtasks(deps.tx, t, subtasks, pos)
+      if (!ids) return { ok: false, status: 409, error: "changed_since" }
+      return done({ parentId: t.id, subtaskIds: ids })
+    })
   }
 
   /** accept | dismiss one proposal, re-derived fresh from Turso (a stale id → 404). */

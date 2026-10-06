@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
-import { createTasksAgent, parentVersion, undoSpec } from "../lib/tasks-agent"
+import { createTasksAgent, undoSpec } from "../lib/tasks-agent"
+import { rowKey, rowVersion } from "../lib/tasks-agent-row"
 import { createTasksChat } from "../lib/tasks-agent-chat"
 import { parseAssignRules } from "../lib/tasks-agent-rules"
 import { createTasksAgentStore } from "../lib/tasks-agent-store"
@@ -16,7 +17,9 @@ const RULES = parseAssignRules(`ROUTES = [
 `)
 const VAGUE = "the whole website thing with the new client and the photos and the blog maybe"
 const A = "aaaaaaaaaa", B = "bbbbbbbbbb"
-const PV = parentVersion({ noteId: "projects/p1", text: VAGUE })
+/** The row of a subtask exactly as insertSubtasks creates it under A. */
+const SUBKEY = rowKey({ text: "Draft the site map", description: "", noteId: "projects/p1", parentRaw: A, dueRaw: "", done: false, assigneeRaw: "human:jeremie" })
+const PV = rowVersion({ text: VAGUE, description: "", noteId: "projects/p1", parentRaw: "", dueRaw: "", done: false, assigneeRaw: "human:jeremie" })
 
 interface Opts { busy?: Map<string, number> | null; split?: string[] | null; exec?: (base: ExecFn) => ExecFn }
 
@@ -299,7 +302,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     } })
     s.t.task({ id: A, text: "Export the final cut", position: 1 })
     s.t.task({ id: B, text: "export the final cut!", position: 2 })
-    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("stale")
     expect(s.t.get(B)!.done).toBe(0)
   })
 
@@ -334,7 +337,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     } })
     s.t.task({ id: A, text: "Export the final cut", position: 1 })
     s.t.task({ id: B, text: "export the final cut!", position: 2 })
-    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("stale")
     expect(s.t.get(B)!.done).toBe(0)
     expect(s.t.activities().length).toBe(0)
   })
@@ -360,7 +363,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     } })
     s.t.task({ id: A, text: VAGUE })
     s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
-    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie" } })
+    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowKey: SUBKEY } })
     expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
     expect(s.t.get(K)).not.toBeNull()
     expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
@@ -376,7 +379,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
       } })
       s.t.task({ id: A, text: VAGUE })
       s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
-      const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie" } })
+      const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowKey: SUBKEY } })
       expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
       expect(s.t.get(K)).not.toBeNull()
       expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
@@ -427,6 +430,43 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     const r = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: ["Draft the site map", "Pick the photos"], parentVersion: PV })
     expect([r.status, r.body.error]).toEqual([409, "changed_since"])
     expect(s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 0 })
+  })
+
+  test("undo of a created subtask: moved to another project between the read and the DELETE → nothing deleted", async () => {
+    const K = "kkkkkkkkkk"
+    const s = setup({ exec: (base) => async (sql, args) => {
+      const r = await base(sql, args)
+      if (sql.startsWith("SELECT id, note_id") && args[0] === K) await base("UPDATE tasks SET note_id = 'projects/other' WHERE id = ?", [K])
+      return r
+    } })
+    s.t.task({ id: A, text: VAGUE })
+    s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
+    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowKey: SUBKEY } })
+    expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
+    expect(s.t.get(K)).toMatchObject({ note_id: "projects/other" })
+    expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
+  })
+
+  test("split: a description added after the draft makes the draft stale (parentVersion covers the description)", async () => {
+    const s = setup()
+    s.t.task({ id: A, text: VAGUE, position: 4 })
+    const draft = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept" })
+    s.t.db.query("UPDATE tasks SET description = 'the client also wants a shop' WHERE id = ?").run(A)
+    const r = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: draft.body.subtasks, parentVersion: draft.body.parentVersion })
+    expect([r.status, r.body.error]).toEqual([409, "draft_stale"])
+    expect(s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 0 })
+  })
+
+  test("assign: a task edited after the proposal was derived (its rule no longer matches) is not assigned", async () => {
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("SELECT id, note_id") && args[0] === A) await base("UPDATE tasks SET text = 'Call the client about the photos' WHERE id = ?", [A])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, assignee: null, text: "Wireframe the booking page" })
+    const r = await s.post(`/api/tasks/agent/proposals/assign:${A}`, { action: "accept" })
+    expect([r.status, r.body.error]).toEqual([409, "stale"])
+    expect(s.t.get(A)!.assignee).toBeNull()
+    expect(s.t.activities().length).toBe(0)
   })
 
   test("split: a mid-way failure rolls back (no log, no subtask); the retry inserts once, after the note's last task", async () => {
