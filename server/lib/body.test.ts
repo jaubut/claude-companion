@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { QueryFn, Row, SqlArg } from "./turso"
 import {
+  humanDetail,
   BODY_CACHE_TTL_MS, DIGEST_MAX, type BodyResponse, buildBody, buildBodyDigest, buildComponentDetail,
   createBodySnapshot, dependentsIndex, emptySummary, isHealthIntent, parseDependsOn, toState, vitalsHeader,
 } from "./body"
@@ -223,5 +224,24 @@ describe("warning state (token-burn spikes)", () => {
     expect(vitalsHeader(mk({ warning: 1, unknown: 1, stopped: 1, dormant: 1, ok: 1 }), 0).worst).toBe("warning")
     expect(vitalsHeader(mk({ warning: 1, failing: 1 }), 0).worst).toBe("failing")
     expect(vitalsHeader(mk({ unknown: 1, stopped: 1 }), 0).worst).toBe("unknown")
+  })
+})
+
+describe("humanDetail (JSON vitals detail → text every client shows)", () => {
+  test("tokens:burn JSON → its warning text", () => {
+    const raw = JSON.stringify({ warning: "today 1003.4M > 2x 7-day avg 449.0M", today_total: 1003428589, top_sessions: [{ session_id: "0509", tokens: 1 }] })
+    expect(humanDetail(raw)).toBe("today 1003.4M > 2x 7-day avg 449.0M")
+  })
+  test("warning + error are joined", () => {
+    expect(humanDetail(JSON.stringify({ warning: "spike", error: "push failed: 503" }))).toBe("spike; push failed: 503")
+  })
+  test("plain text, JSON without warning/error, invalid JSON and null pass unchanged", () => {
+    expect(humanDetail("exit 1")).toBe("exit 1")
+    const noMsg = JSON.stringify({ today_total: 5 })
+    expect(humanDetail(noMsg)).toBe(noMsg)
+    expect(humanDetail("{not json")).toBe("{not json")
+    expect(humanDetail(null)).toBeNull()
+    expect(humanDetail(undefined)).toBeNull()
+    expect(humanDetail(3)).toBe(3)
   })
 })

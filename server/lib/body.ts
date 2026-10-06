@@ -83,6 +83,25 @@ const COMPONENT_EVENTS_SQL =
 
 const cell = (v: Row[string] | undefined): Cell => (v === undefined ? null : v)
 
+/**
+ * A collector may store its vitals detail as JSON (tokens:burn writes
+ * `{"warning":…,"today_total":…,"top_sessions":[…]}`); every client shows
+ * `detail` as text. JSON carrying a `warning` and/or `error` string becomes
+ * that text; anything else (plain text, JSON without them) passes unchanged.
+ */
+export function humanDetail(v: Row[string] | undefined): Cell {
+  if (typeof v !== "string") return cell(v)
+  const t = v.trim()
+  if (!t.startsWith("{")) return v
+  try {
+    const o = JSON.parse(t) as Record<string, unknown>
+    const parts = ["warning", "error"].map((k) => o[k]).filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    return parts.length ? parts.join("; ") : v
+  } catch {
+    return v
+  }
+}
+
 export function toState(v: Row[string] | undefined): BodyState {
   const s = typeof v === "string" ? v.trim().toLowerCase() : ""
   return (BODY_STATES as readonly string[]).includes(s) ? (s as BodyState) : "unknown"
@@ -122,7 +141,7 @@ export function dependentsIndex(rows: Row[]): Map<string, string[]> {
 function toEvent(r: Row): BodyEvent {
   return {
     id: cell(r.id), component_id: String(r.component_id ?? ""), at: cell(r.at), kind: cell(r.kind),
-    from_state: cell(r.from_state), to_state: cell(r.to_state), detail: cell(r.detail),
+    from_state: cell(r.from_state), to_state: cell(r.to_state), detail: humanDetail(r.detail),
   }
 }
 
@@ -151,7 +170,7 @@ export async function buildBody(query: QueryFn, opts: { all?: boolean; now?: () 
     components.push({
       id, host: cell(r.host), kind: cell(r.kind), name: cell(r.name), criticality: cell(r.criticality), state,
       last_run_at: cell(r.last_run_at), last_ok_at: cell(r.last_ok_at), last_exit: cell(r.last_exit),
-      consecutive_failures: Number(r.consecutive_failures) || 0, detail: cell(r.detail),
+      consecutive_failures: Number(r.consecutive_failures) || 0, detail: humanDetail(r.detail),
       depends_on: parseDependsOn(r.depends_on), dependents_count: dependents.get(id)?.length ?? 0,
     })
   }
@@ -217,7 +236,7 @@ export async function buildComponentDetail(query: QueryFn, id: string, now: () =
           component_id: String(v.component_id ?? id), observed_at: cell(v.observed_at), state: toState(v.state),
           last_exit: cell(v.last_exit), last_run_at: cell(v.last_run_at), last_ok_at: cell(v.last_ok_at),
           runs_total: cell(v.runs_total), runs_delta: cell(v.runs_delta),
-          consecutive_failures: Number(v.consecutive_failures) || 0, detail: cell(v.detail),
+          consecutive_failures: Number(v.consecutive_failures) || 0, detail: humanDetail(v.detail),
         }
       : null,
     events: events.slice(0, EVENTS_LIMIT).map(toEvent),

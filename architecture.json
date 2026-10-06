@@ -765,7 +765,7 @@
         },
         {
           "path": "lib/body.ts",
-          "lines": 357,
+          "lines": 376,
           "kind": "lib",
           "exports": [
             "BODY_CHANNEL",
@@ -779,6 +779,7 @@
             "BodyComponent",
             "BodyEvent",
             "BodyResponse",
+            "humanDetail",
             "toState",
             "isRetired",
             "parseDependsOn",
