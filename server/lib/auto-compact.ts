@@ -97,7 +97,7 @@ export interface CompactionDone {
   at: number
 }
 
-export type PushKind = "countdown" | "done"
+export type PushKind = "countdown" | "done" | "failed"
 
 export interface AutoCompactDeps {
   now(): number
