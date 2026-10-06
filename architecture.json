@@ -1261,7 +1261,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 581,
+          "lines": 598,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -1312,6 +1312,9 @@
             "requeueTask",
             "unblockMarker",
             "unblockTask",
+            "NO_REPO_BLOCKER",
+            "repoMarker",
+            "routeTask",
             "liveOwner",
             "claimLive",
             "LiveOutcome",
@@ -1908,6 +1911,37 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/mytask-triage.ts",
+          "lines": 134,
+          "kind": "lib",
+          "exports": [
+            "BATCH_MIN",
+            "COLLECT_TTL_MS",
+            "STALE_DAYS",
+            "NEXT_WEEK_DAYS",
+            "TaskOp",
+            "MyTaskTriageDeps",
+            "overdueItems",
+            "createMyTaskTriage",
+            "MyTaskTriage",
+            "mytaskOptions"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/my-tasks.ts",
+            "lib/triage.ts",
+            "lib/triage-engine.ts",
             "lib/turso.ts"
           ],
           "listeners": [],
@@ -2867,7 +2901,7 @@
         },
         {
           "path": "lib/resolver-prompt.ts",
-          "lines": 143,
+          "lines": 147,
           "kind": "lib",
           "exports": [
             "EvidenceBlock",
@@ -2922,7 +2956,7 @@
         },
         {
           "path": "lib/resolver-work.ts",
-          "lines": 227,
+          "lines": 238,
           "kind": "lib",
           "exports": [
             "BodyOutcome",
@@ -2952,7 +2986,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 482,
+          "lines": 496,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -3010,6 +3044,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/dispatch-tasks.ts",
             "lib/triage.ts"
           ],
           "listeners": [],
@@ -3644,7 +3679,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 465,
+          "lines": 485,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -3699,7 +3734,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/mytask-triage.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -5678,7 +5715,7 @@
         },
         {
           "path": "wiring/resolver.ts",
-          "lines": 346,
+          "lines": 362,
           "kind": "lib",
           "exports": [
             "RESOLVER_ALLOWED",
@@ -5726,6 +5763,7 @@
             "wiring/body-investigate.ts",
             "wiring/resolver-peer.ts",
             "wiring/orchestrator.ts",
+            "state.ts",
             "wiring/proposals.ts"
           ],
           "listeners": [],
@@ -5734,7 +5772,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 332,
+          "lines": 343,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -5772,6 +5810,8 @@
             "lib/triage-sources.ts",
             "lib/triage-store.ts",
             "lib/trip-triage.ts",
+            "lib/mytask-triage.ts",
+            "lib/turso.ts",
             "state.ts",
             "wiring/body.ts",
             "wiring/body-investigate.ts",
@@ -6607,6 +6647,7 @@
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
+            "lib/mytask-triage.ts",
             "lib/triage-pr.ts",
             "routes/my-tasks.ts",
             "wiring/resolver-dry-run.ts"
@@ -6716,6 +6757,7 @@
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
+            "lib/mytask-triage.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
             "routes/body.ts",
@@ -7502,6 +7544,85 @@
             "lib/model-control.ts"
           ]
         },
+        "TaskRow": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/mytask-triage.ts"
+          ]
+        },
+        "SourceItem": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/mytask-triage.ts",
+            "lib/resolver-engine.ts",
+            "lib/resolver-prompt.ts",
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts",
+            "lib/triage-sources.ts",
+            "lib/trip-triage.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "TASKS_TZ": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/mytask-triage.ts",
+            "routes/my-tasks.ts",
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "listMine": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/mytask-triage.ts",
+            "routes/my-tasks.ts"
+          ]
+        },
+        "ExecOutcome": {
+          "module": "lib/triage-engine.ts",
+          "callers": [
+            "lib/mytask-triage.ts",
+            "lib/resolver-work.ts",
+            "lib/triage-pr.ts",
+            "lib/trip-triage.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "TriageOption": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/mytask-triage.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts",
+            "lib/trip-triage.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "setDone": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/mytask-triage.ts",
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "addDays": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/mytask-triage.ts"
+          ]
+        },
+        "setDue": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/mytask-triage.ts",
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
         "parseCliResult": {
           "module": "lib/cli-json.ts",
           "callers": [
@@ -7638,7 +7759,8 @@
         "parseRepoMap": {
           "module": "lib/live-repo.ts",
           "callers": [
-            "lib/project-catalog.ts"
+            "lib/project-catalog.ts",
+            "wiring/resolver.ts"
           ]
         },
         "apnsConfigured": {
@@ -7916,6 +8038,7 @@
             "wiring/dispatch.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
+            "wiring/triage.ts",
             "wiring/trips.ts"
           ]
         },
@@ -8221,21 +8344,6 @@
             "lib/resolver-engine.ts"
           ]
         },
-        "SourceItem": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver-engine.ts",
-            "lib/resolver-prompt.ts",
-            "lib/resolver-work.ts",
-            "lib/resolver.ts",
-            "lib/triage-engine.ts",
-            "lib/triage-sources.ts",
-            "lib/trip-triage.ts",
-            "wiring/resolver-dry-run.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
-          ]
-        },
         "ResolverInfo": {
           "module": "lib/triage.ts",
           "callers": [
@@ -8385,16 +8493,6 @@
             "wiring/resolver.ts"
           ]
         },
-        "ExecOutcome": {
-          "module": "lib/triage-engine.ts",
-          "callers": [
-            "lib/resolver-work.ts",
-            "lib/triage-pr.ts",
-            "lib/trip-triage.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
-          ]
-        },
         "TriageAction": {
           "module": "lib/triage.ts",
           "callers": [
@@ -8429,16 +8527,6 @@
           "module": "lib/resolver-prompt.ts",
           "callers": [
             "lib/resolver-work.ts"
-          ]
-        },
-        "TriageOption": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver.ts",
-            "lib/triage-engine.ts",
-            "lib/trip-triage.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
           ]
         },
         "PROBLEM_MAX": {
@@ -8482,6 +8570,13 @@
           "callers": [
             "lib/resolver.ts",
             "lib/triage-engine.ts"
+          ]
+        },
+        "NO_REPO_BLOCKER": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/resolver.ts",
+            "wiring/resolver.ts"
           ]
         },
         "storePath": {
@@ -8820,6 +8915,18 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/triage-sources.ts"
+          ]
+        },
+        "mytaskOptions": {
+          "module": "lib/mytask-triage.ts",
+          "callers": [
+            "lib/triage.ts"
+          ]
+        },
+        "STALE_DAYS": {
+          "module": "lib/mytask-triage.ts",
+          "callers": [
+            "lib/triage.ts"
           ]
         },
         "GeoEntry": {
@@ -9300,6 +9407,7 @@
             "routes/orchestrator.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts",
             "ws.ts"
           ]
@@ -10175,26 +10283,14 @@
           "callers": [
             "routes/my-tasks.ts",
             "wiring/body-investigate.ts",
-            "wiring/dispatch.ts"
+            "wiring/dispatch.ts",
+            "wiring/triage.ts"
           ]
         },
         "MyTasksResponse": {
           "module": "lib/my-tasks.ts",
           "callers": [
             "routes/my-tasks.ts"
-          ]
-        },
-        "listMine": {
-          "module": "lib/my-tasks.ts",
-          "callers": [
-            "routes/my-tasks.ts"
-          ]
-        },
-        "TASKS_TZ": {
-          "module": "lib/my-tasks.ts",
-          "callers": [
-            "routes/my-tasks.ts",
-            "routes/my-tasks.ts#* /api/tasks/mine"
           ]
         },
         "buildCascade": {
@@ -10209,19 +10305,7 @@
             "routes/my-tasks.ts"
           ]
         },
-        "setDone": {
-          "module": "lib/my-tasks.ts",
-          "callers": [
-            "routes/my-tasks.ts#* /api/tasks/mine"
-          ]
-        },
         "normDate": {
-          "module": "lib/my-tasks.ts",
-          "callers": [
-            "routes/my-tasks.ts#* /api/tasks/mine"
-          ]
-        },
-        "setDue": {
           "module": "lib/my-tasks.ts",
           "callers": [
             "routes/my-tasks.ts#* /api/tasks/mine"
@@ -11544,7 +11628,8 @@
         "readRepoMapSource": {
           "module": "lib/live-repo.ts",
           "callers": [
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts"
           ]
         },
         "buildCatalog": {
@@ -11818,6 +11903,12 @@
             "wiring/resolver.ts"
           ]
         },
+        "routeTask": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
         "GUARD_WINDOW_MS": {
           "module": "lib/resolver-store.ts",
           "callers": [
@@ -11878,6 +11969,12 @@
             "wiring/triage.ts"
           ]
         },
+        "MyTaskTriage": {
+          "module": "lib/mytask-triage.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
         "TriageResolverHook": {
           "module": "lib/triage-engine.ts",
           "callers": [
@@ -11904,6 +12001,12 @@
         },
         "ownsTrips": {
           "module": "wiring/trips.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "createMyTaskTriage": {
+          "module": "lib/mytask-triage.ts",
           "callers": [
             "wiring/triage.ts"
           ]

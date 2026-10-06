@@ -26,6 +26,7 @@ let fixOut: FixOutcome
 let execOut: ExecOutcome
 let bodyOut: { ok: true; result: InvestigationResult } | { ok: false; error: string }
 let reports: PlanReport[]
+let routeOut: { ok: true } | { ok: false; error: string } = { ok: true }
 
 function task(): SourceItem {
   return {
@@ -76,6 +77,7 @@ function seams(): WorkSeams {
     fix: async (_s, _c, instructions) => { calls.push(`fix:${instructions}`); return fixOut },
     unpark: async (_s, reason) => { calls.push(`unpark:${reason}`) },
     revise: async (_s, title) => { calls.push(`revise:${title}`); return "p2" },
+    route: async (_s, repo) => { calls.push(`route:${repo}`); return routeOut },
     record: async (_s, action, summary, meta) => { records.push({ action, summary, meta }) },
     turn: (_s, text) => { turns.push(text) },
     now: () => NOW,
@@ -87,7 +89,7 @@ const work = () => createResolverWork(seams(), (r) => reports.push(r))
 
 beforeEach(() => {
   ctx = { repo: "/repo", readableDirs: [], blocks: [], sensitivePaths: [], sensitive: false, rescuedBefore: false, pr: { head: "dispatch/ab12", base: "main", number: 9, title: "Fix uploads", taskText: "Fix uploads" } }
-  calls = []; executed = []; records = []; comments = []; turns = []; reports = []
+  calls = []; executed = []; records = []; comments = []; turns = []; reports = []; routeOut = { ok: true }
   fixOut = { kind: "pushed", sha: "abcdef1234567", summary: "Mocked the clock" }
   execOut = { kind: "done" }
   bodyOut = { ok: false, error: "x" }
@@ -362,5 +364,45 @@ describe("transient fix failures (Mac unreachable)", () => {
     model = reply({ action: { kind: "fix", instructions: "x" }, category: "ci_failing" })
     await createResolverWork(s)(job(pr()))
     expect(seen).toBe(1)
+  })
+})
+
+describe("blocked on no repo → route", () => {
+  const noRepo = (): SourceItem => ({
+    ...task(), title: "WP1 tasks endpoint",
+    facts: { status: "blocked", blocker: "No local repo mapped for this task. — how-to: RES-W2FH" },
+  })
+
+  test("confident → routed through the seam, recorded, a turn; nothing else executed", async () => {
+    model = reply({ action: { kind: "route", repo: "claude-companion" }, confidence: 0.92 })
+    const out = await work()(job(noRepo()))
+    expect(calls).toContain("route:claude-companion")
+    expect(executed).toEqual([])
+    expect(out).toMatchObject({ kind: "resolved", action: "route", summary: "Opus routed it to claude-companion and requeued it" })
+    expect(records.map((r) => r.action)).toEqual(["resolver:route"])
+    expect(turns[0]).toContain("routed it to claude-companion")
+  })
+
+  test("not sure → a card whose first option hands it back with the route words", async () => {
+    model = reply({ action: { kind: "route", repo: "claude-companion" }, confidence: 0.5, needsJeremie: true, why: "ambiguous" })
+    const out = await work()(job(noRepo()))
+    expect(calls.some((c) => c.startsWith("route:"))).toBe(false)
+    expect(out.kind).toBe("prepared")
+    if (out.kind !== "prepared") return
+    expect(out.phrase.options[0]).toMatchObject({ label: "Route to claude-companion", action: { kind: "ask_opus", instruction: "vas-y, route it to claude-companion" } })
+  })
+
+  test("unknown repo refused by the seam → Jeremie's card with what Opus tried", async () => {
+    model = reply({ action: { kind: "route", repo: "nope" }, confidence: 0.95 })
+    routeOut = { ok: false, error: 'unknown repo "nope"' }
+    const out = await work()(job(noRepo()))
+    expect(out.kind).toBe("prepared")
+    expect(records.map((r) => r.action)).toEqual(["resolver:prepared"])
+  })
+
+  test("route is only offered for the no-repo blocker", async () => {
+    const { resolverActions } = await import("./resolver")
+    expect(resolverActions(noRepo())).toContain("route")
+    expect(resolverActions(task())).not.toContain("route")
   })
 })

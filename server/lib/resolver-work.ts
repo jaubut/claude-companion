@@ -33,6 +33,8 @@ export interface WorkSeams {
   unpark(src: SourceItem, reason: string): Promise<void>
   /** Proposal: reject it and file the rescoped one (never resolved again); returns the new proposal id. */
   revise(src: SourceItem, title: string, prompt: string, why: string): Promise<string | null>
+  /** No-repo task: requeue it with a [repo:<name>] marker (name checked against REPO_MAP). */
+  route(src: SourceItem, repo: string): Promise<{ ok: true } | { ok: false; error: string }>
   /** agent_activity `resolver:<action>`. */
   record(src: SourceItem, action: string, summary: string, meta: Record<string, unknown>): Promise<void>
   /** An orchestrator turn in the item's channel. */
@@ -59,7 +61,7 @@ export const BY = "Opus"
 
 const what = (p: Plan): string => (p.kind === "card" ? "prepare a card" : p.action.kind === "answer" ? `answer: "${clip(p.action.text, 120)}"`
   : p.action.kind === "close_pr" ? `close the PR (${p.action.reason})` : p.action.kind === "reject" ? `reject (${p.action.reason})`
-    : p.action.kind === "fix" ? `fix run on the PR branch${p.then === "unpark" ? " + hand back to the shepherd" : ", then a card"}`
+    : p.action.kind === "route" ? `route to ${p.action.repo}` : p.action.kind === "fix" ? `fix run on the PR branch${p.then === "unpark" ? " + hand back to the shepherd" : ", then a card"}`
       : p.action.kind)
 
 export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) => void) {
@@ -108,7 +110,7 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     return { kind: "resolved", action: kind, summary, outcome: "done" }
   }
 
-  const VERB: Record<string, string> = { fix: "Fix", answer: "Answer", requeue: "Retry", cancel: "Cancel", merge: "Merge", close_pr: "Close", approve: "Approve", reject: "Reject", revise: "Rescope" }
+  const VERB: Record<string, string> = { fix: "Fix", answer: "Answer", requeue: "Retry", cancel: "Cancel", merge: "Merge", close_pr: "Close", approve: "Approve", reject: "Reject", revise: "Rescope", route: "Route" }
 
   /** Opus tried and it did not go through: the outcome card (retry offered once; the 2nd identical failure gives up). */
   async function tried(job: Job, out: ResolverOutput, ctx: ResolverContext, a: Extract<Plan, { kind: "act" }>["action"], error: string, headline?: string, extra?: string[]): Promise<WorkResult> {
@@ -173,6 +175,15 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
       const summary = `Opus rescoped the proposal: ${clip(a.title || a.prompt, 120)}`
       await seams.record(src, "resolver:revise", summary, meta(job, out, { proposal: id, outcome: "done" }))
       return { kind: "resolved", action: "revise", summary, outcome: "done" }
+    }
+    if (a.kind === "route") {
+      const r = await seams.route(src, a.repo)
+      if (!r.ok) return tried(job, out, ctx, a, r.error)
+      seams.attempt?.(src, a.kind, null)
+      const summary = `Opus routed it to ${a.repo} and requeued it`
+      seams.turn(src, `🤖 ${summary}: ${src.title}`)
+      await seams.record(src, "resolver:route", summary, meta(job, out, { repo: a.repo, reason: plan.reason, outcome: "done" }))
+      return { kind: "resolved", action: "route", summary, outcome: "done" }
     }
     if (a.kind === "close_pr") await seams.comment(src, `🤖 **Opus resolver** — closing this PR: ${a.reason}`)
     const action: TriageAction = a.kind === "answer" ? { kind: "answer", text: a.text } : { kind: a.kind } as TriageAction
