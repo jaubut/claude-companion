@@ -24,10 +24,21 @@ export const WINDOW_200K = 200_000
 
 export type GaugeSource = "mod" | "transcript"
 
+// One rate-limit window as Claude Code reports it. `kind` is open-ended
+// ("five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet",
+// "spend_limit", or a kind newer than this server) and passes through as is.
+export interface GaugeLimit {
+  kind: string
+  percentUsed: number | null
+  resetsAt: string | null
+}
+
 export interface GaugeAccount {
   fiveHourPercent: number | null
   fiveHourResetsAt: string | null
   sevenDayPercent: number | null
+  // Every window from the freshest report that carried `rate_limits`; [] until one does.
+  limits: GaugeLimit[]
   at: number
 }
 
@@ -69,6 +80,8 @@ export interface ModReport {
   fiveHourPercent: number | null
   fiveHourResetsAt: string | null
   sevenDayPercent: number | null
+  // null = the report carried no (valid) `rate_limits` array.
+  limits: GaugeLimit[] | null
   at: number | null
 }
 
@@ -101,9 +114,31 @@ interface EmitState {
 
 const SESSION_ID_MAX = 200
 const RESETS_AT_MAX = 64
+const KIND_MAX = 64
+const LIMITS_MAX = 16
 
 function finiteNonNeg(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null
+}
+
+// `rate_limits` → windows. Not an array → null (keep the last known ones);
+// an item without a usable `kind` is skipped; a mistyped percent / reset is null.
+export function parseLimits(v: unknown): GaugeLimit[] | null {
+  if (!Array.isArray(v)) return null
+  const out: GaugeLimit[] = []
+  for (const item of v) {
+    if (out.length >= LIMITS_MAX) break
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const i = item as Record<string, unknown>
+    const kind = typeof i.kind === "string" ? i.kind.trim() : ""
+    if (!kind || kind.length > KIND_MAX) continue
+    out.push({
+      kind,
+      percentUsed: finiteNonNeg(i.percent_used),
+      resetsAt: typeof i.resets_at === "string" && i.resets_at && i.resets_at.length <= RESETS_AT_MAX ? i.resets_at : null,
+    })
+  }
+  return out
 }
 
 // Validates a /hooks/gauge body. Only session_id is required; a field of the
@@ -125,6 +160,7 @@ export function parseModReport(body: unknown): ModReport | null {
     fiveHourPercent: finiteNonNeg(b.five_hour_percent),
     fiveHourResetsAt: resets,
     sevenDayPercent: finiteNonNeg(b.seven_day_percent),
+    limits: parseLimits(b.rate_limits),
     at: finiteNonNeg(b.at) || null,
   }
 }
@@ -142,6 +178,8 @@ export class GaugeStore {
   private entries = new Map<string, Entry>()
   private account: GaugeAccount | null = null
   private emits = new Map<string, EmitState>()
+  // Sessions whose report changed only the account (no ctx gauge held).
+  private accountOnly = new Set<string>()
   private sweepTimer: unknown = null
 
   constructor(private deps: GaugeDeps) {}
@@ -171,6 +209,7 @@ export class GaugeStore {
       prev.reportedAt = now
     }
     const accountChanged = this.mergeAccount(r, at)
+    if (accountChanged && !this.entries.has(r.sessionId)) this.accountOnly.add(r.sessionId)
     if (hasCtx || accountChanged) this.schedule(r.sessionId)
     this.ensureSweep()
   }
@@ -251,19 +290,21 @@ export class GaugeStore {
 
   // Newer reports win; a field the report left null keeps its last value.
   private mergeAccount(r: ModReport, at: number): boolean {
-    if (r.fiveHourPercent === null && r.fiveHourResetsAt === null && r.sevenDayPercent === null) return false
+    if (r.fiveHourPercent === null && r.fiveHourResetsAt === null && r.sevenDayPercent === null && r.limits === null) return false
     const cur = this.account
     if (cur && at < cur.at) return false
     const next: GaugeAccount = {
       fiveHourPercent: r.fiveHourPercent ?? cur?.fiveHourPercent ?? null,
       fiveHourResetsAt: r.fiveHourResetsAt ?? cur?.fiveHourResetsAt ?? null,
       sevenDayPercent: r.sevenDayPercent ?? cur?.sevenDayPercent ?? null,
+      limits: r.limits ?? cur?.limits ?? [],
       at,
     }
     const same = cur
       && cur.fiveHourPercent === next.fiveHourPercent
       && cur.fiveHourResetsAt === next.fiveHourResetsAt
       && cur.sevenDayPercent === next.sevenDayPercent
+      && JSON.stringify(cur.limits) === JSON.stringify(next.limits)
     this.account = next
     return !same
   }
@@ -292,16 +333,21 @@ export class GaugeStore {
     const account = this.account ? { ...this.account } : null
     const now = this.deps.now()
     if (e) {
+      this.accountOnly.delete(sessionId)
       const key = this.deps.resolveKey(sessionId, e.hintKey)
       if (!key) return // not on the phone's list yet; GET /api/gauge resolves later
       this.deps.emit({ type: "gauge", ...this.item(key, e), account })
       this.emits.set(sessionId, { lastAt: now, key, timer: null })
       return
     }
-    // Cleared: tell the phone under the key it last saw, if any.
-    if (!st?.key) { this.emits.delete(sessionId); return }
-    this.deps.emit({ type: "gauge", sessionKey: st.key, ctxTokens: null, ctxWindow: null, ctxPercent: null, source: null, at: now, account })
-    this.emits.delete(sessionId)
+    // Cleared — or only the account changed for a session with no ctx gauge:
+    // a null-ctx frame under the key the phone last saw (else the live key).
+    const accountOnly = this.accountOnly.delete(sessionId)
+    const key = st?.key || (accountOnly ? this.deps.resolveKey(sessionId, "") : null)
+    if (!key) { this.emits.delete(sessionId); return }
+    this.deps.emit({ type: "gauge", sessionKey: key, ctxTokens: null, ctxWindow: null, ctxPercent: null, source: null, at: now, account })
+    if (accountOnly) this.emits.set(sessionId, { lastAt: now, key: "", timer: null })
+    else this.emits.delete(sessionId)
   }
 
   private ensureSweep(): void {

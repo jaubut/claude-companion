@@ -68,7 +68,7 @@ describe("POST /hooks/gauge", () => {
     expect(s.key).toBe("claude:tty:/dev/ttys701")
     expect(gaugeFrames(s.key).at(-1)).toEqual({
       type: "gauge", sessionKey: s.key, ctxTokens: 412000, ctxWindow: 1000000, ctxPercent: 41, source: "mod", at: 1791230000000,
-      account: { fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, at: 1791230000000 },
+      account: { fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, limits: [], at: 1791230000000 },
     })
   })
 
@@ -125,6 +125,31 @@ describe("transcript fallback + session end", () => {
   })
 })
 
+describe("rate_limits", () => {
+  test("mod rate_limits land on account.limits in the frame and GET", async () => {
+    recordSession({ cwd: "/tmp/g-l", sessionId: "g-sid-l", tty: "/dev/ttys705" })
+    const res = await hook("/hooks/gauge", {
+      session_id: "g-sid-l", ctx_tokens: 1000, ctx_window: 200000, ctx_percent: 1, at: 1791230000500,
+      rate_limits: [
+        { kind: "five_hour", percent_used: 23.5, resets_at: "2026-10-06T19:00:00Z" },
+        { kind: "seven_day_opus", percent_used: 31, resets_at: null },
+        { kind: "brand_new_kind", percent_used: 1 },
+      ],
+    })
+    expect(res!.status).toBe(200)
+    const want = [
+      { kind: "five_hour", percentUsed: 23.5, resetsAt: "2026-10-06T19:00:00Z" },
+      { kind: "seven_day_opus", percentUsed: 31, resetsAt: null },
+      { kind: "brand_new_kind", percentUsed: 1, resetsAt: null },
+    ]
+    expect((gaugeFrames("claude:tty:/dev/ttys705").at(-1)!.account as { limits: unknown }).limits).toEqual(want)
+    expect(gauge.snapshot().account?.limits).toEqual(want)
+    // A mistyped rate_limits is ignored (keeps the last array), never a 400.
+    expect((await hook("/hooks/gauge", { session_id: "g-sid-l", rate_limits: "nope", at: 1791230000600 }))!.status).toBe(200)
+    expect(gauge.snapshot().account?.limits).toEqual(want)
+  })
+})
+
 describe("GET /api/gauge", () => {
   test("bearer required; shape", async () => {
     const url = `http://127.0.0.1:${server.port}/api/gauge`
@@ -134,7 +159,7 @@ describe("GET /api/gauge", () => {
     expect(res.status).toBe(200)
     const body = await res.json() as { ok: boolean; account: Record<string, unknown> | null; sessions: Array<Record<string, unknown>> }
     expect(body.ok).toBe(true)
-    expect(Object.keys(body.account!).sort()).toEqual(["at", "fiveHourPercent", "fiveHourResetsAt", "sevenDayPercent"])
+    expect(Object.keys(body.account!).sort()).toEqual(["at", "fiveHourPercent", "fiveHourResetsAt", "limits", "sevenDayPercent"])
     const a = body.sessions.find((x) => x.sessionKey === "claude:tty:/dev/ttys701")!
     expect(a).toEqual({ sessionKey: "claude:tty:/dev/ttys701", ctxTokens: 412000, ctxWindow: 1000000, ctxPercent: 41, source: "mod", at: 1791230000000 })
   })
@@ -148,6 +173,8 @@ describe("contracts/gauge fixtures", () => {
     const live = gaugeFrames("claude:tty:/dev/ttys701").find((f) => f.source === "mod")!
     expect(keysOf(live)).toEqual(keysOf(fixture("frame.json")))
     expect(keysOf(live.account)).toEqual(keysOf(fixture("frame.json").account))
+    const limit = (gauge.snapshot().account?.limits ?? [])[0]
+    expect(keysOf(limit)).toEqual(keysOf(((fixture("frame.json").account as { limits: unknown[] }).limits)[0]))
     const cleared = gaugeFrames("claude:tty:/dev/ttys703").find((f) => f.source === null)!
     expect(keysOf(cleared)).toEqual(keysOf(fixture("frame.cleared.json")))
     const api = gauge.snapshot()

@@ -628,7 +628,7 @@
         },
         {
           "path": "lib/body-tokens.ts",
-          "lines": 187,
+          "lines": 213,
           "kind": "lib",
           "exports": [
             "TOKEN_RANGES",
@@ -655,6 +655,7 @@
           "apiCalls": [],
           "imports": [
             "lib/body.ts",
+            "lib/model-prices.ts",
             "lib/turso.ts"
           ],
           "listeners": [],
@@ -1413,7 +1414,7 @@
         },
         {
           "path": "lib/gauge.ts",
-          "lines": 316,
+          "lines": 362,
           "kind": "lib",
           "exports": [
             "MOD_FRESH_MS",
@@ -1423,12 +1424,14 @@
             "WINDOW_1M",
             "WINDOW_200K",
             "GaugeSource",
+            "GaugeLimit",
             "GaugeAccount",
             "GaugeSessionItem",
             "GaugeFrame",
             "GaugeSnapshot",
             "ModReport",
             "GaugeDeps",
+            "parseLimits",
             "parseModReport",
             "windowFor",
             "percentOf",
@@ -1842,6 +1845,30 @@
             "lib/dialogs.ts",
             "lib/sessions.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/model-prices.ts",
+          "lines": 95,
+          "kind": "lib",
+          "exports": [
+            "PRICING_AS_OF",
+            "ModelPrice",
+            "MODEL_PRICES",
+            "priceFor",
+            "TokenCounts",
+            "usdFor",
+            "usdRowSql",
+            "unpricedRowSql"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4493,7 +4520,7 @@
         },
         {
           "path": "routes/gauge.ts",
-          "lines": 30,
+          "lines": 31,
           "kind": "route-host",
           "exports": [
             "handleGaugeRoute"
@@ -6574,6 +6601,18 @@
             "lib/body-investigator.ts"
           ]
         },
+        "usdRowSql": {
+          "module": "lib/model-prices.ts",
+          "callers": [
+            "lib/body-tokens.ts"
+          ]
+        },
+        "unpricedRowSql": {
+          "module": "lib/model-prices.ts",
+          "callers": [
+            "lib/body-tokens.ts"
+          ]
+        },
         "Row": {
           "module": "lib/turso.ts",
           "callers": [
@@ -6597,6 +6636,12 @@
             "routes/body.ts",
             "routes/goals.ts",
             "wiring/resolver.ts"
+          ]
+        },
+        "PRICING_AS_OF": {
+          "module": "lib/model-prices.ts",
+          "callers": [
+            "lib/body-tokens.ts"
           ]
         },
         "SqlArg": {

@@ -122,12 +122,13 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   "generated_at": "2026-10-05T12:00:00.000Z",
   "range": "7d",
   "since": "2026-09-29",
-  "totals": { "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615 },
-  "by_host": [ { "host": "zettlab", "input": 910, "output": 0, "cache_read": 2000, "cache_creation": 0, "total": 2910 } ],
-  "by_day": [ { "day": "2026-10-05", "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615 } ],
-  "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "host": "mac", "total": 1705 } ],
-  "top_agents": [ { "name": "builder", "total": 500 } ],
-  "top_skills": [ { "name": "today", "total": 40 } ]
+  "pricing_as_of": "2026-10-06",
+  "totals": { "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615, "usd": 0.0071, "unpriced_tokens": 0 },
+  "by_host": [ { "host": "zettlab", "input": 910, "output": 0, "cache_read": 2000, "cache_creation": 0, "total": 2910, "usd": 0.0040, "unpriced_tokens": 0 } ],
+  "by_day": [ { "day": "2026-10-05", "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615, "usd": 0.0071, "unpriced_tokens": 0 } ],
+  "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "host": "mac", "total": 1705, "usd": 0.0031, "unpriced_tokens": 0 } ],
+  "top_agents": [ { "name": "builder", "total": 500, "usd": 0.0008, "unpriced_tokens": 0 } ],
+  "top_skills": [ { "name": "today", "total": 40, "usd": null, "unpriced_tokens": 40 } ]
 }
 ```
 
@@ -145,6 +146,20 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
 - `top_agents` / `top_skills` (≤ 10): `source` rows with prefix `agent:` /
   `skill:`, prefix stripped into `name`; total descending, then name. `main`
   appears in neither.
+- `usd`: what the tokens would cost at Claude API list prices (API-equivalent
+  value; the account is on a subscription, so it is not what is billed), on
+  every totals object and every top row. Priced per row by `model` from one
+  table, `server/lib/model-prices.ts` (USD per MTok: input, output, cache read,
+  and cache creation at the 5-minute write rate — `token_usage` does not split
+  5 m / 1 h writes); standard rates, no batch / fast-mode / `inference_geo`
+  multipliers. A model matches a table id exactly or with a date snapshot
+  (`-20251001`), `[1m]` or `@…` suffix. Rounded to 1/10000 $. `null` when none
+  of the row's tokens are priced.
+- `unpriced_tokens`: tokens of models with no price (aliases like `sonnet`,
+  ids newer than the table). They are in `total` but never in `usd` — never
+  counted as $0; with `unpriced_tokens > 0` a non-null `usd` is a lower bound.
+- `pricing_as_of`: the day the price table was read from the pricing page
+  (`https://platform.claude.com/docs/en/about-claude/pricing`).
 - No `token_usage` table yet (collector not deployed) → the same shape with zero
   totals and empty lists, not an error. Turso down → 503 `turso_unreachable`.
 

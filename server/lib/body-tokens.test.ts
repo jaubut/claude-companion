@@ -4,10 +4,13 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { QueryFn, Row } from "./turso"
+import { PRICING_AS_OF } from "./model-prices"
 import { buildTokens, createTokensSnapshot, liveSessionNames, localDay, parseRange, rangeSince } from "./body-tokens"
 
 // Real SQL against an in-memory sqlite through the QueryFn seam (the aggregation
-// lives in SQL, so fake row matching would test nothing).
+// lives in SQL, so fake row matching would test nothing). ROWS use bare aliases
+// ("opus", "sonnet") that have no price, so their USD is null and every token is
+// unpriced; the USD describe block below uses real model ids.
 
 const NOW = new Date(2026, 9, 5, 15, 0, 0).getTime() // local 2026-10-05 15:00
 const D = (back: number) => localDay(NOW, back)
@@ -72,8 +75,8 @@ describe("GET /api/body/tokens read model", () => {
     const { query, calls } = sqliteQuery(null)
     const body = await buildTokens(query, "7d", { now: () => NOW, sessionNames: names })
     expect(body).toEqual({
-      ok: true, generated_at: new Date(NOW).toISOString(), range: "7d", since: "2026-09-29",
-      totals: { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0 },
+      ok: true, generated_at: new Date(NOW).toISOString(), range: "7d", since: "2026-09-29", pricing_as_of: PRICING_AS_OF,
+      totals: { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0, usd: null, unpriced_tokens: 0 },
       by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [],
     })
     expect(calls).toHaveLength(1)
@@ -82,25 +85,25 @@ describe("GET /api/body/tokens read model", () => {
   test("empty table → zero totals and empty lists", async () => {
     const { query } = sqliteQuery([])
     const body = await buildTokens(query, "30d", { now: () => NOW, sessionNames: names })
-    expect(body.totals).toEqual({ input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0 })
+    expect(body.totals).toEqual({ input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0, usd: null, unpriced_tokens: 0 })
     expect([body.by_host, body.by_day, body.top_sessions, body.top_agents, body.top_skills]).toEqual([[], [], [], [], []])
   })
 
   test("today: totals, by_host, by_day, top lists with names and prefixes stripped", async () => {
     const { query } = sqliteQuery(ROWS)
     const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: names })
-    expect(body.totals).toEqual({ input: 1215, output: 90, cache_read: 3300, cache_creation: 10, total: 4615 })
+    expect(body.totals).toEqual({ input: 1215, output: 90, cache_read: 3300, cache_creation: 10, total: 4615, usd: null, unpriced_tokens: 4615 })
     expect(body.by_host).toEqual([
-      { host: "zettlab", input: 910, output: 0, cache_read: 2000, cache_creation: 0, total: 2910 },
-      { host: "mac", input: 305, output: 90, cache_read: 1300, cache_creation: 10, total: 1705 },
+      { host: "zettlab", input: 910, output: 0, cache_read: 2000, cache_creation: 0, total: 2910, usd: null, unpriced_tokens: 2910 },
+      { host: "mac", input: 305, output: 90, cache_read: 1300, cache_creation: 10, total: 1705, usd: null, unpriced_tokens: 1705 },
     ])
-    expect(body.by_day).toEqual([{ day: "2026-10-05", input: 1215, output: 90, cache_read: 3300, cache_creation: 10, total: 4615 }])
+    expect(body.by_day).toEqual([{ day: "2026-10-05", input: 1215, output: 90, cache_read: 3300, cache_creation: 10, total: 4615, usd: null, unpriced_tokens: 4615 }])
     expect(body.top_sessions).toEqual([
-      { session_id: "s-b", name: null, host: "zettlab", total: 2910 },
-      { session_id: "s-a", name: "tls-dashboard", host: "mac", total: 1705 },
+      { session_id: "s-b", name: null, host: "zettlab", total: 2910, usd: null, unpriced_tokens: 2910 },
+      { session_id: "s-a", name: "tls-dashboard", host: "mac", total: 1705, usd: null, unpriced_tokens: 1705 },
     ])
-    expect(body.top_agents).toEqual([{ name: "researcher", total: 900 }, { name: "builder", total: 500 }])
-    expect(body.top_skills).toEqual([{ name: "today", total: 40 }])
+    expect(body.top_agents).toEqual([{ name: "researcher", total: 900, usd: null, unpriced_tokens: 900 }, { name: "builder", total: 500, usd: null, unpriced_tokens: 500 }])
+    expect(body.top_skills).toEqual([{ name: "today", total: 40, usd: null, unpriced_tokens: 40 }])
   })
 
   test("range filter: 7d includes day -6 not -7; 30d includes -7 not -30", async () => {
@@ -109,12 +112,12 @@ describe("GET /api/body/tokens read model", () => {
     expect(week.totals.total).toBe(4615 + 5700 + 50)
     expect(week.by_day.map((d) => d.day)).toEqual([D(6), D(3), D(0)])
     expect(week.top_sessions.map((s) => s.session_id)).toEqual(["s-c", "s-b", "s-a", "s-d"])
-    expect(week.top_agents).toEqual([{ name: "researcher", total: 900 }, { name: "builder", total: 550 }])
-    expect(week.top_skills).toEqual([{ name: "po", total: 700 }, { name: "today", total: 40 }])
+    expect(week.top_agents).toEqual([{ name: "researcher", total: 900, usd: null, unpriced_tokens: 900 }, { name: "builder", total: 550, usd: null, unpriced_tokens: 550 }])
+    expect(week.top_skills).toEqual([{ name: "po", total: 700, usd: null, unpriced_tokens: 700 }, { name: "today", total: 40, usd: null, unpriced_tokens: 40 }])
 
     const month = await buildTokens(query, "30d", { now: () => NOW, sessionNames: names })
     expect(month.totals.total).toBe(4615 + 5700 + 50 + 90_000)
-    expect(month.top_sessions[0]).toEqual({ session_id: "s-e", name: null, host: "mac", total: 90_000 })
+    expect(month.top_sessions[0]).toEqual({ session_id: "s-e", name: null, host: "mac", total: 90_000, usd: null, unpriced_tokens: 90_000 })
     expect(month.top_sessions.some((s) => s.session_id === "s-f")).toBe(false)
   })
 
@@ -167,5 +170,38 @@ describe("tokens snapshot cache", () => {
     t += 30_000
     await snap.get("today")
     expect(count()).toBe(4)
+  })
+})
+
+describe("USD (API list price per model)", () => {
+  // Opus 5.5: $4 in / $20 out / $0.20 cache read / $5 cache write (5m), per MTok.
+  // Haiku 4.5 (dated id): $1 / $5 / $0.10 / $1.25.
+  const PRICED: U[] = [
+    { host: "mac", back: 0, session: "s-p", source: "main", model: "claude-opus-5-5", input: 1_000_000, output: 100_000, cache_read: 10_000_000, cache_creation: 200_000 },
+    { host: "mac", back: 0, session: "s-p", source: "agent:explore", model: "claude-haiku-4-5-20251001", input: 2_000_000, output: 50_000, cache_read: 0, cache_creation: 0 },
+    { host: "zettlab", back: 0, session: "s-u", source: "main", model: "claude-opus-9", input: 7_000 },
+    { host: "zettlab", back: 0, session: "s-z", source: "agent:unknown", model: "<synthetic>", output: 3 },
+  ]
+  // opus 5.5: 4 + 2 + 2 + 1 = 9 ; haiku: 2 + 0.25 = 2.25
+  test("totals mix priced models; unknown models counted in unpriced_tokens, not $0", async () => {
+    const { query } = sqliteQuery(PRICED)
+    const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: names })
+    expect(body.pricing_as_of).toBe(PRICING_AS_OF)
+    expect(body.totals.usd).toBe(11.25)
+    expect(body.totals.unpriced_tokens).toBe(7_003)
+    expect(body.by_host).toEqual([
+      expect.objectContaining({ host: "mac", usd: 11.25, unpriced_tokens: 0 }),
+      expect.objectContaining({ host: "zettlab", usd: null, unpriced_tokens: 7_003 }),
+    ])
+    expect(body.by_day[0]).toMatchObject({ usd: 11.25, unpriced_tokens: 7_003 })
+    expect(body.top_sessions.map((s) => [s.session_id, s.usd, s.unpriced_tokens])).toEqual([
+      ["s-p", 11.25, 0],
+      ["s-u", null, 7_000],
+      ["s-z", null, 3],
+    ])
+    expect(body.top_agents).toEqual([
+      { name: "explore", total: 2_050_000, usd: 2.25, unpriced_tokens: 0 },
+      { name: "unknown", total: 3, usd: null, unpriced_tokens: 3 },
+    ])
   })
 })

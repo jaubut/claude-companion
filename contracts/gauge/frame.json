@@ -10,6 +10,28 @@
     "fiveHourPercent": 23.5,
     "fiveHourResetsAt": "2026-10-06T19:00:00Z",
     "sevenDayPercent": 12,
+    "limits": [
+      {
+        "kind": "five_hour",
+        "percentUsed": 23.5,
+        "resetsAt": "2026-10-06T19:00:00Z"
+      },
+      {
+        "kind": "seven_day",
+        "percentUsed": 12,
+        "resetsAt": "2026-10-09T13:00:00Z"
+      },
+      {
+        "kind": "seven_day_opus",
+        "percentUsed": 31,
+        "resetsAt": "2026-10-09T13:00:00Z"
+      },
+      {
+        "kind": "spend_limit",
+        "percentUsed": 4,
+        "resetsAt": null
+      }
+    ],
     "at": 1791230000000
   }
 }

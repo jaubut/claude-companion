@@ -5,7 +5,8 @@ import { gauge } from "../wiring/gauge"
 
 // Context gauge (lib/gauge.ts).
 //   POST /hooks/gauge → the context-gauge mod's report, after every turn, on
-//        session start and after a compact. Only session_id is required.
+//        session start and after a compact. Only session_id is required;
+//        `rate_limits` [{kind, percent_used, resets_at}] → account.limits.
 //        Loopback, or the bearer (like /hooks/dispatch-event); never forwarded
 //        upstream — each host gauges its own sessions.
 //   GET  /api/gauge  → { ok, account | null, sessions: [{ sessionKey, ctxTokens, ctxWindow, ctxPercent, source, at }] }

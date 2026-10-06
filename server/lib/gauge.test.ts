@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import {
   EMIT_MIN_MS, type GaugeFrame, GaugeStore, MOD_FRESH_MS, type ModReport, STALE_MS,
-  parseModReport, percentOf, windowFor,
+  parseLimits, parseModReport, percentOf, windowFor,
 } from "./gauge"
 
 // Fake clock + manual timers: everything the store does on time is driven here.
@@ -40,7 +40,7 @@ beforeEach(() => {
 function mod(over: Partial<ModReport> = {}): ModReport {
   return {
     sessionId: "sid-a", cwd: "/w", ctxTokens: 412_000, ctxWindow: 1_000_000, ctxPercent: 41,
-    fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, at: now,
+    fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, limits: null, at: now,
     ...over,
   }
 }
@@ -52,7 +52,7 @@ describe("parseModReport", () => {
       five_hour_percent: 23.5, five_hour_resets_at: "2026-10-06T19:00:00Z", seven_day_percent: 12, at: 1791230000000,
     })).toEqual({
       sessionId: "u1", cwd: "/abs", ctxTokens: 412000, ctxWindow: 1000000, ctxPercent: 41,
-      fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, at: 1791230000000,
+      fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, limits: null, at: 1791230000000,
     })
   })
 
@@ -60,7 +60,7 @@ describe("parseModReport", () => {
     expect(parseModReport({ session_id: "u1", ctx_tokens: null, ctx_percent: "41", five_hour_percent: -1, ctx_window: 0, five_hour_resets_at: 5 }))
       .toEqual({
         sessionId: "u1", cwd: null, ctxTokens: null, ctxWindow: null, ctxPercent: null,
-        fiveHourPercent: null, fiveHourResetsAt: null, sevenDayPercent: null, at: null,
+        fiveHourPercent: null, fiveHourResetsAt: null, sevenDayPercent: null, limits: null, at: null,
       })
   })
 
@@ -86,7 +86,7 @@ describe("GaugeStore", () => {
     const snap = store.snapshot()
     expect(snap).toEqual({
       ok: true,
-      account: { fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, at: now },
+      account: { fiveHourPercent: 23.5, fiveHourResetsAt: "2026-10-06T19:00:00Z", sevenDayPercent: 12, limits: [], at: now },
       sessions: [{ sessionKey: "claude:tty:/dev/ttys001", ctxTokens: 412_000, ctxWindow: 1_000_000, ctxPercent: 41, source: "mod", at: now }],
     })
     expect(frames).toEqual([{ type: "gauge", ...snap.sessions[0]!, account: snap.account }])
@@ -197,6 +197,68 @@ describe("GaugeStore", () => {
     store.reportTranscript("sid-a", "", 90_000, "")
     advance(EMIT_MIN_MS * 3)
     store.reportTranscript("sid-a", "", 90_000, "")
+    expect(frames).toHaveLength(1)
+  })
+})
+
+describe("rate limits (account.limits)", () => {
+  const LIMITS = [
+    { kind: "five_hour", percent_used: 23.5, resets_at: "2026-10-06T19:00:00Z" },
+    { kind: "seven_day", percent_used: 12, resets_at: "2026-10-09T13:00:00Z" },
+    { kind: "seven_day_opus", percent_used: 31, resets_at: null },
+    { kind: "some_future_kind", percent_used: 2 },
+  ]
+
+  test("parseLimits: unknown kinds pass through; bad items skipped; bad fields null", () => {
+    expect(parseLimits(LIMITS)).toEqual([
+      { kind: "five_hour", percentUsed: 23.5, resetsAt: "2026-10-06T19:00:00Z" },
+      { kind: "seven_day", percentUsed: 12, resetsAt: "2026-10-09T13:00:00Z" },
+      { kind: "seven_day_opus", percentUsed: 31, resetsAt: null },
+      { kind: "some_future_kind", percentUsed: 2, resetsAt: null },
+    ])
+    expect(parseLimits([null, 5, [], { kind: "" }, { percent_used: 3 }, { kind: "x".repeat(65) }, { kind: "spend_limit", percent_used: "9", resets_at: 7 }]))
+      .toEqual([{ kind: "spend_limit", percentUsed: null, resetsAt: null }])
+    expect(parseLimits(Array.from({ length: 40 }, (_, i) => ({ kind: `k${i}`, percent_used: i })))).toHaveLength(16)
+    expect(parseLimits([])).toEqual([])
+    for (const v of [undefined, null, "x", {}, 3]) expect(parseLimits(v)).toBeNull()
+  })
+
+  test("parseModReport carries rate_limits as limits", () => {
+    expect(parseModReport({ session_id: "u1", rate_limits: LIMITS })?.limits).toHaveLength(4)
+    expect(parseModReport({ session_id: "u1" })?.limits).toBeNull()
+  })
+
+  test("freshest report's array wins whole; a report without one keeps it; limits alone update the account", () => {
+    const limits = parseLimits(LIMITS)!
+    store.reportMod(mod({ fiveHourPercent: null, fiveHourResetsAt: null, sevenDayPercent: null, ctxTokens: null, ctxPercent: null, limits }))
+    expect(store.snapshot().account).toEqual({ fiveHourPercent: null, fiveHourResetsAt: null, sevenDayPercent: null, limits, at: now })
+    expect(frames).toHaveLength(1) // account changed → frame, even with no ctx
+    expect(frames[0]).toMatchObject({ sessionKey: "claude:tty:/dev/ttys001", ctxTokens: null, ctxPercent: null, source: null })
+    expect(frames[0]!.account?.limits).toEqual(limits)
+
+    advance(EMIT_MIN_MS)
+    store.reportMod(mod({ limits: null })) // flat fields only
+    expect(store.snapshot().account?.limits).toEqual(limits)
+
+    advance(1_000)
+    const next = [{ kind: "five_hour", percentUsed: 40, resetsAt: null }]
+    store.reportMod(mod({ sessionId: "sid-b", limits: next }))
+    expect(store.snapshot().account?.limits).toEqual(next) // replaced, not merged per kind
+
+    store.reportMod(mod({ sessionId: "sid-a", limits: limits, at: now - 60_000 })) // older report
+    expect(store.snapshot().account?.limits).toEqual(next)
+
+    advance(EMIT_MIN_MS)
+    store.reportMod(mod({ limits: [] })) // mod says: no windows now
+    expect(store.snapshot().account?.limits).toEqual([])
+  })
+
+  test("unchanged limits do not count as an account change", () => {
+    const limits = parseLimits(LIMITS)!
+    store.reportMod(mod({ ctxTokens: null, ctxPercent: null, limits }))
+    advance(EMIT_MIN_MS * 2)
+    store.reportMod(mod({ ctxTokens: null, ctxPercent: null, limits: parseLimits(LIMITS) }))
+    advance(EMIT_MIN_MS * 2)
     expect(frames).toHaveLength(1)
   })
 })
