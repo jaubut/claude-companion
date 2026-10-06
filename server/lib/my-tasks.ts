@@ -231,7 +231,7 @@ export async function setDone(exec: ExecFn, id: string, done: boolean): Promise<
   )
   const after = await readBack(exec, id)
   if (!after) return { ok: false, error: "no_such_task" }
-  if (affected > 0) await ledger(exec, id, "status_changed", done ? `marked done: ${after.text}` : `reopened: ${after.text}`, { to: done ? "done" : "open" })
+  if (affected > 0) await ledger(exec, id, "status_changed", done ? `marked done: ${after.text}` : `reopened: ${after.text}`, { from: done ? "open" : "done", to: done ? "done" : "open" })
   return { ok: true, done: after.done, due: after.due }
 }
 

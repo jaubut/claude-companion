@@ -59,11 +59,11 @@ Errors for both writes:
 - `404`: `no_such_task`, which also covers a task that isn't mine
 - `503`: `turso_unreachable`
 
-Each real change writes one `agent_activity` row: `agent_slug='companion'`, action `status_changed` or `due_changed`, `target_kind='task'`. A no-op (same value) writes none.
+Each real change writes one `agent_activity` row: `agent_slug='companion'`, action `status_changed` or `due_changed`, `target_kind='task'`. Its meta carries `{from, to}` (`"open"`/`"done"` for status, dates or null for due), which makes it undoable through the Tasks agent ([tasks-agent-api.md](tasks-agent-api.md)). A no-op (same value) writes none.
 
 ## WS frame `tasks_changed`
 
-`{"type":"tasks_changed","taskId?":"…","why":"done"|"reopened"|"due"|"external"}`. On it, the client refetches `GET /api/tasks/mine?fresh=1`.
+`{"type":"tasks_changed","taskId?":"…","why":"done"|"reopened"|"due"|"external"|"agent"|"undo"}` (`agent`/`undo` come from the Tasks agent). On it, the client refetches `GET /api/tasks/mine?fresh=1`.
 
 When it is sent:
 

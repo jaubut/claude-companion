@@ -1,0 +1,491 @@
+import { randomUUID } from "node:crypto"
+import { MINE, TASKS_TZ, addDays, localDay, normDate } from "./my-tasks"
+import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, allProposals, hiddenBy, slipCounts } from "./tasks-agent-rules"
+import { type LoadResponse, LOAD_DAYS, buildLoad } from "./tasks-agent-load"
+import type { TasksAgentStore } from "./tasks-agent-store"
+import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
+
+// Tasks agent core (PRJ-CT4M WP5): DIGEST (what agents changed on Jeremie's
+// tasks since his last open, with Undo), PROPOSALS (deterministic rules in
+// tasks-agent-rules.ts; accept / dismiss) and LOAD (tasks-agent-load.ts).
+// Every mutation here writes its agent_activity row FIRST, carrying the old
+// value (rule: no log, no mutation), then one compare-and-set UPDATE against
+// the row as just read; a lost race deletes the log row and reports
+// `changed_since`. Contract: docs/tasks-agent-api.md.
+
+export const AGENT_SLUG = "tasks-agent"
+export const DIGEST_LIMIT = 100
+export const DIGEST_FIRST_OPEN_HOURS = 24
+export const PROPOSAL_CAP = 25
+export const SCOPE_LIMIT = 2000
+export const SNAPSHOT_TTL_MS = 30_000
+export const SUBTASKS_MIN = 2
+export const SUBTASKS_MAX = 5
+
+/** Jeremie's own actions: never "news" in his digest. */
+const SELF_SLUGS = ["companion", "human", "human:jeremie"]
+/** Agent actions on a task the digest reports (plus anything the PM agents log). */
+export const DIGEST_ACTIONS = ["status_changed", "due_changed", "assignee_changed", "subtask_created", "closed-as-duplicate", "auto_closed", "text_changed"]
+const PM_SLUGS = ["pm", "pm-nightly", "project-manager"]
+
+const marks = (n: number): string => Array.from({ length: n }, () => "?").join(", ")
+const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : typeof v === "number" ? String(v) : null)
+const isMine = (a: string | null): boolean => !!a && MINE.includes(a)
+
+export function parseMeta(v: unknown): Record<string, unknown> | null {
+  if (typeof v !== "string" || !v.trim()) return null
+  try {
+    const m = JSON.parse(v) as unknown
+    return m && typeof m === "object" && !Array.isArray(m) ? (m as Record<string, unknown>) : null
+  } catch { return null }
+}
+
+/** sqlite "YYYY-MM-DD HH:MM:SS" (UTC) → ISO. */
+export const sqliteToIso = (ts: unknown): string | null => {
+  const s = str(ts)
+  if (!s) return null
+  const t = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s.replace(" ", "T") : `${s.replace(" ", "T")}Z`)
+  return Number.isFinite(t) ? new Date(t).toISOString() : null
+}
+const isoToSqlite = (ms: number): string => new Date(ms).toISOString().slice(0, 19).replace("T", " ")
+
+// ── undo spec ────────────────────────────────────────────────────────────────
+
+export type UndoSpec =
+  | { field: "due"; from: string | null; to: string | null }
+  | { field: "done"; from: boolean; to: boolean }
+  | { field: "assignee"; from: string | null; to: string | null }
+  | { field: "created"; from: null; to: string; parentId: string }
+
+/** Only rows whose meta carries the old value (`from`) are undoable. */
+export function undoSpec(action: string, meta: Record<string, unknown> | null): UndoSpec | null {
+  if (!meta || !Object.prototype.hasOwnProperty.call(meta, "from")) return null
+  const { from, to } = meta
+  switch (action) {
+    case "due_changed": {
+      const f = from === null ? null : normDate(from)
+      const t = to === null || to === undefined ? null : normDate(to)
+      if ((from !== null && !f) || (to !== null && to !== undefined && !t)) return null
+      return { field: "due", from: f, to: t }
+    }
+    case "status_changed":
+      if ((from !== "open" && from !== "done") || (to !== "open" && to !== "done") || from === to) return null
+      return { field: "done", from: from === "done", to: to === "done" }
+    case "assignee_changed":
+      if ((from !== null && typeof from !== "string") || (to !== null && typeof to !== "string")) return null
+      return { field: "assignee", from: str(from), to: str(to) }
+    case "subtask_created":
+      return meta.created === true && from === null && typeof to === "string" && typeof meta.parent === "string"
+        ? { field: "created", from: null, to, parentId: meta.parent } : null
+    default:
+      return null
+  }
+}
+
+// ── reads ────────────────────────────────────────────────────────────────────
+
+interface RawTask { id: string; noteId: string; parentId: string | null; text: string; done: boolean; dueRaw: string; due: string | null; assigneeRaw: string; assignee: string | null; position: number }
+
+async function readTask(exec: ExecFn, id: string): Promise<RawTask | null> {
+  const { rows } = await exec("SELECT id, note_id, parent_id, text, done, due_date, assignee, position FROM tasks WHERE id = ?", [id])
+  const r = rows[0]
+  if (!r) return null
+  return {
+    id: String(r.id), noteId: str(r.note_id) ?? "", parentId: str(r.parent_id), text: str(r.text) ?? "", done: Number(r.done ?? 0) === 1,
+    dueRaw: typeof r.due_date === "string" ? r.due_date : "", due: normDate(r.due_date),
+    assigneeRaw: typeof r.assignee === "string" ? r.assignee : "", assignee: str(r.assignee), position: Number(r.position ?? 0) || 0,
+  }
+}
+
+export async function listScope(query: QueryFn): Promise<ScopeTask[]> {
+  const rows = await query(
+    "SELECT t.id, t.note_id, t.parent_id, t.text, t.description, t.due_date, t.position, t.assignee, n.title AS note_title, n.folder AS note_folder " +
+      `FROM tasks t LEFT JOIN notes n ON n.id = t.note_id WHERE t.done = 0 AND (t.assignee IS NULL OR t.assignee = '' OR t.assignee IN (${marks(MINE.length)})) ` +
+      "ORDER BY t.note_id, t.position LIMIT ?",
+    [...MINE, SCOPE_LIMIT],
+  )
+  return rows.map((r): ScopeTask => {
+    const assignee = str(r.assignee)
+    return {
+      id: String(r.id), noteId: str(r.note_id) ?? "", parentId: str(r.parent_id), text: str(r.text) ?? "", description: str(r.description),
+      due: normDate(r.due_date), position: Number(r.position ?? 0) || 0, assignee, mine: isMine(assignee),
+      project: str(r.note_title) ?? (str(r.note_id) || "No project"), folder: str(r.note_folder),
+    }
+  })
+}
+
+/** due_changed rows → from/to (meta first, else the companion summary "due A → B: …"). */
+export function toDueChange(r: Row): DueChange | null {
+  const id = str(r.target_id)
+  if (!id) return null
+  const meta = parseMeta(r.meta)
+  if (meta && Object.prototype.hasOwnProperty.call(meta, "from")) {
+    return { taskId: id, from: meta.from === null ? null : normDate(meta.from), to: meta.to === null || meta.to === undefined ? null : normDate(meta.to) }
+  }
+  const m = /due (\S+) → (\S+?):?(?:\s|$)/.exec(str(r.summary) ?? "")
+  if (!m) return null
+  return { taskId: id, from: normDate(m[1]), to: normDate(m[2]) }
+}
+
+export async function dueHistory(query: QueryFn, ids: string[]): Promise<DueChange[]> {
+  const out: DueChange[] = []
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200)
+    const rows = await query(
+      `SELECT target_id, meta, summary FROM agent_activity WHERE target_kind = 'task' AND action = 'due_changed' AND target_id IN (${marks(chunk.length)}) ORDER BY id`,
+      chunk,
+    )
+    for (const r of rows) { const c = toDueChange(r); if (c) out.push(c) }
+  }
+  return out
+}
+
+// ── digest ───────────────────────────────────────────────────────────────────
+
+export interface DigestItem {
+  activityId: number
+  at: string | null
+  agent: string
+  action: string
+  taskId: string
+  taskText: string
+  project: string
+  summary: string
+  from: unknown
+  to: unknown
+  undoable: boolean
+  undone: boolean
+}
+
+export interface Digest { since: { activityId: number | null; at: string | null }; items: DigestItem[] }
+
+async function undoneIds(query: QueryFn, targetIds: string[]): Promise<Set<number>> {
+  const out = new Set<number>()
+  for (let i = 0; i < targetIds.length; i += 200) {
+    const chunk = targetIds.slice(i, i + 200)
+    const rows = await query(
+      `SELECT meta FROM agent_activity WHERE agent_slug = ? AND action = 'undo' AND target_kind = 'task' AND target_id IN (${marks(chunk.length)})`,
+      [AGENT_SLUG, ...chunk],
+    )
+    for (const r of rows) { const u = Number(parseMeta(r.meta)?.undoes); if (Number.isInteger(u)) out.add(u) }
+  }
+  return out
+}
+
+export async function maxActivityId(query: QueryFn): Promise<number> {
+  const rows = await query("SELECT MAX(id) AS max_id FROM agent_activity", [])
+  return Number(rows[0]?.max_id ?? 0) || 0
+}
+
+/** Agent changes on Jeremie's tasks after `sinceId` (null → the last 24 h). Jeremie's own actions are left out. */
+export async function buildDigest(query: QueryFn, sinceId: number | null, nowMs: number): Promise<Digest> {
+  const sinceTs = sinceId === null ? isoToSqlite(nowMs - DIGEST_FIRST_OPEN_HOURS * 3_600_000) : ""
+  const rows = await query(
+    "SELECT a.id, a.agent_slug, a.action, a.target_id, a.summary, a.meta, a.ts, t.text AS task_text, t.assignee AS task_assignee, n.title AS note_title " +
+      "FROM agent_activity a JOIN tasks t ON t.id = a.target_id LEFT JOIN notes n ON n.id = t.note_id " +
+      `WHERE a.target_kind = 'task' AND a.id > ? AND a.ts >= ? AND a.agent_slug NOT IN (${marks(SELF_SLUGS.length)}) ` +
+      `AND (a.action IN (${marks(DIGEST_ACTIONS.length)}) OR a.agent_slug IN (${marks(PM_SLUGS.length)})) ` +
+      `AND (t.assignee IN (${marks(MINE.length)}) OR a.action = 'assignee_changed') ` +
+      "ORDER BY a.id DESC LIMIT ?",
+    [sinceId ?? 0, sinceTs, ...SELF_SLUGS, ...DIGEST_ACTIONS, ...PM_SLUGS, ...MINE, DIGEST_LIMIT],
+  )
+  const kept = rows.flatMap((r): DigestItem[] => {
+    const meta = parseMeta(r.meta)
+    // Jeremie's own accepts / confirms through this agent are not news to him.
+    if (meta?.by === "jeremie") return []
+    const action = str(r.action) ?? ""
+    // A reassignment shows only when it moved a task to or from him.
+    if (action === "assignee_changed" && !isMine(str(r.task_assignee)) && !isMine(str(meta?.from)) && !isMine(str(meta?.to))) return []
+    return [{
+      activityId: Number(r.id), at: sqliteToIso(r.ts), agent: str(r.agent_slug) ?? "", action, taskId: String(r.target_id),
+      taskText: str(r.task_text) ?? "", project: str(r.note_title) ?? "", summary: str(r.summary) ?? "",
+      from: meta?.from ?? null, to: meta?.to ?? null, undoable: undoSpec(action, meta) !== null, undone: false,
+    }]
+  })
+  const undone = await undoneIds(query, [...new Set(kept.map((k) => k.taskId))])
+  for (const k of kept) if (undone.has(k.activityId)) { k.undone = true; k.undoable = false }
+  return { since: { activityId: sinceId, at: sinceId === null ? sqliteToIso(sinceTs) : null }, items: kept }
+}
+
+// ── guarded writes ───────────────────────────────────────────────────────────
+
+export type WriteOutcome = { ok: true } | { ok: false; status: number; error: string }
+const conflict = (error: string, status = 409): WriteOutcome => ({ ok: false, status, error })
+
+type Col = "due_date" | "done" | "assignee"
+
+/** Log first (RETURNING id), then CAS on the whole row as read; lost race → log row removed. */
+async function mutate(
+  exec: ExecFn, before: RawTask, col: Col, value: SqlArg, action: string, summary: string, meta: Record<string, unknown>,
+): Promise<WriteOutcome> {
+  const ins = await exec(
+    "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, 'task', ?, ?, ?) RETURNING id",
+    [AGENT_SLUG, action, before.id, summary.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", ...meta })],
+  )
+  const logId = Number(ins.rows[0]?.id)
+  // `col` comes from the fixed Col union, never from input.
+  const { affected } = await exec(
+    `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND done = ? AND COALESCE(due_date, '') = ? AND COALESCE(assignee, '') = ? AND text = ?`,
+    [value, before.id, before.done ? 1 : 0, before.dueRaw, before.assigneeRaw, before.text],
+  )
+  if (affected > 0) return { ok: true }
+  if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => { /* best effort */ })
+  return conflict("changed_since")
+}
+
+export async function setTaskDue(exec: ExecFn, t: RawTask, due: string | null, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
+  if (t.due === due) return { ok: true }
+  return mutate(exec, t, "due_date", due ?? "", "due_changed", `due ${t.due ?? "none"} → ${due ?? "none"}: ${t.text}`, { from: t.due, to: due, ...extra })
+}
+
+export async function setTaskDone(exec: ExecFn, t: RawTask, done: boolean, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
+  if (t.done === done) return { ok: true }
+  const from = t.done ? "done" : "open"
+  const to = done ? "done" : "open"
+  return mutate(exec, t, "done", done ? 1 : 0, "status_changed", `${done ? "closed" : "reopened"}: ${t.text}`, { from, to, ...extra })
+}
+
+export async function setTaskAssignee(exec: ExecFn, t: RawTask, assignee: string | null, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
+  if (t.assignee === assignee) return { ok: true }
+  return mutate(exec, t, "assignee", assignee, "assignee_changed", `assignee ${t.assignee ?? "none"} → ${assignee ?? "none"}: ${t.text}`, { from: t.assignee, to: assignee, ...extra })
+}
+
+/** Log first, then insert the subtask (Jeremie's, undated, under `parent`). A failed insert removes the log row. */
+export async function insertSubtask(exec: ExecFn, parent: RawTask, text: string, offset: number): Promise<string> {
+  const id = randomUUID().replace(/-/g, "")
+  const ins = await exec(
+    "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'subtask_created', 'task', ?, ?, ?) RETURNING id",
+    [AGENT_SLUG, id, `subtask of "${parent.text}": ${text}`.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", from: null, to: text, created: true, parent: parent.id })],
+  )
+  const logId = Number(ins.rows[0]?.id)
+  try {
+    await exec(
+      "INSERT INTO tasks (id, note_id, parent_id, text, description, done, due_date, position, assignee) VALUES (?, ?, ?, ?, '', 0, '', ?, ?)",
+      [id, parent.noteId, parent.id, text, parent.position + offset, parent.assignee ?? MINE[0] ?? "human:jeremie"],
+    )
+  } catch (err) {
+    if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => { /* best effort */ })
+    throw err
+  }
+  return id
+}
+
+// ── undo ─────────────────────────────────────────────────────────────────────
+
+export type UndoResult = { ok: true; taskId: string; field: UndoSpec["field"]; restored: unknown } | { ok: false; status: number; error: string }
+
+export async function undoActivity(exec: ExecFn, activityId: number): Promise<UndoResult> {
+  const { rows } = await exec("SELECT id, action, target_kind, target_id, meta FROM agent_activity WHERE id = ?", [activityId])
+  const a = rows[0]
+  if (!a || a.target_kind !== "task" || !str(a.target_id)) return { ok: false, status: 404, error: "no_such_activity" }
+  const spec = undoSpec(str(a.action) ?? "", parseMeta(a.meta))
+  if (!spec) return { ok: false, status: 409, error: "not_undoable" }
+  const taskId = String(a.target_id)
+  const prior = await exec(
+    "SELECT id FROM agent_activity WHERE agent_slug = ? AND action = 'undo' AND target_kind = 'task' AND target_id = ? AND json_extract(meta, '$.undoes') = ?",
+    [AGENT_SLUG, taskId, activityId],
+  )
+  if (prior.rows.length) return { ok: false, status: 409, error: "already_undone" }
+  const t = await readTask(exec, taskId)
+
+  if (spec.field === "created") {
+    if (!t) return { ok: false, status: 409, error: "changed_since" }
+    if (t.done || t.text !== spec.to || t.parentId !== spec.parentId) return { ok: false, status: 409, error: "changed_since" }
+    const ins = await exec(
+      "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'undo', 'task', ?, ?, ?) RETURNING id",
+      [AGENT_SLUG, taskId, `undo subtask: ${t.text}`.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", undoes: activityId, field: "created", from: t.text, to: null })],
+    )
+    const { affected } = await exec(
+      "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
+      [taskId, spec.to, spec.parentId, taskId],
+    )
+    if (affected === 0) {
+      const logId = Number(ins.rows[0]?.id)
+      if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => {})
+      return { ok: false, status: 409, error: "changed_since" }
+    }
+    return { ok: true, taskId, field: "created", restored: null }
+  }
+
+  if (!t) return { ok: false, status: 404, error: "no_such_task" }
+  // Due / done undo only on Jeremie's own or unassigned tasks; agent tasks belong to dispatch.
+  if (spec.field !== "assignee" && t.assignee !== null && !isMine(t.assignee)) return { ok: false, status: 404, error: "no_such_task" }
+  const current = spec.field === "due" ? t.due : spec.field === "done" ? t.done : t.assignee
+  if (current !== spec.to) return { ok: false, status: 409, error: "changed_since" }
+  const col: Col = spec.field === "due" ? "due_date" : spec.field === "done" ? "done" : "assignee"
+  const value: SqlArg = spec.field === "due" ? spec.from ?? "" : spec.field === "done" ? (spec.from ? 1 : 0) : spec.from
+  const r = await mutate(exec, t, col, value, "undo", `undo ${spec.field} ${String(spec.to ?? "none")} → ${String(spec.from ?? "none")}: ${t.text}`,
+    { undoes: activityId, field: spec.field, from: spec.to, to: spec.from })
+  return r.ok ? { ok: true, taskId, field: spec.field, restored: spec.from } : r
+}
+
+// ── the agent ────────────────────────────────────────────────────────────────
+
+/** Haiku: 2-5 subtasks for a vague task, or null. */
+export type Splitter = (task: { text: string; description: string | null; project: string }) => Promise<string[] | null>
+
+export interface TasksAgentDeps {
+  query: QueryFn
+  exec: ExecFn
+  store: TasksAgentStore
+  /** Busy hours per day (null = calendar unavailable). */
+  busy: (days: string[], tz: string) => Promise<Map<string, number> | null>
+  splitter: Splitter
+  rules: () => AssignRule[]
+  now?: () => number
+}
+
+export interface ProposalsView { counts: Record<ProposalKind, number>; items: Proposal[] }
+
+export interface AgentResponse {
+  generatedAt: string
+  today: string
+  tz: string
+  digest: Digest
+  proposals: ProposalsView
+  load: LoadResponse
+}
+
+export type AcceptBody = { due?: unknown; subtasks?: unknown }
+export type DecideResult =
+  | { ok: true; decision: "accept" | "dismiss"; proposalId: string; taskIds: string[]; detail?: Record<string, unknown> }
+  | { ok: true; stage: "confirm"; proposalId: string; subtasks: string[] }
+  | { ok: false; status: number; error: string }
+
+const KINDS: ProposalKind[] = ["reschedule", "merge", "assign", "split"]
+
+export function createTasksAgent(deps: TasksAgentDeps) {
+  const now = deps.now ?? Date.now
+  let snap: { at: number; today: string; tasks: ScopeTask[]; proposals: Proposal[] } | null = null
+
+  async function snapshot(fresh = false) {
+    const t = now()
+    const today = localDay(t, TASKS_TZ())
+    if (!fresh && snap && t - snap.at < SNAPSHOT_TTL_MS && snap.today === today) return snap
+    const tasks = await listScope(deps.query)
+    const slips = slipCounts(await dueHistory(deps.query, tasks.filter((x) => x.mine).map((x) => x.id)))
+    snap = { at: t, today, tasks, proposals: allProposals({ tasks, slips, rules: deps.rules(), today }) }
+    return snap
+  }
+
+  function visible(proposals: Proposal[]): ProposalsView {
+    const decided = deps.store.decisions()
+    const open = proposals.filter((p) => !hiddenBy(p, decided.get(p.id)))
+    const counts = Object.fromEntries(KINDS.map((k) => [k, open.filter((p) => p.kind === k).length])) as Record<ProposalKind, number>
+    return { counts, items: KINDS.flatMap((k) => open.filter((p) => p.kind === k).slice(0, PROPOSAL_CAP)) }
+  }
+
+  async function view(device: string, fresh = false): Promise<AgentResponse> {
+    const t = now()
+    const tz = TASKS_TZ()
+    const s = await snapshot(fresh)
+    const baseline = deps.store.open(device, await maxActivityId(deps.query), t)
+    const digest = await buildDigest(deps.query, baseline, t)
+    const days = Array.from({ length: LOAD_DAYS }, (_, i) => addDays(s.today, i))
+    const busy = await deps.busy(days, tz).catch(() => null)
+    return {
+      generatedAt: new Date(t).toISOString(), today: s.today, tz, digest, proposals: visible(s.proposals),
+      load: buildLoad(s.tasks.filter((x) => x.mine).map((x) => x.due), s.today, busy),
+    }
+  }
+
+  async function accept(p: Proposal, body: AcceptBody, today: string): Promise<DecideResult> {
+    const done = (detail: Record<string, unknown> = {}): DecideResult => {
+      deps.store.decide({ id: p.id, decision: "accept", version: p.version, at: now() })
+      snap = null
+      return { ok: true, decision: "accept", proposalId: p.id, taskIds: p.taskIds, detail }
+    }
+    const t = await readTask(deps.exec, p.taskIds[p.kind === "merge" ? 1 : 0]!)
+    if (!t || t.done) return { ok: false, status: 409, error: "changed_since" }
+    // Same scope as the rules: reschedule / split on his own tasks, merge on his or unassigned.
+    if ((p.kind === "reschedule" || p.kind === "split") && !isMine(t.assignee)) return { ok: false, status: 409, error: "changed_since" }
+    if (p.kind === "merge" && t.assignee !== null && !isMine(t.assignee)) return { ok: false, status: 409, error: "changed_since" }
+
+    if (p.kind === "reschedule") {
+      let due: string | null
+      if (body.due === undefined) due = String(p.suggestion.suggestedDue ?? addDays(today, 7))
+      else if (body.due === null) due = null
+      else {
+        due = normDate(body.due)
+        if (!due || due !== body.due) return { ok: false, status: 400, error: "due_must_be_yyyy_mm_dd_or_null" }
+      }
+      const r = await setTaskDue(deps.exec, t, due, { proposal: p.id })
+      return r.ok ? done({ due }) : r
+    }
+    if (p.kind === "assign") {
+      if (t.assignee !== null) return { ok: false, status: 409, error: "changed_since" }
+      const assignee = String(p.suggestion.assignee)
+      const r = await setTaskAssignee(deps.exec, t, assignee, { proposal: p.id })
+      return r.ok ? done({ assignee }) : r
+    }
+    if (p.kind === "merge") {
+      const keepId = String(p.suggestion.keepId)
+      const r = await setTaskDone(deps.exec, t, true, { proposal: p.id, merged_into: keepId })
+      return r.ok ? done({ closed: t.id, kept: keepId }) : r
+    }
+    // split: no subtasks yet → Haiku drafts them (nothing written); with subtasks → insert.
+    if (body.subtasks === undefined) {
+      const st = snap?.tasks.find((x) => x.id === t.id)
+      const drafted = await deps.splitter({ text: t.text, description: st?.description ?? null, project: p.project }).catch(() => null)
+      const clean = drafted ? cleanSubtasks(drafted) : null
+      if (!clean) return { ok: false, status: 502, error: "split_unavailable" }
+      return { ok: true, stage: "confirm", proposalId: p.id, subtasks: clean }
+    }
+    const subtasks = Array.isArray(body.subtasks) ? cleanSubtasks(body.subtasks) : null
+    if (!subtasks) return { ok: false, status: 400, error: "subtasks_must_be_2_to_5_strings" }
+    const ids: string[] = []
+    for (const [i, text] of subtasks.entries()) ids.push(await insertSubtask(deps.exec, t, text, i + 1))
+    return done({ parentId: t.id, subtaskIds: ids })
+  }
+
+  /** accept | dismiss one proposal, re-derived fresh from Turso (a stale id → 404). */
+  async function decide(id: string, action: "accept" | "dismiss", body: AcceptBody): Promise<DecideResult> {
+    const s = await snapshot(true)
+    const p = s.proposals.find((x) => x.id === id)
+    if (!p || hiddenBy(p, deps.store.decisions().get(p.id))) return { ok: false, status: 404, error: "no_such_proposal" }
+    if (action === "dismiss") {
+      deps.store.decide({ id: p.id, decision: "dismiss", version: p.version, at: now() })
+      return { ok: true, decision: "dismiss", proposalId: p.id, taskIds: p.taskIds }
+    }
+    return accept(p, body, s.today)
+  }
+
+  async function undo(activityId: number): Promise<UndoResult> {
+    const r = await undoActivity(deps.exec, activityId)
+    if (r.ok) snap = null
+    return r
+  }
+
+  return { view, decide, undo, invalidate: () => { snap = null } }
+}
+
+export type TasksAgent = ReturnType<typeof createTasksAgent>
+
+/** 2-5 distinct, non-empty one-line subtasks, each <= 200 chars; anything else → null. */
+export function cleanSubtasks(list: unknown[]): string[] | null {
+  if (!list.every((x) => typeof x === "string")) return null
+  const out = [...new Set((list as string[]).map((s) => s.replace(/\s+/g, " ").trim()).filter(Boolean))]
+  if (out.length < SUBTASKS_MIN || out.length > SUBTASKS_MAX || out.some((s) => s.length > 200)) return null
+  return out
+}
+
+export function splitPrompt(task: { text: string; description: string | null; project: string }): string {
+  return [
+    "Split this to-do item into 2 to 5 concrete subtasks. Each subtask starts with an action verb, is one line, under 120 characters,",
+    "and is written in the same language as the task. Do not add work the task does not imply.",
+    `Project: ${task.project}`,
+    `Task: ${task.text}`,
+    task.description ? `Notes: ${task.description.slice(0, 600)}` : "",
+    'Reply with JSON only: {"subtasks": ["…", "…"]}',
+  ].filter(Boolean).join("\n")
+}
+
+export function parseSplit(text: string | null): string[] | null {
+  if (!text) return null
+  const m = /\{[\s\S]*\}/.exec(text)
+  if (!m) return null
+  try {
+    const o = JSON.parse(m[0]) as { subtasks?: unknown }
+    return Array.isArray(o.subtasks) ? cleanSubtasks(o.subtasks) : null
+  } catch { return null }
+}

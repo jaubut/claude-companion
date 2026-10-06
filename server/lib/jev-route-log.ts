@@ -99,7 +99,7 @@ export const GO_LIVE_MIN_AGREEMENT = 0.75
 
 export function comparable(r: RouteLogRow): boolean {
   if (!r.intent || (r.oldOutcome !== "chat" && r.oldOutcome !== "task")) return false
-  return !(r.oldOutcome === "chat" && (r.intent === "status" || r.intent === "quick_look" || r.intent === "body"))
+  return !(r.oldOutcome === "chat" && (r.intent === "status" || r.intent === "quick_look" || r.intent === "body" || r.intent === "my_tasks"))
 }
 
 export function agrees(r: RouteLogRow): boolean {

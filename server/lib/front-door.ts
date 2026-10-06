@@ -12,6 +12,10 @@ import { type QuickLookRunner, ackText, answerTurnText, buildQuickLookPrompt, fa
 //   shadow → Jev decides in parallel and is logged; the old brain answers
 //   live   → Jev's route answers: status (code), quick_look (read-only claude),
 //            body / task / chat (old brain with hints); low confidence → old brain
+// Tasks agent (PRJ-CT4M WP5, optional `tasks` dep): a "confirm"/"cancel" reply
+// to a held move is consumed first; a message about Jeremie's own to-do list
+// (Jev `my_tasks` in live mode, or the tasks keyword hint in any mode) goes to
+// the tasks tool, which may hand it back (not_tasks) to the normal path.
 // All modes: a transient "⏳ on it…" turn if nothing answered within ackDelayMs.
 // Seams only (the live instance is wiring/front-door.ts).
 
@@ -23,6 +27,14 @@ export interface BrainHints {
 }
 
 export type BrainResult = { kind: "chat" } | { kind: "task"; noteId: string | null } | { kind: "error" }
+
+/** The tasks tool seam (lib/tasks-agent-chat.ts). */
+export interface TasksRoute {
+  hint: (text: string) => boolean
+  /** false = not about his tasks; the message continues down the normal path. */
+  handle: (text: string, channelId: string, recent: string[]) => Promise<boolean>
+  confirmReply: (text: string, channelId: string) => Promise<boolean>
+}
 
 export interface FrontDoorDeps {
   mode: () => RouterMode
@@ -40,6 +52,7 @@ export interface FrontDoorDeps {
   emitTransient: (text: string, channelId: string) => void
   stageProposal: (d: Extract<BrainDecision, { kind: "proposal" }>, channel: Channel, projects: ProjectRef[]) => Promise<void>
   log: (row: RouteLogRow) => void
+  tasks?: TasksRoute
   now?: () => number
   ackDelayMs?: number
   onError?: (msg: string) => void
@@ -97,8 +110,22 @@ export function createFrontDoor(deps: FrontDoorDeps) {
     const ack = setTimeout(() => { if (!answered) deps.emitTransient(ACK_TEXT, channel.id) }, deps.ackDelayMs ?? ACK_DELAY_MS)
     ;(ack as unknown as { unref?: () => void }).unref?.()
     const answering = () => { answered = true; clearTimeout(ack) }
+    const tasks = deps.tasks
+    const recentLines = () => routerInput(text, channel, deps.thread(channel.id)).recent.map((t) => `${t.role}: ${t.text.replace(/\s+/g, " ").slice(0, 240)}`)
+    const tryTasks = async (): Promise<boolean> => {
+      if (!tasks) return false
+      try {
+        return await tasks.handle(text, channel.id, recentLines())
+      } catch (err) {
+        deps.onError?.(`tasks tool failed: ${(err as Error)?.message ?? String(err)}`)
+        return false
+      }
+    }
     try {
+      if (tasks && await tasks.confirmReply(text, channel.id)) return
+      const hinted = tasks?.hint(text) ?? false
       if (mode === "off") {
+        if (hinted && await tryTasks()) return
         await deps.runBrain(text, channel, {})
         return
       }
@@ -109,6 +136,11 @@ export function createFrontDoor(deps: FrontDoorDeps) {
       if (mode === "shadow") {
         // Concurrent: shadow adds no latency to the answer.
         const jev = deps.decide(input, cat.catalog, opts)
+        if (hinted && await tryTasks()) {
+          answering()
+          log(await jev, "my_tasks", null)
+          return
+        }
         const outcome = await deps.runBrain(text, channel, { prebuilt: cat })
         answering()
         log(await jev, "brain", outcome)
@@ -117,6 +149,11 @@ export function createFrontDoor(deps: FrontDoorDeps) {
       const decided = await deps.decide(input, cat.catalog, opts)
       const route = decided.ok ? pickRoute(decided.decision, minConf) : "brain"
       let outcome: BrainResult | null = null
+      if ((route === "my_tasks" || hinted) && await tryTasks()) {
+        answering()
+        log(decided, "my_tasks", null)
+        return
+      }
       if (route === "status" && decided.ok) {
         const named = namedProject(decided.decision, minConf)
         const answer = await deps.status(named?.noteId ? { noteId: named.noteId, title: named.title } : null)

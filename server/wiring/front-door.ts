@@ -12,6 +12,7 @@ import { broadcast } from "../state"
 import { bodySnapshot } from "./body"
 import { dispatchWiring } from "./dispatch"
 import { applyDecision, brainCatalog, orchEmit, runBrain } from "./orchestrator"
+import { tasksChat } from "./tasks-agent"
 
 // The live front door (lib/front-door.ts): real Jev, sqlite shadow log,
 // the dispatch poller's cache, the Body snapshot, and the old brain.
@@ -67,5 +68,6 @@ export const frontDoor = createFrontDoor({
       companionLog(`[front-door] route log write failed (${(err as Error)?.message ?? "error"})`)
     }
   },
+  tasks: tasksChat,
   onError: (msg) => companionLog(`[front-door] ${msg}`),
 })

@@ -4,7 +4,7 @@ import { type JevOpts, type JevOutcome, type JevQuestion, systemOne } from "./je
 // The front door's tier 0: one Jev call per user message → intent + project +
 // confidence. Code decides what to do with it (mode, threshold, route).
 
-export const INTENTS = ["status", "quick_look", "task", "body", "chat"] as const
+export const INTENTS = ["status", "quick_look", "task", "body", "my_tasks", "chat"] as const
 export type Intent = (typeof INTENTS)[number]
 export type RouterMode = "off" | "shadow" | "live"
 export type ProjectSource = "jev" | "alias" | "channel" | "none"
@@ -37,6 +37,9 @@ export const INTENT_CRITERIA: Record<Intent, string> = {
   body:
     "Asks about the health of machines, servers, services, daemons, cron jobs or the Body monitor: what is down, broken, " +
     "crashing or failing on the Mac or Zettlab.",
+  my_tasks:
+    "About Jeremie's OWN to-do list (his personal tasks and their due dates, not the agent work queue): what is on his plate " +
+    "today or this week, what is due, moving or rescheduling his tasks to a day, marking his tasks done.",
   chat:
     "Conversation, an opinion, planning, brainstorming, a general-knowledge question, a reply or follow-up to the previous " +
     "orchestrator message (yes, no, approve, thanks), or anything the other options do not describe.",
@@ -125,7 +128,7 @@ export async function decideRoute(
   return toDecision(out, input, catalog, opts)
 }
 
-export type Route = "status" | "quick_look" | "task" | "body" | "brain"
+export type Route = "status" | "quick_look" | "task" | "body" | "my_tasks" | "brain"
 
 /**
  * What answers in live mode. Below the threshold, or a quick_look with no
@@ -139,6 +142,7 @@ export function pickRoute(d: RouteDecision, minConf: number): Route {
     case "quick_look": return d.project?.repo && (d.projectSource !== "jev" || d.projectConf >= minConf) ? "quick_look" : "brain"
     case "task": return "task"
     case "body": return "body"
+    case "my_tasks": return "my_tasks"
     default: return "brain"
   }
 }

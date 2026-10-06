@@ -4,6 +4,13 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Tasks agent: deterministic digest/proposals/load, log-first writes, chat via Jev hint + Opus
+**Date:** 2026-10-06 (autodev `ct4m-wp5-tasks-agent-server`, PRJ-CT4M WP5)
+**Choice:** `GET /api/tasks/agent` → digest (agent changes on Jeremie's tasks since the device's last open, baseline in companion.db; Undo only where the activity meta carries `from`), proposals (slip >= 2 → reschedule/drop; unassigned + pm-assign.py agent route → assign, never queued; same-note normalized duplicates → merge; > 12 words without an opening action verb → split, Haiku drafts 2-5 subtasks that Jeremie confirms) and a 14-day load meter (dated tasks vs read-only Google Calendar busy hours, > 4 tasks or > 6 h flags). Every agent write logs its `agent_activity` row first, then one compare-and-set UPDATE; a lost race deletes the row (409 `changed_since`). Chat: new Jev intent `my_tasks` (live) or a keyword hint (any mode) → one tool-less Opus call → list / move / done through the my-tasks paths; > 3 tasks → `tasks_agent_confirm` card. Contract: `docs/tasks-agent-api.md`.
+**Why:** the brief's Agent tab: keep the pile honest without Jeremie re-reading 64 tasks, every change reversible.
+**Assumptions:** "vague = no verb list" read as "doesn't open with an action verb"; bulk `done` from chat also needs the confirm card (same > 3 rule as moves); pm-nightly writes no activity rows today, so its closes show in the digest only once it logs `status_changed {from,to}`.
+**Revisit if:** the keyword hint grabs non-task messages (tighten or rely on Jev live), the assign list floods (365 unassigned), or the calendar token moves off mail-watcher.
+
 ### Smart auto-compact at 600k, only between tasks
 **Date:** 2026-10-05 (autodev `smart-auto-compact-600k`)
 **Choice:** `lib/auto-compact.ts` + `wiring/auto-compact.ts`. On a Stop hook, context = last main-chain assistant usage (input + cache_read + cache_creation). Over `AUTO_COMPACT_TOKENS` (opt-in, see amendment) the check runs once the user has been quiet 3 min (UserPromptSubmit hook, transcript's last human prompt, pane input polled every 20 s); it needs Claude's own status `idle`, no open background Bash/Agent (`run_in_background` without a `<task-notification>` / KillShell), an empty input box, and no attempt in the last 30 min. Then APNs `auto_compact` "compacting <name> in 60s" (`POST /api/auto-compact/cancel {key}`), re-check, and `/compact keep: …` via the phone inject guard + `injectConfirmed`, tmux pane only (tty stripped: no osascript fallback). `compact_boundary` (polled 15 s, or SessionStart `compact`) → "compacted <name>: X -> Y tokens". One attempt per Stop; cooldown starts at the countdown push, so a cancel holds 30 min.
