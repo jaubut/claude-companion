@@ -61,6 +61,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage-pr.ts` | 256 | lib | 20 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
+| `lib/body-tokens.ts` | 233 | lib | 16 |  |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `lib/resolver-work.ts` | 227 | lib | 5 |  |
@@ -72,7 +73,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/command-offpane-cache.ts` | 216 | lib | 14 | state: let launchMemo, warnedOld: Set |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
-| `lib/body-tokens.ts` | 213 | lib | 16 |  |
 | `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/resolver-peer.ts` | 211 | lib | 19 |  |
 | `lib/dialogs.ts` | 209 | lib | 7 |  |
