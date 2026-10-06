@@ -24,7 +24,7 @@ describe("trigger + dedupe", () => {
   test("only dead / crash_loop / failing pass", () => {
     const s = mem()
     for (const state of ["dead", "crash_loop", "failing"]) expect(gate(s, { componentId: "a", state }, T0, { budget: true }).ok).toBe(true)
-    for (const state of ["ok", "dormant", "stopped", "unknown", ""]) expect(gate(s, { componentId: "a", state }, T0, { budget: true })).toMatchObject({ ok: false, reason: "not a problem state" })
+    for (const state of ["ok", "warning", "dormant", "stopped", "unknown", ""]) expect(gate(s, { componentId: "a", state }, T0, { budget: true })).toMatchObject({ ok: false, reason: "not a problem state" })
   })
 
   test("one open investigation per component", () => {

@@ -38,7 +38,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body-investigate-engine.ts` | 367 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `wiring/resolver.ts` | 362 | lib | 13 |  |
-| `lib/body.ts` | 355 | lib | 25 |  |
+| `lib/body.ts` | 357 | lib | 25 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/voice-memo.ts` | 351 | lib | 22 |  |
 | `wiring/triage.ts` | 343 | lib | 9 | state: let liveResolver, let live |
