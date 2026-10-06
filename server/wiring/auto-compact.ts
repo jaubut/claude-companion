@@ -19,7 +19,8 @@ import { getSessionByKey, type Session } from "../lib/sessions"
 import { readClaudeSessionFile } from "../lib/discover"
 import { transcriptPath } from "../lib/session-titles"
 import { injectRefusal, paneNotReady } from "../lib/inject-guard"
-import { injectConfirmed } from "../lib/submit-confirm"
+import { injectVerified } from "../lib/inject-verified"
+import { paneRefOf } from "../lib/tmux-pane"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { openDialogFor, paneSnapshotFor, yieldPaneForInject } from "./dialogs"
@@ -69,9 +70,14 @@ async function inject(key: string, text: string): Promise<{ ok: boolean; error?:
     pane: paneFree ? await paneSnapshotFor(s) : undefined,
   })
   if (refusal) return { ok: false, error: refusal.reason ? `${refusal.error}:${refusal.reason}` : refusal.error }
-  // tty stripped: tmux only, never the osascript fallback.
-  const res = await injectConfirmed(text, { ...s, tty: "" })
-  return res.ok ? { ok: true } : { ok: false, error: res.error }
+  // One bracketed paste + read-back, Enter only if the input starts with
+  // /compact (lib/inject-verified.ts). tmux only, never the osascript fallback.
+  const ref = paneRefOf(s)
+  if (!ref) return { ok: false, error: "no_tmux_pane" }
+  const res = await injectVerified(ref, text)
+  if (res.ok) return { ok: true }
+  await push("failed", { key, name: s.title || s.label || key, sessionId: s.sessionId || "", transcriptPath: "", cwd: s.cwd }, "Compact failed", `${s.title || s.label || key}: the /compact command did not land (${res.error}); nothing was submitted.`)
+  return { ok: false, error: res.error }
 }
 
 function collapseId(key: string): string {

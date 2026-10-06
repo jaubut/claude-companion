@@ -1677,6 +1677,36 @@
           "externals": []
         },
         {
+          "path": "lib/inject-verified.ts",
+          "lines": 123,
+          "kind": "lib",
+          "exports": [
+            "VERIFIED_TEXT_MAX",
+            "PASTE_SETTLE_MS",
+            "VerifiedInjectDeps",
+            "VerifiedResult",
+            "capKeep",
+            "injectVerifiedWith",
+            "injectVerified"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/key-gate.ts",
+            "lib/log.ts",
+            "lib/keyboard-inject.ts",
+            "lib/command-menu.ts",
+            "lib/tmux-pane.ts",
+            "lib/auto-compact-keep.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/jev-route-log.ts",
           "lines": 168,
           "kind": "lib",
@@ -5596,7 +5626,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 255,
+          "lines": 261,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -5626,7 +5656,8 @@
             "lib/discover.ts",
             "lib/session-titles.ts",
             "lib/inject-guard.ts",
-            "lib/submit-confirm.ts",
+            "lib/inject-verified.ts",
+            "lib/tmux-pane.ts",
             "lib/apns.ts",
             "lib/push.ts",
             "wiring/dialogs.ts"
@@ -6842,6 +6873,7 @@
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
             "lib/discover.ts",
+            "lib/inject-verified.ts",
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
             "lib/media.ts",
@@ -7081,7 +7113,8 @@
         "COMPACT_TEXT": {
           "module": "lib/auto-compact-keep.ts",
           "callers": [
-            "lib/auto-compact.ts"
+            "lib/auto-compact.ts",
+            "lib/inject-verified.ts"
           ]
         },
         "buildKeep": {
@@ -7489,6 +7522,7 @@
           "callers": [
             "lib/command-list.ts",
             "lib/inject-guard.ts",
+            "lib/inject-verified.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest"
@@ -7752,6 +7786,7 @@
           "module": "lib/key-gate.ts",
           "callers": [
             "lib/command-scrape.ts",
+            "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
@@ -7802,6 +7837,7 @@
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/discover.ts",
+            "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
             "lib/question-hook.ts",
             "lib/submit-confirm.ts",
@@ -8099,6 +8135,61 @@
             "lib/inject-guard.ts"
           ]
         },
+        "tmuxSendKeys": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "capturePane": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "sendKeysArgs": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts"
+          ]
+        },
+        "paneKey": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "INJECT_QUEUE_MS": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/inject-verified.ts"
+          ]
+        },
+        "INJECT_SEND_MS": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
         "Intent": {
           "module": "lib/jev-router.ts",
           "callers": [
@@ -8157,18 +8248,6 @@
             "lib/jev-router.ts",
             "wiring/triage.ts",
             "wiring/trips.ts"
-          ]
-        },
-        "paneKey": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/keyboard-inject.ts",
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick",
-            "routes/model.ts",
-            "wiring/dialogs.ts"
           ]
         },
         "tmuxSocketFlags": {
@@ -9384,42 +9463,10 @@
             "lib/status-answer.ts"
           ]
         },
-        "INJECT_SEND_MS": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "lib/submit-confirm.ts"
-          ]
-        },
-        "tmuxSendKeys": {
-          "module": "lib/keyboard-inject.ts",
-          "callers": [
-            "lib/submit-confirm.ts"
-          ]
-        },
-        "sendKeysArgs": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick",
-            "routes/model.ts"
-          ]
-        },
         "injectText": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
             "lib/submit-confirm.ts"
-          ]
-        },
-        "capturePane": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "wiring/dialogs.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "readClaudeSessionFile": {
@@ -10414,7 +10461,6 @@
           "module": "lib/submit-confirm.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -10755,7 +10801,8 @@
             "routes/command.ts#POST /api/command/suggest",
             "routes/model.ts#POST /api/model/open",
             "routes/model.ts#POST /api/model/set",
-            "routes/model.ts#POST /api/model/cancel"
+            "routes/model.ts#POST /api/model/cancel",
+            "wiring/auto-compact.ts"
           ]
         },
         "suggestRefusal": {
@@ -11782,6 +11829,12 @@
         },
         "paneNotReady": {
           "module": "lib/inject-guard.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "injectVerified": {
+          "module": "lib/inject-verified.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
