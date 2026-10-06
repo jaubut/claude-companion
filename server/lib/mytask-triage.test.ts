@@ -50,6 +50,12 @@ describe("phrasing + policy", () => {
     expect(stale.context).toContain("• task t0 (2026-05-01)")
   })
 
+  test("money / client words: urgent and never 'Drop the date' first, however late", () => {
+    const inv = overdueItems([row("i", "2026-05-05", { text: "Generate invoice from TLS-2026-04-Q001, send to client" })], TODAY, NOW)[0]!
+    expect(heuristicSeverity(inv)).toBe("urgent")
+    expect(fallbackPhrase(inv).options[0]!.label).toBe("Move to next week")
+  })
+
   test("options ride on approve + task op (shown by the shipped iOS build)", () => {
     const p = fallbackPhrase(card("2026-10-01"))
     expect(p.options.slice(0, 3).map((o) => o.action)).toEqual([
