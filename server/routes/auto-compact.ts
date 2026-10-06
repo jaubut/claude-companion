@@ -3,7 +3,7 @@ import { companionLog } from "../lib/log"
 import { autoCompactor } from "../wiring/auto-compact"
 
 // Smart auto-compact (lib/auto-compact.ts). Bearer-gated like every /api/*.
-//   GET  /api/auto-compact         → { threshold, pending: [{key, phase, name, tokens}] }
+//   GET  /api/auto-compact         → { threshold, pending: [{key, phase, name, tokens, trigger}] }
 //   POST /api/auto-compact/cancel  { key } → { ok, cancelled } — the push's Cancel action
 export async function handleAutoCompactRoute(req: Request, url: URL): Promise<Response | null> {
   if (url.pathname === "/api/auto-compact" && req.method === "GET") {
