@@ -1,6 +1,18 @@
-import { type FileHandle, open, stat } from "node:fs/promises"
+import { type FileHandle, open, readFile, stat } from "node:fs/promises"
+import { existsSync, mkdirSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
-import { type AutoCompactDeps, AutoCompactor, type CompactTarget, type InputState, type PushKind, thresholdFromEnv } from "../lib/auto-compact"
+import { Database } from "bun:sqlite"
+import {
+  type AutoCompactDeps, AutoCompactor, type CompactionDone, type CompactTarget, type InputState, type PushKind,
+  boundaryFromEnv, thresholdFromEnv,
+} from "../lib/auto-compact"
+import { type KeepNote, type KeepPr, type KeepState, type SessionSnapshot, stateNextLines } from "../lib/auto-compact-keep"
+import { type CompactionStats, compactionStats, ensureCompactionLog, insertCompaction } from "../lib/auto-compact-stats"
+import { companionDbPath } from "../lib/db-path"
+import { MINE } from "../lib/my-tasks"
+import { prState, realGh } from "../lib/triage-pr"
+import { type Row, tursoQuery } from "../lib/turso"
 import { companionLog } from "../lib/log"
 import { getSessionByKey, type Session } from "../lib/sessions"
 import { readClaudeSessionFile } from "../lib/discover"
@@ -83,6 +95,90 @@ async function push(kind: PushKind, target: CompactTarget, title: string, body: 
   companionLog(`auto-compact push (${kind}) → ${r.sent}/${r.total} devices`)
 }
 
+// ── state-aware keep: resolve the session's pointers against durable state ──
+
+const LOOKUP_MS = 8_000
+
+function within<T>(p: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), LOOKUP_MS).unref?.())]).catch(() => fallback)
+}
+
+// Live gh state for PRs whose repo is known; the transcript's last-seen state otherwise.
+async function livePrs(prs: KeepPr[]): Promise<KeepPr[]> {
+  return Promise.all(prs.slice(0, 6).map(async (p) => {
+    if (!p.repo) return p
+    const s = await within(prState(realGh, `https://github.com/${p.repo}/pull/${p.number}`), "unknown" as const)
+    return s === "unknown" ? p : { ...p, state: s }
+  }))
+}
+
+const marks = (n: number): string => Array.from({ length: n }, () => "?").join(", ")
+
+// The notes this session wrote (most recent first) + their open tasks; tasks
+// assigned to Jeremie are the pending human steps.
+async function noteState(snap: SessionSnapshot): Promise<{ notes: KeepNote[]; human: string[] }> {
+  const ids = snap.noteIds.slice(0, 4)
+  const refs = snap.refCodes.slice(0, 4)
+  if (!ids.length && !refs.length) return { notes: [], human: [] }
+  const where = [ids.length && `id IN (${marks(ids.length)})`, refs.length && `ref_code IN (${marks(refs.length)})`].filter(Boolean).join(" OR ")
+  const rows = await tursoQuery(`SELECT id, ref_code FROM notes WHERE ${where} LIMIT 8`, [...ids, ...refs])
+  const rank = (r: Row): number => {
+    const i = ids.indexOf(String(r.id)); const j = refs.indexOf(String(r.ref_code ?? ""))
+    return Math.min(i < 0 ? 99 : i, j < 0 ? 99 : j)
+  }
+  const human: string[] = []
+  const notes = await Promise.all(rows.sort((a, b) => rank(a) - rank(b)).slice(0, 4).map(async (r) => {
+    const id = String(r.id)
+    const tasks = await tursoQuery("SELECT text, assignee FROM tasks WHERE note_id = ? AND done = 0 ORDER BY position LIMIT 12", [id])
+    const mine = tasks.filter((t) => MINE.includes(String(t.assignee ?? "")))
+    human.push(...mine.map((t) => String(t.text ?? "")))
+    return { id, ref: String(r.ref_code ?? ""), openTasks: tasks.filter((t) => !mine.includes(t)).map((t) => String(t.text ?? "")) }
+  }))
+  return { notes, human }
+}
+
+// STATE.md of the session's repo: cwd, then up to the git root.
+async function stateNext(cwd: string | undefined): Promise<string[]> {
+  for (let dir = cwd; dir && dir !== dirname(dir); dir = dirname(dir)) {
+    const file = join(dir, "STATE.md")
+    if (existsSync(file)) return stateNextLines(await readFile(file, "utf8"))
+    if (existsSync(join(dir, ".git"))) break
+  }
+  return []
+}
+
+async function keepState(target: CompactTarget, snap: SessionSnapshot): Promise<KeepState> {
+  const [prs, notes, next] = await Promise.all([
+    livePrs(snap.prs),
+    within(noteState(snap), { notes: [], human: [] }),
+    stateNext(target.cwd).catch(() => []),
+  ])
+  return { prs, notes: notes.notes, next, human: notes.human }
+}
+
+// ── compaction stats (companion.db, opened on first use) ────────────────────
+
+let statsDb: Database | null = null
+
+function stats(): Database {
+  if (!statsDb) {
+    const path = companionDbPath()
+    mkdirSync(dirname(path), { recursive: true })
+    statsDb = new Database(path)
+    ensureCompactionLog(statsDb)
+  }
+  return statsDb
+}
+
+function recordCompaction(d: CompactionDone): void {
+  insertCompaction(stats(), { at: d.at, sessionKey: d.target.key, name: d.target.name, trigger: d.trigger, preTokens: d.preTokens, postTokens: d.postTokens })
+}
+
+/** Auto-compactions this server completed since `sinceMs` (GET /api/body/tokens). */
+export function compactionStatsSince(sinceMs: number): CompactionStats {
+  return compactionStats(stats(), sinceMs)
+}
+
 export const realAutoCompactDeps: AutoCompactDeps = {
   now: () => Date.now(),
   setTimer: (fn, ms) => {
@@ -109,6 +205,9 @@ export const realAutoCompactDeps: AutoCompactDeps = {
   push,
   inject,
   log: (line) => companionLog(`\x1b[36m${line}\x1b[0m`),
+  boundaryThreshold: () => boundaryFromEnv(),
+  keepState,
+  recordCompaction,
 }
 
 export const autoCompactor = new AutoCompactor(realAutoCompactDeps)
@@ -120,5 +219,6 @@ export function compactTargetFor(session: Session, transcriptPath: string | unde
     name: session.title || session.label || session.key,
     sessionId: sessionId || session.sessionId,
     transcriptPath,
+    cwd: session.cwd,
   }
 }

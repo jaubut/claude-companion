@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
+import { KEEP_MAX, SessionScan, buildKeep, isClosingPrompt, stateNextLines } from "./auto-compact-keep"
+import { compactionStats, ensureCompactionLog, insertCompaction } from "./auto-compact-stats"
 import {
   AutoCompactor,
   type AutoCompactDeps,
   BackgroundScan,
+  type CompactionDone,
+  boundaryFromEnv,
   CANCEL_MS,
   COMPACT_TEXT,
   BG_MAX_AGE_MS,
@@ -151,7 +156,7 @@ describe("compactGate", () => {
 
 interface Timer { at: number; fn: () => void; id: number }
 
-function harness(opts: { transcript: string; status?: string; input?: InputState; threshold?: number }) {
+function harness(opts: { transcript: string; status?: string; input?: InputState; threshold?: number; extra?: Partial<AutoCompactDeps> }) {
   let now = Date.parse("2026-10-05T12:00:00Z")
   let seq = 0
   let timers: Timer[] = []
@@ -175,6 +180,7 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
     push: async (kind, _t, title) => { pushes.push({ kind, title }) },
     inject: async (_k, text) => { injects.push(text); return state.injectOk ? { ok: true } : { ok: false, error: "dialog_open" } },
     log: (l) => logs.push(l),
+    ...opts.extra,
   }
   const c = new AutoCompactor(deps)
   const flush = async () => { for (let i = 0; i < 500; i++) await Promise.resolve() }
@@ -436,5 +442,254 @@ describe("AutoCompactor", () => {
     h.state.transcript = lines(boundary(900_000, 20_000, "old"))
     await h.advance(15_000 * 2)
     expect(h.pushes.map((p) => p.kind)).toEqual(["countdown"])
+  })
+})
+
+// ── task boundaries + state-aware keep (lib/auto-compact-keep.ts) ──────────
+// Fixtures are trimmed copies of real Zettlab transcript tails (2026-10):
+// a squash merge of chantalmasse-website#14, a dispatch.sh completion, a
+// Turso note INSERT through the pipeline API, a file-dev-task.sh filing.
+
+const SID = "c447e8b2-062c-4655-b74a-8eef0d18e0bc"
+let toolSeq = 0
+function bash(command: string, result: string, ts: string, isError = false): string[] {
+  const id = `toolu_01EPKtrVMzDmAYBGbT88K${String(++toolSeq).padStart(3, "0")}`
+  return [
+    JSON.stringify({ parentUuid: "p", isSidechain: false, type: "assistant", timestamp: ts, sessionId: SID, message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command, description: "x" } }] } }),
+    JSON.stringify({ parentUuid: "p", isSidechain: false, type: "user", timestamp: ts, sessionId: SID, cwd: "/home/aubut/work", message: { role: "user", content: [{ tool_use_id: id, type: "tool_result", content: result, is_error: isError }] } }),
+  ]
+}
+const T = (min: number) => new Date(Date.parse("2026-10-05T11:00:00Z") + min * 60_000).toISOString()
+
+const PR14_VIEW = bash(
+  "cd ~/lanes/chantalmasse-website && gh pr view 14 --json state,mergedAt,title,headRefName,url 2>&1",
+  '{"headRefName":"fix/booking-reminder-missed-clients","mergedAt":null,"state":"OPEN","title":"fix(booking-reminder): stop dropping clients from the 24h reminder","url":"https://github.com/jaubut/chantalmasse-website/pull/14"}',
+  T(1),
+)
+const PR14_MERGE = bash(
+  "cd /tmp/claude-1000/scratchpad/cm && gh pr merge 14 --squash 2>&1 | tail -2; gh pr view 14 --json state,mergeCommit --jq '.state+\" \"+.mergeCommit.oid'",
+  "MERGED 7da5bdfe351c35d89d7275ad404aad8ea1601ee8\nShell cwd was reset to /home/aubut/work",
+  T(2),
+)
+const PR14_MERGE_FAIL = bash(
+  "gh pr merge 14 --squash 2>&1 | tail -2",
+  "X Pull request jaubut/chantalmasse-website#14 is not mergeable: the merge commit cannot be cleanly created.",
+  T(2),
+)
+const TASK_DONE = bash(
+  "bash ~/.claude/tools/dispatch.sh 3f8ea8adb605fe096b3dff82addad13e completed builder",
+  "dispatch.sh: 3f8ea8adb605fe096b3dff82addad13e → completed",
+  T(3),
+)
+const TASK_SQL_DONE = bash(
+  'reqs="{\\"type\\":\\"execute\\",\\"stmt\\":{\\"sql\\":\\"UPDATE tasks SET done=1 WHERE id=?\\",\\"args\\":[{\\"type\\":\\"text\\",\\"value\\":\\"9be30c71\\"}]}}"; curl -s "$TURSO/v2/pipeline" -d "$reqs"',
+  "ok 1 None",
+  T(3),
+)
+const NOTE_INSERT = bash(
+  "python3 - <<E > $S/ins.json\nargs=[t('resources/2026-10-03-bistro-mavia-booking-spec'),t('resources'),t('resources/2026-10-03-bistro-mavia-booking-spec.md')]\nprint(json.dumps({\"requests\":[{\"type\":\"execute\",\"stmt\":{\"sql\":\"INSERT INTO notes (id, folder, filename) VALUES (?, ?, ?)\"}}]}))\nE\ncurl -s \"https://tls-dashboard-jaubut.aws-us-east-1.turso.io/v2/pipeline\" -d @$S/ins.json",
+  "affected 1 []\naffected 0 [['resources/2026-10-03-bistro-mavia-booking-spec', 'RES-MVBK', 'Spec: Bistro Mavia built-in reservation system (replaces Libro)', '15476']]",
+  T(4),
+)
+const DEV_TASK = bash(
+  '~/.claude/tools/file-dev-task.sh PRJ-WCLS builder "bank-match-multi-invoice-client-sum" "Bank reconciliation: match one deposit to several invoices" "Today a bank deposit can only be linked to one invoice"',
+  "filed 47de97dff69c90641bc0d52f946f5cee",
+  T(4),
+)
+const NOTE_LISTING = bash(
+  "UPDATE notes SET status='archived' WHERE id=? -- then list",
+  "PRJ-AAAA a\nPRJ-BBBB b\nPRJ-CCCC c\nRES-DDDD d",
+  T(5),
+)
+const scanOf = (...l: string[]) => {
+  const s = new SessionScan()
+  s.feed(parseLines(lines(...l)), NOW)
+  return s
+}
+const WORK = userPrompt("merge pr 14 if CI is green", T(0))
+
+describe("closing prompts", () => {
+  test("short thanks / ok words only", () => {
+    for (const t of ["nice", "perf!", "ok merci", "good job 👍", "Dope.", "thanks", "nice work"]) expect(isClosingPrompt(t)).toBe(true)
+    for (const t of ["", "ok fix it", "nice, now do the iOS card", "ok go ahead and merge", "yes"]) expect(isClosingPrompt(t)).toBe(false)
+  })
+})
+
+describe("SessionScan: unit-of-work boundaries", () => {
+  test("a squash merge closes the unit", () => {
+    expect(scanOf(WORK, ...PR14_VIEW, ...PR14_MERGE).closedSince(0)).toBe("pr_merged")
+  })
+  test("viewing an open PR is not a boundary", () => {
+    expect(scanOf(WORK, ...PR14_VIEW).closedSince(0)).toBeNull()
+  })
+  test("a failed merge is not a boundary", () => {
+    expect(scanOf(WORK, ...PR14_VIEW, ...PR14_MERGE_FAIL).closedSince(0)).toBeNull()
+    expect(scanOf(WORK, ...bash("gh pr merge 14", "Exit code 1\nGraphQL: Pull request is not mergeable", T(2), true)).closedSince(0)).toBeNull()
+  })
+  test("dispatch.sh completed / UPDATE tasks done=1 close the unit", () => {
+    expect(scanOf(WORK, ...TASK_DONE).closedSince(0)).toBe("task_completed")
+    expect(scanOf(WORK, ...TASK_SQL_DONE).closedSince(0)).toBe("task_completed")
+  })
+  test("a closing prompt after a finished turn closes the unit", () => {
+    expect(scanOf(WORK, assistant(1, 300_000, 0), userPrompt("perf", T(10))).closedSince(0)).toBe("closing_prompt")
+  })
+  test("a new work prompt after the merge reopens the unit", () => {
+    expect(scanOf(WORK, ...PR14_MERGE, userPrompt("now update the iOS card", T(10))).closedSince(0)).toBeNull()
+    expect(scanOf(WORK, ...PR14_MERGE, userPrompt("nice", T(10)), userPrompt("now the iOS card", T(11))).closedSince(0)).toBeNull()
+  })
+  test("closings already used (consumed) or before a compaction do not count", () => {
+    expect(scanOf(WORK, ...PR14_MERGE).closedSince(Date.parse(T(2)) + 1)).toBeNull()
+    const compacted = JSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: T(5), compactMetadata: { preTokens: 1, postTokens: 1 } })
+    expect(scanOf(WORK, ...PR14_MERGE, compacted).closedSince(0)).toBeNull()
+  })
+})
+
+describe("SessionScan: durable pointers", () => {
+  test("PRs with repo and last state, notes and ref codes this session wrote", () => {
+    const s = scanOf(WORK, ...PR14_VIEW, ...PR14_MERGE, ...NOTE_INSERT, ...DEV_TASK, ...NOTE_LISTING,
+      ...bash("gh pr create --title x --body y", "https://github.com/jaubut/claude-companion/pull/140", T(6)))
+    expect(s.snapshot()).toEqual({
+      prs: [{ number: 140, repo: "jaubut/claude-companion", state: "OPEN" }, { number: 14, repo: "jaubut/chantalmasse-website", state: "MERGED" }],
+      noteIds: ["resources/2026-10-03-bistro-mavia-booking-spec"],
+      refCodes: ["PRJ-WCLS", "RES-MVBK"], // the 4-ref listing is not a write of those notes
+    })
+  })
+  test("sidechain (subagent) tool calls are not this session's", () => {
+    const side = PR14_MERGE.map((l) => JSON.stringify({ ...JSON.parse(l), isSidechain: true }))
+    expect(scanOf(WORK, ...side).snapshot().prs).toEqual([])
+  })
+})
+
+describe("stateNextLines", () => {
+  test("the resume / next section and Next: lines", () => {
+    const md = "# STATE\n\n## 📌 Resume here (next session)\n\n- Ship v0.7 R2 rewire\n- Wire spend caps\n\n### detail\n- sub point\n\n## Active Decisions\n- not next\n\n**Next:** run the smoke test\n"
+    expect(stateNextLines(md)).toEqual(["Ship v0.7 R2 rewire", "Wire spend caps", "sub point", "**Next:** run the smoke test"])
+    expect(stateNextLines("# STATE\n## Active Decisions\n- a\n")).toEqual([])
+  })
+})
+
+describe("buildKeep", () => {
+  test("nothing durable → today's generic keep", () => {
+    expect(buildKeep(null)).toBe(COMPACT_TEXT)
+    expect(buildKeep({ prs: [], notes: [], next: [], human: [] })).toBe(COMPACT_TEXT)
+  })
+  test("PRs (open first), notes + open tasks, STATE.md next, human steps — one line", () => {
+    const k = buildKeep({
+      prs: [{ number: 14, repo: "jaubut/chantalmasse-website", state: "MERGED" }, { number: 140, repo: "jaubut/claude-companion", state: "OPEN" }],
+      notes: [{ id: "projects/2026-06-22-companion-orchestrator", ref: "PRJ-OR1T", openTasks: ["iOS token card\nshows compactions"] }],
+      next: ["Ship v0.7"],
+      human: ["Approve the vault PR"],
+    })
+    expect(k).toBe("/compact keep: current task, decisions made; PRs: jaubut/claude-companion#140 OPEN, jaubut/chantalmasse-website#14 MERGED; "
+      + "Turso note projects/2026-06-22-companion-orchestrator (PRJ-OR1T) open tasks: iOS token card shows compactions; "
+      + "STATE.md next: Ship v0.7; pending human steps: Approve the vault PR")
+  })
+  test("capped at KEEP_MAX", () => {
+    const long = "x".repeat(300)
+    const k = buildKeep({ prs: [], notes: Array.from({ length: 4 }, (_, i) => ({ id: `projects/n${i}`, ref: "", openTasks: [long, long, long, long, long] })), next: [long], human: [long] })
+    expect(k.length).toBeLessThanOrEqual(KEEP_MAX)
+    expect(k.includes("\n")).toBe(false)
+  })
+})
+
+describe("AutoCompactor: boundary trigger + keep", () => {
+  const MID = (...l: string[]) => lines(OLD_PROMPT, ...l, assistant(1, 300_000, 0)) // 300k: under 600k, over 250k
+  const keep = { prs: [{ number: 14, repo: "jaubut/chantalmasse-website", state: "MERGED" }], notes: [], next: [], human: [] }
+  const boundaryDeps = (extra: Partial<AutoCompactDeps> = {}): Partial<AutoCompactDeps> => ({
+    boundaryThreshold: () => 250_000, keepState: async () => keep, ...extra,
+  })
+  const MERGED = MID(userPrompt("merge pr 14", "2026-10-05T11:00:00Z"), ...PR14_MERGE)
+
+  test("PR merged + 300k → countdown, then the state-aware keep is typed", async () => {
+    const h = harness({ transcript: MERGED, extra: boundaryDeps() })
+    await h.c.onStop(h.target)
+    expect(h.c.status().map((s) => s.trigger)).toEqual(["pr_merged"])
+    await h.advance(0)
+    expect(h.pushes).toEqual([{ kind: "countdown", title: "compacting wt in 60s" }])
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual(["/compact keep: current task, decisions made; PRs: jaubut/chantalmasse-website#14 MERGED"])
+  })
+
+  test("task completed / closing prompt arm it too", async () => {
+    for (const t of [MID(WORK, ...TASK_DONE), MID(WORK, userPrompt("merci", "2026-10-05T11:20:00Z"))]) {
+      const h = harness({ transcript: t, extra: boundaryDeps() })
+      await h.c.onStop(h.target)
+      await h.advance(CANCEL_MS)
+      expect(h.injects.length).toBe(1)
+    }
+  })
+
+  test("no closing, under the boundary floor, or boundary off → nothing", async () => {
+    const cases: Array<[string, Partial<AutoCompactDeps>]> = [
+      [MID(WORK, ...PR14_VIEW), boundaryDeps()],
+      [lines(OLD_PROMPT, userPrompt("merge", T(0)), ...PR14_MERGE, assistant(1, 200_000, 0)), boundaryDeps()],
+      [MERGED, boundaryDeps({ boundaryThreshold: () => 0 })],
+      [MERGED, {}],
+    ]
+    for (const [t, extra] of cases) {
+      const h = harness({ transcript: t, extra })
+      await h.c.onStop(h.target)
+      await h.advance(10 * 60_000)
+      expect(h.pushes).toEqual([])
+    }
+  })
+
+  test("AUTO_COMPACT_TOKENS=0 → no change: nothing armed, nothing read", async () => {
+    const h = harness({ transcript: MERGED, threshold: 0, extra: boundaryDeps() })
+    await h.c.onStop(h.target)
+    await h.advance(10 * 60_000)
+    expect(h.pushes).toEqual([])
+    expect(h.reads).toEqual([])
+  })
+
+  test("same gates: a busy session is skipped", async () => {
+    const h = harness({ transcript: MERGED, status: "busy", extra: boundaryDeps() })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS * 2)
+    expect(h.injects).toEqual([])
+    expect(h.logs.some((l) => l.includes("skipped — busy"))).toBe(true)
+  })
+
+  test("a closing is used once: no second compaction for the same merge", async () => {
+    const h = harness({ transcript: MERGED, extra: boundaryDeps() })
+    await h.c.onStop(h.target)
+    await h.advance(0)
+    h.c.cancel("k1")
+    await h.advance(COOLDOWN_MS + 1)
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.pushes.length).toBe(1)
+  })
+
+  test("keep lookup failure → generic keep; completion is recorded (X -> Y)", async () => {
+    const done: CompactionDone[] = []
+    const h = harness({ transcript: BIG, extra: { keepState: async () => { throw new Error("turso down") }, recordCompaction: (d) => done.push(d) } })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    h.state.transcript += lines(boundary(650_001, 28_951))
+    await h.advance(15_000)
+    expect(done.map((d) => [d.trigger, d.preTokens, d.postTokens])).toEqual([["size", 650_001, 28_951]])
+  })
+})
+
+describe("boundary setting", () => {
+  test("default 250k, 0 = off", () => {
+    expect(boundaryFromEnv({})).toBe(250_000)
+    expect(boundaryFromEnv({ AUTO_COMPACT_BOUNDARY_TOKENS: "junk" })).toBe(250_000)
+    expect(boundaryFromEnv({ AUTO_COMPACT_BOUNDARY_TOKENS: "0" })).toBe(0)
+    expect(boundaryFromEnv({ AUTO_COMPACT_BOUNDARY_TOKENS: "300000" })).toBe(300_000)
+  })
+})
+
+describe("compaction stats", () => {
+  test("count and tokens saved since a time", () => {
+    const db = new Database(":memory:")
+    ensureCompactionLog(db)
+    insertCompaction(db, { at: 100, sessionKey: "k", name: "wt", trigger: "size", preTokens: 650_000, postTokens: 30_000 })
+    insertCompaction(db, { at: 200, sessionKey: "k", name: "wt", trigger: "pr_merged", preTokens: 300_000, postTokens: 20_000 })
+    expect(compactionStats(db, 150)).toEqual({ count: 1, pre_tokens: 300_000, post_tokens: 20_000, saved: 280_000 })
+    expect(compactionStats(db, 0)).toEqual({ count: 2, pre_tokens: 950_000, post_tokens: 50_000, saved: 900_000 })
+    expect(compactionStats(db, 300).count).toBe(0)
   })
 })

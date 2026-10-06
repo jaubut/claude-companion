@@ -226,10 +226,14 @@ describe("GET /api/body/tokens", () => {
   test("passes range (default today) and fresh to the tokens snapshot", async () => {
     const seen: unknown[] = []
     const tokens: TokensSnapshot = { get: async (range, o) => { seen.push([range, o]); return empty(range) } }
-    const handler = routes.createBodyHandler({ tokens, query: async () => [] })
+    const sinces: number[] = []
+    const stats = { count: 2, pre_tokens: 1_300_000, post_tokens: 60_000, saved: 1_240_000 }
+    const compactions = (since: number) => { sinces.push(since); return stats }
+    const handler = routes.createBodyHandler({ tokens, compactions, query: async () => [] })
     const res = await call(handler, "GET", "/api/body/tokens?range=30d&fresh=1")
     expect(res?.status).toBe(200)
-    expect(await res!.json()).toEqual(empty("30d"))
+    expect(await res!.json()).toEqual({ ...empty("30d"), compactions: stats })
+    expect(sinces[0]).toBe(new Date(2026, 9, 5).getTime()) // local midnight of `since`
     await call(handler, "GET", "/api/body/tokens")
     await call(handler, "GET", "/api/body/tokens?range=7d")
     expect(seen).toEqual([["30d", { fresh: true }], ["today", { fresh: false }], ["7d", { fresh: false }]])

@@ -128,7 +128,8 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   "by_day": [ { "day": "2026-10-05", "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615, "usd": 0.0071, "unpriced_tokens": 0 } ],
   "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "host": "mac", "total": 1705, "usd": 0.0031, "unpriced_tokens": 0 } ],
   "top_agents": [ { "name": "builder", "total": 500, "usd": 0.0008, "unpriced_tokens": 0 } ],
-  "top_skills": [ { "name": "today", "total": 40, "usd": null, "unpriced_tokens": 40 } ]
+  "top_skills": [ { "name": "today", "total": 40, "usd": null, "unpriced_tokens": 40 } ],
+  "compactions": { "count": 2, "pre_tokens": 950000, "post_tokens": 50000, "saved": 900000 }
 }
 ```
 
@@ -160,6 +161,14 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   counted as $0; with `unpriced_tokens > 0` a non-null `usd` is a lower bound.
 - `pricing_as_of`: the day the price table was read from the pricing page
   (`https://platform.claude.com/docs/en/about-claude/pricing`).
+- `compactions`: smart auto-compactions (`docs/auto-compact-api.md`) THIS
+  server completed since local midnight of `since` — companion.db
+  `auto_compactions`, one row per `compact_boundary` that answered our
+  `/compact`. `pre_tokens` / `post_tokens` are summed context sizes before /
+  after, `saved = pre_tokens − post_tokens` (context no longer re-sent each
+  turn). The iOS Token burn card shows `compactions <count> · saved <saved>`.
+  `null` when companion.db is unreadable (hide the line). Not cached: always
+  current, even on a cached token view.
 - No `token_usage` table yet (collector not deployed) → the same shape with zero
   totals and empty lists, not an error. Turso down → 503 `turso_unreachable`.
 
