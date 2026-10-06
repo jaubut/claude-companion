@@ -219,9 +219,16 @@ const conflict = (error: string, status = 409): WriteOutcome => ({ ok: false, st
 
 type Col = "due_date" | "done" | "assignee"
 
-/** Log first (RETURNING id), then CAS on the whole row as read; lost race → log row removed. */
+/** Extra SQL condition ANDed into the CAS (fixed text, args bound). */
+type Guard = { sql: string; args: SqlArg[] }
+
+const dropLog = async (exec: ExecFn, logId: number): Promise<void> => {
+  if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => { /* best effort */ })
+}
+
+/** Log first (RETURNING id), then CAS on the whole row as read; lost race or failed write → log row removed. */
 async function mutate(
-  exec: ExecFn, before: RawTask, col: Col, value: SqlArg, action: string, summary: string, meta: Record<string, unknown>,
+  exec: ExecFn, before: RawTask, col: Col, value: SqlArg, action: string, summary: string, meta: Record<string, unknown>, guard?: Guard,
 ): Promise<WriteOutcome> {
   const ins = await exec(
     "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, 'task', ?, ?, ?) RETURNING id",
@@ -229,12 +236,19 @@ async function mutate(
   )
   const logId = Number(ins.rows[0]?.id)
   // `col` comes from the fixed Col union, never from input.
-  const { affected } = await exec(
-    `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND done = ? AND COALESCE(due_date, '') = ? AND COALESCE(assignee, '') = ? AND text = ?`,
-    [value, before.id, before.done ? 1 : 0, before.dueRaw, before.assigneeRaw, before.text],
-  )
+  let affected: number
+  try {
+    ;({ affected } = await exec(
+      `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND done = ? AND COALESCE(due_date, '') = ? AND COALESCE(assignee, '') = ? AND text = ?${guard ? ` AND ${guard.sql}` : ""}`,
+      [value, before.id, before.done ? 1 : 0, before.dueRaw, before.assigneeRaw, before.text, ...(guard?.args ?? [])],
+    ))
+  } catch (err) {
+    // No mutation → no log (a stale 'undo' row would make a retry say already_undone).
+    await dropLog(exec, logId)
+    throw err
+  }
   if (affected > 0) return { ok: true }
-  if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => { /* best effort */ })
+  await dropLog(exec, logId)
   return conflict("changed_since")
 }
 
@@ -243,11 +257,11 @@ export async function setTaskDue(exec: ExecFn, t: RawTask, due: string | null, e
   return mutate(exec, t, "due_date", due ?? "", "due_changed", `due ${t.due ?? "none"} → ${due ?? "none"}: ${t.text}`, { from: t.due, to: due, ...extra })
 }
 
-export async function setTaskDone(exec: ExecFn, t: RawTask, done: boolean, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
+export async function setTaskDone(exec: ExecFn, t: RawTask, done: boolean, extra: Record<string, unknown> = {}, guard?: Guard): Promise<WriteOutcome> {
   if (t.done === done) return { ok: true }
   const from = t.done ? "done" : "open"
   const to = done ? "done" : "open"
-  return mutate(exec, t, "done", done ? 1 : 0, "status_changed", `${done ? "closed" : "reopened"}: ${t.text}`, { from, to, ...extra })
+  return mutate(exec, t, "done", done ? 1 : 0, "status_changed", `${done ? "closed" : "reopened"}: ${t.text}`, { from, to, ...extra }, guard)
 }
 
 export async function setTaskAssignee(exec: ExecFn, t: RawTask, assignee: string | null, extra: Record<string, unknown> = {}): Promise<WriteOutcome> {
@@ -269,7 +283,7 @@ export async function insertSubtask(exec: ExecFn, parent: RawTask, text: string,
       [id, parent.noteId, parent.id, text, position, parent.assignee ?? MINE[0] ?? "human:jeremie"],
     )
   } catch (err) {
-    if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => { /* best effort */ })
+    await dropLog(exec, logId)
     throw err
   }
   return id
@@ -280,10 +294,11 @@ export async function insertSubtask(exec: ExecFn, parent: RawTask, text: string,
 export type UndoResult = { ok: true; taskId: string; field: UndoSpec["field"]; restored: unknown } | { ok: false; status: number; error: string }
 
 export async function undoActivity(exec: ExecFn, activityId: number): Promise<UndoResult> {
-  const { rows } = await exec("SELECT id, action, target_kind, target_id, meta FROM agent_activity WHERE id = ?", [activityId])
+  const { rows } = await exec("SELECT id, agent_slug, action, target_kind, target_id, meta FROM agent_activity WHERE id = ?", [activityId])
   const a = rows[0]
   if (!a || a.target_kind !== "task" || !str(a.target_id)) return { ok: false, status: 404, error: "no_such_activity" }
-  const spec = undoSpec(str(a.action) ?? "", parseMeta(a.meta))
+  const meta = parseMeta(a.meta)
+  const spec = undoSpec(str(a.action) ?? "", meta)
   if (!spec) return { ok: false, status: 409, error: "not_undoable" }
   const taskId = String(a.target_id)
   const prior = await exec(
@@ -301,13 +316,19 @@ export async function undoActivity(exec: ExecFn, activityId: number): Promise<Un
       "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'undo', 'task', ?, ?, ?) RETURNING id",
       [AGENT_SLUG, taskId, `undo subtask: ${t.text}`.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", undoes: activityId, field: "created", from: t.text, to: null })],
     )
-    const { affected } = await exec(
-      "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
-      [taskId, spec.to, spec.parentId, taskId],
-    )
+    const logId = Number(ins.rows[0]?.id)
+    let affected: number
+    try {
+      ;({ affected } = await exec(
+        "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
+        [taskId, spec.to, spec.parentId, taskId],
+      ))
+    } catch (err) {
+      await dropLog(exec, logId)
+      throw err
+    }
     if (affected === 0) {
-      const logId = Number(ins.rows[0]?.id)
-      if (Number.isFinite(logId)) await exec("DELETE FROM agent_activity WHERE id = ?", [logId]).catch(() => {})
+      await dropLog(exec, logId)
       return { ok: false, status: 409, error: "changed_since" }
     }
     return { ok: true, taskId, field: "created", restored: null }
@@ -315,9 +336,10 @@ export async function undoActivity(exec: ExecFn, activityId: number): Promise<Un
 
   if (!t) return { ok: false, status: 404, error: "no_such_task" }
   // Same scope as the digest. Due / done: his own or unassigned tasks (agent tasks belong to dispatch);
-  // assignee: only a reassignment that is, was or moved to his.
+  // assignee: only a reassignment that is, was or moved to his, or one he made through this agent (an accepted assign proposal).
+  const ownAccept = a.agent_slug === AGENT_SLUG && meta?.by === "jeremie"
   const inScope = spec.field === "assignee"
-    ? isMine(t.assignee) || isMine(spec.from) || isMine(spec.to)
+    ? isMine(t.assignee) || isMine(spec.from) || isMine(spec.to) || ownAccept
     : t.assignee === null || isMine(t.assignee)
   if (!inScope) return { ok: false, status: 404, error: "no_such_task" }
   const current = spec.field === "due" ? t.due : spec.field === "done" ? t.done : t.assignee
@@ -430,10 +452,14 @@ export function createTasksAgent(deps: TasksAgentDeps) {
     }
     if (p.kind === "merge") {
       const keepId = String(p.suggestion.keepId)
-      // Never close the last open copy: the kept task must still be open, in the same note.
+      // Never close the last open copy (the kept task must still be open, in the same note) nor a parent
+      // with open subtasks: both checked inside the closing UPDATE, so no race between check and write.
       const keep = await readTask(deps.exec, keepId)
       if (!keep || keep.done || keep.noteId !== t.noteId) return { ok: false, status: 409, error: "changed_since" }
-      const r = await setTaskDone(deps.exec, t, true, { proposal: p.id, merged_into: keepId })
+      const r = await setTaskDone(deps.exec, t, true, { proposal: p.id, merged_into: keepId }, {
+        sql: "EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND k.done = 0 AND k.note_id = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)",
+        args: [keepId, t.noteId, t.id],
+      })
       return r.ok ? done({ closed: t.id, kept: keepId }) : r
     }
     // split: no subtasks yet → Haiku drafts them (nothing written); with subtasks → insert.

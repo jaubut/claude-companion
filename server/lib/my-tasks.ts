@@ -218,7 +218,8 @@ async function ledger(exec: ExecFn, id: string, action: string, summary: string,
   } catch { /* observability only — never undo the write */ }
 }
 
-async function readBack(exec: ExecFn, id: string): Promise<{ done: boolean; due: string | null; text: string } | null> {
+/** The task as it is now, only if it is still his (null otherwise). */
+export async function readBack(exec: ExecFn, id: string): Promise<{ done: boolean; due: string | null; text: string } | null> {
   const { rows } = await exec(`SELECT done, due_date, text FROM tasks WHERE id = ? AND assignee IN (${marks(MINE.length)})`, [id, ...MINE])
   const r = rows[0]
   return r ? { done: Number(r.done ?? 0) === 1, due: normDate(r.due_date), text: str(r.text) ?? "" } : null

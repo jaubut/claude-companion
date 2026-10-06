@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { TASKS_TZ, type TaskRow, listMine, localDay, normDate, setDone, setDue } from "./my-tasks"
+import { TASKS_TZ, type TaskRow, listMine, localDay, normDate, readBack, setDone, setDue } from "./my-tasks"
 import type { ExecFn, QueryFn } from "./turso"
 
 // Tasks agent CHAT (PRJ-CT4M WP5): "what is on my plate this week" / "move
@@ -10,7 +10,9 @@ import type { ExecFn, QueryFn } from "./turso"
 // Code validates every id against his open tasks and writes through the
 // my-tasks paths (setDue / setDone: assignee-guarded, one agent_activity row
 // each). A write touching more than CONFIRM_OVER tasks is held as a confirm
-// card (frame `tasks_agent_confirm`) until Jeremie confirms it.
+// card (frame `tasks_agent_confirm`) until Jeremie confirms it. Each task's
+// due/done as planned is kept; at apply time a task that changed since (or is
+// no longer his) is skipped and reported, never overwritten.
 
 export const CONFIRM_OVER = 3
 export const PLAN_TTL_MS = 30 * 60_000
@@ -122,7 +124,12 @@ export function renderList(tasks: TaskRow[], plan: Extract<ChatPlan, { op: "list
   return out.join("\n")
 }
 
-interface Pending { id: string; channelId: string; op: "move" | "done"; taskIds: string[]; due: string | null; at: number }
+interface Pending {
+  id: string; channelId: string; op: "move" | "done"; taskIds: string[]; due: string | null; at: number
+  /** Each task's state when the plan was made. */
+  seen: Map<string, { due: string | null; done: boolean }>
+  applying?: boolean
+}
 
 export interface TasksChatDeps {
   query: QueryFn
@@ -152,23 +159,39 @@ export function createTasksChat(deps: TasksChatDeps) {
 
   async function apply(p: Pending): Promise<number> {
     let changed = 0
+    const skipped: string[] = []
+    let gone = 0
+    let failed = 0
     for (const id of p.taskIds) {
-      const r = p.op === "move" ? await setDue(deps.exec, id, p.due) : await setDone(deps.exec, id, true)
-      if (r.ok) changed++
+      try {
+        const was = p.seen.get(id)
+        const cur = await readBack(deps.exec, id)
+        if (!cur || !was) { gone++; continue }
+        if (cur.due !== was.due || cur.done !== was.done) { skipped.push(cur.text); continue }
+        const r = p.op === "move" ? await setDue(deps.exec, id, p.due) : await setDone(deps.exec, id, true)
+        if (r.ok) changed++
+        else gone++
+      } catch { failed++ }
     }
-    deps.notify({ type: "tasks_changed", why: p.op === "move" ? "due" : "done" })
+    if (changed) deps.notify({ type: "tasks_changed", why: p.op === "move" ? "due" : "done" })
     const what = p.op === "move" ? `Moved ${changed} task${changed === 1 ? "" : "s"} to ${p.due ? dayLabel(p.due) : "no date"}` : `Marked ${changed} task${changed === 1 ? "" : "s"} done`
-    deps.emitTurn(changed === p.taskIds.length ? `${what}.` : `${what} (${p.taskIds.length - changed} were already gone).`, p.channelId)
+    const notes: string[] = []
+    if (gone) notes.push(`${gone} ${gone === 1 ? "was" : "were"} already gone or no longer yours`)
+    if (failed) notes.push(`${failed} failed to save`)
+    if (skipped.length) notes.push(`skipped ${skipped.length} changed since the plan: ${skipped.slice(0, 5).join("; ")}${skipped.length > 5 ? "; …" : ""}`)
+    deps.emitTurn(notes.length ? `${what} (${notes.join("; ")}).` : `${what}.`, p.channelId)
     return changed
   }
 
   /** Handle a message routed here. false = not about his tasks (the caller falls through to the brain). */
-  async function handle(text: string, channelId: string, recent: string[] = []): Promise<boolean> {
+  async function handle(text: string, channelId: string, recent: string[] = [], source: "jev" | "hint" = "jev"): Promise<boolean> {
     const t = now()
     const today = localDay(t, TASKS_TZ())
     const tasks = await listMine(deps.query)
     const plan = parsePlan(await deps.plan(planPrompt({ text, today, tasks, recent })), new Set(tasks.map((x) => x.id)))
     if (!plan) {
+      // A keyword hint alone is no proof the message is about his tasks: hand it back.
+      if (source === "hint") return false
       deps.emitTurn("I couldn't work out which of your tasks you mean — name the project or the day and try again.", channelId)
       return true
     }
@@ -176,11 +199,12 @@ export function createTasksChat(deps: TasksChatDeps) {
     if (plan.op === "reply") { deps.emitTurn(plan.text, channelId); return true }
     if (plan.op === "list") { deps.emitTurn(renderList(tasks, plan, today), channelId); return true }
 
-    const p: Pending = { id: randomUUID().replace(/-/g, "").slice(0, 16), channelId, op: plan.op, taskIds: plan.taskIds, due: plan.op === "move" ? plan.due : null, at: t }
+    const byId = new Map(tasks.map((x) => [x.id, x]))
+    const seen = new Map(plan.taskIds.map((id) => [id, { due: byId.get(id)!.due, done: false }]))
+    const p: Pending = { id: randomUUID().replace(/-/g, "").slice(0, 16), channelId, op: plan.op, taskIds: plan.taskIds, due: plan.op === "move" ? plan.due : null, at: t, seen }
     if (p.taskIds.length <= CONFIRM_OVER) { await apply(p); return true }
 
     pending.set(p.id, p)
-    const byId = new Map(tasks.map((x) => [x.id, x]))
     const list = p.taskIds.map((id) => byId.get(id)!)
     const verb = p.op === "move" ? `Move ${list.length} tasks to ${p.due ? dayLabel(p.due) : "no date"}` : `Mark ${list.length} tasks done`
     const lines = list.slice(0, 10).map((x) => `• ${x.noteTitle ?? "No project"}: ${x.text}${x.due ? ` (${x.due})` : ""}`)
@@ -196,9 +220,16 @@ export function createTasksChat(deps: TasksChatDeps) {
   async function confirm(planId: string, yes: boolean): Promise<ConfirmResult> {
     const p = pending.get(planId)
     if (!live(p)) { pending.delete(planId); return { ok: false, status: 404, error: "no_such_plan" } }
-    pending.delete(planId)
-    if (!yes) { deps.emitTurn("Cancelled — nothing changed.", p.channelId); return { ok: true, applied: 0, cancelled: true } }
-    return { ok: true, applied: await apply(p) }
+    if (p.applying) return { ok: false, status: 409, error: "plan_in_progress" }
+    if (!yes) { pending.delete(planId); deps.emitTurn("Cancelled — nothing changed.", p.channelId); return { ok: true, applied: 0, cancelled: true } }
+    p.applying = true
+    try {
+      const applied = await apply(p)
+      pending.delete(planId)
+      return { ok: true, applied }
+    } finally {
+      p.applying = false
+    }
   }
 
   /** A "confirm" / "cancel" reply while a card is pending in this channel. true = consumed. */

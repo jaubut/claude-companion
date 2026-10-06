@@ -134,6 +134,27 @@ describe("chat tool", () => {
     expect(lost.turns[0]!.text).toContain("couldn't work out")
   })
 
+  test("a failed plan on a hint-only route hands the message back, no turn", async () => {
+    const s = setup(() => null)
+    expect(await s.chat.handle("move it to friday", "general", [], "hint")).toBe(false)
+    expect(s.turns.length).toBe(0)
+  })
+
+  test("confirm skips a task whose due changed since the plan, applies the rest, reports it", async () => {
+    const s = setup(() => `{"op":"move","taskIds":${JSON.stringify(ids(5))},"due":"2026-10-09"}`)
+    seedGranby(s.t, 5)
+    await s.chat.handle("move everything Granby to Friday", "general")
+    const [changed, gone, ...rest] = ids(5)
+    s.t.db.query("UPDATE tasks SET due_date = '2026-10-20' WHERE id = ?").run(changed!)
+    s.t.db.query("UPDATE tasks SET assignee = 'agent:builder' WHERE id = ?").run(gone!)
+    expect(await s.chat.confirmReply("confirm", "general")).toBe(true)
+    expect(s.t.get(changed!)!.due_date).toBe("2026-10-20")
+    expect(s.t.get(gone!)!.due_date).toBe("2026-10-07")
+    expect(rest.every((id) => s.t.get(id)!.due_date === "2026-10-09")).toBe(true)
+    expect(s.turns.at(-1)!.text).toBe(`Moved 3 tasks to Fri, Oct 9 (1 was already gone or no longer yours; skipped 1 changed since the plan: Granby ${changed}).`)
+    expect(s.chat.pendingCount()).toBe(0)
+  })
+
   test("a plain yes with nothing pending is not consumed", async () => {
     const s = setup(() => null)
     expect(await s.chat.confirmReply("yes", "general")).toBe(false)

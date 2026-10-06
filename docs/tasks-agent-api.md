@@ -14,7 +14,7 @@ Code:
 - `server/routes/tasks-agent.ts`: the routes
 - `server/wiring/tasks-agent.ts`: the live instance
 
-**Scope.** "Mine" means the same assignees as in tasks-api.md (`human:jeremie`, `human`). The proposal rules also look at unassigned open tasks (`assignee` NULL or `''`). Tasks assigned to agents (`agent:*`) are never edited here, with one exception: an Undo can restore the assignee that an assignment overwrote.
+**Scope.** "Mine" means the same assignees as in tasks-api.md (`human:jeremie`, `human`). The proposal rules also look at unassigned open tasks (`assignee` NULL or `''`). Tasks assigned to agents (`agent:*`) are never edited here, with one exception: an Undo can restore the assignee that an assignment overwrote (including an assign proposal Jeremie accepted here).
 
 **Rule: no log, no mutation.** Every write by this agent works in four steps:
 
@@ -89,7 +89,7 @@ The proposals are deterministic, and no model is called. Each kind is capped at 
 |---|---|---|---|
 | `reschedule` | `slip:<taskId>` | One of my open tasks whose date slipped at least 2 times in its `due_changed` history. A slip means the date was pushed later or dropped. A date set by accepting this proposal is not counted. | `{due}`: a `YYYY-MM-DD` date, `null` to drop the date, or omit it to use `suggestedDue` (+7 days). |
 | `assign` | `assign:<taskId>` | An unassigned open task whose text matches a `~/.claude/tools/pm-assign.py` ROUTES entry that leads to an agent. That file is read-only, the first match wins, and `human` routes produce no proposal. | Sets `assignee = agent:<x>`. It does **not** queue the task: `dispatch_status` is left alone. |
-| `merge` | `merge:<keepId>:<dupId>` | Two open tasks (mine or unassigned) in the same note with the same or nearly the same normalized text. Near means a token Jaccard of at least 0.8 on 4+ tokens, or an edit ratio of at least 0.9. Texts whose numbers differ ("Invoice 1041" / "Invoice 1042") never match. A task that has subtasks is never merged away. | Closes the duplicate (`status_changed`, `merged_into`) and keeps the one with the lower position. Refused (`409 changed_since`) if the kept task is no longer open in the same note. |
+| `merge` | `merge:<keepId>:<dupId>` | Two open tasks (mine or unassigned) in the same note with the same or nearly the same normalized text. Near means a token Jaccard of at least 0.8 on 4+ tokens, or an edit ratio of at least 0.9. Texts whose numbers differ ("Invoice 1041" / "Invoice 1042") never match. A task that has subtasks is never merged away. | Closes the duplicate (`status_changed`, `merged_into`) and keeps the one with the lower position. Refused (`409 changed_since`) if the kept task is no longer open in the same note, or the duplicate has open subtasks. Both are checked inside the closing UPDATE. |
 | `split` | `split:<taskId>` | One of my root tasks with more than 12 words whose first word is not an action verb (EN/FR list), and which has no subtasks yet. | See the two steps below. |
 
 How a split is accepted:
@@ -116,7 +116,7 @@ Body: `{"activityId": 12399}`. Response: `{"ok":true,"taskId":"…","field":"due
 Errors:
 
 - `400`: `bad_json`, `activity_id_must_be_positive_integer`
-- `404`: `no_such_activity`, `no_such_task` (also when the task is outside the digest's scope: due / done / subtask on a task that is not his or unassigned, or a reassignment that never involved him)
+- `404`: `no_such_activity`, `no_such_task` (also when the task is outside the digest's scope: due / done / subtask on a task that is not his or unassigned, or a reassignment that never involved him and was not his own accepted assign proposal)
 - `409`: `not_undoable`, `already_undone`, `changed_since` (the task no longer holds the value the row set)
 
 ## POST /api/tasks/agent/proposals/:id
@@ -140,10 +140,12 @@ Errors:
 
 The Tasks agent also answers in the orchestrator chat (`/api/orchestrator/send`, `lib/front-door.ts`). A message is routed to it in either of these cases:
 
-Both apply in live mode only. In `off` (kill switch) and `shadow` (never changes the answer) the tasks tool is never called.
+Both apply in live mode only. In `off` (kill switch) and `shadow` (never changes the answer) the tasks tool is never called, and in `off` a "confirm" reply is not consumed either.
 
 - Jev classifies it as `my_tasks` (a new router intent).
-- It matches the tasks keyword hint, for example "what is on my plate this week", "move everything Granby to Friday" or "mark the Granby tasks done".
+- It matches the tasks keyword hint, for example "what is on my plate this week", "move everything Granby to Friday" or "mark the Granby tasks done". The hint is used only when Jev said `chat` (or `my_tasks` below the confidence bar) or Jev failed; never over a `task`, `status`, `quick_look` or `body` pick.
+
+If the Opus call fails or returns unreadable JSON, a Jev-routed message gets a clarifying turn; a hint-routed one is handed back to the normal brain.
 
 Opus (`COMPANION_TASKS_CHAT_MODEL`, default `claude-opus-5-5`) runs once with no tools and turns the message into one call:
 
@@ -168,6 +170,7 @@ A move or done that touches **more than 3 tasks** is held instead of applied:
 
 - It is applied by `POST /api/tasks/agent/chat/:planId {"confirm":true}`, or by the chat reply "confirm" in that channel. A bare "yes" / "ok" is never taken as a confirm: it may answer something else.
 - `{"confirm":false}` or a reply such as "cancel" drops it.
+- Each task's due and done state at plan time is kept. On apply every task is re-read: one whose due/done changed since, or that is no longer his, is skipped and named in the reply turn (partial results are reported, e.g. "Moved 3 tasks to Fri, Oct 9 (skipped 1 changed since the plan: …)"). A second confirm while one is applying returns `409 plan_in_progress`.
 - A plan expires after 30 min and lives in memory only. An unknown or expired plan returns `404 no_such_plan`.
 
 ## Frames

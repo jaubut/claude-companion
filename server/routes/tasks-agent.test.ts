@@ -164,6 +164,20 @@ describe("POST /api/tasks/agent/undo", () => {
     expect(s.t.get(B)!.assignee).toBe("agent:builder")
   })
 
+  test("a failed undo write leaves no undo row, so the retry works", async () => {
+    let fail = true
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("UPDATE tasks SET due_date") && fail) { fail = false; throw new Error("blip") }
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, due_date: "2026-10-20" })
+    const act = s.t.activity({ agent: "pm", action: "due_changed", target: A, meta: { from: "2026-10-08", to: "2026-10-20" } })
+    expect((await s.post("/api/tasks/agent/undo", { activityId: act })).status).toBe(503)
+    expect(s.t.activities().length).toBe(1)
+    expect((await s.post("/api/tasks/agent/undo", { activityId: act })).status).toBe(200)
+    expect(s.t.get(A)!.due_date).toBe("2026-10-08")
+  })
+
   test("no old value in meta → 409 not_undoable; changed since → 409 changed_since, nothing written", async () => {
     const s = setup()
     s.t.task({ id: A, due_date: "2026-10-25" })
@@ -244,6 +258,15 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     expect(JSON.parse(String(s.t.activities().at(-1)!.meta))).toMatchObject({ from: null, to: "agent:frontend-design" })
   })
 
+  test("assign: an accepted assign proposal can be undone (back to unassigned)", async () => {
+    const s = setup()
+    s.t.task({ id: A, assignee: null, text: "Wireframe the booking page" })
+    await s.post(`/api/tasks/agent/proposals/assign:${A}`, { action: "accept" })
+    const log = s.t.activities().at(-1)!
+    expect((await s.post("/api/tasks/agent/undo", { activityId: Number(log.id) })).body).toMatchObject({ ok: true, field: "assignee", restored: null })
+    expect(s.t.get(A)!.assignee).toBeNull()
+  })
+
   test("merge: accept closes the duplicate, keeps the first", async () => {
     const s = setup()
     s.t.task({ id: A, text: "Export the final cut", position: 1 })
@@ -263,6 +286,30 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     s.t.task({ id: B, text: "export the final cut!", position: 2 })
     expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
     expect(s.t.get(B)!.done).toBe(0)
+  })
+
+  test("merge: the closing UPDATE re-checks the kept task and open subtasks (no race window)", async () => {
+    const C = "cccccccccc"
+    const raced = setup({ exec: (base) => async (sql, args) => {
+      // The kept task is closed between the pre-check and the closing UPDATE.
+      if (sql.startsWith("UPDATE tasks SET done")) await base("UPDATE tasks SET done = 1 WHERE id = ?", [A])
+      return base(sql, args)
+    } })
+    raced.t.task({ id: A, text: "Export the final cut", position: 1 })
+    raced.t.task({ id: B, text: "export the final cut!", position: 2 })
+    expect((await raced.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect(raced.t.get(B)!.done).toBe(0)
+    expect(raced.t.activities().length).toBe(0)
+
+    const kid = setup({ exec: (base) => async (sql, args) => {
+      // An open subtask lands under the duplicate before the closing UPDATE.
+      if (sql.startsWith("UPDATE tasks SET done")) base("INSERT INTO tasks (id, note_id, parent_id, text, assignee) VALUES (?, 'projects/p1', ?, 'kid', 'human:jeremie')", [C, B])
+      return base(sql, args)
+    } })
+    kid.t.task({ id: A, text: "Export the final cut", position: 1 })
+    kid.t.task({ id: B, text: "export the final cut!", position: 2 })
+    expect((await kid.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect(kid.t.get(B)!.done).toBe(0)
   })
 
   test("split: a mid-way failure rolls back (no log, no subtask); the retry inserts once, after the note's last task", async () => {

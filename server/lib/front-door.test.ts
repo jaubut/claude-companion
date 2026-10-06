@@ -151,10 +151,10 @@ describe("ack", () => {
 
 describe("tasks tool (PRJ-CT4M WP5)", () => {
   function tasks(o: { hint?: boolean; handled?: boolean; confirm?: boolean } = {}) {
-    const seen = { handle: [] as string[], recent: [] as string[][], confirm: 0 }
+    const seen = { handle: [] as string[], recent: [] as string[][], source: [] as string[], confirm: 0 }
     const route: TasksRoute = {
       hint: () => o.hint ?? false,
-      handle: async (text, _ch, recent) => { seen.handle.push(text); seen.recent.push(recent); return o.handled ?? true },
+      handle: async (text, _ch, recent, source) => { seen.handle.push(text); seen.recent.push(recent); seen.source.push(source); return o.handled ?? true },
       confirmReply: async () => { seen.confirm++; return o.confirm ?? false },
     }
     return { route, seen }
@@ -174,7 +174,23 @@ describe("tasks tool (PRJ-CT4M WP5)", () => {
     const h = harness("live", decided("chat"), { tasks: t.route })
     await h.fd.handle("move everything Granby to Friday", CH)
     expect(t.seen.handle.length).toBe(1)
+    expect(t.seen.source).toEqual(["hint"])
     expect(h.calls.brain.length).toBe(0)
+  })
+
+  test("source: my_tasks → jev; the hint also after a Jev failure, but never over a task/status/quick_look/body pick", async () => {
+    const j = tasks({ hint: true })
+    await harness("live", decided("my_tasks", 0.9, false), { tasks: j.route }).fd.handle("what's on my plate", CH)
+    expect(j.seen.source).toEqual(["jev"])
+    const f = tasks({ hint: true })
+    await harness("live", { ok: false, error: "timeout", jevMs: 2000 }, { tasks: f.route }).fd.handle("what's on my plate", CH)
+    expect(f.seen.source).toEqual(["hint"])
+    for (const intent of ["task", "status", "quick_look", "body"] as Intent[]) {
+      const t = tasks({ hint: true })
+      const h = harness("live", decided(intent), { tasks: t.route })
+      await h.fd.handle("move everything Granby to Friday", CH)
+      expect(t.seen.handle.length).toBe(0)
+    }
   })
 
   test("not_tasks hands back to the normal path", async () => {
@@ -195,6 +211,13 @@ describe("tasks tool (PRJ-CT4M WP5)", () => {
     const o = harness("off", decided("chat"), { tasks: off.route })
     await o.fd.handle("what's on my plate", CH)
     expect([off.seen.handle.length, o.calls.brain.length, o.calls.decide]).toEqual([0, 1, 0])
+  })
+
+  test("off: a confirm reply never reaches the tasks tool (kill switch writes nothing)", async () => {
+    const t = tasks({ confirm: true })
+    const h = harness("off", decided("chat"), { tasks: t.route })
+    await h.fd.handle("confirm", CH)
+    expect([t.seen.confirm, h.calls.brain.length]).toEqual([0, 1])
   })
 
   test("a confirm reply to a held card is consumed before any routing", async () => {
