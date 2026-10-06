@@ -85,9 +85,9 @@ export async function dashboardJson(method: string, path: string, body?: unknown
   return { status, json }
 }
 
-/** Raw bytes (receipt PDF). null on 404. */
-export async function dashboardBytes(path: string): Promise<{ bytes: Uint8Array; mime: string } | null> {
-  const res = await send("GET", path, undefined, DEFAULT_TIMEOUT_MS)
+/** Raw bytes (receipt PDF, voice memo audio). null on 404. */
+export async function dashboardBytes(path: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  const res = await send("GET", path, undefined, timeoutMs)
   if (res.status === 404) { void res.body?.cancel(); return null }
   if (!res.ok) { void res.body?.cancel(); throw new DashboardUnreachable(res.status, `http ${res.status}`) }
   const mime = res.headers.get("content-type") || "application/octet-stream"
@@ -114,4 +114,58 @@ export function patchExpense(id: string, fields: Record<string, unknown>): Promi
 
 export function fetchReceiptFile(filename: string): Promise<{ bytes: Uint8Array; mime: string } | null> {
   return dashboardBytes(`/api/expense/receipt/${encodeURIComponent(filename)}`)
+}
+
+// ── Voice memos (inbox_entries rows with type_hint "voice-memo") ──
+
+// Deepgram on a 30-min memo, a ~30 MB audio download: both outlast the default.
+export const VOICE_SLOW_TIMEOUT_MS = 120_000
+
+export function startRecording(mime: string, typeHint: string): Promise<DashReply> {
+  return dashboardJson("POST", "/api/inbox/recording/start", { mime, type_hint: typeHint })
+}
+
+export function postRecordingChunk(id: number, seq: number, audio: string): Promise<DashReply> {
+  return dashboardJson("POST", `/api/inbox/recording/${id}/chunk`, { seq, audio }, 30_000)
+}
+
+export function finalizeRecording(id: number): Promise<DashReply> {
+  return dashboardJson("POST", `/api/inbox/recording/${id}/finalize`, {}, 60_000)
+}
+
+export function transcribeInbox(id: number): Promise<DashReply> {
+  return dashboardJson("POST", `/api/inbox/${id}/transcribe`, {}, VOICE_SLOW_TIMEOUT_MS)
+}
+
+/** `{ok, entry}` — tls-dashboard-v2 GET /api/inbox/:id. */
+export function getInboxEntry(id: number): Promise<DashReply> {
+  return dashboardJson("GET", `/api/inbox/${id}`)
+}
+
+/** Unprocessed rows (a JSON array). */
+export function listInbox(): Promise<{ status: number; value: unknown }> {
+  return dashboardValue("GET", "/api/inbox")
+}
+
+export function patchInbox(id: number, resultId: string): Promise<DashReply> {
+  return dashboardJson("PATCH", `/api/inbox/${id}`, { result_id: resultId })
+}
+
+export function fetchInboxAudio(filename: string): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  return dashboardBytes(`/api/inbox/audio/${encodeURIComponent(filename)}`, VOICE_SLOW_TIMEOUT_MS)
+}
+
+export function createNote(note: Record<string, unknown>): Promise<DashReply> {
+  return dashboardJson("POST", "/api/note", note, 30_000)
+}
+
+/** One note by id or ref_code (`PRJ-XXXX`); 404 → status 404. */
+export function getNote(q: { id?: string; ref?: string }): Promise<DashReply> {
+  const qs = q.ref ? `ref=${encodeURIComponent(q.ref)}` : `id=${encodeURIComponent(q.id ?? "")}`
+  return dashboardJson("GET", `/api/note?${qs}`)
+}
+
+/** Index-only projection of every note (a JSON array). */
+export function listNotesLite(): Promise<{ status: number; value: unknown }> {
+  return dashboardValue("GET", "/api/notes?lite=1", undefined, 30_000)
 }
