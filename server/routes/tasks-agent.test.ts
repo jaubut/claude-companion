@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
 import { createTasksAgent, undoSpec } from "../lib/tasks-agent"
-import { rowKey, rowVersion } from "../lib/tasks-agent-row"
+import { rowVersion } from "../lib/tasks-agent-row"
 import { createTasksChat } from "../lib/tasks-agent-chat"
 import { parseAssignRules } from "../lib/tasks-agent-rules"
 import { createTasksAgentStore } from "../lib/tasks-agent-store"
@@ -18,8 +18,8 @@ const RULES = parseAssignRules(`ROUTES = [
 const VAGUE = "the whole website thing with the new client and the photos and the blog maybe"
 const A = "aaaaaaaaaa", B = "bbbbbbbbbb"
 /** The row of a subtask exactly as insertSubtasks creates it under A. */
-const SUBKEY = rowKey({ text: "Draft the site map", description: "", noteId: "projects/p1", parentRaw: A, dueRaw: "", done: false, assigneeRaw: "human:jeremie" })
-const PV = rowVersion({ text: VAGUE, description: "", noteId: "projects/p1", parentRaw: "", dueRaw: "", done: false, assigneeRaw: "human:jeremie" })
+const SUBRAW = { text: "Draft the site map", description: "", note_id: "projects/p1", parent_id: A, due_date: "", done: 0, assignee: "human:jeremie" }
+const PV = rowVersion({ text: VAGUE, description: "", note_id: "projects/p1", parent_id: "", due_date: "", done: 0, assignee: "human:jeremie" })
 
 interface Opts { busy?: Map<string, number> | null; split?: string[] | null; exec?: (base: ExecFn) => ExecFn }
 
@@ -363,7 +363,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     } })
     s.t.task({ id: A, text: VAGUE })
     s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
-    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowKey: SUBKEY } })
+    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowRaw: SUBRAW } })
     expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
     expect(s.t.get(K)).not.toBeNull()
     expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
@@ -379,7 +379,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
       } })
       s.t.task({ id: A, text: VAGUE })
       s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
-      const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowKey: SUBKEY } })
+      const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowRaw: SUBRAW } })
       expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
       expect(s.t.get(K)).not.toBeNull()
       expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
@@ -441,7 +441,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     } })
     s.t.task({ id: A, text: VAGUE })
     s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
-    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowKey: SUBKEY } })
+    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowRaw: SUBRAW } })
     expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
     expect(s.t.get(K)).toMatchObject({ note_id: "projects/other" })
     expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)

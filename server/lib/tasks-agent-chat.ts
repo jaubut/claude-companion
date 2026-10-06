@@ -198,7 +198,15 @@ export function createTasksChat(deps: TasksChatDeps) {
   async function handle(text: string, channelId: string, recent: string[] = [], source: "jev" | "hint" = "jev"): Promise<boolean> {
     const t = now()
     const today = localDay(t, TASKS_TZ())
-    const tasks = await listMine(deps.query)
+    // ONE snapshot, taken before the (slow) model call: the prompt, the card text and the rowVersions all come from it,
+    // so an edit made while the model plans can never be taken as current. A task whose row moved between the two
+    // reads of the snapshot itself is left out of the plan.
+    const listed = await listMine(deps.query)
+    const rows = await readTasks(deps.exec, listed.map((x) => x.id))
+    const tasks = listed.filter((x) => {
+      const r = rows.get(x.id)
+      return !!r && r.text === x.text && r.due === x.due && r.noteId === x.noteId && r.parentId === x.parentId
+    })
     const plan = parsePlan(await deps.plan(planPrompt({ text, today, tasks, recent })), new Set(tasks.map((x) => x.id)))
     if (!plan) {
       // A keyword hint alone is no proof the message is about his tasks: hand it back.
@@ -211,8 +219,7 @@ export function createTasksChat(deps: TasksChatDeps) {
     if (plan.op === "list") { deps.emitTurn(renderList(tasks, plan, today), channelId); return true }
 
     const byId = new Map(tasks.map((x) => [x.id, x]))
-    const rawNow = await readTasks(deps.exec, plan.taskIds)
-    const seen = new Map([...rawNow].map(([id, raw]) => [id, versionOf(raw)]))
+    const seen = new Map(plan.taskIds.map((id) => [id, versionOf(rows.get(id)!)]))
     const p: Pending = { id: randomUUID().replace(/-/g, "").slice(0, 16), channelId, op: plan.op, taskIds: plan.taskIds, due: plan.op === "move" ? plan.due : null, at: t, seen }
     if (p.taskIds.length <= CONFIRM_OVER) { await apply(p); return true }
 

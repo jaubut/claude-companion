@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { MINE, TASKS_TZ, addDays, localDay, normDate } from "./my-tasks"
 import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, agentFor, allProposals, duplicateMatch, hiddenBy, slipCounts } from "./tasks-agent-rules"
 import { type LoadResponse, LOAD_DAYS, buildLoad } from "./tasks-agent-load"
-import { type RawTask, guardedWrite, keyOf, parseRowVersions, readTask, rowKey, rowKeySql, rowVersion, versionOf } from "./tasks-agent-row"
+import { ROW_COLUMNS, type RawTask, type RowRaw, guardedWrite, parseRowVersions, readTask, rowGuard, rowVersion, toRawTask, versionOf } from "./tasks-agent-row"
 import type { TasksAgentStore } from "./tasks-agent-store"
 import type { ExecFn, QueryFn, Row, SqlArg, Stmt, TxFn } from "./turso"
 
@@ -57,7 +57,10 @@ export type UndoSpec =
   | { field: "due"; from: string | null; to: string | null }
   | { field: "done"; from: boolean; to: boolean }
   | { field: "assignee"; from: string | null; to: string | null }
-  | { field: "created"; from: null; to: string; parentId: string; key: string }
+  | { field: "created"; from: null; to: string; parentId: string; raw: RowRaw }
+
+const isRowRaw = (v: unknown): v is RowRaw =>
+  !!v && typeof v === "object" && ROW_COLUMNS.every((c) => { const x = (v as Record<string, unknown>)[c]; return x === null || typeof x === "string" || typeof x === "number" })
 
 /** Only rows whose meta carries the old value (`from`) are undoable. */
 export function undoSpec(action: string, meta: Record<string, unknown> | null): UndoSpec | null {
@@ -77,9 +80,9 @@ export function undoSpec(action: string, meta: Record<string, unknown> | null): 
       if ((from !== null && typeof from !== "string") || (to !== null && typeof to !== "string")) return null
       return { field: "assignee", from: str(from), to: str(to) }
     case "subtask_created":
-      // `rowKey` = the subtask's whole row as created (tasks-agent-row.ts): undo only deletes it while it still is exactly that.
-      return meta.created === true && from === null && typeof to === "string" && typeof meta.parent === "string" && typeof meta.rowKey === "string"
-        ? { field: "created", from: null, to, parentId: meta.parent, key: meta.rowKey } : null
+      // `rowRaw` = the subtask's whole row as created (tasks-agent-row.ts): undo only deletes it while it still is exactly that.
+      return meta.created === true && from === null && typeof to === "string" && typeof meta.parent === "string" && isRowRaw(meta.rowRaw)
+        ? { field: "created", from: null, to, parentId: meta.parent, raw: meta.rowRaw } : null
     default:
       return null
   }
@@ -91,7 +94,7 @@ export { readTask, type RawTask }
 
 export async function listScope(query: QueryFn): Promise<ScopeTask[]> {
   const rows = await query(
-    "SELECT t.id, t.note_id, t.parent_id, t.text, t.description, t.due_date, t.position, t.assignee, n.title AS note_title, n.folder AS note_folder " +
+    "SELECT t.id, t.note_id, t.parent_id, t.text, t.description, t.due_date, t.done, t.position, t.assignee, n.title AS note_title, n.folder AS note_folder " +
       `FROM tasks t LEFT JOIN notes n ON n.id = t.note_id WHERE t.done = 0 AND (t.assignee IS NULL OR t.assignee = '' OR t.assignee IN (${marks(MINE.length)})) ` +
       "ORDER BY t.note_id, t.position LIMIT ?",
     [...MINE, SCOPE_LIMIT],
@@ -101,11 +104,7 @@ export async function listScope(query: QueryFn): Promise<ScopeTask[]> {
     return {
       id: String(r.id), noteId: str(r.note_id) ?? "", parentId: str(r.parent_id), text: str(r.text) ?? "", description: str(r.description),
       due: normDate(r.due_date), position: Number(r.position ?? 0) || 0, assignee, mine: isMine(assignee),
-      version: rowVersion({
-        text: str(r.text) ?? "", description: typeof r.description === "string" ? r.description : "", noteId: str(r.note_id) ?? "",
-        parentRaw: typeof r.parent_id === "string" ? r.parent_id : "", dueRaw: typeof r.due_date === "string" ? r.due_date : "", done: false,
-        assigneeRaw: typeof r.assignee === "string" ? r.assignee : "",
-      }),
+      version: versionOf(toRawTask(r)),
       project: str(r.note_title) ?? (str(r.note_id) || "No project"), folder: str(r.note_folder),
     }
   })
@@ -225,15 +224,16 @@ const logIfChanged = (action: string, targetId: string, summary: string, meta: R
   args: [AGENT_SLUG, action, targetId, summary.slice(0, 200), JSON.stringify({ source: "companion", by: "jeremie", ...meta })],
 })
 
-/** CAS on the WHOLE row as read (every tracked field, tasks-agent-row.ts) + its log row, in one transaction; lost race → nothing written. */
+/** CAS on the WHOLE row as read (every tracked column, raw and NULL-safe: tasks-agent-row.ts) + its log row, in one transaction; lost race → nothing written. */
 async function mutate(
   tx: TxFn, before: RawTask, col: Col, value: SqlArg, action: string, summary: string, meta: Record<string, unknown>, guard?: Guard,
 ): Promise<WriteOutcome> {
   // `col` comes from the fixed Col union, never from input.
+  const row = rowGuard(before.raw)
   const [upd, log] = await tx([
     {
-      sql: `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND ${rowKeySql()} = ?${guard ? ` AND ${guard.sql}` : ""}`,
-      args: [value, before.id, keyOf(before), ...(guard?.args ?? [])],
+      sql: `UPDATE tasks SET ${col} = ?, updated_at = datetime('now') WHERE id = ? AND ${row.sql}${guard ? ` AND ${guard.sql}` : ""}`,
+      args: [value, before.id, ...row.args, ...(guard?.args ?? [])],
     },
     logIfChanged(action, before.id, summary, meta),
   ])
@@ -268,18 +268,20 @@ export async function insertSubtasks(tx: TxFn, parent: RawTask, texts: string[],
   const ids = texts.map(() => randomUUID().replace(/-/g, ""))
   const assignee = parent.assignee ?? MINE[0] ?? "human:jeremie"
   const stmts: Stmt[] = []
+  const pg = rowGuard(parent.raw, "p.")
   texts.forEach((text, i) => {
     const id = ids[i]!
     const cond = i === 0
-      ? `EXISTS (SELECT 1 FROM tasks p WHERE p.id = ? AND ${rowKeySql("p.")} = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)`
+      ? `EXISTS (SELECT 1 FROM tasks p WHERE p.id = ? AND ${pg.sql}) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)`
       : "changes() > 0"
     stmts.push({
       sql: `INSERT INTO tasks (id, note_id, parent_id, text, description, done, due_date, position, assignee) SELECT ?, ?, ?, ?, '', 0, '', ?, ? WHERE ${cond}`,
-      args: [id, parent.noteId, parent.id, text, firstPosition + i, assignee, ...(i === 0 ? [parent.id, keyOf(parent), parent.id] : [])],
+      args: [id, parent.noteId, parent.id, text, firstPosition + i, assignee, ...(i === 0 ? [parent.id, ...pg.args, parent.id] : [])],
     })
     stmts.push(logIfChanged("subtask_created", id, `subtask of "${parent.text}": ${text}`, {
       from: null, to: text, created: true, parent: parent.id,
-      rowKey: rowKey({ text, description: "", noteId: parent.noteId, parentRaw: parent.id, dueRaw: "", done: false, assigneeRaw: assignee }),
+      // The row exactly as this INSERT writes it; undo deletes only while the row still is that.
+      rowRaw: { text, description: "", note_id: parent.noteId, parent_id: parent.id, due_date: "", done: 0, assignee } satisfies RowRaw,
     }))
   })
   const res = await tx(stmts)
@@ -310,11 +312,12 @@ export async function undoActivity(exec: ExecFn, tx: TxFn, activityId: number): 
     if (!isMine(t.assignee)) return { ok: false, status: 404, error: "no_such_task" }
     // Deleted only while the row is EXACTLY as created (spec.key): any edit since (text, date, description, project,
     // parent, assignee, done) keeps it. Checked on the read row, and again inside the DELETE.
-    if (keyOf(t) !== spec.key || t.parentId !== spec.parentId) return { ok: false, status: 409, error: "changed_since" }
+    if (versionOf(t) !== rowVersion(spec.raw)) return { ok: false, status: 409, error: "changed_since" }
+    const g = rowGuard(spec.raw)
     const [del, log] = await tx([
       {
-        sql: `DELETE FROM tasks WHERE id = ? AND ${rowKeySql()} = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)`,
-        args: [taskId, spec.key, taskId],
+        sql: `DELETE FROM tasks WHERE id = ? AND ${g.sql} AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)`,
+        args: [taskId, ...g.args, taskId],
       },
       logIfChanged("undo", taskId, `undo subtask: ${t.text}`, { undoes: activityId, field: "created", from: t.text, to: null }),
     ])
@@ -459,9 +462,10 @@ export function createTasksAgent(deps: TasksAgentDeps) {
         // note) and still a duplicate; a parent with open subtasks is never closed. All pinned inside the closing UPDATE.
         return guardedWrite<DecideResult>(deps.exec, keepId, expectFor(keepId), async (keep) => {
           if (keep.done || keep.noteId !== t.noteId || !duplicateMatch(t.text, keep.text)) return { ok: false, status: 409, error: "changed_since" }
+          const kg = rowGuard(keep.raw, "k.")
           const r = await setTaskDone(deps.tx, t, true, { proposal: p.id, merged_into: keepId }, {
-            sql: `EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND ${rowKeySql("k.")} = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)`,
-            args: [keepId, keyOf(keep), t.id],
+            sql: `EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND ${kg.sql}) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)`,
+            args: [keepId, ...kg.args, t.id],
           })
           return r.ok ? done({ closed: t.id, kept: keepId }) : r
         })

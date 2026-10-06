@@ -1608,6 +1608,24 @@
           "externals": []
         },
         {
+          "path": "lib/hrana-stub.test-util.ts",
+          "lines": 95,
+          "kind": "lib",
+          "exports": [
+            "HranaStubOptions",
+            "installHranaStub"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/idempotency.ts",
           "lines": 83,
           "kind": "lib",
@@ -3549,7 +3567,7 @@
         },
         {
           "path": "lib/tasks-agent-chat.ts",
-          "lines": 263,
+          "lines": 270,
           "kind": "lib",
           "exports": [
             "CONFIRM_OVER",
@@ -3618,19 +3636,19 @@
         },
         {
           "path": "lib/tasks-agent-row.ts",
-          "lines": 115,
+          "lines": 114,
           "kind": "lib",
           "exports": [
+            "RawValue",
+            "ROW_COLUMNS",
+            "RowColumn",
+            "RowRaw",
             "RawTask",
-            "RowFields",
-            "rowKey",
             "rowVersion",
-            "rowKeySql",
+            "rowGuard",
             "TASK_COLUMNS",
             "toRawTask",
-            "fieldsOf",
             "versionOf",
-            "keyOf",
             "readTask",
             "readTasks",
             "StaleOutcome",
@@ -3743,7 +3761,7 @@
         },
         {
           "path": "lib/tasks-agent.ts",
-          "lines": 542,
+          "lines": 546,
           "kind": "lib",
           "exports": [
             "AGENT_SLUG",
@@ -7412,6 +7430,7 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/dispatch-tasks.ts",
+            "lib/tasks-agent-row.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
             "lib/triage-sources.ts"
@@ -9471,6 +9490,18 @@
             "lib/tasks-agent.ts"
           ]
         },
+        "RowRaw": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "ROW_COLUMNS": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
         "RawTask": {
           "module": "lib/tasks-agent-row.ts",
           "callers": [
@@ -9489,7 +9520,7 @@
             "lib/tasks-agent.ts"
           ]
         },
-        "rowVersion": {
+        "toRawTask": {
           "module": "lib/tasks-agent-row.ts",
           "callers": [
             "lib/tasks-agent.ts"
@@ -9507,19 +9538,13 @@
             "lib/tasks-agent.ts"
           ]
         },
-        "rowKeySql": {
+        "rowGuard": {
           "module": "lib/tasks-agent-row.ts",
           "callers": [
             "lib/tasks-agent.ts"
           ]
         },
-        "keyOf": {
-          "module": "lib/tasks-agent-row.ts",
-          "callers": [
-            "lib/tasks-agent.ts"
-          ]
-        },
-        "rowKey": {
+        "rowVersion": {
           "module": "lib/tasks-agent-row.ts",
           "callers": [
             "lib/tasks-agent.ts"

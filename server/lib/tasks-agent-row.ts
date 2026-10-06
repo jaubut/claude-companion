@@ -1,17 +1,25 @@
 import { createHash } from "node:crypto"
 import { normDate } from "./my-tasks"
-import type { ExecFn, Row } from "./turso"
+import type { ExecFn, Row, SqlArg } from "./turso"
 
 // One row version for every Tasks-agent write (PRJ-CT4M WP5). The agent only
 // ever acts on a task as it was when it decided (a proposal, a draft, a chat
 // card, an undo snapshot). That is checked in ONE way, here, for every field
 // the agent reads or decides on, so a write can never pin "some" fields:
-//   - rowKey / rowVersion: the same canonical string / hash of the tracked fields;
-//   - ROW_KEY_SQL: the same string as a SQL expression, for the compare-and-set
-//     INSIDE the transaction (`WHERE <ROW_KEY_SQL> = ?`);
+//   - rowVersion: a hash of the raw tracked values (JSON, no normalization);
+//   - rowGuard: the same raw values compared column by column, NULL-safe, for the
+//     compare-and-set INSIDE the transaction (`WHERE id = ? AND text IS ? AND …`);
 //   - guardedWrite: read the row, refuse (409 stale) if its version is not the one
 //     the decision was made on, then hand the fresh row to the write.
-// To track one more field, add it to ROW_FIELDS below (JS and SQL both follow).
+// One raw-value source (toRawTask) feeds both. To track one more column, add it to ROW_COLUMNS.
+
+/** A tracked column's value exactly as the database holds it (NULL stays null: no trimming, no normalization). */
+export type RawValue = string | number | null
+
+/** The tracked columns, in the order the version is built and the guard compares them. */
+export const ROW_COLUMNS = ["text", "description", "note_id", "parent_id", "due_date", "done", "assignee"] as const
+export type RowColumn = (typeof ROW_COLUMNS)[number]
+export type RowRaw = Record<RowColumn, RawValue>
 
 export interface RawTask {
   id: string
@@ -25,49 +33,40 @@ export interface RawTask {
   assigneeRaw: string
   assignee: string | null
   position: number
+  /** The raw values of ROW_COLUMNS: the ONE source of the version and of the SQL guard. */
+  raw: RowRaw
 }
 
-/** The tracked fields, in the order the key is built: [JS value, SQL column]. */
-const ROW_FIELDS: { js: (t: RowFields) => string; col: string }[] = [
-  { js: (t) => t.text, col: "COALESCE(@text, '')" },
-  { js: (t) => t.description, col: "COALESCE(@description, '')" },
-  { js: (t) => t.noteId, col: "COALESCE(@note_id, '')" },
-  { js: (t) => t.parentRaw, col: "COALESCE(@parent_id, '')" },
-  { js: (t) => t.dueRaw, col: "COALESCE(@due_date, '')" },
-  { js: (t) => (t.done ? "1" : "0"), col: "CAST(COALESCE(@done, 0) AS TEXT)" },
-  { js: (t) => t.assigneeRaw, col: "COALESCE(@assignee, '')" },
-]
+const rawValue = (v: unknown): RawValue => (typeof v === "string" || typeof v === "number" ? v : null)
 
-/** What the key is built from (raw column values, '' for NULL). */
-export interface RowFields { text: string; description: string; noteId: string; parentRaw: string; dueRaw: string; done: boolean; assigneeRaw: string }
+/** The client-facing version: a hash of an unambiguous encoding (JSON array of the raw values, ROW_COLUMNS order). */
+export const rowVersion = (raw: RowRaw): string =>
+  createHash("sha1").update(JSON.stringify(ROW_COLUMNS.map((c) => raw[c]))).digest("hex").slice(0, 16)
 
-const SEP = "\u001f"
-
-export const rowKey = (t: RowFields): string => ROW_FIELDS.map((f) => f.js(t)).join(SEP)
-export const rowVersion = (t: RowFields): string => createHash("sha1").update(rowKey(t)).digest("hex").slice(0, 16)
-
-/** The task row's key as a SQL expression (`alias` = "" or e.g. "p."). */
-export const rowKeySql = (alias = ""): string =>
-  `(${ROW_FIELDS.map((f) => f.col.replace(/@(\w+)/g, (_, c: string) => `${alias}${c}`)).join(` || char(31) || `)})`
+/**
+ * The in-transaction guard: every tracked column compared with its raw value, NULL-safe (`IS`), no string building
+ * on either side. `alias` = "" or e.g. "p.". Args are the raw values in ROW_COLUMNS order.
+ */
+export function rowGuard(raw: RowRaw, alias = ""): { sql: string; args: SqlArg[] } {
+  return { sql: ROW_COLUMNS.map((c) => `${alias}${c} IS ?`).join(" AND "), args: ROW_COLUMNS.map((c) => raw[c]) }
+}
 
 export const TASK_COLUMNS = "id, note_id, parent_id, text, description, done, due_date, assignee, position"
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : typeof v === "number" ? String(v) : null)
 
+/** The one mapper from a tasks row (columns of TASK_COLUMNS) to a RawTask. */
 export function toRawTask(r: Row): RawTask {
+  const raw = Object.fromEntries(ROW_COLUMNS.map((c) => [c, rawValue(r[c])])) as RowRaw
   return {
-    id: String(r.id), noteId: str(r.note_id) ?? "", parentId: str(r.parent_id), text: str(r.text) ?? "", description: typeof r.description === "string" ? r.description : "",
-    done: Number(r.done ?? 0) === 1, dueRaw: typeof r.due_date === "string" ? r.due_date : "", due: normDate(r.due_date),
-    assigneeRaw: typeof r.assignee === "string" ? r.assignee : "", assignee: str(r.assignee), position: Number(r.position ?? 0) || 0,
+    id: String(r.id), noteId: typeof r.note_id === "string" ? r.note_id : "", parentId: str(r.parent_id), text: typeof r.text === "string" ? r.text : "",
+    description: typeof r.description === "string" ? r.description : "", done: Number(r.done ?? 0) === 1,
+    dueRaw: typeof r.due_date === "string" ? r.due_date : "", due: normDate(r.due_date),
+    assigneeRaw: typeof r.assignee === "string" ? r.assignee : "", assignee: str(r.assignee), position: Number(r.position ?? 0) || 0, raw,
   }
 }
 
-/** A RawTask as the key sees it. */
-export const fieldsOf = (t: RawTask): RowFields => ({
-  text: t.text, description: t.description, noteId: t.noteId, parentRaw: t.parentId ?? "", dueRaw: t.dueRaw, done: t.done, assigneeRaw: t.assigneeRaw,
-})
-export const versionOf = (t: RawTask): string => rowVersion(fieldsOf(t))
-export const keyOf = (t: RawTask): string => rowKey(fieldsOf(t))
+export const versionOf = (t: RawTask): string => rowVersion(t.raw)
 
 export async function readTask(exec: ExecFn, id: string): Promise<RawTask | null> {
   const { rows } = await exec(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`, [id])

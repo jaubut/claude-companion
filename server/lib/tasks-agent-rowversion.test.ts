@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
 import { createTasksAgent } from "./tasks-agent"
 import { createTasksChat } from "./tasks-agent-chat"
-import { rowKey, rowKeySql, rowVersion } from "./tasks-agent-row"
+import { setTaskDue } from "./tasks-agent"
+import { ROW_COLUMNS, type RowRaw, readTask, rowGuard, rowVersion } from "./tasks-agent-row"
 import { parseAssignRules } from "./tasks-agent-rules"
 import { createTasksAgentStore } from "./tasks-agent-store"
 import { testDb, txOver } from "./tasks-agent-testdb.test-util"
@@ -82,7 +83,7 @@ const PATHS: Path[] = [
   } },
   { name: "split accept", target: A, whens: ["before", "after"], run: async (h) => {
     h.t.task({ id: A, text: VAGUE, position: 4 })
-    const pv = rowVersion({ text: VAGUE, description: "", noteId: NOTE, parentRaw: "", dueRaw: "", done: false, assigneeRaw: HUMAN })
+    const pv = rowVersion({ text: VAGUE, description: "", note_id: NOTE, parent_id: "", due_date: "", done: 0, assignee: HUMAN })
     refused(await h.agent.decide(`split:${A}`, "accept", { subtasks: ["Draft the site map", "Pick the photos"], parentVersion: pv }))
     expect(h.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 0 })
   } },
@@ -94,8 +95,8 @@ const PATHS: Path[] = [
   { name: "undo of a created subtask", target: K, whens: ["before", "after"], run: async (h) => {
     h.t.task({ id: A, text: VAGUE })
     h.t.task({ id: K, parent_id: A, text: "Draft the site map" })
-    const key = rowKey({ text: "Draft the site map", description: "", noteId: NOTE, parentRaw: A, dueRaw: "", done: false, assigneeRaw: HUMAN })
-    const act = h.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowKey: key } })
+    const raw = { text: "Draft the site map", description: "", note_id: NOTE, parent_id: A, due_date: "", done: 0, assignee: HUMAN }
+    const act = h.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie", rowRaw: raw } })
     refused(await h.agent.undo(act) as { ok: boolean; status?: number })
     expect(h.t.get(K)).not.toBeNull()
   } },
@@ -159,19 +160,57 @@ describe("every guarded write refuses an edit to ANY tracked field", () => {
   }
 })
 
-describe("row key", () => {
-  test("the SQL expression and the JS key are the same string, field by field", () => {
+describe("row version and SQL guard (one raw-value source)", () => {
+  const guardCount = (t: ReturnType<typeof testDb>, id: string, raw: RowRaw): number => {
+    const g = rowGuard(raw)
+    return (t.db.query(`SELECT COUNT(*) AS n FROM tasks WHERE id = ? AND ${g.sql}`).get(id, ...g.args) as { n: number }).n
+  }
+  const base: RowRaw = { text: "t", description: "", note_id: "n", parent_id: "", due_date: "", done: 0, assignee: "x" }
+
+  test("separator characters inside values cannot collide (the old concatenated key did)", async () => {
     const t = testDb()
-    t.task({ id: A, text: "héllo | x", description: "d\nesc", note_id: "projects/p9", parent_id: "pp", due_date: "2026-10-01", done: 1, assignee: "agent:builder" })
-    const row = t.db.query(`SELECT ${rowKeySql()} AS k FROM tasks WHERE id = ?`).get(A) as { k: string }
-    expect(row.k).toBe(rowKey({ text: "héllo | x", description: "d\nesc", noteId: "projects/p9", parentRaw: "pp", dueRaw: "2026-10-01", done: true, assigneeRaw: "agent:builder" }))
+    t.task({ id: A, text: "A\u001fB", description: "C" })
+    const one = await readTask(t.exec, A)
+    expect(rowVersion({ ...base, text: "A\u001fB", description: "C" })).not.toBe(rowVersion({ ...base, text: "A", description: "B\u001fC" }))
+    // The row is edited to the colliding values: the guard built from the first read must not match.
+    t.db.query("UPDATE tasks SET text = 'A', description = ? WHERE id = ?").run("B\u001fC", A)
+    expect(guardCount(t, A, one!.raw)).toBe(0)
+    expect((await readTask(t.exec, A))!.raw.description).toBe("B\u001fC")
   })
 
-  test("NULL and empty columns key the same; every field changes the version", () => {
-    const base = { text: "t", description: "", noteId: "n", parentRaw: "", dueRaw: "", done: false, assigneeRaw: "" }
-    const v = rowVersion(base)
-    for (const [k, val] of Object.entries({ text: "u", description: "x", noteId: "m", parentRaw: "p", dueRaw: "2026-01-01", done: true, assigneeRaw: "a" })) {
-      expect(rowVersion({ ...base, [k]: val })).not.toBe(v)
+  test("whitespace-only text / parent / description are kept raw: an unchanged row is not a false 409", async () => {
+    const t = testDb()
+    t.task({ id: A, text: "   ", description: " ", parent_id: "  ", due_date: "2026-10-01" })
+    const row = (await readTask(t.exec, A))!
+    expect(row.raw).toMatchObject({ text: "   ", description: " ", parent_id: "  " })
+    expect(guardCount(t, A, row.raw)).toBe(1)
+    expect(await setTaskDue(t.tx, row, "2026-11-01")).toEqual({ ok: true })
+    expect(t.get(A)!.due_date).toBe("2026-11-01")
+  })
+
+  test("NULL columns compare NULL-safe, and NULL differs from ''", async () => {
+    const t = testDb()
+    t.task({ id: A, assignee: null })
+    t.db.query("UPDATE tasks SET description = NULL WHERE id = ?").run(A)
+    const row = (await readTask(t.exec, A))!
+    expect(row.raw).toMatchObject({ assignee: null, description: null })
+    expect(guardCount(t, A, row.raw)).toBe(1)
+    expect(rowVersion(row.raw)).not.toBe(rowVersion({ ...row.raw, description: "", assignee: "" }))
+    expect(guardCount(t, A, { ...row.raw, description: "" })).toBe(0)
+  })
+
+  test("for every tracked column, the JS version and the SQL guard agree on rows read through the production mapper", async () => {
+    for (const col of ROW_COLUMNS) {
+      const t = testDb()
+      t.task({ id: A, text: "héllo ", description: "d", note_id: "projects/p1", parent_id: "pp", due_date: "2026-10-01", assignee: HUMAN })
+      const before = (await readTask(t.exec, A))!
+      expect(guardCount(t, A, before.raw)).toBe(1)
+      const [column, value] = FIELDS[col]!
+      t.db.query(`UPDATE tasks SET ${column} = ? WHERE id = ?`).run(value, A)
+      const after = (await readTask(t.exec, A))!
+      expect(rowVersion(after.raw)).not.toBe(rowVersion(before.raw))
+      expect(guardCount(t, A, before.raw)).toBe(0)
+      expect(guardCount(t, A, after.raw)).toBe(1)
     }
   })
 })

@@ -258,4 +258,32 @@ describe("chat tool", () => {
       expect(s.chat.pendingCount()).toBe(1)
     })
   })
+
+  test("an edit made while the model is planning is not taken as current: that task is skipped on confirm", async () => {
+    let edit: () => void = () => {}
+    const s = setup(() => { edit(); return `{"op":"done","taskIds":${JSON.stringify(ids(5))}}` })
+    seedGranby(s.t, 5)
+    const T = ids(5)[2]!
+    edit = () => s.t.db.query("UPDATE tasks SET text = 'Edited during planning', due_date = '2026-12-01' WHERE id = ?").run(T)
+    await s.chat.handle("mark the Granby tasks done", "general")
+    const frame = s.frames.find((f) => f.type === "tasks_agent_confirm") as { planId: string; rowVersions: Record<string, string> }
+    // The card's versions are the pre-model snapshot, so the edited task no longer matches.
+    expect(await s.chat.confirm(frame.planId, true, frame.rowVersions)).toMatchObject({ ok: true })
+    expect(s.t.get(T)!.done).toBe(0)
+    expect(s.t.activities().some((a) => a.target_id === T)).toBe(false)
+  })
+
+  test("an edit during planning is skipped by a typed \"confirm\" reply too (versions are taken before the model call)", async () => {
+    const T = ids(5)[2]!
+    let edit: () => void = () => {}
+    const s = setup(() => { edit(); return `{"op":"done","taskIds":${JSON.stringify(ids(5))}}` })
+    seedGranby(s.t, 5)
+    // Edit lands after the snapshot but before the model answers (the model call is the slow step).
+    edit = () => s.t.db.query("UPDATE tasks SET description = 'new notes' WHERE id = ?").run(T)
+    await s.chat.handle("mark the Granby tasks done", "general")
+    expect(await s.chat.confirmReply("confirm", "general")).toBe(true)
+    expect(s.t.get(T)!.done).toBe(0)
+    expect(ids(5).filter((id) => id !== T).every((id) => s.t.get(id)!.done === 1)).toBe(true)
+    expect(s.turns.at(-1)!.text).toContain("skipped 1 changed since the plan")
+  })
 })
