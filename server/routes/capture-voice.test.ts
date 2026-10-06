@@ -260,6 +260,9 @@ test("start validation: mime must be audio/*; bad JSON; method", async () => {
   expect((await call("GET", "/api/capture/voice/start")).status).toBe(405)
   expect(hits).toEqual([])
   expect((await call("POST", "/api/capture/voice/start", { mime: "audio/x-m4a" })).status).toBe(200)
+  expect(JSON.parse(hits.at(-1)!.body)).toEqual({ mime: "audio/x-m4a", type_hint: "voice-memo" })
+  expect((await call("POST", "/api/capture/voice/start", { mime: "audio/aac" })).status).toBe(200) // iOS ADTS
+  expect(JSON.parse(hits.at(-1)!.body).mime).toBe("audio/aac")
 })
 
 test("chunk validation: 512 KB decoded passes, one byte more → 413; bad seq / base64 refused before the dashboard", async () => {
@@ -346,6 +349,8 @@ test("audio: dashboard bytes + content-type pass through; Range → 206", async 
   expect(part.headers.get("content-range")).toBe("bytes 1-3/6")
   expect([...(await call("GET", `/api/capture/voice/${a.id}/audio`, undefined, { range: "bytes=-2" })).bytes]).toEqual([5, 4])
   expect((await call("GET", `/api/capture/voice/${a.id}/audio`, undefined, { range: "bytes=9-" })).status).toBe(416)
+  const adts = seedRow({ audio_filename: "2026-10-06-adts.aac", audio_mime: "audio/aac" })
+  expect((await call("GET", `/api/capture/voice/${adts.id}/audio`)).headers.get("content-type")).toBe("audio/aac")
   const noBlob = seedRow({ audio_blob: null })
   expect((await call("GET", `/api/capture/voice/${noBlob.id}/audio`)).status).toBe(404)
   expect((await call("POST", `/api/capture/voice/${a.id}/audio`)).status).toBe(405)
