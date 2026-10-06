@@ -113,7 +113,9 @@ export function parseFixRequest(raw: unknown): FixRequest | { error: string } {
     cwd: s(o.cwd, 500), noteId: s(o.noteId, 200), agent: s(o.agent, 64), investigationId: s(o.investigationId, 64) ?? "",
   }
   for (const k of ["host", "componentId", "prompt", "title", "cwd", "noteId", "agent"] as const) if (!req[k]) return { error: `${k} required` }
-  if (!req.cwd!.startsWith("/")) return { error: "cwd must be absolute" }
+  // `~` / `~/…` is the receiving host's home (localizeCwd expands it): Mac cards default to ~/.claude.
+  const cwd = req.cwd!
+  if (!cwd.startsWith("/") && cwd !== "~" && !cwd.startsWith("~/")) return { error: "cwd must be absolute" }
   return req as FixRequest
 }
 

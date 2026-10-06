@@ -10,6 +10,8 @@ import { parseFixRequest } from "../lib/body-fix"
 import { runBodyFix } from "../wiring/body-fix"
 import { type CompactionStats, localDayStart } from "../lib/auto-compact-stats"
 import { compactionStatsSince } from "../wiring/auto-compact"
+import { parseAgentBody } from "../lib/body-agent"
+import { startBodyAgent } from "../wiring/body-agent"
 import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/body-investigate"
 
 // Body monitor API (living-system nervous system). Auth is the `/api/*` bearer
@@ -22,6 +24,7 @@ import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/b
 //                                     (+ a problem state triggers an auto-investigation)
 //   POST /api/body/investigate        {component_id,…} investigate on this host / {report} from a peer
 //   POST /api/body/fix                an approved Mac fix forwarded by Zettlab → live run here
+//   POST /api/body/component/:id/agent  "Get an agent on it": a live agent run on the owning host
 // Turso failures map to 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
 
 export interface BodyRouteDeps {
@@ -33,12 +36,15 @@ export interface BodyRouteDeps {
   sink?: BodyAlertSink
   /** Owning-host side of an approved Mac fix (wiring/body-fix.ts). */
   runFix?: typeof runBodyFix
+  /** "Get an agent on it" (wiring/body-agent.ts). */
+  startAgent?: (componentId: string, instruction: string | null) => Promise<Response>
   /** Lazy: the live investigator is built on first use. */
   investigator?: () => Pick<BodyInvestigator, "consider" | "receiveReport" | "latestFor">
   now?: () => number
 }
 
 const COMPONENT_PREFIX = "/api/body/component/"
+const AGENT_SUFFIX = "/agent"
 
 function unreachable(err: unknown): Response {
   const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`
@@ -55,6 +61,7 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
   const now = deps.now ?? Date.now
   const investigator = deps.investigator ?? bodyInvestigator
   const runFix = deps.runFix ?? runBodyFix
+  const startAgent = deps.startAgent ?? ((id: string, instruction: string | null) => startBodyAgent(id, instruction))
   const latest = (id: string): InvestigationRecord | null => {
     try { return investigator().latestFor(id) } catch { return null }
   }
@@ -94,6 +101,18 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
       } catch (err) {
         return unreachable(err)
       }
+    }
+    if (url.pathname.startsWith(COMPONENT_PREFIX) && url.pathname.endsWith(AGENT_SUFFIX) && req.method === "POST") {
+      let id: string
+      try {
+        id = decodeURIComponent(url.pathname.slice(COMPONENT_PREFIX.length, -AGENT_SUFFIX.length))
+      } catch {
+        return Response.json({ ok: false, error: "bad component id" }, { status: 400 })
+      }
+      if (!id) return Response.json({ ok: false, error: "component id required" }, { status: 400 })
+      const body = parseAgentBody(await req.text().catch(() => ""))
+      if ("error" in body) return Response.json({ ok: false, error: body.error }, { status: 400 })
+      return startAgent(id, body.instruction)
     }
     if (url.pathname === "/api/body/alert" && req.method === "POST") {
       let raw: unknown
