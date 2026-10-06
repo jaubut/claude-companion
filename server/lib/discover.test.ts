@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test"
 import {
+  isIgnoredAgentProcess,
   isNoTty,
   markFirstDiscoveryDoneForTest,
   parseAgentPs,
@@ -84,4 +85,19 @@ test("waitForFirstDiscovery: releases as soon as the boot pass finishes", async 
   expect(await waiting).toBe(true)
   expect(Date.now() - t0).toBeLessThan(1_000)
   expect(await waitForFirstDiscovery(5_000)).toBe(true)
+})
+
+test("isIgnoredAgentProcess: a DISPATCH_WORKER=1 claude is skipped, a plain one is listed", async () => {
+  const { resetDispatchWorkerCache } = await import("./dispatch-worker")
+  resetDispatchWorkerCache()
+  const envs: Record<string, string[]> = {
+    "301": ["HOME=/h", "DISPATCH_WORKER=1", "DISPATCH_TASK_ID=abc"], // herdr pane worker, has a tty
+    "302": ["HOME=/h", "TERM=xterm"],                                  // a human's claude
+    "303": ["COMPANION_SCRAPE=1"],                                     // the companion's own scrape claude
+  }
+  const deps = { ownsTty: async () => true, envOf: async (pid: string) => envs[pid] ?? null }
+  expect(await isIgnoredAgentProcess("301", "/dev/pts/7", deps)).toBe(true)
+  expect(await isIgnoredAgentProcess("302", "/dev/pts/8", deps)).toBe(false)
+  expect(await isIgnoredAgentProcess("303", "/dev/pts/9", deps)).toBe(true)
+  expect(await isIgnoredAgentProcess("304", "/dev/pts/10", deps)).toBe(false) // env unreadable: listed, as before
 })
