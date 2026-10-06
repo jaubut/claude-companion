@@ -17,8 +17,18 @@ const D = (back: number) => localDay(NOW, back)
 
 interface U { host: string; back: number; session: string; source: string; model?: string; input?: number; output?: number; cache_read?: number; cache_creation?: number }
 
-function sqliteQuery(rows: U[] | null): { query: QueryFn; calls: string[] } {
+interface S { host: string; session: string; name: string | null; tmux?: string | null }
+
+function sqliteQuery(rows: U[] | null, sessions?: S[]): { query: QueryFn; calls: string[] } {
   const db = new Database(":memory:")
+  if (sessions) {
+    db.run(
+      "CREATE TABLE token_sessions (host TEXT, session_id TEXT, name TEXT, tmux TEXT, cwd TEXT, first_seen TEXT, last_seen TEXT, " +
+      "PRIMARY KEY (host, session_id))",
+    )
+    const ins = db.prepare("INSERT INTO token_sessions VALUES (?, ?, ?, ?, '/tmp', '2026-10-05T00:00:00Z', '2026-10-05T01:00:00Z')")
+    for (const r of sessions) ins.run(r.host, r.session, r.name, r.tmux ?? null)
+  }
   if (rows) {
     db.run(
       "CREATE TABLE token_usage (host TEXT, day TEXT, session_id TEXT, source TEXT, model TEXT, input INTEGER, output INTEGER, " +
@@ -139,6 +149,58 @@ describe("GET /api/body/tokens read model", () => {
     const { query } = sqliteQuery(ROWS)
     const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: async () => { throw new Error("EACCES") } })
     expect(body.top_sessions.every((s) => s.name === null)).toBe(true)
+  })
+})
+
+describe("top_sessions names from token_sessions", () => {
+  test("join hit: name + tmux from the table win over the live lookup, other hosts too", async () => {
+    const { query } = sqliteQuery(ROWS, [
+      { host: "mac", session: "s-a", name: "from-table", tmux: "main:2" },
+      { host: "zettlab", session: "s-b", name: "zettlab-job", tmux: null },
+    ])
+    const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: names })
+    expect(body.top_sessions).toEqual([
+      { session_id: "s-b", name: "zettlab-job", host: "zettlab", total: 2910, usd: null, unpriced_tokens: 2910 },
+      { session_id: "s-a", name: "from-table", tmux: "main:2", host: "mac", total: 1705, usd: null, unpriced_tokens: 1705 },
+    ])
+    expect("tmux" in body.top_sessions[0]!).toBe(false)
+  })
+
+  test("join miss (no row, null/blank name, or host mismatch) → live fallback", async () => {
+    const { query } = sqliteQuery(ROWS, [
+      { host: "zettlab", session: "s-a", name: "wrong-host" },
+      { host: "mac", session: "s-c", name: "  ", tmux: "w:1" },
+    ])
+    const live = async () => new Map([["s-a", "tls-dashboard"], ["s-c", "live-c"]])
+    const body = await buildTokens(query, "7d", { now: () => NOW, sessionNames: live })
+    expect(body.top_sessions.map((s) => [s.session_id, s.name, s.tmux])).toEqual([
+      ["s-c", "live-c", "w:1"],
+      ["s-b", null, undefined],
+      ["s-a", "tls-dashboard", undefined],
+      ["s-d", null, undefined],
+    ])
+  })
+
+  test("join keeps order and the 10 cap", async () => {
+    const many: U[] = Array.from({ length: 14 }, (_, i) => ({ host: "mac", back: 0, session: `s-${String(i).padStart(2, "0")}`, source: "main", input: i < 2 ? 500 : i * 10 }))
+    const { query } = sqliteQuery(many, many.map((r) => ({ host: "mac", session: r.session, name: `n-${r.session}` })))
+    const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: names })
+    expect(body.top_sessions.map((s) => s.session_id)).toEqual(["s-00", "s-01", "s-13", "s-12", "s-11", "s-10", "s-09", "s-08", "s-07", "s-06"])
+    expect(body.top_sessions.every((s) => s.name === `n-${s.session_id}`)).toBe(true)
+  })
+
+  test("token_sessions table missing → live names only, no join query", async () => {
+    const { query, calls } = sqliteQuery(ROWS)
+    const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: names })
+    expect(body.top_sessions.map((s) => s.name)).toEqual([null, "tls-dashboard"])
+    expect(calls.some((c) => c.includes("token_sessions") && !c.includes("sqlite_master"))).toBe(false)
+  })
+
+  test("token_sessions alone (no token_usage) → empty view", async () => {
+    const { query } = sqliteQuery(null, [{ host: "mac", session: "s-a", name: "x" }])
+    const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: names })
+    expect(body.top_sessions).toEqual([])
+    expect(body.totals.total).toBe(0)
   })
 })
 
