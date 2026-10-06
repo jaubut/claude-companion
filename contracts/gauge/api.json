@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "account": {
+    "fiveHourPercent": 23.5,
+    "fiveHourResetsAt": "2026-10-06T19:00:00Z",
+    "sevenDayPercent": 12,
+    "at": 1791230000000
+  },
+  "sessions": [
+    {
+      "sessionKey": "claude:tty:/dev/ttys003",
+      "ctxTokens": 412000,
+      "ctxWindow": 1000000,
+      "ctxPercent": 41,
+      "source": "mod",
+      "at": 1791230000000
+    },
+    {
+      "sessionKey": "claude:sid:5b0e7c1a-0000-4000-8000-000000000000",
+      "ctxTokens": 83000,
+      "ctxWindow": 200000,
+      "ctxPercent": 42,
+      "source": "transcript",
+      "at": 1791230100000
+    }
+  ]
+}

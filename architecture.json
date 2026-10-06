@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 99,
+          "lines": 100,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -67,6 +67,7 @@
             "routes/capture.ts",
             "routes/trips.ts",
             "routes/auto-compact.ts",
+            "routes/gauge.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -344,7 +345,7 @@
         },
         {
           "path": "lib/auto-compact.ts",
-          "lines": 482,
+          "lines": 491,
           "kind": "lib",
           "exports": [
             "IDLE_MS",
@@ -1406,6 +1407,39 @@
             "lib/jev-route-log.ts",
             "lib/quick-look.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/gauge.ts",
+          "lines": 316,
+          "kind": "lib",
+          "exports": [
+            "MOD_FRESH_MS",
+            "STALE_MS",
+            "EMIT_MIN_MS",
+            "SWEEP_MS",
+            "WINDOW_1M",
+            "WINDOW_200K",
+            "GaugeSource",
+            "GaugeAccount",
+            "GaugeSessionItem",
+            "GaugeFrame",
+            "GaugeSnapshot",
+            "ModReport",
+            "GaugeDeps",
+            "parseModReport",
+            "windowFor",
+            "percentOf",
+            "GaugeStore"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4458,6 +4492,39 @@
           "externals": []
         },
         {
+          "path": "routes/gauge.ts",
+          "lines": 30,
+          "kind": "route-host",
+          "exports": [
+            "handleGaugeRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/hooks/gauge",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/gauge",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/gauge.ts",
+            "lib/vault-guard.ts",
+            "wiring/gauge.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/goals.ts",
           "lines": 214,
           "kind": "route-host",
@@ -4495,7 +4562,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 593,
+          "lines": 597,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -4580,7 +4647,8 @@
             "wiring/dispatch.ts",
             "lib/vault-guard.ts",
             "lib/auth.ts",
-            "wiring/auto-compact.ts"
+            "wiring/auto-compact.ts",
+            "wiring/gauge.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5216,6 +5284,32 @@
           "externals": []
         },
         {
+          "path": "wiring/gauge.ts",
+          "lines": 43,
+          "kind": "lib",
+          "exports": [
+            "resolveGaugeKey",
+            "gauge",
+            "gaugeFromTranscript"
+          ],
+          "state": [],
+          "emits": [
+            "gauge"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/gauge.ts",
+            "lib/sessions.ts",
+            "state.ts",
+            "wiring/auto-compact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/live.ts",
           "lines": 329,
           "kind": "lib",
@@ -5718,6 +5812,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
           ]
         },
@@ -5795,6 +5890,12 @@
         },
         "handleDialogRoute": {
           "module": "routes/dialogs.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleGaugeRoute": {
+          "module": "routes/gauge.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -5903,6 +6004,7 @@
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/auto-compact.ts",
             "wiring/events.ts",
+            "wiring/gauge.ts",
             "wiring/orchestrator.ts",
             "wiring/waiting.ts"
           ]
@@ -6539,6 +6641,7 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/dialogs.ts",
+            "wiring/gauge.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
           ]
@@ -8973,6 +9076,7 @@
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/front-door.ts",
+            "wiring/gauge.ts",
             "wiring/orchestrator.ts",
             "wiring/receipt-qa.ts",
             "wiring/triage.ts",
@@ -9253,7 +9357,8 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start",
-            "routes/hooks.ts#POST /hooks/session-end"
+            "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/gauge.ts"
           ]
         },
         "BodySnapshot": {
@@ -9560,6 +9665,36 @@
             "routes/dialogs.ts#POST /api/dialog/pick"
           ]
         },
+        "gauge": {
+          "module": "wiring/gauge.ts",
+          "callers": [
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/gauge.ts#GET /api/gauge",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
+        "peerOf": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/hooks.ts#POST /hooks/dispatch-event",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "isLoopback": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/hooks.ts#POST /hooks/dispatch-event"
+          ]
+        },
+        "parseModReport": {
+          "module": "lib/gauge.ts",
+          "callers": [
+            "routes/gauge.ts#POST /hooks/gauge"
+          ]
+        },
         "removeSessionByKey": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -9829,25 +9964,17 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
+        "gaugeFromTranscript": {
+          "module": "wiring/gauge.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
         "noteSessionBoundary": {
           "module": "lib/submit-confirm.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
-        "peerOf": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/dispatch-event",
-            "routes/records.ts",
-            "routes/vault.ts"
-          ]
-        },
-        "isLoopback": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/dispatch-event"
           ]
         },
         "dispatchWiring": {
@@ -10441,6 +10568,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/auto-compact.ts",
+            "wiring/gauge.ts",
             "wiring/waiting.ts"
           ]
         },
@@ -11082,6 +11210,18 @@
           "module": "lib/jev-route-log.ts",
           "callers": [
             "wiring/front-door.ts"
+          ]
+        },
+        "GaugeStore": {
+          "module": "lib/gauge.ts",
+          "callers": [
+            "wiring/gauge.ts"
+          ]
+        },
+        "MOD_FRESH_MS": {
+          "module": "lib/gauge.ts",
+          "callers": [
+            "wiring/gauge.ts"
           ]
         },
         "setLiveTarget": {

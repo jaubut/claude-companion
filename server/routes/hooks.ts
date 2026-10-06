@@ -46,6 +46,7 @@ import { dispatchWiring } from "../wiring/dispatch"
 import { isLoopback, peerOf } from "../lib/vault-guard"
 import { checkBearer } from "../lib/auth"
 import { autoCompactor, compactTargetFor } from "../wiring/auto-compact"
+import { gauge, gaugeFromTranscript } from "../wiring/gauge"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -501,6 +502,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       const target = compactTargetFor(session, body.transcript_path, body.session_id)
       if (target) void autoCompactor.onStop(target).catch(() => { /* logged inside */ })
     }
+    // Context gauge fallback (lib/gauge.ts) — skipped while the mod reports.
+    if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
     const reset = "\x1b[0m"
     const magenta = "\x1b[35m"
     companionLog(`${magenta}waiting for input${reset} — phone can respond`)
@@ -576,6 +579,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     closeQuestionsFor(body.session_id, undefined, "expired", "session ended", "session_end")
     closeApprovalsFor({ sessionId: body.session_id }, "session ended", "session_end")
     forgetSession({ tty, sessionId: body.session_id, cwd })
+    for (const id of new Set([sid, ...victims.map((v) => v.sessionId)])) if (id) gauge.drop(id)
     // `/exit` (and `/clear`, which ends the old session first) fire no
     // UserPromptSubmit; the session ending is their proof of submission.
     noteSessionBoundary({ sessionId: body.session_id, tty, pane: tmuxPane })

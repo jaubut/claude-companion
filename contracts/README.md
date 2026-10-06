@@ -30,3 +30,18 @@ iOS repo the drift check is skipped with a printed reason.
 
 Change the type → change the fixture → `bun run contracts:sync` → both tests
 (`bun test` here, the iOS decode test there) → commit in both repos.
+
+## `gauge/` — context gauge (`server/lib/gauge.ts`)
+
+Not part of `contracts:sync` (that copies `feed-events/` only); the iOS decoder mirrors
+these by hand. `server/routes/gauge.test.ts` checks the live frame and `GET /api/gauge`
+carry exactly these keys.
+
+- `frame.json` — the `gauge` WS frame: one `GET /api/gauge` `sessions[]` item plus
+  `account`. `sessionKey` is the session registry `key` (the `sessions` frame's `key`).
+  ≤ 1 frame / 2 s per session (trailing, so the latest value always lands).
+- `frame.cleared.json` — the session's gauge dropped (30 min without a report, or the
+  session ended): `ctxTokens` / `ctxWindow` / `ctxPercent` / `source` all null.
+- `api.json` — `GET /api/gauge` (bearer). `account` may be null; every account field and
+  every `ctx*` field may be null. `source` is `"mod"` (live, from the context-gauge mod) or
+  `"transcript"` (server estimate; no 5h figure on that path). `at` is ms since epoch.
