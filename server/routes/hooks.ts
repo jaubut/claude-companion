@@ -47,61 +47,12 @@ import { isLoopback, peerOf } from "../lib/vault-guard"
 import { checkBearer } from "../lib/auth"
 import { autoCompactor, compactTargetFor } from "../wiring/auto-compact"
 import { gauge, gaugeFromTranscript } from "../wiring/gauge"
+import { extractLastAssistantMessage } from "../lib/last-assistant"
+import { workerHookGate } from "../lib/worker-hook-gate"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
 // use. Same paths, decisions, responses and log lines as before the split.
-
-function readAssistantAfterLastUser(transcriptPath: string): string | null {
-  // Returns the concatenated text of all assistant entries that appear AFTER
-  // the most recent user entry in the transcript. Returns null if the file
-  // hasn't been flushed with the current turn's assistant message yet — the
-  // caller should retry in that case instead of showing the prior turn.
-  try {
-    const raw = require("node:fs").readFileSync(transcriptPath, "utf8") as string
-    const lines = raw.trim().split("\n")
-    let lastUserIdx = -1
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const entry = JSON.parse(lines[i]!)
-        if (entry.type === "user") { lastUserIdx = i; break }
-      } catch { /* skip */ }
-    }
-    if (lastUserIdx < 0) return null  // no user entry at all → nothing reliable
-
-    const chunks: string[] = []
-    for (let i = lastUserIdx + 1; i < lines.length; i++) {
-      try {
-        const entry = JSON.parse(lines[i]!)
-        if (entry.type !== "assistant") continue
-        const content = entry.message?.content
-        if (!Array.isArray(content)) continue
-        for (const b of content as Array<Record<string, unknown>>) {
-          if (b.type === "text" && typeof b.text === "string") chunks.push(b.text)
-        }
-      } catch { /* skip */ }
-    }
-    if (chunks.length === 0) return null  // transcript not flushed yet
-    return chunks.join("\n")
-  } catch {
-    return null
-  }
-}
-
-async function extractLastAssistantMessage(transcriptPath: string | undefined): Promise<string> {
-  // Stop hook sometimes fires before the harness finishes flushing the final
-  // assistant turn to disk. Retry briefly (up to ~1s) before giving up — a
-  // stale "last assistant message" would surface the PRIOR turn's text as the
-  // reply to the current user prompt, which is the bug we're fixing.
-  if (!transcriptPath) return ""
-  const attempts = [0, 80, 160, 320, 500]  // ms between retries
-  for (const delay of attempts) {
-    if (delay) await new Promise(r => setTimeout(r, delay))
-    const out = readAssistantAfterLastUser(transcriptPath)
-    if (out !== null) return out
-  }
-  return ""
-}
 
 // A question that is no longer on screen: answered in the terminal picker
 // (PostToolUse of the question tool), or the turn / session moved past it.
@@ -132,6 +83,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const dropped = scrapeHookPassthrough(req.headers)
     if (dropped) return dropped
   }
+  const worker = await workerHookGate(req, url)
+  if (worker.early) return worker.early
   // ── Hook endpoint — PreToolUse ──
   if (url.pathname === "/hooks/pre-tool-use" && req.method === "POST") {
     const body = await req.json() as {
@@ -151,7 +104,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const tty = headerMeta.tty ?? ""
 
     let session: Session | null = null
-    if (cwd) {
+    if (cwd && !worker.is) {
       session = recordSession({ cwd, sessionId, ...headerMeta })
     }
 
@@ -168,7 +121,11 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const yellow = "\x1b[33m"
     const cyan = "\x1b[36m"
 
+    // Worker activity stays off the phone feed; its auto-decisions still reach the approval history.
+    const track: typeof recordToolStart = worker.is ? () => {} : recordToolStart
+
     // ── AskUserQuestion / request_user_input fast path ─────────────
+    if (worker.is && isQuestionTool(tool)) return hookPassthroughResponse(agent)
     {
       const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, session, headerMeta })
       if (handled) return handled
@@ -188,7 +145,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       decision = "allow"
       verdict = "auto-allow"
       companionLog(`\x1b[35msuper-allow\x1b[0m ${tool} ${dim}${summarize(tool, input)}${reset}`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
+      track({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
       audit("allow", "super", "SUPER mode")
       return hookDecisionResponse(agent, "PreToolUse", decision, "Approved via Claude Companion (SUPER)")
     }
@@ -209,16 +166,18 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       decision = "allow"
       verdict = "auto-allow"
       companionLog(`${green}auto-allow${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
+      track({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
     } else if (verdictJudge === "deny") {
       decision = "deny"
       verdict = "auto-deny"
       companionLog(`${red}auto-deny${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
+      track({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
+    } else if (worker.is) {
+      return hookPassthroughResponse(agent) // not the phone's call: the dialog stays, the runner ends the run `blocked`
     } else {
       verdict = "pending"
       companionLog(`${yellow}→ phone${reset} ${cyan}${tool}${reset} ${dim}${summarize(tool, input)}${reset}`)
-      recordToolStart({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
+      track({ tool, input, summary: summarize(tool, input), verdict, cwd, sessionId, tty, sessionKey: session?.key ?? "" })
       const outcome = await addApprovalRequest(
         { agent, sessionId, tool, input, cwd, sessionKey: session?.key ?? "", reason: judgeReason, toolUseId: body.tool_use_id },
         { signal: req.signal },

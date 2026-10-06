@@ -1155,7 +1155,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 449,
+          "lines": 458,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1163,6 +1163,7 @@
             "processEnvEntries",
             "ScrapeProcessDeps",
             "isScrapeProcess",
+            "isIgnoredAgentProcess",
             "readClaudeSessionFile",
             "tmuxPaneFromSessionFile",
             "tmuxRefFromEnv",
@@ -1188,6 +1189,7 @@
             "lib/sessions.ts",
             "lib/session-removal-log.ts",
             "lib/scrape-registry.ts",
+            "lib/dispatch-worker.ts",
             "lib/tmux-pane.ts",
             "lib/log.ts"
           ],
@@ -1334,6 +1336,29 @@
             "lib/orchestrator-chat.ts",
             "lib/turso.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/dispatch-worker.ts",
+          "lines": 55,
+          "kind": "lib",
+          "exports": [
+            "DISPATCH_WORKER_ENV",
+            "envHasDispatchWorker",
+            "resetDispatchWorkerCache",
+            "isDispatchWorkerPid",
+            "isDispatchWorkerHook"
+          ],
+          "state": [
+            "cache: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1693,6 +1718,23 @@
             "lib/tmux-pane.ts",
             "lib/question-driver.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/last-assistant.ts",
+          "lines": 53,
+          "kind": "lib",
+          "exports": [
+            "extractLastAssistantMessage"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4397,6 +4439,30 @@
           "externals": []
         },
         {
+          "path": "lib/worker-hook-gate.ts",
+          "lines": 25,
+          "kind": "lib",
+          "exports": [
+            "setWorkerEnvReaderForTests",
+            "workerHookGate"
+          ],
+          "state": [
+            "let envReader"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/hook-common.ts",
+            "lib/discover.ts",
+            "lib/dispatch-worker.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-identity.ts",
           "lines": 130,
           "kind": "lib",
@@ -4888,7 +4954,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 597,
+          "lines": 556,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -4974,7 +5040,9 @@
             "lib/vault-guard.ts",
             "lib/auth.ts",
             "wiring/auto-compact.ts",
-            "wiring/gauge.ts"
+            "wiring/gauge.ts",
+            "lib/last-assistant.ts",
+            "lib/worker-hook-gate.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7466,6 +7534,12 @@
             "lib/discover.ts"
           ]
         },
+        "isDispatchWorkerPid": {
+          "module": "lib/dispatch-worker.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
         "PaneRef": {
           "module": "lib/tmux-pane.ts",
           "callers": [
@@ -8008,6 +8082,7 @@
             "lib/orphan-question.ts",
             "lib/question-hook.ts",
             "lib/tool-format.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/post-tool-use"
           ]
         },
@@ -8062,7 +8137,6 @@
           "module": "lib/session-titles.ts",
           "callers": [
             "lib/orphan-question.ts",
-            "routes/hooks.ts",
             "wiring/events.ts"
           ]
         },
@@ -8210,6 +8284,7 @@
           "module": "lib/hook-common.ts",
           "callers": [
             "lib/question-hook.ts",
+            "lib/worker-hook-gate.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request"
@@ -9620,6 +9695,28 @@
             "lib/voice-memo.ts"
           ]
         },
+        "processEnvEntries": {
+          "module": "lib/discover.ts",
+          "callers": [
+            "lib/worker-hook-gate.ts"
+          ]
+        },
+        "isDispatchWorkerHook": {
+          "module": "lib/dispatch-worker.ts",
+          "callers": [
+            "lib/worker-hook-gate.ts"
+          ]
+        },
+        "agentFromHeaders": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "lib/worker-hook-gate.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
         "matchUnboundTaskById": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -10380,15 +10477,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "agentFromHeaders": {
-          "module": "lib/hook-common.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request",
-            "routes/hooks.ts#POST /hooks/stop"
-          ]
-        },
         "agentTitle": {
           "module": "lib/hook-common.ts",
           "callers": [
@@ -10454,6 +10542,12 @@
           "module": "lib/pty-manager.ts",
           "callers": [
             "routes/hooks.ts"
+          ]
+        },
+        "workerHookGate": {
+          "module": "lib/worker-hook-gate.ts",
+          "callers": [
+            "routes/hooks.ts#* /hooks/"
           ]
         },
         "unmarkWaiting": {
@@ -10537,6 +10631,12 @@
           "module": "lib/session-titles.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "extractLastAssistantMessage": {
+          "module": "lib/last-assistant.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "resolveWorkerTask": {
