@@ -182,7 +182,8 @@ export interface KeepNote { id: string; ref: string; openTasks: string[] }
 export interface KeepState { prs: KeepPr[]; notes: KeepNote[]; next: string[]; human: string[] }
 
 const oneLine = (s: string, max: number): string => {
-  const t = s.replace(/\s+/g, " ").trim()
+  // Typed into a tmux pane: strip control chars (ESC, ^C…) after the collapse.
+  const t = s.replace(/\s+/g, " ").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim()
   return t.length > max ? `${t.slice(0, max - 1)}…` : t
 }
 

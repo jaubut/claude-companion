@@ -317,8 +317,61 @@
           "externals": []
         },
         {
+          "path": "lib/auto-compact-keep.ts",
+          "lines": 208,
+          "kind": "lib",
+          "exports": [
+            "COMPACT_TEXT",
+            "KEEP_MAX",
+            "UnitReason",
+            "isClosingPrompt",
+            "KeepPr",
+            "SessionSnapshot",
+            "SessionScan",
+            "stateNextLines",
+            "KeepNote",
+            "KeepState",
+            "buildKeep"
+          ],
+          "state": [
+            "CLOSING_WORDS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auto-compact-transcript.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/auto-compact-stats.ts",
+          "lines": 55,
+          "kind": "lib",
+          "exports": [
+            "CompactionRow",
+            "CompactionStats",
+            "ensureCompactionLog",
+            "insertCompaction",
+            "compactionStats",
+            "localDayStart"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/auto-compact-transcript.ts",
-          "lines": 219,
+          "lines": 227,
           "kind": "lib",
           "exports": [
             "BG_MAX_AGE_MS",
@@ -330,8 +383,12 @@
             "contextSettled",
             "CompactBoundary",
             "compactBoundaries",
+            "contentBlocks",
+            "blockText",
             "BackgroundScan",
             "openBackgroundTasks",
+            "isHumanPrompt",
+            "humanPromptText",
             "lastHumanPromptAt"
           ],
           "state": [],
@@ -346,7 +403,7 @@
         },
         {
           "path": "lib/auto-compact.ts",
-          "lines": 491,
+          "lines": 584,
           "kind": "lib",
           "exports": [
             "IDLE_MS",
@@ -358,14 +415,17 @@
             "TAIL_START_BYTES",
             "TAIL_MAX_BYTES",
             "SCAN_CHUNK_BYTES",
-            "COMPACT_TEXT",
+            "DEFAULT_BOUNDARY_TOKENS",
             "thresholdFromEnv",
+            "boundaryFromEnv",
             "InputState",
             "GateInput",
             "GateReason",
             "GateVerdict",
             "compactGate",
             "CompactTarget",
+            "Trigger",
+            "CompactionDone",
             "PushKind",
             "AutoCompactDeps",
             "AutoCompactStatus",
@@ -378,6 +438,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/auto-compact-keep.ts",
             "lib/auto-compact-transcript.ts"
           ],
           "listeners": [],
@@ -4430,7 +4491,7 @@
         },
         {
           "path": "routes/body.ts",
-          "lines": 138,
+          "lines": 147,
           "kind": "route-host",
           "exports": [
             "BodyRouteDeps",
@@ -4484,6 +4545,8 @@
             "lib/body-investigator.ts",
             "lib/body-fix.ts",
             "wiring/body-fix.ts",
+            "lib/auto-compact-stats.ts",
+            "wiring/auto-compact.ts",
             "wiring/body-investigate.ts"
           ],
           "listeners": [],
@@ -5115,20 +5178,29 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 125,
+          "lines": 225,
           "kind": "lib",
           "exports": [
+            "compactionStatsSince",
             "realAutoCompactDeps",
             "autoCompactor",
             "compactTargetFor"
           ],
-          "state": [],
+          "state": [
+            "let statsDb"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
             "lib/auto-compact.ts",
+            "lib/auto-compact-keep.ts",
+            "lib/auto-compact-stats.ts",
+            "lib/db-path.ts",
+            "lib/my-tasks.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
             "lib/log.ts",
             "lib/sessions.ts",
             "lib/discover.ts",
@@ -6339,7 +6411,8 @@
             "lib/orchestrator-db.ts",
             "lib/push-tokens.ts",
             "lib/receipt-qa-store.ts",
-            "lib/session-titles.ts"
+            "lib/session-titles.ts",
+            "wiring/auto-compact.ts"
           ]
         },
         "redactSecrets": {
@@ -6377,7 +6450,40 @@
         "Entry": {
           "module": "lib/auto-compact-transcript.ts",
           "callers": [
+            "lib/auto-compact-keep.ts",
             "lib/auto-compact.ts"
+          ]
+        },
+        "entryTime": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact-keep.ts",
+            "lib/auto-compact.ts"
+          ]
+        },
+        "isBoundary": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact-keep.ts",
+            "lib/auto-compact.ts"
+          ]
+        },
+        "contentBlocks": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact-keep.ts"
+          ]
+        },
+        "blockText": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact-keep.ts"
+          ]
+        },
+        "humanPromptText": {
+          "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact-keep.ts"
           ]
         },
         "contextTokens": {
@@ -6416,18 +6522,6 @@
             "lib/auto-compact.ts"
           ]
         },
-        "entryTime": {
-          "module": "lib/auto-compact-transcript.ts",
-          "callers": [
-            "lib/auto-compact.ts"
-          ]
-        },
-        "isBoundary": {
-          "module": "lib/auto-compact-transcript.ts",
-          "callers": [
-            "lib/auto-compact.ts"
-          ]
-        },
         "lastHumanPromptAt": {
           "module": "lib/auto-compact-transcript.ts",
           "callers": [
@@ -6442,6 +6536,44 @@
         },
         "openBackgroundTasks": {
           "module": "lib/auto-compact-transcript.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "UnitReason": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "SessionSnapshot": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "lib/auto-compact.ts",
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "KeepState": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "lib/auto-compact.ts",
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "SessionScan": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "COMPACT_TEXT": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "buildKeep": {
+          "module": "lib/auto-compact-keep.ts",
           "callers": [
             "lib/auto-compact.ts"
           ]
@@ -6747,7 +6879,8 @@
             "lib/my-tasks.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
-            "routes/goals.ts"
+            "routes/goals.ts",
+            "wiring/auto-compact.ts"
           ]
         },
         "QueryFn": {
@@ -8034,6 +8167,7 @@
             "routes/body.ts",
             "routes/goals.ts",
             "routes/my-tasks.ts",
+            "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
@@ -9621,6 +9755,14 @@
             "wiring/body.ts"
           ]
         },
+        "CompactionStats": {
+          "module": "lib/auto-compact-stats.ts",
+          "callers": [
+            "routes/body.ts",
+            "routes/body.ts#GET /api/body/tokens",
+            "wiring/auto-compact.ts"
+          ]
+        },
         "BodyAlertSink": {
           "module": "wiring/body.ts",
           "callers": [
@@ -9649,6 +9791,12 @@
             "routes/body.ts"
           ]
         },
+        "compactionStatsSince": {
+          "module": "wiring/auto-compact.ts",
+          "callers": [
+            "routes/body.ts"
+          ]
+        },
         "bodyAlertSink": {
           "module": "wiring/body.ts",
           "callers": [
@@ -9664,6 +9812,12 @@
         },
         "parseRange": {
           "module": "lib/body-tokens.ts",
+          "callers": [
+            "routes/body.ts#GET /api/body/tokens"
+          ]
+        },
+        "localDayStart": {
+          "module": "lib/auto-compact-stats.ts",
           "callers": [
             "routes/body.ts#GET /api/body/tokens"
           ]
@@ -10840,27 +10994,19 @@
             "routes/vault.ts"
           ]
         },
-        "getSessionByKey": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "wiring/auto-compact.ts",
-            "wiring/gauge.ts",
-            "wiring/waiting.ts"
-          ]
-        },
         "InputState": {
           "module": "lib/auto-compact.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
         },
-        "paneNotReady": {
-          "module": "lib/inject-guard.ts",
+        "CompactTarget": {
+          "module": "lib/auto-compact.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
         },
-        "CompactTarget": {
+        "CompactionDone": {
           "module": "lib/auto-compact.ts",
           "callers": [
             "wiring/auto-compact.ts"
@@ -10880,6 +11026,82 @@
         },
         "AutoCompactor": {
           "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "boundaryFromEnv": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "getSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/gauge.ts",
+            "wiring/waiting.ts"
+          ]
+        },
+        "paneNotReady": {
+          "module": "lib/inject-guard.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "KeepPr": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "prState": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "realGh": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "KeepNote": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "MINE": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "stateNextLines": {
+          "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "ensureCompactionLog": {
+          "module": "lib/auto-compact-stats.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "insertCompaction": {
+          "module": "lib/auto-compact-stats.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "compactionStats": {
+          "module": "lib/auto-compact-stats.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
@@ -11738,13 +11960,6 @@
           "callers": [
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts"
-          ]
-        },
-        "realGh": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/resolver-dry-run.ts",
-            "wiring/triage.ts"
           ]
         },
         "liveSeams": {

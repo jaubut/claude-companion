@@ -590,6 +590,12 @@ describe("buildKeep", () => {
     expect(k.length).toBeLessThanOrEqual(KEEP_MAX)
     expect(k.includes("\n")).toBe(false)
   })
+  test("strips control characters from typed keep text", () => {
+    const k = buildKeep({ prs: [], notes: [], next: ["clear \u001b[2J then \u0003 stop"], human: [] })
+    expect(k.startsWith("/compact keep:")).toBe(true)
+    expect(k.includes("\u001b")).toBe(false)
+    expect(k.includes("\u0003")).toBe(false)
+  })
 })
 
 describe("AutoCompactor: boundary trigger + keep", () => {
