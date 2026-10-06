@@ -1,0 +1,10 @@
+{
+  "type": "gauge",
+  "sessionKey": "claude:tty:/dev/ttys003",
+  "ctxTokens": null,
+  "ctxWindow": null,
+  "ctxPercent": null,
+  "source": null,
+  "at": 1791231800000,
+  "account": null
+}
