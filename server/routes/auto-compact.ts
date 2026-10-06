@@ -3,7 +3,7 @@ import { companionLog } from "../lib/log"
 import { autoCompactor, compactTargetForKey } from "../wiring/auto-compact"
 
 // Smart auto-compact (lib/auto-compact.ts). Bearer-gated like every /api/*.
-//   GET  /api/auto-compact         → { threshold, only, pending: [{key, phase, name, tokens}] }
+//   GET  /api/auto-compact         → { threshold, only, pending: [{key, phase, name, tokens, trigger}] }
 //   POST /api/auto-compact/cancel  { key } → { ok, cancelled } — the push's Cancel action
 //   POST /api/auto-compact/test    { key } → arm that one session regardless of size
 export async function handleAutoCompactRoute(req: Request, url: URL): Promise<Response | null> {

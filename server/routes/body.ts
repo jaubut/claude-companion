@@ -8,12 +8,15 @@ import { type BodyAlertSink, bodyAlertSink, bodySnapshot, tokensSnapshot } from 
 import { parseInvestigateBody } from "../lib/body-investigator"
 import { parseFixRequest } from "../lib/body-fix"
 import { runBodyFix } from "../wiring/body-fix"
+import { type CompactionStats, localDayStart } from "../lib/auto-compact-stats"
+import { compactionStatsSince } from "../wiring/auto-compact"
 import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/body-investigate"
 
 // Body monitor API (living-system nervous system). Auth is the `/api/*` bearer
 // gate in companion-server.ts. Contract: docs/body-api.md.
 //   GET  /api/body                    summary + components + last 50 events (30 s cache; ?all=1, ?fresh=1)
 //   GET  /api/body/tokens             fleet token usage (token_usage rollups; ?range=today|7d|30d, 30 s cache, ?fresh=1)
+//                                     + `compactions` (this server's auto-compactions in the range)
 //   GET  /api/body/component/:id      one component + latest vitals + last 50 events (id URL-decoded)
 //   POST /api/body/alert              collector alert → #Body turn, `body_alert` frame, gated push
 //                                     (+ a problem state triggers an auto-investigation)
@@ -25,6 +28,8 @@ export interface BodyRouteDeps {
   query?: QueryFn
   snapshot?: BodySnapshot
   tokens?: TokensSnapshot
+  /** Auto-compactions since a ms timestamp (wiring/auto-compact.ts). */
+  compactions?: (sinceMs: number) => CompactionStats
   sink?: BodyAlertSink
   /** Owning-host side of an approved Mac fix (wiring/body-fix.ts). */
   runFix?: typeof runBodyFix
@@ -45,6 +50,7 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
   const query = deps.query ?? tursoQuery
   const snapshot = deps.snapshot ?? bodySnapshot
   const tokens = deps.tokens ?? tokensSnapshot
+  const compactions = deps.compactions ?? compactionStatsSince
   const sink = deps.sink ?? bodyAlertSink
   const now = deps.now ?? Date.now
   const investigator = deps.investigator ?? bodyInvestigator
@@ -66,7 +72,10 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
       const range = parseRange(url.searchParams.get("range"))
       if (!range) return Response.json({ ok: false, error: "range must be today, 7d or 30d" }, { status: 400 })
       try {
-        return Response.json(await tokens.get(range, { fresh: url.searchParams.get("fresh") === "1" }))
+        const body = await tokens.get(range, { fresh: url.searchParams.get("fresh") === "1" })
+        let stats: CompactionStats | null = null
+        try { stats = compactions(localDayStart(body.since)) } catch { /* companion.db unreadable: card shows no line */ }
+        return Response.json({ ...body, compactions: stats })
       } catch (err) {
         return unreachable(err)
       }

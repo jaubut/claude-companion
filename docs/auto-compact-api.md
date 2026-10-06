@@ -10,16 +10,77 @@ off. GET `/api/auto-compact` reports the effective `threshold` (0 = off).
 
 **Scope.** `AUTO_COMPACT_ONLY` = comma list of session keys or name globs
 (`*`, `?`, case-insensitive; matched against the key and the session name
-shown in the push). When set, only matching sessions can be armed by a Stop;
+shown in the push). When set, only matching sessions can be armed by a Stop (size AND boundary trigger,
+skipped before the transcript is read); the test trigger ignores it;
 unset/blank = every session. E.g. `AUTO_COMPACT_ONLY=claude:tty:/dev/ttys003,wt-*`.
 GET reports it as `only` (`[]` = all).
+
+## Triggers
+
+On every Stop hook, with the context size = the last main-chain assistant
+usage:
+
+- **size** — context > `AUTO_COMPACT_TOKENS`.
+- **test** — `POST /api/auto-compact/test` (below): size floor skipped, scope ignored.
+- **task boundary** — context > `AUTO_COMPACT_BOUNDARY_TOKENS` (default
+  `250000`; `0` = off; unset/garbage = default; ignored while
+  `AUTO_COMPACT_TOKENS` is off) AND a unit of work just closed in this session
+  (`server/lib/auto-compact-keep.ts`, `SessionScan`):
+  - `pr_merged` — a `gh pr merge` whose result is not an error / "not
+    mergeable", or a `gh pr …` result saying `MERGED`, for a PR not already
+    seen merged;
+  - `task_completed` — `dispatch.sh: <id> → completed`, or a Bash command
+    running `UPDATE tasks SET … done=1` / `/api/task … "done": true`;
+  - `closing_prompt` — the latest human prompt is ≤ 3 words, all from
+    nice / perf / parfait / good / great / dope / merci / ok / thanks / cool /
+    super / top / bravo / job / work… ("ok fix it" is not closing).
+
+  A merge / completion counts only after the last non-closing prompt and the
+  last compaction ("since the last boundary"); every closing is used once (the
+  countdown consumes it). Sidechain (subagent) entries are ignored.
+
+Both triggers then pass the same gates: idle 3 min, Claude status `idle`, no
+open background Bash/Agent, empty input box, 30 min per-session cooldown, 60 s
+cancellable countdown push. The countdown body names the boundary
+("Context 300k tokens, PR merged. …").
+
+## Keep text
+
+Every trigger, including `test`, types this state-aware keep (falling back to the
+generic one); a finished test compaction is recorded with `trigger: "test"`
+and its countdown push body names the reason ("Context 40k tokens, test.").
+
+The typed command is `/compact keep: …` built from durable state, not the
+chat — one line, ≤ 1500 chars:
+
+- `PRs:` every PR this session touched with `gh pr <verb> <n|url>` (open first,
+  ≤ 6), state read live from `gh pr view <url> --json state` when the repo is
+  known, else the last state seen in the transcript;
+- `Turso note <id> (<ref_code>) open tasks: …` for the notes / tasks this
+  session wrote (`UPDATE|INSERT … notes|tasks`, `/api/note|task`,
+  `file-dev-task.sh`, `dispatch.sh`; ≤ 4 notes, ≤ 5 tasks each);
+- `STATE.md next:` lines of the session cwd's STATE.md (cwd up to the git
+  root): the body of a heading naming "next" / "resume here", and `Next:` lines;
+- `pending human steps:` open tasks of those notes assigned to
+  `COMPANION_TASK_ASSIGNEES` (default `human:jeremie,human`).
+
+Lookups are capped at 8 s each. If nothing is found or a lookup fails, the
+keep is the generic
+`/compact keep: current task, open PRs/branches, decisions made, next steps`.
+
+## Stats
+
+Each completed compaction (our inject answered by a `compact_boundary`) is a
+companion.db `auto_compactions` row (trigger, pre / post tokens). Totals per
+range are on `GET /api/body/tokens` → `compactions` (`docs/body-api.md`).
 
 ## Endpoints
 
 ```
 GET  /api/auto-compact
-  → 200 { threshold: number, only: string[], pending: [{ key, phase, name, tokens }] }
-     phase: "scheduled" | "countdown" | "injecting" | "awaiting_boundary"
+  → 200 { threshold: number, only: string[], pending: [{ key, phase, name, tokens, trigger }] }
+     phase:   "scheduled" | "countdown" | "injecting" | "awaiting_boundary"
+     trigger: "size" | "pr_merged" | "task_completed" | "closing_prompt" | "test"
 
 POST /api/auto-compact/cancel
   body  { key: string }          // session key from the push userInfo.key
@@ -71,7 +132,7 @@ replaces it):
 ```
 category:   "auto_compact"
 title:      "compacting <name> in 60s"
-body:       "Context <X> tokens. To cancel, type anything in the session's pane."
+body:       "Context <X> tokens[, PR merged | task completed | task closed]. To cancel, type anything in the session's pane."
 userInfo:   { key, sessionId, action: "auto_compact_cancel", cancelPath: "/api/auto-compact/cancel" }
 ```
 
