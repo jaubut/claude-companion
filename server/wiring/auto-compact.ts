@@ -1,9 +1,10 @@
 import { type FileHandle, open, stat } from "node:fs/promises"
 import { createHash } from "node:crypto"
-import { type AutoCompactDeps, AutoCompactor, type CompactTarget, type InputState, type PushKind, thresholdFromEnv } from "../lib/auto-compact"
+import { type AutoCompactDeps, AutoCompactor, type CompactTarget, type InputState, type PushKind, inScope, scopeFromEnv, thresholdFromEnv } from "../lib/auto-compact"
 import { companionLog } from "../lib/log"
 import { getSessionByKey, type Session } from "../lib/sessions"
 import { readClaudeSessionFile } from "../lib/discover"
+import { transcriptPath } from "../lib/session-titles"
 import { injectRefusal, paneNotReady } from "../lib/inject-guard"
 import { injectConfirmed } from "../lib/submit-confirm"
 import { apnsConfigured } from "../lib/apns"
@@ -109,6 +110,7 @@ export const realAutoCompactDeps: AutoCompactDeps = {
   push,
   inject,
   log: (line) => companionLog(`\x1b[36m${line}\x1b[0m`),
+  eligible: (target) => inScope(target, scopeFromEnv()),
 }
 
 export const autoCompactor = new AutoCompactor(realAutoCompactDeps)
@@ -121,4 +123,12 @@ export function compactTargetFor(session: Session, transcriptPath: string | unde
     sessionId: sessionId || session.sessionId,
     transcriptPath,
   }
+}
+
+// Test trigger: the registry has no transcript path, so derive it from the
+// session's cwd + id (Claude's ~/.claude/projects layout).
+export function compactTargetForKey(key: string): CompactTarget | null {
+  const s = claudeSession(key)
+  if (!s?.sessionId || !s.cwd) return null
+  return compactTargetFor(s, transcriptPath(s.cwd, s.sessionId), s.sessionId)
 }

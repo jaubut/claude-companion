@@ -14,6 +14,8 @@ import {
   TAIL_START_BYTES,
   compactBoundaries,
   compactGate as gate,
+  inScope,
+  scopeFromEnv,
   contextTokens as contextTokensOf,
   lastHumanPromptAt as lastHumanPromptAtOf,
   openBackgroundTasks as openBackgroundTasksOf,
@@ -119,6 +121,24 @@ describe("threshold setting", () => {
   })
 })
 
+describe("AUTO_COMPACT_ONLY scope", () => {
+  test("parse: unset/blank → [] (every session); comma list trimmed", () => {
+    expect(scopeFromEnv({})).toEqual([])
+    expect(scopeFromEnv({ AUTO_COMPACT_ONLY: " , " })).toEqual([])
+    expect(scopeFromEnv({ AUTO_COMPACT_ONLY: "tmux:%3, wt-*" })).toEqual(["tmux:%3", "wt-*"])
+  })
+  test("match key exactly or name by glob, case-insensitive", () => {
+    const t = { key: "tmux:%3", name: "WT-Companion" }
+    expect(inScope(t, [])).toBe(true)
+    expect(inScope(t, ["tmux:%3"])).toBe(true)
+    expect(inScope(t, ["wt-*"])).toBe(true)
+    expect(inScope(t, ["other", "wt-compan?on"])).toBe(true)
+    expect(inScope(t, ["tmux:%"])).toBe(false)
+    expect(inScope(t, ["wt"])).toBe(false)
+    expect(inScope(t, ["wt-(.*)"])).toBe(false) // regex chars are literal
+  })
+})
+
 describe("compactGate", () => {
   const now = 10_000_000
   const ok: GateInput = {
@@ -126,6 +146,12 @@ describe("compactGate", () => {
     agentStatus: "idle", backgroundTasks: 0, lastAttemptAt: 0, cooldownMs: COOLDOWN_MS, input: "empty",
   }
   test("passes when every condition holds", () => expect(gate(ok)).toEqual({ ok: true }))
+  test("force skips only the size check", () => {
+    expect(gate({ ...ok, tokens: 1_000, force: true })).toEqual({ ok: true })
+    expect(gate({ ...ok, tokens: null, force: true })).toEqual({ ok: true })
+    expect(gate({ ...ok, threshold: 0, force: true })).toEqual({ ok: false, reason: "off" })
+    expect(gate({ ...ok, tokens: 1_000, force: true, agentStatus: "busy" })).toEqual({ ok: false, reason: "busy" })
+  })
   test("off", () => expect(gate({ ...ok, threshold: 0 })).toEqual({ ok: false, reason: "off" }))
   test("threshold is strict", () => {
     expect(gate({ ...ok, tokens: 600_000 })).toEqual({ ok: false, reason: "below_threshold" })
@@ -151,7 +177,7 @@ describe("compactGate", () => {
 
 interface Timer { at: number; fn: () => void; id: number }
 
-function harness(opts: { transcript: string; status?: string; input?: InputState; threshold?: number }) {
+function harness(opts: { transcript: string; status?: string; input?: InputState; threshold?: number; eligible?: boolean }) {
   let now = Date.parse("2026-10-05T12:00:00Z")
   let seq = 0
   let timers: Timer[] = []
@@ -175,6 +201,7 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
     push: async (kind, _t, title) => { pushes.push({ kind, title }) },
     inject: async (_k, text) => { injects.push(text); return state.injectOk ? { ok: true } : { ok: false, error: "dialog_open" } },
     log: (l) => logs.push(l),
+    ...(opts.eligible === undefined ? {} : { eligible: () => opts.eligible! }),
   }
   const c = new AutoCompactor(deps)
   const flush = async () => { for (let i = 0; i < 500; i++) await Promise.resolve() }
@@ -436,5 +463,105 @@ describe("AutoCompactor", () => {
     h.state.transcript = lines(boundary(900_000, 20_000, "old"))
     await h.advance(15_000 * 2)
     expect(h.pushes.map((p) => p.kind)).toEqual(["countdown"])
+  })
+})
+
+describe("AUTO_COMPACT_ONLY in the controller", () => {
+  test("out-of-scope session: a big Stop arms nothing", async () => {
+    const h = harness({ transcript: BIG, eligible: false })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS * 2)
+    expect(h.pushes).toEqual([])
+    expect(h.c.status()).toEqual([])
+  })
+  test("in-scope session behaves as before", async () => {
+    const h = harness({ transcript: BIG, eligible: true })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+  })
+})
+
+describe("AutoCompactor.test (on-demand trigger)", () => {
+  const SMALL = lines(OLD_PROMPT, assistant(1, 40_000, 0))
+
+  test("small session: countdown push, 60 s, then /compact, then done", async () => {
+    const h = harness({ transcript: SMALL })
+    expect(await h.c.test(h.target)).toEqual({ ok: true, waitMs: 0, tokens: 40_001 })
+    await h.advance(0)
+    expect(h.pushes).toEqual([{ kind: "countdown", title: "compacting wt in 60s" }])
+    await h.advance(CANCEL_MS - 1)
+    expect(h.injects).toEqual([])
+    await h.advance(1)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    h.state.transcript += lines(boundary(40_001, 9_000))
+    await h.advance(15_000)
+    expect(h.pushes[1]).toEqual({ kind: "done", title: "compacted wt: 40k -> 9k tokens" })
+  })
+
+  test("ignores AUTO_COMPACT_ONLY (explicit target)", async () => {
+    const h = harness({ transcript: SMALL, eligible: false })
+    expect((await h.c.test(h.target)).ok).toBe(true)
+  })
+
+  test("refused when the feature is off", async () => {
+    const h = harness({ transcript: SMALL, threshold: 0 })
+    expect(await h.c.test(h.target)).toEqual({ ok: false, error: "off" })
+    expect(h.c.status()).toEqual([])
+  })
+
+  test("refused when the session is busy (or waiting)", async () => {
+    for (const status of ["busy", "waiting"]) {
+      const h = harness({ transcript: SMALL, status })
+      expect(await h.c.test(h.target)).toEqual({ ok: false, error: "busy" })
+      expect(h.c.status()).toEqual([])
+    }
+  })
+
+  test("cancel during the countdown → no inject", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(0)
+    expect(h.c.cancel("k1")).toBe(true)
+    await h.advance(CANCEL_MS * 2)
+    expect(h.injects).toEqual([])
+  })
+
+  test("typing in the pane during the countdown → no inject", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(0)
+    h.state.input = "typing"
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([])
+  })
+
+  test("still waits out the idle window after a recent prompt", async () => {
+    const h = harness({ transcript: SMALL })
+    h.c.noteUserActivity("k1")
+    const r = await h.c.test(h.target)
+    expect(r).toEqual({ ok: true, waitMs: IDLE_MS, tokens: 40_001 })
+    await h.advance(IDLE_MS - 1)
+    expect(h.pushes).toEqual([])
+    await h.advance(1)
+    expect(h.pushes.map((p) => p.kind)).toEqual(["countdown"])
+  })
+
+  test("refused during cooldown and while a compaction is in flight", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(CANCEL_MS)
+    expect(await h.c.test(h.target)).toEqual({ ok: false, error: "in_progress" })
+    h.state.transcript += lines(boundary(40_001, 9_000))
+    await h.advance(15_000)
+    expect(await h.c.test(h.target)).toEqual({ ok: false, error: "cooldown" })
+  })
+
+  test("a later normal Stop on a small session does not re-arm the test", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.c.onStop(h.target) // supersedes; below threshold → nothing
+    await h.advance(CANCEL_MS * 2)
+    expect(h.pushes).toEqual([])
   })
 })

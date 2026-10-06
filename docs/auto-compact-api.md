@@ -8,17 +8,56 @@ controller), `server/wiring/auto-compact.ts` (tmux / APNs / fs deps),
 positive number (e.g. `600000`). Unset, blank, `0`, negative or non-numeric =
 off. GET `/api/auto-compact` reports the effective `threshold` (0 = off).
 
+**Scope.** `AUTO_COMPACT_ONLY` = comma list of session keys or name globs
+(`*`, `?`, case-insensitive; matched against the key and the session name
+shown in the push). When set, only matching sessions can be armed by a Stop;
+unset/blank = every session. E.g. `AUTO_COMPACT_ONLY=claude:tty:/dev/ttys003,wt-*`.
+GET reports it as `only` (`[]` = all).
+
 ## Endpoints
 
 ```
 GET  /api/auto-compact
-  → 200 { threshold: number, pending: [{ key, phase, name, tokens }] }
+  → 200 { threshold: number, only: string[], pending: [{ key, phase, name, tokens }] }
      phase: "scheduled" | "countdown" | "injecting" | "awaiting_boundary"
 
 POST /api/auto-compact/cancel
   body  { key: string }          // session key from the push userInfo.key
   → 200 { ok: true, cancelled: boolean }  // false = nothing cancellable (already typed / gone)
   → 400 { ok: false, error: "key_required" }
+
+POST /api/auto-compact/test
+  body  { key: string }          // session key (`sessions[].key` in GET /api/status)
+  → 200 { ok: true, key, name, tokens: number | null, checkInSeconds: number }
+  → 400 { ok: false, error: "key_required" }
+  → 404 { ok: false, error: "session_not_found" }      // unknown / not a Claude session
+  → 409 { ok: false, error: "off" | "busy" | "in_progress" | "cooldown" }
+  → 422 { ok: false, error: "transcript_unreadable" }
+```
+
+### Test trigger
+
+`POST /api/auto-compact/test` proves the feature on any session without
+waiting for 600k tokens. It runs the **normal path** for that one session
+with every gate except the size threshold (and `AUTO_COMPACT_ONLY`, since the
+target is explicit):
+
+1. waits until the user has been quiet 3 min (`checkInSeconds`, 0 if already idle);
+2. re-checks the gates (idle status, no background tasks, empty input box);
+3. sends the countdown push `compacting <name> in 60s`;
+4. after 60 s, still idle and not cancelled, types `/compact …` into the pane;
+5. sends the result push on the `compact_boundary`.
+
+Cancel during steps 1–3 by typing anything in the session's pane, or with
+`POST /api/auto-compact/cancel {key}`. Refused when the feature is off
+(`AUTO_COMPACT_TOKENS` unset/0), when the session is not `idle`
+(busy / waiting on a dialog), while a `/compact` it injected is still
+settling, and inside the 30 min cooldown (a cancelled test counts as an
+attempt). Every request is logged (`auto-compact test requested for <key>`).
+
+```
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"key":"claude:tty:/dev/ttys003"}' http://<host>:<port>/api/auto-compact/test
 ```
 
 Cancel works only in `scheduled` / `countdown`. A cancel (like a prompt or
@@ -41,6 +80,7 @@ Result push: category `auto_compact_done`, title
 
 ### iOS work still open (claude-companion-ios)
 
+Tracked as companion-ios #82 (open). Until it ships, cancel = type in the pane.
 The `auto_compact` category has **no registered action yet**, so a tap only
 opens the app; the push body tells the user to cancel by typing in the pane.
 To wire it:

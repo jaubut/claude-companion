@@ -12,6 +12,10 @@
 // pane through the guarded inject path. When the bytes appended after the
 // inject show a compact_boundary it pushes the result.
 //
+// AUTO_COMPACT_ONLY (key or name globs) narrows which sessions a Stop can arm.
+// POST /api/auto-compact/test arms one session on demand: same path and gates,
+// minus the size threshold (AutoCompactor.test).
+//
 // One attempt per Stop; a new Stop or any user prompt / typing supersedes or
 // cancels it. A per-session cooldown starts at the countdown push, so a
 // cancel also holds the next attempt off for COOLDOWN_MS.
@@ -55,6 +59,22 @@ export function thresholdFromEnv(env: Record<string, string | undefined> = proce
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
 }
 
+// AUTO_COMPACT_ONLY: comma list of session keys or name globs (`*`, `?`,
+// case-insensitive). Unset/blank → [] = every session.
+export function scopeFromEnv(env: Record<string, string | undefined> = process.env): string[] {
+  return (env.AUTO_COMPACT_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+}
+
+function globRegex(glob: string): RegExp {
+  const body = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")
+  return new RegExp(`^${body}$`, "i")
+}
+
+export function inScope(target: { key: string; name: string }, patterns: string[]): boolean {
+  if (patterns.length === 0) return true
+  return patterns.some((p) => { const re = globRegex(p); return re.test(target.key) || re.test(target.name) })
+}
+
 // ── Gate ──────────────────────────────────────────────────────────────────
 
 export type InputState = "empty" | "typing" | "not_ready" | "unknown"
@@ -70,6 +90,8 @@ export interface GateInput {
   lastAttemptAt: number
   cooldownMs: number
   input: InputState
+  // Test trigger: skip the size check (every other gate still applies).
+  force?: boolean
 }
 
 export type GateReason =
@@ -89,7 +111,7 @@ export type GateVerdict = { ok: true } | { ok: false; reason: GateReason }
 // "waiting" (a dialog) and unknown all refuse.
 export function compactGate(g: GateInput): GateVerdict {
   if (g.threshold <= 0) return { ok: false, reason: "off" }
-  if (g.tokens === null || g.tokens <= g.threshold) return { ok: false, reason: "below_threshold" }
+  if (!g.force && (g.tokens === null || g.tokens <= g.threshold)) return { ok: false, reason: "below_threshold" }
   if (g.lastAttemptAt > 0 && g.now - g.lastAttemptAt < g.cooldownMs) return { ok: false, reason: "cooldown" }
   if (g.now - g.lastUserActivityAt < g.idleMs) return { ok: false, reason: "user_active" }
   if (g.input === "typing") return { ok: false, reason: "typing" }
@@ -123,13 +145,20 @@ export interface AutoCompactDeps {
   push(kind: PushKind, target: CompactTarget, title: string, body: string): Promise<void>
   inject(key: string, text: string): Promise<{ ok: boolean; error?: string }>
   log(line: string): void
+  // AUTO_COMPACT_ONLY scope; absent = every session. Not consulted by test().
+  eligible?(target: CompactTarget): boolean
 }
+
+export type TestResult =
+  | { ok: true; waitMs: number; tokens: number | null }
+  | { ok: false; error: "off" | "busy" | "in_progress" | "cooldown" | "transcript_unreadable" }
 
 type Phase = "scheduled" | "countdown" | "injecting" | "awaiting_boundary"
 
 interface Pending {
   phase: Phase
   target: CompactTarget
+  test: boolean // armed by test(): the size threshold is skipped
   timer: unknown
   typingTimer: unknown
   tokens: number
@@ -209,6 +238,7 @@ export class AutoCompactor {
 
     const threshold = this.deps.threshold()
     if (threshold <= 0 || !target.transcriptPath) return
+    if (this.deps.eligible && !this.deps.eligible(target)) return
     const tail = await this.readTail(target.transcriptPath, contextSettled)
     if (!tail) return
     const tokens = contextTokens(tail.entries)
@@ -219,16 +249,42 @@ export class AutoCompactor {
       this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(threshold)} — cooldown`)
       return
     }
-    const activity = this.activityAt(target.key, tail)
-    const wait = Math.max(0, activity + IDLE_MS - now)
+    const wait = this.arm(target, tokens, tail, false)
+    this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(threshold)} — check in ${Math.round(wait / 1000)}s`)
+  }
+
+  // On-demand trigger for one session, whatever its size: the onStop path
+  // without the threshold (idle wait, gates, countdown push, CANCEL_MS,
+  // inject). Refuses up front what the gates would refuse anyway.
+  async test(target: CompactTarget): Promise<TestResult> {
+    if (this.deps.threshold() <= 0) return { ok: false, error: "off" }
+    const prior = this.pending.get(target.key)
+    if (prior?.phase === "injecting" || prior?.phase === "awaiting_boundary") return { ok: false, error: "in_progress" }
+    if (await this.deps.agentStatus(target.key) !== "idle") return { ok: false, error: "busy" }
+    const lastAttemptAt = this.lastAttempt.get(target.key) ?? 0
+    if (lastAttemptAt > 0 && this.deps.now() - lastAttemptAt < COOLDOWN_MS) return { ok: false, error: "cooldown" }
+    const tail = target.transcriptPath ? await this.readTail(target.transcriptPath, contextSettled) : null
+    if (!tail) return { ok: false, error: "transcript_unreadable" }
+    const cur = this.pending.get(target.key) // re-read: the awaits above may have raced a Stop
+    if (cur?.phase === "injecting" || cur?.phase === "awaiting_boundary") return { ok: false, error: "in_progress" }
+    if (cur) this.abort(target.key, "superseded by a test trigger", false)
+    const tokens = contextTokens(tail.entries)
+    const waitMs = this.arm(target, tokens ?? 0, tail, true)
+    this.deps.log(`auto-compact ${target.name}: TEST trigger (${tokens === null ? "?" : formatTokens(tokens)}) — check in ${Math.round(waitMs / 1000)}s`)
+    return { ok: true, waitMs, tokens }
+  }
+
+  // Schedule the gate check once the user has been quiet IDLE_MS; returns the wait.
+  private arm(target: CompactTarget, tokens: number, tail: Tail, test: boolean): number {
+    const wait = Math.max(0, this.activityAt(target.key, tail) + IDLE_MS - this.deps.now())
     const p: Pending = {
-      phase: "scheduled", target, tokens, timer: null, typingTimer: null,
+      phase: "scheduled", target, test, tokens, timer: null, typingTimer: null,
       offset: 0, injectedAt: 0, minBoundaryAt: 0, boundaryDeadline: 0,
     }
     this.pending.set(target.key, p)
     p.timer = this.deps.setTimer(() => { void this.evaluate(target.key, p) }, wait)
     this.watchTyping(target.key, p)
-    this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(threshold)} — check in ${Math.round(wait / 1000)}s`)
+    return wait
   }
 
   // The session's current context size from the same tail read onStop uses
@@ -350,6 +406,7 @@ export class AutoCompactor {
       lastAttemptAt: p.phase === "countdown" ? 0 : this.lastAttempt.get(key) ?? 0,
       cooldownMs: COOLDOWN_MS,
       input,
+      force: p.test,
     })
     return { verdict, tokens }
   }
@@ -367,7 +424,7 @@ export class AutoCompactor {
     p.phase = "countdown"
     this.lastAttempt.set(key, this.deps.now())
     const secs = Math.round(CANCEL_MS / 1000)
-    this.deps.log(`auto-compact ${p.target.name}: push countdown (${formatTokens(p.tokens)}, ${secs}s)`)
+    this.deps.log(`auto-compact ${p.target.name}: push countdown (${formatTokens(p.tokens)}, ${secs}s${p.test ? ", test" : ""})`)
     // No iOS Cancel action yet (docs/auto-compact-api.md) — say how to cancel.
     void this.deps.push("countdown", p.target, `compacting ${p.target.name} in ${secs}s`, `Context ${formatTokens(p.tokens)} tokens. To cancel, type anything in the session's pane.`)
       .catch(() => { /* push is best effort; the inject gate still applies */ })
