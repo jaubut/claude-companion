@@ -237,6 +237,7 @@ describe("humanDetail (JSON vitals detail → text every client shows)", () => {
   })
   test("plain text, JSON without warning/error, invalid JSON and null pass unchanged", () => {
     expect(humanDetail("exit 1")).toBe("exit 1")
+    expect(humanDetail(JSON.stringify({ today_total: 57913584, week_total: 1, avg_7d: 76618800, top_sessions: [] }))).toBe("today 57.9M · 7-day avg 76.6M")
     const noMsg = JSON.stringify({ today_total: 5 })
     expect(humanDetail(noMsg)).toBe(noMsg)
     expect(humanDetail("{not json")).toBe("{not json")

@@ -87,8 +87,11 @@ const cell = (v: Row[string] | undefined): Cell => (v === undefined ? null : v)
  * A collector may store its vitals detail as JSON (tokens:burn writes
  * `{"warning":…,"today_total":…,"top_sessions":[…]}`); every client shows
  * `detail` as text. JSON carrying a `warning` and/or `error` string becomes
- * that text; anything else (plain text, JSON without them) passes unchanged.
+ * that text; a healthy burn row (today_total + avg_7d) its two numbers; anything
+ * else (plain text, other JSON) passes unchanged.
  */
+const mega = (n: number): string => `${(n / 1e6).toFixed(1)}M`
+
 export function humanDetail(v: Row[string] | undefined): Cell {
   if (typeof v !== "string") return cell(v)
   const t = v.trim()
@@ -96,7 +99,10 @@ export function humanDetail(v: Row[string] | undefined): Cell {
   try {
     const o = JSON.parse(t) as Record<string, unknown>
     const parts = ["warning", "error"].map((k) => o[k]).filter((x): x is string => typeof x === "string" && x.trim() !== "")
-    return parts.length ? parts.join("; ") : v
+    if (parts.length) return parts.join("; ")
+    // A healthy tokens:burn row: its numbers, not the blob.
+    if (typeof o.today_total === "number" && typeof o.avg_7d === "number") return `today ${mega(o.today_total)} · 7-day avg ${mega(o.avg_7d)}`
+    return v
   } catch {
     return v
   }
