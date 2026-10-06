@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { MINE, TASKS_TZ, type TaskRow, listMine, localDay, normDate } from "./my-tasks"
+import { MINE, TASKS_TZ, type TaskRow, listMine, localDay, normDate, openMine } from "./my-tasks"
 import { setTaskDone, setTaskDue } from "./tasks-agent"
 import { guardedWrite, parseRowVersions, readTasks, versionOf } from "./tasks-agent-row"
 import type { ExecFn, QueryFn, TxFn } from "./turso"
@@ -205,7 +205,9 @@ export function createTasksChat(deps: TasksChatDeps) {
     const rows = await readTasks(deps.exec, listed.map((x) => x.id))
     const tasks = listed.filter((x) => {
       const r = rows.get(x.id)
-      return !!r && r.text === x.text && r.due === x.due && r.noteId === x.noteId && r.parentId === x.parentId
+      // Still open and still his (the listMine rule, re-checked on the snapshot row: a task closed or reassigned between the
+      // two reads is not eligible), and the same row listMine saw.
+      return !!r && openMine(r) && r.text === x.text && r.due === x.due && r.noteId === x.noteId && r.parentId === x.parentId
     })
     const plan = parsePlan(await deps.plan(planPrompt({ text, today, tasks, recent })), new Set(tasks.map((x) => x.id)))
     if (!plan) {

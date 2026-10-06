@@ -2040,7 +2040,7 @@
         },
         {
           "path": "lib/my-tasks.ts",
-          "lines": 254,
+          "lines": 260,
           "kind": "lib",
           "exports": [
             "MINE",
@@ -2060,6 +2060,8 @@
             "sectionFor",
             "fromRow",
             "buildCascade",
+            "OPEN_MINE_SQL",
+            "openMine",
             "listMine",
             "fingerprint",
             "WriteResult",
@@ -3567,7 +3569,7 @@
         },
         {
           "path": "lib/tasks-agent-chat.ts",
-          "lines": 270,
+          "lines": 272,
           "kind": "lib",
           "exports": [
             "CONFIRM_OVER",
@@ -9472,6 +9474,12 @@
         },
         "readTasks": {
           "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "openMine": {
+          "module": "lib/my-tasks.ts",
           "callers": [
             "lib/tasks-agent-chat.ts"
           ]

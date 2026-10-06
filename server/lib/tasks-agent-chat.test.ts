@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { createTasksAgentRoute } from "../routes/tasks-agent"
 import type { TasksAgent } from "./tasks-agent"
 import { CONFIRM_OVER, createTasksChat, parsePlan, planPrompt, renderList, tasksHint } from "./tasks-agent-chat"
-import type { TaskRow } from "./my-tasks"
+import { type TaskRow, listMine, openMine } from "./my-tasks"
 import type { ExecFn } from "./turso"
 import { testDb, txOver } from "./tasks-agent-testdb.test-util"
 
@@ -285,5 +285,46 @@ describe("chat tool", () => {
     expect(s.t.get(T)!.done).toBe(0)
     expect(ids(5).filter((id) => id !== T).every((id) => s.t.get(id)!.done === 1)).toBe(true)
     expect(s.turns.at(-1)!.text).toContain("skipped 1 changed since the plan")
+  })
+
+  describe("eligibility between listMine and the snapshot read", () => {
+    for (const [name, edit] of [
+      ["closed", "UPDATE tasks SET done = 1 WHERE id = ?"],
+      ["reassigned to an agent", "UPDATE tasks SET assignee = 'agent:builder' WHERE id = ?"],
+    ] as const) {
+      test(`a task ${name} between listMine and the snapshot is not moved, not logged, not reported as moved`, async () => {
+        const t = testDb()
+        const turns: string[] = []
+        const T = ids(1)[0]!
+        let fired = false
+        const query: typeof t.query = async (sql, args) => {
+          const r = await t.query(sql, args)
+          if (!fired && sql.includes("FROM tasks t")) { fired = true; t.db.query(edit).run(T) }
+          return r
+        }
+        const chat = createTasksChat({
+          query, exec: t.exec, tx: t.tx, now: () => NOW,
+          plan: async () => `{"op":"move","taskIds":${JSON.stringify([T])},"due":"2026-10-09"}`,
+          emitTurn: (x) => turns.push(x), notify: () => {},
+        })
+        seedGranby(t, 1)
+        await chat.handle("move Granby to Friday", "general")
+        expect(t.get(T)!.due_date).toBe("2026-10-07")
+        expect(t.activities().length).toBe(0)
+        expect(turns.join("\n")).not.toContain("Moved 1 task")
+      })
+    }
+
+    test("openMine (the snapshot rule) and listMine's SQL agree on every done / assignee combination", async () => {
+      const t = testDb()
+      const combos: [number, string | null][] = [
+        [0, "human:jeremie"], [0, "human"], [0, "agent:builder"], [0, null], [0, ""], [1, "human:jeremie"], [1, "agent:builder"], [1, null],
+      ]
+      combos.forEach(([done, assignee], i) => t.task({ id: `e${String(i).padStart(9, "0")}`, done, assignee }))
+      const listed = new Set((await listMine(t.query)).map((r) => r.id))
+      combos.forEach(([done, assignee], i) => {
+        expect(listed.has(`e${String(i).padStart(9, "0")}`)).toBe(openMine({ done: done === 1, assignee: assignee === "" ? null : assignee }))
+      })
+    })
   })
 })

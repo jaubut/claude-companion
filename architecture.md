@@ -56,15 +56,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
+| `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
-| `lib/tasks-agent-chat.ts` | 270 | lib | 14 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/question-hook.ts` | 263 | lib | 7 |  |
 | `lib/triage-sources.ts` | 262 | lib | 22 | state: HOLDS: Set |
+| `lib/my-tasks.ts` | 260 | lib | 25 |  |
 | `lib/triage-pr.ts` | 256 | lib | 20 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/auto-compact.ts` | 255 | lib | 6 | state: let statsDb |
-| `lib/my-tasks.ts` | 254 | lib | 23 |  |
 | `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
 | `lib/resolver-work.ts` | 238 | lib | 5 |  |
 | `lib/body-tokens.ts` | 236 | lib | 16 |  |
