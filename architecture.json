@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 100,
+          "lines": 101,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -68,6 +68,7 @@
             "routes/trips.ts",
             "routes/auto-compact.ts",
             "routes/gauge.ts",
+            "routes/my-tasks.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -1869,6 +1870,46 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/my-tasks.ts",
+          "lines": 253,
+          "kind": "lib",
+          "exports": [
+            "MINE",
+            "TASKS_TZ",
+            "MINE_LIMIT",
+            "WEEK_DAYS",
+            "SectionKey",
+            "SECTIONS",
+            "MyTask",
+            "MyProject",
+            "MySection",
+            "MyTasksResponse",
+            "TaskRow",
+            "normDate",
+            "localDay",
+            "addDays",
+            "sectionFor",
+            "fromRow",
+            "buildCascade",
+            "listMine",
+            "fingerprint",
+            "WriteResult",
+            "setDone",
+            "setDue"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4751,6 +4792,39 @@
           "externals": []
         },
         {
+          "path": "routes/my-tasks.ts",
+          "lines": 117,
+          "kind": "route-host",
+          "exports": [
+            "CACHE_TTL_MS",
+            "WATCH_MS",
+            "MyTasksDeps",
+            "createMyTasks",
+            "handleMyTasksRoute",
+            "startMyTasksWatch"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "*",
+              "path": "/api/tasks/mine",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/my-tasks.ts",
+            "lib/turso.ts",
+            "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/orchestrator.ts",
           "lines": 434,
           "kind": "route-host",
@@ -5951,6 +6025,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleMyTasksRoute": {
+          "module": "routes/my-tasks.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleOrchestratorRoute": {
           "module": "routes/orchestrator.ts",
           "callers": [
@@ -6187,6 +6267,7 @@
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/model.ts",
+            "routes/my-tasks.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/records.ts",
@@ -6525,7 +6606,9 @@
             "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
+            "lib/my-tasks.ts",
             "lib/triage-pr.ts",
+            "routes/my-tasks.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -6619,6 +6702,7 @@
             "lib/body-tokens.ts",
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
+            "lib/my-tasks.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
             "routes/goals.ts"
@@ -6631,10 +6715,12 @@
             "lib/body.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
+            "lib/my-tasks.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
             "routes/body.ts",
             "routes/goals.ts",
+            "routes/my-tasks.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -7171,6 +7257,7 @@
             "lib/triage-engine.ts",
             "routes/body.ts",
             "routes/goals.ts#GET /api/goals",
+            "routes/my-tasks.ts",
             "routes/orchestrator.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
@@ -7823,6 +7910,7 @@
             "lib/receipt-qa-worker.ts",
             "routes/body.ts",
             "routes/goals.ts",
+            "routes/my-tasks.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
@@ -9114,6 +9202,7 @@
             "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/my-tasks.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -10081,6 +10170,63 @@
             "routes/model.ts#POST /api/model/set"
           ]
         },
+        "tursoExec": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "routes/my-tasks.ts",
+            "wiring/body-investigate.ts",
+            "wiring/dispatch.ts"
+          ]
+        },
+        "MyTasksResponse": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts"
+          ]
+        },
+        "listMine": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts"
+          ]
+        },
+        "TASKS_TZ": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts",
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "buildCascade": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts"
+          ]
+        },
+        "fingerprint": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts"
+          ]
+        },
+        "setDone": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "normDate": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "setDue": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
         "emitChannel": {
           "module": "wiring/orchestrator.ts",
           "callers": [
@@ -10825,13 +10971,6 @@
           "callers": [
             "wiring/body-investigate.ts",
             "wiring/body.ts"
-          ]
-        },
-        "tursoExec": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "wiring/body-investigate.ts",
-            "wiring/dispatch.ts"
           ]
         },
         "investigateEnabled": {
