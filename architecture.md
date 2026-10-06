@@ -18,7 +18,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/resolver.ts` | 496 | lib | 45 | state: CLOSABLE: Set, REJECTABLE: Set |
-| `lib/auto-compact.ts` | 491 | lib | 22 |  |
+| `lib/auto-compact.ts` | 555 | lib | 25 |  |
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/triage.ts` | 487 | lib | 44 | state: DESTRUCTIVE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
@@ -122,7 +122,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/worker-identity.ts` | 130 | lib | 6 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/hook-common.ts` | 125 | lib | 9 |  |
-| `wiring/auto-compact.ts` | 125 | lib | 3 |  |
+| `wiring/auto-compact.ts` | 157 | lib | 5 |  |
 | `lib/worker-tail.ts` | 121 | lib | 3 | state: LIVE_STATUSES: Set |
 | `routes/my-tasks.ts` | 117 | route-host | 6 | route: * /api/tasks/mine |
 | `wiring/resolver-peer.ts` | 117 | lib | 7 | state: let store, let deps |
@@ -175,7 +175,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/gauge.ts` | 31 | route-host | 1 | routes: 2 |
 | `lib/push.ts` | 28 | lib | 2 |  |
 | `lib/worker-hook-gate.ts` | 25 | lib | 2 | state: let envReader |
-| `routes/auto-compact.ts` | 25 | route-host | 1 | routes: 2 |
+| `routes/auto-compact.ts` | 42 | route-host | 1 | routes: 3 |
 | `lib/session-removal-log.ts` | 24 | lib | 2 | state: let removedSinceDrain |
 | `lib/db-path.ts` | 14 | lib | 1 |  |
 

@@ -346,7 +346,7 @@
         },
         {
           "path": "lib/auto-compact.ts",
-          "lines": 491,
+          "lines": 555,
           "kind": "lib",
           "exports": [
             "IDLE_MS",
@@ -360,6 +360,8 @@
             "SCAN_CHUNK_BYTES",
             "COMPACT_TEXT",
             "thresholdFromEnv",
+            "scopeFromEnv",
+            "inScope",
             "InputState",
             "GateInput",
             "GateReason",
@@ -368,6 +370,7 @@
             "CompactTarget",
             "PushKind",
             "AutoCompactDeps",
+            "TestResult",
             "AutoCompactStatus",
             "formatTokens",
             "AutoCompactor"
@@ -4464,7 +4467,7 @@
         },
         {
           "path": "routes/auto-compact.ts",
-          "lines": 25,
+          "lines": 42,
           "kind": "route-host",
           "exports": [
             "handleAutoCompactRoute"
@@ -4476,6 +4479,11 @@
             {
               "method": "GET",
               "path": "/api/auto-compact",
+              "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/auto-compact/test",
               "prefix": false
             },
             {
@@ -5183,12 +5191,14 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 125,
+          "lines": 157,
           "kind": "lib",
           "exports": [
             "realAutoCompactDeps",
             "autoCompactor",
-            "compactTargetFor"
+            "compactTargetFor",
+            "compactTargetForKey",
+            "findTranscriptSync"
           ],
           "state": [],
           "emits": [],
@@ -5200,6 +5210,7 @@
             "lib/log.ts",
             "lib/sessions.ts",
             "lib/discover.ts",
+            "lib/session-titles.ts",
             "lib/inject-guard.ts",
             "lib/submit-confirm.ts",
             "lib/apns.ts",
@@ -6361,6 +6372,7 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/feed",
             "routes/attach.ts",
+            "routes/auto-compact.ts#POST /api/auto-compact/test",
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/body.ts#POST /api/body/alert",
             "routes/capture.ts",
@@ -7794,6 +7806,7 @@
           "module": "lib/session-titles.ts",
           "callers": [
             "lib/orphan-question.ts",
+            "wiring/auto-compact.ts",
             "wiring/events.ts"
           ]
         },
@@ -9689,16 +9702,30 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "scopeFromEnv": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "routes/auto-compact.ts#GET /api/auto-compact",
+            "wiring/auto-compact.ts"
+          ]
+        },
         "autoCompactor": {
           "module": "wiring/auto-compact.ts",
           "callers": [
             "routes/auto-compact.ts#GET /api/auto-compact",
+            "routes/auto-compact.ts#POST /api/auto-compact/test",
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/gauge.ts"
+          ]
+        },
+        "compactTargetForKey": {
+          "module": "wiring/auto-compact.ts",
+          "callers": [
+            "routes/auto-compact.ts#POST /api/auto-compact/test"
           ]
         },
         "BodySnapshot": {
@@ -10973,6 +11000,12 @@
           ]
         },
         "AutoCompactDeps": {
+          "module": "lib/auto-compact.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "inScope": {
           "module": "lib/auto-compact.ts",
           "callers": [
             "wiring/auto-compact.ts"

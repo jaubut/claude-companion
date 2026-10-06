@@ -189,6 +189,13 @@ export interface AutoCompactStatus {
   tokens: number
 }
 
+// A test trigger on a session with unknown context arms with 0 — leave the
+// count out rather than claim "Context 0 tokens".
+function countdownBody(tokens: number): string {
+  const ctx = tokens > 0 ? `Context ${formatTokens(tokens)} tokens. ` : ""
+  return `${ctx}To cancel, type anything in the session's pane.`
+}
+
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`
@@ -426,7 +433,7 @@ export class AutoCompactor {
     const secs = Math.round(CANCEL_MS / 1000)
     this.deps.log(`auto-compact ${p.target.name}: push countdown (${formatTokens(p.tokens)}, ${secs}s${p.test ? ", test" : ""})`)
     // No iOS Cancel action yet (docs/auto-compact-api.md) — say how to cancel.
-    void this.deps.push("countdown", p.target, `compacting ${p.target.name} in ${secs}s`, `Context ${formatTokens(p.tokens)} tokens. To cancel, type anything in the session's pane.`)
+    void this.deps.push("countdown", p.target, `compacting ${p.target.name} in ${secs}s`, countdownBody(p.tokens))
       .catch(() => { /* push is best effort; the inject gate still applies */ })
     p.timer = this.deps.setTimer(() => { void this.fire(key, p) }, CANCEL_MS)
   }

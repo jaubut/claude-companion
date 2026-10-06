@@ -182,6 +182,7 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
   let seq = 0
   let timers: Timer[] = []
   const pushes: Array<{ kind: string; title: string }> = []
+  const bodies: string[] = []
   const injects: string[] = []
   const logs: string[] = []
   const state = { transcript: opts.transcript, status: opts.status ?? "idle", input: opts.input ?? ("empty" as InputState), injectOk: true }
@@ -198,7 +199,7 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
     },
     agentStatus: async () => state.status,
     inputState: async () => state.input,
-    push: async (kind, _t, title) => { pushes.push({ kind, title }) },
+    push: async (kind, _t, title, body) => { pushes.push({ kind, title }); bodies.push(body) },
     inject: async (_k, text) => { injects.push(text); return state.injectOk ? { ok: true } : { ok: false, error: "dialog_open" } },
     log: (l) => logs.push(l),
     ...(opts.eligible === undefined ? {} : { eligible: () => opts.eligible! }),
@@ -220,7 +221,7 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
     await flush()
   }
   const target = { key: "k1", name: "wt", sessionId: "sid", transcriptPath: "/t.jsonl" }
-  return { c, state, pushes, injects, logs, reads, advance, target, nowAt: () => now }
+  return { c, state, pushes, bodies, injects, logs, reads, advance, target, nowAt: () => now }
 }
 
 const OLD_PROMPT = userPrompt("start", "2026-10-05T11:00:00Z") // an hour before the fake clock
@@ -497,6 +498,17 @@ describe("AutoCompactor.test (on-demand trigger)", () => {
     h.state.transcript += lines(boundary(40_001, 9_000))
     await h.advance(15_000)
     expect(h.pushes[1]).toEqual({ kind: "done", title: "compacted wt: 40k -> 9k tokens" })
+  })
+
+  test("countdown body shows the count, or leaves it out when unknown", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(0)
+    expect(h.bodies[0]).toBe("Context 40k tokens. To cancel, type anything in the session's pane.")
+    const u = harness({ transcript: lines(OLD_PROMPT, assistant(1, 40_000, 0), boundary(40_001, 9_000)) })
+    expect(await u.c.test(u.target)).toMatchObject({ ok: true, tokens: null })
+    await u.advance(0)
+    expect(u.bodies).toEqual(["To cancel, type anything in the session's pane."])
   })
 
   test("ignores AUTO_COMPACT_ONLY (explicit target)", async () => {
