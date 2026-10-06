@@ -150,6 +150,7 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   the row or its name is missing it falls back to the live session's name from
   this host's `~/.claude/sessions/*.json`, else `null`. `tmux` (optional, additive)
   is `token_sessions.tmux`; the key is absent when unknown.
+  When `token_sessions` has several rows for a session, the newest non-blank one (by `last_seen`) wins.
 - `top_agents` / `top_skills` (≤ 10): `source` rows with prefix `agent:` /
   `skill:`, prefix stripped into `name`; total descending, then name. `main`
   appears in neither.

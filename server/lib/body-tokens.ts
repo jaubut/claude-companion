@@ -105,10 +105,13 @@ const BY_DAY_SQL = `SELECT day, ${SUMS} FROM token_usage WHERE day >= ? GROUP BY
 const TOP_SESSIONS_SQL =
   `SELECT session_id, MAX(host) AS host, ${TOTAL} AS total, ${COST} FROM token_usage WHERE day >= ? ` +
   "GROUP BY session_id ORDER BY total DESC, session_id LIMIT ?"
-// Same top-N, names joined from token_sessions (outer ORDER BY: a join does not keep the subquery's order).
+// Same top-N, name/tmux looked up in token_sessions. Duplicate (host, session_id) rows are tolerated:
+// correlated subqueries pick the newest non-blank value by last_seen, so it stays one row per session.
+const sessionCol = (col: "name" | "tmux"): string =>
+  `(SELECT ${col} FROM token_sessions s WHERE s.host = t.host AND s.session_id = t.session_id ` +
+  `AND TRIM(COALESCE(s.${col}, '')) <> '' ORDER BY s.last_seen DESC LIMIT 1) AS ${col}`
 const TOP_SESSIONS_JOIN_SQL =
-  `SELECT t.*, s.name AS name, s.tmux AS tmux FROM (${TOP_SESSIONS_SQL}) t ` +
-  "LEFT JOIN token_sessions s ON s.host = t.host AND s.session_id = t.session_id ORDER BY t.total DESC, t.session_id"
+  `SELECT t.*, ${sessionCol("name")}, ${sessionCol("tmux")} FROM (${TOP_SESSIONS_SQL}) t ORDER BY t.total DESC, t.session_id`
 const TOP_SOURCE_SQL =
   `SELECT substr(source, ?) AS name, ${TOTAL} AS total, ${COST} FROM token_usage WHERE day >= ? AND source LIKE ? ` +
   "GROUP BY source ORDER BY total DESC, source LIMIT ?"
