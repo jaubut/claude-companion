@@ -20,6 +20,8 @@ export interface ResolverContext {
   sensitivePaths: string[]
   sensitive: boolean
   rescuedBefore: boolean
+  /** No-repo task only: the REPO_MAP names a `route` may name. */
+  repos?: string[]
   /** PR only: what a fix run needs. */
   pr?: { head: string; base: string; number: number; title: string; taskText: string }
 }
@@ -38,6 +40,7 @@ const ACTION_HELP: Record<ResolverActionKind, string> = {
   fix: '{"kind":"fix","instructions":"<precise, self-contained instructions for a builder working on the PR branch>"} — a fix run on the PR branch (never main)',
   approve: '{"kind":"approve"} — start the proposed work',
   reject: '{"kind":"reject","reason":"<why>"} — drop the proposal',
+  route: '{"kind":"route","repo":"<one exact name from Known repos>"} — the task could not be routed to a repo; name the repo it clearly targets and it restarts there',
   revise: '{"kind":"revise","title":"<short title>","prompt":"<the rescoped, self-contained worker prompt>"} — replace the proposal with a rescoped one',
 }
 
@@ -107,6 +110,7 @@ export function buildResolverPrompt(src: SourceItem, ctx: ResolverContext, job: 
     ...(src.project ? [`project: ${src.project}`] : []),
     ...(src.url ? [`url: ${src.url}`] : []),
     ...facts,
+    ...(actions.includes("route") && ctx.repos?.length ? [`Known repos (route must name one exactly; none when unclear): ${ctx.repos.join(", ")}`] : []),
     ...(ctx.sensitive ? [`SENSITIVE: touches ${ctx.sensitivePaths.join(", ") || "a sensitive area (shepherd)"} — write the threat-model review.`] : []),
     ...(ctx.rescuedBefore ? ["Opus already ran one rescue on this PR; do not propose another fix unless Jeremie asked."] : []),
     "",

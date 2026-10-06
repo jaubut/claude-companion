@@ -15,6 +15,8 @@ import { type GhFn, type PrReadiness, closePr, holdReason, mergePr, prReadiness,
 import { type ApprovedPr, type BodyLookup, bodySources, prApprovals, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
 import { type TriageStore, createTriageStore } from "../lib/triage-store"
 import type { TripTriage } from "../lib/trip-triage"
+import { type MyTaskTriage, createMyTaskTriage } from "../lib/mytask-triage"
+import { tursoExec, tursoQuery } from "../lib/turso"
 import { HOST_INFO, broadcast as wsBroadcast } from "../state"
 import { bodySnapshot } from "./body"
 import { bodyFixStore, bodyInvestigator, investigationStore } from "./body-investigate"
@@ -49,6 +51,8 @@ export interface LiveTriageOpts {
   body?: BodySnapshot
   /** Trip cards (source `trip`); default = the live travel log on the store host, none elsewhere. */
   trips?: Pick<TripTriage, "collect" | "current" | "execute"> | null
+  /** Overdue cards for Jeremie's own tasks (source `mytask`); default = live on the store host, none elsewhere. */
+  mytasks?: Pick<MyTaskTriage, "collect" | "current" | "execute"> | null
   broadcast?: (frame: Record<string, unknown>) => void
   now?: () => number
   /** The Opus resolver; default = the live one on the store host (never under `bun test`), null = off. */
@@ -63,7 +67,7 @@ function defaultModel(prompt: string): Promise<string | null> {
 }
 
 async function jevSeverity(src: SourceItem, phrase: Phrase): Promise<Severity | null> {
-  if (src.source === "trip") return null
+  if (src.source === "trip" || src.source === "mytask") return null
   if (process.env.COMPANION_TRIAGE_JEV?.trim() === "0" || process.env.NODE_ENV === "test") return null
   const out = await systemOne(
     { source: src.source, title: src.title, project: src.project, problem: phrase.problem, facts: src.facts },
@@ -107,6 +111,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   const body = opts.body ?? bodySnapshot
   const now = opts.now ?? Date.now
   const trips = opts.trips !== undefined ? opts.trips : ownsTrips() && process.env.NODE_ENV !== "test" ? tripsLive().triage : null
+  const mytasks = opts.mytasks !== undefined ? opts.mytasks
+    : ownsTrips() && process.env.NODE_ENV !== "test" ? createMyTaskTriage({ query: tursoQuery, exec: tursoExec, log: companionLog, onWrite: () => wsBroadcast({ type: "tasks_changed", why: "triage" }) }) : null
   let prCache: { at: number; items: SourceItem[] } | null = null
   let approved: ResolvingItem[] = []
   const readyCache = new Map<string, { at: number; ready: PrReadiness | null }>()
@@ -174,8 +180,10 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   async function collect(): Promise<SourceItem[]> {
     const tasks = taskSources(dispatch.snapshot() ?? [], (t) => dispatch.threadIdFor(t))
     const proposals = listProposals().map((t) => proposalItem(t.taskId)).filter((s): s is SourceItem => !!s)
-    const [prs, lookup, tripItems] = await Promise.all([prItems(), bodyLookup(), trips ? trips.collect() : Promise.resolve([])])
-    return [...tasks, ...proposals, ...prs, ...bodySources(investigations(), now(), lookup), ...tripItems]
+    const [prs, lookup, tripItems, mine] = await Promise.all([
+      prItems(), bodyLookup(), trips ? trips.collect() : Promise.resolve([]), mytasks ? mytasks.collect() : Promise.resolve([]),
+    ])
+    return [...tasks, ...proposals, ...prs, ...bodySources(investigations(), now(), lookup), ...tripItems, ...mine]
   }
 
   async function current(src: SourceItem): Promise<SourceItem | null> {
@@ -189,11 +197,12 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     if (ref.source === "proposal") return proposalItem(ref.taskId)
     if (ref.source === "pr") return (await prItems(true)).find((p) => p.refId === src.refId) ?? null
     if (ref.source === "trip") return trips ? trips.current(src) : null
+    if (ref.source === "mytask") return mytasks ? mytasks.current(src) : null
     return bodySources(investigations(), now(), await bodyLookup()).find((b) => b.refId === src.refId) ?? null
   }
 
   async function phrase(src: SourceItem): Promise<string | null> {
-    if (src.source === "trip") return null // deterministic card (lib/triage.ts), no model call
+    if (src.source === "trip" || src.source === "mytask") return null // deterministic card (lib/triage.ts), no model call
     let item = src
     if (src.ref.source === "task") {
       const found = await getDispatchTask(dispatch.query, await dispatch.columns(), src.ref.taskId).catch(() => null)
@@ -271,6 +280,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
       case "requeue": return src.ref.source === "body" ? requeueBody(src) : taskWrite("requeue", src, null, by)
       case "cancel": return taskWrite("cancel", src, null, by)
       case "approve":
+        if (src.ref.source === "mytask") return mytasks ? mytasks.execute(src, option) : { kind: "error", status: 400, error: "wrong_source" }
+        return proposalAction(src, option)
       case "reject": return proposalAction(src, option)
       case "merge":
       case "close_pr": return prAction(src, a.kind, by)
