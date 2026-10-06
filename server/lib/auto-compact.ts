@@ -12,6 +12,11 @@
 // pane through the guarded inject path. When the bytes appended after the
 // inject show a compact_boundary it pushes the result.
 //
+// AUTO_COMPACT_ONLY (key or name globs) narrows which sessions any automatic
+// trigger (size or boundary) can arm; the explicit test trigger ignores it.
+// POST /api/auto-compact/test arms one session on demand: same path and gates,
+// minus the size threshold (AutoCompactor.test).
+//
 // Boundary trigger (lib/auto-compact-keep.ts): under the size threshold but
 // over AUTO_COMPACT_BOUNDARY_TOKENS (default 250k), a Stop also arms when a
 // unit of work just closed — a PR merged, a dispatch / Turso task completed,
@@ -38,6 +43,7 @@
 // the real deps (tmux, APNs, Claude's
 // session file) are wired in wiring/auto-compact.ts.
 
+import { type GateVerdict, type InputState, compactGate } from "./auto-compact-gate"
 import { COMPACT_TEXT, type KeepState, type SessionSnapshot, SessionScan, type UnitReason, buildKeep } from "./auto-compact-keep"
 import {
   BackgroundScan, type CompactBoundary, type Entry, compactBoundaries, contextSettled, contextTokens,
@@ -59,66 +65,8 @@ export const TAIL_START_BYTES = 256 * 1024
 export const TAIL_MAX_BYTES = 16 * 1024 * 1024
 export const SCAN_CHUNK_BYTES = 1024 * 1024
 export { COMPACT_TEXT } from "./auto-compact-keep"
-export const DEFAULT_BOUNDARY_TOKENS = 250_000
-
-// AUTO_COMPACT_TOKENS: unset/blank/garbage/0/negative → off (0). Opt-in only.
-export function thresholdFromEnv(env: Record<string, string | undefined> = process.env): number {
-  const n = Number((env.AUTO_COMPACT_TOKENS ?? "").trim())
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
-}
-
-// AUTO_COMPACT_BOUNDARY_TOKENS: unset/blank/garbage → 250k; 0/negative → the
-// boundary trigger is off. Only consulted while AUTO_COMPACT_TOKENS is on.
-export function boundaryFromEnv(env: Record<string, string | undefined> = process.env): number {
-  const raw = (env.AUTO_COMPACT_BOUNDARY_TOKENS ?? "").trim()
-  const n = Number(raw)
-  if (!raw || !Number.isFinite(n)) return DEFAULT_BOUNDARY_TOKENS
-  return n > 0 ? Math.floor(n) : 0
-}
-
-// ── Gate ──────────────────────────────────────────────────────────────────
-
-export type InputState = "empty" | "typing" | "not_ready" | "unknown"
-
-export interface GateInput {
-  threshold: number
-  tokens: number | null
-  now: number
-  lastUserActivityAt: number
-  idleMs: number
-  agentStatus: string
-  backgroundTasks: number
-  lastAttemptAt: number
-  cooldownMs: number
-  input: InputState
-}
-
-export type GateReason =
-  | "off"
-  | "below_threshold"
-  | "cooldown"
-  | "user_active"
-  | "typing"
-  | "busy"
-  | "background_tasks"
-  | "pane_not_ready"
-
-export type GateVerdict = { ok: true } | { ok: false; reason: GateReason }
-
-// Every condition, cheapest first. `agentStatus` is Claude Code's own view
-// (~/.claude/sessions/<pid>.json); only an explicit "idle" passes — "busy",
-// "waiting" (a dialog) and unknown all refuse.
-export function compactGate(g: GateInput): GateVerdict {
-  if (g.threshold <= 0) return { ok: false, reason: "off" }
-  if (g.tokens === null || g.tokens <= g.threshold) return { ok: false, reason: "below_threshold" }
-  if (g.lastAttemptAt > 0 && g.now - g.lastAttemptAt < g.cooldownMs) return { ok: false, reason: "cooldown" }
-  if (g.now - g.lastUserActivityAt < g.idleMs) return { ok: false, reason: "user_active" }
-  if (g.input === "typing") return { ok: false, reason: "typing" }
-  if (g.agentStatus !== "idle") return { ok: false, reason: "busy" }
-  if (g.backgroundTasks > 0) return { ok: false, reason: "background_tasks" }
-  if (g.input !== "empty") return { ok: false, reason: "pane_not_ready" }
-  return { ok: true }
-}
+export { DEFAULT_BOUNDARY_TOKENS, boundaryFromEnv, inScope, scopeFromEnv, thresholdFromEnv } from "./auto-compact-settings"
+export { type GateInput, type GateReason, type GateVerdict, type InputState, compactGate } from "./auto-compact-gate"
 
 // ── Controller ────────────────────────────────────────────────────────────
 
@@ -131,12 +79,14 @@ export interface CompactTarget {
   cwd?: string
 }
 
-export type Trigger = "size" | UnitReason
+// size = over the threshold; a UnitReason = boundary trigger; test = on demand.
+export type Trigger = "size" | UnitReason | "test"
 
-const TRIGGER_LABEL: Record<UnitReason, string> = {
+const TRIGGER_LABEL: Record<Exclude<Trigger, "size">, string> = {
   pr_merged: "PR merged",
   task_completed: "task completed",
   closing_prompt: "task closed",
+  test: "test",
 }
 
 export interface CompactionDone {
@@ -162,6 +112,9 @@ export interface AutoCompactDeps {
   push(kind: PushKind, target: CompactTarget, title: string, body: string): Promise<void>
   inject(key: string, text: string): Promise<{ ok: boolean; error?: string }>
   log(line: string): void
+  // AUTO_COMPACT_ONLY scope; absent = every session. Gates every automatic
+  // trigger (size, boundary); not consulted by test().
+  eligible?(target: CompactTarget): boolean
   /** Boundary-trigger floor; absent or ≤ 0 = boundary trigger off. */
   boundaryThreshold?(): number
   /** Resolve the session's durable pointers (gh / Turso / STATE.md); absent → COMPACT_TEXT. */
@@ -170,12 +123,16 @@ export interface AutoCompactDeps {
   recordCompaction?(done: CompactionDone): void
 }
 
+export type TestResult =
+  | { ok: true; waitMs: number; tokens: number | null }
+  | { ok: false; error: "off" | "busy" | "in_progress" | "cooldown" | "transcript_unreadable" }
+
 type Phase = "scheduled" | "countdown" | "injecting" | "awaiting_boundary"
 
 interface Pending {
   phase: Phase
   target: CompactTarget
-  trigger: Trigger
+  trigger: Trigger // why it was armed; "test" skips only the size floor
   minTokens: number // the size floor this attempt was armed on
   timer: unknown
   typingTimer: unknown
@@ -211,6 +168,13 @@ export interface AutoCompactStatus {
   name: string
   tokens: number
   trigger: Trigger
+}
+
+// A test trigger on a session with unknown context arms with 0 — leave the
+// count out rather than claim "Context 0 tokens".
+function countdownBody(tokens: number, trigger: Trigger): string {
+  const parts = [tokens > 0 ? `Context ${formatTokens(tokens)} tokens` : "", trigger === "size" ? "" : TRIGGER_LABEL[trigger]].filter(Boolean)
+  return `${parts.length ? `${parts.join(", ")}. ` : ""}To cancel, type anything in the session's pane.`
 }
 
 export function formatTokens(n: number): string {
@@ -264,6 +228,7 @@ export class AutoCompactor {
 
     const threshold = this.deps.threshold()
     if (threshold <= 0 || !target.transcriptPath) return
+    if (this.deps.eligible && !this.deps.eligible(target)) return
     const tail = await this.readTail(target.transcriptPath, contextSettled)
     if (!tail) return
     const tokens = contextTokens(tail.entries)
@@ -280,15 +245,39 @@ export class AutoCompactor {
       trigger = reason
       minTokens = boundary
     }
-    const why = trigger === "size" ? "" : ` (${TRIGGER_LABEL[trigger]})`
     const now = this.deps.now()
     const lastAttemptAt = this.lastAttempt.get(target.key) ?? 0
     if (lastAttemptAt > 0 && now - lastAttemptAt < COOLDOWN_MS) {
-      this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(minTokens)}${why} — cooldown`)
+      this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(minTokens)}${trigger === "size" ? "" : ` (${TRIGGER_LABEL[trigger]})`} — cooldown`)
       return
     }
-    const activity = this.activityAt(target.key, tail)
-    const wait = Math.max(0, activity + IDLE_MS - now)
+    this.arm(target, tokens, tail, trigger, minTokens)
+  }
+
+  // On-demand trigger for one session, whatever its size: the onStop path
+  // without the threshold (idle wait, gates, countdown push, CANCEL_MS,
+  // inject). Refuses up front what the gates would refuse anyway.
+  async test(target: CompactTarget): Promise<TestResult> {
+    if (this.deps.threshold() <= 0) return { ok: false, error: "off" }
+    const prior = this.pending.get(target.key)
+    if (prior?.phase === "injecting" || prior?.phase === "awaiting_boundary") return { ok: false, error: "in_progress" }
+    if (await this.deps.agentStatus(target.key) !== "idle") return { ok: false, error: "busy" }
+    const lastAttemptAt = this.lastAttempt.get(target.key) ?? 0
+    if (lastAttemptAt > 0 && this.deps.now() - lastAttemptAt < COOLDOWN_MS) return { ok: false, error: "cooldown" }
+    const tail = target.transcriptPath ? await this.readTail(target.transcriptPath, contextSettled) : null
+    if (!tail) return { ok: false, error: "transcript_unreadable" }
+    const cur = this.pending.get(target.key) // re-read: the awaits above may have raced a Stop
+    if (cur?.phase === "injecting" || cur?.phase === "awaiting_boundary") return { ok: false, error: "in_progress" }
+    if (cur) this.abort(target.key, "superseded by a test trigger", false)
+    const tokens = contextTokens(tail.entries)
+    const waitMs = this.arm(target, tokens ?? 0, tail, "test", this.deps.threshold())
+    return { ok: true, waitMs, tokens }
+  }
+
+  // The one scheduler for every trigger (size, boundary, test): the gate check
+  // once the user has been quiet IDLE_MS; returns the wait.
+  private arm(target: CompactTarget, tokens: number, tail: Tail, trigger: Trigger, minTokens: number): number {
+    const wait = Math.max(0, this.activityAt(target.key, tail) + IDLE_MS - this.deps.now())
     const p: Pending = {
       phase: "scheduled", target, trigger, minTokens, tokens, timer: null, typingTimer: null,
       offset: 0, injectedAt: 0, minBoundaryAt: 0, boundaryDeadline: 0,
@@ -296,7 +285,9 @@ export class AutoCompactor {
     this.pending.set(target.key, p)
     p.timer = this.deps.setTimer(() => { void this.evaluate(target.key, p) }, wait)
     this.watchTyping(target.key, p)
+    const why = trigger === "size" ? "" : ` (${TRIGGER_LABEL[trigger]})`
     this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(minTokens)}${why} — check in ${Math.round(wait / 1000)}s`)
+    return wait
   }
 
   // The session's current context size from the same tail read onStop uses
@@ -424,6 +415,7 @@ export class AutoCompactor {
       lastAttemptAt: p.phase === "countdown" ? 0 : this.lastAttempt.get(key) ?? 0,
       cooldownMs: COOLDOWN_MS,
       input,
+      force: p.trigger === "test",
     })
     return { verdict, tokens }
   }
@@ -442,10 +434,9 @@ export class AutoCompactor {
     this.lastAttempt.set(key, this.deps.now())
     this.consumed.set(key, this.deps.now())
     const secs = Math.round(CANCEL_MS / 1000)
-    const why = p.trigger === "size" ? "" : `, ${TRIGGER_LABEL[p.trigger]}`
-    this.deps.log(`auto-compact ${p.target.name}: push countdown (${formatTokens(p.tokens)}${why}, ${secs}s)`)
+    this.deps.log(`auto-compact ${p.target.name}: push countdown (${formatTokens(p.tokens)}${p.trigger === "size" ? "" : `, ${TRIGGER_LABEL[p.trigger]}`}, ${secs}s)`)
     // No iOS Cancel action yet (docs/auto-compact-api.md) — say how to cancel.
-    void this.deps.push("countdown", p.target, `compacting ${p.target.name} in ${secs}s`, `Context ${formatTokens(p.tokens)} tokens${why}. To cancel, type anything in the session's pane.`)
+    void this.deps.push("countdown", p.target, `compacting ${p.target.name} in ${secs}s`, countdownBody(p.tokens, p.trigger))
       .catch(() => { /* push is best effort; the inject gate still applies */ })
     p.timer = this.deps.setTimer(() => { void this.fire(key, p) }, CANCEL_MS)
   }

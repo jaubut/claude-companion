@@ -19,6 +19,8 @@ import {
   TAIL_START_BYTES,
   compactBoundaries,
   compactGate as gate,
+  inScope,
+  scopeFromEnv,
   contextTokens as contextTokensOf,
   lastHumanPromptAt as lastHumanPromptAtOf,
   openBackgroundTasks as openBackgroundTasksOf,
@@ -124,6 +126,24 @@ describe("threshold setting", () => {
   })
 })
 
+describe("AUTO_COMPACT_ONLY scope", () => {
+  test("parse: unset/blank → [] (every session); comma list trimmed", () => {
+    expect(scopeFromEnv({})).toEqual([])
+    expect(scopeFromEnv({ AUTO_COMPACT_ONLY: " , " })).toEqual([])
+    expect(scopeFromEnv({ AUTO_COMPACT_ONLY: "tmux:%3, wt-*" })).toEqual(["tmux:%3", "wt-*"])
+  })
+  test("match key exactly or name by glob, case-insensitive", () => {
+    const t = { key: "tmux:%3", name: "WT-Companion" }
+    expect(inScope(t, [])).toBe(true)
+    expect(inScope(t, ["tmux:%3"])).toBe(true)
+    expect(inScope(t, ["wt-*"])).toBe(true)
+    expect(inScope(t, ["other", "wt-compan?on"])).toBe(true)
+    expect(inScope(t, ["tmux:%"])).toBe(false)
+    expect(inScope(t, ["wt"])).toBe(false)
+    expect(inScope(t, ["wt-(.*)"])).toBe(false) // regex chars are literal
+  })
+})
+
 describe("compactGate", () => {
   const now = 10_000_000
   const ok: GateInput = {
@@ -131,6 +151,12 @@ describe("compactGate", () => {
     agentStatus: "idle", backgroundTasks: 0, lastAttemptAt: 0, cooldownMs: COOLDOWN_MS, input: "empty",
   }
   test("passes when every condition holds", () => expect(gate(ok)).toEqual({ ok: true }))
+  test("force skips only the size check", () => {
+    expect(gate({ ...ok, tokens: 1_000, force: true })).toEqual({ ok: true })
+    expect(gate({ ...ok, tokens: null, force: true })).toEqual({ ok: true })
+    expect(gate({ ...ok, threshold: 0, force: true })).toEqual({ ok: false, reason: "off" })
+    expect(gate({ ...ok, tokens: 1_000, force: true, agentStatus: "busy" })).toEqual({ ok: false, reason: "busy" })
+  })
   test("off", () => expect(gate({ ...ok, threshold: 0 })).toEqual({ ok: false, reason: "off" }))
   test("threshold is strict", () => {
     expect(gate({ ...ok, tokens: 600_000 })).toEqual({ ok: false, reason: "below_threshold" })
@@ -156,11 +182,12 @@ describe("compactGate", () => {
 
 interface Timer { at: number; fn: () => void; id: number }
 
-function harness(opts: { transcript: string; status?: string; input?: InputState; threshold?: number; extra?: Partial<AutoCompactDeps> }) {
+function harness(opts: { transcript: string; status?: string; input?: InputState; threshold?: number; eligible?: boolean; extra?: Partial<AutoCompactDeps> }) {
   let now = Date.parse("2026-10-05T12:00:00Z")
   let seq = 0
   let timers: Timer[] = []
   const pushes: Array<{ kind: string; title: string }> = []
+  const bodies: string[] = []
   const injects: string[] = []
   const logs: string[] = []
   const state = { transcript: opts.transcript, status: opts.status ?? "idle", input: opts.input ?? ("empty" as InputState), injectOk: true }
@@ -177,9 +204,10 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
     },
     agentStatus: async () => state.status,
     inputState: async () => state.input,
-    push: async (kind, _t, title) => { pushes.push({ kind, title }) },
+    push: async (kind, _t, title, body) => { pushes.push({ kind, title }); bodies.push(body) },
     inject: async (_k, text) => { injects.push(text); return state.injectOk ? { ok: true } : { ok: false, error: "dialog_open" } },
     log: (l) => logs.push(l),
+    ...(opts.eligible === undefined ? {} : { eligible: () => opts.eligible! }),
     ...opts.extra,
   }
   const c = new AutoCompactor(deps)
@@ -199,7 +227,7 @@ function harness(opts: { transcript: string; status?: string; input?: InputState
     await flush()
   }
   const target = { key: "k1", name: "wt", sessionId: "sid", transcriptPath: "/t.jsonl" }
-  return { c, state, pushes, injects, logs, reads, advance, target, nowAt: () => now }
+  return { c, state, pushes, bodies, injects, logs, reads, advance, target, nowAt: () => now }
 }
 
 const OLD_PROMPT = userPrompt("start", "2026-10-05T11:00:00Z") // an hour before the fake clock
@@ -442,6 +470,117 @@ describe("AutoCompactor", () => {
     h.state.transcript = lines(boundary(900_000, 20_000, "old"))
     await h.advance(15_000 * 2)
     expect(h.pushes.map((p) => p.kind)).toEqual(["countdown"])
+  })
+})
+
+describe("AUTO_COMPACT_ONLY in the controller", () => {
+  test("out-of-scope session: a big Stop arms nothing", async () => {
+    const h = harness({ transcript: BIG, eligible: false })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS * 2)
+    expect(h.pushes).toEqual([])
+    expect(h.c.status()).toEqual([])
+  })
+  test("in-scope session behaves as before", async () => {
+    const h = harness({ transcript: BIG, eligible: true })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+  })
+})
+
+describe("AutoCompactor.test (on-demand trigger)", () => {
+  const SMALL = lines(OLD_PROMPT, assistant(1, 40_000, 0))
+
+  test("small session: countdown push, 60 s, then /compact, then done", async () => {
+    const h = harness({ transcript: SMALL })
+    expect(await h.c.test(h.target)).toEqual({ ok: true, waitMs: 0, tokens: 40_001 })
+    await h.advance(0)
+    expect(h.pushes).toEqual([{ kind: "countdown", title: "compacting wt in 60s" }])
+    await h.advance(CANCEL_MS - 1)
+    expect(h.injects).toEqual([])
+    await h.advance(1)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    h.state.transcript += lines(boundary(40_001, 9_000))
+    await h.advance(15_000)
+    expect(h.pushes[1]).toEqual({ kind: "done", title: "compacted wt: 40k -> 9k tokens" })
+  })
+
+  test("countdown body shows the count, or leaves it out when unknown", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(0)
+    expect(h.bodies[0]).toBe("Context 40k tokens, test. To cancel, type anything in the session's pane.")
+    const u = harness({ transcript: lines(OLD_PROMPT, assistant(1, 40_000, 0), boundary(40_001, 9_000)) })
+    expect(await u.c.test(u.target)).toMatchObject({ ok: true, tokens: null })
+    await u.advance(0)
+    expect(u.bodies).toEqual(["test. To cancel, type anything in the session's pane."])
+  })
+
+  test("ignores AUTO_COMPACT_ONLY (explicit target)", async () => {
+    const h = harness({ transcript: SMALL, eligible: false })
+    expect((await h.c.test(h.target)).ok).toBe(true)
+  })
+
+  test("refused when the feature is off", async () => {
+    const h = harness({ transcript: SMALL, threshold: 0 })
+    expect(await h.c.test(h.target)).toEqual({ ok: false, error: "off" })
+    expect(h.c.status()).toEqual([])
+  })
+
+  test("refused when the session is busy (or waiting)", async () => {
+    for (const status of ["busy", "waiting"]) {
+      const h = harness({ transcript: SMALL, status })
+      expect(await h.c.test(h.target)).toEqual({ ok: false, error: "busy" })
+      expect(h.c.status()).toEqual([])
+    }
+  })
+
+  test("cancel during the countdown → no inject", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(0)
+    expect(h.c.cancel("k1")).toBe(true)
+    await h.advance(CANCEL_MS * 2)
+    expect(h.injects).toEqual([])
+  })
+
+  test("typing in the pane during the countdown → no inject", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(0)
+    h.state.input = "typing"
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([])
+  })
+
+  test("still waits out the idle window after a recent prompt", async () => {
+    const h = harness({ transcript: SMALL })
+    h.c.noteUserActivity("k1")
+    const r = await h.c.test(h.target)
+    expect(r).toEqual({ ok: true, waitMs: IDLE_MS, tokens: 40_001 })
+    await h.advance(IDLE_MS - 1)
+    expect(h.pushes).toEqual([])
+    await h.advance(1)
+    expect(h.pushes.map((p) => p.kind)).toEqual(["countdown"])
+  })
+
+  test("refused during cooldown and while a compaction is in flight", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.advance(CANCEL_MS)
+    expect(await h.c.test(h.target)).toEqual({ ok: false, error: "in_progress" })
+    h.state.transcript += lines(boundary(40_001, 9_000))
+    await h.advance(15_000)
+    expect(await h.c.test(h.target)).toEqual({ ok: false, error: "cooldown" })
+  })
+
+  test("a later normal Stop on a small session does not re-arm the test", async () => {
+    const h = harness({ transcript: SMALL })
+    await h.c.test(h.target)
+    await h.c.onStop(h.target) // supersedes; below threshold → nothing
+    await h.advance(CANCEL_MS * 2)
+    expect(h.pushes).toEqual([])
   })
 })
 
@@ -697,5 +836,101 @@ describe("compaction stats", () => {
     expect(compactionStats(db, 150)).toEqual({ count: 1, pre_tokens: 300_000, post_tokens: 20_000, saved: 280_000 })
     expect(compactionStats(db, 0)).toEqual({ count: 2, pre_tokens: 950_000, post_tokens: 50_000, saved: 900_000 })
     expect(compactionStats(db, 300).count).toBe(0)
+  })
+})
+
+describe("integration: scope + test trigger + boundary trigger", () => {
+  const MID = (...l: string[]) => lines(OLD_PROMPT, ...l, assistant(1, 300_000, 0))
+  const keepOf = { prs: [{ number: 14, repo: "jaubut/chantalmasse-website", state: "MERGED" }], notes: [], next: [], human: [] }
+  const extra = (more: Partial<AutoCompactDeps> = {}): Partial<AutoCompactDeps> => ({
+    boundaryThreshold: () => 250_000, keepState: async () => keepOf, ...more,
+  })
+  const MERGED = MID(userPrompt("merge pr 14", "2026-10-05T11:00:00Z"), ...PR14_MERGE)
+  const SMALL = lines(OLD_PROMPT, assistant(1, 40_000, 0))
+
+  test("AUTO_COMPACT_ONLY gates the boundary trigger too, before the transcript is read", async () => {
+    const out = harness({ transcript: MERGED, eligible: false, extra: extra() })
+    await out.c.onStop(out.target)
+    await out.advance(10 * 60_000)
+    expect(out.pushes).toEqual([])
+    expect(out.reads).toEqual([])
+    expect(out.c.status()).toEqual([])
+    const inn = harness({ transcript: MERGED, eligible: true, extra: extra() })
+    await inn.c.onStop(inn.target)
+    expect(inn.c.status().map((s) => s.trigger)).toEqual(["pr_merged"])
+  })
+
+  test("AUTO_COMPACT_ONLY gates the size trigger before the transcript is read", async () => {
+    const h = harness({ transcript: BIG, eligible: false })
+    await h.c.onStop(h.target)
+    expect(h.reads).toEqual([])
+  })
+
+  test("test trigger ignores scope and uses the state-aware keep text", async () => {
+    const h = harness({ transcript: SMALL, eligible: false, extra: extra() })
+    expect((await h.c.test(h.target)).ok).toBe(true)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual(["/compact keep: current task, decisions made; PRs: jaubut/chantalmasse-website#14 MERGED"])
+  })
+
+  test("test trigger falls back to COMPACT_TEXT when the keep lookup fails", async () => {
+    const h = harness({ transcript: SMALL, extra: extra({ keepState: async () => { throw new Error("gh down") } }) })
+    await h.c.test(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+  })
+
+  test("test trigger: countdown push names the reason, pending lists the trigger, stats record 'test'", async () => {
+    const done: CompactionDone[] = []
+    const h = harness({ transcript: SMALL, extra: extra({ recordCompaction: (d) => done.push(d) }) })
+    await h.c.test(h.target)
+    expect(h.c.status().map((s) => s.trigger)).toEqual(["test"])
+    await h.advance(0)
+    expect(h.bodies[0]).toBe("Context 40k tokens, test. To cancel, type anything in the session's pane.")
+    await h.advance(CANCEL_MS)
+    h.state.transcript += lines(boundary(40_001, 9_000))
+    await h.advance(15_000)
+    expect(done.map((d) => [d.trigger, d.preTokens, d.postTokens])).toEqual([["test", 40_001, 9_000]])
+  })
+
+  test("size and boundary countdown bodies keep their wording", async () => {
+    const size = harness({ transcript: BIG })
+    await size.c.onStop(size.target)
+    await size.advance(0)
+    expect(size.bodies[0]).toMatch(/^Context \d+k tokens\. To cancel/)
+    const b = harness({ transcript: MERGED, extra: extra() })
+    await b.c.onStop(b.target)
+    await b.advance(0)
+    expect(b.bodies[0]).toBe("Context 300k tokens, PR merged. To cancel, type anything in the session's pane.")
+  })
+
+  test("force skips only the size threshold: busy / cooldown / off still refuse", async () => {
+    const busy = harness({ transcript: SMALL, status: "busy" })
+    expect(await busy.c.test(busy.target)).toEqual({ ok: false, error: "busy" })
+    const off = harness({ transcript: SMALL, threshold: 0 })
+    expect(await off.c.test(off.target)).toEqual({ ok: false, error: "off" })
+    const cd = harness({ transcript: SMALL })
+    await cd.c.test(cd.target)
+    await cd.advance(CANCEL_MS)
+    cd.state.transcript += lines(boundary(40_001, 9_000))
+    await cd.advance(15_000)
+    expect(await cd.c.test(cd.target)).toEqual({ ok: false, error: "cooldown" })
+    // armed test whose gate then fails at the check (agent turned busy)
+    const late = harness({ transcript: SMALL })
+    await late.c.test(late.target)
+    late.state.status = "busy"
+    await late.advance(CANCEL_MS * 2)
+    expect(late.injects).toEqual([])
+  })
+
+  test("a closing is consumed once at the countdown even when a test countdown fired in between", async () => {
+    const h = harness({ transcript: MERGED, extra: extra() })
+    await h.c.onStop(h.target)
+    await h.advance(0)
+    h.c.cancel("k1")
+    await h.advance(COOLDOWN_MS + 1)
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.pushes.length).toBe(1)
   })
 })

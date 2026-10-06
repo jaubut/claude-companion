@@ -1,11 +1,12 @@
 import { type FileHandle, open, readFile, stat } from "node:fs/promises"
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
 import { Database } from "bun:sqlite"
 import {
   type AutoCompactDeps, AutoCompactor, type CompactionDone, type CompactTarget, type InputState, type PushKind,
-  boundaryFromEnv, thresholdFromEnv,
+  boundaryFromEnv, inScope, scopeFromEnv, thresholdFromEnv,
 } from "../lib/auto-compact"
 import { type KeepNote, type KeepPr, type KeepState, type SessionSnapshot, stateNextLines } from "../lib/auto-compact-keep"
 import { type CompactionStats, compactionStats, ensureCompactionLog, insertCompaction } from "../lib/auto-compact-stats"
@@ -16,6 +17,7 @@ import { type Row, tursoQuery } from "../lib/turso"
 import { companionLog } from "../lib/log"
 import { getSessionByKey, type Session } from "../lib/sessions"
 import { readClaudeSessionFile } from "../lib/discover"
+import { transcriptPath } from "../lib/session-titles"
 import { injectRefusal, paneNotReady } from "../lib/inject-guard"
 import { injectConfirmed } from "../lib/submit-confirm"
 import { apnsConfigured } from "../lib/apns"
@@ -205,6 +207,7 @@ export const realAutoCompactDeps: AutoCompactDeps = {
   push,
   inject,
   log: (line) => companionLog(`\x1b[36m${line}\x1b[0m`),
+  eligible: (target) => inScope(target, scopeFromEnv()),
   boundaryThreshold: () => boundaryFromEnv(),
   keepState,
   recordCompaction,
@@ -221,4 +224,31 @@ export function compactTargetFor(session: Session, transcriptPath: string | unde
     transcriptPath,
     cwd: session.cwd,
   }
+}
+
+// Test trigger: the registry has no transcript path, so derive it from the
+// session's cwd + id (Claude's ~/.claude/projects layout).
+export function compactTargetForKey(key: string, projectsDir = join(homedir(), ".claude", "projects")): CompactTarget | null {
+  const s = claudeSession(key)
+  if (!s?.sessionId || !s.cwd) return null
+  return compactTargetFor(s, findTranscriptSync(s.cwd, s.sessionId, projectsDir), s.sessionId)
+}
+
+// cwd-derived path first; else `<sessionId>.jsonl` in any project dir (a
+// session resumed from another folder keeps its file under the original one),
+// newest if several. Neither → the cwd path, which test() reports unreadable.
+export function findTranscriptSync(cwd: string, sessionId: string, projectsDir: string): string {
+  const direct = transcriptPath(cwd, sessionId, projectsDir)
+  if (existsSync(direct)) return direct
+  let best: { path: string; mtime: number } | null = null
+  let dirs: string[] = []
+  try { dirs = readdirSync(projectsDir) } catch { /* no projects dir */ }
+  for (const d of dirs) {
+    const path = join(projectsDir, d, `${sessionId}.jsonl`)
+    try {
+      const mtime = statSync(path).mtimeMs
+      if (!best || mtime > best.mtime) best = { path, mtime }
+    } catch { /* not here */ }
+  }
+  return best?.path ?? direct
 }
