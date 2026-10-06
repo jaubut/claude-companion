@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05",
+  "generatedAt": "2026-10-06",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1040,7 +1040,7 @@
         },
         {
           "path": "lib/dashboard-client.ts",
-          "lines": 118,
+          "lines": 172,
           "kind": "lib",
           "exports": [
             "DASHBOARD_KEY_NAME",
@@ -1058,7 +1058,19 @@
             "extractReceipt",
             "saveExpense",
             "patchExpense",
-            "fetchReceiptFile"
+            "fetchReceiptFile",
+            "VOICE_SLOW_TIMEOUT_MS",
+            "startRecording",
+            "postRecordingChunk",
+            "finalizeRecording",
+            "transcribeInbox",
+            "getInboxEntry",
+            "listInbox",
+            "patchInbox",
+            "fetchInboxAudio",
+            "createNote",
+            "getNote",
+            "listNotesLite"
           ],
           "state": [],
           "emits": [],
@@ -3962,6 +3974,47 @@
           "externals": []
         },
         {
+          "path": "lib/voice-memo.ts",
+          "lines": 351,
+          "kind": "lib",
+          "exports": [
+            "VOICE_HINT",
+            "CHUNK_MAX_BYTES",
+            "TRANSCRIPT_MAX",
+            "VoiceStatus",
+            "VoiceMemo",
+            "ProjectRef",
+            "Outcome",
+            "transcriptOf",
+            "isoUtc",
+            "toMemo",
+            "base64Size",
+            "voiceStart",
+            "voiceChunk",
+            "voiceFinalize",
+            "voiceTranscribe",
+            "voiceList",
+            "voiceGet",
+            "AudioOutcome",
+            "voiceAudio",
+            "voiceValidate",
+            "voiceDiscard",
+            "voiceProjects"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dashboard-client.ts",
+            "lib/log.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/waiting.ts",
           "lines": 66,
           "kind": "lib",
@@ -4299,10 +4352,13 @@
         },
         {
           "path": "routes/capture.ts",
-          "lines": 204,
+          "lines": 323,
           "kind": "lib",
           "exports": [
             "captureLimiter",
+            "voiceChunkLimiter",
+            "audioResponse",
+            "parseVoicePath",
             "parseItemPath",
             "handleCaptureRoute"
           ],
@@ -4320,6 +4376,7 @@
             "lib/receipt-qa-store.ts",
             "lib/receipt-qa-worker.ts",
             "lib/vault-guard.ts",
+            "lib/voice-memo.ts",
             "lib/vault-upstream.ts"
           ],
           "listeners": [],
@@ -5876,12 +5933,6 @@
             "lib/transcript.ts"
           ]
         },
-        "identityFor": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
         "verbFor": {
           "module": "lib/tool-format.ts",
           "callers": [
@@ -5984,6 +6035,7 @@
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
             "lib/vault-upstream.ts",
+            "lib/voice-memo.ts",
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/api.ts#DELETE /api/learned",
@@ -6378,13 +6430,6 @@
             "wiring/body.ts"
           ]
         },
-        "BASE_DISALLOWED": {
-          "module": "lib/readonly-claude.ts",
-          "callers": [
-            "lib/body-investigator.ts",
-            "lib/quick-look.ts"
-          ]
-        },
         "readonlyArgs": {
           "module": "lib/readonly-claude.ts",
           "callers": [
@@ -6598,15 +6643,6 @@
           "module": "lib/command-offpane.ts",
           "callers": [
             "lib/command-offpane-cache.ts"
-          ]
-        },
-        "tmuxArgv": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/command-offpane-launch.ts",
-            "lib/key-gate.ts",
-            "lib/keyboard-inject.ts",
-            "lib/spawn-session.ts"
           ]
         },
         "helpTab": {
@@ -6908,14 +6944,6 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-poller.ts"
-          ]
-        },
-        "ProjectRef": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-poller.ts",
-            "lib/front-door.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "TaskDto": {
@@ -7530,7 +7558,8 @@
           "module": "lib/dashboard-client.ts",
           "callers": [
             "lib/receipt-capture.ts",
-            "lib/receipt-qa-worker.ts"
+            "lib/receipt-qa-worker.ts",
+            "lib/voice-memo.ts"
           ]
         },
         "extractReceipt": {
@@ -7545,6 +7574,7 @@
             "lib/receipt-capture.ts",
             "lib/receipt-qa-worker.ts",
             "lib/trip-dashboard.ts",
+            "lib/voice-memo.ts",
             "routes/capture.ts",
             "routes/trips.ts"
           ]
@@ -7567,6 +7597,7 @@
             "lib/receipt-capture.ts",
             "lib/receipt-qa-worker.ts",
             "lib/trip-dashboard.ts",
+            "lib/voice-memo.ts",
             "routes/capture.ts",
             "routes/trips.ts"
           ]
@@ -8006,12 +8037,6 @@
             "lib/resolver-fix-guard.ts"
           ]
         },
-        "conflictPolicyLines": {
-          "module": "lib/resolver-fix-policy.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
         "GitFn": {
           "module": "lib/resolver-fix-guard.ts",
           "callers": [
@@ -8020,12 +8045,6 @@
         },
         "guardFixRange": {
           "module": "lib/resolver-fix-guard.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
-        "fixDisallowed": {
-          "module": "lib/resolver-fix-policy.ts",
           "callers": [
             "lib/resolver-fix.ts"
           ]
@@ -8049,12 +8068,6 @@
           "callers": [
             "lib/resolver-prompt.ts",
             "lib/resolver.ts"
-          ]
-        },
-        "allowedActions": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver-prompt.ts"
           ]
         },
         "resolverActions": {
@@ -8176,14 +8189,6 @@
             "lib/resolver-work.ts"
           ]
         },
-        "fallbackPhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver-work.ts",
-            "lib/resolver.ts",
-            "lib/triage-engine.ts"
-          ]
-        },
         "buildResolverPrompt": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -8234,6 +8239,13 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
+          ]
+        },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts",
+            "lib/triage-engine.ts"
           ]
         },
         "storePath": {
@@ -8339,12 +8351,6 @@
           ]
         },
         "spawnNewSessionFlags": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/spawn-session.ts"
-          ]
-        },
-        "spawnServerFlags": {
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/spawn-session.ts"
@@ -8766,12 +8772,6 @@
             "lib/trip-triage.ts"
           ]
         },
-        "uploadInput": {
-          "module": "lib/trip-service.ts",
-          "callers": [
-            "lib/trip-triage.ts"
-          ]
-        },
         "rowInput": {
           "module": "lib/trip-service.ts",
           "callers": [
@@ -8784,6 +8784,66 @@
             "lib/vault-guard.ts",
             "routes/records.ts",
             "routes/vault.ts"
+          ]
+        },
+        "finalizeRecording": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "fetchInboxAudio": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "createNote": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "startRecording": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "postRecordingChunk": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "transcribeInbox": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "getInboxEntry": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "listInbox": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "patchInbox": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
+          ]
+        },
+        "listNotesLite": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/voice-memo.ts"
           ]
         },
         "matchUnboundTaskById": {
@@ -8981,13 +9041,6 @@
             "ws.ts"
           ]
         },
-        "waitingSummary": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/api.ts#* /api/status",
-            "ws.ts"
-          ]
-        },
         "dialogWatcher": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -9159,12 +9212,6 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "HISTORY_STATES": {
-          "module": "lib/approval-history.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
           ]
         },
         "getHistoryItem": {
@@ -9365,6 +9412,72 @@
         },
         "resolveByHuman": {
           "module": "lib/receipt-qa-worker.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "Outcome": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceAudio": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceList": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceProjects": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceStart": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceGet": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceChunk": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceFinalize": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceTranscribe": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceValidate": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceDiscard": {
+          "module": "lib/voice-memo.ts",
           "callers": [
             "routes/capture.ts"
           ]
@@ -9847,8 +9960,7 @@
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+            "routes/orchestrator.ts"
           ]
         },
         "setChannelAuto": {
@@ -9940,14 +10052,6 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts"
-          ]
-        },
-        "getNote": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "fileTask": {
@@ -11326,18 +11430,6 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver-peer.ts",
-            "wiring/resolver.ts"
-          ]
-        },
-        "QUICK_LOOK_ALLOWED": {
-          "module": "lib/quick-look.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "QUICK_LOOK_DISALLOWED": {
-          "module": "lib/quick-look.ts",
-          "callers": [
             "wiring/resolver.ts"
           ]
         },
