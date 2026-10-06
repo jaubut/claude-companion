@@ -202,6 +202,7 @@ import { reconcileLiveOnBoot } from "./server/wiring/live"
 import { startBodyInvestigate } from "./server/wiring/body-investigate"
 import { startTriage } from "./server/wiring/triage"
 import { startTrips } from "./server/wiring/trips"
+import { startMyTasksWatch } from "./server/routes/my-tasks"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -227,6 +228,7 @@ startBodyInvestigate()
 // Brain triage: recompute after every dispatch poll / proposal change; phrase new items in the background.
 startTriage()
 startTrips()
+startMyTasksWatch()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"
