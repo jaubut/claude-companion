@@ -116,7 +116,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-sonnet.ts` | 138 | lib | 11 | state: MONEY_FIELDS: Set |
 | `routes/body.ts` | 138 | route-host | 3 | routes: 6 |
 | `lib/turso.ts` | 137 | lib | 7 | state: let agentToken, let agentEnvRead |
-| `lib/mytask-triage.ts` | 134 | lib | 10 |  |
+| `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/vault-guard.ts` | 134 | lib | 17 | state: peers: WeakMap |
 | `lib/worker-identity.ts` | 130 | lib | 6 |  |

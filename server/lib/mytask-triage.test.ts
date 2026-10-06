@@ -34,6 +34,7 @@ describe("overdueItems", () => {
     const a = overdueItems([row("a", "2026-10-01")], TODAY, NOW)[0]!.version
     const b = overdueItems([row("a", "2026-10-02")], TODAY, NOW)[0]!.version
     expect(a).not.toBe(b)
+    expect(a.startsWith("r2|")).toBe(true) // phrasing revision: a phrasing change re-renders cached cards
   })
 })
 

@@ -17,6 +17,8 @@ export const COLLECT_TTL_MS = 60_000
 /** Overdue by more than this → recommend dropping the date instead of moving it. */
 export const STALE_DAYS = 14
 export const NEXT_WEEK_DAYS = 7
+/** Bump when the deterministic phrasing/severity changes: the triage store caches a card per version. */
+export const PHRASE_REV = 2
 
 export type TaskOp = "done" | "next_week" | "undate"
 
@@ -50,7 +52,7 @@ export function overdueItems(rows: TaskRow[], today: string, nowMs: number): Sou
       items.push({
         source: "mytask",
         refId: batch ? `p:${noteId}` : g[0]!.id,
-        version: g.map((r) => `${r.id}@${r.due}`).join(","),
+        version: `r${PHRASE_REV}|${g.map((r) => `${r.id}@${r.due}`).join(",")}`,
         title: batch ? `${g.length} overdue tasks in ${project}` : g[0]!.text,
         project,
         createdAt: t, updatedAt: t,

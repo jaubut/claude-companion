@@ -1919,13 +1919,14 @@
         },
         {
           "path": "lib/mytask-triage.ts",
-          "lines": 134,
+          "lines": 136,
           "kind": "lib",
           "exports": [
             "BATCH_MIN",
             "COLLECT_TTL_MS",
             "STALE_DAYS",
             "NEXT_WEEK_DAYS",
+            "PHRASE_REV",
             "TaskOp",
             "MyTaskTriageDeps",
             "overdueItems",
