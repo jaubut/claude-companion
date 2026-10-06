@@ -13,6 +13,7 @@ import { Database } from "bun:sqlite"
 import { recordSession } from "./sessions"
 import { drainRemovalCount } from "./session-removal-log"
 import { envHasScrapeVar, isScrapeTarget } from "./scrape-registry"
+import { isDispatchWorkerPid } from "./dispatch-worker"
 import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
 import { companionLog } from "./log"
 
@@ -123,6 +124,16 @@ export async function isScrapeProcess(pid: string, tty: string, deps: ScrapeProc
   if (!(await (deps.ownsTty ?? ttyOwnedByMe)(tty))) return false
   const env = await (deps.envOf ?? processEnvEntries)(pid)
   return env ? envHasScrapeVar(env) : false
+}
+
+// A live claude the picker must not list: the companion's own hidden /help
+// enumeration claude (lib/command-offpane.ts) — by its registered tty, or by the
+// scrape var in its environment — or a dispatch worker. The herdr runner's worker
+// has a tty (legacy `claude -p` has none and never got this far) but is no phone
+// conversation: DISPATCH_WORKER=1 in its env.
+export async function isIgnoredAgentProcess(pid: string, tty: string, deps: ScrapeProcessDeps = {}): Promise<boolean> {
+  if (await isScrapeProcess(pid, tty, deps)) return true
+  return isDispatchWorkerPid(pid, deps.envOf ?? processEnvEntries)
 }
 
 async function findCwdForPid(pid: string): Promise<string> {
@@ -395,9 +406,7 @@ async function discoverOnce(): Promise<{ registered: number }> {
 
   await Promise.all(pids.map(async (p) => {
     try {
-      // The companion's own hidden /help enumeration claude (lib/command-offpane.ts):
-      // by its registered tty, or by the scrape var in its environment.
-      if (await isScrapeProcess(p.pid, p.tty)) return
+      if (await isIgnoredAgentProcess(p.pid, p.tty)) return
       const [cwd, termProgram] = await Promise.all([
         findCwdForPid(p.pid),
         findTermProgramForPid(p.pid),

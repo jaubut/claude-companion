@@ -493,6 +493,23 @@ export function unblockTask(ctx: WriteCtx, id: string, answer: string): Promise<
   })
 }
 
+/** dispatch-run's blocker when no repo matched the task (stored as "<line> — how-to: RES-…"). */
+export const NO_REPO_BLOCKER = /^No local repo mapped/
+/** Explicit routing marker dispatch-run honours before any other rule (claude-config repo-map). */
+export const repoMarker = (repo: string): string => `[repo:${repo}] `
+
+/** blocked on "No local repo mapped" → queued with `[repo:<name>]` prefixed (dispatch-run routes on it); never re-routes a marked task. */
+export function routeTask(ctx: WriteCtx, id: string, repo: string): Promise<WriteOutcome> {
+  return transition(ctx, id, {
+    to: "queued",
+    allowed: (t) => t.status === "blocked" && NO_REPO_BLOCKER.test(t.blocker ?? "") && !t.title.startsWith("[repo:"),
+    guard: "dispatch_status = 'blocked' AND dispatch_blocker LIKE 'No local repo mapped%' AND substr(text, 1, 6) <> '[repo:'", guardArgs: [],
+    sets: ["text = ? || text", ...requeueSets(ctx.cols)], setArgs: [repoMarker(repo)],
+    summary: (t) => `→queued (routed to ${repo}): ${t.title}`,
+    meta: { op: "route", repo },
+  })
+}
+
 // ── live mode (P4) ───────────────────────────────────────────────────────────
 // A live run is a Turso row filed already claimed (`running`, owner
 // `companion:<host>`), worked by the Companion's tmux runner. dispatch-run only

@@ -1,3 +1,4 @@
+import { NO_REPO_BLOCKER } from "./dispatch-tasks"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -72,6 +73,7 @@ export function routable(src: SourceItem, opts: { createdByResolver?: (taskId: s
   const ref = src.ref
   switch (ref.source) {
     case "trip": return false
+    case "mytask": return false // Jeremie's own list: his call, never Opus's
     case "proposal": return !opts.createdByResolver?.(ref.taskId)
     case "body": return opts.bodyLocal?.(ref.componentId) ?? true
     default: return true
@@ -171,6 +173,8 @@ export type ResolverAction =
   | { kind: "approve" }
   | { kind: "reject"; reason: string }
   | { kind: "revise"; title: string; prompt: string }
+  /** A task blocked on "No local repo mapped": name its repo (REPO_MAP name); it requeues with a [repo:] marker. */
+  | { kind: "route"; repo: string }
 
 export type ResolverActionKind = ResolverAction["kind"]
 
@@ -201,10 +205,12 @@ export interface ResolverOutput {
 }
 
 /** The actions Opus may name for a source (the policy below still decides what runs). */
-export function resolverActions(src: Pick<SourceItem, "ref">): ResolverActionKind[] {
+export function resolverActions(src: Pick<SourceItem, "ref"> & { facts?: Record<string, string> }): ResolverActionKind[] {
   const ref = src.ref
   switch (ref.source) {
-    case "task": return ref.status === "blocked" ? ["none", "answer", "requeue", "cancel"] : ["none", "requeue", "cancel"]
+    case "task":
+      if (ref.status === "blocked" && NO_REPO_BLOCKER.test(src.facts?.blocker ?? "")) return ["none", "route", "answer", "cancel"]
+      return ref.status === "blocked" ? ["none", "answer", "requeue", "cancel"] : ["none", "requeue", "cancel"]
     case "pr": return ["none", "merge", "close_pr", "fix"]
     case "proposal": return ["none", "approve", "reject", "revise"]
     default: return ["none"]
@@ -232,6 +238,7 @@ function toResolverAction(v: unknown, allowed: readonly ResolverActionKind[]): R
     case "close_pr": return { kind, reason: str(o.reason, 300) || "closed by the Opus resolver" }
     case "reject": return { kind, reason: str(o.reason, 300) || "rejected by the Opus resolver" }
     case "fix": { const instructions = str(o.instructions, 4000); return instructions ? { kind, instructions } : null }
+    case "route": { const repo = str(o.repo, 64); return /^[a-z0-9][a-z0-9._-]*$/i.test(repo) ? { kind, repo } : null }
     case "revise": {
       const prompt = str(o.prompt, 4000)
       return prompt ? { kind, title: str(o.title, 120), prompt } : null
@@ -334,6 +341,7 @@ export function decide(src: Pick<SourceItem, "ref">, out: ResolverOutput, ctx: P
     case "cancel": return card("cancelling is Jeremie's call")
     case "approve": return card("approving is Jeremie's call")
     case "revise": return card("a rescoped proposal needs Jeremie's OK")
+    case "route": return sure ? { kind: "act", action: a, then: "resolved", reason: `repo is clear (${pct(out.confidence)})` } : card("not sure which repo the task targets")
   }
 }
 
@@ -375,6 +383,12 @@ export function preparedPhrase(src: SourceItem, out: ResolverOutput, ctx: Pick<P
   if (out.action.kind === "answer" && src.ref.source === "task" && src.ref.status === "blocked") {
     const text = out.action.text
     phrase = prepend(phrase, { label: "Use Opus's answer", detail: clip(text, 90), action: { kind: "answer", text } }, (o) => o.action.kind === "answer" && o.action.text === text)
+  }
+  // A no-repo task Opus wasn't sure about: one tap hands it back with the consent words to route it.
+  if (out.action.kind === "route" && src.ref.source === "task") {
+    const instruction = `vas-y, route it to ${out.action.repo}`
+    phrase = prepend(phrase, { label: `Route to ${clip(out.action.repo, 20)}`, detail: "Opus requeues it in that repo", action: { kind: "ask_opus", instruction } },
+      (o) => o.action.kind === "ask_opus" && o.action.instruction === instruction)
   }
   if (src.ref.source === "pr") phrase = prCardOrder(phrase, out, ctx.sensitive)
   return phrase

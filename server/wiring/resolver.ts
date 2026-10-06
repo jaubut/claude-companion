@@ -6,8 +6,8 @@ import { BODY_CHANNEL, buildComponentDetail } from "../lib/body"
 import { type InvestigationResult, localBodyHost, routeFor } from "../lib/body-investigate"
 import { knownPaths, runInvestigatorCli } from "../lib/body-investigator"
 import { type DispatchWiring } from "../lib/dispatch-poller"
-import { getDispatchTask, getTaskActivity } from "../lib/dispatch-tasks"
-import { type RepoMapCheck, checkRepoMap, fixRepoHere, isDir, localRepoFor, repoForNote, repoMapCheckLine } from "../lib/live-repo"
+import { NO_REPO_BLOCKER, getDispatchTask, getTaskActivity, routeTask } from "../lib/dispatch-tasks"
+import { type RepoMapCheck, checkRepoMap, fixRepoHere, isDir, localRepoFor, parseRepoMap, readRepoMapSource, repoForNote, repoMapCheckLine } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn, createProposal, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
@@ -29,6 +29,7 @@ import type { QueryFn } from "../lib/turso"
 import { bodyReportApplier, investigationStore } from "./body-investigate"
 import { fixOnPeer } from "./resolver-peer"
 import { emitTask, orchEmit } from "./orchestrator"
+import { HOST_INFO } from "../state"
 import { rejectProposal } from "./proposals"
 
 // The Opus resolver, live (docs/orchestrator-triage-api.md#opus-resolver):
@@ -119,6 +120,7 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
     const ref = src.ref
     if (ref.source === "task") {
       ctx.repo = (await gatherTask(ref.taskId, blocks)).repo
+      if (NO_REPO_BLOCKER.test(src.facts.blocker ?? "")) ctx.repos = repoNames()
     } else if (ref.source === "pr") {
       const t = await gatherTask(ref.taskId, blocks)
       const raw = await gh(["pr", "view", ref.prUrl, "--json", PR_JSON])
@@ -173,6 +175,7 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
     if (ref.source === "task" || ref.source === "pr") return ["task", ref.taskId]
     if (ref.source === "proposal") return ["proposal", ref.taskId]
     if (ref.source === "body") return ["body", ref.componentId]
+    if (ref.source === "mytask") return ["task", src.refId]
     return ["trip", src.refId]
   }
 
@@ -235,6 +238,14 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
         [RESOLVER_SLUG, src.ref.taskId, `${src.ref.repo}#${src.ref.number} handed back by Opus: ${reason}`.slice(0, 200), JSON.stringify({ url: src.ref.prUrl, by: RESOLVER_SLUG, reason })],
       )
     },
+    async route(src, repo) {
+      if (src.ref.source !== "task") return { ok: false, error: "not a task" }
+      if (!repoNames().includes(repo)) return { ok: false, error: `unknown repo "${repo}"` }
+      const out = await routeTask({ exec: o.dispatch.exec, cols: await o.dispatch.columns(), host: HOST_INFO.name, channel: src.ref.channel, log: companionLog }, src.ref.taskId, repo)
+      if (!out.ok) return { ok: false, error: out.error }
+      o.dispatch.applyLocal(out.task)
+      return { ok: true }
+    },
     async revise(src, title, prompt, why) {
       if (src.ref.source !== "proposal") return null
       const old = getTask(src.ref.taskId)
@@ -283,6 +294,11 @@ export interface ResolverLiveOpts {
   config?: () => ResolverConfig
   /** Replace some live seams (a mock model, a fake fix run). */
   overrides?: Partial<WorkSeams>
+}
+
+/** REPO_MAP names (deduped), read live from claude-config: what a `route` may name. */
+function repoNames(): string[] {
+  return [...new Set(parseRepoMap(readRepoMapSource() ?? "").map((e) => e.name).filter((n): n is string => !!n))]
 }
 
 export function createLiveResolver(o: Omit<LiveResolverOpts, "store"> & ResolverLiveOpts & { onChange: (finished: boolean) => void }): LiveResolver {
