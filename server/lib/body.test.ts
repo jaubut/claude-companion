@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { QueryFn, Row, SqlArg } from "./turso"
 import {
   BODY_CACHE_TTL_MS, DIGEST_MAX, type BodyResponse, buildBody, buildBodyDigest, buildComponentDetail,
-  createBodySnapshot, dependentsIndex, isHealthIntent, parseDependsOn, toState,
+  createBodySnapshot, dependentsIndex, emptySummary, isHealthIntent, parseDependsOn, toState, vitalsHeader,
 } from "./body"
 
 // Pure read model against fake Turso rows (the QueryFn seam) — no network.
@@ -64,7 +64,7 @@ describe("GET /api/body read model", () => {
     expect(body.ok).toBe(true)
     expect(body.generated_at).toBe(new Date(0).toISOString())
     expect(body.components.map((c) => c.id)).toEqual(["mac:launchd:backup", "zettlab:zfs:tank", "zettlab:systemd:kb-api", "mac:cron:nostate"])
-    expect(body.summary).toEqual({ ok: 1, failing: 1, dead: 1, crash_loop: 0, dormant: 0, stopped: 0, unknown: 1, total: 4 })
+    expect(body.summary).toEqual({ ok: 1, warning: 0, failing: 1, dead: 1, crash_loop: 0, dormant: 0, stopped: 0, unknown: 1, total: 4 })
     const tank = body.components.find((c) => c.id === "zettlab:zfs:tank")!
     expect(tank.dependents_count).toBe(2) // backup + kb-api (deduped); retired cloud:cron:old not counted
     const backup = body.components[0]!
@@ -95,6 +95,8 @@ describe("GET /api/body read model", () => {
   test("helpers: state, depends_on, dependents index", () => {
     expect(toState("CRASH_LOOP")).toBe("crash_loop")
     expect(toState("weird")).toBe("unknown")
+    expect(toState("warning")).toBe("warning")
+    expect(toState("WARNING")).toBe("warning")
     expect(toState(null)).toBe("unknown")
     expect(parseDependsOn('["a", 3, "", "b"]')).toEqual(["a", "b"])
     expect(parseDependsOn('{"a":1}')).toEqual([])
@@ -168,7 +170,7 @@ describe("brain digest", () => {
     }))
     const body: BodyResponse = {
       ok: true, generated_at: "2026-10-03T12:00:00.000Z", components, recent_events: [],
-      summary: { ok: 0, failing: 0, dead: 80, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 80 },
+      summary: { ok: 0, warning: 0, failing: 0, dead: 80, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 80 },
     }
     const digest = buildBodyDigest(body)
     expect(digest.length).toBeLessThanOrEqual(DIGEST_MAX)
@@ -177,7 +179,7 @@ describe("brain digest", () => {
   })
 
   test("all healthy", () => {
-    const body: BodyResponse = { ok: true, generated_at: "t", components: [], recent_events: [], summary: { ok: 3, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 3 } }
+    const body: BodyResponse = { ok: true, generated_at: "t", components: [], recent_events: [], summary: { ok: 3, warning: 0, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 3 } }
     expect(buildBodyDigest(body)).toBe("Body monitor (as of t): 3 components — 3 ok.\nNothing failing, dead or crash-looping.")
   })
 })
@@ -196,4 +198,30 @@ describe("health intent predicate", () => {
   ]) {
     test(`no: ${t}`, () => expect(isHealthIntent(t)).toBe(false))
   }
+})
+
+describe("warning state (token-burn spikes)", () => {
+  test("normalized as warning, counted in summary, never a problem", async () => {
+    const { query } = fakeTurso(
+      [{ id: "zettlab:tokens:burn", host: "zettlab", kind: "tokens", name: "burn" }, { id: "mac:cron:a", host: "mac" }],
+      [{ component_id: "zettlab:tokens:burn", observed_at: "2026-10-05T10:00:00Z", state: "warning" }, { component_id: "mac:cron:a", observed_at: "2026-10-05T10:00:00Z", state: "ok" }],
+      [],
+    )
+    const body = await buildBody(query)
+    expect(body.components.find((c) => c.id === "zettlab:tokens:burn")!.state).toBe("warning")
+    expect(body.summary).toEqual({ ...emptySummary(), ok: 1, warning: 1, total: 2 })
+    expect(buildBodyDigest(body)).toContain("1 warning")
+    expect(buildBodyDigest(body)).toContain("Nothing failing, dead or crash-looping.")
+    const v = vitalsHeader(body, 0)
+    expect(v.worst).toBe("warning")
+    expect(v.problems).toBe(0)
+    expect(v.line).toBe("2 components: 1 ok · 1 warning")
+  })
+
+  test("worst ranks failing > warning > unknown", () => {
+    const mk = (s: Partial<ReturnType<typeof emptySummary>>): BodyResponse => ({ ok: true, generated_at: "t", components: [], recent_events: [], summary: { ...emptySummary(), ...s } })
+    expect(vitalsHeader(mk({ warning: 1, unknown: 1, stopped: 1, dormant: 1, ok: 1 }), 0).worst).toBe("warning")
+    expect(vitalsHeader(mk({ warning: 1, failing: 1 }), 0).worst).toBe("failing")
+    expect(vitalsHeader(mk({ unknown: 1, stopped: 1 }), 0).worst).toBe("unknown")
+  })
 })

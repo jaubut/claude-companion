@@ -173,7 +173,7 @@ describe("auto-investigation routes", () => {
 describe("GET /api/body + /api/body/component/:id", () => {
   const snapshotBody: BodyResponse = {
     ok: true, generated_at: "2026-10-03T12:00:00.000Z", components: [], recent_events: [],
-    summary: { ok: 0, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 0 },
+    summary: { ok: 0, warning: 0, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 0 },
   }
 
   test("passes all/fresh to the snapshot", async () => {
@@ -226,10 +226,14 @@ describe("GET /api/body/tokens", () => {
   test("passes range (default today) and fresh to the tokens snapshot", async () => {
     const seen: unknown[] = []
     const tokens: TokensSnapshot = { get: async (range, o) => { seen.push([range, o]); return empty(range) } }
-    const handler = routes.createBodyHandler({ tokens, query: async () => [] })
+    const sinces: number[] = []
+    const stats = { count: 2, pre_tokens: 1_300_000, post_tokens: 60_000, saved: 1_240_000 }
+    const compactions = (since: number) => { sinces.push(since); return stats }
+    const handler = routes.createBodyHandler({ tokens, compactions, query: async () => [] })
     const res = await call(handler, "GET", "/api/body/tokens?range=30d&fresh=1")
     expect(res?.status).toBe(200)
-    expect(await res!.json()).toEqual(empty("30d"))
+    expect(await res!.json()).toEqual({ ...empty("30d"), compactions: stats })
+    expect(sinces[0]).toBe(new Date(2026, 9, 5).getTime()) // local midnight of `since`
     await call(handler, "GET", "/api/body/tokens")
     await call(handler, "GET", "/api/body/tokens?range=7d")
     expect(seen).toEqual([["30d", { fresh: true }], ["today", { fresh: false }], ["7d", { fresh: false }]])
@@ -252,7 +256,7 @@ describe("brain digest wiring", () => {
   const body: BodyResponse = {
     ok: true, generated_at: "g", recent_events: [],
     components: [{ id: "zettlab:systemd:kb-api", host: "zettlab", kind: "systemd", name: "kb-api", criticality: "high", state: "dead", last_run_at: null, last_ok_at: null, last_exit: 1, consecutive_failures: 2, detail: null, depends_on: [], dependents_count: 0 }],
-    summary: { ok: 0, failing: 0, dead: 1, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 1 },
+    summary: { ok: 0, warning: 0, failing: 0, dead: 1, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 1 },
   }
   const snap: BodySnapshot = { get: async () => body }
 

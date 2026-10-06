@@ -10,11 +10,15 @@ import type { QueryFn, Row, SqlArg } from "./turso"
 // module only READS them:
 //   token_usage(host, day, session_id, source, model, input, output, cache_read,
 //               cache_creation, turns, PRIMARY KEY(host, day, session_id, source, model))
+//   token_sessions(host, session_id, name, tmux, cwd, first_seen, last_seen)
 // `day` is the collector host's local YYYY-MM-DD; `source` is `main`,
 // `agent:<type>` or `skill:<name>`. Aggregation runs in SQL (30 days × hosts ×
 // sessions is too many rows to ship), so tests use an in-memory sqlite.
 // `usd` is the API-list-price value of the tokens, per model (lib/model-prices.ts);
 // tokens of a model with no price are counted in `unpriced_tokens`, never as $0.
+// top_sessions names come from token_sessions (any host, survives session end);
+// this host's live ~/.claude/sessions/*.json is only the fallback when the table
+// or the row is missing (older collectors don't write it).
 // Contract: docs/body-api.md.
 
 export const TOKEN_RANGES = ["today", "7d", "30d"] as const
@@ -36,8 +40,10 @@ export interface TokenTotals {
 
 export interface TokenSession {
   session_id: string
-  /** Live session's name from ~/.claude/sessions/*.json on this host, else null. */
+  /** token_sessions.name, else the live session's name from ~/.claude/sessions/*.json on this host, else null. */
   name: string | null
+  /** token_sessions.tmux (tmux session/window the session ran in); absent when unknown. */
+  tmux?: string
   host: string
   total: number
   usd: number | null
@@ -92,13 +98,20 @@ const SUMS =
   "COALESCE(SUM(input),0) AS input, COALESCE(SUM(output),0) AS output, " +
   `COALESCE(SUM(cache_read),0) AS cache_read, COALESCE(SUM(cache_creation),0) AS cache_creation, ${COST}`
 const TOTAL = "COALESCE(SUM(input),0) + COALESCE(SUM(output),0) + COALESCE(SUM(cache_read),0) + COALESCE(SUM(cache_creation),0)"
-const TABLE_SQL = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'token_usage'"
+const TABLE_SQL = "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('token_usage', 'token_sessions')"
 const TOTALS_SQL = `SELECT ${SUMS} FROM token_usage WHERE day >= ?`
 const BY_HOST_SQL = `SELECT host, ${SUMS}, ${TOTAL} AS total FROM token_usage WHERE day >= ? GROUP BY host ORDER BY total DESC, host`
 const BY_DAY_SQL = `SELECT day, ${SUMS} FROM token_usage WHERE day >= ? GROUP BY day ORDER BY day`
 const TOP_SESSIONS_SQL =
   `SELECT session_id, MAX(host) AS host, ${TOTAL} AS total, ${COST} FROM token_usage WHERE day >= ? ` +
   "GROUP BY session_id ORDER BY total DESC, session_id LIMIT ?"
+// Same top-N, name/tmux looked up in token_sessions. Duplicate (host, session_id) rows are tolerated:
+// correlated subqueries pick the newest non-blank value by last_seen, so it stays one row per session.
+const sessionCol = (col: "name" | "tmux"): string =>
+  `(SELECT ${col} FROM token_sessions s WHERE s.host = t.host AND s.session_id = t.session_id ` +
+  `AND TRIM(COALESCE(s.${col}, '')) <> '' ORDER BY s.last_seen DESC LIMIT 1) AS ${col}`
+const TOP_SESSIONS_JOIN_SQL =
+  `SELECT t.*, ${sessionCol("name")}, ${sessionCol("tmux")} FROM (${TOP_SESSIONS_SQL}) t ORDER BY t.total DESC, t.session_id`
 const TOP_SOURCE_SQL =
   `SELECT substr(source, ?) AS name, ${TOTAL} AS total, ${COST} FROM token_usage WHERE day >= ? AND source LIKE ? ` +
   "GROUP BY source ORDER BY total DESC, source LIMIT ?"
@@ -106,6 +119,7 @@ const TOP_SOURCE_SQL =
 // ── Row helpers ──────────────────────────────────────────────────────────────
 
 const num = (v: Row[string] | undefined): number => Number(v) || 0
+const str = (v: Row[string] | undefined): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
 
 // SUM over only-NULL (all unpriced, or no rows) is NULL → null. Rounded to
 // 1/10000 $ so float noise from the per-row products does not reach the wire.
@@ -158,7 +172,8 @@ export async function buildTokens(query: QueryFn, range: TokenRange, opts: Build
   const since = rangeSince(range, now)
   const base = { ok: true as const, generated_at: new Date(now).toISOString(), range, since, pricing_as_of: PRICING_AS_OF }
   // Collector not deployed yet → an empty view, not a 503.
-  if ((await query(TABLE_SQL, [])).length === 0) {
+  const tables = new Set((await query(TABLE_SQL, [])).map((r) => String(r.name)))
+  if (!tables.has("token_usage")) {
     return { ...base, totals: emptyTotals(), by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [] }
   }
   const source = (prefix: string): [string, SqlArg[]] => [TOP_SOURCE_SQL, [prefix.length + 1, since, `${prefix}%`, TOP_LIMIT]]
@@ -166,7 +181,7 @@ export async function buildTokens(query: QueryFn, range: TokenRange, opts: Build
     query(TOTALS_SQL, [since]),
     query(BY_HOST_SQL, [since]),
     query(BY_DAY_SQL, [since]),
-    query(TOP_SESSIONS_SQL, [since, TOP_LIMIT]),
+    query(tables.has("token_sessions") ? TOP_SESSIONS_JOIN_SQL : TOP_SESSIONS_SQL, [since, TOP_LIMIT]),
     query(...source("agent:")),
     query(...source("skill:")),
     (opts.sessionNames ?? liveSessionNames)().catch(() => new Map<string, string>()),
@@ -179,7 +194,15 @@ export async function buildTokens(query: QueryFn, range: TokenRange, opts: Build
     by_day: byDay.map((r) => ({ day: String(r.day ?? ""), ...totalsOf(r) })),
     top_sessions: sessions.map((r) => {
       const id = String(r.session_id ?? "")
-      return { session_id: id, name: names.get(id) ?? null, host: String(r.host ?? ""), total: num(r.total), ...costOf(r) }
+      const tmux = str(r.tmux)
+      return {
+        session_id: id,
+        name: str(r.name) ?? names.get(id) ?? null,
+        ...(tmux ? { tmux } : {}),
+        host: String(r.host ?? ""),
+        total: num(r.total),
+        ...costOf(r),
+      }
     }),
     top_agents: agents.map(toSource),
     top_skills: skills.map(toSource),

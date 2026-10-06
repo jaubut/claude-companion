@@ -18,8 +18,10 @@ body_vitals(component_id, observed_at, state, last_exit, last_run_at, last_ok_at
 body_events(id, component_id, at, kind, from_state, to_state, detail)
 ```
 
-`state` ∈ `ok | failing | dead | crash_loop | dormant | stopped | unknown`. A
-component with no vitals row, or a state outside that list, reads `unknown`.
+`state` ∈ `ok | warning | failing | dead | crash_loop | dormant | stopped | unknown`.
+`warning` (e.g. a token-burn spike on `zettlab:tokens:burn`) is shown amber and
+never counts as a failure: not in `problems`, not auto-investigated; its alerts
+arrive at `warning` severity. A component with no vitals row, or a state outside that list, reads `unknown`.
 Timestamps and other cells are passed through as Turso returns them (string,
 number or `null`) — the server does not reformat them.
 
@@ -31,7 +33,7 @@ Query: `?all=1` includes retired components; `?fresh=1` bypasses the 30 s cache.
 {
   "ok": true,
   "generated_at": "2026-10-03T12:00:00.000Z",
-  "summary": { "ok": 38, "failing": 1, "dead": 1, "crash_loop": 0, "dormant": 2, "stopped": 0, "unknown": 1, "total": 43 },
+  "summary": { "ok": 38, "warning": 0, "failing": 1, "dead": 1, "crash_loop": 0, "dormant": 2, "stopped": 0, "unknown": 1, "total": 43 },
   "components": [
     {
       "id": "mac:launchd:backup", "host": "mac", "kind": "launchd", "name": "backup",
@@ -103,12 +105,17 @@ went to Zettlab, which holds the card). `rootCause`/`confidence`/`severity` are
 
 Fleet token usage for the Body "Token burn" card. Server: `server/lib/body-tokens.ts`
 (read model + cache). Reads the token-burn collector's Turso table (claude-config
-`tools/body/`, every 5 min per host); this server never writes it:
+`tools/body/`, every 5 min per host); this server never writes them:
 
 ```
 token_usage(host, day, session_id, source, model, input, output, cache_read, cache_creation, turns,
             PRIMARY KEY(host, day, session_id, source, model))
+token_sessions(host, session_id, name, tmux, cwd, first_seen, last_seen)
 ```
+
+Either table may be missing (collector not deployed / older collector): no
+`token_usage` → the empty view below with zero totals; no `token_sessions` →
+names fall back to the live lookup.
 
 `day` is the collector host's local `YYYY-MM-DD`; `source` is `main`,
 `agent:<type>` or `skill:<name>`.
@@ -126,9 +133,10 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   "totals": { "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615, "usd": 0.0071, "unpriced_tokens": 0 },
   "by_host": [ { "host": "zettlab", "input": 910, "output": 0, "cache_read": 2000, "cache_creation": 0, "total": 2910, "usd": 0.0040, "unpriced_tokens": 0 } ],
   "by_day": [ { "day": "2026-10-05", "input": 1215, "output": 90, "cache_read": 3300, "cache_creation": 10, "total": 4615, "usd": 0.0071, "unpriced_tokens": 0 } ],
-  "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "host": "mac", "total": 1705, "usd": 0.0031, "unpriced_tokens": 0 } ],
+  "top_sessions": [ { "session_id": "0275ce20-…", "name": "tls-dashboard", "tmux": "main:2", "host": "mac", "total": 1705, "usd": 0.0031, "unpriced_tokens": 0 } ],
   "top_agents": [ { "name": "builder", "total": 500, "usd": 0.0008, "unpriced_tokens": 0 } ],
-  "top_skills": [ { "name": "today", "total": 40, "usd": null, "unpriced_tokens": 40 } ]
+  "top_skills": [ { "name": "today", "total": 40, "usd": null, "unpriced_tokens": 40 } ],
+  "compactions": { "count": 2, "pre_tokens": 950000, "post_tokens": 50000, "saved": 900000 }
 }
 ```
 
@@ -140,9 +148,12 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
 - `by_host`: total descending, then host. `by_day`: ascending by day; days with
   no rows are absent (the client fills gaps).
 - `top_sessions` (≤ 10): total descending, then `session_id`, summed over all
-  sources and models. `name` is the live session's name from this host's
-  `~/.claude/sessions/*.json`, else `null` (ended sessions and other hosts'
-  sessions).
+  sources and models. `name` comes from `token_sessions` (joined on
+  `(host, session_id)`; any host, kept after the session ends); when that table,
+  the row or its name is missing it falls back to the live session's name from
+  this host's `~/.claude/sessions/*.json`, else `null`. `tmux` (optional, additive)
+  is `token_sessions.tmux`; the key is absent when unknown.
+  When `token_sessions` has several rows for a session, the newest non-blank one (by `last_seen`) wins.
 - `top_agents` / `top_skills` (≤ 10): `source` rows with prefix `agent:` /
   `skill:`, prefix stripped into `name`; total descending, then name. `main`
   appears in neither.
@@ -160,6 +171,14 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   counted as $0; with `unpriced_tokens > 0` a non-null `usd` is a lower bound.
 - `pricing_as_of`: the day the price table was read from the pricing page
   (`https://platform.claude.com/docs/en/about-claude/pricing`).
+- `compactions`: smart auto-compactions (`docs/auto-compact-api.md`) THIS
+  server completed since local midnight of `since` — companion.db
+  `auto_compactions`, one row per `compact_boundary` that answered our
+  `/compact`. `pre_tokens` / `post_tokens` are summed context sizes before /
+  after, `saved = pre_tokens − post_tokens` (context no longer re-sent each
+  turn). The iOS Token burn card shows `compactions <count> · saved <saved>`.
+  `null` when companion.db is unreadable (hide the line). Not cached: always
+  current, even on a cached token view.
 - No `token_usage` table yet (collector not deployed) → the same shape with zero
   totals and empty lists, not an error. Turso down → 503 `turso_unreachable`.
 
@@ -211,7 +230,7 @@ the Mac by mistake), that server still records the turn and sends the frame; set
 ## Auto-investigation (`POST /api/body/investigate`)
 
 A component that goes **dead / crash_loop / failing** is investigated with no
-tap: one headless, **read-only** `claude -p` on the host that owns it. Any fix
+tap (`warning` and every other state is skipped): one headless, **read-only** `claude -p` on the host that owns it. Any fix
 comes back as a #Body proposal card; the investigator never changes anything.
 
 **Triggers.** Every `POST /api/body/alert` whose `state` is a problem state, plus

@@ -91,12 +91,12 @@ const STOP_TOOL_RE = /^(KillShell|KillBash|TaskStop)$/
 // "Successfully killed shell: <id>".
 const STOP_OK_RE = /\bsuccessfully (stopped|killed)\b/i
 
-function contentBlocks(e: Entry): Entry[] {
+export function contentBlocks(e: Entry): Entry[] {
   const c = (e.message as Entry | undefined)?.content
   return Array.isArray(c) ? (c as Entry[]) : []
 }
 
-function blockText(b: Entry): string {
+export function blockText(b: Entry): string {
   if (typeof b.text === "string") return b.text
   if (typeof b.content === "string") return b.content
   if (Array.isArray(b.content)) {
@@ -190,12 +190,20 @@ export function openBackgroundTasks(entries: Entry[], now: number): string[] {
   return scan.open(now)
 }
 
-function isHumanPrompt(e: Entry): boolean {
-  if (e.type !== "user" || e.isSidechain === true || e.isMeta === true) return false
+export function isHumanPrompt(e: Entry): boolean {
+  return humanPromptText(e) !== null
+}
+
+// The prompt text a human typed, or null when `e` is not a human prompt.
+export function humanPromptText(e: Entry): string | null {
+  if (e.type !== "user" || e.isSidechain === true || e.isMeta === true) return null
   const c = (e.message as Entry | undefined)?.content
-  if (typeof c === "string") return !c.includes("<task-notification>")
-  if (!Array.isArray(c)) return false
-  return (c as Entry[]).some((b) => b.type === "text" && typeof b.text === "string" && !b.text.includes("<task-notification>"))
+  if (typeof c === "string") return c.includes("<task-notification>") ? null : c
+  if (!Array.isArray(c)) return null
+  const texts = (c as Entry[])
+    .filter((b) => b.type === "text" && typeof b.text === "string" && !b.text.includes("<task-notification>"))
+    .map((b) => b.text as string)
+  return texts.length ? texts.join("\n") : null
 }
 
 // Last human prompt's time (ms) — the idle-window fallback when the server

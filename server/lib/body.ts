@@ -16,7 +16,9 @@ export const BODY_CACHE_TTL_MS = 30_000
 export const EVENTS_LIMIT = 50
 export const DIGEST_MAX = 800
 
-export const BODY_STATES = ["ok", "failing", "dead", "crash_loop", "dormant", "stopped", "unknown"] as const
+// "warning" = token-burn spike etc. Shown amber; never a failure (not a
+// problem state, no auto-investigation, not counted in `problems`).
+export const BODY_STATES = ["ok", "warning", "failing", "dead", "crash_loop", "dormant", "stopped", "unknown"] as const
 export type BodyState = (typeof BODY_STATES)[number]
 export type BodySummary = Record<BodyState, number> & { total: number }
 
@@ -125,7 +127,7 @@ function toEvent(r: Row): BodyEvent {
 }
 
 export function emptySummary(): BodySummary {
-  return { ok: 0, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 0 }
+  return { ok: 0, warning: 0, failing: 0, dead: 0, crash_loop: 0, dormant: 0, stopped: 0, unknown: 0, total: 0 }
 }
 
 // ── GET /api/body ────────────────────────────────────────────────────────────
@@ -328,7 +330,7 @@ export interface BodyVitals {
   /** One display line, e.g. "43 components: 38 ok · 1 failing · 1 dead — 2 tasks blocked". */
   line: string
   summary: BodySummary
-  /** Worst state present (dead > crash_loop > failing > unknown > stopped > dormant > ok). */
+  /** Worst state present (dead > crash_loop > failing > warning > unknown > stopped > dormant > ok). */
   worst: BodyState
   /** dead + crash_loop + failing. */
   problems: number
@@ -337,7 +339,7 @@ export interface BodyVitals {
   generatedAt: string
 }
 
-const WORST_ORDER: readonly BodyState[] = ["dead", "crash_loop", "failing", "unknown", "stopped", "dormant", "ok"]
+const WORST_ORDER: readonly BodyState[] = ["dead", "crash_loop", "failing", "warning", "unknown", "stopped", "dormant", "ok"]
 
 export function vitalsHeader(body: BodyResponse, blockedTasks: number): BodyVitals {
   const s = body.summary

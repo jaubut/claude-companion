@@ -84,7 +84,7 @@ function otherWriter(id: string, to: string, from: string[], extra = ""): number
 
 const body: BodyResponse = {
   ok: true, generated_at: "2026-10-03T12:00:00.000Z",
-  summary: { ok: 38, failing: 1, dead: 1, crash_loop: 0, dormant: 2, stopped: 0, unknown: 1, total: 43 },
+  summary: { ok: 38, warning: 0, failing: 1, dead: 1, crash_loop: 0, dormant: 2, stopped: 0, unknown: 1, total: 43 },
   components: [{
     id: "mac:launchd:backup", host: "mac", kind: "launchd", name: "backup", criticality: "critical", state: "dead",
     last_run_at: null, last_ok_at: null, last_exit: 1, consecutive_failures: 3, detail: "exit 1", depends_on: [], dependents_count: 0,

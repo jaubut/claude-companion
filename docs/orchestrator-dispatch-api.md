@@ -135,11 +135,11 @@ There is no generic SQL route. Approve, cancel, requeue and unblock honour `Idem
   fails or takes longer than 1.5 s:
   ```json
   {"line":"43 components: 38 ok · 1 failing · 1 dead · 2 dormant · 1 unknown — 2 tasks blocked",
-   "summary":{"ok":38,"failing":1,"dead":1,"crash_loop":0,"dormant":2,"stopped":0,"unknown":1,"total":43},
+   "summary":{"ok":38,"warning":0,"failing":1,"dead":1,"crash_loop":0,"dormant":2,"stopped":0,"unknown":1,"total":43},
    "worst":"dead","problems":2,"blockedTasks":2,"generatedAt":"2026-10-03T12:00:00.000Z"}
   ```
-  `worst` ranks dead > crash_loop > failing > unknown > stopped > dormant > ok; `problems` is
-  dead + crash_loop + failing. Other channels have no `vitals` key. The live counts come from
+  `worst` ranks dead > crash_loop > failing > warning > unknown > stopped > dormant > ok; `problems` is
+  dead + crash_loop + failing (`warning` is never a problem). Other channels have no `vitals` key. The live counts come from
   the `body` channel's `counts` (blocked tasks across every note) and `orchestrator_queue`.
 - **`body_alert` banner** (frame unchanged, see `body-api.md`):
   `{type:"body_alert", alert:{component_id, severity, title, message, state, from_state, at}}`.
