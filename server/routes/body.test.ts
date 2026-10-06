@@ -218,8 +218,8 @@ describe("GET /api/body + /api/body/component/:id", () => {
 
 describe("GET /api/body/tokens", () => {
   const empty = (range: TokenRange): TokensResponse => ({
-    ok: true, generated_at: "2026-10-05T12:00:00.000Z", range, since: "2026-10-05",
-    totals: { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0 },
+    ok: true, generated_at: "2026-10-05T12:00:00.000Z", range, since: "2026-10-05", pricing_as_of: "2026-10-06",
+    totals: { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0, usd: null, unpriced_tokens: 0 },
     by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [],
   })
 

@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { BODY_CACHE_TTL_MS } from "./body"
+import { PRICING_AS_OF, unpricedRowSql, usdRowSql } from "./model-prices"
 import type { QueryFn, Row, SqlArg } from "./turso"
 
 // Fleet token view (GET /api/body/tokens). The token-burn collector (claude-config
@@ -12,6 +13,8 @@ import type { QueryFn, Row, SqlArg } from "./turso"
 // `day` is the collector host's local YYYY-MM-DD; `source` is `main`,
 // `agent:<type>` or `skill:<name>`. Aggregation runs in SQL (30 days × hosts ×
 // sessions is too many rows to ship), so tests use an in-memory sqlite.
+// `usd` is the API-list-price value of the tokens, per model (lib/model-prices.ts);
+// tokens of a model with no price are counted in `unpriced_tokens`, never as $0.
 // Contract: docs/body-api.md.
 
 export const TOKEN_RANGES = ["today", "7d", "30d"] as const
@@ -25,6 +28,10 @@ export interface TokenTotals {
   cache_read: number
   cache_creation: number
   total: number
+  /** API-equivalent USD of the priced tokens; null when none are priced. */
+  usd: number | null
+  /** Tokens of models with no known price (not in `usd`). */
+  unpriced_tokens: number
 }
 
 export interface TokenSession {
@@ -33,12 +40,16 @@ export interface TokenSession {
   name: string | null
   host: string
   total: number
+  usd: number | null
+  unpriced_tokens: number
 }
 
 export interface TokenSource {
   /** Agent type / skill name without the `agent:` / `skill:` prefix. */
   name: string
   total: number
+  usd: number | null
+  unpriced_tokens: number
 }
 
 export interface TokensResponse {
@@ -47,6 +58,8 @@ export interface TokensResponse {
   range: TokenRange
   /** First day included (local YYYY-MM-DD, inclusive). */
   since: string
+  /** Day the price table (lib/model-prices.ts) was read from the pricing page. */
+  pricing_as_of: string
   totals: TokenTotals
   by_host: (TokenTotals & { host: string })[]
   by_day: (TokenTotals & { day: string })[]
@@ -74,32 +87,45 @@ export function rangeSince(range: TokenRange, now: number): string {
 
 // ── SQL (parameterized; `day >= ?` uses the PK's day column) ─────────────────
 
+const COST = `SUM(${usdRowSql()}) AS usd, COALESCE(SUM(${unpricedRowSql()}),0) AS unpriced_tokens`
 const SUMS =
   "COALESCE(SUM(input),0) AS input, COALESCE(SUM(output),0) AS output, " +
-  "COALESCE(SUM(cache_read),0) AS cache_read, COALESCE(SUM(cache_creation),0) AS cache_creation"
+  `COALESCE(SUM(cache_read),0) AS cache_read, COALESCE(SUM(cache_creation),0) AS cache_creation, ${COST}`
 const TOTAL = "COALESCE(SUM(input),0) + COALESCE(SUM(output),0) + COALESCE(SUM(cache_read),0) + COALESCE(SUM(cache_creation),0)"
 const TABLE_SQL = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'token_usage'"
 const TOTALS_SQL = `SELECT ${SUMS} FROM token_usage WHERE day >= ?`
 const BY_HOST_SQL = `SELECT host, ${SUMS}, ${TOTAL} AS total FROM token_usage WHERE day >= ? GROUP BY host ORDER BY total DESC, host`
 const BY_DAY_SQL = `SELECT day, ${SUMS} FROM token_usage WHERE day >= ? GROUP BY day ORDER BY day`
 const TOP_SESSIONS_SQL =
-  `SELECT session_id, MAX(host) AS host, ${TOTAL} AS total FROM token_usage WHERE day >= ? ` +
+  `SELECT session_id, MAX(host) AS host, ${TOTAL} AS total, ${COST} FROM token_usage WHERE day >= ? ` +
   "GROUP BY session_id ORDER BY total DESC, session_id LIMIT ?"
 const TOP_SOURCE_SQL =
-  `SELECT substr(source, ?) AS name, ${TOTAL} AS total FROM token_usage WHERE day >= ? AND source LIKE ? ` +
+  `SELECT substr(source, ?) AS name, ${TOTAL} AS total, ${COST} FROM token_usage WHERE day >= ? AND source LIKE ? ` +
   "GROUP BY source ORDER BY total DESC, source LIMIT ?"
 
 // ── Row helpers ──────────────────────────────────────────────────────────────
 
 const num = (v: Row[string] | undefined): number => Number(v) || 0
 
+// SUM over only-NULL (all unpriced, or no rows) is NULL → null. Rounded to
+// 1/10000 $ so float noise from the per-row products does not reach the wire.
+function usdOf(v: Row[string] | undefined): number | null {
+  if (v === null || v === undefined || v === "") return null
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.round(n * 10_000) / 10_000 : null
+}
+
+function costOf(r: Row | undefined): { usd: number | null; unpriced_tokens: number } {
+  return { usd: usdOf(r?.usd), unpriced_tokens: num(r?.unpriced_tokens) }
+}
+
 function totalsOf(r: Row | undefined): TokenTotals {
   const t = { input: num(r?.input), output: num(r?.output), cache_read: num(r?.cache_read), cache_creation: num(r?.cache_creation) }
-  return { ...t, total: t.input + t.output + t.cache_read + t.cache_creation }
+  return { ...t, total: t.input + t.output + t.cache_read + t.cache_creation, ...costOf(r) }
 }
 
 export function emptyTotals(): TokenTotals {
-  return { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0 }
+  return { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0, usd: null, unpriced_tokens: 0 }
 }
 
 /** sessionId → name for live sessions on this host (Claude Code ≥ 2.1 session files). */
@@ -130,7 +156,7 @@ export interface BuildTokensOpts {
 export async function buildTokens(query: QueryFn, range: TokenRange, opts: BuildTokensOpts = {}): Promise<TokensResponse> {
   const now = (opts.now ?? Date.now)()
   const since = rangeSince(range, now)
-  const base = { ok: true as const, generated_at: new Date(now).toISOString(), range, since }
+  const base = { ok: true as const, generated_at: new Date(now).toISOString(), range, since, pricing_as_of: PRICING_AS_OF }
   // Collector not deployed yet → an empty view, not a 503.
   if ((await query(TABLE_SQL, [])).length === 0) {
     return { ...base, totals: emptyTotals(), by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [] }
@@ -145,7 +171,7 @@ export async function buildTokens(query: QueryFn, range: TokenRange, opts: Build
     query(...source("skill:")),
     (opts.sessionNames ?? liveSessionNames)().catch(() => new Map<string, string>()),
   ])
-  const toSource = (r: Row): TokenSource => ({ name: String(r.name ?? ""), total: num(r.total) })
+  const toSource = (r: Row): TokenSource => ({ name: String(r.name ?? ""), total: num(r.total), ...costOf(r) })
   return {
     ...base,
     totals: totalsOf(totals[0]),
@@ -153,7 +179,7 @@ export async function buildTokens(query: QueryFn, range: TokenRange, opts: Build
     by_day: byDay.map((r) => ({ day: String(r.day ?? ""), ...totalsOf(r) })),
     top_sessions: sessions.map((r) => {
       const id = String(r.session_id ?? "")
-      return { session_id: id, name: names.get(id) ?? null, host: String(r.host ?? ""), total: num(r.total) }
+      return { session_id: id, name: names.get(id) ?? null, host: String(r.host ?? ""), total: num(r.total), ...costOf(r) }
     }),
     top_agents: agents.map(toSource),
     top_skills: skills.map(toSource),
