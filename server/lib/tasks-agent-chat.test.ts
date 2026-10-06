@@ -3,7 +3,8 @@ import { createTasksAgentRoute } from "../routes/tasks-agent"
 import type { TasksAgent } from "./tasks-agent"
 import { CONFIRM_OVER, createTasksChat, parsePlan, planPrompt, renderList, tasksHint } from "./tasks-agent-chat"
 import type { TaskRow } from "./my-tasks"
-import { testDb } from "./tasks-agent-testdb.test-util"
+import type { ExecFn } from "./turso"
+import { testDb, txOver } from "./tasks-agent-testdb.test-util"
 
 const NOW = Date.parse("2026-10-06T15:00:00Z") // Tuesday 11:00 Toronto
 
@@ -13,7 +14,7 @@ function setup(planOut: (prompt: string) => string | null) {
   const frames: Record<string, unknown>[] = []
   const prompts: string[] = []
   const chat = createTasksChat({
-    query: t.query, exec: t.exec, now: () => NOW,
+    query: t.query, exec: t.exec, tx: t.tx, now: () => NOW,
     plan: async (p) => { prompts.push(p); return planOut(p) },
     emitTurn: (text, ch) => turns.push({ text, ch }),
     notify: (f) => frames.push(f),
@@ -81,12 +82,12 @@ describe("chat tool", () => {
     expect(s.prompts[0]).toContain("g000000000")
   })
 
-  test(`move of <= ${CONFIRM_OVER} tasks applies at once through the my-tasks path`, async () => {
+  test(`move of <= ${CONFIRM_OVER} tasks applies at once through the tasks-agent transactional path`, async () => {
     const s = setup(() => `{"op":"move","taskIds":${JSON.stringify(ids(3))},"due":"2026-10-09"}`)
     seedGranby(s.t, 3)
     await s.chat.handle("move everything Granby to Friday", "general")
     expect(ids(3).map((id) => s.t.get(id)!.due_date)).toEqual(["2026-10-09", "2026-10-09", "2026-10-09"])
-    expect(s.t.activities().map((a) => [a.agent_slug, a.action])).toEqual(Array(3).fill(["companion", "due_changed"]))
+    expect(s.t.activities().map((a) => [a.agent_slug, a.action])).toEqual(Array(3).fill(["tasks-agent", "due_changed"]))
     expect(JSON.parse(String(s.t.activities()[0]!.meta))).toMatchObject({ from: "2026-10-07", to: "2026-10-09" })
     expect(s.turns.at(-1)!.text).toBe("Moved 3 tasks to Fri, Oct 9.")
     expect(s.frames).toEqual([{ type: "tasks_changed", why: "due" }])
@@ -167,5 +168,44 @@ describe("chat tool", () => {
     for (const w of ["yes", "ok", "go", "oui", "no"]) expect(await s.chat.confirmReply(w, "general")).toBe(false)
     expect(s.chat.pendingCount()).toBe(1)
     expect(s.t.activities().length).toBe(0)
+  })
+
+  test("a date edited between the stale-state check and the write is never overwritten (atomic CAS)", async () => {
+    const t = testDb()
+    const ch = createTasksChat({
+      query: t.query, now: () => NOW, tx: t.tx,
+      exec: async (sql, args) => {
+        const r = await t.exec(sql, args)
+        // The newer edit lands right after the chat reads the row, before its write.
+        if (sql.startsWith("SELECT id, note_id") && args[0] === ids(1)[0]) t.db.query("UPDATE tasks SET due_date = '2026-12-01' WHERE id = ?").run(ids(1)[0]!)
+        return r
+      },
+      plan: async () => `{"op":"move","taskIds":${JSON.stringify(ids(1))},"due":"2026-10-09"}`,
+      emitTurn: (x) => turns.push(x), notify: () => {},
+    })
+    const turns: string[] = []
+    seedGranby(t, 1)
+    await ch.handle("move Granby to Friday", "general")
+    expect(t.get(ids(1)[0]!)!.due_date).toBe("2026-12-01")
+    expect(t.activities().length).toBe(0)
+    expect(turns.at(-1)).toContain("skipped 1 changed since the plan")
+  })
+
+  test("a chat move and its activity row commit together: a failing log insert rolls the move back", async () => {
+    const t = testDb()
+    const flaky: ExecFn = async (sql, args) => {
+      if (sql.startsWith("INSERT INTO agent_activity")) throw new Error("turso blip")
+      return t.exec(sql, args)
+    }
+    const turns: string[] = []
+    const ch = createTasksChat({
+      query: t.query, now: () => NOW, tx: txOver(flaky), exec: flaky,
+      plan: async () => `{"op":"move","taskIds":${JSON.stringify(ids(1))},"due":"2026-10-09"}`,
+      emitTurn: (x) => turns.push(x), notify: () => {},
+    })
+    seedGranby(t, 1)
+    await ch.handle("move Granby to Friday", "general")
+    expect(t.get(ids(1)[0]!)!.due_date).toBe("2026-10-07")
+    expect(turns.at(-1)).toContain("failed to save")
   })
 })

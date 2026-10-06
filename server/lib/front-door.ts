@@ -128,7 +128,8 @@ export function createFrontDoor(deps: FrontDoorDeps) {
         await deps.runBrain(text, channel, {})
         return
       }
-      if (tasks && await tasks.confirmReply(text, channel.id)) return
+      // Shadow never changes the answer, so a held plan is not applied from there either.
+      if (tasks && mode !== "shadow" && await tasks.confirmReply(text, channel.id)) return
       const cat = await deps.catalog()
       const input = routerInput(text, channel, deps.thread(channel.id))
       const minConf = deps.minConf()

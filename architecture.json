@@ -1511,7 +1511,7 @@
         },
         {
           "path": "lib/front-door.ts",
-          "lines": 203,
+          "lines": 204,
           "kind": "lib",
           "exports": [
             "BrainHints",
@@ -3549,7 +3549,7 @@
         },
         {
           "path": "lib/tasks-agent-chat.ts",
-          "lines": 249,
+          "lines": 254,
           "kind": "lib",
           "exports": [
             "CONFIRM_OVER",
@@ -3574,6 +3574,7 @@
           "apiCalls": [],
           "imports": [
             "lib/my-tasks.ts",
+            "lib/tasks-agent.ts",
             "lib/turso.ts"
           ],
           "listeners": [],
@@ -3707,7 +3708,7 @@
         },
         {
           "path": "lib/tasks-agent.ts",
-          "lines": 524,
+          "lines": 528,
           "kind": "lib",
           "exports": [
             "AGENT_SLUG",
@@ -3723,6 +3724,8 @@
             "sqliteToIso",
             "UndoSpec",
             "undoSpec",
+            "RawTask",
+            "readTask",
             "listScope",
             "toDueChange",
             "dueHistory",
@@ -6208,7 +6211,7 @@
         },
         {
           "path": "wiring/tasks-agent.ts",
-          "lines": 40,
+          "lines": 41,
           "kind": "lib",
           "exports": [
             "tasksAgent",
@@ -8216,7 +8219,6 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "lib/mytask-triage.ts",
-            "lib/tasks-agent-chat.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
           ]
         },
@@ -8233,7 +8235,6 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "lib/mytask-triage.ts",
-            "lib/tasks-agent-chat.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
           ]
         },
@@ -9377,24 +9378,38 @@
             "routes/my-tasks.ts#* /api/tasks/mine"
           ]
         },
-        "readBack": {
-          "module": "lib/my-tasks.ts",
-          "callers": [
-            "lib/tasks-agent-chat.ts"
-          ]
-        },
         "TxFn": {
           "module": "lib/turso.ts",
           "callers": [
+            "lib/tasks-agent-chat.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts"
+          ]
+        },
+        "readTask": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
           ]
         },
         "MINE": {
           "module": "lib/my-tasks.ts",
           "callers": [
+            "lib/tasks-agent-chat.ts",
             "lib/tasks-agent.ts",
             "wiring/auto-compact.ts"
+          ]
+        },
+        "setTaskDue": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
+          ]
+        },
+        "setTaskDone": {
+          "module": "lib/tasks-agent.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts"
           ]
         },
         "ScopeTask": {
@@ -9471,6 +9486,12 @@
         },
         "buildLoad": {
           "module": "lib/tasks-agent-load.ts",
+          "callers": [
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "duplicateMatch": {
+          "module": "lib/tasks-agent-rules.ts",
           "callers": [
             "lib/tasks-agent.ts"
           ]

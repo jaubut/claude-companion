@@ -32,7 +32,7 @@ function setup(o: Opts = {}) {
     splitter: async (task) => { splitCalls.push(task.text); return o.split === undefined ? ["Draft the site map", "Pick the photos", "Write the blog post"] : o.split },
   })
   const turns: string[] = []
-  const chat = createTasksChat({ query: t.query, exec: t.exec, plan: async () => null, emitTurn: (x) => turns.push(x), notify: (f) => frames.push(f), now: () => now })
+  const chat = createTasksChat({ query: t.query, exec: t.exec, tx: t.tx, plan: async () => null, emitTurn: (x) => turns.push(x), notify: (f) => frames.push(f), now: () => now })
   const handle = createTasksAgentRoute({ agent, chat, notify: (f) => frames.push(f) })
   const call = async (path: string, init?: RequestInit) => {
     const req = new Request(`http://localhost${path}`, init)
@@ -324,6 +324,45 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     kid.t.task({ id: B, text: "export the final cut!", position: 2 })
     expect((await kid.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
     expect(kid.t.get(B)!.done).toBe(0)
+  })
+
+  test("merge: refused when the kept task's text changed after the proposal (it no longer duplicates)", async () => {
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("SELECT id, note_id") && args[0] === A) await base("UPDATE tasks SET text = 'Something else entirely' WHERE id = ?", [A])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: "Export the final cut", position: 1 })
+    s.t.task({ id: B, text: "export the final cut!", position: 2 })
+    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect(s.t.get(B)!.done).toBe(0)
+    expect(s.t.activities().length).toBe(0)
+  })
+
+  test("merge: the kept task's text edited between the read and the closing UPDATE closes nothing", async () => {
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("UPDATE tasks SET done")) await base("UPDATE tasks SET text = 'Something else entirely' WHERE id = ?", [A])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: "Export the final cut", position: 1 })
+    s.t.task({ id: B, text: "export the final cut!", position: 2 })
+    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect(s.t.get(B)!.done).toBe(0)
+    expect(s.t.activities().length).toBe(0)
+  })
+
+  test("undo of a created subtask: reassigned to an agent between the scope check and the DELETE → nothing deleted", async () => {
+    const K = "kkkkkkkkkk"
+    const s = setup({ exec: (base) => async (sql, args) => {
+      const r = await base(sql, args)
+      if (sql.startsWith("SELECT id, note_id") && args[0] === K) await base("UPDATE tasks SET assignee = 'agent:builder' WHERE id = ?", [K])
+      return r
+    } })
+    s.t.task({ id: A, text: VAGUE })
+    s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
+    const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie" } })
+    expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
+    expect(s.t.get(K)).not.toBeNull()
+    expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
   })
 
   test("split: a mid-way failure rolls back (no log, no subtask); the retry inserts once, after the note's last task", async () => {

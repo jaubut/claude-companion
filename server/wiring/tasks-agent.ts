@@ -30,6 +30,7 @@ export const tasksAgent = createTasksAgent({
 export const tasksChat = createTasksChat({
   query: tursoQuery,
   exec: tursoExec,
+  tx: tursoTx,
   plan: (prompt) => runBrainCall(tasksChatModel(), prompt),
   emitTurn: (text, channelId) => orchEmit(appendTurn("orchestrator", text, null, channelId)),
   notify: (frame) => {

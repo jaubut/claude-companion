@@ -152,12 +152,12 @@ Opus (`COMPANION_TASKS_CHAT_MODEL`, default `claude-opus-5-5`) runs once with no
 | call | what happens |
 |---|---|
 | `list {from,to,project?}` | A deterministic answer (by day, with an overdue footnote). |
-| `move {taskIds,due}` | Moves the tasks through the my-tasks paths (`setDue`). |
-| `done {taskIds}` | Closes the tasks through the my-tasks paths (`setDone`). |
+| `move {taskIds,due}` | Moves the tasks with the same transactional write as the Agent tab (`setTaskDue`). |
+| `done {taskIds}` | Closes the tasks with the same transactional write (`setTaskDone`). |
 | `reply {text}` | Posts the text as the answer. |
 | `not_tasks` | Hands the message back to the normal brain. |
 
-Every task id is checked against his open tasks. Each write logs the `due_changed` / `status_changed` row of the my-tasks path, with `from` and `to`.
+Every task id is checked against his open tasks. Each write is one transaction: a compare-and-set on the row as just read (which must still match the due/done seen at plan time, else the task is skipped and reported) plus its `due_changed` / `status_changed` row (agent `tasks-agent`, `by: jeremie`, `via: chat`) with `from` and `to`; a failed log rolls the write back.
 
 A move or done that touches **more than 3 tasks** is held instead of applied:
 

@@ -220,6 +220,13 @@ describe("tasks tool (PRJ-CT4M WP5)", () => {
     expect([t.seen.confirm, h.calls.brain.length]).toEqual([0, 1])
   })
 
+  test("shadow: a confirm reply never applies a held plan (shadow does not change the answer)", async () => {
+    const t = tasks({ confirm: true })
+    const h = harness("shadow", decided("chat"), { tasks: t.route })
+    await h.fd.handle("confirm", CH)
+    expect([t.seen.confirm, h.calls.brain.length]).toEqual([0, 1])
+  })
+
   test("a confirm reply to a held card is consumed before any routing", async () => {
     const t = tasks({ confirm: true })
     const h = harness("live", decided("chat"), { tasks: t.route })

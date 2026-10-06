@@ -17,8 +17,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact.ts` | 575 | lib | 18 |  |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
+| `lib/tasks-agent.ts` | 528 | lib | 40 |  |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/tasks-agent.ts` | 524 | lib | 38 |  |
 | `lib/resolver.ts` | 496 | lib | 45 | state: CLOSABLE: Set, REJECTABLE: Set |
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/triage.ts` | 487 | lib | 44 | state: DESTRUCTIVE: Set |
@@ -64,8 +64,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/auto-compact.ts` | 255 | lib | 6 | state: let statsDb |
 | `lib/my-tasks.ts` | 254 | lib | 23 |  |
+| `lib/tasks-agent-chat.ts` | 254 | lib | 14 |  |
 | `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
-| `lib/tasks-agent-chat.ts` | 249 | lib | 14 |  |
 | `lib/resolver-work.ts` | 238 | lib | 5 |  |
 | `lib/body-tokens.ts` | 236 | lib | 16 |  |
 | `lib/command-menu.ts` | 231 | lib | 10 |  |
@@ -83,11 +83,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `lib/dialogs.ts` | 209 | lib | 7 |  |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
+| `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `lib/resolver-store.ts` | 204 | lib | 8 |  |
 | `lib/trip-triage.ts` | 204 | lib | 10 |  |
 | `ws.ts` | 204 | lib | 1 | emits: init, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
-| `lib/front-door.ts` | 203 | lib | 8 |  |
 | `routes/command.ts` | 202 | route-host | 1 | routes: 2 |
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
@@ -178,8 +178,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/push-tokens.ts` | 46 | lib | 6 | state: db: Database |
 | `wiring/gauge.ts` | 43 | lib | 3 | emits: gauge |
 | `routes/auto-compact.ts` | 42 | route-host | 1 | routes: 3 |
+| `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
-| `wiring/tasks-agent.ts` | 40 | lib | 2 |  |
 | `lib/agent-pid.ts` | 37 | lib | 2 |  |
 | `routes/media.ts` | 36 | route-host | 1 | route: GET /api/media/ |
 | `lib/auto-compact-settings.ts` | 35 | lib | 5 |  |
@@ -416,8 +416,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `resolveTmuxRefFromTty()` | `lib/tmux-pane.ts` | `lib/keyboard-inject.ts`, `lib/question-hook.ts`, `lib/submit-confirm.ts` |
 | `ShFn()` | `lib/resolver-fix.ts` | `lib/live-repo.ts`, `wiring/resolver-peer.ts`, `wiring/resolver.ts` |
 | `listMine()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `routes/my-tasks.ts` |
-| `setDone()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
-| `setDue()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `listQueued()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-queue.ts`, `wiring/dispatch.ts`, `wiring/orchestrator.ts` |
 | `QuestionItem()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-driver.ts`, `lib/question-hook.ts` |
 | `InjectTarget()` | `lib/keyboard-inject.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/submit-confirm.ts` |
@@ -431,6 +429,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `FixOutcome()` | `lib/resolver-fix.ts` | `lib/resolver-peer.ts`, `lib/resolver-work.ts`, `wiring/resolver-peer.ts` |
 | `TriageAction()` | `lib/triage.ts` | `lib/resolver-work.ts`, `lib/resolver.ts`, `wiring/resolver.ts` |
 | `normDate()` | `lib/my-tasks.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
+| `TxFn()` | `lib/turso.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts` |
+| `MINE()` | `lib/my-tasks.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `wiring/auto-compact.ts` |
 | `Trip()` | `lib/trip-model.ts` | `lib/trip-dashboard.ts`, `lib/trip-triage.ts`, `routes/trips.ts` |
 | `TripStore()` | `lib/trip-store.ts` | `lib/trip-geocode.ts`, `lib/trip-service.ts`, `lib/trip-triage.ts` |
 | `TripUpload()` | `lib/trip-model.ts` | `lib/trip-service.ts`, `lib/trip-store.ts`, `routes/trips.ts` |
@@ -512,6 +512,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `BrainDecision()` | `lib/orchestrator-brain.ts` | `lib/front-door.ts`, `wiring/orchestrator.ts` |
 | `unstyle()` | `lib/command-menu.ts` | `lib/inject-guard.ts`, `lib/submit-confirm.ts` |
 | `TaskRow()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts` |
+| `setDone()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
+| `setDue()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `parseQuestionInput()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts` |
 | `withPickerIO()` | `lib/keyboard-inject.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts` |
 | `addQuestionRequest()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts` |
@@ -543,8 +545,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `WaitingKind()` | `lib/waiting.ts` | `lib/sessions.ts`, `wiring/waiting.ts` |
 | `BodyResponse()` | `lib/body.ts` | `lib/status-answer.ts`, `wiring/front-door.ts` |
 | `readClaudeSessionFile()` | `lib/discover.ts` | `lib/submit-confirm.ts`, `wiring/auto-compact.ts` |
-| `TxFn()` | `lib/turso.ts` | `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts` |
-| `MINE()` | `lib/my-tasks.ts` | `lib/tasks-agent.ts`, `wiring/auto-compact.ts` |
 | `Activity()` | `lib/activity.ts` | `lib/transcript.ts`, `wiring/events.ts` |
 | `ResolvingItem()` | `lib/triage.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |
 | `TriageStore()` | `lib/triage-store.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |

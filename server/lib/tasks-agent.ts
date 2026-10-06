@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { MINE, TASKS_TZ, addDays, localDay, normDate } from "./my-tasks"
-import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, allProposals, hiddenBy, slipCounts } from "./tasks-agent-rules"
+import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, allProposals, duplicateMatch, hiddenBy, slipCounts } from "./tasks-agent-rules"
 import { type LoadResponse, LOAD_DAYS, buildLoad } from "./tasks-agent-load"
 import type { TasksAgentStore } from "./tasks-agent-store"
 import type { ExecFn, QueryFn, Row, SqlArg, Stmt, TxFn } from "./turso"
@@ -85,9 +85,9 @@ export function undoSpec(action: string, meta: Record<string, unknown> | null): 
 
 // ── reads ────────────────────────────────────────────────────────────────────
 
-interface RawTask { id: string; noteId: string; parentId: string | null; text: string; done: boolean; dueRaw: string; due: string | null; assigneeRaw: string; assignee: string | null; position: number }
+export interface RawTask { id: string; noteId: string; parentId: string | null; text: string; done: boolean; dueRaw: string; due: string | null; assigneeRaw: string; assignee: string | null; position: number }
 
-async function readTask(exec: ExecFn, id: string): Promise<RawTask | null> {
+export async function readTask(exec: ExecFn, id: string): Promise<RawTask | null> {
   const { rows } = await exec("SELECT id, note_id, parent_id, text, done, due_date, assignee, position FROM tasks WHERE id = ?", [id])
   const r = rows[0]
   if (!r) return null
@@ -312,8 +312,9 @@ export async function undoActivity(exec: ExecFn, tx: TxFn, activityId: number): 
     if (t.done || t.text !== spec.to || t.parentId !== spec.parentId) return { ok: false, status: 409, error: "changed_since" }
     const [del, log] = await tx([
       {
-        sql: "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
-        args: [taskId, spec.to, spec.parentId, taskId],
+        // The assignee as read is part of the predicate: a reassignment between the scope check and the DELETE wins.
+        sql: "DELETE FROM tasks WHERE id = ? AND done = 0 AND text = ? AND parent_id = ? AND COALESCE(assignee, '') = ? AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ?)",
+        args: [taskId, spec.to, spec.parentId, t.assigneeRaw, taskId],
       },
       logIfChanged("undo", taskId, `undo subtask: ${t.text}`, { undoes: activityId, field: "created", from: t.text, to: null }),
     ])
@@ -445,9 +446,12 @@ export function createTasksAgent(deps: TasksAgentDeps) {
       // with open subtasks: both checked inside the closing UPDATE, so no race between check and write.
       const keep = await readTask(deps.exec, keepId)
       if (!keep || keep.done || keep.noteId !== t.noteId) return { ok: false, status: 409, error: "changed_since" }
+      // Still duplicates as of now (either text may have been edited since the proposal), and the kept
+      // task's text as read is pinned in the UPDATE (the closed task's is pinned by the row check).
+      if (!duplicateMatch(t.text, keep.text)) return { ok: false, status: 409, error: "changed_since" }
       const r = await setTaskDone(deps.tx, t, true, { proposal: p.id, merged_into: keepId }, {
-        sql: "EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND k.done = 0 AND k.note_id = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)",
-        args: [keepId, t.noteId, t.id],
+        sql: "EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND k.done = 0 AND k.note_id = ? AND k.text = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)",
+        args: [keepId, t.noteId, keep.text, t.id],
       })
       return r.ok ? done({ closed: t.id, kept: keepId }) : r
     }

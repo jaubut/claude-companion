@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
-import { TASKS_TZ, type TaskRow, listMine, localDay, normDate, readBack, setDone, setDue } from "./my-tasks"
-import type { ExecFn, QueryFn } from "./turso"
+import { MINE, TASKS_TZ, type TaskRow, listMine, localDay, normDate } from "./my-tasks"
+import { readTask, setTaskDone, setTaskDue } from "./tasks-agent"
+import type { ExecFn, QueryFn, TxFn } from "./turso"
 
 // Tasks agent CHAT (PRJ-CT4M WP5): "what is on my plate this week" / "move
 // everything Granby to Friday" in the orchestrator chat. The front door routes
@@ -8,8 +9,8 @@ import type { ExecFn, QueryFn } from "./turso"
 // Opus turns the message into ONE tool call over Jeremie's open tasks:
 //   list {from,to,project?} · move {taskIds,due} · done {taskIds} · reply {text} · not_tasks
 // Code validates every id against his open tasks and writes through the
-// my-tasks paths (setDue / setDone: assignee-guarded, one agent_activity row
-// each). A write touching more than CONFIRM_OVER tasks is held as a confirm
+// tasks-agent write paths (setTaskDue / setTaskDone: one transaction each, a
+// compare-and-set on the row as just read plus its agent_activity row). A write touching more than CONFIRM_OVER tasks is held as a confirm
 // card (frame `tasks_agent_confirm`) until Jeremie confirms it. Each task's
 // due/done as planned is kept; at apply time a task that changed since (or is
 // no longer his) is skipped and reported, never overwritten.
@@ -134,6 +135,8 @@ interface Pending {
 export interface TasksChatDeps {
   query: QueryFn
   exec: ExecFn
+  /** All-or-nothing writes (tursoTx). */
+  tx: TxFn
   /** One Opus call (tool-less); the model's text or null. */
   plan: (prompt: string) => Promise<string | null>
   emitTurn: (text: string, channelId: string) => void
@@ -165,12 +168,14 @@ export function createTasksChat(deps: TasksChatDeps) {
     for (const id of p.taskIds) {
       try {
         const was = p.seen.get(id)
-        const cur = await readBack(deps.exec, id)
-        if (!cur || !was) { gone++; continue }
+        const cur = await readTask(deps.exec, id)
+        if (!cur || !was || !cur.assignee || !MINE.includes(cur.assignee)) { gone++; continue }
         if (cur.due !== was.due || cur.done !== was.done) { skipped.push(cur.text); continue }
-        const r = p.op === "move" ? await setDue(deps.exec, id, p.due) : await setDone(deps.exec, id, true)
+        // The CAS inside the write is on the row as read just above, i.e. as planned: an edit landing
+        // in between makes it a conflict (skipped), never an overwrite.
+        const r = p.op === "move" ? await setTaskDue(deps.tx, cur, p.due, { via: "chat" }) : await setTaskDone(deps.tx, cur, true, { via: "chat" })
         if (r.ok) changed++
-        else gone++
+        else skipped.push(cur.text)
       } catch { failed++ }
     }
     if (changed) deps.notify({ type: "tasks_changed", why: p.op === "move" ? "due" : "done" })
