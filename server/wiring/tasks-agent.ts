@@ -8,7 +8,6 @@ import { createCalendarBusy } from "../lib/tasks-agent-load"
 import { loadAssignRules } from "../lib/tasks-agent-rules"
 import { createTasksAgentStore } from "../lib/tasks-agent-store"
 import { tursoExec, tursoQuery } from "../lib/turso"
-import { createTasksAgentRoute } from "../routes/tasks-agent"
 import { broadcast } from "../state"
 import { orchEmit } from "./orchestrator"
 
@@ -37,5 +36,3 @@ export const tasksChat = createTasksChat({
     broadcast(frame)
   },
 })
-
-export const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })

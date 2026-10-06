@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 102,
+          "lines": 104,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -69,6 +69,7 @@
             "routes/auto-compact.ts",
             "routes/gauge.ts",
             "routes/my-tasks.ts",
+            "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
             "lib/vault-guard.ts",
             "ws.ts",
@@ -1387,7 +1388,7 @@
         },
         {
           "path": "lib/front-door.ts",
-          "lines": 202,
+          "lines": 200,
           "kind": "lib",
           "exports": [
             "BrainHints",
@@ -3407,7 +3408,7 @@
         },
         {
           "path": "lib/tasks-agent-chat.ts",
-          "lines": 217,
+          "lines": 218,
           "kind": "lib",
           "exports": [
             "CONFIRM_OVER",
@@ -3474,7 +3475,7 @@
         },
         {
           "path": "lib/tasks-agent-rules.ts",
-          "lines": 265,
+          "lines": 268,
           "kind": "lib",
           "exports": [
             "SLIP_MIN",
@@ -3564,7 +3565,7 @@
         },
         {
           "path": "lib/tasks-agent.ts",
-          "lines": 492,
+          "lines": 517,
           "kind": "lib",
           "exports": [
             "AGENT_SLUG",
@@ -6017,12 +6018,11 @@
         },
         {
           "path": "wiring/tasks-agent.ts",
-          "lines": 42,
+          "lines": 39,
           "kind": "lib",
           "exports": [
             "tasksAgent",
-            "tasksChat",
-            "handleTasksAgentRoute"
+            "tasksChat"
           ],
           "state": [],
           "emits": [],
@@ -6040,7 +6040,6 @@
             "lib/tasks-agent-rules.ts",
             "lib/tasks-agent-store.ts",
             "lib/turso.ts",
-            "routes/tasks-agent.ts",
             "state.ts",
             "wiring/orchestrator.ts"
           ],
@@ -6208,6 +6207,50 @@
         }
       ],
       "fanIn": {
+        "createTasksAgentRoute": {
+          "module": "routes/tasks-agent.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "broadcast": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#* /api/feed",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/my-tasks.ts",
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts",
+            "wiring/dialogs.ts",
+            "wiring/dispatch.ts",
+            "wiring/events.ts",
+            "wiring/front-door.ts",
+            "wiring/gauge.ts",
+            "wiring/orchestrator.ts",
+            "wiring/receipt-qa.ts",
+            "wiring/tasks-agent.ts",
+            "wiring/triage.ts",
+            "wiring/waiting.ts",
+            "ws.ts"
+          ]
+        },
+        "tasksAgent": {
+          "module": "wiring/tasks-agent.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "tasksChat": {
+          "module": "wiring/tasks-agent.ts",
+          "callers": [
+            "companion-server.ts",
+            "wiring/front-door.ts"
+          ]
+        },
         "disableAutoSelectFamily": {
           "module": "lib/apns.ts",
           "callers": [
@@ -6381,12 +6424,6 @@
         },
         "handleVaultRoute": {
           "module": "routes/vault.ts",
-          "callers": [
-            "companion-server.ts#* /ws"
-          ]
-        },
-        "handleTasksAgentRoute": {
-          "module": "wiring/tasks-agent.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -9696,30 +9733,6 @@
             "routes/trips.ts"
           ]
         },
-        "broadcast": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts#POST /api/push/broadcast",
-            "routes/api.ts#POST /api/super-auto",
-            "routes/api.ts#* /api/feed",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit",
-            "routes/my-tasks.ts",
-            "wiring/body-fix.ts",
-            "wiring/body-investigate.ts",
-            "wiring/body.ts",
-            "wiring/dialogs.ts",
-            "wiring/dispatch.ts",
-            "wiring/events.ts",
-            "wiring/front-door.ts",
-            "wiring/gauge.ts",
-            "wiring/orchestrator.ts",
-            "wiring/receipt-qa.ts",
-            "wiring/tasks-agent.ts",
-            "wiring/triage.ts",
-            "wiring/waiting.ts",
-            "ws.ts"
-          ]
-        },
         "listLearned": {
           "module": "lib/learned-allow.ts",
           "callers": [
@@ -11876,12 +11889,6 @@
             "wiring/front-door.ts"
           ]
         },
-        "tasksChat": {
-          "module": "wiring/tasks-agent.ts",
-          "callers": [
-            "wiring/front-door.ts"
-          ]
-        },
         "GaugeStore": {
           "module": "lib/gauge.ts",
           "callers": [
@@ -12404,12 +12411,6 @@
         },
         "tasksChatModel": {
           "module": "lib/tasks-agent-chat.ts",
-          "callers": [
-            "wiring/tasks-agent.ts"
-          ]
-        },
-        "createTasksAgentRoute": {
-          "module": "routes/tasks-agent.ts",
           "callers": [
             "wiring/tasks-agent.ts"
           ]

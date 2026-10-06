@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "./lib/auth"
-import { type WsData, clientInfo } from "./state"
+import { type WsData, broadcast, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { handleApiRoute } from "./routes/api"
@@ -20,7 +20,8 @@ import { handleTripsRoute } from "./routes/trips"
 import { handleAutoCompactRoute } from "./routes/auto-compact"
 import { handleGaugeRoute } from "./routes/gauge"
 import { handleMyTasksRoute } from "./routes/my-tasks"
-import { handleTasksAgentRoute } from "./wiring/tasks-agent"
+import { createTasksAgentRoute } from "./routes/tasks-agent"
+import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
@@ -31,6 +32,7 @@ import { waitForFirstDiscovery } from "./lib/discover"
 // finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
 const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 
+const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 
 export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
