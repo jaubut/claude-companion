@@ -45,7 +45,7 @@ describe("routeTask", () => {
     expect(r.dispatch_result_ref).toBeNull()
     const act = db.query("SELECT action, meta FROM agent_activity").all() as Record<string, string>[]
     expect(act.map((a) => a.action)).toEqual(["dispatch:queued"])
-    expect(JSON.parse(act[0]!.meta)).toMatchObject({ op: "route", repo: "claude-companion" })
+    expect(JSON.parse(act[0]!.meta ?? "{}")).toMatchObject({ op: "route", repo: "claude-companion" })
   })
 
   test("a different blocker is never routed", async () => {
