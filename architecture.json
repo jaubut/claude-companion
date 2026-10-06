@@ -3708,7 +3708,7 @@
         },
         {
           "path": "lib/tasks-agent.ts",
-          "lines": 528,
+          "lines": 535,
           "kind": "lib",
           "exports": [
             "AGENT_SLUG",
@@ -3745,6 +3745,7 @@
             "ProposalsView",
             "AgentResponse",
             "AcceptBody",
+            "parentVersion",
             "DecideResult",
             "createTasksAgent",
             "TasksAgent",

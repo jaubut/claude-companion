@@ -6,7 +6,7 @@ import { TursoUnreachable } from "../lib/turso"
 // Brain → Tasks agent tab (PRJ-CT4M WP5, contract docs/tasks-agent-api.md):
 //   GET  /api/tasks/agent                      → { generatedAt, today, tz, digest, proposals, load }
 //   POST /api/tasks/agent/undo {activityId}    → { ok, taskId, field, restored }
-//   POST /api/tasks/agent/proposals/:id {action:"accept"|"dismiss", due?, subtasks?}
+//   POST /api/tasks/agent/proposals/:id {action:"accept"|"dismiss", due?, subtasks?, parentVersion?}
 //   POST /api/tasks/agent/chat/:planId {confirm} → apply / drop a held chat move
 // Device = `X-Companion-Device` (the digest baseline is per device). Every
 // write pushes `tasks_changed`. Turso failures → 503 turso_unreachable.
@@ -74,7 +74,7 @@ export function createTasksAgentRoute(deps: TasksAgentRouteDeps) {
       if (!body) return err(400, "bad_json")
       if (body.action !== "accept" && body.action !== "dismiss") return err(400, "action_must_be_accept_or_dismiss")
       try {
-        const r = await deps.agent.decide(id, body.action, { due: body.due, subtasks: body.subtasks })
+        const r = await deps.agent.decide(id, body.action, { due: body.due, subtasks: body.subtasks, parentVersion: body.parentVersion })
         if (!r.ok) return err(r.status, r.error)
         if ("decision" in r && r.decision === "accept") deps.notify({ type: "tasks_changed", taskId: r.taskIds[r.taskIds.length - 1], why: "agent" })
         return Response.json(r)

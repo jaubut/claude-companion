@@ -94,8 +94,8 @@ The proposals are deterministic, and no model is called. Each kind is capped at 
 
 How a split is accepted:
 
-1. `{action:"accept"}` asks Haiku for 2-5 subtasks and returns `{"ok":true,"stage":"confirm","subtasks":[…]}`. Nothing is written in this step. If Haiku is unavailable, the response is `502 split_unavailable`.
-2. `{action:"accept","subtasks":[…]}` with the list Jeremie edited or confirmed (2-5 lines) inserts each subtask. Each one gets `parent_id = task`, its parent's assignee, no date, a position after the note's last task, and one `subtask_created` row. All or nothing: if an insert fails midway, the subtasks already written (and their rows) are removed, so a retry starts clean.
+1. `{action:"accept"}` asks Haiku for 2-5 subtasks and returns `{"ok":true,"stage":"confirm","subtasks":[…],"parentVersion":"…"}`. `parentVersion` binds the draft to the task's text and project. Nothing is written in this step. If Haiku is unavailable, the response is `502 split_unavailable`.
+2. `{action:"accept","subtasks":[…],"parentVersion":"…"}` (version from step 1; `400 parent_version_required` without it, `409 draft_stale` if the task's text or project changed since the draft, so ask for a new draft) with the list Jeremie edited or confirmed (2-5 lines) inserts each subtask. Each one gets `parent_id = task`, its parent's assignee, no date, a position after the note's last task, and one `subtask_created` row. All or nothing: if an insert fails midway, the subtasks already written (and their rows) are removed, so a retry starts clean.
 
 After an accept or a dismiss, the proposal is hidden as long as its `version` still matches. A `reschedule` proposal is hidden until the date has slipped 2 more times.
 
@@ -121,7 +121,7 @@ Errors:
 
 ## POST /api/tasks/agent/proposals/:id
 
-Body: `{"action":"accept"|"dismiss", "due"?: …, "subtasks"?: […]}`. The server works the proposal out again from Turso, so an id that no longer applies returns 404.
+Body: `{"action":"accept"|"dismiss", "due"?: …, "subtasks"?: […], "parentVersion"?: "…"}`. The server works the proposal out again from Turso, so an id that no longer applies returns 404.
 
 Responses:
 
@@ -131,9 +131,9 @@ Responses:
 
 Errors:
 
-- `400`: `bad_id`, `bad_json`, `action_must_be_accept_or_dismiss`, `due_must_be_yyyy_mm_dd_or_null`, `subtasks_must_be_2_to_5_strings`
+- `400`: `bad_id`, `bad_json`, `action_must_be_accept_or_dismiss`, `due_must_be_yyyy_mm_dd_or_null`, `subtasks_must_be_2_to_5_strings`, `parent_version_required`
 - `404`: `no_such_proposal`
-- `409`: `changed_since`
+- `409`: `changed_since`, `draft_stale`
 - `502`: `split_unavailable`
 
 ## Chat

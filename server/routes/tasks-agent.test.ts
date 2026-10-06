@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
-import { createTasksAgent, undoSpec } from "../lib/tasks-agent"
+import { createTasksAgent, parentVersion, undoSpec } from "../lib/tasks-agent"
 import { createTasksChat } from "../lib/tasks-agent-chat"
 import { parseAssignRules } from "../lib/tasks-agent-rules"
 import { createTasksAgentStore } from "../lib/tasks-agent-store"
@@ -16,6 +16,7 @@ const RULES = parseAssignRules(`ROUTES = [
 `)
 const VAGUE = "the whole website thing with the new client and the photos and the blog maybe"
 const A = "aaaaaaaaaa", B = "bbbbbbbbbb"
+const PV = parentVersion({ noteId: "projects/p1", text: VAGUE })
 
 interface Opts { busy?: Map<string, number> | null; split?: string[] | null; exec?: (base: ExecFn) => ExecFn }
 
@@ -365,6 +366,69 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
   })
 
+  test("undo of a created subtask: a due date or description added since creation → nothing deleted, edit kept", async () => {
+    const K = "kkkkkkkkkk"
+    for (const edit of ["due_date = '2026-11-01'", "description = 'client notes'"]) {
+      const s = setup({ exec: (base) => async (sql, args) => {
+        const r = await base(sql, args)
+        if (sql.startsWith("SELECT id, note_id") && args[0] === K) await base(`UPDATE tasks SET ${edit} WHERE id = ?`, [K])
+        return r
+      } })
+      s.t.task({ id: A, text: VAGUE })
+      s.t.task({ id: K, parent_id: A, text: "Draft the site map" })
+      const act = s.t.activity({ agent: "tasks-agent", action: "subtask_created", target: K, meta: { from: null, to: "Draft the site map", created: true, parent: A, by: "jeremie" } })
+      expect((await s.post("/api/tasks/agent/undo", { activityId: act })).body.error).toBe("changed_since")
+      expect(s.t.get(K)).not.toBeNull()
+      expect(s.t.activities().filter((a) => a.action === "undo").length).toBe(0)
+    }
+  })
+
+  test("merge: a duplicate moved to another project between the read and the write is not closed", async () => {
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("UPDATE tasks SET done")) await base("UPDATE tasks SET note_id = 'projects/other' WHERE id = ?", [B])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: "Export the final cut", position: 1 })
+    s.t.task({ id: B, text: "export the final cut!", position: 2 })
+    expect((await s.post(`/api/tasks/agent/proposals/merge:${A}:${B}`, { action: "accept" })).body.error).toBe("changed_since")
+    expect(s.t.get(B)!.done).toBe(0)
+    expect(s.t.activities().length).toBe(0)
+  })
+
+  test("split: the parent moved to another project between the read and the insert → no children, 409", async () => {
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("SELECT MAX(position)")) await base("UPDATE tasks SET note_id = 'projects/other' WHERE id = ?", [A])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: VAGUE, position: 4 })
+    const r = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: ["Draft the site map", "Pick the photos"], parentVersion: PV })
+    expect([r.status, r.body.error]).toEqual([409, "changed_since"])
+    expect(s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 0 })
+    expect(s.t.activities().length).toBe(0)
+  })
+
+  test("split: a draft made for an older parent text is refused (draft_stale); a missing version is a 400", async () => {
+    const s = setup()
+    s.t.task({ id: A, text: VAGUE, position: 4 })
+    const draft = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept" })
+    s.t.db.query("UPDATE tasks SET text = ? WHERE id = ?").run(`${VAGUE} and also the newsletter`, A)
+    const body = { action: "accept", subtasks: draft.body.subtasks, parentVersion: draft.body.parentVersion }
+    expect(await s.post(`/api/tasks/agent/proposals/split:${A}`, body)).toEqual({ status: 409, body: { error: "draft_stale" } })
+    expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: draft.body.subtasks })).body.error).toBe("parent_version_required")
+    expect(s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 0 })
+  })
+
+  test("split: the parent text edited between the version check and the insert → nothing written", async () => {
+    const s = setup({ exec: (base) => async (sql, args) => {
+      if (sql.startsWith("SELECT MAX(position)")) await base("UPDATE tasks SET text = text || ' (edited)' WHERE id = ?", [A])
+      return base(sql, args)
+    } })
+    s.t.task({ id: A, text: VAGUE, position: 4 })
+    const r = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: ["Draft the site map", "Pick the photos"], parentVersion: PV })
+    expect([r.status, r.body.error]).toEqual([409, "changed_since"])
+    expect(s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 0 })
+  })
+
   test("split: a mid-way failure rolls back (no log, no subtask); the retry inserts once, after the note's last task", async () => {
     let fail = true
     const s = setup({ exec: (base) => async (sql, args) => {
@@ -373,7 +437,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     } })
     s.t.task({ id: A, text: VAGUE, position: 4 })
     s.t.task({ id: B, text: "Next sibling", position: 5 })
-    const body = { action: "accept", subtasks: ["Draft the site map", "Pick the photos"] }
+    const body = { action: "accept", subtasks: ["Draft the site map", "Pick the photos"], parentVersion: PV }
     expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, body)).status).toBe(503)
     expect([s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A), s.t.activities().length]).toEqual([{ n: 0 }, 0])
     expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, body)).status).toBe(200)
@@ -389,7 +453,7 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
       return base(sql, args)
     } })
     s.t.task({ id: A, text: VAGUE, position: 4 })
-    const body = { action: "accept", subtasks: ["Draft the site map", "Pick the photos"] }
+    const body = { action: "accept", subtasks: ["Draft the site map", "Pick the photos"], parentVersion: PV }
     expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, body))).toEqual({ status: 409, body: { error: "changed_since" } })
     expect(s.t.db.query("SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ?").get(A)).toEqual({ n: 1 })
     expect(s.t.activities().length).toBe(0)
@@ -399,10 +463,10 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     const s = setup()
     s.t.task({ id: A, text: VAGUE, position: 4 })
     const draft = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept" })
-    expect(draft.body).toEqual({ ok: true, stage: "confirm", proposalId: `split:${A}`, subtasks: ["Draft the site map", "Pick the photos", "Write the blog post"] })
+    expect(draft.body).toEqual({ ok: true, stage: "confirm", proposalId: `split:${A}`, subtasks: ["Draft the site map", "Pick the photos", "Write the blog post"], parentVersion: PV })
     expect(s.t.activities().length).toBe(0)
     expect((await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: ["only one"] })).status).toBe(400)
-    const r = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: ["Draft the site map", "Pick the photos"] })
+    const r = await s.post(`/api/tasks/agent/proposals/split:${A}`, { action: "accept", subtasks: ["Draft the site map", "Pick the photos"], parentVersion: PV })
     expect(r.body.detail.subtaskIds.length).toBe(2)
     const kids = s.t.db.query("SELECT text, parent_id, assignee, done FROM tasks WHERE parent_id = ? ORDER BY position").all(A)
     expect(kids).toEqual([
