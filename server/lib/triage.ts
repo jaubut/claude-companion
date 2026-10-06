@@ -356,8 +356,10 @@ function tripPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "trip" }>
 
 function mytaskPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "mytask" }>): Phrase {
   const batch = ref.taskIds.length > 1
-  const done = finishOptions(mytaskOptions(ref.lateDays, batch, snooze))
-  const action = ref.lateDays > STALE_DAYS
+  // Money / client / deadline work is never quietly un-dated, however late.
+  const keep = URGENT_WORDS.test(`${src.title} ${src.facts.evidence ?? ""}`)
+  const done = finishOptions(mytaskOptions(keep ? 0 : ref.lateDays, batch, snooze))
+  const action = !keep && ref.lateDays > STALE_DAYS
     ? `Long past due: drop the date${batch ? "s" : ""} unless ${batch ? "they're" : "it's"} still real.`
     : `Move ${batch ? "them" : "it"} to next week, or mark ${batch ? "them" : "it"} done.`
   const evidence = src.facts.evidence?.trim()
@@ -422,7 +424,7 @@ const URGENT_WORDS = /\b(prod(uction)?|outage|down|client|invoice|facture|paymen
 export function heuristicSeverity(src: SourceItem): Severity {
   const h = src.hints ?? {}
   if (src.ref.source === "trip") return "low"
-  if (src.ref.source === "mytask") return src.ref.lateDays > STALE_DAYS ? "low" : URGENT_WORDS.test(src.title) ? "urgent" : "normal"
+  if (src.ref.source === "mytask") return URGENT_WORDS.test(`${src.title} ${src.facts.evidence ?? ""}`) ? "urgent" : src.ref.lateDays > STALE_DAYS ? "low" : "normal"
   if (src.ref.source === "body") return /^(critical|high)$/i.test(h.criticality ?? "") ? "urgent" : "normal"
   if (src.ref.source === "proposal" && /^(critical|high)$/i.test(h.bodySeverity ?? "")) return "urgent"
   if (src.ref.source === "pr" && h.safetyNet) return "low"

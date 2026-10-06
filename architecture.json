@@ -3679,7 +3679,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 485,
+          "lines": 487,
           "kind": "lib",
           "exports": [
             "TriageSource",

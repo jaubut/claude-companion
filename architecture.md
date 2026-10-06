@@ -20,7 +20,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver.ts` | 496 | lib | 45 | state: CLOSABLE: Set, REJECTABLE: Set |
 | `lib/auto-compact.ts` | 491 | lib | 22 |  |
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
-| `lib/triage.ts` | 485 | lib | 44 | state: DESTRUCTIVE: Set |
+| `lib/triage.ts` | 487 | lib | 44 | state: DESTRUCTIVE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `routes/api.ts` | 454 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
