@@ -121,7 +121,7 @@ Errors:
 
 ## POST /api/tasks/agent/proposals/:id
 
-Body: `{"action":"accept"|"dismiss", "due"?: …, "subtasks"?: […], "parentVersion"?: "…"}`. The server works the proposal out again from Turso, so an id that no longer applies returns 404.
+Body: `{"action":"accept"|"dismiss", "due"?: …, "subtasks"?: […], "parentVersion"?: "…", "rowVersions"?: {"<taskId>":"<version>"}}`. The server works the proposal out again from Turso, so an id that no longer applies returns 404.
 
 Responses:
 
@@ -129,9 +129,13 @@ Responses:
 - Dismiss: `{"ok":true,"decision":"dismiss",…}`.
 - Split, first step: the `stage:"confirm"` response shown above.
 
+**Clients MUST echo `rowVersions`.** Every proposal in `GET /api/tasks/agent` carries `rowVersions` (taskId → version of each task it was derived from; a merge has both tasks). Send the map back unchanged in the accept body (all four kinds, including the draft step of a split). When present, the server checks THE VERSIONS THE USER SAW and answers `409 stale`, writing nothing, if any task changed since. When absent (older clients, server-side flows) the server falls back to the version it reads at accept time, which only protects against changes made after the tap, not against a card that sat on screen. A non-object or non-string value is `400 row_versions_must_be_object_of_strings`.
+
+iOS Agent tab (companion-ios #92, or the follow-up task): store `rowVersions` with each proposal and each `tasks_agent_confirm` card and send them with the accept / confirm call; on `409 stale`, refresh the tab (`?fresh=1`) instead of retrying.
+
 Errors:
 
-- `400`: `bad_id`, `bad_json`, `action_must_be_accept_or_dismiss`, `due_must_be_yyyy_mm_dd_or_null`, `subtasks_must_be_2_to_5_strings`, `parent_version_required`
+- `400`: `bad_id`, `bad_json`, `action_must_be_accept_or_dismiss`, `due_must_be_yyyy_mm_dd_or_null`, `subtasks_must_be_2_to_5_strings`, `parent_version_required`, `row_versions_must_be_object_of_strings`
 - `404`: `no_such_proposal`
 - `409`: `changed_since` (lost a race inside the transaction), `stale` (the task is no longer the row the proposal was derived from; for an assign, its pm-assign rule no longer matches), `draft_stale`
 - `502`: `split_unavailable`
@@ -165,10 +169,10 @@ A move or done that touches **more than 3 tasks** is held instead of applied:
 
   ```json
   {"type":"tasks_agent_confirm","planId":"…","threadId":"general","op":"move","due":"2026-10-09",
-   "title":"Move 5 tasks to Fri, Oct 9?","tasks":[{"id":"…","text":"…","due":"…","project":"…"}],"expiresAt":…}
+   "title":"Move 5 tasks to Fri, Oct 9?","rowVersions":{"<taskId>":"<version>"},"tasks":[{"id":"…","text":"…","due":"…","project":"…"}],"expiresAt":…}
   ```
 
-- It is applied by `POST /api/tasks/agent/chat/:planId {"confirm":true}`, or by the chat reply "confirm" in that channel. A bare "yes" / "ok" is never taken as a confirm: it may answer something else.
+- It is applied by `POST /api/tasks/agent/chat/:planId {"confirm":true,"rowVersions":{…}}` (clients MUST echo the card's `rowVersions`: a task whose version differs from the one the user saw is skipped and named; absent = the versions kept at plan time), or by the chat reply "confirm" in that channel. A bare "yes" / "ok" is never taken as a confirm: it may answer something else.
 - `{"confirm":false}` or a reply such as "cancel" drops it.
 - Each task's due and done state at plan time is kept. On apply every task is re-read: one whose due/done changed since, or that is no longer his, is skipped and named in the reply turn (partial results are reported, e.g. "Moved 3 tasks to Fri, Oct 9 (skipped 1 changed since the plan: …)"). A second confirm while one is applying returns `409 plan_in_progress`.
 - A plan expires after 30 min and lives in memory only. An unknown or expired plan returns `404 no_such_plan`.

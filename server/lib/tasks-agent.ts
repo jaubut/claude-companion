@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { MINE, TASKS_TZ, addDays, localDay, normDate } from "./my-tasks"
 import { type AssignRule, type DueChange, type Proposal, type ProposalKind, type ScopeTask, agentFor, allProposals, duplicateMatch, hiddenBy, slipCounts } from "./tasks-agent-rules"
 import { type LoadResponse, LOAD_DAYS, buildLoad } from "./tasks-agent-load"
-import { type RawTask, guardedWrite, keyOf, readTask, rowKey, rowKeySql, rowVersion, versionOf } from "./tasks-agent-row"
+import { type RawTask, guardedWrite, keyOf, parseRowVersions, readTask, rowKey, rowKeySql, rowVersion, versionOf } from "./tasks-agent-row"
 import type { TasksAgentStore } from "./tasks-agent-store"
 import type { ExecFn, QueryFn, Row, SqlArg, Stmt, TxFn } from "./turso"
 
@@ -368,7 +368,7 @@ export interface AgentResponse {
   load: LoadResponse
 }
 
-export type AcceptBody = { due?: unknown; subtasks?: unknown; parentVersion?: unknown }
+export type AcceptBody = { due?: unknown; subtasks?: unknown; parentVersion?: unknown; rowVersions?: unknown }
 
 /** What a split draft is bound to: the parent's row version (every tracked field, description included). insertSubtasks pins the same row inside its transaction. */
 export const parentVersion = (t: RawTask): string => versionOf(t)
@@ -423,8 +423,12 @@ export function createTasksAgent(deps: TasksAgentDeps) {
     }
     // The task acted on (merge: the duplicate). guardedWrite refuses it (409 stale) unless it is exactly the
     // row the proposal was derived from; every write below pins that same row again inside its transaction.
+    // Versions the HUMAN saw (echoed `rowVersions`) win over the snapshot taken at accept time; absent = the snapshot.
+    const echoed = parseRowVersions(body.rowVersions)
+    if (echoed === null) return { ok: false, status: 400, error: "row_versions_must_be_object_of_strings" }
+    const expectFor = (id: string): string | undefined => echoed?.[id] ?? p.rowVersions?.[id]
     const subject = p.taskIds[p.kind === "merge" ? 1 : 0]!
-    return guardedWrite<DecideResult>(deps.exec, subject, p.rowVersions?.[subject], async (t) => {
+    return guardedWrite<DecideResult>(deps.exec, subject, expectFor(subject), async (t) => {
       if (t.done) return { ok: false, status: 409, error: "changed_since" }
       // Same scope as the rules: reschedule / split on his own tasks, merge on his or unassigned.
       if ((p.kind === "reschedule" || p.kind === "split") && !isMine(t.assignee)) return { ok: false, status: 409, error: "changed_since" }
@@ -453,7 +457,7 @@ export function createTasksAgent(deps: TasksAgentDeps) {
         const keepId = String(p.suggestion.keepId)
         // Never close the last open copy: the kept task must be exactly the row the proposal saw (so still open, same
         // note) and still a duplicate; a parent with open subtasks is never closed. All pinned inside the closing UPDATE.
-        return guardedWrite<DecideResult>(deps.exec, keepId, p.rowVersions?.[keepId], async (keep) => {
+        return guardedWrite<DecideResult>(deps.exec, keepId, expectFor(keepId), async (keep) => {
           if (keep.done || keep.noteId !== t.noteId || !duplicateMatch(t.text, keep.text)) return { ok: false, status: 409, error: "changed_since" }
           const r = await setTaskDone(deps.tx, t, true, { proposal: p.id, merged_into: keepId }, {
             sql: `EXISTS (SELECT 1 FROM tasks k WHERE k.id = ? AND ${rowKeySql("k.")} = ?) AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = ? AND c.done = 0)`,

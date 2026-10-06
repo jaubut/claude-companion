@@ -3549,7 +3549,7 @@
         },
         {
           "path": "lib/tasks-agent-chat.ts",
-          "lines": 260,
+          "lines": 263,
           "kind": "lib",
           "exports": [
             "CONFIRM_OVER",
@@ -3618,7 +3618,7 @@
         },
         {
           "path": "lib/tasks-agent-row.ts",
-          "lines": 103,
+          "lines": 115,
           "kind": "lib",
           "exports": [
             "RawTask",
@@ -3634,7 +3634,8 @@
             "readTask",
             "readTasks",
             "StaleOutcome",
-            "guardedWrite"
+            "guardedWrite",
+            "parseRowVersions"
           ],
           "state": [],
           "emits": [],
@@ -3742,7 +3743,7 @@
         },
         {
           "path": "lib/tasks-agent.ts",
-          "lines": 538,
+          "lines": 542,
           "kind": "lib",
           "exports": [
             "AGENT_SLUG",
@@ -9457,6 +9458,13 @@
           ]
         },
         "versionOf": {
+          "module": "lib/tasks-agent-row.ts",
+          "callers": [
+            "lib/tasks-agent-chat.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
+        "parseRowVersions": {
           "module": "lib/tasks-agent-row.ts",
           "callers": [
             "lib/tasks-agent-chat.ts",

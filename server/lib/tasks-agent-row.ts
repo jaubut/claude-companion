@@ -100,3 +100,15 @@ export async function guardedWrite<R extends { ok: boolean }>(
   if (expected !== undefined && versionOf(t) !== expected) return { ok: false, status: 409, error: "stale", fresh: t }
   return write(t)
 }
+
+/** A client's echoed `rowVersions` body field: undefined = absent, null = malformed, else {taskId: version}. */
+export function parseRowVersions(v: unknown): Record<string, string> | null | undefined {
+  if (v === undefined) return undefined
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null
+  const out: Record<string, string> = {}
+  for (const [k, x] of Object.entries(v)) {
+    if (typeof x !== "string" || !x) return null
+    out[k] = x
+  }
+  return out
+}

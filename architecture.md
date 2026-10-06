@@ -17,7 +17,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact.ts` | 575 | lib | 18 |  |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
-| `lib/tasks-agent.ts` | 538 | lib | 39 |  |
+| `lib/tasks-agent.ts` | 542 | lib | 39 |  |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/resolver.ts` | 496 | lib | 45 | state: CLOSABLE: Set, REJECTABLE: Set |
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
@@ -59,8 +59,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/question-hook.ts` | 263 | lib | 7 |  |
+| `lib/tasks-agent-chat.ts` | 263 | lib | 14 |  |
 | `lib/triage-sources.ts` | 262 | lib | 22 | state: HOLDS: Set |
-| `lib/tasks-agent-chat.ts` | 260 | lib | 14 |  |
 | `lib/triage-pr.ts` | 256 | lib | 20 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/auto-compact.ts` | 255 | lib | 6 | state: let statsDb |
@@ -132,13 +132,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/my-tasks.ts` | 117 | route-host | 6 | route: * /api/tasks/mine |
 | `wiring/resolver-peer.ts` | 117 | lib | 7 | state: let store, let deps |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
+| `lib/tasks-agent-row.ts` | 115 | lib | 15 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `wiring/body-fix.ts` | 112 | lib | 4 | state: let deps · emits: orchestrator_channel |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
 | `companion-server.ts` | 104 | route-host | 1 | routes: 5 |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
-| `lib/tasks-agent-row.ts` | 103 | lib | 14 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `lib/orchestrator-db.ts` | 99 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
@@ -548,6 +548,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `readClaudeSessionFile()` | `lib/discover.ts` | `lib/submit-confirm.ts`, `wiring/auto-compact.ts` |
 | `guardedWrite()` | `lib/tasks-agent-row.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts` |
 | `versionOf()` | `lib/tasks-agent-row.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts` |
+| `parseRowVersions()` | `lib/tasks-agent-row.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts` |
 | `Activity()` | `lib/activity.ts` | `lib/transcript.ts`, `wiring/events.ts` |
 | `ResolvingItem()` | `lib/triage.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |
 | `TriageStore()` | `lib/triage-store.ts` | `lib/triage-engine.ts`, `wiring/triage.ts` |

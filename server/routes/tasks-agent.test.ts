@@ -469,6 +469,66 @@ describe("POST /api/tasks/agent/proposals/:id", () => {
     expect(s.t.activities().length).toBe(0)
   })
 
+  describe("echoed rowVersions (what the human saw)", () => {
+    const seen = async (s: ReturnType<typeof setup>, id: string) => (await s.get()).body.proposals.items.find((p: any) => p.id === id)
+    const PATH = (id: string) => `/api/tasks/agent/proposals/${id}`
+
+    test("stale echoed version → 409 stale, nothing written; the same accept without the echo goes through (snapshot at accept time)", async () => {
+      const s = setup()
+      slipped(s, A)
+      const p = await seen(s, `slip:${A}`)
+      expect(p.rowVersions[A]).toMatch(/^[0-9a-f]{16}$/)
+      s.t.db.query("UPDATE tasks SET description = 'edited after the card was shown' WHERE id = ?").run(A)
+      expect(await s.post(PATH(`slip:${A}`), { action: "accept", rowVersions: p.rowVersions })).toEqual({ status: 409, body: { error: "stale" } })
+      expect(s.t.get(A)!.due_date).toBe("2026-10-01")
+      expect(s.t.activities().filter((a) => a.agent_slug === "tasks-agent").length).toBe(0)
+      expect((await s.post(PATH(`slip:${A}`), { action: "accept" })).status).toBe(200)
+    })
+
+    test("current echoed version → applied", async () => {
+      const s = setup()
+      slipped(s, A)
+      const p = await seen(s, `slip:${A}`)
+      const r = await s.post(PATH(`slip:${A}`), { action: "accept", rowVersions: p.rowVersions })
+      expect(r.status).toBe(200)
+      expect(s.t.get(A)!.due_date).toBe("2026-10-13")
+    })
+
+    test("merge: either task edited since the card → 409 stale", async () => {
+      for (const edited of [A, B]) {
+        const s = setup()
+        s.t.task({ id: A, text: "Export the final cut", position: 1 })
+        s.t.task({ id: B, text: "export the final cut!", position: 2 })
+        const p = await seen(s, `merge:${A}:${B}`)
+        expect(Object.keys(p.rowVersions).sort()).toEqual([A, B])
+        s.t.db.query("UPDATE tasks SET description = 'x' WHERE id = ?").run(edited)
+        expect(await s.post(PATH(`merge:${A}:${B}`), { action: "accept", rowVersions: p.rowVersions })).toEqual({ status: 409, body: { error: "stale" } })
+        expect(s.t.get(B)!.done).toBe(0)
+      }
+    })
+
+    test("split: the draft step uses the echoed version too; assign likewise", async () => {
+      const s = setup()
+      s.t.task({ id: A, text: VAGUE, position: 4 })
+      s.t.task({ id: B, assignee: null, text: "Wireframe the booking page" })
+      const sp = await seen(s, `split:${A}`)
+      const as = await seen(s, `assign:${B}`)
+      s.t.db.query("UPDATE tasks SET description = 'x' WHERE id IN (?, ?)").run(A, B)
+      expect((await s.post(PATH(`split:${A}`), { action: "accept", rowVersions: sp.rowVersions })).body.error).toBe("stale")
+      expect(s.splitCalls.length).toBe(0)
+      expect((await s.post(PATH(`assign:${B}`), { action: "accept", rowVersions: as.rowVersions })).body.error).toBe("stale")
+      expect(s.t.get(B)!.assignee).toBeNull()
+    })
+
+    test("malformed rowVersions → 400", async () => {
+      const s = setup()
+      slipped(s, A)
+      for (const bad of ["x", [1], { [A]: 5 }, { [A]: "" }]) {
+        expect((await s.post(PATH(`slip:${A}`), { action: "accept", rowVersions: bad })).body.error).toBe("row_versions_must_be_object_of_strings")
+      }
+    })
+  })
+
   test("split: a mid-way failure rolls back (no log, no subtask); the retry inserts once, after the note's last task", async () => {
     let fail = true
     const s = setup({ exec: (base) => async (sql, args) => {

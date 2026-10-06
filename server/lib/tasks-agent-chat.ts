@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { MINE, TASKS_TZ, type TaskRow, listMine, localDay, normDate } from "./my-tasks"
 import { setTaskDone, setTaskDue } from "./tasks-agent"
-import { guardedWrite, readTasks, versionOf } from "./tasks-agent-row"
+import { guardedWrite, parseRowVersions, readTasks, versionOf } from "./tasks-agent-row"
 import type { ExecFn, QueryFn, TxFn } from "./turso"
 
 // Tasks agent CHAT (PRJ-CT4M WP5): "what is on my plate this week" / "move
@@ -161,14 +161,15 @@ export function createTasksChat(deps: TasksChatDeps) {
     return best
   }
 
-  async function apply(p: Pending): Promise<number> {
+  async function apply(p: Pending, echoed?: Record<string, string>): Promise<number> {
     let changed = 0
     const skipped: string[] = []
     let gone = 0
     let failed = 0
     for (const id of p.taskIds) {
       try {
-        const was = p.seen.get(id)
+        // What the human saw on the card (echoed by the client) wins over the version kept at plan time.
+        const was = echoed?.[id] ?? p.seen.get(id)
         if (!was) { gone++; continue }
         // The task must still be exactly the row the plan was made on (any edit: text, project, date, notes, assignee…),
         // else it is skipped; the write pins that same row inside its transaction.
@@ -222,20 +223,22 @@ export function createTasksChat(deps: TasksChatDeps) {
     if (list.length > 10) lines.push(`• …and ${list.length - 10} more`)
     deps.emitTurn([`${verb}?`, ...lines, "", "Reply \"confirm\" (or tap Confirm) to apply, \"cancel\" to drop it."].join("\n"), channelId)
     deps.notify({
-      type: "tasks_agent_confirm", planId: p.id, threadId: channelId, op: p.op, due: p.due, title: `${verb}?`,
+      type: "tasks_agent_confirm", planId: p.id, threadId: channelId, op: p.op, due: p.due, title: `${verb}?`, rowVersions: Object.fromEntries(p.seen),
       tasks: list.map((x) => ({ id: x.id, text: x.text, due: x.due, project: x.noteTitle })), expiresAt: t + PLAN_TTL_MS,
     })
     return true
   }
 
-  async function confirm(planId: string, yes: boolean): Promise<ConfirmResult> {
+  async function confirm(planId: string, yes: boolean, rowVersions?: unknown): Promise<ConfirmResult> {
+    const echoed = parseRowVersions(rowVersions)
+    if (echoed === null) return { ok: false, status: 400, error: "row_versions_must_be_object_of_strings" }
     const p = pending.get(planId)
     if (!live(p)) { pending.delete(planId); return { ok: false, status: 404, error: "no_such_plan" } }
     if (p.applying) return { ok: false, status: 409, error: "plan_in_progress" }
     if (!yes) { pending.delete(planId); deps.emitTurn("Cancelled — nothing changed.", p.channelId); return { ok: true, applied: 0, cancelled: true } }
     p.applying = true
     try {
-      const applied = await apply(p)
+      const applied = await apply(p, echoed)
       pending.delete(planId)
       return { ok: true, applied }
     } finally {

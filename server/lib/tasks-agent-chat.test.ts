@@ -221,4 +221,41 @@ describe("chat tool", () => {
     expect(rest.every((id) => s.t.get(id)!.due_date === "2026-10-09")).toBe(true)
     expect(s.turns.at(-1)!.text).toContain("skipped 2 changed since the plan")
   })
+
+  describe("echoed rowVersions on confirm", () => {
+    const held = async () => {
+      const s = setup(() => `{"op":"move","taskIds":${JSON.stringify(ids(5))},"due":"2026-10-09"}`)
+      seedGranby(s.t, 5)
+      await s.chat.handle("move everything Granby to Friday", "general")
+      const frame = s.frames.find((f) => f.type === "tasks_agent_confirm") as { planId: string; rowVersions: Record<string, string> }
+      return { s, frame }
+    }
+
+    test("the card carries each task's rowVersion", async () => {
+      const { frame } = await held()
+      expect(Object.keys(frame.rowVersions).sort()).toEqual(ids(5))
+    })
+
+    test("a stale echoed version skips that task, nothing written for it; the others apply", async () => {
+      const { s, frame } = await held()
+      const stale = { ...frame.rowVersions, [ids(5)[1]!]: "0000000000000000" }
+      expect(await s.chat.confirm(frame.planId, true, stale)).toEqual({ ok: true, applied: 4 })
+      expect(s.t.get(ids(5)[1]!)!.due_date).toBe("2026-10-07")
+      expect(s.t.activities().some((a) => a.target_id === ids(5)[1])).toBe(false)
+      expect(s.turns.at(-1)!.text).toContain("skipped 1 changed since the plan")
+    })
+
+    test("current echoed versions apply all; absent keeps the plan-time versions", async () => {
+      const a = await held()
+      expect(await a.s.chat.confirm(a.frame.planId, true, a.frame.rowVersions)).toEqual({ ok: true, applied: 5 })
+      const b = await held()
+      expect(await b.s.chat.confirm(b.frame.planId, true)).toEqual({ ok: true, applied: 5 })
+    })
+
+    test("malformed → 400 and the plan stays held", async () => {
+      const { s, frame } = await held()
+      expect(await s.chat.confirm(frame.planId, true, [1])).toEqual({ ok: false, status: 400, error: "row_versions_must_be_object_of_strings" })
+      expect(s.chat.pendingCount()).toBe(1)
+    })
+  })
 })
