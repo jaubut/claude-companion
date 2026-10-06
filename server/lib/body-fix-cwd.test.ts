@@ -20,6 +20,17 @@ describe("localizeCwd", () => {
     expect(localizeCwd("/home/aubut/.claude", "/Users/x", only("/home/aubut/.claude"))).toBe("/home/aubut/.claude")
   })
 
+  test("default home honours process.env.HOME", () => {
+    const saved = process.env.HOME
+    process.env.HOME = "/tmp/cc-fake-home"
+    try {
+      expect(localizeCwd("~/.claude")).toBe("/tmp/cc-fake-home/.claude")
+    } finally {
+      if (saved === undefined) delete process.env.HOME
+      else process.env.HOME = saved
+    }
+  })
+
   test("leaves non-home paths alone", () => {
     expect(localizeCwd("/opt/app", "/Users/jeremieaubut", none)).toBe("/opt/app")
   })

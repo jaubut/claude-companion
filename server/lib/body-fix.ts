@@ -74,7 +74,7 @@ export function createBodyFixStore(db: Database): BodyFixStore {
  * (/home/aubut/… vs /Users/jeremieaubut/…): expand `~`, keep a path that exists,
  * else re-root a foreign home prefix onto this host's home.
  */
-export function localizeCwd(cwd: string, home: string = homedir(), exists: (p: string) => boolean = existsSync): string {
+export function localizeCwd(cwd: string, home: string = process.env.HOME || homedir(), exists: (p: string) => boolean = existsSync): string {
   const c = cwd.trim()
   if (c === "~") return home
   if (c.startsWith("~/")) return join(home, c.slice(2))
