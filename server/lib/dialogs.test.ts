@@ -162,3 +162,42 @@ test("the idle prompt under a divider is still not a dialog", () => {
   const idle = `${"─".repeat(40)}\n❯ \n${"─".repeat(40)}\n  ⏸ manual mode on · ? for shortcuts\n`
   expect(parseDialog(idle)).toBeNull()
 })
+
+// Live shape, 2-question AskUserQuestion (2026-10-03 / 2026-10-07 pane %330):
+// after the last tab, the review screen has no hint footer. The phone timed
+// out, the tabs were answered via dialog cards, then this screen never
+// reached the phone and the session hung ~20 min.
+const REVIEW = `
+❯ Use the AskUserQuestion tool with two questions
+────────────────────────────────────────────────────────────────────────────────
+←  ☒ CLAUDE.md  ☒ Cleanup  ✔ Submit  →
+
+Review your answers
+
+ │ ● Activate the slim CLAUDE.md?
+   → Activate (Recommended)
+ ● Also fix these?
+   → Retire invoice-generator, Fix Zettlab's 5 broken skills
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+`
+
+test("footerless AskUserQuestion review/submit screen is a question with Submit / Cancel and Enter", () => {
+  const d = parseDialog(REVIEW)
+  expect(d).not.toBeNull()
+  expect(d!.kind).toBe("question")
+  expect(d!.items.map((i) => [i.number, i.text, i.cursor])).toEqual([[1, "Submit answers", true], [2, "Cancel", false]])
+  expect(d!.hints.map((h) => h.key)).toEqual(["Enter", "Escape"])
+  expect(d!.title).toBe("Review your answers")
+  expect(d!.body).toContain("Ready to submit your answers?")
+  // Without the tab bar in view (scrolled / divider in between) it is still a question.
+  const noBar = REVIEW.replace(/^←.*$/m, "")
+  expect(parseDialog(noBar)!.kind).toBe("question")
+})
+
+test("prose mentioning the review question without a cursor row is not a dialog", () => {
+  expect(parseDialog("  Ready to submit your answers?\n  1. Submit answers\n  2. Cancel\n")).toBeNull()
+})

@@ -86,7 +86,10 @@ function classify(line: string): Classified {
   return { marker, cursor, numbered: num ? num[1]! : null, col, text: num ? rest.slice(num[0].length) : rest }
 }
 
-const CONFIRM_Q_RE = /\bDo you want to\b.*\?\s*$/
+// "Do you want to …?" (sandbox network prompt) or the AskUserQuestion review
+// screen's "Ready to submit your answers?" above "❯ 1. Submit answers / 2. Cancel".
+const REVIEW_Q_RE = /\bReady to submit your answers\?/
+const CONFIRM_Q_RE = /\bDo you want to\b.*\?\s*$|\bReady to submit your answers\?\s*$/
 const NUMBERED_ROW_RE = /^\s*(?:❯|›|>)?\s*\d+\.\s+\S/
 
 // The last lines are a numbered picker (cursor on one row) under a
@@ -148,7 +151,7 @@ export function parseDialog(pane: string): Dialog | null {
   }
   const textCol = classify(all[cursorIdx]!).col
   const region = all.slice(start, footerIdx)
-  const isQuestion = region.some((l) => TAB_BAR_RE.test(l)) || /Tab\/Arrow keys to navigate/.test(all[footerIdx]!)
+  const isQuestion = region.some((l) => TAB_BAR_RE.test(l) || REVIEW_Q_RE.test(l)) || /Tab\/Arrow keys to navigate/.test(all[footerIdx] ?? "")
 
   const items: DialogItem[] = []
   const pre: string[] = []
