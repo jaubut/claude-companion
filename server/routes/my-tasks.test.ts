@@ -146,6 +146,16 @@ describe("POST /api/tasks/:id/done", () => {
     expect((await post(`/api/tasks/${ID}/done`, "{nope"))!.status).toBe(400)
     expect((await post(`/api/tasks/${ID}/done`, { done: "yes" }))!.status).toBe(400)
   })
+
+  test("ids with : / # _ (mail-watcher, note-scoped, task_) are accepted", async () => {
+    const ids = ["mail-watcher:30f3d0c4f68221bc", "projects/2026-06-23-mobile-mechanic#s10", "task_capl_0"]
+    const { post, db } = setup(ids.map((id) => task(id)))
+    for (const id of ids) {
+      const res = (await post(`/api/tasks/${encodeURIComponent(id)}/done`, { done: true }))!
+      expect(res.status).toBe(200)
+    }
+    expect(db.tasks.every((t) => t.done === 1)).toBe(true)
+  })
 })
 
 describe("POST /api/tasks/:id/due", () => {

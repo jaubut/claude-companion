@@ -13,7 +13,10 @@ import { broadcast } from "../state"
 
 export const CACHE_TTL_MS = 30_000
 export const WATCH_MS = 60_000
-const ID = /^[A-Za-z0-9-]{8,64}$/
+// Real task ids in Turso: uuids, "task_capl_0", "mail-watcher:30f3d0c4f68221bc",
+// "projects/2026-06-23-mobile-mechanic#s10". The client percent-encodes the
+// segment; the SQL is parameterised, so this only bounds junk.
+const ID = /^[A-Za-z0-9_:/#.-]{3,128}$/
 const WRITE = /^\/api\/tasks\/([^/]+)\/(done|due)$/
 
 export interface MyTasksDeps {
