@@ -1254,7 +1254,7 @@
         },
         {
           "path": "lib/dialogs.ts",
-          "lines": 209,
+          "lines": 212,
           "kind": "lib",
           "exports": [
             "DialogItem",
@@ -1673,7 +1673,7 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 169,
+          "lines": 175,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
