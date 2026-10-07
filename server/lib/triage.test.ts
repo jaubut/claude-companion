@@ -4,7 +4,7 @@ import { createInvestigationStore } from "./body-investigate"
 import type { DispatchTask } from "./dispatch-tasks"
 import type { Task } from "./orchestrator-chat"
 import {
-  type SourceItem, type TriageItem, CONFLICT_MERGE_LABEL, allowedActions, approvalSummary, buildItem, conflictPhrase, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
+  type SourceItem, type TriageItem, CONFLICT_MERGE_LABEL, PROBLEM_MAX, allowedActions, approvalSummary, buildItem, conflictPhrase, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
 } from "./triage"
 import { APPROVAL_TTL_MS, APPROVED_MERGE, NEEDS_HUMAN, PR_SAFETY_NET_MS, bodyComponentUrl, bodySources, parsePrUrl, prApprovals, prSources, proposalSource, taskSources } from "./triage-sources"
 
@@ -82,6 +82,16 @@ describe("collection per source", () => {
     expect(items.map((i) => i.ref.source === "pr" && i.ref.taskId)).toEqual(["stale"])
     expect(items[0]!.hints?.safetyNet).toBe(true)
     expect(heuristicSeverity(items[0]!)).toBe("low")
+  })
+
+  test("PRs: a long Opus-escalated park reason is kept verbatim in facts.reason (suffix included)", () => {
+    const reason = `${"touches src/lib/auth and the session store; ".repeat(8)}· Opus: session cookie flag dropped, check before merge`
+    const [item] = prSources({
+      tasks: [prTask("op", "https://github.com/o/r/pull/7")],
+      activity: [act(1, "op", NEEDS_HUMAN, { reason, url: "https://github.com/o/r/pull/7", cascade: { stage: "opus", verdict: "ESCALATE" } })],
+    }, NOW)
+    expect(reason.length).toBeGreaterThan(PROBLEM_MAX)
+    expect(item!.facts.reason).toBe(reason)
   })
 
   test("parsePrUrl only takes github PR URLs", () => {

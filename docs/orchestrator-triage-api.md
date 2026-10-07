@@ -190,6 +190,27 @@ stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land T
   merge's "Merge started", and show `approval` / `resolver.summary` on the row (today's row shows `title` +
   `project` only, which is why the title carries the line).
 
+<a id="pr-review-cascade"></a>
+## PR review cascade (2026-10-07 — shepherd-side; no triage code change)
+
+The claude-config PR shepherd reviews each PR through a model cascade before deciding. What triage sees:
+
+- **Park = ESCALATE only.** `pr:needs-human` is written only when the cascade's final verdict is `ESCALATE`;
+  approve / fix verdicts never reach a card. Triage reads it exactly as before (problem = `meta.reason`).
+- **Reason suffix.** An Opus-escalated park's `meta.reason` ends with `" · Opus: <brief>"` and its meta carries
+  `cascade: { stage, verdict, model, confidence, brief }`. Triage keeps the full reason verbatim (suffix
+  included) in the source's `facts.reason`; the card's `problem` is a display string built from it (the model may
+  rephrase it, the fallback clips it to 280 chars), so a long reason can lose the suffix on the card.
+  `meta.cascade` is not read.
+- **`pr:cascade` rows** (one per cascade stage) are **url-targeted**: `target_kind = 'pr'`, `target_id` = the PR
+  URL. Triage only reads `target_kind = 'task'` rows, so they never touch a card, its `version` or the 48 h safety
+  net. They are the shepherd's audit log, not a triage input.
+- **`pr:hold`** (task-targeted, `meta = { url, infra_task, reason, host }`): the PR waits on an infra task. It is
+  a `pr:*` row, so it counts as shepherd activity — and any `pr:*` row, `pr:hold` included, permanently disables
+  the 48 h safety net (it only fires when a PR has no `pr:*` row at all). A hold that outlives its infra task stays
+  invisible to triage until the shepherd writes another row (`pr:needs-human` re-parks it), so the shepherd owns
+  resolving stale holds.
+
 ## Source `trip` (travel log, 2026-10-04 — additive)
 
 Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*` and shows no trip cards.
