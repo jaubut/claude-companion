@@ -369,6 +369,75 @@ to one worker and one Turso row. Errors on the Zettlab approve:
 A Mac card that was reported on the Mac itself (no peer) runs live there with
 the same explicit cwd.
 
+`cwd` is absolute, or `~` / `~/…` (the receiving host's home — a Mac card with
+no known repo defaults to `~/.claude`); anything else → 400.
+
+## "Get an agent on it" (`POST /api/body/component/:id/agent`)
+
+Server: `server/lib/body-agent.ts` (agent table, prompt, body, run store),
+`server/wiring/body-agent.ts`. For a component whose investigation found no code
+fix (the condition is real — e.g. `cloud:turso-table:inbox_entries` failing on
+`inbox backlog 47 > 40`), the phone starts an agent directly. **The tap is the
+approval**: no card, a LIVE run straight away.
+
+```json
+POST /api/body/component/cloud%3Aturso-table%3Ainbox_entries/agent
+{ "instruction": "process the backlog" }          // optional; empty body is fine
+→ { "ok": true, "taskId": "<local id on the owning host>", "dispatchTaskId": "<32 hex>",
+    "host": "zettlab", "agent": "inbox-processor", "status": "running", "mode": "live" }
+```
+
+The id is percent-encoded like `GET /api/body/component/:id`. `instruction` is a
+string (≤ 2000 chars, trimmed; blank = none).
+
+**Where it runs** — the owning host, as for investigations: `mac:*` → the Mac;
+`zettlab:*` / `cloud:*` → Zettlab.
+- Owner = this host: a #Body proposal row (`createProposal`) run at once
+  through `approveLive` — Turso row claimed `running`, owner
+  `companion:<host>`, the tmux worker, visible in Sessions. cwd = the
+  component's git repo / unit working dir (`knownPaths`), else `~/.claude`.
+- Owner = the peer: forwarded to its `POST /api/body/fix` (above; `fixId`
+  `agent-<16 hex>`, bearer, `x-companion-body-hop: 1`), which runs the same live
+  path there. cwd = the cwd the latest investigation's fix card recorded, else
+  `~/.claude`. Peer errors map as for an approved Mac fix (503
+  `host_unreachable`, 502 `host_refused`, or the peer's own error).
+
+**Agent** (first match wins, `AGENT_RULES` in `lib/body-agent.ts`):
+
+| component | agent |
+|---|---|
+| `*:turso-table:inbox_entries` | `inbox-processor` |
+| `*:systemd-*` (kind `systemd-timer` / `systemd-service`) | `claude` (ops) |
+| `*:launchd:*` | `claude` (ops) |
+| repo-backed (a git repo known for it) | `builder` |
+| anything else | `claude` |
+
+An agent this host cannot start (no `~/.claude/agents/<name>.md`) falls back to `claude`.
+Project note = `COMPANION_BODY_NOTE_ID` (default `projects/2026-06-22-companion-orchestrator`).
+
+**Prompt**: component id, kind, host, state; the latest vitals as one line
+(`state=… last_exit=… consecutive_failures=… last_ok_at=… detail=…`); the last 3
+events; the latest finished investigation's `rootCause` + `evidence` (+ notes);
+the instruction (else "resolve the condition so the component reads ok"); rules:
+confirm first, do the work the condition calls for — never raise the threshold
+or silence the probe — and report what changed.
+
+**Guards / errors**
+
+| status | error | when |
+|---|---|---|
+| 409 | `already_running` (+`taskId`, `dispatchTaskId`, `host`, `agent`) | this component's last agent run (companion.db `body_agent_runs`) is still `queued`/`running`/`blocked` in Turso, or a start for it is in flight (`taskId: null`) |
+| 409 | `component_ok` | state `ok` and no `instruction` |
+| 404 | `no such component` | |
+| 422 | `unknown_host` | the id carries no `mac`/`zettlab`/`cloud` prefix and the component has no known host |
+| 400 | `invalid JSON` / `instruction must be a string` / `bad component id` | |
+| 503 | `turso_unreachable` | |
+| — | the live path's errors (`429 live_cap`, `422 no_cwd`, `400 unknown_agent`, …) | the local row is then `cancelled` (no stray card) |
+
+Every start writes Turso `agent_activity`: `agent_slug` = the agent, `action`
+`body:agent`, `target_kind` `body_component`, `target_id` = the component id,
+`meta` `{source, host, owner, taskId, dispatchTaskId, instruction}`.
+
 ## Orchestrator brain ("brain's face")
 
 `wiring/orchestrator.ts runBrain` calls `bodyDigestFor(channel, text)`: for every
@@ -388,6 +457,9 @@ cause, confidence, proposed card), so "what's dead and why?" answers from them.
 - List: `GET /api/body` → header from `summary`, rows from `components`
   (badge `state`, sort problems first client-side), a feed from `recent_events`.
 - Detail: `GET /api/body/component/<percent-encoded id>`.
+- "Get an agent on it": `POST /api/body/component/<percent-encoded id>/agent`
+  `{instruction?}` → open Sessions on `dispatchTaskId`; a 409 `already_running`
+  carries the running one's `taskId` / `dispatchTaskId`.
 - Token burn card: `GET /api/body/tokens?range=today|7d|30d`; card state from the
   `<host>:tokens:burn` component in `components`.
 - Live: `body_alert` frame → refresh the list (or patch the row by `component_id` + `state`).

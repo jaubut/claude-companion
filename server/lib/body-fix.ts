@@ -74,7 +74,7 @@ export function createBodyFixStore(db: Database): BodyFixStore {
  * (/home/aubut/… vs /Users/jeremieaubut/…): expand `~`, keep a path that exists,
  * else re-root a foreign home prefix onto this host's home.
  */
-export function localizeCwd(cwd: string, home: string = homedir(), exists: (p: string) => boolean = existsSync): string {
+export function localizeCwd(cwd: string, home: string = process.env.HOME || homedir(), exists: (p: string) => boolean = existsSync): string {
   const c = cwd.trim()
   if (c === "~") return home
   if (c.startsWith("~/")) return join(home, c.slice(2))
@@ -113,7 +113,9 @@ export function parseFixRequest(raw: unknown): FixRequest | { error: string } {
     cwd: s(o.cwd, 500), noteId: s(o.noteId, 200), agent: s(o.agent, 64), investigationId: s(o.investigationId, 64) ?? "",
   }
   for (const k of ["host", "componentId", "prompt", "title", "cwd", "noteId", "agent"] as const) if (!req[k]) return { error: `${k} required` }
-  if (!req.cwd!.startsWith("/")) return { error: "cwd must be absolute" }
+  // `~` / `~/…` is the receiving host's home (localizeCwd expands it): Mac cards default to ~/.claude.
+  const cwd = req.cwd!
+  if (!cwd.startsWith("/") && cwd !== "~" && !cwd.startsWith("~/")) return { error: "cwd must be absolute" }
   return req as FixRequest
 }
 

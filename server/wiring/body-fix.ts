@@ -1,6 +1,6 @@
 import { BODY_CHANNEL, BODY_CHANNEL_NAME } from "../lib/body"
 import { type BodyFixStore, type FixRequest, fixRequestFor, fixRunsElsewhere, localizeCwd, postFix } from "../lib/body-fix"
-import { type BodyHost, localBodyHost } from "../lib/body-investigate"
+import { type BodyHost, hostFromId, localBodyHost, ownerHost } from "../lib/body-investigate"
 import { type PeerConfig, bodyPeer } from "../lib/body-investigate-engine"
 import { companionLog } from "../lib/log"
 import { type Task, appendTurn, createProposal, getTask, markFiled, stampDispatchId } from "../lib/orchestrator-chat"
@@ -93,7 +93,8 @@ export async function approveBodyFix(task: Task, dispatch: DispatchWiring = disp
 /** POST /api/body/fix on the owning host: one local proposal row per fix id, run live in the fix's cwd. */
 export async function runBodyFix(req: FixRequest, dispatch: DispatchWiring = dispatchWiring, local: BodyHost = deps.localHost()): Promise<Response> {
   // Never forwarded again: a fix for a component this host does not own is refused.
-  if (local !== req.host || !req.componentId.startsWith(`${req.host}:`)) {
+  // cloud:* components are owned by zettlab (lib/body-investigate.ts ownerHost).
+  if (local !== req.host || ownerHost(hostFromId(req.componentId)) !== req.host) {
     return Response.json({ ok: false, error: "not_owner", host: local }, { status: 409 })
   }
   let taskId = deps.store.run(req.fixId)

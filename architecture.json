@@ -542,6 +542,39 @@
           "externals": []
         },
         {
+          "path": "lib/body-agent.ts",
+          "lines": 145,
+          "kind": "lib",
+          "exports": [
+            "INSTRUCTION_MAX",
+            "EVENTS_IN_PROMPT",
+            "AGENT_RULES",
+            "DEFAULT_BODY_AGENT",
+            "agentFor",
+            "parseAgentBody",
+            "vitalsLine",
+            "AgentPromptInput",
+            "buildAgentPrompt",
+            "agentTitle",
+            "AgentRun",
+            "BodyAgentStore",
+            "createBodyAgentStore",
+            "OPEN_DISPATCH_STATES"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/body-investigate.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/body-alert.ts",
           "lines": 173,
           "kind": "lib",
@@ -574,7 +607,7 @@
         },
         {
           "path": "lib/body-fix.ts",
-          "lines": 153,
+          "lines": 155,
           "kind": "lib",
           "exports": [
             "FIX_TIMEOUT_MS",
@@ -4942,7 +4975,7 @@
         },
         {
           "path": "routes/body.ts",
-          "lines": 147,
+          "lines": 166,
           "kind": "route-host",
           "exports": [
             "BodyRouteDeps",
@@ -4998,6 +5031,8 @@
             "wiring/body-fix.ts",
             "lib/auto-compact-stats.ts",
             "wiring/auto-compact.ts",
+            "lib/body-agent.ts",
+            "wiring/body-agent.ts",
             "wiring/body-investigate.ts"
           ],
           "listeners": [],
@@ -5696,8 +5731,48 @@
           "externals": []
         },
         {
+          "path": "wiring/body-agent.ts",
+          "lines": 187,
+          "kind": "lib",
+          "exports": [
+            "BodyAgentDeps",
+            "setBodyAgentDeps",
+            "startBodyAgent"
+          ],
+          "state": [
+            "let deps",
+            "starting: Set"
+          ],
+          "emits": [
+            "orchestrator_channel"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/body.ts",
+            "lib/body-agent.ts",
+            "lib/body-fix.ts",
+            "lib/body-investigate.ts",
+            "lib/body-investigate-engine.ts",
+            "lib/body-investigator.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/orchestrator-db.ts",
+            "state.ts",
+            "wiring/body-investigate.ts",
+            "wiring/dispatch.ts",
+            "wiring/live.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/body-fix.ts",
-          "lines": 112,
+          "lines": 113,
           "kind": "lib",
           "exports": [
             "BodyFixDeps",
@@ -6531,6 +6606,7 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/my-tasks.ts",
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -6947,6 +7023,7 @@
             "routes/trips.ts",
             "routes/vault.ts",
             "wiring/auto-compact.ts",
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -7188,6 +7265,25 @@
             "lib/auto-judge.ts"
           ]
         },
+        "BodyComponentDetail": {
+          "module": "lib/body.ts",
+          "callers": [
+            "lib/body-agent.ts",
+            "lib/body-investigate-engine.ts",
+            "lib/body-investigator.ts",
+            "lib/resolver-prompt.ts",
+            "wiring/body-agent.ts"
+          ]
+        },
+        "InvestigationRecord": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-agent.ts",
+            "lib/body-investigate-engine.ts",
+            "routes/body.ts",
+            "wiring/body-agent.ts"
+          ]
+        },
         "ApnsPayload": {
           "module": "lib/apns.ts",
           "callers": [
@@ -7204,6 +7300,7 @@
           "callers": [
             "lib/body-fix.ts",
             "lib/body-investigate-engine.ts",
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/resolver-peer.ts"
           ]
@@ -7213,6 +7310,7 @@
           "callers": [
             "lib/body-investigate-engine.ts",
             "routes/resolver.ts#GET /api/resolver/has-repo",
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/resolver-peer.ts",
@@ -7223,13 +7321,6 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts"
-          ]
-        },
-        "InvestigationRecord": {
-          "module": "lib/body-investigate.ts",
-          "callers": [
-            "lib/body-investigate-engine.ts",
-            "routes/body.ts"
           ]
         },
         "InvestigationStore": {
@@ -7251,7 +7342,9 @@
         "hostFromId": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts"
           ]
         },
         "routeFor": {
@@ -7285,7 +7378,8 @@
           "module": "lib/body-investigator.ts",
           "callers": [
             "lib/body-investigate-engine.ts",
-            "lib/resolver-prompt.ts"
+            "lib/resolver-prompt.ts",
+            "wiring/body-agent.ts"
           ]
         },
         "buildInvestigationPrompt": {
@@ -7319,14 +7413,6 @@
             "lib/body-investigate-engine.ts"
           ]
         },
-        "BodyComponentDetail": {
-          "module": "lib/body.ts",
-          "callers": [
-            "lib/body-investigate-engine.ts",
-            "lib/body-investigator.ts",
-            "lib/resolver-prompt.ts"
-          ]
-        },
         "Task": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -7347,7 +7433,8 @@
         "FixCard": {
           "module": "lib/body-fix.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "wiring/body-agent.ts"
           ]
         },
         "clampChars": {
@@ -7404,6 +7491,7 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -9362,12 +9450,6 @@
             "lib/resolver.ts"
           ]
         },
-        "INSTRUCTION_MAX": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver.ts"
-          ]
-        },
         "finishOptions": {
           "module": "lib/triage.ts",
           "callers": [
@@ -9720,12 +9802,6 @@
         },
         "buildLoad": {
           "module": "lib/tasks-agent-load.ts",
-          "callers": [
-            "lib/tasks-agent.ts"
-          ]
-        },
-        "agentFor": {
-          "module": "lib/tasks-agent-rules.ts",
           "callers": [
             "lib/tasks-agent.ts"
           ]
@@ -10216,6 +10292,7 @@
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
@@ -10389,6 +10466,7 @@
           "callers": [
             "routes/api.ts#* /api/status",
             "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/resolver.ts",
@@ -10658,6 +10736,12 @@
             "wiring/triage.ts"
           ]
         },
+        "startBodyAgent": {
+          "module": "wiring/body-agent.ts",
+          "callers": [
+            "routes/body.ts"
+          ]
+        },
         "parseRange": {
           "module": "lib/body-tokens.ts",
           "callers": [
@@ -10674,12 +10758,19 @@
           "module": "lib/body.ts",
           "callers": [
             "routes/body.ts#GET /api/body/component/",
+            "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/resolver.ts"
           ]
         },
         "investigationDto": {
           "module": "lib/body-investigate.ts",
+          "callers": [
+            "routes/body.ts#GET /api/body/component/"
+          ]
+        },
+        "parseAgentBody": {
+          "module": "lib/body-agent.ts",
           "callers": [
             "routes/body.ts#GET /api/body/component/"
           ]
@@ -10976,14 +11067,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "agentTitle": {
-          "module": "lib/hook-common.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/stop",
-            "wiring/events.ts"
-          ]
-        },
         "cwdFromPayload": {
           "module": "lib/hook-common.ts",
           "callers": [
@@ -11149,6 +11232,7 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts"
@@ -11232,6 +11316,7 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/front-door.ts",
             "wiring/live.ts",
@@ -11479,6 +11564,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
@@ -11947,32 +12033,147 @@
             "wiring/auto-compact.ts"
           ]
         },
-        "BodyFixStore": {
-          "module": "lib/body-fix.ts",
+        "DEFAULT_BODY_AGENT": {
+          "module": "lib/body-agent.ts",
           "callers": [
-            "wiring/body-fix.ts"
+            "wiring/body-agent.ts"
+          ]
+        },
+        "buildAgentPrompt": {
+          "module": "lib/body-agent.ts",
+          "callers": [
+            "wiring/body-agent.ts"
+          ]
+        },
+        "BodyAgentStore": {
+          "module": "lib/body-agent.ts",
+          "callers": [
+            "wiring/body-agent.ts"
+          ]
+        },
+        "createBodyAgentStore": {
+          "module": "lib/body-agent.ts",
+          "callers": [
+            "wiring/body-agent.ts"
+          ]
+        },
+        "OPEN_DISPATCH_STATES": {
+          "module": "lib/body-agent.ts",
+          "callers": [
+            "wiring/body-agent.ts"
           ]
         },
         "PeerConfig": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/resolver-peer.ts"
-          ]
-        },
-        "bodyFixStore": {
-          "module": "wiring/body-investigate.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/triage.ts"
           ]
         },
         "bodyPeer": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
+            "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/resolver-peer.ts"
+          ]
+        },
+        "investigationStore": {
+          "module": "wiring/body-investigate.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "bodyFixStore": {
+          "module": "wiring/body-investigate.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "knownPaths": {
+          "module": "lib/body-investigator.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-investigate.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "DEFAULT_NOTE_ID": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "BODY_CHANNEL_NAME": {
+          "module": "lib/body.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "ensureChannel": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts"
+          ]
+        },
+        "localizeCwd": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts"
+          ]
+        },
+        "createProposal": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts",
+            "wiring/body-investigate.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "approveLive": {
+          "module": "wiring/live.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts",
+            "wiring/proposals.ts"
+          ]
+        },
+        "postFix": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts"
+          ]
+        },
+        "ownerHost": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "wiring/body-agent.ts",
+            "wiring/body-fix.ts"
+          ]
+        },
+        "BodyFixStore": {
+          "module": "lib/body-fix.ts",
+          "callers": [
+            "wiring/body-fix.ts"
           ]
         },
         "LiveStart": {
@@ -11988,26 +12189,7 @@
             "wiring/body-fix.ts"
           ]
         },
-        "localizeCwd": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "wiring/body-fix.ts"
-          ]
-        },
-        "approveLive": {
-          "module": "wiring/live.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/proposals.ts"
-          ]
-        },
         "fixRequestFor": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "wiring/body-fix.ts"
-          ]
-        },
-        "postFix": {
           "module": "lib/body-fix.ts",
           "callers": [
             "wiring/body-fix.ts"
@@ -12032,38 +12214,6 @@
           "module": "lib/body-fix.ts",
           "callers": [
             "wiring/body-fix.ts"
-          ]
-        },
-        "BODY_CHANNEL_NAME": {
-          "module": "lib/body.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/body-investigate.ts",
-            "wiring/body.ts"
-          ]
-        },
-        "ensureChannel": {
-          "module": "lib/orchestrator-channels.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/body-investigate.ts",
-            "wiring/body.ts"
-          ]
-        },
-        "createProposal": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/body-investigate.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts",
-            "wiring/resolver.ts"
-          ]
-        },
-        "DEFAULT_NOTE_ID": {
-          "module": "lib/body-investigate-engine.ts",
-          "callers": [
-            "wiring/body-investigate.ts"
           ]
         },
         "BodyInvestigator": {
@@ -12125,13 +12275,6 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "wiring/body-investigate.ts"
-          ]
-        },
-        "knownPaths": {
-          "module": "lib/body-investigator.ts",
-          "callers": [
-            "wiring/body-investigate.ts",
-            "wiring/resolver.ts"
           ]
         },
         "runInvestigatorCli": {
@@ -12778,14 +12921,6 @@
           "module": "lib/triage-sources.ts",
           "callers": [
             "wiring/resolver-dry-run.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "investigationStore": {
-          "module": "wiring/body-investigate.ts",
-          "callers": [
-            "wiring/resolver-dry-run.ts",
-            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
