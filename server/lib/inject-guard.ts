@@ -58,11 +58,13 @@ export type PaneNotReadyReason =
   | "help_overlay"       // /help (any tab) is on screen
   | "no_prompt"          // no input prompt line at all (a panel replaced it)
   | "prompt_unframed"    // a "❯" line, but not inside the input box dividers
+  | "question_review_pending" // AskUserQuestion "Ready to submit your answers?" is waiting for Submit / Cancel
   | "input_not_empty"    // the user (or a lost inject) has text in the box
   | "shortcuts_overlay"  // the "?" shortcuts list under the box
   | "panel_open"         // key hints under the box: a panel has focus
 
 const DIVIDER_RE = /^[\s▔─━═]{8,}$/
+const REVIEW_PENDING_RE = /Ready to submit your answers\?/
 // The "?" overlay. Two of these, below the box, and it is the overlay — the
 // idle footer's own "? for shortcuts" hint matches none of them.
 const SHORTCUT_MARKERS = [/! for bash mode/i, /@ for file paths/i, /\/ for commands/i, /double tap esc/i, /# to memori[sz]e/i]
@@ -90,14 +92,18 @@ export function paneNotReady(pane: string | null): PaneNotReadyReason | null {
   const lines = unstyle(pane).split("\n")
   if (helpOverlayVisible(lines.join("\n"))) return "help_overlay"
 
+  // No usable input box: name the AskUserQuestion review screen when that is
+  // what holds the pane, so the phone says what is pending (2026-10-07).
+  const noBox = (r: PaneNotReadyReason): PaneNotReadyReason =>
+    lines.slice(-20).some((l) => REVIEW_PENDING_RE.test(l)) ? "question_review_pending" : r
   const idx = promptLineIndex(lines)
-  if (idx < 0) return "no_prompt"
+  if (idx < 0) return noBox("no_prompt")
   // The input box is framed: a divider directly above the prompt line, and one
   // below it after any continuation lines.
-  if (!DIVIDER_RE.test(lines[idx - 1] ?? "")) return "prompt_unframed"
+  if (!DIVIDER_RE.test(lines[idx - 1] ?? "")) return noBox("prompt_unframed")
   let bottom = idx + 1
   while (bottom < lines.length && !DIVIDER_RE.test(lines[bottom] ?? "")) bottom++
-  if (bottom >= lines.length) return "prompt_unframed"
+  if (bottom >= lines.length) return noBox("prompt_unframed")
 
   if (inputLine(pane) !== "") return "input_not_empty"
   if (lines.slice(idx + 1, bottom).some((l) => l.trim())) return "input_not_empty"

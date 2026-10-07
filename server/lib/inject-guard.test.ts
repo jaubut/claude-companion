@@ -215,6 +215,10 @@ describe("paneNotReady — parser fixtures", () => {
     expect(paneNotReady(pane(DIV, "❯ "))).toBe("prompt_unframed")
   })
 
+  test("the AskUserQuestion review screen is named, not just 'unframed'", () => {
+    expect(paneNotReady(pane(DIV, "←  ☒ A  ☒ B  ✔ Submit  →", "Review your answers", "Ready to submit your answers?", "❯ 1. Submit answers", "  2. Cancel"))).toBe("question_review_pending")
+  })
+
   test("a failed capture", () => {
     expect(paneNotReady(null)).toBe("capture_failed")
   })

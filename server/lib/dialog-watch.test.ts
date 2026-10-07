@@ -249,6 +249,21 @@ test("a review screen parseDialog can't see still starts the orphan clock and ge
   expect(h.opened).toEqual([])
 })
 
+// 2026-10-07 pane %330: tabs answered via dialog cards, then the review
+// screen can't be re-raised (no open call read back) → it must still mirror.
+test("a review screen that can't be re-raised is mirrored as a Submit / Cancel dialog", async () => {
+  let t = 1_000_000
+  const { h, w } = harness({ now: () => t, raiseOrphanQuestion: () => false })
+  h.status = { status: "waiting", waitingFor: "input needed" }
+  h.pane = "────────────────────\n←  ☒ A  ☒ B  ✔ Submit  →\nReview your answers\n ● A?\n   → x\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n"
+  await w.tick()
+  t += QUESTION_ORPHAN_MS + 1
+  await w.tick()
+  expect(h.opened).toHaveLength(1)
+  expect(h.opened[0]![1].items.map((i) => i.text)).toEqual(["Submit answers", "Cancel"])
+  expect(h.opened[0]![1].hints[0]!.key).toBe("Enter")
+})
+
 test("a question the hooks already routed is not mirrored", async () => {
   const { h, w } = harness()
   h.status = { status: "waiting", waitingFor: "dialog open" }
