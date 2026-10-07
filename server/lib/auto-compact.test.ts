@@ -15,6 +15,8 @@ import {
   type GateInput,
   IDLE_MS,
   type InputState,
+  NOT_EXECUTED_BACKOFF_MS,
+  NOT_EXECUTED_MS,
   SCAN_CHUNK_BYTES,
   TAIL_START_BYTES,
   compactBoundaries,
@@ -470,6 +472,84 @@ describe("AutoCompactor", () => {
     h.state.transcript = lines(boundary(900_000, 20_000, "old"))
     await h.advance(15_000 * 2)
     expect(h.pushes.map((p) => p.kind)).toEqual(["countdown"])
+  })
+})
+
+describe("not_executed guard (no silent retry loop)", () => {
+  // Inject "succeeds", no compact_boundary follows (2026-10-06: a pasted /compact).
+  async function failedOnce() {
+    const h = harness({ transcript: BIG })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    await h.advance(NOT_EXECUTED_MS + 15_000)
+    return h
+  }
+
+  test("no boundary within NOT_EXECUTED_MS → recorded not_executed + phone push", async () => {
+    const h = await failedOnce()
+    expect(h.pushes.map((p) => p.kind)).toEqual(["countdown", "failed"])
+    expect(h.pushes[1]!.title).toBe("Compact non exécuté — wt")
+    expect(h.c.notExecutedOf("k1")).not.toBeNull()
+    expect(h.logs.some((l) => l.includes("not_executed"))).toBe(true)
+  })
+
+  test("not flagged when the boundary lands before NOT_EXECUTED_MS", async () => {
+    const h = harness({ transcript: BIG })
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    h.state.transcript = lines(OLD_PROMPT, assistant(1, 650_000, 0), boundary(650_001, 28_951))
+    await h.advance(NOT_EXECUTED_MS + 15_000)
+    expect(h.pushes.map((p) => p.kind)).toEqual(["countdown", "done"])
+    expect(h.c.notExecutedOf("k1")).toBeNull()
+  })
+
+  test("the guard stops a second attempt within the backoff (past the cooldown too)", async () => {
+    const h = await failedOnce()
+    await h.advance(16 * 60_000) // boundary watch gives up
+    expect(h.c.status()).toEqual([])
+    await h.advance(COOLDOWN_MS) // past the 30 min cooldown
+    await h.c.onStop(h.target)
+    await h.advance(IDLE_MS + CANCEL_MS)
+    expect(h.injects).toEqual([COMPACT_TEXT])
+    expect(h.pushes.map((p) => p.kind)).toEqual(["countdown", "failed"])
+    expect(h.logs.some((l) => l.includes("held, last /compact not executed"))).toBe(true)
+  })
+
+  test("after the backoff the session is eligible again", async () => {
+    const h = await failedOnce()
+    await h.advance(NOT_EXECUTED_BACKOFF_MS)
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects.length).toBe(2)
+    expect(h.c.notExecutedOf("k1")).toBeNull()
+  })
+
+  test("a late compact_boundary (real compaction) clears the guard", async () => {
+    const h = await failedOnce()
+    h.state.transcript = lines(OLD_PROMPT, assistant(1, 650_000, 0), boundary(650_001, 28_951))
+    await h.advance(15_000)
+    expect(h.pushes.map((p) => p.kind)).toEqual(["countdown", "failed", "done"])
+    expect(h.c.notExecutedOf("k1")).toBeNull()
+  })
+
+  test("SessionStart compact clears the guard", async () => {
+    const h = await failedOnce()
+    await h.c.onCompacted("k1")
+    expect(h.c.notExecutedOf("k1")).toBeNull()
+  })
+
+  test("a Stop whose context dropped (manual compaction) clears it; the next big Stop arms", async () => {
+    const h = await failedOnce()
+    await h.advance(16 * 60_000)
+    h.state.transcript = lines(OLD_PROMPT, assistant(1, 40_000, 0))
+    await h.c.onStop(h.target)
+    expect(h.c.notExecutedOf("k1")).toBeNull()
+    await h.advance(COOLDOWN_MS)
+    h.state.transcript = BIG
+    await h.c.onStop(h.target)
+    await h.advance(CANCEL_MS)
+    expect(h.injects.length).toBe(2)
   })
 })
 

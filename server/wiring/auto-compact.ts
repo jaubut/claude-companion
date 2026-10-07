@@ -70,8 +70,9 @@ async function inject(key: string, text: string): Promise<{ ok: boolean; error?:
     pane: paneFree ? await paneSnapshotFor(s) : undefined,
   })
   if (refusal) return { ok: false, error: refusal.reason ? `${refusal.error}:${refusal.reason}` : refusal.error }
-  // One bracketed paste + read-back, Enter only if the input starts with
-  // /compact (lib/inject-verified.ts). tmux only, never the osascript fallback.
+  // Typed in stages (never pasted: a pasted slash command does not run) +
+  // read-back, Enter only if the input starts with `/compact keep:`
+  // (lib/inject-verified.ts). tmux only, never the osascript fallback.
   const ref = paneRefOf(s)
   if (!ref) return { ok: false, error: "no_tmux_pane" }
   const res = await injectVerified(ref, text)
@@ -90,7 +91,8 @@ async function push(kind: PushKind, target: CompactTarget, title: string, body: 
     title,
     body,
     category: kind === "countdown" ? "auto_compact" : "auto_compact_done",
-    interruptionLevel: kind === "countdown" ? "active" : "passive",
+    // A failure (not delivered, or delivered and not executed) needs eyes.
+    interruptionLevel: kind === "done" ? "passive" : "active",
     threadId: `auto_compact:${target.key}`,
     // The result replaces the countdown banner instead of stacking under it.
     collapseId: collapseId(target.key),

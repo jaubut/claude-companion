@@ -31,19 +31,19 @@
 // cancels it. A per-session cooldown starts at the countdown push, so a
 // cancel also holds the next attempt off for COOLDOWN_MS.
 //
-// Transcripts of >600k sessions are tens of MB: no check parses a whole file
-// in one go. Context size reads a growing tail window (TAIL_START_BYTES ×4 up
-// to TAIL_MAX_BYTES), each byte parsed once. Background tasks are tracked by an
-// incremental per-session scan: the first gate check walks the file forward in
-// SCAN_CHUNK_BYTES reads (async I/O between chunks), later ones only the bytes
-// appended since. The boundary watch reads only the bytes appended since its
-// last poll (a rewritten, shorter file is rescanned from the top).
+// No silent retry loop: an inject with no compact_boundary after it holds the
+// session (`not_executed`, lib/auto-compact-guard.ts).
 //
-// Gating + controller here; transcript parsing in lib/auto-compact-transcript.ts;
-// the real deps (tmux, APNs, Claude's
-// session file) are wired in wiring/auto-compact.ts.
+// Transcripts are tens of MB; none is parsed whole: context size reads a
+// growing tail window (TAIL_START_BYTES ×4 up to TAIL_MAX_BYTES), background
+// tasks an incremental per-session scan in SCAN_CHUNK_BYTES reads, the boundary
+// watch only bytes appended since its last poll (shorter file → rescan).
+//
+// Controller here; parsing in lib/auto-compact-transcript.ts; real deps (tmux,
+// APNs, Claude's session file) in wiring/auto-compact.ts.
 
 import { type GateVerdict, type InputState, compactGate } from "./auto-compact-gate"
+import { NOT_EXECUTED_MS, type NotExecuted, NotExecutedGuard, notExecutedPush } from "./auto-compact-guard"
 import { COMPACT_TEXT, type KeepState, type SessionSnapshot, SessionScan, type UnitReason, buildKeep } from "./auto-compact-keep"
 import {
   BackgroundScan, type CompactBoundary, type Entry, compactBoundaries, contextSettled, contextTokens,
@@ -61,6 +61,7 @@ export const COOLDOWN_MS = 30 * 60_000
 export const TYPING_POLL_MS = 20_000
 export const BOUNDARY_POLL_MS = 15_000
 export const BOUNDARY_WAIT_MS = 15 * 60_000
+export { NOT_EXECUTED_BACKOFF_MS, NOT_EXECUTED_MS, type NotExecuted } from "./auto-compact-guard"
 export const TAIL_START_BYTES = 256 * 1024
 export const TAIL_MAX_BYTES = 16 * 1024 * 1024
 export const SCAN_CHUNK_BYTES = 1024 * 1024
@@ -143,6 +144,7 @@ interface Pending {
   // time: boundaries older than it are pre-inject history, not our result.
   minBoundaryAt: number
   boundaryDeadline: number
+  notExecuted: boolean // flagged after NOT_EXECUTED_MS without a boundary
 }
 
 interface Tail {
@@ -189,6 +191,7 @@ export class AutoCompactor {
   private lastAttempt = new Map<string, number>()
   private bg = new Map<string, BgState>()
   private consumed = new Map<string, number>() // last countdown: unit closings up to here are used
+  private guard = new NotExecutedGuard()
 
   constructor(private deps: AutoCompactDeps) {}
 
@@ -219,7 +222,11 @@ export class AutoCompactor {
     this.lastActivity.delete(key)
     this.bg.delete(key)
     this.consumed.delete(key)
+    this.guard.clear(key)
   }
+
+  /** The not_executed guard on a session, if one holds. */
+  notExecutedOf(key: string): NotExecuted | null { return this.guard.get(key) }
 
   async onStop(target: CompactTarget): Promise<void> {
     const prior = this.pending.get(target.key)
@@ -233,6 +240,7 @@ export class AutoCompactor {
     if (!tail) return
     const tokens = contextTokens(tail.entries)
     if (tokens === null) return
+    if (this.guard.dropped(target.key, tokens)) this.deps.log(`auto-compact ${target.name}: context dropped to ${formatTokens(tokens)} — not_executed guard cleared`)
     let trigger: Trigger = "size"
     let minTokens = threshold
     if (tokens <= threshold) {
@@ -246,6 +254,9 @@ export class AutoCompactor {
       minTokens = boundary
     }
     const now = this.deps.now()
+    const held = this.guard.check(target.key, now) // "dropped" above runs on every Stop, under the threshold too
+    if (held !== "none") this.deps.log(`auto-compact ${target.name}: ${held === "held" ? `${formatTokens(tokens)} — held, last /compact not executed` : "not_executed backoff over — eligible again"}`)
+    if (held === "held") return
     const lastAttemptAt = this.lastAttempt.get(target.key) ?? 0
     if (lastAttemptAt > 0 && now - lastAttemptAt < COOLDOWN_MS) {
       this.deps.log(`auto-compact ${target.name}: ${formatTokens(tokens)} > ${formatTokens(minTokens)}${trigger === "size" ? "" : ` (${TRIGGER_LABEL[trigger]})`} — cooldown`)
@@ -280,7 +291,7 @@ export class AutoCompactor {
     const wait = Math.max(0, this.activityAt(target.key, tail) + IDLE_MS - this.deps.now())
     const p: Pending = {
       phase: "scheduled", target, trigger, minTokens, tokens, timer: null, typingTimer: null,
-      offset: 0, injectedAt: 0, minBoundaryAt: 0, boundaryDeadline: 0,
+      offset: 0, injectedAt: 0, minBoundaryAt: 0, boundaryDeadline: 0, notExecuted: false,
     }
     this.pending.set(target.key, p)
     p.timer = this.deps.setTimer(() => { void this.evaluate(target.key, p) }, wait)
@@ -300,8 +311,10 @@ export class AutoCompactor {
   }
 
   // SessionStart(source=compact) — a compaction just finished somewhere;
-  // settle the boundary watch now instead of on the next poll.
+  // settle the boundary watch now instead of on the next poll. It is also a
+  // real compaction: the not_executed guard goes.
   async onCompacted(key: string): Promise<void> {
+    if (this.guard.clear(key)) this.deps.log(`auto-compact ${key}: compaction seen — not_executed guard cleared`)
     const p = this.pending.get(key)
     if (p?.phase === "awaiting_boundary" || p?.phase === "injecting") await this.checkBoundary(key, p)
   }
@@ -484,6 +497,7 @@ export class AutoCompactor {
       const pre = b.preTokens || p.tokens
       const post = b.postTokens || fresh.post || 0
       this.deps.log(`auto-compact ${p.target.name}: compact_boundary ${formatTokens(pre)} -> ${formatTokens(post)}`)
+      this.guard.clear(key)
       this.clear(key, p)
       try {
         this.deps.recordCompaction?.({ target: p.target, trigger: p.trigger, preTokens: pre, postTokens: post, at: this.deps.now() })
@@ -493,6 +507,7 @@ export class AutoCompactor {
       return
     }
     if (p.phase !== "awaiting_boundary") return
+    if (!p.notExecuted && this.deps.now() - p.injectedAt >= NOT_EXECUTED_MS) this.flagNotExecuted(key, p)
     if (this.deps.now() >= p.boundaryDeadline) {
       this.deps.log(`auto-compact ${p.target.name}: no compact_boundary after ${Math.round(BOUNDARY_WAIT_MS / 60_000)} min — giving up`)
       this.clear(key, p)
@@ -500,6 +515,15 @@ export class AutoCompactor {
     }
     if (p.timer) this.deps.clearTimer(p.timer)
     p.timer = this.deps.setTimer(() => { void this.checkBoundary(key, p) }, BOUNDARY_POLL_MS)
+  }
+
+  // Enter went in, nothing compacted. The watch keeps polling: a late boundary still counts.
+  private flagNotExecuted(key: string, p: Pending): void {
+    p.notExecuted = true
+    this.guard.record(key, this.deps.now(), p.tokens)
+    this.deps.log(`auto-compact ${p.target.name}: not_executed — no compact_boundary ${Math.round(NOT_EXECUTED_MS / 1000)}s after the inject; held until a compaction or the backoff`)
+    const { title, body } = notExecutedPush(p.target.name)
+    void this.deps.push("failed", p.target, title, body).catch(() => { /* best effort */ })
   }
 
   // The latest compact_boundary in the complete lines appended since p.offset
