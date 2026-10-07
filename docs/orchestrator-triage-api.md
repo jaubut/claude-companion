@@ -190,6 +190,23 @@ stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land T
   merge's "Merge started", and show `approval` / `resolver.summary` on the row (today's row shows `title` +
   `project` only, which is why the title carries the line).
 
+<a id="pr-review-cascade"></a>
+## PR review cascade (2026-10-07 — shepherd-side; no triage code change)
+
+The claude-config PR shepherd reviews each PR through a model cascade before deciding. What triage sees:
+
+- **Park = ESCALATE only.** `pr:needs-human` is written only when the cascade's final verdict is `ESCALATE`;
+  approve / fix verdicts never reach a card. Triage reads it exactly as before (problem = `meta.reason`).
+- **Reason suffix.** An Opus-escalated park's `meta.reason` ends with `" · Opus: <brief>"` and its meta carries
+  `cascade: { stage, verdict, model, confidence, brief }`. The card shows the full reason verbatim (suffix
+  included); `meta.cascade` is not read.
+- **`pr:cascade` rows** (one per cascade stage) are **url-targeted**: `target_kind = 'pr'`, `target_id` = the PR
+  URL. Triage only reads `target_kind = 'task'` rows, so they never touch a card, its `version` or the 48 h safety
+  net. They are the shepherd's audit log, not a triage input.
+- **`pr:hold`** (task-targeted, `meta = { url, infra_task, reason, host }`): the PR waits on an infra task. It is
+  a `pr:*` row, so it counts as shepherd activity: the PR gets no 48 h safety-net card while held. A PR with no
+  `pr:*` row at all still gets one.
+
 ## Source `trip` (travel log, 2026-10-04 — additive)
 
 Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*` and shows no trip cards.

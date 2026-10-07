@@ -392,6 +392,34 @@ describe("choose → the existing guarded paths", () => {
     expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action = 'pr:approved-merge'").get()).toEqual({ n: 1 })
   })
 
+  test("PR review cascade: the ' · Opus:' park reason reaches the card; a url-targeted pr:cascade row changes nothing", async () => {
+    const url = "https://github.com/jaubut/x/pull/7"
+    const id = turTask("completed", null, { pr: url })
+    const reason = "touches src/lib/auth · Opus: session cookie flag dropped, check before merge"
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
+      .run(id, JSON.stringify({ reason, repo: "x", pr: 7, url, cascade: { stage: "opus", verdict: "ESCALATE", model: "opus", confidence: 0.8, brief: "session cookie flag dropped, check before merge" } }))
+    await sync()
+    const before = await itemOf("pr:jaubut/x#7")
+    expect(before).toMatchObject({ source: "pr", problem: reason })
+    // The shepherd's cascade log is keyed by PR url (target_kind 'pr'): triage never reads it.
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:cascade', 'pr', ?, ?)")
+      .run(url, JSON.stringify({ stage: "sonnet", verdict: "APPROVE", model: "sonnet", confidence: 0.9 }))
+    await sync()
+    const after = await itemOf("pr:jaubut/x#7")
+    expect(after).toMatchObject({ problem: before.problem, updatedAt: before.updatedAt, options: before.options })
+  })
+
+  test("48 h safety net: a task-targeted pr:hold (waiting on an infra task) suppresses it; no pr:* row at all still trips it", async () => {
+    const held = turTask("completed", null, { pr: "https://github.com/jaubut/x/pull/8" })
+    const quiet = turTask("completed", null, { pr: "https://github.com/jaubut/x/pull/9" })
+    turso.query("UPDATE tasks SET updated_at = datetime('now', '-3 days') WHERE id IN (?, ?)").run(held, quiet)
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta, ts) VALUES ('pr-shepherd', 'pr:hold', 'task', ?, ?, datetime('now', '-3 days'))")
+      .run(held, JSON.stringify({ url: "https://github.com/jaubut/x/pull/8", infra_task: "f".repeat(32), reason: "waits on the CI runner fix", host: "zettlab" }))
+    await sync()
+    expect(await itemOf("pr:jaubut/x#8")).toBeUndefined()
+    expect(await itemOf("pr:jaubut/x#9")).toMatchObject({ source: "pr", problem: "Open for more than 2 days with no review activity." })
+  })
+
   test("a Body component whose diagnosis failed twice: requeue forces a new investigation", async () => {
     for (let i = 0; i < 2; i++) {
       const r = invStore.insert({ componentId: "zettlab:svc:y", host: "zettlab", state: "dead", trigger: "sweep", status: "running", runOn: "local", attempt: i + 1 }, Date.now() - 1000 + i)
