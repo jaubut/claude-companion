@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-06",
+  "generatedAt": "2026-10-07",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -340,6 +340,27 @@
           "externals": []
         },
         {
+          "path": "lib/auto-compact-guard.ts",
+          "lines": 61,
+          "kind": "lib",
+          "exports": [
+            "NOT_EXECUTED_MS",
+            "NOT_EXECUTED_BACKOFF_MS",
+            "NotExecuted",
+            "NotExecutedGuard",
+            "notExecutedPush"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/auto-compact-keep.ts",
           "lines": 208,
           "kind": "lib",
@@ -447,7 +468,7 @@
         },
         {
           "path": "lib/auto-compact.ts",
-          "lines": 575,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "IDLE_MS",
@@ -476,6 +497,7 @@
           "apiCalls": [],
           "imports": [
             "lib/auto-compact-gate.ts",
+            "lib/auto-compact-guard.ts",
             "lib/auto-compact-keep.ts",
             "lib/auto-compact-transcript.ts",
             "lib/auto-compact-settings.ts"
@@ -913,7 +935,7 @@
         },
         {
           "path": "lib/command-menu.ts",
-          "lines": 231,
+          "lines": 254,
           "kind": "lib",
           "exports": [
             "CommandSuggestion",
@@ -922,6 +944,7 @@
             "unstyle",
             "promptLineIndex",
             "inputLine",
+            "inputText",
             "parseCommandMenu",
             "suggestRefusal",
             "mayClearLine",
@@ -1678,14 +1701,20 @@
         },
         {
           "path": "lib/inject-verified.ts",
-          "lines": 123,
+          "lines": 165,
           "kind": "lib",
           "exports": [
             "VERIFIED_TEXT_MAX",
-            "PASTE_SETTLE_MS",
+            "COMMAND",
+            "MENU_SETTLE_MS",
+            "CHUNK_CHARS",
+            "CHUNK_GAP_MS",
+            "TYPE_SETTLE_MS",
             "VerifiedInjectDeps",
             "VerifiedResult",
             "capKeep",
+            "stages",
+            "landed",
             "injectVerifiedWith",
             "injectVerified"
           ],
@@ -5626,7 +5655,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 261,
+          "lines": 263,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -7098,8 +7127,26 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "NOT_EXECUTED_MS": {
+          "module": "lib/auto-compact-guard.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
         "SessionScan": {
           "module": "lib/auto-compact-keep.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "NotExecutedGuard": {
+          "module": "lib/auto-compact-guard.ts",
+          "callers": [
+            "lib/auto-compact.ts"
+          ]
+        },
+        "NotExecuted": {
+          "module": "lib/auto-compact-guard.ts",
           "callers": [
             "lib/auto-compact.ts"
           ]
@@ -7115,6 +7162,12 @@
           "callers": [
             "lib/auto-compact.ts",
             "lib/inject-verified.ts"
+          ]
+        },
+        "notExecutedPush": {
+          "module": "lib/auto-compact-guard.ts",
+          "callers": [
+            "lib/auto-compact.ts"
           ]
         },
         "buildKeep": {
@@ -7522,7 +7575,6 @@
           "callers": [
             "lib/command-list.ts",
             "lib/inject-guard.ts",
-            "lib/inject-verified.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest"
@@ -8135,22 +8187,17 @@
             "lib/inject-guard.ts"
           ]
         },
+        "inputText": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/inject-verified.ts"
+          ]
+        },
         "tmuxSendKeys": {
           "module": "lib/keyboard-inject.ts",
           "callers": [
             "lib/inject-verified.ts",
             "lib/submit-confirm.ts"
-          ]
-        },
-        "capturePane": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/inject-verified.ts",
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "wiring/dialogs.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "sendKeysArgs": {
@@ -8162,6 +8209,17 @@
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts"
+          ]
+        },
+        "capturePane": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "paneKey": {

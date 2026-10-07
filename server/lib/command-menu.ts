@@ -146,6 +146,29 @@ export function inputLine(pane: string): string | null {
   return PLACEHOLDER_RE.test(typed) ? "" : typed
 }
 
+// The whole input box when a long line wraps: the prompt line plus the
+// indented continuation rows under it, up to the box's bottom divider (or the
+// first blank / unindented row). Rows are joined with one space; Claude Code
+// wraps at word boundaries, but a long token can break mid-word, so callers
+// that compare should ignore whitespace. Same null / "" contract as inputLine.
+export function inputText(pane: string): string | null {
+  const lines = splitLines(pane)
+  const texts = lines.map(textOf)
+  const idx = promptLineIndex(texts)
+  if (idx < 0) return null
+  const first = typedAfterPrompt(lines[idx]!)
+  if (PLACEHOLDER_RE.test(first)) return ""
+  const parts = [first]
+  for (let i = idx + 1; i < lines.length; i++) {
+    const raw = texts[i]!
+    if (DIVIDER_RE.test(raw) || !/^[\s ]+\S/.test(raw)) break
+    const solid = textOf(lines[i]!.filter((c) => !c.dim)).trim()
+    if (!solid) break
+    parts.push(solid)
+  }
+  return parts.join(" ").trim()
+}
+
 // The command menu as the pane currently renders it.
 //
 // Rows sit between the header and the divider above the input box. A long
