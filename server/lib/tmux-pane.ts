@@ -301,3 +301,45 @@ export async function tmuxPaneAttached(pane: string, socket?: string): Promise<b
     return null
   }
 }
+
+// ── Pane width ───────────────────────────────────────────────────────────
+//
+// Live 2026-10-08 (pane %204): a tiny tmux client attached with
+// `window-size latest` squeezed the window to 11 columns. The /compact keep
+// text wrapped to ~50 rows, the read-back mismatched, and one Ctrl-U (which
+// clears ONE wrapped row) left the rest in the box — every phone inject after
+// that was refused input_not_empty for ~10h. Below this width the input box
+// cannot be read back reliably, so nothing is typed into it.
+export const MIN_INJECT_PANE_WIDTH = 40
+
+export function paneTooNarrow(width: number | null | undefined): boolean {
+  return typeof width === "number" && width < MIN_INJECT_PANE_WIDTH
+}
+
+// `#{pane_width}` in columns. Null when tmux can't say (bad id, dead pane,
+// slow tmux) — callers treat that as unknown, not as narrow.
+export async function tmuxPaneWidth(ref: PaneRef, signal?: AbortSignal): Promise<number | null> {
+  if (!PANE_ID.test(ref.pane)) return null
+  try {
+    const p = Bun.spawn([...tmuxArgv(ref.socket), "display-message", "-p", "-t", ref.pane, "#{pane_width}"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    const kill = () => { try { p.kill() } catch { /* gone */ } }
+    const timer = setTimeout(kill, 1_000)
+    if (signal?.aborted) kill()
+    signal?.addEventListener("abort", kill, { once: true })
+    try {
+      const out = await new Response(p.stdout).text()
+      const code = await p.exited
+      if (code !== 0 || signal?.aborted) return null
+      const n = Number(out.trim())
+      return Number.isInteger(n) && n > 0 ? n : null
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", kill)
+    }
+  } catch {
+    return null
+  }
+}

@@ -25,13 +25,21 @@
 // VERIFIED_TEXT_MAX stays 800: typed text has no paste-placeholder problem,
 // but the input box grows one row per wrap (~10 rows at 80 columns) and a
 // short pane must still show the whole box for the read-back.
+//
+// Clearing (live 2026-10-08, pane %204): Claude Code's Ctrl-U deletes ONE row
+// of a wrapped input, not the whole input. A single Ctrl-U after a mismatch
+// left most of the keep text in the box, and every later phone inject was
+// refused input_not_empty for ~10h. So a failure clears until the read-back is
+// empty (capped), and a residue that will not clear is logged and reported.
+// A pane under MIN_INJECT_PANE_WIDTH columns is refused before any key: at 11
+// columns the keep text wrapped to ~50 rows and could not be read back.
 
 import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
 import { tmuxSendKeys } from "./keyboard-inject"
 import { INJECT_SEND_MS, INJECT_QUEUE_MS } from "./herdr-inject"
 import { inputText } from "./command-menu"
-import { capturePane, paneKey, sendKeysArgs, type PaneRef } from "./tmux-pane"
+import { MIN_INJECT_PANE_WIDTH, capturePane, paneKey, paneTooNarrow, sendKeysArgs, tmuxPaneWidth, type PaneRef } from "./tmux-pane"
 import { COMPACT_TEXT } from "./auto-compact-keep"
 
 export const VERIFIED_TEXT_MAX = 800
@@ -45,6 +53,8 @@ export const TYPE_SETTLE_MS = 400
 // `/compact keep: ` + this many chars of the keep text must read back.
 const HEAD_CHARS = 24
 const VERIFY_TURN_MS = 8_000
+/** Ctrl-U presses before giving up on a residue (one press = one wrapped row). */
+export const CLEAR_MAX_PRESSES = 40
 
 export interface VerifiedInjectDeps {
   /** Type `text` literally into the pane (`send-keys -l`). Never a paste. */
@@ -55,11 +65,23 @@ export interface VerifiedInjectDeps {
   key(ref: PaneRef, key: string, signal: AbortSignal): Promise<boolean>
   sleep(ms: number): Promise<void>
   log(line: string): void
+  /** Pane width in columns (null = unknown). Absent → no width check. */
+  width?(ref: PaneRef, signal: AbortSignal): Promise<number | null>
 }
 
 export type VerifiedResult =
   | { ok: true; text: string; fellBack: boolean }
-  | { ok: false; error: "type_failed" | "input_mismatch" | "unreadable" | "key_gate"; seen?: string }
+  | {
+    ok: false
+    error: "type_failed" | "input_mismatch" | "unreadable" | "key_gate" | "pane_too_narrow"
+    seen?: string
+    /** Typed text could not be cleared: the input box still holds it. */
+    residue?: boolean
+    /** pane_too_narrow: the width read. */
+    width?: number
+  }
+
+type Failure = Extract<VerifiedResult, { ok: false }>
 
 const squash = (s: string) => s.replace(/\s+/g, "")
 
@@ -104,21 +126,38 @@ async function typeStaged(ref: PaneRef, text: string, d: VerifiedInjectDeps, sig
   return true
 }
 
-async function attempt(ref: PaneRef, text: string, d: VerifiedInjectDeps, signal: AbortSignal): Promise<VerifiedResult> {
-  if (!(await typeStaged(ref, text, d, signal))) {
+// Ctrl-U until the input box reads back empty. One press clears one wrapped
+// row, so a long line needs several. True when the box is empty; false (and
+// logged) when it is still holding text or can no longer be read.
+export async function clearInput(ref: PaneRef, d: VerifiedInjectDeps, signal: AbortSignal): Promise<boolean> {
+  let left: string | null = null
+  for (let i = 0; i < CLEAR_MAX_PRESSES; i++) {
     await d.key(ref, "C-u", signal)
-    return { ok: false, error: "type_failed" }
+    const pane = await d.capture(ref, signal)
+    if (pane === null) {
+      d.log(`inject clear: pane unreadable after ${i + 1} Ctrl-U — residue left unknown`)
+      return false
+    }
+    left = inputText(pane)
+    if (left === "") return true
   }
+  d.log(`inject clear: residue left after ${CLEAR_MAX_PRESSES} Ctrl-U — input began "${(left ?? "").slice(0, 60)}"`)
+  return false
+}
+
+// Clear after a failure; a residue is carried on the result, never dropped.
+async function fail(ref: PaneRef, d: VerifiedInjectDeps, signal: AbortSignal, r: Failure): Promise<Failure> {
+  return (await clearInput(ref, d, signal)) ? r : { ...r, residue: true }
+}
+
+async function attempt(ref: PaneRef, text: string, d: VerifiedInjectDeps, signal: AbortSignal): Promise<VerifiedResult> {
+  if (!(await typeStaged(ref, text, d, signal))) return fail(ref, d, signal, { ok: false, error: "type_failed" })
   await d.sleep(TYPE_SETTLE_MS)
   const pane = await d.capture(ref, signal)
-  if (pane === null) {
-    await d.key(ref, "C-u", signal)
-    return { ok: false, error: "unreadable" }
-  }
+  if (pane === null) return fail(ref, d, signal, { ok: false, error: "unreadable" })
   const typed = inputText(pane)
   if (!landed(typed, text)) {
-    await d.key(ref, "C-u", signal)
-    return { ok: false, error: "input_mismatch", seen: (typed ?? "").slice(0, 60) }
+    return fail(ref, d, signal, { ok: false, error: "input_mismatch", seen: (typed ?? "").slice(0, 60) })
   }
   if (!(await d.key(ref, "Enter", signal))) return { ok: false, error: "type_failed" }
   return { ok: true, text, fellBack: false }
@@ -126,9 +165,17 @@ async function attempt(ref: PaneRef, text: string, d: VerifiedInjectDeps, signal
 
 /** Type in stages → read back → Enter only if the input starts with the command. */
 export async function injectVerifiedWith(ref: PaneRef, text: string, d: VerifiedInjectDeps, signal: AbortSignal): Promise<VerifiedResult> {
+  if (d.width) {
+    const width = await d.width(ref, signal)
+    if (paneTooNarrow(width)) {
+      d.log(`inject refused: pane ${width} cols wide (< ${MIN_INJECT_PANE_WIDTH}) — the input box cannot be read back`)
+      return { ok: false, error: "pane_too_narrow", width: width! }
+    }
+  }
   const first = capKeep(oneLine(text))
   const r = await attempt(ref, first, d, signal)
-  if (r.ok || first === COMPACT_TEXT) return r
+  // A residue stays put: typing the retry on top of it would only mangle more.
+  if (r.ok || r.residue || first === COMPACT_TEXT) return r
   d.log(`inject verify failed (${r.error}${r.seen ? `, input began "${r.seen}"` : ""}) — retrying plain keep`)
   const second = await attempt(ref, COMPACT_TEXT, d, signal)
   return second.ok ? { ...second, fellBack: true } : second
@@ -143,6 +190,7 @@ const real: VerifiedInjectDeps = {
   async key(ref, key, signal) {
     return (await tmuxSendKeys(sendKeysArgs(ref, key), 2000, signal)).ok
   },
+  width: (ref, signal) => tmuxPaneWidth(ref, signal),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   log: (line) => companionLog(line),
 }
@@ -156,7 +204,7 @@ export async function injectVerified(ref: PaneRef, text: string, deps: VerifiedI
       timeoutMs: Math.max(VERIFY_TURN_MS, INJECT_SEND_MS),
     })
     if (r.ok) deps.log(`delivered (verified typed${r.fellBack ? ", plain keep fallback" : ""}) → ${where}`)
-    else deps.log(`inject NOT sent → ${where}: ${r.error}${r.seen ? ` (input began "${r.seen}")` : ""}`)
+    else deps.log(`inject NOT sent → ${where}: ${r.error}${r.width ? ` (${r.width} cols)` : ""}${r.seen ? ` (input began "${r.seen}")` : ""}${r.residue ? " — residue left in the input box" : ""}`)
     return r
   } catch (err) {
     deps.log(`inject NOT sent → ${where}: ${String(err)}`)

@@ -1767,7 +1767,7 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 176,
+          "lines": 187,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
@@ -1787,7 +1787,8 @@
             "lib/command-list.ts",
             "lib/command-menu.ts",
             "lib/dialogs.ts",
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1795,7 +1796,7 @@
         },
         {
           "path": "lib/inject-verified.ts",
-          "lines": 166,
+          "lines": 214,
           "kind": "lib",
           "exports": [
             "VERIFIED_TEXT_MAX",
@@ -1804,11 +1805,13 @@
             "CHUNK_CHARS",
             "CHUNK_GAP_MS",
             "TYPE_SETTLE_MS",
+            "CLEAR_MAX_PRESSES",
             "VerifiedInjectDeps",
             "VerifiedResult",
             "capKeep",
             "stages",
             "landed",
+            "clearInput",
             "injectVerifiedWith",
             "injectVerified"
           ],
@@ -2793,13 +2796,14 @@
         },
         {
           "path": "lib/receipt-checks.ts",
-          "lines": 188,
+          "lines": 191,
           "kind": "lib",
           "exports": [
             "TPS_RATE",
             "TVQ_RATE",
             "MAX_AGE_DAYS",
             "ALWAYS_PERSONAL",
+            "NOT_CLASSIFIABLE",
             "BASE_CHART",
             "BOOKS_RULES",
             "parseMoney",
@@ -2833,7 +2837,7 @@
         },
         {
           "path": "lib/receipt-jev.ts",
-          "lines": 165,
+          "lines": 171,
           "kind": "lib",
           "exports": [
             "JEV_AGREE_MIN",
@@ -2909,7 +2913,7 @@
         },
         {
           "path": "lib/receipt-qa-worker.ts",
-          "lines": 308,
+          "lines": 321,
           "kind": "lib",
           "exports": [
             "MAX_ATTEMPTS",
@@ -2953,7 +2957,7 @@
         },
         {
           "path": "lib/receipt-sonnet.ts",
-          "lines": 138,
+          "lines": 140,
           "kind": "lib",
           "exports": [
             "PATCH_ALLOWLIST",
@@ -3987,7 +3991,7 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 304,
+          "lines": 346,
           "kind": "lib",
           "exports": [
             "tmuxSocketFromEnv",
@@ -4011,7 +4015,10 @@
             "paneInputReady",
             "paneHasDialog",
             "tmuxSessionForPane",
-            "tmuxPaneAttached"
+            "tmuxPaneAttached",
+            "MIN_INJECT_PANE_WIDTH",
+            "paneTooNarrow",
+            "tmuxPaneWidth"
           ],
           "state": [],
           "emits": [],
@@ -4834,7 +4841,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 459,
+          "lines": 461,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -5760,7 +5767,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 264,
+          "lines": 277,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -5773,7 +5780,9 @@
           "state": [
             "let statsDb"
           ],
-          "emits": [],
+          "emits": [
+            "inject_error"
+          ],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
@@ -5792,6 +5801,7 @@
             "lib/inject-guard.ts",
             "lib/inject-verified.ts",
             "lib/tmux-pane.ts",
+            "state.ts",
             "lib/apns.ts",
             "lib/push.ts",
             "wiring/dialogs.ts"
@@ -5961,13 +5971,14 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 161,
+          "lines": 170,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
             "yieldPaneForInject",
             "openDialogFor",
-            "paneSnapshotFor"
+            "paneSnapshotFor",
+            "paneWidthFor"
           ],
           "state": [],
           "emits": [
@@ -6621,7 +6632,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 209,
+          "lines": 212,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -6676,6 +6687,7 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/my-tasks.ts",
+            "wiring/auto-compact.ts",
             "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
@@ -6956,6 +6968,12 @@
             "lib/activity.ts",
             "lib/codex-feed.ts",
             "lib/transcript.ts"
+          ]
+        },
+        "identityFor": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
           ]
         },
         "verbFor": {
@@ -7577,6 +7595,13 @@
             "wiring/body.ts"
           ]
         },
+        "BASE_DISALLOWED": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/body-investigator.ts",
+            "lib/quick-look.ts"
+          ]
+        },
         "readonlyArgs": {
           "module": "lib/readonly-claude.ts",
           "callers": [
@@ -7823,6 +7848,15 @@
           "module": "lib/command-offpane.ts",
           "callers": [
             "lib/command-offpane-cache.ts"
+          ]
+        },
+        "tmuxArgv": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/command-offpane-launch.ts",
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/spawn-session.ts"
           ]
         },
         "helpTab": {
@@ -8414,8 +8448,22 @@
             "lib/inject-guard.ts"
           ]
         },
+        "paneTooNarrow": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-guard.ts",
+            "lib/inject-verified.ts",
+            "wiring/auto-compact.ts"
+          ]
+        },
         "inputText": {
           "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/inject-verified.ts"
+          ]
+        },
+        "MIN_INJECT_PANE_WIDTH": {
+          "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/inject-verified.ts"
           ]
@@ -8447,6 +8495,13 @@
             "wiring/dialogs.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "tmuxPaneWidth": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "paneKey": {
@@ -9025,6 +9080,13 @@
             "lib/receipt-sonnet.ts"
           ]
         },
+        "NOT_CLASSIFIABLE": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-jev.ts",
+            "lib/receipt-sonnet.ts"
+          ]
+        },
         "BASE_CHART": {
           "module": "lib/receipt-checks.ts",
           "callers": [
@@ -9440,6 +9502,12 @@
             "lib/resolver-fix-guard.ts"
           ]
         },
+        "conflictPolicyLines": {
+          "module": "lib/resolver-fix-policy.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
         "GitFn": {
           "module": "lib/resolver-fix-guard.ts",
           "callers": [
@@ -9448,6 +9516,12 @@
         },
         "guardFixRange": {
           "module": "lib/resolver-fix-guard.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
+        "fixDisallowed": {
+          "module": "lib/resolver-fix-policy.ts",
           "callers": [
             "lib/resolver-fix.ts"
           ]
@@ -9471,6 +9545,12 @@
           "callers": [
             "lib/resolver-prompt.ts",
             "lib/resolver.ts"
+          ]
+        },
+        "allowedActions": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-prompt.ts"
           ]
         },
         "resolverActions": {
@@ -9582,6 +9662,14 @@
             "lib/resolver-work.ts"
           ]
         },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts"
+          ]
+        },
         "buildResolverPrompt": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -9616,13 +9704,6 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
-          ]
-        },
-        "fallbackPhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver.ts",
-            "lib/triage-engine.ts"
           ]
         },
         "NO_REPO_BLOCKER": {
@@ -9735,6 +9816,12 @@
           ]
         },
         "spawnNewSessionFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "spawnServerFlags": {
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/spawn-session.ts"
@@ -10344,6 +10431,12 @@
             "lib/trip-triage.ts"
           ]
         },
+        "uploadInput": {
+          "module": "lib/trip-service.ts",
+          "callers": [
+            "lib/trip-triage.ts"
+          ]
+        },
         "rowInput": {
           "module": "lib/trip-service.ts",
           "callers": [
@@ -10615,6 +10708,13 @@
             "ws.ts"
           ]
         },
+        "waitingSummary": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "ws.ts"
+          ]
+        },
         "dialogWatcher": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -10747,6 +10847,14 @@
             "ws.ts"
           ]
         },
+        "paneWidthFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
+            "ws.ts"
+          ]
+        },
         "clearWaitingForTarget": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -10787,6 +10895,12 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "HISTORY_STATES": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
           ]
         },
         "getHistoryItem": {
@@ -11619,7 +11733,8 @@
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
         "setChannelAuto": {
@@ -13199,6 +13314,18 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver-peer.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "QUICK_LOOK_ALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "QUICK_LOOK_DISALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
             "wiring/resolver.ts"
           ]
         },

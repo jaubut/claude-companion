@@ -120,6 +120,7 @@ async function jevPass(row: QaRow): Promise<void> {
   const jev = await workerDeps.jev(row.fields, chart).catch(() => null)
   const d = decideJev(row.fields, issues, jev)
   if (d.fill && jev) return jevFill(row, d.fill, jev)
+  if (d.clear) return jevClear(row, d.status, d.issues, jev)
   settle(row, d.status, { issues: d.issues, jev: jev ? { ...jev } : null })
 }
 
@@ -132,6 +133,18 @@ async function jevFill(row: QaRow, code: string, jev: JevVerdict): Promise<void>
   }
   audit(row.expense_id, "jev", changes, `jev conf ${jev.confidence.toFixed(2)}`)
   settle(row, "jev_ok", { issues: [], jev: { ...jev }, fields: { ...row.fields, category_code: code }, changes: [...row.changes, ...changes] })
+}
+
+/** Blank a never-pick saved code (PATCH + by:"jev" change + audit) before settling. */
+async function jevClear(row: QaRow, status: QaStatus, issues: QaIssue[], jev: JevVerdict | null): Promise<void> {
+  const changes = diff(row.fields, { category_code: "" }, "jev")
+  const j = jev ? { ...jev } : null
+  if (!await applyPatch(row.expense_id, { category_code: "" })) {
+    const issue: QaIssue = { field: "category_code", problem: "dashboard refused clearing the never-pick code" }
+    return settle(row, "to_review", { issues: [...issues, issue], jev: j })
+  }
+  audit(row.expense_id, "jev", changes, "never-pick GL code cleared")
+  settle(row, status, { issues, jev: j, fields: { ...row.fields, category_code: "" }, changes: [...row.changes, ...changes] })
 }
 
 // ── Pass 2: Sonnet on `to_review` ──

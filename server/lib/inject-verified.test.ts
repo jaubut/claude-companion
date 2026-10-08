@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { COMPACT_TEXT } from "./auto-compact-keep"
 import { inputText } from "./command-menu"
 import {
-  CHUNK_CHARS, CHUNK_GAP_MS, MENU_SETTLE_MS, TYPE_SETTLE_MS, VERIFIED_TEXT_MAX,
+  CHUNK_CHARS, CHUNK_GAP_MS, CLEAR_MAX_PRESSES, MENU_SETTLE_MS, TYPE_SETTLE_MS, VERIFIED_TEXT_MAX,
   capKeep, injectVerifiedWith, type VerifiedInjectDeps,
 } from "./inject-verified"
 
@@ -151,4 +151,94 @@ test("failed typing never presses Enter; the half-typed line is cleared", async 
   expect(r).toEqual({ ok: false, error: "type_failed" })
   expect(calls).not.toContain("key:Enter")
   expect(calls).toContain("key:C-u")
+})
+
+// Claude Code's real Ctrl-U: it deletes ONE wrapped row (the last), not the
+// whole input. `lose` mangles every attempt's head so the read-back mismatches.
+function rowWise(opts: { width: number; lose: number; stuck?: boolean }) {
+  const calls: string[] = []
+  let box = ""
+  const d: VerifiedInjectDeps = {
+    async type(_r, text) {
+      calls.push(`type:${text}`)
+      box += box.length === 0 ? text.slice(opts.lose) : text
+      return true
+    },
+    async capture() { return render(box, opts.width) },
+    async key(_r, key) {
+      calls.push(`key:${key}`)
+      if (key === "C-u" && !opts.stuck) {
+        const rows = Math.ceil(box.length / opts.width)
+        box = box.slice(0, Math.max(0, rows - 1) * opts.width)
+      }
+      if (key === "Enter") calls.push(`submitted:${box}`)
+      return true
+    },
+    sleep: async () => {},
+    log: (l) => calls.push(`log:${l}`),
+  }
+  return { d, calls, box: () => box }
+}
+
+test("a wrapped input that needs N Ctrl-U is cleared until the read-back is empty", async () => {
+  const width = 20
+  const { d, calls, box } = rowWise({ width, lose: 5 })
+  const n = Math.ceil((COMPACT_TEXT.length - 5) / width)
+  expect(n).toBeGreaterThan(1)
+  const r = await injectVerifiedWith(ref, COMPACT_TEXT, d, sig)
+  expect(r.ok).toBe(false)
+  expect(calls.filter((c) => c === "key:C-u").length).toBe(n)
+  if (!r.ok) {
+    expect(r.error).toBe("input_mismatch")
+    expect(r.residue).toBeUndefined()
+  }
+  expect(box()).toBe("")
+  expect(inputText(await d.capture(ref, sig) as string)).toBe("")
+  expect(calls).not.toContain("key:Enter")
+})
+
+test("long keep at 60 cols: several Ctrl-U per attempt, box empty after both attempts", async () => {
+  const { d, calls, box } = rowWise({ width: 60, lose: 15 })
+  const r = await injectVerifiedWith(ref, longKeep, d, sig)
+  expect(r.ok).toBe(false)
+  if (!r.ok) expect(r.error).toBe("input_mismatch")
+  // The first (long) attempt wraps to many rows: more than one press to clear it.
+  const firstRetry = calls.findIndex((c, i) => i > 0 && c === "type:/compact" && calls.slice(0, i).includes("key:C-u"))
+  const pressesFirst = calls.slice(0, firstRetry).filter((c) => c === "key:C-u").length
+  expect(pressesFirst).toBeGreaterThan(5)
+  expect(box()).toBe("")
+  expect(inputText(await d.capture(ref, sig) as string)).toBe("")
+})
+
+test("a residue that will not clear: capped presses, logged, reported, no retry typed on top", async () => {
+  const { d, calls } = rowWise({ width: 60, lose: 15, stuck: true })
+  const r = await injectVerifiedWith(ref, longKeep, d, sig)
+  expect(r.ok).toBe(false)
+  if (!r.ok) {
+    expect(r.error).toBe("input_mismatch")
+    expect(r.residue).toBe(true)
+  }
+  expect(calls.filter((c) => c === "key:C-u").length).toBe(CLEAR_MAX_PRESSES)
+  expect(calls.some((c) => c.startsWith("log:") && c.includes("residue left"))).toBe(true)
+  expect(typed(calls).filter((t) => t === "/compact").length).toBe(1)
+  expect(calls).not.toContain("key:Enter")
+})
+
+test("pane 11 cols wide → pane_too_narrow, zero keystrokes sent", async () => {
+  const { d, calls } = fake()
+  d.width = async () => 11
+  const r = await injectVerifiedWith(ref, longKeep, d, sig)
+  expect(r).toEqual({ ok: false, error: "pane_too_narrow", width: 11 })
+  expect(typed(calls)).toEqual([])
+  expect(keys(calls)).toEqual([])
+  expect(calls.some((c) => c.startsWith("log:") && c.includes("11 cols"))).toBe(true)
+})
+
+test("a wide pane, or an unknown width, types as before", async () => {
+  for (const w of [160, null]) {
+    const { d } = fake()
+    d.width = async () => w
+    const r = await injectVerifiedWith(ref, longKeep, d, sig)
+    expect(r.ok).toBe(true)
+  }
 })
