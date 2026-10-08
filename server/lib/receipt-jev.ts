@@ -135,12 +135,13 @@ const fmt = (p: number): string => p.toFixed(2)
 /**
  * The meal distance rule applies to a business meal: category says meal or
  * Jev's meal noul fires, and neither the grocery rule nor a personal verdict
- * (saved purpose or Jev's pick) takes it out of the books.
+ * (saved purpose or Jev's pick) takes it out of the books. Jev down → the
+ * category alone decides.
  */
-export function mealRuleApplies(f: ExpenseFields, jev: JevVerdict): boolean {
-  if (groceryByName(f) || jev.grocery >= NOUL_YES) return false
-  if (isPersonalPurpose(f) || jev.code === PERSONAL_OPTION) return false
-  return mealByCategory(f) || jev.meal >= NOUL_YES
+export function mealRuleApplies(f: ExpenseFields, jev: JevVerdict | null): boolean {
+  if (groceryByName(f) || (jev && jev.grocery >= NOUL_YES)) return false
+  if (isPersonalPurpose(f) || jev?.code === PERSONAL_OPTION) return false
+  return mealByCategory(f) || (!!jev && jev.meal >= NOUL_YES)
 }
 
 /** Distance decides the meal code; no address/km → to_review, never a guess. */
@@ -164,7 +165,8 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
   const issues = [...checkIssues]
   if (!jev) {
     issues.push({ field: "jev", problem: "jev_unavailable" })
-    return { status: "to_review", issues }
+    // A meal by category still gets its distance code; Jev's personal/business call stays open.
+    return meal ? decideMeal(f, issues, meal) : { status: "to_review", issues }
   }
   // A personal purchase carries no GL code: Jev picking `personal` agrees with it.
   const saved = String(f.category_code ?? "").trim() || (isPersonalPurpose(f) ? PERSONAL_OPTION : "")

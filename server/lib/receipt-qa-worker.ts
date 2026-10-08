@@ -133,9 +133,11 @@ async function jevPass(row: QaRow): Promise<void> {
   }
   const chart = await loadChart(workerDeps.chartQuery)
   const jev = await workerDeps.jev(row.fields, chart).catch(() => null)
-  const meal = jev && mealRuleApplies(row.fields, jev) ? await mealRule(row.fields) : undefined
+  const meal = mealRuleApplies(row.fields, jev) ? await mealRule(row.fields) : undefined
   const d = decideJev(row.fields, issues, jev, meal)
-  const jevJson = jev ? { ...jev, ...(meal && "km" in meal ? { office_km: meal.km } : {}) } : null
+  // office_km persists the rule's ownership of the code, even when nothing was patched.
+  const km = meal && "km" in meal ? { office_km: meal.km } : null
+  const jevJson = jev || km ? { ...jev, ...km } : null
   if (d.rule && meal && "km" in meal) return ruleSet(row, d, d.rule, meal.km, jevJson)
   if (d.fill && jev) return jevFill(row, d.fill, jev)
   settle(row, d.status, { issues: d.issues, jev: jevJson })
@@ -164,10 +166,15 @@ async function ruleSet(row: QaRow, d: JevDecision, code: string, km: number, jev
   settle(row, d.status, { issues: d.issues, jev, fields: { ...row.fields, category_code: code }, changes: [...row.changes, ...changes] })
 }
 
-/** A meal code set by the distance rule, or one it could not resolve, is not Sonnet's to change. */
+function mealAddressUnresolved(row: QaRow): boolean {
+  return row.issues.some((i) => i.problem.startsWith(MEAL_ADDRESS_UNRESOLVED))
+}
+
+/** A meal code decided by the distance rule (patched or already matching), or one it could not resolve, is not Sonnet's to change. */
 function mealCodeLocked(row: QaRow): boolean {
-  return row.changes.some((c) => c.by === "rule" && c.field === "category_code") ||
-    row.issues.some((i) => i.problem.startsWith(MEAL_ADDRESS_UNRESOLVED))
+  return typeof row.jev?.office_km === "number" ||
+    row.changes.some((c) => c.by === "rule" && c.field === "category_code") ||
+    mealAddressUnresolved(row)
 }
 
 /** Book Jev's confident code on a blank expense (PATCH + by:"jev" change + audit). */
@@ -222,6 +229,8 @@ async function sonnetPass(row: QaRow): Promise<void> {
   if (code !== undefined && code !== String(row.fields.category_code ?? "") && mealCodeLocked(row)) {
     return toHuman(row, [...row.issues, { field: "sonnet", problem: "patch refused: meal GL code is decided by office distance" }])
   }
+  // Sonnet cannot geocode: an unresolved meal address is never auto-completed.
+  if (mealAddressUnresolved(row)) return toHuman(row, row.issues)
   const changes = diff(row.fields, verdict.patch, "sonnet")
   if (changes.length) {
     const patch = Object.fromEntries(changes.map((c) => [c.field, c.to]))

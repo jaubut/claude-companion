@@ -383,11 +383,46 @@ test("meal rule: Sonnet may not change a meal code the rule set or could not res
   expect(hits.some((h) => h.method === "PATCH")).toBe(false)
 })
 
+test("meal rule: Jev down, category Meals → distance still sets the code; Sonnet cannot change it", async () => {
+  seed({ category_code: "", address: MONTREAL })
+  jevAnswer = () => new Response("x", { status: 500 })
+  sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"client lunch"}'
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "needs_human", category_code: "5216" })
+  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5216", by: "rule" }])
+  expect(row.jev).toEqual({ office_km: 82.4 })
+  expect(row.issues.at(-1)!.problem).toBe("patch refused: meal GL code is decided by office distance")
+})
+
+test("meal rule: a saved code the rule confirmed (no PATCH) is still locked against Sonnet", async () => {
+  seed({ address: GRANBY, total: "$120.00" }) // saved 5776 matches; sum mismatch sends it to Sonnet
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  sonnetText = '{"resolved":true,"patch":{"category_code":"5216","total":"114.98"},"reason":"trip"}'
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "needs_human", category_code: "5776" })
+  expect(row.issues.at(-1)!.problem).toBe("patch refused: meal GL code is decided by office distance")
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: unresolved address is never auto-completed by Sonnet (even with an empty patch)", async () => {
+  seed({ address: "" }) // saved 5776
+  jevAnswer = jev("5776", 0.99, { meal: 0.9, trip: 0.9 })
+  sonnetText = '{"resolved":true,"patch":{},"reason":"looks fine"}'
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row.status).toBe("needs_human")
+  expect(row.issues.some((i) => i.problem.startsWith("meal address unresolved"))).toBe(true)
+})
+
 // ── Pass 2: Sonnet ──
 
-// A row that reaches the Sonnet pass: no GL code, Jev down → to_review.
+// A row that reaches the Sonnet pass: no GL code, Jev down → to_review. Not a
+// meal by category, so the distance rule (which runs even with Jev down) stays out.
+const UNCODED = { category_code: "", category: "Other" } satisfies ExpenseFields
 function review(fields: ExpenseFields = {}): void {
-  seed({ category_code: "", ...fields })
+  seed({ ...UNCODED, ...fields })
   jevAnswer = () => new Response("x", { status: 500 })
 }
 
@@ -438,7 +473,7 @@ test("Sonnet: a code outside the chart, or amounts still off, are refused", asyn
   sonnetText = '{"resolved":true,"patch":{"category_code":"2400"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(ID)!.issues.at(-1)!.problem).toContain("not in chart")
-  seed({ category_code: "", tps: "$7.00" }, `${ID}-b`)
+  seed({ ...UNCODED, tps: "$7.00" }, `${ID}-b`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(`${ID}-b`)!.status).toBe("needs_human")
@@ -450,7 +485,7 @@ test("Sonnet: total only when arithmetic proves it wrong and the patch adds up",
   await drainReceiptQa()
   expect(getQaRow(ID)!.status).toBe("sonnet_fixed")
   expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body).total).toBe("114.98")
-  seed({ category_code: "" }, `${ID}-c`)
+  seed({ ...UNCODED }, `${ID}-c`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776","total":"99.00"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(`${ID}-c`)!.issues.at(-1)!.problem).toContain("total change not proven")
@@ -461,7 +496,7 @@ test("Sonnet: unresolved / bad JSON → needs_human + push", async () => {
   sonnetText = '{"resolved":false,"patch":{},"reason":"where was the meal eaten?"}'
   await drainReceiptQa()
   expect(getQaRow(ID)!.issues.at(-1)!.problem).toBe("unresolved: where was the meal eaten?")
-  seed({ category_code: "" }, `${ID}-d`)
+  seed({ ...UNCODED }, `${ID}-d`)
   sonnetText = "I think it is fine."
   await drainReceiptQa()
   expect(getQaRow(`${ID}-d`)!).toMatchObject({ status: "needs_human" })
@@ -486,7 +521,7 @@ test("Sonnet unavailable → backoff; dashboard PATCH 5xx → backoff, then need
   workerDeps.now = () => t
   for (let i = 1; i < MAX_ATTEMPTS; i++) { t += 3_600_000; await drainReceiptQa() }
   expect(getQaRow(ID)!.issues.at(-1)).toEqual({ field: "sonnet", problem: "sonnet_unavailable" })
-  seed({ category_code: "" }, `${ID}-e`)
+  seed({ ...UNCODED }, `${ID}-e`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"x"}'
   patchReply = () => new Response("down", { status: 503 })
   t += 3_600_000
