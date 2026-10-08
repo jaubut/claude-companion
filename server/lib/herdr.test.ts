@@ -4,7 +4,8 @@ import { parseDialog } from "./dialogs"
 import { inputLine, unstyle } from "./command-menu"
 import { createDialogWatcher } from "./dialog-watch"
 import { stages } from "./inject-verified"
-import { type Session, releaseHerdrWorkspace } from "./sessions"
+import type { Session } from "./sessions"
+import { releaseHerdrWorkspace } from "./herdr-workspace"
 import { herdrAgentBaseName, spawnInHerdr, spawnLinux, spawnMacAuto, type SpawnResult } from "./spawn-session"
 import { injectConfirmed, noteUserPromptSubmit } from "./submit-confirm"
 import { injectText } from "./keyboard-inject"
@@ -391,8 +392,8 @@ test("never closed while a command holds the pane, the pane is shared, or a sess
 test("only a session this server spawned in herdr releases its workspace", () => {
   const panes: string[] = []
   const close = async (pane: string) => { panes.push(pane); return "" }
-  releaseHerdrWorkspace(herdrSession({ herdrAgent: "" }), close)
-  releaseHerdrWorkspace(herdrSession({ tmuxPane: "%3" }), close)
-  releaseHerdrWorkspace(herdrSession(), close)
+  releaseHerdrWorkspace(herdrSession({ herdrAgent: "" }), () => [], close)
+  releaseHerdrWorkspace(herdrSession({ tmuxPane: "%3" }), () => [], close)
+  releaseHerdrWorkspace(herdrSession(), () => [], close)
   expect(panes).toEqual(["w6:p1"])
 })

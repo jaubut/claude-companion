@@ -968,7 +968,7 @@
         },
         {
           "path": "lib/command-menu.ts",
-          "lines": 254,
+          "lines": 255,
           "kind": "lib",
           "exports": [
             "CommandSuggestion",
@@ -990,7 +990,8 @@
           "apiCalls": [],
           "imports": [
             "lib/sessions.ts",
-            "lib/dialogs.ts"
+            "lib/dialogs.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1264,7 +1265,7 @@
         },
         {
           "path": "lib/dialog-watch.ts",
-          "lines": 196,
+          "lines": 198,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -1280,7 +1281,8 @@
           "apiCalls": [],
           "imports": [
             "lib/dialogs.ts",
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1664,8 +1666,29 @@
           "externals": []
         },
         {
+          "path": "lib/herdr-workspace.ts",
+          "lines": 18,
+          "kind": "lib",
+          "exports": [
+            "releaseHerdrWorkspace"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts",
+            "lib/herdr.ts",
+            "lib/log.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/herdr.ts",
-          "lines": 155,
+          "lines": 233,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -1674,6 +1697,11 @@
             "silentSuccess",
             "Herdr",
             "realHerdr",
+            "herdrScreen",
+            "herdrPaneWidth",
+            "herdrPaneAtShell",
+            "WorkspaceCloseOpts",
+            "closeHerdrWorkspaceWhenIdle",
             "validHerdrPane",
             "herdrPaneOf",
             "herdrGateKey",
@@ -1798,7 +1826,7 @@
         },
         {
           "path": "lib/inject-verified.ts",
-          "lines": 214,
+          "lines": 243,
           "kind": "lib",
           "exports": [
             "VERIFIED_TEXT_MAX",
@@ -1815,6 +1843,8 @@
             "landed",
             "clearInput",
             "injectVerifiedWith",
+            "herdrVerifiedDeps",
+            "injectVerifiedHerdr",
             "injectVerified"
           ],
           "state": [],
@@ -1827,6 +1857,7 @@
             "lib/log.ts",
             "lib/keyboard-inject.ts",
             "lib/herdr-inject.ts",
+            "lib/herdr.ts",
             "lib/command-menu.ts",
             "lib/tmux-pane.ts",
             "lib/auto-compact-keep.ts"
@@ -3613,6 +3644,7 @@
             "lib/agent-pid.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
+            "lib/herdr-workspace.ts",
             "lib/waiting.ts"
           ],
           "listeners": [],
@@ -5164,7 +5196,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 202,
+          "lines": 236,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -5193,6 +5225,7 @@
             "lib/command-scrape.ts",
             "lib/key-gate.ts",
             "lib/sessions.ts",
+            "lib/herdr.ts",
             "lib/tmux-pane.ts",
             "wiring/dialogs.ts"
           ],
@@ -5202,7 +5235,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 87,
+          "lines": 95,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -5308,7 +5341,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 556,
+          "lines": 558,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -5379,6 +5412,7 @@
             "lib/auto-judge.ts",
             "lib/approval-history-auto.ts",
             "lib/sessions.ts",
+            "lib/herdr-workspace.ts",
             "wiring/waiting.ts",
             "lib/activity.ts",
             "lib/feed.ts",
@@ -5781,7 +5815,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 277,
+          "lines": 282,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -5814,6 +5848,7 @@
             "lib/session-titles.ts",
             "lib/inject-guard.ts",
             "lib/inject-verified.ts",
+            "lib/herdr.ts",
             "lib/tmux-pane.ts",
             "state.ts",
             "lib/apns.ts",
@@ -5985,14 +6020,16 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 170,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
             "yieldPaneForInject",
             "openDialogFor",
             "paneSnapshotFor",
-            "paneWidthFor"
+            "paneWidthFor",
+            "screenSnapshotFor",
+            "screenWidthFor"
           ],
           "state": [],
           "emits": [
@@ -6014,7 +6051,9 @@
             "lib/pty-manager.ts",
             "lib/orphan-question.ts",
             "lib/tmux-pane.ts",
-            "wiring/waiting.ts"
+            "wiring/waiting.ts",
+            "lib/herdr.ts",
+            "lib/command-menu.ts"
           ],
           "listeners": [
             "dialogWatcher.start"
@@ -6940,6 +6979,7 @@
             "lib/agent-pid.ts",
             "lib/command-menu.ts",
             "lib/dialog-watch.ts",
+            "lib/herdr-workspace.ts",
             "lib/hook-common.ts",
             "lib/inject-guard.ts",
             "lib/model-control.ts",
@@ -6947,6 +6987,7 @@
             "lib/question-hook.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
+            "routes/command.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
@@ -7074,6 +7115,7 @@
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
             "lib/discover.ts",
+            "lib/herdr-workspace.ts",
             "lib/inject-verified.ts",
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
@@ -7776,6 +7818,21 @@
             "wiring/dialogs.ts"
           ]
         },
+        "herdrPaneOf": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-menu.ts",
+            "lib/dialog-watch.ts",
+            "lib/herdr-workspace.ts",
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/auto-compact.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
         "defaultTmux": {
           "module": "lib/command-offpane-launch.ts",
           "callers": [
@@ -8366,17 +8423,24 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
             "lib/spawn-session.ts",
-            "lib/submit-confirm.ts"
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "herdrGateKey": {
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
             "lib/submit-confirm.ts",
-            "routes/dialogs.ts#POST /api/dialog/key"
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/dialogs.ts"
           ]
         },
         "herdrErrorCode": {
@@ -8397,14 +8461,25 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
             "lib/submit-confirm.ts",
-            "routes/dialogs.ts#POST /api/dialog/key"
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick"
           ]
         },
         "herdrSendText": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/herdr-inject.ts"
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
+            "routes/command.ts"
+          ]
+        },
+        "closeHerdrWorkspaceWhenIdle": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-workspace.ts"
           ]
         },
         "SpawnAgent": {
@@ -8431,7 +8506,9 @@
           "module": "lib/command-menu.ts",
           "callers": [
             "lib/inject-guard.ts",
-            "lib/submit-confirm.ts"
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "promptLineIndex": {
@@ -8491,6 +8568,13 @@
         },
         "tmuxPaneWidth": {
           "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "herdrPaneWidth": {
+          "module": "lib/herdr.ts",
           "callers": [
             "lib/inject-verified.ts",
             "wiring/dialogs.ts"
@@ -8582,14 +8666,6 @@
             "lib/jev-router.ts",
             "wiring/triage.ts",
             "wiring/trips.ts"
-          ]
-        },
-        "herdrPaneOf": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/keyboard-inject.ts",
-            "lib/submit-confirm.ts",
-            "routes/dialogs.ts#POST /api/dialog/key"
           ]
         },
         "deliverViaHerdr": {
@@ -9801,6 +9877,13 @@
             "lib/sessions.ts"
           ]
         },
+        "releaseHerdrWorkspace": {
+          "module": "lib/herdr-workspace.ts",
+          "callers": [
+            "lib/sessions.ts",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
         "deriveKey": {
           "module": "lib/session-identity.ts",
           "callers": [
@@ -10846,7 +10929,6 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -10854,7 +10936,6 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -11211,6 +11292,16 @@
             "routes/model.ts"
           ]
         },
+        "paneRefOf": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel",
+            "wiring/auto-compact.ts"
+          ]
+        },
         "mayClearLine": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -11221,16 +11312,6 @@
           "module": "lib/command-menu.ts",
           "callers": [
             "routes/command.ts"
-          ]
-        },
-        "paneRefOf": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/model.ts#POST /api/model/open",
-            "routes/model.ts#POST /api/model/set",
-            "routes/model.ts#POST /api/model/cancel",
-            "wiring/auto-compact.ts"
           ]
         },
         "suggestRefusal": {
@@ -12250,8 +12331,26 @@
             "wiring/waiting.ts"
           ]
         },
+        "screenSnapshotFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "screenWidthFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
         "paneNotReady": {
           "module": "lib/inject-guard.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "injectVerifiedHerdr": {
+          "module": "lib/inject-verified.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
