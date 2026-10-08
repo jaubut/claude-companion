@@ -22,7 +22,7 @@ import {
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
-import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
+import { dialogWatcher, openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 import { withIdempotency } from "../lib/idempotency"
 import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
@@ -340,6 +340,7 @@ async function handleInject(req: Request): Promise<Response> {
     lookup, target, paneFree,
     dialog: paneFree ? await openDialogFor(target) : null,
     pane: paneFree ? await paneSnapshotFor(target) : undefined,
+    paneWidth: paneFree ? await paneWidthFor(target) : undefined,
   })
   if (refusal) {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
@@ -350,6 +351,7 @@ async function handleInject(req: Request): Promise<Response> {
     const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
       : refusal.error === "target_idle" ? `target ${who} has no live tty`
       : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
+      : refusal.error === "pane_too_narrow" ? `${who} pane only ${refusal.width} cols wide — input box can't be verified`
       : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
       : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
     companionLog(`${red}inject refused${reset} — ${why}`)
@@ -357,9 +359,9 @@ async function handleInject(req: Request): Promise<Response> {
     // is fine and the target is alive, it just can't accept text yet. 410
     // stays the "this target is gone" code the phone already maps to a
     // re-pin prompt.
-    const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" ? 409 : 410
+    const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" || refusal.error === "pane_too_narrow" ? 409 : 410
     return Response.json({
-      ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt,
+      ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt, width: refusal.width,
     }, { status })
   }
 

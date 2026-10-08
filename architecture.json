@@ -1706,7 +1706,7 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 175,
+          "lines": 186,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
@@ -1726,7 +1726,8 @@
             "lib/command-list.ts",
             "lib/command-menu.ts",
             "lib/dialogs.ts",
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1734,7 +1735,7 @@
         },
         {
           "path": "lib/inject-verified.ts",
-          "lines": 165,
+          "lines": 213,
           "kind": "lib",
           "exports": [
             "VERIFIED_TEXT_MAX",
@@ -1743,11 +1744,13 @@
             "CHUNK_CHARS",
             "CHUNK_GAP_MS",
             "TYPE_SETTLE_MS",
+            "CLEAR_MAX_PRESSES",
             "VerifiedInjectDeps",
             "VerifiedResult",
             "capKeep",
             "stages",
             "landed",
+            "clearInput",
             "injectVerifiedWith",
             "injectVerified"
           ],
@@ -3919,7 +3922,7 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 304,
+          "lines": 346,
           "kind": "lib",
           "exports": [
             "tmuxSocketFromEnv",
@@ -3943,7 +3946,10 @@
             "paneInputReady",
             "paneHasDialog",
             "tmuxSessionForPane",
-            "tmuxPaneAttached"
+            "tmuxPaneAttached",
+            "MIN_INJECT_PANE_WIDTH",
+            "paneTooNarrow",
+            "tmuxPaneWidth"
           ],
           "state": [],
           "emits": [],
@@ -4766,7 +4772,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 454,
+          "lines": 456,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -5691,7 +5697,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 263,
+          "lines": 276,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -5704,7 +5710,9 @@
           "state": [
             "let statsDb"
           ],
-          "emits": [],
+          "emits": [
+            "inject_error"
+          ],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
@@ -5723,6 +5731,7 @@
             "lib/inject-guard.ts",
             "lib/inject-verified.ts",
             "lib/tmux-pane.ts",
+            "state.ts",
             "lib/apns.ts",
             "lib/push.ts",
             "wiring/dialogs.ts"
@@ -5892,13 +5901,14 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 161,
+          "lines": 170,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
             "yieldPaneForInject",
             "openDialogFor",
-            "paneSnapshotFor"
+            "paneSnapshotFor",
+            "paneWidthFor"
           ],
           "state": [],
           "emits": [
@@ -6552,7 +6562,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 204,
+          "lines": 207,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -6607,6 +6617,7 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/my-tasks.ts",
+            "wiring/auto-compact.ts",
             "wiring/body-agent.ts",
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
@@ -8276,8 +8287,22 @@
             "lib/inject-guard.ts"
           ]
         },
+        "paneTooNarrow": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-guard.ts",
+            "lib/inject-verified.ts",
+            "wiring/auto-compact.ts"
+          ]
+        },
         "inputText": {
           "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/inject-verified.ts"
+          ]
+        },
+        "MIN_INJECT_PANE_WIDTH": {
+          "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/inject-verified.ts"
           ]
@@ -8309,6 +8334,13 @@
             "wiring/dialogs.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "tmuxPaneWidth": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "paneKey": {
@@ -10580,6 +10612,14 @@
           ]
         },
         "paneSnapshotFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
+            "ws.ts"
+          ]
+        },
+        "paneWidthFor": {
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
