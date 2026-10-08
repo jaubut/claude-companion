@@ -174,11 +174,12 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
   if (grocery && !isPersonalPurpose(f)) {
     issues.push({ field: "purpose", problem: "grocery purchase booked as business (groceries are always personal)", suggestion: "Personal — not a business expense" })
   }
-  // Meal with an office-distance outcome: the rule owns the code (Jev's pick and trip noul are moot).
-  if (meal && !grocery) return decideMeal(f, issues, meal)
+  // The business-purpose gate holds even when the distance rule decides the code.
   if (!grocery && jev.meal >= NOUL_YES && jev.trip < NOUL_YES) {
     issues.push({ field: "purpose", problem: "meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)" })
   }
+  // Meal with an office-distance outcome: the rule owns the code (Jev's pick is moot).
+  if (meal && !grocery) return decideMeal(f, issues, meal)
   const suggestion = jev.code !== PERSONAL_OPTION ? jev.code : undefined
   // Jeremie 2026-10-03: a blank code is filled by Jev when it is confident and
   // nothing else is wrong. A non-blank code is never overwritten here.

@@ -277,7 +277,7 @@ function auditLines(): Array<Record<string, unknown>> {
 
 test("meal rule: Granby address (≤ 50 km) → 5776 set in code, by:rule change + audit", async () => {
   seed({ category_code: "", address: GRANBY })
-  jevAnswer = jev("5216", 0.97, { meal: 0.9, trip: 0.1 }) // Jev's pick and trip noul do not decide a meal
+  jevAnswer = jev("5216", 0.97, { meal: 0.9, trip: 0.9 }) // Jev's pick does not decide a meal
   await drainReceiptQa()
   const row = getQaRow(ID)!
   expect(row).toMatchObject({ status: "jev_ok", category_code: "5776", issues: [] })
@@ -288,6 +288,17 @@ test("meal rule: Granby address (≤ 50 km) → 5776 set in code, by:rule change
   expect(JSON.parse(dist.body)).toEqual({ address: GRANBY })
   expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body)).toEqual({ category_code: "5776" })
   expect(auditLines()).toEqual([expect.objectContaining({ expense_id: ID, by: "rule", field: "category_code", from: "", to: "5776", reason: "meal 1.2 km from office (≤ 50 km)" })])
+})
+
+test("meal rule: no trip/client context → code still set by the rule, but to_review (business-purpose gate kept)", async () => {
+  sonnetText = null // keep the row in to_review
+  seed({ category_code: "", address: GRANBY, purpose: "lunch" })
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.1 })
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "to_review", category_code: "5776" })
+  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5776", by: "rule" }])
+  expect(row.issues.map((i) => i.problem)).toEqual(["meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)"])
 })
 
 test("meal rule: Montréal address (> 50 km) → 5216 overrides a saved 5776", async () => {
@@ -410,15 +421,18 @@ test("meal rule: Grain de Folie fixture (Granby) → 5776", async () => {
   } satisfies ExpenseFields
   const gid = "accounting/2026-10/2026-10-08-grain-de-folie-1161"
   insertQueued({ expense_id: gid, fields: grain, receipt_file: "2026-10-08-1.pdf", image_path: "" })
+  sonnetText = null // keep rows in to_review
   jevAnswer = jev("5776", 0.7, { meal: 0.95, trip: 0.2 })
   await drainReceiptQa()
-  expect(getQaRow(gid)!).toMatchObject({ status: "jev_ok", category_code: "5776", issues: [] })
+  // Code set by the rule; Jev's low trip/client noul still sends the business purpose to review.
+  expect(getQaRow(gid)!).toMatchObject({ status: "to_review", category_code: "5776" })
+  expect(getQaRow(gid)!.issues.map((i) => i.field)).toEqual(["purpose"])
   expect(getQaRow(gid)!.changes).toEqual([{ field: "category_code", from: "", to: "5776", by: "rule" }])
   // Saved 5776 already (as booked): agrees, nothing written.
   insertQueued({ expense_id: `${gid}-b`, fields: { ...grain, category_code: "5776" }, receipt_file: "", image_path: "" })
   hits = []
   await drainReceiptQa()
-  expect(getQaRow(`${gid}-b`)!).toMatchObject({ status: "jev_ok", category_code: "5776", changes: [] })
+  expect(getQaRow(`${gid}-b`)!).toMatchObject({ category_code: "5776", changes: [] })
   expect(hits.some((h) => h.method === "PATCH")).toBe(false)
 })
 
