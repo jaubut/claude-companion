@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 109,
+          "lines": 110,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -4720,7 +4720,7 @@
         },
         {
           "path": "lib/voice-memo.ts",
-          "lines": 457,
+          "lines": 466,
           "kind": "lib",
           "exports": [
             "VOICE_HINT",
@@ -5136,7 +5136,7 @@
         },
         {
           "path": "routes/capture.ts",
-          "lines": 367,
+          "lines": 385,
           "kind": "lib",
           "exports": [
             "VOICE_UPLOAD_PATH",
@@ -6757,12 +6757,6 @@
             "companion-server.ts"
           ]
         },
-        "VOICE_UPLOAD_PATH": {
-          "module": "routes/capture.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
@@ -6777,6 +6771,12 @@
             "companion-server.ts#* /ws",
             "routes/records.ts",
             "routes/vault.ts"
+          ]
+        },
+        "VOICE_UPLOAD_PATH": {
+          "module": "routes/capture.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
           ]
         },
         "waitForFirstDiscovery": {

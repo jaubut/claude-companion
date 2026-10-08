@@ -124,11 +124,15 @@ function withDeviceTranscript(m: VoiceMemo): VoiceMemo {
   return t ? { ...m, transcript: t } : m
 }
 
+// ISO-BMFF major brands that hold audio. mp42/isom are generic (a voice
+// memo may carry them); qt/heic/heix/mif1/msf1 (video, images) are refused.
+const AUDIO_BRANDS = ["M4A ", "M4B ", "M4P ", "mp42", "isom"]
+
 /** Container from the first bytes — the client's declared type is not trusted. */
 export function sniffAudio(b: Uint8Array): string | null {
   const ascii = (at: number, s: string): boolean => [...s].every((c, i) => b[at + i] === c.charCodeAt(0))
   if (b.length < 12) return null
-  if (ascii(4, "ftyp")) return "audio/mp4"
+  if (ascii(4, "ftyp")) return AUDIO_BRANDS.some((brand) => ascii(8, brand)) ? "audio/mp4" : null
   if (ascii(0, "RIFF") && ascii(8, "WAVE")) return "audio/wav"
   if (ascii(0, "ID3")) return "audio/mpeg"
   if (b[0] === 0xff && (b[1]! & 0xf6) === 0xf0) return "audio/aac" // ADTS: layer bits 00
@@ -268,7 +272,9 @@ export function voiceTranscribe(id: number): Promise<Outcome> {
       companionLog(`voice #${id} transcribe refused (HTTP ${r.status})`)
       return fail(502, "transcribe_failed")
     }
-    return done({ transcript: transcriptOf(raw) })
+    const transcript = transcriptOf(raw)
+    if (transcript !== null && !got.entry.processed) dropTranscript(id) // the fresh run wins over the stale on-device text; a validated memo keeps what was validated
+    return done({ transcript })
   })
 }
 
@@ -388,7 +394,10 @@ export function voiceValidate(id: number, body: Record<string, unknown>): Promis
     const e = got.entry
     if (e.processed) {
       if (e.result_id === "discarded") return fail(409, "already_discarded")
-      saveTranscript(id, transcript) // a retry re-stores a write lost after the first commit
+      // A retry only re-stores a write lost after the first commit — never overwrites what was validated.
+      let stored: string | null = null
+      try { stored = deviceTranscript(id) } catch { /* treat as missing */ }
+      if (stored === null) saveTranscript(id, transcript)
       return done({ note_id: e.result_id })
     }
     if (e.audio_bytes === null || !e.audio_filename) return fail(409, "not_finalized")

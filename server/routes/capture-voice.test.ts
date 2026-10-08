@@ -500,11 +500,16 @@ function m4a(size = 1_200_000): Uint8Array {
   return b
 }
 
-async function upload(audio: Uint8Array | null, transcript?: string, extra: Record<string, string> = {}, type = "audio/mp4"): Promise<Reply> {
+async function upload(audio: Uint8Array | null, transcript?: string, extra: Record<string, string> = {}, type = "audio/mp4", withLength = true): Promise<Reply> {
   const form = new FormData()
   if (audio) form.append("audio", new File([audio], "memo.m4a", { type }))
   if (transcript !== undefined) form.append("transcript", transcript)
-  const req = new Request("http://localhost:4245/api/capture/voice/upload", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, ...extra }, body: form })
+  // URLSession sends Content-Length for a data upload; Bun's Request doesn't for FormData.
+  const encoded = new Request("http://localhost/", { method: "POST", body: form })
+  const contentType = encoded.headers.get("content-type")!
+  const body = new Uint8Array(await encoded.arrayBuffer())
+  const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": contentType, ...(withLength ? { "content-length": String(body.byteLength) } : {}), ...extra }
+  const req = new Request("http://localhost:4245/api/capture/voice/upload", { method: "POST", headers, body })
   recordPeer(req, "127.0.0.1")
   const res = (await handleCaptureRoute(req, new URL(req.url)))!
   const bytes = new Uint8Array(await res.arrayBuffer())
@@ -553,7 +558,7 @@ test("upload refusals: no audio / empty / > 25 MB / not audio → 400, nothing r
   const png = new Uint8Array(64); png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
   expect(await upload(png, "x", {}, "audio/mp4")).toMatchObject({ status: 400, json: { error: "bad_audio_type" } })
   expect(await upload(m4a(1000), "x".repeat(50_001))).toMatchObject({ status: 400, json: { error: "transcript_too_long" } })
-  const notForm = await call("POST", "/api/capture/voice/upload", { audio: "x" })
+  const notForm = await call("POST", "/api/capture/voice/upload", { audio: "x" }, { "content-length": "14" })
   expect(notForm).toMatchObject({ status: 400, json: { error: "bad_form" } })
   expect((await call("GET", "/api/capture/voice/upload")).status).toBe(405)
   expect(hits).toEqual([])
@@ -594,4 +599,36 @@ test("sniffAudio: m4a / wav / mp3 (ID3 + frame) / aac ADTS; junk → null", () =
   expect(sniffAudio(pad([0xff, 0xf1]))).toBe("audio/aac")
   expect(sniffAudio(pad([0x89, 0x50]))).toBeNull()
   expect(sniffAudio(new Uint8Array(4))).toBeNull()
+})
+
+test("upload: no / non-numeric content-length → 411; body longer than declared → 400 audio_too_large", async () => {
+  expect(await upload(m4a(2000), "x", {}, "audio/mp4", false)).toMatchObject({ status: 411, json: { ok: false, error: "length_required" } })
+  expect(await upload(m4a(2000), "x", { "content-length": "abc" })).toMatchObject({ status: 411, json: { error: "length_required" } })
+  expect(await upload(m4a(2000), "x", { "content-length": "100" })).toMatchObject({ status: 400, json: { error: "audio_too_large" } })
+  expect(await upload(m4a(2000), "x", { "content-length": String(27 * 1024 * 1024) })).toMatchObject({ status: 413, json: { error: "audio_too_large" } })
+  expect(hits).toEqual([])
+})
+
+test("validate retry keeps the first transcript and note", async () => {
+  autoTranscribe = false
+  const { id } = (await upload(m4a(2000), DEVICE)).json
+  const a = await call("POST", `/api/capture/voice/${id}/validate`, { transcript: "text A" })
+  expect(a.status).toBe(200)
+  const b = await call("POST", `/api/capture/voice/${id}/validate`, { transcript: "text B" })
+  expect(b.json).toEqual({ ok: true, note_id: a.json.note_id })
+  expect((await call("GET", `/api/capture/voice/${id}`)).json.item).toMatchObject({ transcript: "text A", note_id: a.json.note_id })
+})
+
+test("transcribe replaces the stale on-device transcript in GET and the list", async () => {
+  autoTranscribe = false
+  const { id } = (await upload(m4a(2000), DEVICE)).json
+  expect((await call("POST", `/api/capture/voice/${id}/transcribe`)).json).toEqual({ ok: true, transcript: SPOKEN })
+  expect((await call("GET", `/api/capture/voice/${id}`)).json.item.transcript).toBe(SPOKEN)
+  expect((await call("GET", "/api/capture/voice?status=pending")).json.items[0].transcript).toBe(SPOKEN)
+})
+
+test("sniffAudio: ftyp with a video / image brand → null", () => {
+  const ftyp = (brand: string): Uint8Array => { const b = new Uint8Array(16); b.set([0, 0, 0, 0x20, ...Buffer.from(`ftyp${brand}`)]); return b }
+  for (const brand of ["qt  ", "heic", "heix", "mif1", "msf1"]) expect(sniffAudio(ftyp(brand))).toBeNull()
+  for (const brand of ["M4A ", "M4B ", "M4P ", "mp42", "isom"]) expect(sniffAudio(ftyp(brand))).toBe("audio/mp4")
 })

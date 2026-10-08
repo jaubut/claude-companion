@@ -124,11 +124,25 @@ async function forwardAudio(up: UpstreamConfig, req: Request, path: string): Pro
   }
 }
 
+/** The body, cut off (null) past `max` bytes — a body longer than its declared length never gets buffered whole. */
+async function readCapped(req: Request, max: number): Promise<Uint8Array | null> {
+  const parts: Uint8Array[] = []
+  let total = 0
+  if (req.body) {
+    for await (const chunk of req.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.byteLength
+      if (total > max) return null // leaving the loop cancels the stream
+      parts.push(chunk)
+    }
+  }
+  return new Uint8Array(Buffer.concat(parts))
+}
+
 /** Multipart is passed through byte for byte — the store host parses it. */
-async function forwardRaw(up: UpstreamConfig, req: Request, path: string): Promise<Response> {
+async function forwardRaw(up: UpstreamConfig, req: Request, path: string, body: Uint8Array): Promise<Response> {
   try {
     const res = await fetch(up.base + path, {
-      method: "POST", body: await req.arrayBuffer(),
+      method: "POST", body,
       headers: {
         authorization: `Bearer ${getAuthToken()}`, "x-companion-device": forwardedDevice(device(req)), [HOP_HEADER]: "1", "content-type": req.headers.get("content-type") ?? "",
         // The store host dedupes too: a reply lost on the way back must not become a second memo on retry.
@@ -265,15 +279,19 @@ async function handleVoice(req: Request, url: URL, up: UpstreamConfig | null): P
   if (p === VOICE_UPLOAD_PATH) {
     if (req.method !== "POST") return fail(405, "method_not_allowed")
     // Refuse before buffering: formData()/arrayBuffer() read the whole body.
-    const declared = Number(req.headers.get("content-length"))
-    if (!Number.isFinite(declared) || declared > UPLOAD_MAX_BYTES + UPLOAD_FORM_OVERHEAD_BYTES) {
+    const rawLength = req.headers.get("content-length") ?? ""
+    if (!/^\d+$/.test(rawLength)) return fail(411, "length_required")
+    const declared = Number(rawLength)
+    if (declared > UPLOAD_MAX_BYTES + UPLOAD_FORM_OVERHEAD_BYTES) {
       return fail(413, "audio_too_large", `max ${UPLOAD_MAX_BYTES} bytes`)
     }
     const wait = limited()
     if (wait) return wait
     return withIdempotency(req, "capture-voice-upload", async () => {
-      if (up) return forwardRaw(up, req, p)
-      const form = await req.formData().catch(() => null)
+      const raw = await readCapped(req, declared).catch(() => null)
+      if (!raw) return fail(400, "audio_too_large", `max ${UPLOAD_MAX_BYTES} bytes`)
+      if (up) return forwardRaw(up, req, p, raw)
+      const form = await new Response(raw, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData().catch(() => null)
       if (!form) return fail(400, "bad_form")
       const audio = form.get("audio")
       if (!(audio instanceof File)) return fail(400, "audio_required")

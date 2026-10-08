@@ -48,9 +48,6 @@ export function createCompanionServer(port: number) {
       // TCP peer for the vault's network gate and the resolve/WS audit log
       // (routes only get req + url). Weak map: dies with the Request.
       recordPeer(req, server.requestIP(req)?.address)
-      // A one-shot voice upload streams ~50 chunks + finalize (Deepgram) to the
-      // dashboard before replying — far past Bun's 10 s idle default.
-      if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
@@ -65,6 +62,10 @@ export function createCompanionServer(port: number) {
       if (isStateMutation && !isHookCall && !isHealth && !checkBearer(req)) {
         return unauthorized()
       }
+      // A one-shot voice upload streams ~50 chunks + finalize (Deepgram) to the
+      // dashboard before replying — far past Bun's 10 s idle default. After the
+      // gate: unauthenticated callers keep the default.
+      if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
 
       // ── Public liveness probe ──
       // Used by the hook scripts to skip the 300s wait when the server is
