@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { type Herdr, herdrKeyName, herdrPaneOf } from "./herdr"
-import { herdrAgentBaseName, spawnInHerdr, spawnMacAuto, type SpawnResult } from "./spawn-session"
+import { herdrAgentBaseName, spawnInHerdr, spawnLinux, spawnMacAuto, type SpawnResult } from "./spawn-session"
 import { injectConfirmed, noteUserPromptSubmit } from "./submit-confirm"
 import { injectText } from "./keyboard-inject"
 import { deliverViaHerdr } from "./herdr-inject"
@@ -128,6 +128,42 @@ test("mac auto: gate failure → tmux fallback (logged); post-gate failure → n
     legacy, log: (l) => logs.push(l),
   })
   expect(failed).toEqual({ ok: false, app: "herdr", error: "agent start: timeout" })
+})
+
+// Linux (Zettlab): the real spawnInHerdr against a fake herdr, tmux faked.
+function linuxDeps(gate: string | null) {
+  const f = fakeHerdr({ gate })
+  const tmuxCalls: string[] = []
+  const deps = {
+    herdr: (c: string, a: "claude" | "codex" | "kimi", e?: Record<string, string>) => spawnInHerdr(c, a, e, f.h),
+    tmux: async (c: string): Promise<SpawnResult> => { tmuxCalls.push(c); return { ok: true, app: "tmux", sessionName: "cc-x" } },
+    log: () => undefined,
+  }
+  return { f, tmuxCalls, deps }
+}
+
+test("linux auto: gate passes → herdr workspace, tmux untouched", async () => {
+  const { f, tmuxCalls, deps } = linuxDeps(null)
+  const r = await spawnLinux("/home/aubut/work", "auto", "claude", undefined, deps)
+  expect(r).toEqual({ ok: true, app: "herdr", sessionName: "cc-work", herdrPane: "w7:p1" })
+  expect(f.verbs()).toContain("agent start")
+  expect(tmuxCalls).toEqual([])
+})
+
+test("linux auto: gate fails → detached tmux, herdr never called", async () => {
+  const { f, tmuxCalls, deps } = linuxDeps("herdr-down: no socket")
+  const r = await spawnLinux("/home/aubut/work", "auto", "claude", undefined, deps)
+  expect(r.app).toBe("tmux")
+  expect(tmuxCalls).toEqual(["/home/aubut/work"])
+  expect(f.calls).toEqual([])
+})
+
+test("linux: explicit tmux skips herdr; terminal/iterm stay macOS-only", async () => {
+  const { f, tmuxCalls, deps } = linuxDeps(null)
+  expect((await spawnLinux("/w", "tmux", "claude", undefined, deps)).app).toBe("tmux")
+  expect(f.calls).toEqual([])
+  expect(tmuxCalls).toEqual(["/w"])
+  expect((await spawnLinux("/w", "iterm", "claude", undefined, deps)).error).toContain("macOS-only")
 })
 
 // ── inject routing ────────────────────────────────────────────────────────
