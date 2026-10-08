@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { type JevVerdict, decideJev, resetChartCache } from "./receipt-jev"
 import { type ExpenseFields, type QaItem, getQaRow, insertQueued, onReceiptQa, useReceiptQaDb } from "./receipt-qa-store"
 import { MAX_ATTEMPTS, auditFile, drainReceiptQa, workerDeps } from "./receipt-qa-worker"
-import { runSonnetCli } from "./receipt-sonnet"
+import { runSonnetCli, validatePatch } from "./receipt-sonnet"
 import { receiptPushPayload, wireReceiptQa } from "../wiring/receipt-qa"
 
 // Receipt QA worker: Jev pass (code checks + fake System One over HTTP),
@@ -217,6 +217,22 @@ test("Jev fill: saved never-pick 5200 + Jev 5776@0.96 → 5776 booked, audit sho
   expect(getQaRow(ID)!).toMatchObject({ status: "jev_ok", category_code: "5776" })
   const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
   expect(audit).toEqual([expect.objectContaining({ by: "jev", field: "category_code", from: "5200", to: "5776" })])
+})
+
+test("Jev low conf on saved never-pick 5200 → code cleared on the dashboard + audited, to_review", async () => {
+  sonnetText = null // keep the row in to_review
+  seed({ category_code: "5200" })
+  jevAnswer = jev("5776", 0.6, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "to_review", category_code: "", changes: [{ field: "category_code", from: "5200", to: "", by: "jev" }] })
+  expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body)).toEqual({ category_code: "" })
+  const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+  expect(audit).toEqual([expect.objectContaining({ by: "jev", field: "category_code", from: "5200", to: "" })])
+})
+
+test("validatePatch: a saved never-pick code is refused even when the patch omits category_code", () => {
+  const chart = [{ code: "5776", name: "Frais de représentation" }]
+  expect(validatePatch({ ...MEAL, category_code: "5200" }, { notes: "Reviewed" }, chart)).toEqual({ ok: false, why: "category_code is never-pick" })
 })
 
 test("Jev fill: dashboard PATCH 5xx → retried later, not dropped", async () => {

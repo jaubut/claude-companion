@@ -123,6 +123,8 @@ export interface JevDecision {
   issues: QaIssue[]
   /** Blank saved code + confident Jev + clean receipt: the code Jev books itself. */
   fill?: string
+  /** Saved code is never-pick and Jev did not fill it: blank it on the dashboard. */
+  clear?: boolean
 }
 
 const fmt = (p: number): string => p.toFixed(2)
@@ -164,5 +166,5 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
   } else if (jev.confidence < JEV_AGREE_MIN) {
     issues.push({ field: "category_code", problem: `Jev agrees with ${saved} but only at conf ${fmt(jev.confidence)}` })
   }
-  return { status: issues.length ? "to_review" : "jev_ok", issues }
+  return { status: issues.length ? "to_review" : "jev_ok", issues, ...(neverPick ? { clear: true } : {}) }
 }

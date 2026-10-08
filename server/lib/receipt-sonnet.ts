@@ -133,6 +133,7 @@ export function validatePatch(fields: ExpenseFields, patch: Record<string, strin
   }
   const after: ExpenseFields = { ...fields, ...patch }
   if (checkArithmetic(after).length || checkTaxRates(after).length) return { ok: false, why: "patched amounts still inconsistent" }
+  if (NOT_CLASSIFIABLE.has(String(after.category_code ?? "").trim())) return { ok: false, why: "category_code is never-pick" }
   if (!String(after.category_code ?? "").trim() && !isPersonalPurpose(after)) return { ok: false, why: "no GL code after patch" }
   return { ok: true, patch }
 }
