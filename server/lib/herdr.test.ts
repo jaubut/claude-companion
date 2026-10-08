@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { type Herdr, herdrKeyName, herdrPaneOf } from "./herdr"
+import { type Herdr, herdrKeyName, herdrPaneOf, silentSuccess } from "./herdr"
 import { herdrAgentBaseName, spawnInHerdr, spawnMacAuto, type SpawnResult } from "./spawn-session"
 import { injectConfirmed, noteUserPromptSubmit } from "./submit-confirm"
 import { injectText } from "./keyboard-inject"
@@ -206,4 +206,15 @@ test("text starting with '-' is refused before herdr is called", async () => {
   const r = await deliverViaHerdr("w2:p1", "-h", { herdr: f.h })
   expect(r).toEqual({ ok: false, blocked: false, reason: "leading_dash" })
   expect(f.calls).toEqual([])
+})
+
+test("silentSuccess: exit 0 with no stdout is success (pane send-keys/send-text)", () => {
+  expect(silentSuccess({ status: 0, stdout: "" })).toBe(true)
+  expect(silentSuccess({ status: 0, stdout: "  \n" })).toBe(true)
+  // Output present → parseCliResult decides.
+  expect(silentSuccess({ status: 0, stdout: '{"result":{}}' })).toBe(false)
+  // Failures stay failures.
+  expect(silentSuccess({ status: 1, stdout: "" })).toBe(false)
+  expect(silentSuccess({ status: null, stdout: "" })).toBe(false)
+  expect(silentSuccess({ status: 0, stdout: "", error: new Error("spawn") })).toBe(false)
 })

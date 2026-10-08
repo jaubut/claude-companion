@@ -1665,12 +1665,13 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 146,
+          "lines": 155,
           "kind": "lib",
           "exports": [
             "ExecResult",
             "HERDR_CLIENT_PATH",
             "herdrErrorCode",
+            "silentSuccess",
             "Herdr",
             "realHerdr",
             "validHerdrPane",
