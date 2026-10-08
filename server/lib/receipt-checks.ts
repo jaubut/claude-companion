@@ -18,12 +18,15 @@ const CURRENCIES = new Set(["", "CAD", "USD", "EUR"])
 // catches the rest.
 export const ALWAYS_PERSONAL = /\b(flashfood|maxi|iga|provigo|metro plus|super ?c|loblaws)\b/i
 
+/** 5xxx accounts never picked as an expense code (group headers, stock, adjustments, Salary).
+ * Mirror of tls-dashboard-v2 server/lib/expense-rules.ts NOT_CLASSIFIABLE — keep in sync. */
+export const NOT_CLASSIFIABLE: ReadonlySet<string> = new Set(["5100", "5200", "5110", "5111", "5112", "5118", "5119", "5212", "5218", "5219", "5220", "5226", "5213"])
+
 /** Expense accounts actually in use (tls-dashboard-v2 chart-of-accounts.ts favourites). `coa` names override. */
 export const BASE_CHART: ReadonlyArray<{ code: string; name: string }> = [
   { code: "5783", name: "Frais informatique" },
   { code: "5215", name: "Telephone / Mobility Expenses" },
   { code: "5221", name: "Frais Internet" },
-  { code: "5200", name: "Indirect Expenses" },
   { code: "5615", name: "Publicité & promotions" },
   { code: "5612", name: "Honoraires Professionnels" },
   { code: "5700", name: "Fourniture de Bureau" },

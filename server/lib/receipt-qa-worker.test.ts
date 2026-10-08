@@ -5,8 +5,8 @@ import { join } from "node:path"
 import { type JevVerdict, decideJev, resetChartCache } from "./receipt-jev"
 import { type ExpenseFields, type QaItem, getQaRow, insertQueued, onReceiptQa, useReceiptQaDb } from "./receipt-qa-store"
 import { DashboardUnreachable } from "./dashboard-client"
-import { MAX_ATTEMPTS, auditFile, drainReceiptQa, workerDeps } from "./receipt-qa-worker"
-import { runSonnetCli } from "./receipt-sonnet"
+import { MAX_ATTEMPTS, acceptByHuman, auditFile, drainReceiptQa, workerDeps } from "./receipt-qa-worker"
+import { runSonnetCli, validatePatch } from "./receipt-sonnet"
 import { receiptPushPayload, wireReceiptQa } from "../wiring/receipt-qa"
 
 // Receipt QA worker: Jev pass (code checks + fake System One over HTTP),
@@ -99,7 +99,7 @@ beforeEach(() => {
     address in OFFICE_KM ? Response.json({ km: OFFICE_KM[address], method: "driving", lat: 45.4, lon: -72.7 }) : Response.json({ km: null, reason: "address not geocodable" })
   Object.assign(workerDeps, realDeps, {
     dupQuery: async () => [],
-    chartQuery: async () => [{ code: "5776", name: "Frais de représentation" }, { code: "5216", name: "Travel Expenses" }, { code: "2400", name: "Business MC" }],
+    chartQuery: async () => [{ code: "5776", name: "Frais de représentation" }, { code: "5216", name: "Travel Expenses" }, { code: "2400", name: "Business MC" }, { code: "5200", name: "Indirect Expenses" }],
     sonnet: async (prompt: string, imagePath: string) => {
       sonnetCalls.push({ prompt, imagePath })
       return sonnetText === null ? { kind: "error" as const, reason: "exit 1" } : { kind: "ok" as const, text: sonnetText }
@@ -163,6 +163,12 @@ test("decideJev: meal without trip/client context → to_review (50 km rule)", (
   expect(r.issues[0]!.problem).toContain("50 km")
 })
 
+test("decideJev: category meal (Jev meal noul low) without trip/client context → still gated to_review", () => {
+  const r = decideJev({ ...MEAL, purpose: "lunch" }, [], V("5776", 0.95, { meal: 0.2, trip: 0.1 }), { km: 0.8, code: "5776" })
+  expect(r.status).toBe("to_review")
+  expect(r.issues[0]!.problem).toContain("50 km")
+})
+
 test("decideJev: Jev unavailable → to_review with jev_unavailable", () => {
   expect(decideJev(MEAL, [], null)).toEqual({ status: "to_review", issues: [{ field: "jev", problem: "jev_unavailable" }] })
 })
@@ -173,6 +179,16 @@ test("decideJev: blank code + conf ≥ 0.9 + clean → jev_ok with fill; any fla
   expect(decideJev(blank, [{ field: "tps", problem: "x" }], V("5776", 0.99, { meal: 0.9, trip: 0.9 })).fill).toBeUndefined()
   expect(decideJev({ ...blank, purpose: "lunch" }, [], V("5776", 0.99, { meal: 0.9, trip: 0.1 })).fill).toBeUndefined()
   expect(decideJev(blank, [], V("personal", 0.99)).fill).toBeUndefined()
+})
+
+test("decideJev: never-pick saved code (5200) counts as blank → filled at ≥ 0.9, to_review below", () => {
+  const catchAll = { ...MEAL, category_code: "5200" }
+  expect(decideJev(catchAll, [], V("5776", 0.96, { meal: 0.9, trip: 0.9 }))).toEqual({ status: "jev_ok", issues: [], fill: "5776" })
+  const low = decideJev(catchAll, [], V("5776", 0.6, { meal: 0.9, trip: 0.9 }))
+  expect(low.status).toBe("to_review")
+  expect(low.fill).toBeUndefined()
+  expect(low.issues[0]).toMatchObject({ field: "category_code", suggestion: "5776" })
+  expect(low.issues[0]!.problem).toContain("5200 is never-pick")
 })
 
 // ── Pass 1 end to end ──
@@ -214,6 +230,39 @@ test("Jev fill refused: grocery flag, conf 0.85, or a non-blank code Jev disagre
   expect(existsSync(auditFile())).toBe(false)
 })
 
+test("Jev fill: saved never-pick 5200 + Jev 5776@0.96 → 5776 booked, audit shows the replaced code", async () => {
+  seed({ ...OFFICE, category_code: "5200" }) // not a meal: the distance rule stays out
+  jevAnswer = jev("5776", 0.96)
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "jev_ok", category_code: "5776" })
+  const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+  expect(audit).toEqual([expect.objectContaining({ by: "jev", field: "category_code", from: "5200", to: "5776" })])
+})
+
+test("Jev low conf on saved never-pick 5200 → code cleared on the dashboard + audited, to_review", async () => {
+  sonnetText = null // keep the row in to_review
+  seed({ ...OFFICE, category_code: "5200" }) // not a meal: the distance rule stays out
+  jevAnswer = jev("5776", 0.6)
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "to_review", category_code: "", changes: [{ field: "category_code", from: "5200", to: "", by: "jev" }] })
+  expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body)).toEqual({ category_code: "" })
+  const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+  expect(audit).toEqual([expect.objectContaining({ by: "jev", field: "category_code", from: "5200", to: "" })])
+})
+
+test("meal with saved never-pick 5200 → the distance rule books 5776 (by:rule), no clear", async () => {
+  seed({ category_code: "5200" })
+  jevAnswer = jev("5776", 0.6, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ category_code: "5776", changes: [{ field: "category_code", from: "5200", to: "5776", by: "rule" }] })
+  expect(hits.filter((h) => h.method === "PATCH").map((h) => JSON.parse(h.body))).toEqual([{ category_code: "5776" }])
+})
+
+test("validatePatch: a saved never-pick code is refused even when the patch omits category_code", () => {
+  const chart = [{ code: "5776", name: "Frais de représentation" }]
+  expect(validatePatch({ ...MEAL, category_code: "5200" }, { notes: "Reviewed" }, chart)).toEqual({ ok: false, why: "category_code is never-pick" })
+})
+
 test("Jev fill: dashboard PATCH 5xx → retried later, not dropped", async () => {
   seed({ category_code: "" })
   jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
@@ -237,6 +286,7 @@ test("Jev pass: fake System One agrees → jev_ok; request carries the vault key
   expect(sent.model).toBe("jev-latest")
   expect(Object.keys(sent.questions.gl_code.criteria)).toEqual(expect.arrayContaining(["5216", "5776", "personal"]))
   expect(sent.questions.gl_code.criteria["2400"]).toBeUndefined() // never a card account
+  expect(sent.questions.gl_code.criteria["5200"]).toBeUndefined() // never-pick, even from coa
   expect(frames.map((f) => f.status)).toEqual(["queued", "jev_ok"])
 })
 
@@ -288,6 +338,18 @@ test("meal rule: Granby address (≤ 50 km) → 5776 set in code, by:rule change
   expect(JSON.parse(dist.body)).toEqual({ address: GRANBY })
   expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body)).toEqual({ category_code: "5776" })
   expect(auditLines()).toEqual([expect.objectContaining({ expense_id: ID, by: "rule", field: "category_code", from: "", to: "5776", reason: "meal 1.2 km from office (≤ 50 km)" })])
+})
+
+test("meal rule: phone accept during the distance lookup → human_done kept, no worker PATCH", async () => {
+  seed({ category_code: "5216" })
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  distanceReply = () => {
+    expect(acceptByHuman(ID)).toEqual({ ok: true })
+    return Response.json({ km: 0.8, method: "driving", lat: 45.4, lon: -72.7 })
+  }
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "human_done", category_code: "5216", changes: [] })
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
 })
 
 test("meal rule: no trip/client context → code still set by the rule, but to_review (business-purpose gate kept)", async () => {
@@ -537,6 +599,10 @@ test("Sonnet: a code outside the chart, or amounts still off, are refused", asyn
   sonnetText = '{"resolved":true,"patch":{"category_code":"2400"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(ID)!.issues.at(-1)!.problem).toContain("not in chart")
+  seed(UNCODED, `${ID}-np`) // Jev still answering 500 → to_review
+  sonnetText = '{"resolved":true,"patch":{"category_code":"5200"},"reason":"x"}'
+  await drainReceiptQa()
+  expect(getQaRow(`${ID}-np`)!.issues.at(-1)!.problem).toContain("never-pick")
   seed({ ...UNCODED, tps: "$7.00" }, `${ID}-b`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"x"}'
   await drainReceiptQa()

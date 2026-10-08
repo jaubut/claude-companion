@@ -10,7 +10,7 @@ import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } f
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, describeClient, HOST_INFO, type WsData } from "./state"
-import { dialogWatcher, openDialogFor, paneSnapshotFor, yieldPaneForInject } from "./wiring/dialogs"
+import { dialogWatcher, openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 
 // WebSocket handlers: on open, send the init frame, then replay pending
@@ -142,11 +142,13 @@ export const websocket: WebSocketHandler<WsData> = {
             lookup, target, paneFree,
             dialog: paneFree ? await openDialogFor(target) : null,
             pane: paneFree ? await paneSnapshotFor(target) : undefined,
+            paneWidth: paneFree ? await paneWidthFor(target) : undefined,
           })
           if (refusal) {
             const why = refusal.error === "target_gone" ? `${lookup} not registered`
               : refusal.error === "target_idle" ? `${target?.label || target?.key} has no tty`
               : refusal.error === "busy_flow" ? `${target?.label || target?.key} pane still held by a companion flow`
+              : refusal.error === "pane_too_narrow" ? `${target?.label || target?.key} pane only ${refusal.width} cols wide — input box can't be verified`
               : refusal.error === "pane_not_ready" ? `${target?.label || target?.key} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
               : `${target?.label || target?.key} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
             companionLog(`${red}ws inject refused${reset} — ${why}`)
@@ -159,6 +161,7 @@ export const websocket: WebSocketHandler<WsData> = {
                 dialog: refusal.dialog,
                 reason: refusal.reason,
                 excerpt: refusal.excerpt,
+                width: refusal.width,
               }))
             } catch { /* ignore */ }
             break
@@ -169,7 +172,12 @@ export const websocket: WebSocketHandler<WsData> = {
           const { cleared } = clearWaitingForTarget(target, "turn-end")
           announceWaiting(cleared)
           const res = await injectConfirmed(msg.text.trim(), target ?? undefined)
-          if (!res.ok && res.error === "not_submitted") {
+          if (!res.ok && res.error === "pane_not_ready") {
+            // herdr: the agent is at an approval/question — same frame as the
+            // pre-inject refusal above.
+            companionLog(`${red}ws inject refused${reset} — ${target?.label || target?.key} herdr agent blocked`)
+            try { ws.send(JSON.stringify({ type: "inject_error", error: res.error, key: msg.key, cwd: msg.cwd, reason: res.reason, excerpt: res.excerpt })) } catch { /* ignore */ }
+          } else if (!res.ok && res.error === "not_submitted") {
             // Every client, so whichever phone shows the bubble marks it undelivered.
             broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? msg.key, cwd: target?.cwd ?? msg.cwd, text: msg.text.trim(), excerpt: res.excerpt })
           } else if (!res.ok) {

@@ -8,6 +8,8 @@
 import { companionLog } from "./log"
 import { KeyGateTimeout, keyGate } from "./key-gate"
 import { type PaneRef, paneKey, resolveTmuxRefFromTty, tmuxArgv, tmuxSocketFlags } from "./tmux-pane"
+import { type Herdr, herdrGateKey, herdrPaneOf } from "./herdr"
+import { INJECT_QUEUE_MS, INJECT_SEND_MS, deliverViaHerdr, herdrPickerIO } from "./herdr-inject"
 
 export interface InjectTarget {
   tty?: string
@@ -22,6 +24,9 @@ export interface InjectTarget {
   // The tmux server that pane is on ($TMUX's socket path); "" / absent = the
   // default server. Pane ids are only unique per server (lib/tmux-pane.ts).
   tmuxSocket?: string
+  // herdr pane ($HERDR_PANE_ID). Used only when there is no tmuxPane: text
+  // goes through `herdr agent prompt`, keys through `herdr pane send-keys`.
+  herdrPane?: string
 }
 
 function escapeForAppleScript(s: string): string {
@@ -343,18 +348,20 @@ function withInjectLock<T>(fn: () => Promise<T>): Promise<T> {
   return next
 }
 
-// An inject's key-gate turn must START within INJECT_QUEUE_MS of the call or
-// it is refused, never typed late (Codex round 3: a wedged sender held it, and
-// the global lock, forever); once started it is bounded by INJECT_SEND_MS.
-export const INJECT_QUEUE_MS = 2_000
-export const INJECT_SEND_MS = 4_000
-
 // Tests only: an absolute start deadline (Date.now clock) and a fake sender.
-export interface InjectOpts { deadline?: number; sendKeys?: TmuxSender }
+export interface InjectOpts { deadline?: number; sendKeys?: TmuxSender; herdr?: Herdr }
 
 export async function injectText(text: string, target?: InjectTarget, opts: InjectOpts = {}): Promise<boolean> {
   const deadline = opts.deadline ?? Date.now() + INJECT_QUEUE_MS
   const sendKeys = opts.sendKeys ?? tmuxSendKeys
+  // A herdr pane is addressed explicitly too, and never falls back to
+  // AppleScript: its tty belongs to no Terminal/iTerm tab.
+  const herdrPane = herdrPaneOf(target)
+  if (herdrPane) {
+    const r = await deliverViaHerdr(herdrPane, text, { deadline, herdr: opts.herdr })
+    companionLog(r.ok ? `\x1b[32mdelivered (herdr)\x1b[0m → ${herdrPane}` : `\x1b[31mdeliver failed\x1b[0m (herdr ${herdrPane}) — ${r.reason}`)
+    return r.ok
+  }
   // A tmux pane is addressed explicitly and serialised per pane by the key
   // gate: no global lock (that is for the AppleScript focus race), so one
   // wedged pane cannot stall injects into every other session.
@@ -584,6 +591,8 @@ export async function withPickerIO<T>(
     let ref: PaneRef | null = TMUX_PANE_RE.test(pane) ? { pane, socket: target.tmuxSocket ?? "" } : null
     if (!ref && target.tty && process.platform === "linux") ref = await resolveTmuxRefFromTty(target.tty)
     if (ref) return run(tmuxPickerIO(ref), paneKey(ref.pane, ref.socket))
+    const herdrPane = herdrPaneOf(target)
+    if (herdrPane) return run(herdrPickerIO(herdrPane), herdrGateKey(herdrPane))
     if (target.tty && process.platform === "darwin") return run(ttyPickerIO(target), target.tty)
     return null
   })

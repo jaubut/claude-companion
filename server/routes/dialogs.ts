@@ -5,6 +5,7 @@ import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { paneKey, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
+import { herdrGateKey, herdrPaneOf, herdrSendKey } from "../lib/herdr"
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -21,9 +22,19 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     const key = (body.key ?? "").trim()
     const name = (body.name ?? "").trim()
     const session = key ? resolveSession(key) : null
-    if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
     const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(name)
-    if (!named && [...name].length !== 1) return Response.json({ ok: false, error: "name must be a key name or one character" }, { status: 400 })
+    if (session && !named && [...name].length !== 1) return Response.json({ ok: false, error: "name must be a key name or one character" }, { status: 400 })
+    // herdr session (Mac): Esc/interrupt and dialog keys via `pane send-keys`.
+    const herdrPane = herdrPaneOf(session)
+    if (session && herdrPane) {
+      const gk = herdrGateKey(herdrPane)
+      const sent = await keyGate.send(gk, name, () => herdrSendKey(herdrPane, name)).catch(() => false)
+      if (!sent) return Response.json({ ok: false, error: "herdr send-keys failed" }, { status: 500 })
+      if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
+      companionLog(`\x1b[36mdialog key\x1b[0m ${name} → ${gk}`)
+      return Response.json({ ok: true })
+    }
+    if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
     const ref = { pane: session.tmuxPane, socket: session.tmuxSocket ?? "" }
     const gateKey = paneKey(ref.pane, ref.socket)
     const args = named ? sendKeysArgs(ref, name) : sendKeysArgs(ref, "-l", name)

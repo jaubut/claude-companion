@@ -2,6 +2,7 @@ import { helpOverlayVisible } from "./command-list"
 import { inputLine, promptLineIndex, unstyle } from "./command-menu"
 import type { Dialog } from "./dialogs"
 import type { Session } from "./sessions"
+import { paneTooNarrow } from "./tmux-pane"
 
 // Why text is refused before it reaches `injectText`. Both inject call sites
 // (POST /api/inject and the WebSocket "input" message) used to make these
@@ -23,7 +24,7 @@ import type { Session } from "./sessions"
 // (`dialog-watch.ts` closes question-kind before it lands in `current()`), and
 // are excluded explicitly in case that ever changes.
 
-export type InjectRefusalCode = "target_gone" | "target_idle" | "busy_flow" | "dialog_open" | "pane_not_ready"
+export type InjectRefusalCode = "target_gone" | "target_idle" | "busy_flow" | "dialog_open" | "pane_not_ready" | "pane_too_narrow"
 
 export interface InjectRefusal {
   error: InjectRefusalCode
@@ -35,6 +36,8 @@ export interface InjectRefusal {
   // the pane as captured, so the phone (and the log) can show what was there.
   reason?: PaneNotReadyReason
   excerpt?: string
+  // Carried only for `pane_too_narrow`: the pane width in columns.
+  width?: number
 }
 
 // ── pane_not_ready ──────────────────────────────────────────────────────────
@@ -62,6 +65,7 @@ export type PaneNotReadyReason =
   | "input_not_empty"    // the user (or a lost inject) has text in the box
   | "shortcuts_overlay"  // the "?" shortcuts list under the box
   | "panel_open"         // key hints under the box: a panel has focus
+  | "agent_blocked"      // herdr refused the prompt: an approval/question is up
 
 const DIVIDER_RE = /^[\s▔─━═]{8,}$/
 const REVIEW_PENDING_RE = /Ready to submit your answers\?/
@@ -133,6 +137,9 @@ export interface InjectAttempt {
   // AppleScript path types into a focused tty). Null when the capture failed,
   // which refuses: a pane tmux cannot read is not one to type into blind.
   pane?: string | null
+  // `#{pane_width}` of the target's pane. Undefined/null when unknown (no
+  // pane, or tmux could not say) — not refused on that alone.
+  paneWidth?: number | null
 }
 
 // Returns the reason to refuse, or null to proceed with the inject.
@@ -142,7 +149,7 @@ export interface InjectAttempt {
 // dialog in the way, then a pane that is not showing an empty input box. Callers must run this BEFORE clearing any waiting reason
 // — a refused inject answered nothing, so blanking the badge would tell the
 // phone the session is unblocked when it is still sitting on a dialog.
-export function injectRefusal({ lookup, target, dialog, paneFree, pane }: InjectAttempt): InjectRefusal | null {
+export function injectRefusal({ lookup, target, dialog, paneFree, pane, paneWidth }: InjectAttempt): InjectRefusal | null {
   // The caller asked for a specific target and we don't have it registered.
   // Refuse rather than silently pasting into whatever is frontmost.
   if (lookup && !target) return { error: "target_gone" }
@@ -165,6 +172,11 @@ export function injectRefusal({ lookup, target, dialog, paneFree, pane }: Inject
 
   // After the dialog: a recorded dialog is the better answer (the phone can
   // render and drive it). This catches what dialog-watch never records.
+  // A pane too narrow to read the input box back (lib/tmux-pane.ts
+  // MIN_INJECT_PANE_WIDTH): typed text wraps into dozens of rows that can be
+  // neither verified nor cleared with one Ctrl-U. Don't type into it.
+  if (target && paneTooNarrow(paneWidth)) return { error: "pane_too_narrow", width: paneWidth! }
+
   if (target && pane !== undefined) {
     const reason = paneNotReady(pane)
     if (reason) return { error: "pane_not_ready", reason, excerpt: paneExcerpt(pane) }

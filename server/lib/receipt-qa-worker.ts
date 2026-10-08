@@ -106,7 +106,21 @@ function diff(fields: ExpenseFields, patch: Record<string, string>, by: QaChange
     .map(([k, v]) => ({ field: k, from: String(fields[k] ?? ""), to: v, by }))
 }
 
+/** A phone resolve/accept landed while a worker pass awaited: its view of the row is stale. */
+class Superseded extends Error {}
+
+function superseded(row: QaRow): boolean {
+  return getQaRow(row.expense_id)?.status !== row.status
+}
+
+/** Before a worker PATCH: never write over a row the human already settled. */
+function assertCurrent(row: QaRow): void {
+  if (superseded(row)) throw new Superseded(row.expense_id)
+}
+
 function settle(row: QaRow, status: QaStatus, extra: Parameters<typeof transition>[2] = {}): void {
+  // Worker settles only the row it loaded; the human's human_done always wins.
+  if (status !== "human_done" && superseded(row)) return companionLog(`receipt-qa ${row.expense_id} superseded, ${status} dropped`)
   const terminal = status === "jev_ok" || status === "sonnet_fixed" || status === "human_done"
   // Fresh read: the Sonnet pass may have cached the dashboard PDF since `row` was loaded.
   if (terminal) removeLocalCopy(getQaRow(row.expense_id)?.image_path ?? row.image_path)
@@ -146,6 +160,7 @@ async function jevPass(row: QaRow): Promise<void> {
   const jevJson = jev || km ? { ...jev, ...km } : null
   if (d.rule && meal && "km" in meal) return ruleSet(row, d, d.rule, meal.km, jevJson)
   if (d.fill && jev) return jevFill(row, d.fill, jev)
+  if (d.clear) return jevClear(row, d.status, d.issues, jev)
   settle(row, d.status, { issues: d.issues, jev: jevJson })
 }
 
@@ -176,6 +191,7 @@ async function ruleSet(row: QaRow, d: JevDecision, code: string, km: number, jev
   const changes = diff(row.fields, { category_code: code }, "rule")
   let saved: boolean
   try {
+    assertCurrent(row)
     saved = await applyPatch(row.expense_id, { category_code: code })
   } catch (e) {
     if (!(e instanceof Transient) || row.attempts + 1 < MAX_ATTEMPTS) throw e
@@ -205,12 +221,26 @@ function mealCodeLocked(row: QaRow): boolean {
 /** Book Jev's confident code on a blank expense (PATCH + by:"jev" change + audit). */
 async function jevFill(row: QaRow, code: string, jev: JevVerdict): Promise<void> {
   const changes = diff(row.fields, { category_code: code }, "jev")
+  assertCurrent(row)
   if (!await applyPatch(row.expense_id, { category_code: code })) {
     const issue: QaIssue = { field: "category_code", problem: `dashboard refused Jev's ${code}`, suggestion: code }
     return settle(row, "to_review", { issues: [issue], jev: { ...jev } })
   }
   audit(row.expense_id, "jev", changes, `jev conf ${jev.confidence.toFixed(2)}`)
   settle(row, "jev_ok", { issues: [], jev: { ...jev }, fields: { ...row.fields, category_code: code }, changes: [...row.changes, ...changes] })
+}
+
+/** Blank a never-pick saved code (PATCH + by:"jev" change + audit) before settling. */
+async function jevClear(row: QaRow, status: QaStatus, issues: QaIssue[], jev: JevVerdict | null): Promise<void> {
+  const changes = diff(row.fields, { category_code: "" }, "jev")
+  const j = jev ? { ...jev } : null
+  assertCurrent(row)
+  if (!await applyPatch(row.expense_id, { category_code: "" })) {
+    const issue: QaIssue = { field: "category_code", problem: "dashboard refused clearing the never-pick code" }
+    return settle(row, "to_review", { issues: [...issues, issue], jev: j })
+  }
+  audit(row.expense_id, "jev", changes, "never-pick GL code cleared")
+  settle(row, status, { issues, jev: j, fields: { ...row.fields, category_code: "" }, changes: [...row.changes, ...changes] })
 }
 
 // ── Pass 2: Sonnet on `to_review` ──
@@ -262,6 +292,7 @@ async function sonnetPass(row: QaRow): Promise<void> {
   const changes = diff(row.fields, verdict.patch, "sonnet")
   if (changes.length) {
     const patch = Object.fromEntries(changes.map((c) => [c.field, c.to]))
+    assertCurrent(row)
     if (!await applyPatch(row.expense_id, patch)) return toHuman(row, [...row.issues, { field: "sonnet", problem: "dashboard refused the patch" }])
     audit(row.expense_id, "sonnet", changes, ans.reason)
   }
@@ -284,6 +315,7 @@ async function processOne(row: QaRow): Promise<void> {
     if (row.status === "queued") await jevPass(row)
     else if (row.status === "to_review") await sonnetPass(row)
   } catch (e) {
+    if (e instanceof Superseded) return companionLog(`receipt-qa ${row.expense_id} superseded by a human, pass dropped`)
     const attempts = row.attempts + 1
     const reason = e instanceof Error ? e.message : "error"
     if (attempts >= MAX_ATTEMPTS) {

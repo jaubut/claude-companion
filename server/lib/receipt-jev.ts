@@ -1,4 +1,4 @@
-import { BASE_CHART, MEAL_ADDRESS_UNRESOLVED, groceryByName, isPersonalPurpose, mealByCategory } from "./receipt-checks"
+import { BASE_CHART, MEAL_ADDRESS_UNRESOLVED, NOT_CLASSIFIABLE, groceryByName, isPersonalPurpose, mealByCategory } from "./receipt-checks"
 import type { ExpenseFields, QaIssue, QaStatus } from "./receipt-qa-store"
 import { readSecretValue } from "./secret-store"
 
@@ -36,7 +36,7 @@ let chartCache: { at: number; chart: ChartEntry[] } | null = null
 export function resetChartCache(): void { chartCache = null }
 
 function expenseCode(code: string): boolean {
-  return /^5\d{3}$/.test(code) && !code.startsWith("54") && !code.startsWith("51")
+  return /^5\d{3}$/.test(code) && !code.startsWith("54") && !code.startsWith("51") && !NOT_CLASSIFIABLE.has(code)
 }
 
 export async function loadChart(query: ChartQuery, now = Date.now()): Promise<ChartEntry[]> {
@@ -125,6 +125,8 @@ export interface JevDecision {
   fill?: string
   /** Meal distance rule: the code booked in code when it differs from the saved one. */
   rule?: string
+  /** Saved code is never-pick and Jev did not fill it: blank it on the dashboard. */
+  clear?: boolean
 }
 
 /** Outcome of the office-distance lookup for a meal: a code, or why none. */
@@ -157,7 +159,7 @@ function decideMeal(f: ExpenseFields, issues: QaIssue[], meal: MealRule): JevDec
 
 /**
  * All code checks pass AND Jev agrees with the saved code at ≥ 0.9 AND no
- * books-rule flag → jev_ok; the same with a BLANK saved code → jev_ok + `fill`.
+ * books-rule flag → jev_ok; the same with a BLANK (or never-pick) saved code → jev_ok + `fill`.
  * Anything else → to_review with every issue found. A business meal with a
  * `meal` outcome is decided by the office-distance rule instead (see decideMeal).
  */
@@ -169,13 +171,17 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
     return meal ? decideMeal(f, issues, meal) : { status: "to_review", issues }
   }
   // A personal purchase carries no GL code: Jev picking `personal` agrees with it.
-  const saved = String(f.category_code ?? "").trim() || (isPersonalPurpose(f) ? PERSONAL_OPTION : "")
+  // A never-pick code (5200 catch-all…) counts as blank so Jev can replace it.
+  const raw = String(f.category_code ?? "").trim()
+  const neverPick = NOT_CLASSIFIABLE.has(raw)
+  const saved = (neverPick ? "" : raw) || (isPersonalPurpose(f) ? PERSONAL_OPTION : "")
   const grocery = groceryByName(f) || jev.grocery >= NOUL_YES
   if (grocery && !isPersonalPurpose(f)) {
     issues.push({ field: "purpose", problem: "grocery purchase booked as business (groceries are always personal)", suggestion: "Personal — not a business expense" })
   }
   // The business-purpose gate holds even when the distance rule decides the code.
-  if (!grocery && jev.meal >= NOUL_YES && jev.trip < NOUL_YES) {
+  // `meal` is only passed for a business meal (category or Jev), so a category meal is gated too.
+  if (!grocery && (jev.meal >= NOUL_YES || meal) && jev.trip < NOUL_YES) {
     issues.push({ field: "purpose", problem: "meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)" })
   }
   // Meal with an office-distance outcome: the rule owns the code (Jev's pick is moot).
@@ -187,11 +193,12 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
     return { status: "jev_ok", issues, fill: suggestion }
   }
   if (!saved) {
-    issues.push({ field: "category_code", problem: `GL code missing; Jev suggests ${jev.code} (conf ${fmt(jev.confidence)})`, ...(suggestion ? { suggestion } : {}) })
+    const what = neverPick ? `GL code ${raw} is never-pick` : "GL code missing"
+    issues.push({ field: "category_code", problem: `${what}; Jev suggests ${jev.code} (conf ${fmt(jev.confidence)})`, ...(suggestion ? { suggestion } : {}) })
   } else if (jev.code !== saved) {
     issues.push({ field: "category_code", problem: `Jev picks ${jev.code} (conf ${fmt(jev.confidence)}) over saved ${saved}`, ...(suggestion ? { suggestion } : {}) })
   } else if (jev.confidence < JEV_AGREE_MIN) {
     issues.push({ field: "category_code", problem: `Jev agrees with ${saved} but only at conf ${fmt(jev.confidence)}` })
   }
-  return { status: issues.length ? "to_review" : "jev_ok", issues }
+  return { status: issues.length ? "to_review" : "jev_ok", issues, ...(neverPick ? { clear: true } : {}) }
 }
