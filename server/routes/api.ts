@@ -382,6 +382,11 @@ async function handleInject(req: Request): Promise<Response> {
   }
 
   const res = await injectConfirmed(text, target ?? undefined)
+  if (!res.ok && res.error === "pane_not_ready") {
+    // herdr refused it (agent_blocked): same 409 as the pre-inject refusal.
+    companionLog(`\x1b[31minject refused\x1b[0m — ${target?.label || target?.key} herdr agent blocked`)
+    return Response.json({ ok: false, error: res.error, key, cwd, reason: res.reason, excerpt: res.excerpt }, { status: 409 })
+  }
   if (!res.ok && res.error === "not_submitted") {
     // Typed but never submitted (no UserPromptSubmit after Enter + one
     // retry). Tell every client so the bubble is marked undelivered, and

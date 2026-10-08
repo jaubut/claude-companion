@@ -73,6 +73,9 @@ companion_find_agent_pid() {
 # X-Companion-Agent is deliberately NOT here: companion-codex-hook.sh layers its
 # own agent + cwd headers on top of the same six.
 #
+# X-Companion-Herdr-Pane is $HERDR_PANE_ID when the agent runs in a herdr
+# pane (Mac): the server injects through `herdr agent prompt` there.
+#
 # X-Companion-Task-Id carries the orchestrator task this worker was dispatched
 # as (COMPANION_TASK_ID, exported into its tmux session at dispatch). Empty for
 # every session a human started, which is exactly what the server expects.
@@ -85,5 +88,6 @@ companion_headers() {
     -H "X-Companion-Tmux-Pane: ${TMUX_PANE:-}"
     -H "X-Companion-Tmux: ${TMUX:-}"
     -H "X-Companion-Task-Id: ${COMPANION_TASK_ID:-}"
+    -H "X-Companion-Herdr-Pane: ${HERDR_PANE_ID:-}"
   )
 }

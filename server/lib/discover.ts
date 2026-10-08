@@ -16,6 +16,7 @@ import { envHasScrapeVar, isScrapeTarget } from "./scrape-registry"
 import { isDispatchWorkerPid } from "./dispatch-worker"
 import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
 import { companionLog } from "./log"
+import { validHerdrPane } from "./herdr"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
@@ -238,6 +239,12 @@ export function tmuxRefFromEnv(env: readonly string[] | null): PaneRef {
   return { socket, pane }
 }
 
+// $HERDR_PANE_ID from a process environment ("" when not in herdr).
+export function herdrPaneFromEnv(env: readonly string[] | null): string {
+  const e = env?.find((x) => x.startsWith("HERDR_PANE_ID="))
+  return validHerdrPane(e?.slice("HERDR_PANE_ID=".length))
+}
+
 export interface TmuxRefDeps {
   envOf?: (pid: string) => Promise<string[] | null>
   // tty → (socket, pane) across every tmux server; memoised per discovery tick.
@@ -424,14 +431,18 @@ async function discoverOnce(): Promise<{ registered: number }> {
           label: thread ? codexThreadLabel(thread, p.tty) : undefined,
         }, { provisional: true })
       } else {
-        const file = await readClaudeSessionFile(p.pid)
-        const ref = await resolveTmuxRef(p.pid, p.tty, tmuxPaneFromSessionFile(file?.tmux), { ttyMap })
+        const [file, env] = await Promise.all([readClaudeSessionFile(p.pid), processEnvEntries(p.pid)])
+        const ref = await resolveTmuxRef(p.pid, p.tty, tmuxPaneFromSessionFile(file?.tmux), { ttyMap, envOf: async () => env })
+        // After a server restart the first phone message can beat every hook:
+        // a herdr session must already be routed through herdr by then.
+        const herdrPane = herdrPaneFromEnv(env)
         if (file) {
           recordSession(
             {
               agent: p.agent, cwd, sessionId: file.sessionId!, tty: p.tty, pid: p.pid, termProgram,
               tmuxPane: ref.pane,
               tmuxSocket: ref.socket,
+              herdrPane,
               firstSeenAt: file.startedAt || undefined,
               agentStatus: file.status ?? "",
               waitingFor: file.waitingFor ?? "",
@@ -443,7 +454,7 @@ async function discoverOnce(): Promise<{ registered: number }> {
           recordSession(
             {
               agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram, firstSeenAt: startedAt || undefined,
-              tmuxPane: ref.pane, tmuxSocket: ref.socket,
+              tmuxPane: ref.pane, tmuxSocket: ref.socket, herdrPane,
             },
             { provisional: true, sessionIdConfirmed: false },
           )

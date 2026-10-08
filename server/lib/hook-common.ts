@@ -2,6 +2,7 @@ import type { SpawnAgent } from "./spawn-session"
 import type { Session } from "./sessions"
 import { isScrapeTarget, tmuxServerPidOf } from "./scrape-registry"
 import { tmuxSocketFromEnv } from "./tmux-pane"
+import { herdrAgentFor, validHerdrPane } from "./herdr"
 
 // Helpers shared by every hook endpoint and the event wiring: which agent a
 // hook came from, the cwd it reports, the decision envelope each hook event
@@ -111,7 +112,14 @@ export function metaFromHeaders(headers: Headers): Partial<Session> {
     tmuxSocket: tmuxSocketFromEnv(headers.get("x-companion-tmux")),
     taskId: raw("x-companion-task-id"),
     pid: raw("x-companion-pid"),
+    ...herdrMeta(validHerdrPane(headers.get("x-companion-herdr-pane"))),
   }
+}
+
+// Only present when the hook ran in a herdr pane, so a hook without the header
+// never blanks what an earlier one recorded.
+function herdrMeta(herdrPane: string): Partial<Session> {
+  return herdrPane ? { herdrPane, herdrAgent: herdrAgentFor(herdrPane) } : {}
 }
 
 // A hook from the companion's own hidden /help enumeration session

@@ -36,7 +36,8 @@
 
 import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
-import { INJECT_SEND_MS, INJECT_QUEUE_MS, tmuxSendKeys } from "./keyboard-inject"
+import { tmuxSendKeys } from "./keyboard-inject"
+import { INJECT_SEND_MS, INJECT_QUEUE_MS } from "./herdr-inject"
 import { inputText } from "./command-menu"
 import { MIN_INJECT_PANE_WIDTH, capturePane, paneKey, paneTooNarrow, sendKeysArgs, tmuxPaneWidth, type PaneRef } from "./tmux-pane"
 import { COMPACT_TEXT } from "./auto-compact-keep"
