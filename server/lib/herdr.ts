@@ -52,6 +52,13 @@ async function herdrExec(args: string[], timeoutMs: number): Promise<ExecResult>
   }
 }
 
+// `pane send-keys` / `pane send-text` succeed silently on herdr 0.9.3: exit 0,
+// no stdout. parseCliResult calls that bad_output, which failed every phone
+// Esc and dialog key to a herdr pane.
+export function silentSuccess(r: { status: number | null; stdout: string; error?: Error }): boolean {
+  return r.status === 0 && !r.error && !r.stdout.trim()
+}
+
 // The seam every herdr caller here goes through (tests pass a fake).
 export interface Herdr {
   // A JSON command: its `result`, or throws an error carrying `.code`.
@@ -66,7 +73,9 @@ export const realHerdr: Herdr = {
   async call(args, timeoutMs = 10_000) {
     const mod = await loadClient()
     if (!mod) throw new LocalHerdrError("herdr_client_missing", `herdr client not loadable: ${HERDR_CLIENT_PATH}`)
-    return mod.parseCliResult(await herdrExec(args, timeoutMs), args.slice(0, 2).join(" "))
+    const r = await herdrExec(args, timeoutMs)
+    if (silentSuccess(r)) return {}
+    return mod.parseCliResult(r, args.slice(0, 2).join(" "))
   },
   async read(pane) {
     const r = await herdrExec(["pane", "read", pane, "--source", "visible", "--format", "ansi"], 1_500)

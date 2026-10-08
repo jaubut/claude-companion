@@ -28,6 +28,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/api.ts` | 461 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/voice-memo.ts` | 457 | lib | 25 | state: let tdb |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
+| `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 434 | route-host | 3 | routes: 10 |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/submit-confirm.ts` | 418 | lib | 18 | state: watches: Set, paneLocks: Map |
@@ -49,6 +50,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/live.ts` | 329 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
 | `lib/triage-engine.ts` | 325 | lib | 8 | emits: orchestrator_triage |
+| `routes/capture.ts` | 323 | lib | 6 |  |
 | `lib/receipt-qa-worker.ts` | 321 | lib | 12 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
@@ -85,6 +87,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver-peer.ts` | 211 | lib | 19 |  |
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
+| `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
+| `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `lib/resolver-store.ts` | 204 | lib | 8 |  |
@@ -96,15 +100,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dialog-watch.ts` | 196 | lib | 5 |  |
 | `routes/trips.ts` | 194 | lib | 5 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
-| `lib/receipt-checks.ts` | 191 | lib | 21 | state: CURRENCIES: Set |
 | `lib/trip-dashboard.ts` | 190 | lib | 17 |  |
 | `lib/inject-guard.ts` | 187 | lib | 7 |  |
 | `wiring/body-agent.ts` | 187 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
+| `lib/dashboard-client.ts` | 177 | lib | 29 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
-| `lib/dashboard-client.ts` | 172 | lib | 28 |  |
-| `lib/receipt-jev.ts` | 171 | lib | 12 | state: let chartCache |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `wiring/dialogs.ts` | 170 | lib | 5 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
@@ -114,12 +116,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/vault.ts` | 162 | lib | 1 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/body-fix.ts` | 155 | lib | 11 |  |
+| `lib/herdr.ts` | 155 | lib | 14 | state: let clientMod, spawnedAgents: Map |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/feed.ts` | 149 | lib | 10 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `lib/resolver-prompt.ts` | 147 | lib | 7 |  |
-| `lib/herdr.ts` | 146 | lib | 13 | state: let clientMod, spawnedAgents: Map |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
 | `lib/jev.ts` | 143 | lib | 16 |  |
@@ -555,6 +557,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `resolveClaudeBin()` | `lib/receipt-sonnet.ts` | `lib/readonly-claude.ts`, `lib/resolver-fix.ts` |
 | `NOT_CLASSIFIABLE()` | `lib/receipt-checks.ts` | `lib/receipt-jev.ts`, `lib/receipt-sonnet.ts` |
 | `isPersonalPurpose()` | `lib/receipt-checks.ts` | `lib/receipt-jev.ts`, `lib/receipt-sonnet.ts` |
+| `MEAL_ADDRESS_UNRESOLVED()` | `lib/receipt-checks.ts` | `lib/receipt-jev.ts`, `lib/receipt-qa-worker.ts` |
 | `ChartEntry()` | `lib/receipt-jev.ts` | `lib/receipt-qa-worker.ts`, `lib/receipt-sonnet.ts` |
 | `fetchReceiptFile()` | `lib/dashboard-client.ts` | `lib/receipt-qa-worker.ts`, `routes/capture.ts` |
 | `getQaRow()` | `lib/receipt-qa-store.ts` | `lib/receipt-qa-worker.ts`, `routes/capture.ts` |

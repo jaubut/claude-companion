@@ -1200,7 +1200,7 @@
         },
         {
           "path": "lib/dashboard-client.ts",
-          "lines": 172,
+          "lines": 177,
           "kind": "lib",
           "exports": [
             "DASHBOARD_KEY_NAME",
@@ -1218,6 +1218,7 @@
             "extractReceipt",
             "saveExpense",
             "patchExpense",
+            "officeDistance",
             "fetchReceiptFile",
             "VOICE_SLOW_TIMEOUT_MS",
             "startRecording",
@@ -1664,12 +1665,13 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 146,
+          "lines": 155,
           "kind": "lib",
           "exports": [
             "ExecResult",
             "HERDR_CLIENT_PATH",
             "herdrErrorCode",
+            "silentSuccess",
             "Herdr",
             "realHerdr",
             "validHerdrPane",
@@ -2796,7 +2798,7 @@
         },
         {
           "path": "lib/receipt-checks.ts",
-          "lines": 191,
+          "lines": 208,
           "kind": "lib",
           "exports": [
             "TPS_RATE",
@@ -2819,7 +2821,13 @@
             "normMerchant",
             "checkDuplicate",
             "isPersonalPurpose",
-            "groceryByName"
+            "groceryByName",
+            "MEAL_TRAVEL_KM",
+            "MEAL_TRAVEL_CODE",
+            "MEAL_LOCAL_CODE",
+            "MEAL_ADDRESS_UNRESOLVED",
+            "mealByCategory",
+            "mealCodeForKm"
           ],
           "state": [
             "CURRENCIES: Set"
@@ -2837,7 +2845,7 @@
         },
         {
           "path": "lib/receipt-jev.ts",
-          "lines": 171,
+          "lines": 205,
           "kind": "lib",
           "exports": [
             "JEV_AGREE_MIN",
@@ -2851,6 +2859,8 @@
             "jevState",
             "askJev",
             "JevDecision",
+            "MealRule",
+            "mealRuleApplies",
             "decideJev"
           ],
           "state": [
@@ -2913,10 +2923,12 @@
         },
         {
           "path": "lib/receipt-qa-worker.ts",
-          "lines": 321,
+          "lines": 436,
           "kind": "lib",
           "exports": [
             "MAX_ATTEMPTS",
+            "OfficeDistance",
+            "OfficeDistanceMissing",
             "WorkerDeps",
             "workerDeps",
             "qaEnabled",
@@ -2930,6 +2942,7 @@
             "acceptByHuman"
           ],
           "state": [
+            "ownedKm: Map",
             "let running",
             "let again",
             "let timer",
@@ -9093,6 +9106,12 @@
             "routes/capture.ts"
           ]
         },
+        "groceryByName": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-jev.ts"
+          ]
+        },
         "isPersonalPurpose": {
           "module": "lib/receipt-checks.ts",
           "callers": [
@@ -9100,10 +9119,17 @@
             "lib/receipt-sonnet.ts"
           ]
         },
-        "groceryByName": {
+        "mealByCategory": {
           "module": "lib/receipt-checks.ts",
           "callers": [
             "lib/receipt-jev.ts"
+          ]
+        },
+        "MEAL_ADDRESS_UNRESOLVED": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-jev.ts",
+            "lib/receipt-qa-worker.ts"
           ]
         },
         "DupQuery": {
@@ -9155,6 +9181,12 @@
             "wiring/trips.ts"
           ]
         },
+        "officeDistance": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
         "askJev": {
           "module": "lib/receipt-jev.ts",
           "callers": [
@@ -9192,6 +9224,13 @@
             "lib/receipt-qa-worker.ts"
           ]
         },
+        "getQaRow": {
+          "module": "lib/receipt-qa-store.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts",
+            "routes/capture.ts"
+          ]
+        },
         "transition": {
           "module": "lib/receipt-qa-store.ts",
           "callers": [
@@ -9202,13 +9241,6 @@
           "module": "lib/receipt-capture.ts",
           "callers": [
             "lib/receipt-qa-worker.ts"
-          ]
-        },
-        "getQaRow": {
-          "module": "lib/receipt-qa-store.ts",
-          "callers": [
-            "lib/receipt-qa-worker.ts",
-            "routes/capture.ts"
           ]
         },
         "codeChecks": {
@@ -9229,8 +9261,38 @@
             "lib/receipt-qa-worker.ts"
           ]
         },
+        "mealRuleApplies": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
         "decideJev": {
           "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "MealRule": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "mealCodeForKm": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "JevDecision": {
+          "module": "lib/receipt-jev.ts",
+          "callers": [
+            "lib/receipt-qa-worker.ts"
+          ]
+        },
+        "MEAL_TRAVEL_KM": {
+          "module": "lib/receipt-checks.ts",
           "callers": [
             "lib/receipt-qa-worker.ts"
           ]
