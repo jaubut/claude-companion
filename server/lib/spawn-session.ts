@@ -13,8 +13,8 @@
 // terminal window mirroring the first (tmux mirrors any session attached
 // from multiple clients in real time, which looked like a "copy" bug).
 //
-// macOS "auto" now prefers herdr (spawnInHerdr below) when its version gate
-// passes; the tmux path above is the fallback. Linux is tmux only.
+// "auto" now prefers herdr (spawnInHerdr below) when its version gate passes,
+// on macOS and Linux alike; the tmux path above is the fallback.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
@@ -429,8 +429,8 @@ export async function spawnInHerdr(
   return { ok: true, app: "herdr", sessionName: name, herdrPane: paneId }
 }
 
-// macOS "auto": herdr when its gate passes, else today's Terminal/iTerm tmux
-// path. Only a gate failure falls back (see SpawnResult.fallback).
+// "auto": herdr when its gate passes, else `legacy` (Mac: Terminal/iTerm tmux;
+// Linux: detached tmux). Only a gate failure falls back (see SpawnResult.fallback).
 export async function spawnMacAuto(
   cwd: string,
   agent: SpawnAgent,
@@ -445,6 +445,30 @@ export async function spawnMacAuto(
   if (r.ok || !r.fallback) return r
   deps.log(`spawn: herdr skipped (${r.fallback}) — falling back to tmux`)
   return deps.legacy(cwd, agent, env)
+}
+
+// Linux / headless server path (Zettlab). No GUI Terminal: "auto" is a herdr
+// workspace on the host's herdr server (scripts/herdr-zettlab-setup.sh; panes
+// sized by its headless_cols/rows = 220x60), else a detached tmux session.
+// Attach over SSH with `herdr --remote` / the Mac's `herdr machine`, or
+// `tmux attach` for the fallback.
+export function spawnLinux(
+  cwd: string,
+  app: SpawnApp,
+  agent: SpawnAgent,
+  env: Record<string, string> | undefined,
+  deps: {
+    herdr: typeof spawnInHerdr
+    tmux: (cwd: string, agent: SpawnAgent, env?: Record<string, string>) => Promise<SpawnResult>
+    log: (line: string) => void
+  } = { herdr: spawnInHerdr, tmux: spawnInTmuxDetached, log: companionLog },
+): Promise<SpawnResult> {
+  if (app === "terminal" || app === "iterm") {
+    return Promise.resolve({ ok: false, error: `app="${app}" is macOS-only; use "tmux", "herdr" or "auto" on this server` })
+  }
+  if (app === "tmux") return deps.tmux(cwd, agent, env)
+  if (app === "herdr") return deps.herdr(cwd, agent, env)
+  return spawnMacAuto(cwd, agent, env, { herdr: deps.herdr, legacy: deps.tmux, log: deps.log })
 }
 
 // The pre-herdr macOS auto: prefer the app that's already running. If both,
@@ -526,16 +550,7 @@ export async function spawnCompanionSession(opts: {
   // folder-trust dialog (codex has no such gate, so skip it there).
   if (agent !== "codex") ensureFolderTrusted(resolved)
 
-  // Linux / headless server path. macOS-only apps don't apply, and there's
-  // no GUI Terminal to open — every spawn just creates a detached tmux
-  // session. The user can attach with `tmux attach` over SSH if they want
-  // to interact directly; iOS routes via the tmux pane regardless.
-  if (process.platform !== "darwin") {
-    if (app === "terminal" || app === "iterm") {
-      return { ok: false, error: `app="${app}" is macOS-only; use "tmux" or "auto" on this server` }
-    }
-    return spawnInTmuxDetached(resolved, agent, opts.env)
-  }
+  if (process.platform !== "darwin") return spawnLinux(resolved, app, agent, opts.env)
 
   if (app === "tmux") return spawnInTmuxDetached(resolved, agent, opts.env)
   if (app === "iterm") return spawnInIterm(resolved, agent, opts.env)
