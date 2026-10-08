@@ -3608,7 +3608,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 546,
+          "lines": 561,
           "kind": "lib",
           "exports": [
             "SpawnApp",
@@ -3624,6 +3624,7 @@
             "HERDR_START_TIMEOUT_MS",
             "spawnInHerdr",
             "spawnMacAuto",
+            "spawnLinux",
             "homeSpawnCwd",
             "spawnCompanionSession"
           ],
