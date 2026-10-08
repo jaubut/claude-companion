@@ -6970,12 +6970,6 @@
             "lib/transcript.ts"
           ]
         },
-        "identityFor": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/activity.ts"
-          ]
-        },
         "verbFor": {
           "module": "lib/tool-format.ts",
           "callers": [
@@ -7595,13 +7589,6 @@
             "wiring/body.ts"
           ]
         },
-        "BASE_DISALLOWED": {
-          "module": "lib/readonly-claude.ts",
-          "callers": [
-            "lib/body-investigator.ts",
-            "lib/quick-look.ts"
-          ]
-        },
         "readonlyArgs": {
           "module": "lib/readonly-claude.ts",
           "callers": [
@@ -7848,15 +7835,6 @@
           "module": "lib/command-offpane.ts",
           "callers": [
             "lib/command-offpane-cache.ts"
-          ]
-        },
-        "tmuxArgv": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/command-offpane-launch.ts",
-            "lib/key-gate.ts",
-            "lib/keyboard-inject.ts",
-            "lib/spawn-session.ts"
           ]
         },
         "helpTab": {
@@ -9502,12 +9480,6 @@
             "lib/resolver-fix-guard.ts"
           ]
         },
-        "conflictPolicyLines": {
-          "module": "lib/resolver-fix-policy.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
         "GitFn": {
           "module": "lib/resolver-fix-guard.ts",
           "callers": [
@@ -9516,12 +9488,6 @@
         },
         "guardFixRange": {
           "module": "lib/resolver-fix-guard.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
-        "fixDisallowed": {
-          "module": "lib/resolver-fix-policy.ts",
           "callers": [
             "lib/resolver-fix.ts"
           ]
@@ -9545,12 +9511,6 @@
           "callers": [
             "lib/resolver-prompt.ts",
             "lib/resolver.ts"
-          ]
-        },
-        "allowedActions": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver-prompt.ts"
           ]
         },
         "resolverActions": {
@@ -9662,14 +9622,6 @@
             "lib/resolver-work.ts"
           ]
         },
-        "fallbackPhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver-work.ts",
-            "lib/resolver.ts",
-            "lib/triage-engine.ts"
-          ]
-        },
         "buildResolverPrompt": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -9704,6 +9656,13 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
+          ]
+        },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver.ts",
+            "lib/triage-engine.ts"
           ]
         },
         "NO_REPO_BLOCKER": {
@@ -9816,12 +9775,6 @@
           ]
         },
         "spawnNewSessionFlags": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/spawn-session.ts"
-          ]
-        },
-        "spawnServerFlags": {
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/spawn-session.ts"
@@ -10431,12 +10384,6 @@
             "lib/trip-triage.ts"
           ]
         },
-        "uploadInput": {
-          "module": "lib/trip-service.ts",
-          "callers": [
-            "lib/trip-triage.ts"
-          ]
-        },
         "rowInput": {
           "module": "lib/trip-service.ts",
           "callers": [
@@ -10708,13 +10655,6 @@
             "ws.ts"
           ]
         },
-        "waitingSummary": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/api.ts#* /api/status",
-            "ws.ts"
-          ]
-        },
         "dialogWatcher": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -10895,12 +10835,6 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "HISTORY_STATES": {
-          "module": "lib/approval-history.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
           ]
         },
         "getHistoryItem": {
@@ -11733,8 +11667,7 @@
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread"
+            "routes/orchestrator.ts"
           ]
         },
         "setChannelAuto": {
@@ -13314,18 +13247,6 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver-peer.ts",
-            "wiring/resolver.ts"
-          ]
-        },
-        "QUICK_LOOK_ALLOWED": {
-          "module": "lib/quick-look.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "QUICK_LOOK_DISALLOWED": {
-          "module": "lib/quick-look.ts",
-          "callers": [
             "wiring/resolver.ts"
           ]
         },

@@ -305,19 +305,19 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## Contracts — hook endpoints (Claude Code → server)
 
-| route | handler | called by |
-|---|---|---|
-| `* /hooks/…` | server/companion-server.ts | — |
-| `* /hooks/…` | server/routes/hooks.ts | — |
-| `POST /hooks/dispatch-event` | server/routes/hooks.ts | — |
-| `POST /hooks/gauge` | server/routes/gauge.ts | — |
-| `POST /hooks/permission-request` | server/routes/hooks.ts | — |
-| `POST /hooks/post-tool-use` | server/routes/hooks.ts | — |
-| `POST /hooks/pre-tool-use` | server/routes/hooks.ts | — |
-| `POST /hooks/session-end` | server/routes/hooks.ts | — |
-| `POST /hooks/session-start` | server/routes/hooks.ts | — |
-| `POST /hooks/stop` | server/routes/hooks.ts | — |
-| `POST /hooks/user-prompt-submit` | server/routes/hooks.ts | — |
+| route | handler |
+|---|---|
+| `* /hooks/…` | server/companion-server.ts |
+| `* /hooks/…` | server/routes/hooks.ts |
+| `POST /hooks/dispatch-event` | server/routes/hooks.ts |
+| `POST /hooks/gauge` | server/routes/gauge.ts |
+| `POST /hooks/permission-request` | server/routes/hooks.ts |
+| `POST /hooks/post-tool-use` | server/routes/hooks.ts |
+| `POST /hooks/pre-tool-use` | server/routes/hooks.ts |
+| `POST /hooks/session-end` | server/routes/hooks.ts |
+| `POST /hooks/session-start` | server/routes/hooks.ts |
+| `POST /hooks/stop` | server/routes/hooks.ts |
+| `POST /hooks/user-prompt-submit` | server/routes/hooks.ts |
 
 ## Fan-in — server (exports reached from 2+ modules)
 
@@ -393,7 +393,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `InvestigationRecord()` | `lib/body-investigate.ts` | `lib/body-agent.ts`, `lib/body-investigate-engine.ts`, `routes/body.ts`, `wiring/body-agent.ts` |
 | `InvestigationStore()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `lib/triage-sources.ts`, `wiring/body-investigate.ts`, `wiring/triage.ts` |
 | `toTaskDto()` | `lib/dispatch-tasks.ts` | `lib/body-investigate-engine.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
-| `tmuxArgv()` | `lib/tmux-pane.ts` | `lib/command-offpane-launch.ts`, `lib/key-gate.ts`, `lib/keyboard-inject.ts`, `lib/spawn-session.ts` |
 | `ESC_SETTLE_MS()` | `lib/command-list.ts` | `lib/command-scrape.ts`, `lib/key-gate.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/model.ts#POST /api/model/cancel` |
 | `Channel()` | `lib/orchestrator-channels.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `routes/orchestrator.ts`, `wiring/body.ts` |
 | `Herdr()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/keyboard-inject.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts` |
@@ -454,7 +453,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `ResolverOutcome()` | `lib/triage.ts` | `lib/resolver-engine.ts`, `lib/resolver-store.ts`, `lib/resolver.ts` |
 | `FixOutcome()` | `lib/resolver-fix.ts` | `lib/resolver-peer.ts`, `lib/resolver-work.ts`, `wiring/resolver-peer.ts` |
 | `TriageAction()` | `lib/triage.ts` | `lib/resolver-work.ts`, `lib/resolver.ts`, `wiring/resolver.ts` |
-| `fallbackPhrase()` | `lib/triage.ts` | `lib/resolver-work.ts`, `lib/resolver.ts`, `lib/triage-engine.ts` |
 | `TxFn()` | `lib/turso.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts` |
 | `MINE()` | `lib/my-tasks.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `wiring/auto-compact.ts` |
 | `Trip()` | `lib/trip-model.ts` | `lib/trip-dashboard.ts`, `lib/trip-triage.ts`, `routes/trips.ts` |
@@ -513,7 +511,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `buildInvestigationPrompt()` | `lib/body-investigator.ts` | `lib/body-investigate-engine.ts`, `lib/resolver-prompt.ts` |
 | `FixCard()` | `lib/body-fix.ts` | `lib/body-investigate-engine.ts`, `wiring/body-agent.ts` |
 | `isHealthIntent()` | `lib/body.ts` | `lib/body-investigate-engine.ts`, `wiring/body.ts` |
-| `BASE_DISALLOWED()` | `lib/readonly-claude.ts` | `lib/body-investigator.ts`, `lib/quick-look.ts` |
 | `readonlyArgs()` | `lib/readonly-claude.ts` | `lib/body-investigator.ts`, `lib/quick-look.ts` |
 | `readonlyCwd()` | `lib/readonly-claude.ts` | `lib/body-investigator.ts`, `wiring/resolver.ts` |
 | `FeedEvent()` | `lib/feed.ts` | `lib/codex-feed.ts`, `wiring/events.ts` |
@@ -571,6 +568,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `ActionKind()` | `lib/triage.ts` | `lib/resolver-prompt.ts`, `lib/resolver.ts` |
 | `ResolverContext()` | `lib/resolver-prompt.ts` | `lib/resolver-work.ts`, `wiring/resolver.ts` |
 | `Job()` | `lib/resolver-engine.ts` | `lib/resolver-work.ts`, `wiring/resolver-dry-run.ts` |
+| `fallbackPhrase()` | `lib/triage.ts` | `lib/resolver.ts`, `lib/triage-engine.ts` |
 | `NO_REPO_BLOCKER()` | `lib/dispatch-tasks.ts` | `lib/resolver.ts`, `wiring/resolver.ts` |
 | `writeLimiter()` | `lib/vault-guard.ts` | `lib/secret-store.ts`, `routes/vault.ts` |
 | `WaitingKind()` | `lib/waiting.ts` | `lib/sessions.ts`, `wiring/waiting.ts` |
@@ -606,7 +604,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `SpawnResult()` | `lib/spawn-session.ts` | `routes/api.ts#POST /api/spawn-session`, `wiring/orchestrator.ts` |
 | `spawnCompanionSession()` | `lib/spawn-session.ts` | `routes/api.ts#POST /api/spawn-session`, `wiring/orchestrator.ts` |
 | `getPending()` | `lib/pty-manager.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
-| `waitingSummary()` | `lib/sessions.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `getActivity()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `listActivities()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
@@ -634,7 +631,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `choicesFrom()` | `lib/model-control.ts` | `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set` |
 | `emitChannel()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/` |
 | `vetoAuto()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `wiring/triage.ts` |
-| `listTasks()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread` |
 | `getTaskActivity()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/resolver.ts` |
 | `fileTask()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/orchestrator.ts` |
 | `requeueTask()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/triage.ts` |
