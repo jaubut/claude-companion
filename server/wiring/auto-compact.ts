@@ -27,7 +27,8 @@ import { openDialogFor, paneSnapshotFor, yieldPaneForInject } from "./dialogs"
 
 // Real deps for lib/auto-compact.ts. Two hard rules on the inject:
 //   - only into the session's OWN tmux pane: no pane → "unknown" input state →
-//     the gate refuses; the delivery is passed without a tty so a failed
+//     the gate refuses (so herdr sessions, which have no tmux pane, are never
+//     auto-compacted in v1 — likewise the /help scrape and dialog mirror); the delivery is passed without a tty so a failed
 //     send-keys can never fall back to the AppleScript (focus-the-terminal)
 //     path;
 //   - the same guard as a phone inject (lib/inject-guard.ts): registered,

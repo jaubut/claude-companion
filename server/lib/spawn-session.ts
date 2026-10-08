@@ -12,9 +12,14 @@
 // a re-tap launches a *new* agent instance instead of opening a second
 // terminal window mirroring the first (tmux mirrors any session attached
 // from multiple clients in real time, which looked like a "copy" bug).
+//
+// macOS "auto" now prefers herdr (spawnInHerdr below) when its version gate
+// passes; the tmux path above is the fallback. Linux is tmux only.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
+import { type Herdr, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
+import { companionLog } from "./log"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -41,7 +46,7 @@ function ensureFolderTrusted(cwd: string): void {
   } catch { /* best-effort — worst case the trust dialog still appears */ }
 }
 
-export type SpawnApp = "terminal" | "iterm" | "tmux" | "auto"
+export type SpawnApp = "terminal" | "iterm" | "tmux" | "herdr" | "auto"
 export type SpawnAgent = "claude" | "codex" | "kimi"
 
 // Kimi sessions are regular Claude Code pointed at Moonshot's Anthropic-
@@ -51,8 +56,10 @@ export type SpawnAgent = "claude" | "codex" | "kimi"
 // session feed) behaves exactly like a claude session.
 const KIMI_ENV_FILE = `${process.env.HOME}/.config/kimi/kimi.env`
 
+const KIMI_SOURCE = `. "$HOME/.config/kimi/kimi.env"`
+
 function agentLaunchCommand(agent: SpawnAgent): string {
-  if (agent === "kimi") return `. "$HOME/.config/kimi/kimi.env" && claude`
+  if (agent === "kimi") return `${KIMI_SOURCE} && claude`
   return agent
 }
 
@@ -65,19 +72,23 @@ function agentLaunchCommand(agent: SpawnAgent): string {
 // anything else throws rather than shipping an injectable command line.
 const ENV_TOKEN = /^[A-Za-z0-9_-]+$/
 
+function checkEnv(env?: Record<string, string>): [string, string][] {
+  const entries = Object.entries(env ?? {})
+  for (const [key, value] of entries) {
+    if (!ENV_TOKEN.test(key)) throw new Error(`spawn env: unsafe key ${JSON.stringify(key)}`)
+    if (!ENV_TOKEN.test(value)) throw new Error(`spawn env: unsafe value for ${key}: ${JSON.stringify(value)}`)
+  }
+  return entries
+}
+
 // The form is load-bearing: `export K=V; cd '<cwd>' && <agent>`, export FIRST,
 // joined with `;`. The obvious `K=V cd … && claude` prefix is a *command*
 // assignment in POSIX sh — it scopes to `cd` alone and never reaches claude,
 // let alone the hook children that need to read it.
 function envPrefix(env?: Record<string, string>): string {
-  const entries = Object.entries(env ?? {})
+  const entries = checkEnv(env)
   if (entries.length === 0) return ""
-  const parts = entries.map(([key, value]) => {
-    if (!ENV_TOKEN.test(key)) throw new Error(`spawn env: unsafe key ${JSON.stringify(key)}`)
-    if (!ENV_TOKEN.test(value)) throw new Error(`spawn env: unsafe value for ${key}: ${JSON.stringify(value)}`)
-    return `export ${key}=${value}`
-  })
-  return `${parts.join("; ")}; `
+  return `${entries.map(([key, value]) => `export ${key}=${value}`).join("; ")}; `
 }
 
 // The command tmux runs inside the new session, shared by every spawn path
@@ -89,11 +100,17 @@ export function buildInner(cwd: string, agent: SpawnAgent, env?: Record<string, 
 
 export interface SpawnResult {
   ok: boolean
-  app?: "Terminal" | "iTerm" | "tmux"
+  app?: "Terminal" | "iTerm" | "tmux" | "herdr"
   sessionName?: string
   // Socket path of the tmux server the session landed on ("" = the default
   // server). Same form discovery records from $TMUX, so `-S` reaches it.
   tmuxSocket?: string
+  // herdr spawns: the workspace's root pane (what hooks report as $HERDR_PANE_ID).
+  herdrPane?: string
+  // Set when herdr was not even tried (version gate / server down): the
+  // caller may fall back to tmux. A failure after the gate never sets it — a
+  // workspace may exist by then, and a fallback would start a second agent.
+  fallback?: string
   error?: string
 }
 
@@ -337,6 +354,112 @@ async function spawnInIterm(cwd: string, agent: SpawnAgent, env?: Record<string,
   return { ok: true, app: "iTerm", sessionName, tmuxSocket: spawnSocketPath() }
 }
 
+// ── herdr (Mac, desk-cockpit trial — RES-RY7A) ─────────────────────────────
+//
+// A new herdr workspace rooted at the cwd, the agent started in its root pane
+// with `agent start` (returns once the agent is ready). Every pane exports
+// $HERDR_PANE_ID, which the hooks forward, so phone messages go through
+// `herdr agent prompt` / `pane send-keys` — pane-addressed, no focus race,
+// same as tmux. No shell command line is built: env rides `--env` (still held
+// to ENV_TOKEN), kimi sources the same kimi.env in the pane's shell first.
+
+// herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents.
+export function herdrAgentBaseName(cwd: string, agent: SpawnAgent): string {
+  return agentTmuxSessionName(cwd, agent).toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 28)
+}
+
+async function herdrNameTaken(name: string, h: Herdr): Promise<boolean> {
+  try {
+    await h.call(["agent", "get", name])
+    return true
+  } catch {
+    return false // agent_not_found (anything else surfaces at agent start)
+  }
+}
+
+async function uniqueHerdrAgentName(cwd: string, agent: SpawnAgent, h: Herdr): Promise<string> {
+  const base = herdrAgentBaseName(cwd, agent)
+  if (!(await herdrNameTaken(base, h))) return base
+  for (let i = 2; i < 100; i++) {
+    if (!(await herdrNameTaken(`${base}-${i}`, h))) return `${base}-${i}`
+  }
+  return `${base}-${Date.now() % 1000}`
+}
+
+// Bounded below the phone's patience; claude is normally ready in 2-5 s.
+export const HERDR_START_TIMEOUT_MS = 20_000
+
+export async function spawnInHerdr(
+  cwd: string,
+  agent: SpawnAgent,
+  env?: Record<string, string>,
+  h: Herdr = realHerdr,
+): Promise<SpawnResult> {
+  const envArgs = checkEnv(env).flatMap(([k, v]) => ["--env", `${k}=${v}`])
+  const gate = await h.gate()
+  if (gate) return { ok: false, app: "herdr", error: gate, fallback: gate }
+
+  const name = await uniqueHerdrAgentName(cwd, agent, h)
+  let paneId = ""
+  let workspaceId = ""
+  try {
+    const r = await h.call(["workspace", "create", "--cwd", cwd, "--label", name, ...envArgs, "--no-focus"])
+    workspaceId = (r.workspace as { workspace_id?: string } | undefined)?.workspace_id ?? ""
+    paneId = (r.root_pane as { pane_id?: string } | undefined)?.pane_id ?? ""
+  } catch (err) {
+    return { ok: false, app: "herdr", error: `herdr workspace create: ${(err as Error).message}` }
+  }
+  if (!paneId) return { ok: false, app: "herdr", error: "herdr workspace create: no root_pane.pane_id" }
+
+  try {
+    if (agent === "kimi") await h.call(["pane", "run", paneId, KIMI_SOURCE])
+    await h.call(
+      ["agent", "start", name, "--kind", agent === "codex" ? "codex" : "claude", "--pane", paneId, "--timeout", String(HERDR_START_TIMEOUT_MS)],
+      HERDR_START_TIMEOUT_MS + 5_000,
+    )
+  } catch (err) {
+    // Blocked during startup (a dialog): the agent runs and its hooks will
+    // register it — the phone can answer from there.
+    if (herdrErrorCode(err) !== "agent_not_ready") {
+      if (workspaceId) await h.call(["workspace", "close", workspaceId]).catch(() => undefined)
+      return { ok: false, app: "herdr", error: `herdr agent start: ${(err as Error).message}` }
+    }
+  }
+  noteHerdrAgent(paneId, name)
+  return { ok: true, app: "herdr", sessionName: name, herdrPane: paneId }
+}
+
+// macOS "auto": herdr when its gate passes, else today's Terminal/iTerm tmux
+// path. Only a gate failure falls back (see SpawnResult.fallback).
+export async function spawnMacAuto(
+  cwd: string,
+  agent: SpawnAgent,
+  env: Record<string, string> | undefined,
+  deps: {
+    herdr: typeof spawnInHerdr
+    legacy: (cwd: string, agent: SpawnAgent, env?: Record<string, string>) => Promise<SpawnResult>
+    log: (line: string) => void
+  } = { herdr: spawnInHerdr, legacy: spawnMacTerminalAuto, log: companionLog },
+): Promise<SpawnResult> {
+  const r = await deps.herdr(cwd, agent, env)
+  if (r.ok || !r.fallback) return r
+  deps.log(`spawn: herdr skipped (${r.fallback}) — falling back to tmux`)
+  return deps.legacy(cwd, agent, env)
+}
+
+// The pre-herdr macOS auto: prefer the app that's already running. If both,
+// prefer Terminal (that's what today's sessions show); if neither, launch
+// Terminal.
+async function spawnMacTerminalAuto(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
+  const [terminalRunning, itermRunning] = await Promise.all([
+    isAppRunning("Terminal"),
+    isAppRunning("iTerm2"),
+  ])
+  if (terminalRunning) return spawnInTerminal(cwd, agent, env)
+  if (itermRunning) return spawnInIterm(cwd, agent, env)
+  return spawnInTerminal(cwd, agent, env)
+}
+
 // A spawn in the bare home dir moves to ~/work on Linux. Claude Code's Linux
 // sandbox (bwrap) masks .git/config, .git/hooks and .git/info/exclude of the cwd
 // even when it isn't a repo, so every session started in ~ built a fake ~/.git
@@ -417,14 +540,6 @@ export async function spawnCompanionSession(opts: {
   if (app === "tmux") return spawnInTmuxDetached(resolved, agent, opts.env)
   if (app === "iterm") return spawnInIterm(resolved, agent, opts.env)
   if (app === "terminal") return spawnInTerminal(resolved, agent, opts.env)
-
-  // macOS Auto: prefer the app that's already running. If both, prefer
-  // Terminal (that's what today's sessions show); if neither, launch Terminal.
-  const [terminalRunning, itermRunning] = await Promise.all([
-    isAppRunning("Terminal"),
-    isAppRunning("iTerm2"),
-  ])
-  if (terminalRunning) return spawnInTerminal(resolved, agent, opts.env)
-  if (itermRunning) return spawnInIterm(resolved, agent, opts.env)
-  return spawnInTerminal(resolved, agent, opts.env)
+  if (app === "herdr") return spawnInHerdr(resolved, agent, opts.env)
+  return spawnMacAuto(resolved, agent, opts.env)
 }

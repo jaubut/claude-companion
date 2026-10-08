@@ -15,7 +15,8 @@
 
 import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
-import { INJECT_SEND_MS, injectText, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { INJECT_SEND_MS, deliverViaHerdr, injectText, isHooklessInput, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { type Herdr, herdrGateKey, herdrPaneOf, herdrSendKey, realHerdr } from "./herdr"
 import { inputLine, unstyle } from "./command-menu"
 import { type PaneRef, capturePane, paneKey, resolveTmuxRefFromTty, sendKeysArgs } from "./tmux-pane"
 import { readClaudeSessionFile } from "./discover"
@@ -41,18 +42,8 @@ export interface SubmitIdentity {
   pane?: string
 }
 
-// Slash commands (/exit, /clear, /model …) and `!` bash-mode run locally in
-// Claude Code and never fire UserPromptSubmit, so "no hook" is not evidence
-// of a lost prompt for them (log 2026-09-25: `/exit` delivered, session
-// ended, then flagged "not submitted"). Their proof, when there is one, is
-// the session ending or clearing — see noteSessionBoundary.
-// A slash command is `/name` whose first word has no second `/` — an
-// absolute path like `/Users/me/file.txt` is a normal prompt and fires the hook.
-export function isHooklessInput(text: string): boolean {
-  const t = text.trim()
-  if (t.startsWith("!")) return true
-  return /^\/[A-Za-z][\w:.-]*(?:\s|$)/.test(t)
-}
+// isHooklessInput lives in keyboard-inject.ts (the herdr delivery needs it).
+export { isHooklessInput }
 
 // Timer seam so the tests drive the window with a fake clock.
 export interface SubmitClock {
@@ -261,6 +252,9 @@ export type InjectOutcome =
   | { ok: true; confirmed: boolean; retried?: boolean; queued?: boolean; command?: boolean }
   | { ok: false; error: "deliver_failed" }
   | { ok: false; error: "not_submitted"; excerpt: string }
+  // herdr refused the prompt: the agent sits at an approval/question
+  // (agent_blocked). Same code as the pre-inject pane_not_ready refusal.
+  | { ok: false; error: "pane_not_ready"; reason: "agent_blocked"; excerpt: string }
 
 // Should the inject route write the user_prompt feed event (and start the
 // "Thinking" pill) itself? Only when nothing else will: a delivery that
@@ -337,7 +331,10 @@ function withPaneLock<T>(pane: string, fn: () => Promise<T>): Promise<T> {
 // injectText + submit confirmation. Only Claude sessions in a tmux pane are
 // confirmed: that is where the hook is guaranteed and the pane is readable.
 // Everything else keeps the old "delivered = sent" answer (confirmed: false).
-export async function injectConfirmed(text: string, target: ConfirmTarget | undefined): Promise<InjectOutcome> {
+// `herdr` is a test seam.
+export async function injectConfirmed(text: string, target: ConfirmTarget | undefined, herdr: Herdr = realHerdr): Promise<InjectOutcome> {
+  const herdrPane = herdrPaneOf(target)
+  if (target && herdrPane) return injectHerdr(text, target, herdrPane, herdr)
   const ref = target && (target.agent ?? "claude") === "claude" ? await confirmPane(target) : null
   if (!target || !ref) {
     return (await injectText(text, target)) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
@@ -355,18 +352,63 @@ export async function injectConfirmed(text: string, target: ConfirmTarget | unde
         text,
         pressEnter: pressEnterIn(ref),
         capture: () => capturePane(ref.pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true, socket: ref.socket }),
-        busy: async () => !!target.pid && (await readClaudeSessionFile(target.pid))?.status === "busy",
+        busy: busyOf(target),
         hookless,
       })
-      const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const green = "\x1b[32m"; const yellow = "\x1b[33m"
-      const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit hook`
-        : r.confirmed ? `${green}submit confirmed${reset}${r.retried ? " (after Enter retry)" : ""}`
-        : "command" in r ? `${dim}command sent${reset} — slash / bash-mode input fires no UserPromptSubmit (unconfirmable, not an error)`
-        : `${yellow}submit queued${reset} — Claude mid-turn, text in its queue`
-      companionLog(`${line} → ${pane}`)
-      if (!r.ok) return r
-      if (r.confirmed) return { ok: true, confirmed: true, retried: r.retried }
-      return "command" in r ? { ok: true, confirmed: false, command: true } : { ok: true, confirmed: false, queued: true }
+      return confirmOutcome(r, pane)
+    } finally {
+      watch.close()
+    }
+  })
+}
+
+const busyOf = (target: ConfirmTarget) => async () => !!target.pid && (await readClaudeSessionFile(target.pid))?.status === "busy"
+
+function confirmOutcome(r: ConfirmResult, where: string): InjectOutcome {
+  const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"; const green = "\x1b[32m"; const yellow = "\x1b[33m"
+  const line = !r.ok ? `${red}not submitted${reset} — no UserPromptSubmit hook`
+    : r.confirmed ? `${green}submit confirmed${reset}${r.retried ? " (after Enter retry)" : ""}`
+    : "command" in r ? `${dim}command sent${reset} — slash / bash-mode input fires no UserPromptSubmit (unconfirmable, not an error)`
+    : `${yellow}submit queued${reset} — Claude mid-turn, text in its queue`
+  companionLog(`${line} → ${where}`)
+  if (!r.ok) return r
+  if (r.confirmed) return { ok: true, confirmed: true, retried: r.retried }
+  return "command" in r ? { ok: true, confirmed: false, command: true } : { ok: true, confirmed: false, queued: true }
+}
+
+// The herdr twin of the tmux path above: same pane lock, same watch armed
+// before the Enter, same confirmSubmit (#51). Delivery is `herdr agent
+// prompt`; the Enter retry and the read-back go through `pane send-keys` /
+// `pane read`. Never AppleScript.
+async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h: Herdr): Promise<InjectOutcome> {
+  const where = herdrGateKey(pane)
+  return withPaneLock(where, async (): Promise<InjectOutcome> => {
+    const hookless = isHooklessInput(text)
+    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty }, { boundary: hookless })
+    try {
+      const d = await deliverViaHerdr(pane, text, { typed: hookless, herdr: h })
+      if (!d.ok) {
+        companionLog(`\x1b[31mdeliver failed\x1b[0m (herdr ${pane}) — ${d.reason}`)
+        if (!d.blocked) return { ok: false, error: "deliver_failed" }
+        return { ok: false, error: "pane_not_ready", reason: "agent_blocked", excerpt: paneExcerpt(await h.read(pane)) }
+      }
+      companionLog(`\x1b[32mdelivered (herdr)\x1b[0m → ${pane}`)
+      if ((target.agent ?? "claude") !== "claude") return { ok: true, confirmed: false }
+      const r = await confirmSubmit({
+        watch,
+        text,
+        pressEnter: async () => {
+          try {
+            return await keyGate.send(where, "Enter", () => herdrSendKey(pane, "Enter", h), { timeoutMs: INJECT_SEND_MS })
+          } catch {
+            return false
+          }
+        },
+        capture: () => h.read(pane),
+        busy: busyOf(target),
+        hookless,
+      })
+      return confirmOutcome(r, where)
     } finally {
       watch.close()
     }

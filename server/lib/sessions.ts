@@ -57,6 +57,12 @@ export interface Session {
   // server. Pane ids are unique per server only, so (tmuxSocket, tmuxPane) is
   // the identity (lib/tmux-pane.ts). Optional so older fixtures still type.
   tmuxSocket?: string
+  // herdr pane id ($HERDR_PANE_ID, header X-Companion-Herdr-Pane) when the
+  // agent runs in a herdr pane. With no tmuxPane, inject goes through herdr
+  // (lib/herdr.ts) — never the AppleScript path. herdrAgent: the agent name
+  // when this server spawned it, for logs.
+  herdrPane?: string
+  herdrAgent?: string
   // The orchestrator task this session is a worker for, from
   // X-Companion-Task-Id (COMPANION_TASK_ID in the worker's env, issued at
   // dispatch). Empty for every session a human started — identity is issued,
@@ -202,6 +208,8 @@ export function recordSession(
     iTermSessionId: meta.iTermSessionId || prev?.iTermSessionId || "",
     tmuxPane: meta.tmuxPane || prev?.tmuxPane || "",
     tmuxSocket: mergeTmuxSocket(meta, prev),
+    herdrPane: meta.herdrPane || prev?.herdrPane || "",
+    herdrAgent: meta.herdrAgent || prev?.herdrAgent || "",
     // Sticky: ps-discovery and rehydrate re-record a worker with no headers at
     // all, and must not erase the identity a hook already established.
     taskId: meta.taskId || prev?.taskId || "",
@@ -288,6 +296,7 @@ export function recordSession(
     prev.taskId !== next.taskId ||
     prev.tmuxPane !== next.tmuxPane ||
     prev.tmuxSocket !== next.tmuxSocket ||
+    prev.herdrPane !== next.herdrPane ||
     // Shape completeness only: no caller puts waiting in `meta`, so the sticky
     // merge always falls through to prev. The real emit path is the setters.
     prev.waitingSince !== next.waitingSince

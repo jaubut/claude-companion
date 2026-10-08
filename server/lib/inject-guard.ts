@@ -62,6 +62,7 @@ export type PaneNotReadyReason =
   | "input_not_empty"    // the user (or a lost inject) has text in the box
   | "shortcuts_overlay"  // the "?" shortcuts list under the box
   | "panel_open"         // key hints under the box: a panel has focus
+  | "agent_blocked"      // herdr refused the prompt: an approval/question is up
 
 const DIVIDER_RE = /^[\s▔─━═]{8,}$/
 const REVIEW_PENDING_RE = /Ready to submit your answers\?/

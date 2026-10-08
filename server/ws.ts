@@ -169,7 +169,12 @@ export const websocket: WebSocketHandler<WsData> = {
           const { cleared } = clearWaitingForTarget(target, "turn-end")
           announceWaiting(cleared)
           const res = await injectConfirmed(msg.text.trim(), target ?? undefined)
-          if (!res.ok && res.error === "not_submitted") {
+          if (!res.ok && res.error === "pane_not_ready") {
+            // herdr: the agent is at an approval/question — same frame as the
+            // pre-inject refusal above.
+            companionLog(`${red}ws inject refused${reset} — ${target?.label || target?.key} herdr agent blocked`)
+            try { ws.send(JSON.stringify({ type: "inject_error", error: res.error, key: msg.key, cwd: msg.cwd, reason: res.reason, excerpt: res.excerpt })) } catch { /* ignore */ }
+          } else if (!res.ok && res.error === "not_submitted") {
             // Every client, so whichever phone shows the bubble marks it undelivered.
             broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? msg.key, cwd: target?.cwd ?? msg.cwd, text: msg.text.trim(), excerpt: res.excerpt })
           } else if (!res.ok) {
