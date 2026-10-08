@@ -30,6 +30,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 431 | lib | 11 |  |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
+| `lib/receipt-qa-worker.ts` | 404 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
@@ -37,7 +38,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/dispatch-poller.ts` | 375 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `lib/submit-confirm.ts` | 375 | lib | 19 | state: watches: Set, paneLocks: Map |
-| `lib/receipt-qa-worker.ts` | 368 | lib | 13 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/body-investigate-engine.ts` | 367 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `wiring/resolver.ts` | 362 | lib | 13 |  |
@@ -92,7 +92,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/command.ts` | 202 | route-host | 1 | routes: 2 |
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
-| `lib/receipt-jev.ts` | 197 | lib | 14 | state: let chartCache |
+| `lib/receipt-jev.ts` | 198 | lib | 14 | state: let chartCache |
 | `lib/resolver-fix.ts` | 197 | lib | 14 | state: PROTECTED: Set |
 | `lib/dialog-watch.ts` | 196 | lib | 5 |  |
 | `routes/trips.ts` | 194 | lib | 5 |  |
