@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-07",
+  "generatedAt": "2026-10-08",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -2731,13 +2731,14 @@
         },
         {
           "path": "lib/receipt-checks.ts",
-          "lines": 188,
+          "lines": 191,
           "kind": "lib",
           "exports": [
             "TPS_RATE",
             "TVQ_RATE",
             "MAX_AGE_DAYS",
             "ALWAYS_PERSONAL",
+            "NOT_CLASSIFIABLE",
             "BASE_CHART",
             "BOOKS_RULES",
             "parseMoney",
@@ -2771,7 +2772,7 @@
         },
         {
           "path": "lib/receipt-jev.ts",
-          "lines": 165,
+          "lines": 171,
           "kind": "lib",
           "exports": [
             "JEV_AGREE_MIN",
@@ -2847,7 +2848,7 @@
         },
         {
           "path": "lib/receipt-qa-worker.ts",
-          "lines": 308,
+          "lines": 321,
           "kind": "lib",
           "exports": [
             "MAX_ATTEMPTS",
@@ -2891,7 +2892,7 @@
         },
         {
           "path": "lib/receipt-sonnet.ts",
-          "lines": 138,
+          "lines": 140,
           "kind": "lib",
           "exports": [
             "PATCH_ALLOWLIST",
@@ -8866,6 +8867,13 @@
             "lib/receipt-checks.ts",
             "lib/receipt-jev.ts",
             "lib/receipt-qa-worker.ts",
+            "lib/receipt-sonnet.ts"
+          ]
+        },
+        "NOT_CLASSIFIABLE": {
+          "module": "lib/receipt-checks.ts",
+          "callers": [
+            "lib/receipt-jev.ts",
             "lib/receipt-sonnet.ts"
           ]
         },
