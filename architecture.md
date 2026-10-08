@@ -26,6 +26,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
 | `routes/api.ts` | 461 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
+| `lib/voice-memo.ts` | 457 | lib | 25 | state: let tdb |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `routes/orchestrator.ts` | 434 | route-host | 3 | routes: 10 |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
@@ -38,17 +39,16 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/dispatch-poller.ts` | 375 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `lib/body-investigate-engine.ts` | 367 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
+| `routes/capture.ts` | 367 | lib | 7 |  |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `wiring/resolver.ts` | 362 | lib | 13 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
-| `lib/voice-memo.ts` | 351 | lib | 22 |  |
 | `lib/tmux-pane.ts` | 346 | lib | 25 |  |
 | `wiring/triage.ts` | 343 | lib | 9 | state: let liveResolver, let live |
 | `lib/trip-classify.ts` | 340 | lib | 31 |  |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/live.ts` | 329 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
 | `lib/triage-engine.ts` | 325 | lib | 8 | emits: orchestrator_triage |
-| `routes/capture.ts` | 323 | lib | 6 |  |
 | `lib/receipt-qa-worker.ts` | 321 | lib | 12 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
@@ -139,9 +139,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `wiring/body-fix.ts` | 113 | lib | 4 | state: let deps · emits: orchestrator_channel |
+| `companion-server.ts` | 109 | route-host | 1 | routes: 5 |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
-| `companion-server.ts` | 104 | route-host | 1 | routes: 5 |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `lib/orchestrator-db.ts` | 99 | lib | 2 |  |
