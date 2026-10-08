@@ -25,6 +25,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage.ts` | 487 | lib | 44 | state: DESTRUCTIVE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
+| `lib/voice-memo.ts` | 466 | lib | 25 | state: let tdb |
 | `routes/api.ts` | 461 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/command-list.ts` | 455 | lib | 21 |  |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
@@ -36,20 +37,19 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
+| `routes/capture.ts` | 385 | lib | 7 |  |
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/dispatch-poller.ts` | 375 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `lib/body-investigate-engine.ts` | 367 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `wiring/resolver.ts` | 362 | lib | 13 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
-| `lib/voice-memo.ts` | 351 | lib | 22 |  |
 | `lib/tmux-pane.ts` | 346 | lib | 25 |  |
 | `wiring/triage.ts` | 343 | lib | 9 | state: let liveResolver, let live |
 | `lib/trip-classify.ts` | 340 | lib | 31 |  |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/live.ts` | 329 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
 | `lib/triage-engine.ts` | 325 | lib | 8 | emits: orchestrator_triage |
-| `routes/capture.ts` | 323 | lib | 6 |  |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
@@ -139,9 +139,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `wiring/body-fix.ts` | 113 | lib | 4 | state: let deps · emits: orchestrator_channel |
+| `companion-server.ts` | 110 | route-host | 1 | routes: 5 |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
-| `companion-server.ts` | 104 | route-host | 1 | routes: 5 |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `lib/orchestrator-db.ts` | 99 | lib | 2 |  |
@@ -347,13 +347,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `dialogWatcher()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/status`, `routes/command.ts#POST /api/command/suggest`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
 | `dispatchWiring()` | `wiring/dispatch.ts` | `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/body-fix.ts`, `wiring/front-door.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/triage.ts` |
 | `summarize()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/approval-history-auto.ts`, `lib/approval-history.ts`, `lib/codex-feed.ts`, `lib/question-hook.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `wiring/events.ts` |
+| `companionDbPath()` | `lib/db-path.ts` | `lib/approval-history.ts`, `lib/learned-allow.ts`, `lib/orchestrator-db.ts`, `lib/push-tokens.ts`, `lib/receipt-qa-store.ts`, `lib/session-titles.ts`, `lib/voice-memo.ts`, `wiring/auto-compact.ts` |
 | `paneKey()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts`, `wiring/dialogs.ts` |
 | `vaultUpstream()` | `lib/vault-upstream.ts` | `lib/receipt-qa-worker.ts`, `lib/records-expiry.ts`, `lib/secret-store.ts`, `routes/capture.ts`, `routes/records.ts`, `routes/trips.ts`, `routes/vault.ts`, `wiring/trips.ts` |
 | `HOST_INFO()` | `state.ts` | `routes/api.ts#* /api/status`, `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts`, `wiring/triage.ts`, `ws.ts` |
 | `autoCompactor()` | `wiring/auto-compact.ts` | `routes/auto-compact.ts#GET /api/auto-compact`, `routes/auto-compact.ts#POST /api/auto-compact/test`, `routes/auto-compact.ts#POST /api/auto-compact/cancel`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end`, `wiring/gauge.ts` |
 | `cwdFromPayload()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `metaFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
-| `companionDbPath()` | `lib/db-path.ts` | `lib/approval-history.ts`, `lib/learned-allow.ts`, `lib/orchestrator-db.ts`, `lib/push-tokens.ts`, `lib/receipt-qa-store.ts`, `lib/session-titles.ts`, `wiring/auto-compact.ts` |
 | `localBodyHost()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `routes/resolver.ts#GET /api/resolver/has-repo`, `wiring/body-agent.ts`, `wiring/body-fix.ts`, `wiring/body-investigate.ts`, `wiring/resolver-peer.ts`, `wiring/resolver.ts` |
 | `PaneRef()` | `lib/tmux-pane.ts` | `lib/discover.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/question-hook.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/model.ts` |
 | `DispatchTask()` | `lib/dispatch-tasks.ts` | `lib/dispatch-mirror.ts`, `lib/dispatch-poller.ts`, `lib/status-answer.ts`, `lib/triage-sources.ts`, `routes/orchestrator.ts`, `wiring/live.ts`, `wiring/triage.ts` |

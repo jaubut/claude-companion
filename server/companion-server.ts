@@ -15,7 +15,7 @@ import { handleBodyRoute } from "./routes/body"
 import { handleResolverRoute } from "./routes/resolver"
 import { handleVaultRoute } from "./routes/vault"
 import { handleRecordsRoute } from "./routes/records"
-import { handleCaptureRoute } from "./routes/capture"
+import { VOICE_UPLOAD_PATH, handleCaptureRoute } from "./routes/capture"
 import { handleTripsRoute } from "./routes/trips"
 import { handleAutoCompactRoute } from "./routes/auto-compact"
 import { handleGaugeRoute } from "./routes/gauge"
@@ -31,6 +31,8 @@ import { waitForFirstDiscovery } from "./lib/discover"
 // treats init's `sessions` as authoritative, so an init sent before discovery
 // finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
 const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
+// Above the 150 s upstream timeout the forwarding host waits on.
+const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 
@@ -60,6 +62,10 @@ export function createCompanionServer(port: number) {
       if (isStateMutation && !isHookCall && !isHealth && !checkBearer(req)) {
         return unauthorized()
       }
+      // A one-shot voice upload streams ~50 chunks + finalize (Deepgram) to the
+      // dashboard before replying — far past Bun's 10 s idle default. After the
+      // gate: unauthenticated callers keep the default.
+      if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
 
       // ── Public liveness probe ──
       // Used by the hook scripts to skip the 300s wait when the server is

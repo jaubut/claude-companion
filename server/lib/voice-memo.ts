@@ -2,6 +2,10 @@ import {
   DashboardKeyMissing, DashboardUnreachable, type DashReply, createNote, fetchInboxAudio, finalizeRecording,
   getInboxEntry, getNote, listInbox, listNotesLite, patchInbox, postRecordingChunk, startRecording, transcribeInbox,
 } from "./dashboard-client"
+import { Database } from "bun:sqlite"
+import { mkdirSync } from "node:fs"
+import { dirname } from "node:path"
+import { companionDbPath } from "./db-path"
 import { companionLog } from "./log"
 
 // Voice memos in Quick Capture (Jeremie, 2026-10-05), store host side. Audio
@@ -13,6 +17,7 @@ import { companionLog } from "./log"
 export const VOICE_HINT = "voice-memo"
 export const CHUNK_MAX_BYTES = 512 * 1024
 export const TRANSCRIPT_MAX = 50_000
+export const UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 const TITLE_MAX = 200
 const PROJECT_MAX = 200
 const MIME_MAX = 100
@@ -74,6 +79,65 @@ export function toMemo(e: Entry): VoiceMemo {
     id: e.id, filename: e.audio_filename ?? "", created_at: isoUtc(e.created_at),
     transcript: transcriptOf(e.raw_text), status, note_id: status === "validated" && e.result_id ? e.result_id : null,
   }
+}
+
+// ── On-device transcripts ──
+// One-shot uploads carry the iPhone's own transcript. The dashboard has no way
+// to store it (its finalize auto-runs Deepgram into raw_text), so it lives
+// here, keyed by inbox id, and wins over raw_text when a memo is read.
+
+let tdb: Database | null = null
+function transcripts(): Database {
+  if (tdb) return tdb
+  const path = companionDbPath()
+  mkdirSync(dirname(path), { recursive: true })
+  tdb = new Database(path)
+  tdb.exec("PRAGMA busy_timeout = 3000") // companion.db is shared with other stores
+  tdb.exec("CREATE TABLE IF NOT EXISTS voice_memo_transcripts (inbox_id INTEGER PRIMARY KEY, transcript TEXT NOT NULL, created_at INTEGER NOT NULL)")
+  return tdb
+}
+
+function deviceTranscript(id: number): string | null {
+  const row = transcripts().query("SELECT transcript FROM voice_memo_transcripts WHERE inbox_id = ?").get(id) as { transcript: string } | null
+  return row?.transcript || null
+}
+
+// Best-effort: called after an irreversible dashboard step, so a local SQLite
+// error must never turn a committed upload/validation into an error reply.
+function saveTranscript(id: number, transcript: string): boolean {
+  try {
+    transcripts().query("INSERT OR REPLACE INTO voice_memo_transcripts (inbox_id, transcript, created_at) VALUES (?, ?, ?)").run(id, transcript, Date.now())
+    return true
+  } catch {
+    companionLog(`voice #${id} transcript store failed`)
+    return false
+  }
+}
+
+function dropTranscript(id: number): void {
+  try { transcripts().query("DELETE FROM voice_memo_transcripts WHERE inbox_id = ?").run(id) } catch { /* orphan row is harmless */ }
+}
+
+function withDeviceTranscript(m: VoiceMemo): VoiceMemo {
+  let t: string | null = null
+  try { t = deviceTranscript(m.id) } catch { companionLog(`voice #${m.id} transcript read failed`) }
+  return t ? { ...m, transcript: t } : m
+}
+
+// ISO-BMFF major brands that hold audio. mp42/isom are generic (a voice
+// memo may carry them); qt/heic/heix/mif1/msf1 (video, images) are refused.
+const AUDIO_BRANDS = ["M4A ", "M4B ", "M4P ", "mp42", "isom"]
+
+/** Container from the first bytes — the client's declared type is not trusted. */
+export function sniffAudio(b: Uint8Array): string | null {
+  const ascii = (at: number, s: string): boolean => [...s].every((c, i) => b[at + i] === c.charCodeAt(0))
+  if (b.length < 12) return null
+  if (ascii(4, "ftyp")) return AUDIO_BRANDS.some((brand) => ascii(8, brand)) ? "audio/mp4" : null
+  if (ascii(0, "RIFF") && ascii(8, "WAVE")) return "audio/wav"
+  if (ascii(0, "ID3")) return "audio/mpeg"
+  if (b[0] === 0xff && (b[1]! & 0xf6) === 0xf0) return "audio/aac" // ADTS: layer bits 00
+  if (b[0] === 0xff && (b[1]! & 0xe0) === 0xe0 && (b[1]! & 0x06) !== 0) return "audio/mpeg" // MPEG frame sync
+  return null
 }
 
 /** GET /api/inbox/:id on the dashboard → the row, or the contract error. */
@@ -208,7 +272,49 @@ export function voiceTranscribe(id: number): Promise<Outcome> {
       companionLog(`voice #${id} transcribe refused (HTTP ${r.status})`)
       return fail(502, "transcribe_failed")
     }
-    return done({ transcript: transcriptOf(raw) })
+    const transcript = transcriptOf(raw)
+    if (transcript !== null && !got.entry.processed) dropTranscript(id) // the fresh run wins over the stale on-device text; a validated memo keeps what was validated
+    return done({ transcript })
+  })
+}
+
+/**
+ * One-shot upload: the whole file + the on-device transcript. Same dashboard
+ * store as the chunked flow (start → 512 KB chunks → finalize), so the memo is
+ * an ordinary pending voice-memo row afterwards.
+ */
+export function voiceUpload(bytes: Uint8Array, transcriptRaw: string): Promise<Outcome> {
+  if (bytes.byteLength === 0) return Promise.resolve(fail(400, "audio_required"))
+  if (bytes.byteLength > UPLOAD_MAX_BYTES) return Promise.resolve(fail(400, "audio_too_large", { message: `max ${UPLOAD_MAX_BYTES} bytes` }))
+  const mime = sniffAudio(bytes)
+  if (!mime) return Promise.resolve(fail(400, "bad_audio_type", { message: "m4a, aac, wav or mp3" }))
+  const transcript = transcriptRaw.trim()
+  if (transcript.length > TRANSCRIPT_MAX) return Promise.resolve(fail(400, "transcript_too_long", { message: `max ${TRANSCRIPT_MAX} characters` }))
+  return guarded(async () => {
+    const s = await startRecording(mime, VOICE_HINT)
+    const id = s.json?.id
+    const filename = s.json?.filename
+    if (!okReply(s) || typeof id !== "number" || typeof filename !== "string") {
+      companionLog(`voice upload start refused (HTTP ${s.status})`)
+      return fail(502, "dashboard_error")
+    }
+    // Any failure past start → discard the row, so no audio-less memo sits pending.
+    const abandon = async (): Promise<void> => { await patchInbox(id, "discarded").catch(() => null) }
+    try {
+      for (let seq = 0, off = 0; off < bytes.byteLength; seq++, off += CHUNK_MAX_BYTES) {
+        const c = await postRecordingChunk(id, seq, Buffer.from(bytes.subarray(off, off + CHUNK_MAX_BYTES)).toString("base64"))
+        if (!okReply(c)) throw new DashboardUnreachable(c.status, `chunk ${seq}`)
+      }
+      const f = await finalizeRecording(id)
+      if (!okReply(f)) throw new DashboardUnreachable(f.status, "finalize")
+    } catch (e) {
+      companionLog(`voice upload #${id} refused mid-way, discarded`)
+      await abandon()
+      throw e
+    }
+    const stored = transcript ? saveTranscript(id, transcript) : true
+    companionLog(`voice upload → #${id} (${bytes.byteLength} B, ${mime})`)
+    return done({ id, filename, bytes: bytes.byteLength, status: "pending", transcript: transcript && stored ? transcript : null })
   })
 }
 
@@ -223,7 +329,7 @@ export function voiceList(status: string): Promise<Outcome> {
       .filter((v): v is Record<string, unknown> => !!v && typeof v === "object")
       .map(toEntry)
       .filter((e) => e.type_hint === VOICE_HINT && !e.processed)
-      .map(toMemo)
+      .map((e) => withDeviceTranscript(toMemo(e)))
     return done({ items })
   })
 }
@@ -231,7 +337,7 @@ export function voiceList(status: string): Promise<Outcome> {
 export function voiceGet(id: number): Promise<Outcome> {
   return guarded(async () => {
     const got = await memoEntry(id)
-    return "error" in got ? got.error : done({ item: toMemo(got.entry) })
+    return "error" in got ? got.error : done({ item: withDeviceTranscript(toMemo(got.entry)) })
   })
 }
 
@@ -286,7 +392,14 @@ export function voiceValidate(id: number, body: Record<string, unknown>): Promis
     const got = await memoEntry(id)
     if ("error" in got) return got.error
     const e = got.entry
-    if (e.processed) return e.result_id === "discarded" ? fail(409, "already_discarded") : done({ note_id: e.result_id })
+    if (e.processed) {
+      if (e.result_id === "discarded") return fail(409, "already_discarded")
+      // A retry only re-stores a write lost after the first commit — never overwrites what was validated.
+      let stored: string | null = null
+      try { stored = deviceTranscript(id) } catch { /* treat as missing */ }
+      if (stored === null) saveTranscript(id, transcript)
+      return done({ note_id: e.result_id })
+    }
     if (e.audio_bytes === null || !e.audio_filename) return fail(409, "not_finalized")
     const projectRef = project ? await resolveProject(project) : null
     if (project && !projectRef) return fail(400, "unknown_project")
@@ -317,6 +430,7 @@ export function voiceValidate(id: number, body: Record<string, unknown>): Promis
       companionLog(`voice #${id} → ${noteId} but inbox mark failed`)
       return fail(502, "mark_failed", { note_id: noteId })
     }
+    saveTranscript(id, transcript) // GET /:id shows what was validated, not the first draft
     companionLog(`voice #${id} validated → ${noteId}`)
     return done({ note_id: noteId })
   })
@@ -329,6 +443,7 @@ export function voiceDiscard(id: number): Promise<Outcome> {
     if (got.entry.processed) return got.entry.result_id === "discarded" ? done({}) : fail(409, "already_validated")
     const r = await patchInbox(id, "discarded")
     if (!okReply(r)) return fail(502, "dashboard_error")
+    dropTranscript(id)
     companionLog(`voice #${id} discarded (audio kept)`)
     return done({})
   })
