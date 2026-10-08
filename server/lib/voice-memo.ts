@@ -92,6 +92,7 @@ function transcripts(): Database {
   const path = companionDbPath()
   mkdirSync(dirname(path), { recursive: true })
   tdb = new Database(path)
+  tdb.exec("PRAGMA busy_timeout = 3000") // companion.db is shared with other stores
   tdb.exec("CREATE TABLE IF NOT EXISTS voice_memo_transcripts (inbox_id INTEGER PRIMARY KEY, transcript TEXT NOT NULL, created_at INTEGER NOT NULL)")
   return tdb
 }
@@ -101,12 +102,25 @@ function deviceTranscript(id: number): string | null {
   return row?.transcript || null
 }
 
-function saveTranscript(id: number, transcript: string): void {
-  transcripts().query("INSERT OR REPLACE INTO voice_memo_transcripts (inbox_id, transcript, created_at) VALUES (?, ?, ?)").run(id, transcript, Date.now())
+// Best-effort: called after an irreversible dashboard step, so a local SQLite
+// error must never turn a committed upload/validation into an error reply.
+function saveTranscript(id: number, transcript: string): boolean {
+  try {
+    transcripts().query("INSERT OR REPLACE INTO voice_memo_transcripts (inbox_id, transcript, created_at) VALUES (?, ?, ?)").run(id, transcript, Date.now())
+    return true
+  } catch {
+    companionLog(`voice #${id} transcript store failed`)
+    return false
+  }
+}
+
+function dropTranscript(id: number): void {
+  try { transcripts().query("DELETE FROM voice_memo_transcripts WHERE inbox_id = ?").run(id) } catch { /* orphan row is harmless */ }
 }
 
 function withDeviceTranscript(m: VoiceMemo): VoiceMemo {
-  const t = deviceTranscript(m.id)
+  let t: string | null = null
+  try { t = deviceTranscript(m.id) } catch { companionLog(`voice #${m.id} transcript read failed`) }
   return t ? { ...m, transcript: t } : m
 }
 
@@ -292,9 +306,9 @@ export function voiceUpload(bytes: Uint8Array, transcriptRaw: string): Promise<O
       await abandon()
       throw e
     }
-    if (transcript) saveTranscript(id, transcript)
+    const stored = transcript ? saveTranscript(id, transcript) : true
     companionLog(`voice upload → #${id} (${bytes.byteLength} B, ${mime})`)
-    return done({ id, filename, bytes: bytes.byteLength, status: "pending", transcript: transcript || null })
+    return done({ id, filename, bytes: bytes.byteLength, status: "pending", transcript: transcript && stored ? transcript : null })
   })
 }
 
@@ -372,7 +386,11 @@ export function voiceValidate(id: number, body: Record<string, unknown>): Promis
     const got = await memoEntry(id)
     if ("error" in got) return got.error
     const e = got.entry
-    if (e.processed) return e.result_id === "discarded" ? fail(409, "already_discarded") : done({ note_id: e.result_id })
+    if (e.processed) {
+      if (e.result_id === "discarded") return fail(409, "already_discarded")
+      saveTranscript(id, transcript) // a retry re-stores a write lost after the first commit
+      return done({ note_id: e.result_id })
+    }
     if (e.audio_bytes === null || !e.audio_filename) return fail(409, "not_finalized")
     const projectRef = project ? await resolveProject(project) : null
     if (project && !projectRef) return fail(400, "unknown_project")
@@ -416,6 +434,7 @@ export function voiceDiscard(id: number): Promise<Outcome> {
     if (got.entry.processed) return got.entry.result_id === "discarded" ? done({}) : fail(409, "already_validated")
     const r = await patchInbox(id, "discarded")
     if (!okReply(r)) return fail(502, "dashboard_error")
+    dropTranscript(id)
     companionLog(`voice #${id} discarded (audio kept)`)
     return done({})
   })

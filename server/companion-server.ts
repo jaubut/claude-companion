@@ -15,7 +15,7 @@ import { handleBodyRoute } from "./routes/body"
 import { handleResolverRoute } from "./routes/resolver"
 import { handleVaultRoute } from "./routes/vault"
 import { handleRecordsRoute } from "./routes/records"
-import { handleCaptureRoute } from "./routes/capture"
+import { VOICE_UPLOAD_PATH, handleCaptureRoute } from "./routes/capture"
 import { handleTripsRoute } from "./routes/trips"
 import { handleAutoCompactRoute } from "./routes/auto-compact"
 import { handleGaugeRoute } from "./routes/gauge"
@@ -31,6 +31,8 @@ import { waitForFirstDiscovery } from "./lib/discover"
 // treats init's `sessions` as authoritative, so an init sent before discovery
 // finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
 const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
+// Above the 150 s upstream timeout the forwarding host waits on.
+const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 
@@ -46,6 +48,9 @@ export function createCompanionServer(port: number) {
       // TCP peer for the vault's network gate and the resolve/WS audit log
       // (routes only get req + url). Weak map: dies with the Request.
       recordPeer(req, server.requestIP(req)?.address)
+      // A one-shot voice upload streams ~50 chunks + finalize (Deepgram) to the
+      // dashboard before replying — far past Bun's 10 s idle default.
+      if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
