@@ -274,3 +274,21 @@ describe("injectRefusal — pane_not_ready", () => {
     expect(injectRefusal({ ...at, paneFree: false, pane: HELP })?.error).toBe("busy_flow")
   })
 })
+
+describe("pane_too_narrow", () => {
+  test("a pane under 40 columns is refused with its width, even with an empty box", () => {
+    expect(injectRefusal({ lookup: "k", target: session(), paneFree: true, pane: IDLE, paneWidth: 11 }))
+      .toEqual({ error: "pane_too_narrow", width: 11 })
+  })
+
+  test("40+ columns, or an unknown width, falls through to the pane check", () => {
+    expect(injectRefusal({ lookup: "k", target: session(), paneFree: true, pane: IDLE, paneWidth: 40 })).toBeNull()
+    expect(injectRefusal({ lookup: "k", target: session(), paneFree: true, pane: IDLE, paneWidth: null })).toBeNull()
+    expect(injectRefusal({ lookup: "k", target: session(), paneFree: true, pane: IDLE })).toBeNull()
+  })
+
+  test("a dialog still outranks a narrow pane", () => {
+    expect(injectRefusal({ lookup: "k", target: session(), paneFree: true, dialog: dialog(), pane: IDLE, paneWidth: 11 })?.error)
+      .toBe("dialog_open")
+  })
+})

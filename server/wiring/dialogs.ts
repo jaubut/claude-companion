@@ -8,7 +8,7 @@ import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
 import { getPendingQuestions, questionAnsweredRecently } from "../lib/questions"
 import { hasPendingApprovalFor } from "../lib/pty-manager"
 import { isQuestionReview, orphanPickerClosed, raiseOrphanQuestion } from "../lib/orphan-question"
-import { capturePane, paneKey } from "../lib/tmux-pane"
+import { capturePane, paneKey, tmuxPaneWidth } from "../lib/tmux-pane"
 import { markWaiting, unmarkWaiting } from "./waiting"
 
 // Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
@@ -157,4 +157,13 @@ export async function paneSnapshotFor(
 ): Promise<string | null | undefined> {
   if (!target?.tmuxPane) return undefined
   return capturePane(target.tmuxPane, AbortSignal.timeout(PANE_SNAPSHOT_TIMEOUT_MS), { escapes: true, socket: target.tmuxSocket })
+}
+
+// The target's pane width in columns, for the inject guard's pane_too_narrow
+// check. Undefined when there is no tmux pane; null when tmux could not say.
+export async function paneWidthFor(
+  target: { tmuxPane?: string; tmuxSocket?: string } | null | undefined,
+): Promise<number | null | undefined> {
+  if (!target?.tmuxPane) return undefined
+  return tmuxPaneWidth({ pane: target.tmuxPane, socket: target.tmuxSocket ?? "" }, AbortSignal.timeout(PANE_SNAPSHOT_TIMEOUT_MS))
 }

@@ -20,10 +20,11 @@ import { readClaudeSessionFile } from "../lib/discover"
 import { transcriptPath } from "../lib/session-titles"
 import { injectRefusal, paneNotReady } from "../lib/inject-guard"
 import { injectVerified } from "../lib/inject-verified"
-import { paneRefOf } from "../lib/tmux-pane"
+import { paneRefOf, paneTooNarrow } from "../lib/tmux-pane"
+import { broadcast } from "../state"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import { openDialogFor, paneSnapshotFor, yieldPaneForInject } from "./dialogs"
+import { openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "./dialogs"
 
 // Real deps for lib/auto-compact.ts. Two hard rules on the inject:
 //   - only into the session's OWN tmux pane: no pane → "unknown" input state →
@@ -54,6 +55,8 @@ async function inputState(key: string): Promise<InputState> {
   if (!s?.tmuxPane) return "unknown"
   const pane = await paneSnapshotFor(s)
   if (pane === undefined || pane === null) return "unknown"
+  // Too narrow to verify a typed /compact: never armable (inject-verified.ts).
+  if (paneTooNarrow(await paneWidthFor(s))) return "not_ready"
   const reason = paneNotReady(pane)
   if (reason === null) return "empty"
   return reason === "input_not_empty" ? "typing" : "not_ready"
@@ -68,8 +71,12 @@ async function inject(key: string, text: string): Promise<{ ok: boolean; error?:
     lookup: key, target: s, paneFree,
     dialog: paneFree ? await openDialogFor(s) : null,
     pane: paneFree ? await paneSnapshotFor(s) : undefined,
+    paneWidth: paneFree ? await paneWidthFor(s) : undefined,
   })
-  if (refusal) return { ok: false, error: refusal.reason ? `${refusal.error}:${refusal.reason}` : refusal.error }
+  if (refusal) {
+    if (refusal.error === "pane_too_narrow") companionLog(`auto-compact refused → ${key}: pane ${refusal.width} cols wide`)
+    return { ok: false, error: refusal.reason ? `${refusal.error}:${refusal.reason}` : refusal.error }
+  }
   // Typed in stages (never pasted: a pasted slash command does not run) +
   // read-back, Enter only if the input starts with `/compact keep:`
   // (lib/inject-verified.ts). tmux only, never the osascript fallback.
@@ -77,7 +84,13 @@ async function inject(key: string, text: string): Promise<{ ok: boolean; error?:
   if (!ref) return { ok: false, error: "no_tmux_pane" }
   const res = await injectVerified(ref, text)
   if (res.ok) return { ok: true }
-  await push("failed", { key, name: s.title || s.label || key, sessionId: s.sessionId || "", transcriptPath: "", cwd: s.cwd }, "Compact failed", `${s.title || s.label || key}: the /compact command did not land (${res.error}); nothing was submitted.`)
+  // Text left in the box blocks every later inject (input_not_empty): say so
+  // on every client, not only in the log.
+  if (res.residue) {
+    broadcast({ type: "inject_error", error: "residue_left", key, cwd: s.cwd, excerpt: res.seen })
+  }
+  const residue = res.residue ? " Text is still in the input box — clear it by hand." : ""
+  await push("failed", { key, name: s.title || s.label || key, sessionId: s.sessionId || "", transcriptPath: "", cwd: s.cwd }, "Compact failed", `${s.title || s.label || key}: the /compact command did not land (${res.error}); nothing was submitted.${residue}`)
   return { ok: false, error: res.error }
 }
 
