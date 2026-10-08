@@ -114,12 +114,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/vault.ts` | 162 | lib | 1 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/body-fix.ts` | 155 | lib | 11 |  |
+| `lib/herdr.ts` | 155 | lib | 14 | state: let clientMod, spawnedAgents: Map |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/feed.ts` | 149 | lib | 10 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `lib/resolver-prompt.ts` | 147 | lib | 7 |  |
-| `lib/herdr.ts` | 146 | lib | 13 | state: let clientMod, spawnedAgents: Map |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
 | `lib/jev.ts` | 143 | lib | 16 |  |
