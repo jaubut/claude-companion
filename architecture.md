@@ -37,10 +37,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/dispatch-poller.ts` | 375 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `lib/submit-confirm.ts` | 375 | lib | 19 | state: watches: Set, paneLocks: Map |
+| `lib/receipt-qa-worker.ts` | 368 | lib | 13 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/body-investigate-engine.ts` | 367 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `wiring/resolver.ts` | 362 | lib | 13 |  |
-| `lib/receipt-qa-worker.ts` | 359 | lib | 13 | state: let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/voice-memo.ts` | 351 | lib | 22 |  |
 | `wiring/triage.ts` | 343 | lib | 9 | state: let liveResolver, let live |
@@ -92,9 +92,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/command.ts` | 202 | route-host | 1 | routes: 2 |
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
+| `lib/receipt-jev.ts` | 197 | lib | 14 | state: let chartCache |
 | `lib/resolver-fix.ts` | 197 | lib | 14 | state: PROTECTED: Set |
 | `lib/dialog-watch.ts` | 196 | lib | 5 |  |
-| `lib/receipt-jev.ts` | 195 | lib | 14 | state: let chartCache |
 | `routes/trips.ts` | 194 | lib | 5 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/trip-dashboard.ts` | 190 | lib | 17 |  |
