@@ -1,11 +1,11 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { DashboardKeyMissing, DashboardUnreachable, type DashReply, fetchReceiptFile, patchExpense } from "./dashboard-client"
+import { DashboardKeyMissing, DashboardUnreachable, type DashReply, fetchReceiptFile, officeDistance, patchExpense } from "./dashboard-client"
 import { companionLog } from "./log"
-import { type DupQuery, checkDuplicate, codeChecks } from "./receipt-checks"
+import { type DupQuery, MEAL_ADDRESS_UNRESOLVED, MEAL_TRAVEL_KM, checkDuplicate, codeChecks, mealCodeForKm } from "./receipt-checks"
 import { localCopyPath, qaDir, removeLocalCopy } from "./receipt-capture"
-import { type ChartEntry, type ChartQuery, type JevVerdict, askJev, decideJev, loadChart } from "./receipt-jev"
+import { type ChartEntry, type ChartQuery, type JevDecision, type JevVerdict, type MealRule, askJev, decideJev, loadChart, mealRuleApplies } from "./receipt-jev"
 import { type ExpenseFields, type QaChange, type QaIssue, type QaRow, type QaStatus, getQaRow, nextDue, nextWakeAt, defer, setImagePath, transition } from "./receipt-qa-store"
 import { type SonnetRunner, buildPrompt, parseAnswer, runSonnetCli, validatePatch } from "./receipt-sonnet"
 import { tursoQuery } from "./turso"
@@ -17,6 +17,9 @@ import { vaultUpstream } from "./vault-upstream"
 // the row moves on with an issue naming what was unavailable.
 // Kill switch COMPANION_RECEIPT_QA=off: rows stay `queued`, saves still work.
 // Jev fills a BLANK category_code itself (conf ≥ 0.9, receipt clean, no flag).
+// Business meals: the dashboard office-distance endpoint decides the code
+// (> 50 km → 5216, ≤ 50 km → 5776, by:"rule"); unresolved → to_review;
+// endpoint down → retried, then unresolved; endpoint not deployed (404) → old Jev path.
 // Every edit made here or by the phone is appended to
 // ~/.config/tls-agent/receipt-qa-audit.jsonl {ts, expense_id, by, field, from, to, reason}.
 
@@ -29,12 +32,19 @@ const DUPLICATE = "possible duplicate"
 
 class Transient extends Error {}
 
+/** Office-distance answer: km, or why there is none. Throws when the endpoint is unreachable. */
+export type OfficeDistance = { km: number } | { km: null; reason: string }
+
+/** The dashboard has no office-distance endpoint (404, no `{km}` body): the meal rule is not live yet. */
+export class OfficeDistanceMissing extends Error {}
+
 export interface WorkerDeps {
   dupQuery: DupQuery
   chartQuery: ChartQuery
   jev: (f: ExpenseFields, chart: ChartEntry[]) => Promise<JevVerdict | null>
   sonnet: SonnetRunner
   patch: (id: string, fields: Record<string, string>) => Promise<DashReply>
+  officeDistance: (address: string) => Promise<OfficeDistance>
   fetchReceipt: (filename: string) => Promise<{ bytes: Uint8Array; mime: string } | null>
   now: () => number
 }
@@ -44,6 +54,15 @@ const defaultDupQuery: DupQuery = async (date, excludeId) => {
   return rows.map((r) => ({ id: String(r.id ?? ""), merchant: String(r.merchant ?? ""), total: String(r.total ?? "") }))
 }
 
+const defaultOfficeDistance = async (address: string): Promise<OfficeDistance> => {
+  const r = await officeDistance(address)
+  if (r.status === 404 && !(r.json && "km" in r.json)) throw new OfficeDistanceMissing("office-distance endpoint not deployed")
+  const km = r.json?.km
+  if (r.status >= 200 && r.status < 300 && typeof km === "number" && Number.isFinite(km) && km >= 0) return { km }
+  const reason = r.json?.reason
+  return { km: null, reason: typeof reason === "string" && reason ? reason.slice(0, 120) : `http ${r.status}` }
+}
+
 /** Test seam: swap any dependency. */
 export const workerDeps: WorkerDeps = {
   dupQuery: defaultDupQuery,
@@ -51,6 +70,7 @@ export const workerDeps: WorkerDeps = {
   jev: askJev,
   sonnet: runSonnetCli,
   patch: patchExpense,
+  officeDistance: defaultOfficeDistance,
   fetchReceipt: fetchReceiptFile,
   now: () => Date.now(),
 }
@@ -86,7 +106,21 @@ function diff(fields: ExpenseFields, patch: Record<string, string>, by: QaChange
     .map(([k, v]) => ({ field: k, from: String(fields[k] ?? ""), to: v, by }))
 }
 
+/** A phone resolve/accept landed while a worker pass awaited: its view of the row is stale. */
+class Superseded extends Error {}
+
+function superseded(row: QaRow): boolean {
+  return getQaRow(row.expense_id)?.status !== row.status
+}
+
+/** Before a worker PATCH: never write over a row the human already settled. */
+function assertCurrent(row: QaRow): void {
+  if (superseded(row)) throw new Superseded(row.expense_id)
+}
+
 function settle(row: QaRow, status: QaStatus, extra: Parameters<typeof transition>[2] = {}): void {
+  // Worker settles only the row it loaded; the human's human_done always wins.
+  if (status !== "human_done" && superseded(row)) return companionLog(`receipt-qa ${row.expense_id} superseded, ${status} dropped`)
   const terminal = status === "jev_ok" || status === "sonnet_fixed" || status === "human_done"
   // Fresh read: the Sonnet pass may have cached the dashboard PDF since `row` was loaded.
   if (terminal) removeLocalCopy(getQaRow(row.expense_id)?.image_path ?? row.image_path)
@@ -118,15 +152,76 @@ async function jevPass(row: QaRow): Promise<void> {
   }
   const chart = await loadChart(workerDeps.chartQuery)
   const jev = await workerDeps.jev(row.fields, chart).catch(() => null)
-  const d = decideJev(row.fields, issues, jev)
+  const meal = mealRuleApplies(row.fields, jev) ? await mealRule(row) : undefined
+  const d = decideJev(row.fields, issues, jev, meal)
+  // office_km persists the rule's ownership of the code, even when nothing was patched.
+  const km = meal && "km" in meal ? { office_km: meal.km } : null
+  if (meal && "km" in meal) ownedKm.set(row.expense_id, meal.km)
+  const jevJson = jev || km ? { ...jev, ...km } : null
+  if (d.rule && meal && "km" in meal) return ruleSet(row, d, d.rule, meal.km, jevJson)
   if (d.fill && jev) return jevFill(row, d.fill, jev)
   if (d.clear) return jevClear(row, d.status, d.issues, jev)
-  settle(row, d.status, { issues: d.issues, jev: jev ? { ...jev } : null })
+  settle(row, d.status, { issues: d.issues, jev: jevJson })
+}
+
+/**
+ * Office distance for a meal's extracted address. No address / no km → unresolved.
+ * Endpoint not deployed (404) → undefined: the rule is not live, the old Jev path decides.
+ * Unreachable / 5xx / no key → Transient while attempts remain, then unresolved.
+ */
+async function mealRule(row: QaRow): Promise<MealRule | undefined> {
+  const address = String(row.fields.address ?? "").trim()
+  if (!address) return { unresolved: "no address on the receipt" }
+  try {
+    const d = await workerDeps.officeDistance(address)
+    return d.km === null ? { unresolved: d.reason || "address not geocodable" } : { km: d.km, code: mealCodeForKm(d.km) }
+  } catch (e) {
+    if (e instanceof OfficeDistanceMissing) return undefined
+    const transient = e instanceof DashboardUnreachable || e instanceof DashboardKeyMissing
+    if (transient && row.attempts + 1 < MAX_ATTEMPTS) throw new Transient("office-distance unavailable")
+    return { unresolved: "office-distance endpoint unavailable" }
+  }
+}
+
+/** office_km found by this run's jevPass, so the exhaustion path in processOne keeps the rule's ownership. */
+const ownedKm = new Map<string, number>()
+
+/** Book the distance rule's meal code (PATCH + by:"rule" change + audit). */
+async function ruleSet(row: QaRow, d: JevDecision, code: string, km: number, jev: Record<string, unknown> | null): Promise<void> {
+  const changes = diff(row.fields, { category_code: code }, "rule")
+  let saved: boolean
+  try {
+    assertCurrent(row)
+    saved = await applyPatch(row.expense_id, { category_code: code })
+  } catch (e) {
+    if (!(e instanceof Transient) || row.attempts + 1 < MAX_ATTEMPTS) throw e
+    saved = false
+  }
+  // Not saved: the row still carries office_km, so Sonnet can never auto-complete the wrong code.
+  if (!saved) return settle(row, "to_review", { issues: [...d.issues, ruleNotSaved(code)], jev })
+  audit(row.expense_id, "rule", changes, `meal ${km.toFixed(1)} km from office (${km > MEAL_TRAVEL_KM ? ">" : "≤"} ${MEAL_TRAVEL_KM} km)`)
+  settle(row, d.status, { issues: d.issues, jev, fields: { ...row.fields, category_code: code }, changes: [...row.changes, ...changes] })
+}
+
+function ruleNotSaved(code: string): QaIssue {
+  return { field: "category_code", problem: `meal rule code ${code} not saved`, suggestion: code }
+}
+
+function mealAddressUnresolved(row: QaRow): boolean {
+  return row.issues.some((i) => i.problem.startsWith(MEAL_ADDRESS_UNRESOLVED))
+}
+
+/** A meal code decided by the distance rule (patched or already matching), or one it could not resolve, is not Sonnet's to change. */
+function mealCodeLocked(row: QaRow): boolean {
+  return typeof row.jev?.office_km === "number" ||
+    row.changes.some((c) => c.by === "rule" && c.field === "category_code") ||
+    mealAddressUnresolved(row)
 }
 
 /** Book Jev's confident code on a blank expense (PATCH + by:"jev" change + audit). */
 async function jevFill(row: QaRow, code: string, jev: JevVerdict): Promise<void> {
   const changes = diff(row.fields, { category_code: code }, "jev")
+  assertCurrent(row)
   if (!await applyPatch(row.expense_id, { category_code: code })) {
     const issue: QaIssue = { field: "category_code", problem: `dashboard refused Jev's ${code}`, suggestion: code }
     return settle(row, "to_review", { issues: [issue], jev: { ...jev } })
@@ -139,6 +234,7 @@ async function jevFill(row: QaRow, code: string, jev: JevVerdict): Promise<void>
 async function jevClear(row: QaRow, status: QaStatus, issues: QaIssue[], jev: JevVerdict | null): Promise<void> {
   const changes = diff(row.fields, { category_code: "" }, "jev")
   const j = jev ? { ...jev } : null
+  assertCurrent(row)
   if (!await applyPatch(row.expense_id, { category_code: "" })) {
     const issue: QaIssue = { field: "category_code", problem: "dashboard refused clearing the never-pick code" }
     return settle(row, "to_review", { issues: [...issues, issue], jev: j })
@@ -171,6 +267,9 @@ function toHuman(row: QaRow, issues: QaIssue[], extra: Parameters<typeof transit
 
 async function sonnetPass(row: QaRow): Promise<void> {
   if (row.issues.some((i) => i.problem.startsWith(DUPLICATE))) return toHuman(row, row.issues)
+  // The rule's code never reached the dashboard: only a human finishes this row.
+  const km = row.jev?.office_km
+  if (typeof km === "number" && String(row.fields.category_code ?? "") !== mealCodeForKm(km)) return toHuman(row, row.issues)
   const chart = await loadChart(workerDeps.chartQuery)
   const imagePath = await receiptPathFor(row)
   const prompt = buildPrompt({ fields: row.fields, issues: row.issues, jev: row.jev, chart, imagePath })
@@ -184,9 +283,16 @@ async function sonnetPass(row: QaRow): Promise<void> {
   if (!ans.resolved) return toHuman(row, [...row.issues, { field: "sonnet", problem: `unresolved: ${ans.reason || "no reason"}` }])
   const verdict = validatePatch(row.fields, ans.patch, chart)
   if (!verdict.ok) return toHuman(row, [...row.issues, { field: "sonnet", problem: `patch refused: ${verdict.why}` }])
+  const code = verdict.patch.category_code
+  if (code !== undefined && code !== String(row.fields.category_code ?? "") && mealCodeLocked(row)) {
+    return toHuman(row, [...row.issues, { field: "sonnet", problem: "patch refused: meal GL code is decided by office distance" }])
+  }
+  // Sonnet cannot geocode: an unresolved meal address is never auto-completed.
+  if (mealAddressUnresolved(row)) return toHuman(row, row.issues)
   const changes = diff(row.fields, verdict.patch, "sonnet")
   if (changes.length) {
     const patch = Object.fromEntries(changes.map((c) => [c.field, c.to]))
+    assertCurrent(row)
     if (!await applyPatch(row.expense_id, patch)) return toHuman(row, [...row.issues, { field: "sonnet", problem: "dashboard refused the patch" }])
     audit(row.expense_id, "sonnet", changes, ans.reason)
   }
@@ -209,14 +315,23 @@ async function processOne(row: QaRow): Promise<void> {
     if (row.status === "queued") await jevPass(row)
     else if (row.status === "to_review") await sonnetPass(row)
   } catch (e) {
+    if (e instanceof Superseded) return companionLog(`receipt-qa ${row.expense_id} superseded by a human, pass dropped`)
     const attempts = row.attempts + 1
     const reason = e instanceof Error ? e.message : "error"
     if (attempts >= MAX_ATTEMPTS) {
       const issue: QaIssue = { field: "qa", problem: `qa_failed: ${reason.slice(0, 120)}` }
-      return row.status === "queued" ? settle(row, "to_review", { issues: [...row.issues, issue] }) : toHuman(row, [...row.issues, issue])
+      if (row.status !== "queued") return toHuman(row, [...row.issues, issue])
+      // A meal whose distance was found keeps the rule's ownership of the code.
+      const km = ownedKm.get(row.expense_id)
+      if (km === undefined) return settle(row, "to_review", { issues: [...row.issues, issue] })
+      const code = mealCodeForKm(km)
+      const meal = String(row.fields.category_code ?? "") !== code ? [ruleNotSaved(code)] : []
+      return settle(row, "to_review", { issues: [...row.issues, ...meal, issue], jev: { ...row.jev, office_km: km } })
     }
     defer(row.expense_id, attempts, workerDeps.now() + backoff(attempts), reason)
     companionLog(`receipt-qa ${row.expense_id} retry ${attempts}/${MAX_ATTEMPTS} (${e instanceof Transient ? "transient" : "error"})`)
+  } finally {
+    ownedKm.delete(row.expense_id)
   }
 }
 
