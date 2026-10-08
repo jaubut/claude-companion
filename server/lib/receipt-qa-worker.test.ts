@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type JevVerdict, decideJev, resetChartCache } from "./receipt-jev"
 import { type ExpenseFields, type QaItem, getQaRow, insertQueued, onReceiptQa, useReceiptQaDb } from "./receipt-qa-store"
-import { MAX_ATTEMPTS, auditFile, drainReceiptQa, workerDeps } from "./receipt-qa-worker"
+import { DashboardUnreachable } from "./dashboard-client"
+import { MAX_ATTEMPTS, acceptByHuman, auditFile, drainReceiptQa, workerDeps } from "./receipt-qa-worker"
 import { runSonnetCli, validatePatch } from "./receipt-sonnet"
 import { receiptPushPayload, wireReceiptQa } from "../wiring/receipt-qa"
 
@@ -28,6 +29,12 @@ interface Hit { method: string; path: string; key: string | null; auth: string |
 let hits: Hit[] = []
 let jevAnswer: () => Response = () => Response.json({})
 let patchReply: () => Response = () => Response.json({ ok: true })
+// Fake tls-dashboard-v2 POST /api/geo/office-distance (Granby office).
+const GRANBY = "301 rue Notre-Dame, Granby, QC J2G 3L2"
+const MONTREAL = "1234 rue Saint-Denis, Montréal, QC H2X 3J6"
+const OFFICE_KM: Record<string, number> = { [GRANBY]: 1.2, "45 rue Principale, Granby, QC J2G 2T8": 0.8, [MONTREAL]: 82.4 }
+let distanceReply: (address: string) => Response = (address) =>
+  address in OFFICE_KM ? Response.json({ km: OFFICE_KM[address], method: "driving", lat: 45.4, lon: -72.7 }) : Response.json({ km: null, reason: "address not geocodable" })
 let server: ReturnType<typeof Bun.serve>
 
 let sonnetCalls: Array<{ prompt: string; imagePath: string }> = []
@@ -55,6 +62,7 @@ beforeAll(() => {
       const u = new URL(req.url)
       hits.push({ method: req.method, path: u.pathname, key: req.headers.get("x-api-key"), auth: req.headers.get("authorization"), body: await req.text() })
       if (u.pathname === "/jev") return jevAnswer()
+      if (u.pathname === "/api/geo/office-distance" && req.method === "POST") return distanceReply(String(JSON.parse(hits.at(-1)!.body).address ?? ""))
       if (req.method === "PATCH") return patchReply()
       return new Response("nope", { status: 404 })
     },
@@ -87,6 +95,8 @@ beforeEach(() => {
   pushes = []
   jevAnswer = jev("5776", 0.95)
   patchReply = () => Response.json({ ok: true })
+  distanceReply = (address) =>
+    address in OFFICE_KM ? Response.json({ km: OFFICE_KM[address], method: "driving", lat: 45.4, lon: -72.7 }) : Response.json({ km: null, reason: "address not geocodable" })
   Object.assign(workerDeps, realDeps, {
     dupQuery: async () => [],
     chartQuery: async () => [{ code: "5776", name: "Frais de représentation" }, { code: "5216", name: "Travel Expenses" }, { code: "2400", name: "Business MC" }, { code: "5200", name: "Indirect Expenses" }],
@@ -111,7 +121,10 @@ const ID = "accounting/2026-10/2026-10-01-resto-chez-paul"
 const MEAL = {
   merchant: "Resto Chez Paul", date: "2026-10-01", total: "$114.98", subtotal: "$100.00", tps: "$5.00", tvq: "$9.98",
   tip: "", category: "Meals", category_code: "5776", purpose: "Lunch with client Acme about the October shoot", notes: "", currency: "CAD",
+  address: "45 rue Principale, Granby, QC J2G 2T8",
 } satisfies ExpenseFields
+// Not a meal: Jev owns the GL code (the distance rule does not apply).
+const OFFICE = { merchant: "Bureau en Gros", category: "Office", category_code: "5700", purpose: "Printer paper for the studio", address: GRANBY } satisfies ExpenseFields
 
 function seed(fields: ExpenseFields = {}, id = ID): void {
   insertQueued({ expense_id: id, fields: { ...MEAL, ...fields }, receipt_file: "2026-10-01-1.pdf", image_path: "" })
@@ -150,6 +163,12 @@ test("decideJev: meal without trip/client context → to_review (50 km rule)", (
   expect(r.issues[0]!.problem).toContain("50 km")
 })
 
+test("decideJev: category meal (Jev meal noul low) without trip/client context → still gated to_review", () => {
+  const r = decideJev({ ...MEAL, purpose: "lunch" }, [], V("5776", 0.95, { meal: 0.2, trip: 0.1 }), { km: 0.8, code: "5776" })
+  expect(r.status).toBe("to_review")
+  expect(r.issues[0]!.problem).toContain("50 km")
+})
+
 test("decideJev: Jev unavailable → to_review with jev_unavailable", () => {
   expect(decideJev(MEAL, [], null)).toEqual({ status: "to_review", issues: [{ field: "jev", problem: "jev_unavailable" }] })
 })
@@ -175,18 +194,19 @@ test("decideJev: never-pick saved code (5200) counts as blank → filled at ≥ 
 // ── Pass 1 end to end ──
 
 test("Jev fill: blank code + confident + clean → PATCH category_code, by:jev change, audit, jev_ok", async () => {
-  seed({ category_code: "" })
-  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  seed({ ...OFFICE, category_code: "" })
+  jevAnswer = jev("5700", 0.95)
   await drainReceiptQa()
   const row = getQaRow(ID)!
-  expect(row).toMatchObject({ status: "jev_ok", category_code: "5776", issues: [] })
-  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5776", by: "jev" }])
+  expect(row).toMatchObject({ status: "jev_ok", category_code: "5700", issues: [] })
+  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5700", by: "jev" }])
   const patches = hits.filter((h) => h.method === "PATCH")
   expect(patches).toHaveLength(1)
   expect(patches[0]!.key).toBe(DASH_KEY)
-  expect(JSON.parse(patches[0]!.body)).toEqual({ category_code: "5776" })
+  expect(JSON.parse(patches[0]!.body)).toEqual({ category_code: "5700" })
+  expect(hits.some((h) => h.path === "/api/geo/office-distance")).toBe(false) // not a meal
   const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
-  expect(audit).toEqual([expect.objectContaining({ expense_id: ID, by: "jev", field: "category_code", from: "", to: "5776", reason: "jev conf 0.95" })])
+  expect(audit).toEqual([expect.objectContaining({ expense_id: ID, by: "jev", field: "category_code", from: "", to: "5700", reason: "jev conf 0.95" })])
   expect(sonnetCalls).toHaveLength(0)
   expect(frames.map((f) => f.status)).toEqual(["queued", "jev_ok"])
 })
@@ -197,22 +217,22 @@ test("Jev fill refused: grocery flag, conf 0.85, or a non-blank code Jev disagre
   jevAnswer = jev("5700", 0.97)
   await drainReceiptQa()
   expect(getQaRow(`${ID}-g`)!.status).toBe("to_review")
-  seed({ category_code: "" }, `${ID}-l`)
-  jevAnswer = jev("5776", 0.85, { meal: 0.9, trip: 0.9 })
+  seed({ ...OFFICE, category_code: "" }, `${ID}-l`)
+  jevAnswer = jev("5700", 0.85)
   await drainReceiptQa()
-  expect(getQaRow(`${ID}-l`)!.issues[0]).toMatchObject({ field: "category_code", suggestion: "5776" })
-  seed({}, `${ID}-n`) // saved 5776
-  jevAnswer = jev("5216", 0.97, { meal: 0.9, trip: 0.9 })
+  expect(getQaRow(`${ID}-l`)!.issues[0]).toMatchObject({ field: "category_code", suggestion: "5700" })
+  seed(OFFICE, `${ID}-n`) // saved 5700
+  jevAnswer = jev("5783", 0.97)
   await drainReceiptQa()
   const n = getQaRow(`${ID}-n`)!
-  expect(n).toMatchObject({ status: "to_review", category_code: "5776", changes: [] })
+  expect(n).toMatchObject({ status: "to_review", category_code: "5700", changes: [] })
   expect(hits.some((h) => h.method === "PATCH")).toBe(false)
   expect(existsSync(auditFile())).toBe(false)
 })
 
 test("Jev fill: saved never-pick 5200 + Jev 5776@0.96 → 5776 booked, audit shows the replaced code", async () => {
-  seed({ category_code: "5200" })
-  jevAnswer = jev("5776", 0.96, { meal: 0.9, trip: 0.9 })
+  seed({ ...OFFICE, category_code: "5200" }) // not a meal: the distance rule stays out
+  jevAnswer = jev("5776", 0.96)
   await drainReceiptQa()
   expect(getQaRow(ID)!).toMatchObject({ status: "jev_ok", category_code: "5776" })
   const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
@@ -221,13 +241,21 @@ test("Jev fill: saved never-pick 5200 + Jev 5776@0.96 → 5776 booked, audit sho
 
 test("Jev low conf on saved never-pick 5200 → code cleared on the dashboard + audited, to_review", async () => {
   sonnetText = null // keep the row in to_review
-  seed({ category_code: "5200" })
-  jevAnswer = jev("5776", 0.6, { meal: 0.9, trip: 0.9 })
+  seed({ ...OFFICE, category_code: "5200" }) // not a meal: the distance rule stays out
+  jevAnswer = jev("5776", 0.6)
   await drainReceiptQa()
   expect(getQaRow(ID)!).toMatchObject({ status: "to_review", category_code: "", changes: [{ field: "category_code", from: "5200", to: "", by: "jev" }] })
   expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body)).toEqual({ category_code: "" })
   const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
   expect(audit).toEqual([expect.objectContaining({ by: "jev", field: "category_code", from: "5200", to: "" })])
+})
+
+test("meal with saved never-pick 5200 → the distance rule books 5776 (by:rule), no clear", async () => {
+  seed({ category_code: "5200" })
+  jevAnswer = jev("5776", 0.6, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ category_code: "5776", changes: [{ field: "category_code", from: "5200", to: "5776", by: "rule" }] })
+  expect(hits.filter((h) => h.method === "PATCH").map((h) => JSON.parse(h.body))).toEqual([{ category_code: "5776" }])
 })
 
 test("validatePatch: a saved never-pick code is refused even when the patch omits category_code", () => {
@@ -291,11 +319,236 @@ test("Jev pass: duplicate check down → retried with backoff, then reviewed", a
   expect(row.issues).toContainEqual({ field: "total", problem: "duplicate check unavailable" })
 })
 
+// ── Meal GL rule: office distance decides 5216 vs 5776 ──
+
+function auditLines(): Array<Record<string, unknown>> {
+  return readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+}
+
+test("meal rule: Granby address (≤ 50 km) → 5776 set in code, by:rule change + audit", async () => {
+  seed({ category_code: "", address: GRANBY })
+  jevAnswer = jev("5216", 0.97, { meal: 0.9, trip: 0.9 }) // Jev's pick does not decide a meal
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "jev_ok", category_code: "5776", issues: [] })
+  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5776", by: "rule" }])
+  expect(row.jev).toMatchObject({ office_km: 1.2 })
+  const dist = hits.find((h) => h.path === "/api/geo/office-distance")!
+  expect(dist).toMatchObject({ method: "POST", key: DASH_KEY })
+  expect(JSON.parse(dist.body)).toEqual({ address: GRANBY })
+  expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body)).toEqual({ category_code: "5776" })
+  expect(auditLines()).toEqual([expect.objectContaining({ expense_id: ID, by: "rule", field: "category_code", from: "", to: "5776", reason: "meal 1.2 km from office (≤ 50 km)" })])
+})
+
+test("meal rule: phone accept during the distance lookup → human_done kept, no worker PATCH", async () => {
+  seed({ category_code: "5216" })
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  distanceReply = () => {
+    expect(acceptByHuman(ID)).toEqual({ ok: true })
+    return Response.json({ km: 0.8, method: "driving", lat: 45.4, lon: -72.7 })
+  }
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "human_done", category_code: "5216", changes: [] })
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: no trip/client context → code still set by the rule, but to_review (business-purpose gate kept)", async () => {
+  sonnetText = null // keep the row in to_review
+  seed({ category_code: "", address: GRANBY, purpose: "lunch" })
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.1 })
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "to_review", category_code: "5776" })
+  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5776", by: "rule" }])
+  expect(row.issues.map((i) => i.problem)).toEqual(["meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)"])
+})
+
+test("meal rule: Montréal address (> 50 km) → 5216 overrides a saved 5776", async () => {
+  seed({ address: MONTREAL }) // saved 5776
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "jev_ok", category_code: "5216" })
+  expect(row.changes).toEqual([{ field: "category_code", from: "5776", to: "5216", by: "rule" }])
+  expect(auditLines()[0]).toMatchObject({ by: "rule", to: "5216", reason: "meal 82.4 km from office (> 50 km)" })
+})
+
+test("meal rule: meal detected by Jev's noul alone (category not a meal)", async () => {
+  seed({ category: "Other", category_code: "", address: MONTREAL })
+  jevAnswer = jev("5776", 0.95, { meal: 0.8, trip: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "jev_ok", category_code: "5216" })
+})
+
+test("meal rule: missing / ungeocodable address → to_review 'meal address unresolved', no code written", async () => {
+  sonnetText = null // keep rows in to_review
+  jevAnswer = jev("5776", 0.99, { meal: 0.9, trip: 0.9 })
+  seed({ category_code: "", address: "" })
+  await drainReceiptQa()
+  let row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "to_review", category_code: "", changes: [] })
+  expect(row.issues).toEqual([{ field: "address", problem: "meal address unresolved: no address on the receipt" }])
+  expect(hits.some((h) => h.path === "/api/geo/office-distance")).toBe(false)
+
+  seed({ category_code: "", address: "zzz nowhere" }, `${ID}-g`)
+  await drainReceiptQa()
+  row = getQaRow(`${ID}-g`)!
+  expect(row).toMatchObject({ status: "to_review", category_code: "" })
+  expect(row.issues).toEqual([{ field: "address", problem: "meal address unresolved: address not geocodable" }])
+
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+  expect(existsSync(auditFile())).toBe(false)
+})
+
+test("meal rule: endpoint down (5xx / unreachable) → retried, then to_review 'meal address unresolved' after MAX_ATTEMPTS", async () => {
+  sonnetText = null
+  jevAnswer = jev("5776", 0.99, { meal: 0.9, trip: 0.9 })
+  distanceReply = () => new Response("down", { status: 503 })
+  seed({ category_code: "", address: GRANBY })
+  await drainReceiptQa()
+  let row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "queued", attempts: 1, issues: [] })
+  let t = NOW
+  workerDeps.now = () => t
+  for (let i = 1; i < MAX_ATTEMPTS; i++) { t += 3_600_000; await drainReceiptQa() }
+  row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "to_review", category_code: "" })
+  expect(row.issues).toEqual([{ field: "address", problem: "meal address unresolved: office-distance endpoint unavailable" }])
+
+  workerDeps.officeDistance = async () => { throw new DashboardUnreachable(0, "network") }
+  seed({ category_code: "", address: GRANBY }, `${ID}-u`)
+  await drainReceiptQa()
+  expect(getQaRow(`${ID}-u`)!).toMatchObject({ status: "queued", attempts: 1 })
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: endpoint not deployed (404) → old Jev path, jev_ok when Jev agrees, no push", async () => {
+  distanceReply = () => Response.json({ error: "not_found" }, { status: 404 })
+  seed({ address: GRANBY }) // saved 5776
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  let row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "jev_ok", category_code: "5776", issues: [], changes: [] })
+  expect(row.jev?.office_km).toBeUndefined()
+  expect(pushes).toHaveLength(0)
+  // No trip/client context: the old flag, not 'meal address unresolved'.
+  sonnetText = null
+  seed({ address: GRANBY }, `${ID}-f`)
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.1 })
+  await drainReceiptQa()
+  row = getQaRow(`${ID}-f`)!
+  expect(row.status).toBe("to_review")
+  expect(row.issues.map((i) => i.problem)).toEqual(["meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)"])
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: rule PATCH down until exhaustion → to_review 'not saved' with office_km; Sonnet's empty patch → needs_human, never sonnet_fixed", async () => {
+  seed({ address: MONTREAL }) // saved 5776, rule says 5216
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  patchReply = () => new Response("down", { status: 503 })
+  sonnetText = '{"resolved":true,"patch":{},"reason":"looks fine"}'
+  let t = NOW
+  workerDeps.now = () => t
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "queued", attempts: 1 })
+  for (let i = 1; i < MAX_ATTEMPTS; i++) { t += 3_600_000; await drainReceiptQa() }
+  const row = getQaRow(ID)!
+  expect(frames.map((f) => f.status)).toContain("to_review")
+  expect(frames.map((f) => f.status)).not.toContain("sonnet_fixed")
+  expect(row).toMatchObject({ status: "needs_human", category_code: "5776", changes: [] })
+  expect(row.jev).toMatchObject({ office_km: 82.4 })
+  expect(row.issues).toContainEqual({ field: "category_code", problem: "meal rule code 5216 not saved", suggestion: "5216" })
+  expect(existsSync(auditFile())).toBe(false)
+})
+
+test("meal rule: groceries stay personal (no distance lookup); a personal meal is not booked", async () => {
+  sonnetText = null
+  seed({ merchant: "Maxi Granby", category: "Meals", category_code: "", purpose: "Snacks", address: GRANBY })
+  jevAnswer = jev("5776", 0.97, { meal: 0.9, grocery: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(ID)!.issues.map((i) => i.problem)).toContain("grocery purchase booked as business (groceries are always personal)")
+  seed({ category_code: "", purpose: "Personal — not a business expense", reimbursable: "no", address: MONTREAL }, `${ID}-p`)
+  jevAnswer = jev("personal", 0.95, { meal: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(`${ID}-p`)!).toMatchObject({ category_code: "", changes: [] })
+  expect(hits.some((h) => h.path === "/api/geo/office-distance")).toBe(false)
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: Grain de Folie fixture (Granby) → 5776", async () => {
+  workerDeps.now = () => Date.parse("2026-10-08T18:00:00Z")
+  const grain = {
+    merchant: "Grain de Folie", date: "2026-10-08", total: "$30.41", subtotal: "$23.00", tps: "$1.15", tvq: "$2.29", tip: "$3.97",
+    category: "Meals", category_code: "", purpose: "Business meal at Grain de Folie in Granby, QC.", notes: "", currency: "CAD", address: GRANBY,
+  } satisfies ExpenseFields
+  const gid = "accounting/2026-10/2026-10-08-grain-de-folie-1161"
+  insertQueued({ expense_id: gid, fields: grain, receipt_file: "2026-10-08-1.pdf", image_path: "" })
+  sonnetText = null // keep rows in to_review
+  jevAnswer = jev("5776", 0.7, { meal: 0.95, trip: 0.2 })
+  await drainReceiptQa()
+  // Code set by the rule; Jev's low trip/client noul still sends the business purpose to review.
+  expect(getQaRow(gid)!).toMatchObject({ status: "to_review", category_code: "5776" })
+  expect(getQaRow(gid)!.issues.map((i) => i.field)).toEqual(["purpose"])
+  expect(getQaRow(gid)!.changes).toEqual([{ field: "category_code", from: "", to: "5776", by: "rule" }])
+  // Saved 5776 already (as booked): agrees, nothing written.
+  insertQueued({ expense_id: `${gid}-b`, fields: { ...grain, category_code: "5776" }, receipt_file: "", image_path: "" })
+  hits = []
+  await drainReceiptQa()
+  expect(getQaRow(`${gid}-b`)!).toMatchObject({ category_code: "5776", changes: [] })
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: Sonnet may not change a meal code the rule set or could not resolve", async () => {
+  seed({ category_code: "", address: "" })
+  jevAnswer = jev("5776", 0.99, { meal: 0.9, trip: 0.9 })
+  sonnetText = '{"resolved":true,"patch":{"category_code":"5216"},"reason":"looks like a trip"}'
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row.status).toBe("needs_human")
+  expect(row.issues.at(-1)!.problem).toBe("patch refused: meal GL code is decided by office distance")
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: Jev down, category Meals → distance still sets the code; Sonnet cannot change it", async () => {
+  seed({ category_code: "", address: MONTREAL })
+  jevAnswer = () => new Response("x", { status: 500 })
+  sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"client lunch"}'
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "needs_human", category_code: "5216" })
+  expect(row.changes).toEqual([{ field: "category_code", from: "", to: "5216", by: "rule" }])
+  expect(row.jev).toEqual({ office_km: 82.4 })
+  expect(row.issues.at(-1)!.problem).toBe("patch refused: meal GL code is decided by office distance")
+})
+
+test("meal rule: a saved code the rule confirmed (no PATCH) is still locked against Sonnet", async () => {
+  seed({ address: GRANBY, total: "$120.00" }) // saved 5776 matches; sum mismatch sends it to Sonnet
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  sonnetText = '{"resolved":true,"patch":{"category_code":"5216","total":"114.98"},"reason":"trip"}'
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "needs_human", category_code: "5776" })
+  expect(row.issues.at(-1)!.problem).toBe("patch refused: meal GL code is decided by office distance")
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: unresolved address is never auto-completed by Sonnet (even with an empty patch)", async () => {
+  seed({ address: "" }) // saved 5776
+  jevAnswer = jev("5776", 0.99, { meal: 0.9, trip: 0.9 })
+  sonnetText = '{"resolved":true,"patch":{},"reason":"looks fine"}'
+  await drainReceiptQa()
+  const row = getQaRow(ID)!
+  expect(row.status).toBe("needs_human")
+  expect(row.issues.some((i) => i.problem.startsWith("meal address unresolved"))).toBe(true)
+})
+
 // ── Pass 2: Sonnet ──
 
-// A row that reaches the Sonnet pass: no GL code, Jev down → to_review.
+// A row that reaches the Sonnet pass: no GL code, Jev down → to_review. Not a
+// meal by category, so the distance rule (which runs even with Jev down) stays out.
+const UNCODED = { category_code: "", category: "Other" } satisfies ExpenseFields
 function review(fields: ExpenseFields = {}): void {
-  seed({ category_code: "", ...fields })
+  seed({ ...UNCODED, ...fields })
   jevAnswer = () => new Response("x", { status: 500 })
 }
 
@@ -346,11 +599,11 @@ test("Sonnet: a code outside the chart, or amounts still off, are refused", asyn
   sonnetText = '{"resolved":true,"patch":{"category_code":"2400"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(ID)!.issues.at(-1)!.problem).toContain("not in chart")
-  seed({ category_code: "" }, `${ID}-np`) // Jev still answering 500 → to_review
+  seed(UNCODED, `${ID}-np`) // Jev still answering 500 → to_review
   sonnetText = '{"resolved":true,"patch":{"category_code":"5200"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(`${ID}-np`)!.issues.at(-1)!.problem).toContain("never-pick")
-  seed({ category_code: "", tps: "$7.00" }, `${ID}-b`)
+  seed({ ...UNCODED, tps: "$7.00" }, `${ID}-b`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(`${ID}-b`)!.status).toBe("needs_human")
@@ -362,7 +615,7 @@ test("Sonnet: total only when arithmetic proves it wrong and the patch adds up",
   await drainReceiptQa()
   expect(getQaRow(ID)!.status).toBe("sonnet_fixed")
   expect(JSON.parse(hits.find((h) => h.method === "PATCH")!.body).total).toBe("114.98")
-  seed({ category_code: "" }, `${ID}-c`)
+  seed({ ...UNCODED }, `${ID}-c`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776","total":"99.00"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(`${ID}-c`)!.issues.at(-1)!.problem).toContain("total change not proven")
@@ -373,7 +626,7 @@ test("Sonnet: unresolved / bad JSON → needs_human + push", async () => {
   sonnetText = '{"resolved":false,"patch":{},"reason":"where was the meal eaten?"}'
   await drainReceiptQa()
   expect(getQaRow(ID)!.issues.at(-1)!.problem).toBe("unresolved: where was the meal eaten?")
-  seed({ category_code: "" }, `${ID}-d`)
+  seed({ ...UNCODED }, `${ID}-d`)
   sonnetText = "I think it is fine."
   await drainReceiptQa()
   expect(getQaRow(`${ID}-d`)!).toMatchObject({ status: "needs_human" })
@@ -398,7 +651,7 @@ test("Sonnet unavailable → backoff; dashboard PATCH 5xx → backoff, then need
   workerDeps.now = () => t
   for (let i = 1; i < MAX_ATTEMPTS; i++) { t += 3_600_000; await drainReceiptQa() }
   expect(getQaRow(ID)!.issues.at(-1)).toEqual({ field: "sonnet", problem: "sonnet_unavailable" })
-  seed({ category_code: "" }, `${ID}-e`)
+  seed({ ...UNCODED }, `${ID}-e`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"x"}'
   patchReply = () => new Response("down", { status: 503 })
   t += 3_600_000

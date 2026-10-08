@@ -112,6 +112,11 @@ export function patchExpense(id: string, fields: Record<string, unknown>): Promi
   return dashboardJson("PATCH", `/api/expense/${encodeIdPath(id)}`, fields)
 }
 
+/** `{km, method, lat, lon}` | `{km: null, reason}` — tls-dashboard-v2 POST /api/geo/office-distance (Granby office). */
+export function officeDistance(address: string): Promise<DashReply> {
+  return dashboardJson("POST", "/api/geo/office-distance", { address })
+}
+
 export function fetchReceiptFile(filename: string): Promise<{ bytes: Uint8Array; mime: string } | null> {
   return dashboardBytes(`/api/expense/receipt/${encodeURIComponent(filename)}`)
 }
