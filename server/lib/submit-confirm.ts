@@ -15,7 +15,8 @@
 
 import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
-import { INJECT_SEND_MS, deliverViaHerdr, injectText, isHooklessInput, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { injectText, tmuxSendKeys, type InjectTarget } from "./keyboard-inject"
+import { INJECT_SEND_MS, deliverViaHerdr, isHooklessInput } from "./herdr-inject"
 import { type Herdr, herdrGateKey, herdrPaneOf, herdrSendKey, realHerdr } from "./herdr"
 import { inputLine, unstyle } from "./command-menu"
 import { type PaneRef, capturePane, paneKey, resolveTmuxRefFromTty, sendKeysArgs } from "./tmux-pane"
@@ -42,7 +43,7 @@ export interface SubmitIdentity {
   pane?: string
 }
 
-// isHooklessInput lives in keyboard-inject.ts (the herdr delivery needs it).
+// isHooklessInput lives in herdr-inject.ts (the herdr delivery needs it).
 export { isHooklessInput }
 
 // Timer seam so the tests drive the window with a fake clock.

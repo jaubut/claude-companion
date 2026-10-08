@@ -3,6 +3,7 @@ import { type Herdr, herdrKeyName, herdrPaneOf } from "./herdr"
 import { herdrAgentBaseName, spawnInHerdr, spawnMacAuto, type SpawnResult } from "./spawn-session"
 import { injectConfirmed, noteUserPromptSubmit } from "./submit-confirm"
 import { injectText } from "./keyboard-inject"
+import { deliverViaHerdr } from "./herdr-inject"
 
 // A fake herdr: records every argv, answers from `reply` (throw to fail).
 function fakeHerdr(opts: {
@@ -197,4 +198,12 @@ test("a tmux pane wins over a herdr pane (tmux inside herdr)", async () => {
   await injectText("hi", { ...TARGET, tmuxPane: "%4" }, { herdr: f.h, sendKeys: async (a) => { sent.push([...a]); return { ok: true, reason: "" } } })
   expect(f.calls).toEqual([])
   expect(sent.length).toBe(2)
+})
+
+// herdr 0.9.3 has no `--` separator: leading-dash text would parse as an option.
+test("text starting with '-' is refused before herdr is called", async () => {
+  const f = fakeHerdr()
+  const r = await deliverViaHerdr("w2:p1", "-h", { herdr: f.h })
+  expect(r).toEqual({ ok: false, blocked: false, reason: "leading_dash" })
+  expect(f.calls).toEqual([])
 })

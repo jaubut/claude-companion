@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-07",
+  "generatedAt": "2026-10-08",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1310,7 +1310,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 458,
+          "lines": 469,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1322,6 +1322,7 @@
             "readClaudeSessionFile",
             "tmuxPaneFromSessionFile",
             "tmuxRefFromEnv",
+            "herdrPaneFromEnv",
             "TmuxRefDeps",
             "resolveTmuxRef",
             "firstDiscovery",
@@ -1346,7 +1347,8 @@
             "lib/scrape-registry.ts",
             "lib/dispatch-worker.ts",
             "lib/tmux-pane.ts",
-            "lib/log.ts"
+            "lib/log.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1635,8 +1637,66 @@
           "externals": []
         },
         {
+          "path": "lib/herdr-inject.ts",
+          "lines": 76,
+          "kind": "lib",
+          "exports": [
+            "INJECT_QUEUE_MS",
+            "INJECT_SEND_MS",
+            "isHooklessInput",
+            "HerdrDelivery",
+            "deliverViaHerdr",
+            "herdrPickerIO"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/key-gate.ts",
+            "lib/herdr.ts",
+            "lib/question-driver.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/herdr.ts",
+          "lines": 146,
+          "kind": "lib",
+          "exports": [
+            "ExecResult",
+            "HERDR_CLIENT_PATH",
+            "herdrErrorCode",
+            "Herdr",
+            "realHerdr",
+            "validHerdrPane",
+            "herdrPaneOf",
+            "herdrGateKey",
+            "herdrKeyName",
+            "herdrSendKey",
+            "herdrSendText",
+            "noteHerdrAgent",
+            "herdrAgentFor"
+          ],
+          "state": [
+            "let clientMod",
+            "spawnedAgents: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/hook-common.ts",
-          "lines": 125,
+          "lines": 133,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
@@ -1658,7 +1718,8 @@
             "lib/spawn-session.ts",
             "lib/sessions.ts",
             "lib/scrape-registry.ts",
-            "lib/tmux-pane.ts"
+            "lib/tmux-pane.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1706,7 +1767,7 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 175,
+          "lines": 176,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
@@ -1734,7 +1795,7 @@
         },
         {
           "path": "lib/inject-verified.ts",
-          "lines": 165,
+          "lines": 166,
           "kind": "lib",
           "exports": [
             "VERIFIED_TEXT_MAX",
@@ -1760,6 +1821,7 @@
             "lib/key-gate.ts",
             "lib/log.ts",
             "lib/keyboard-inject.ts",
+            "lib/herdr-inject.ts",
             "lib/command-menu.ts",
             "lib/tmux-pane.ts",
             "lib/auto-compact-keep.ts"
@@ -1901,12 +1963,10 @@
         },
         {
           "path": "lib/keyboard-inject.ts",
-          "lines": 591,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "InjectTarget",
-            "INJECT_QUEUE_MS",
-            "INJECT_SEND_MS",
             "InjectOpts",
             "injectText",
             "TmuxResult",
@@ -1925,6 +1985,8 @@
             "lib/log.ts",
             "lib/key-gate.ts",
             "lib/tmux-pane.ts",
+            "lib/herdr.ts",
+            "lib/herdr-inject.ts",
             "lib/question-driver.ts"
           ],
           "listeners": [],
@@ -3493,7 +3555,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 596,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "Session",
@@ -3542,7 +3604,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 431,
+          "lines": 546,
           "kind": "lib",
           "exports": [
             "SpawnApp",
@@ -3554,6 +3616,10 @@
             "DETACHED_ROWS",
             "detachedNewSessionArgs",
             "detachedSpawnArgv",
+            "herdrAgentBaseName",
+            "HERDR_START_TIMEOUT_MS",
+            "spawnInHerdr",
+            "spawnMacAuto",
             "homeSpawnCwd",
             "spawnCompanionSession"
           ],
@@ -3563,7 +3629,9 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/tmux-pane.ts"
+            "lib/tmux-pane.ts",
+            "lib/herdr.ts",
+            "lib/log.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3593,13 +3661,12 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 375,
+          "lines": 418,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
             "LATE_HOOK_GRACE_MS",
             "SubmitIdentity",
-            "isHooklessInput",
             "SubmitClock",
             "SubmitWatch",
             "noteUserPromptSubmit",
@@ -3628,6 +3695,8 @@
             "lib/key-gate.ts",
             "lib/log.ts",
             "lib/keyboard-inject.ts",
+            "lib/herdr-inject.ts",
+            "lib/herdr.ts",
             "lib/command-menu.ts",
             "lib/tmux-pane.ts",
             "lib/discover.ts"
@@ -4765,7 +4834,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 454,
+          "lines": 459,
           "kind": "route-host",
           "exports": [
             "handleApiRoute"
@@ -5112,7 +5181,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 76,
+          "lines": 87,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -5140,7 +5209,8 @@
             "lib/key-gate.ts",
             "lib/sessions.ts",
             "lib/tmux-pane.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5690,7 +5760,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 263,
+          "lines": 264,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -6551,7 +6621,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 204,
+          "lines": 209,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -6988,6 +7058,7 @@
             "lib/receipt-qa-worker.ts",
             "lib/records-expiry.ts",
             "lib/session-removal-log.ts",
+            "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
             "lib/super-auto.ts",
             "lib/vault-upstream.ts",
@@ -7926,6 +7997,7 @@
           "module": "lib/key-gate.ts",
           "callers": [
             "lib/command-scrape.ts",
+            "lib/herdr-inject.ts",
             "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
             "lib/submit-confirm.ts",
@@ -7987,6 +8059,13 @@
         },
         "tmuxSocketFromEnv": {
           "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/hook-common.ts"
+          ]
+        },
+        "validHerdrPane": {
+          "module": "lib/herdr.ts",
           "callers": [
             "lib/discover.ts",
             "lib/hook-common.ts"
@@ -8248,12 +8327,72 @@
             "lib/front-door.ts"
           ]
         },
+        "Herdr": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-inject.ts",
+            "lib/keyboard-inject.ts",
+            "lib/spawn-session.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "realHerdr": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-inject.ts",
+            "lib/spawn-session.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "herdrGateKey": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-inject.ts",
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
+            "routes/dialogs.ts#POST /api/dialog/key"
+          ]
+        },
+        "herdrErrorCode": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-inject.ts",
+            "lib/spawn-session.ts"
+          ]
+        },
+        "PickerIO": {
+          "module": "lib/question-driver.ts",
+          "callers": [
+            "lib/herdr-inject.ts",
+            "lib/keyboard-inject.ts"
+          ]
+        },
+        "herdrSendKey": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-inject.ts",
+            "lib/submit-confirm.ts",
+            "routes/dialogs.ts#POST /api/dialog/key"
+          ]
+        },
+        "herdrSendText": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-inject.ts"
+          ]
+        },
         "SpawnAgent": {
           "module": "lib/spawn-session.ts",
           "callers": [
             "lib/hook-common.ts",
             "lib/question-hook.ts",
             "routes/api.ts#POST /api/spawn-session"
+          ]
+        },
+        "herdrAgentFor": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/hook-common.ts"
           ]
         },
         "tmuxServerPidOf": {
@@ -8324,15 +8463,17 @@
           ]
         },
         "INJECT_QUEUE_MS": {
-          "module": "lib/keyboard-inject.ts",
+          "module": "lib/herdr-inject.ts",
           "callers": [
-            "lib/inject-verified.ts"
+            "lib/inject-verified.ts",
+            "lib/keyboard-inject.ts"
           ]
         },
         "INJECT_SEND_MS": {
-          "module": "lib/keyboard-inject.ts",
+          "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/inject-verified.ts",
+            "lib/keyboard-inject.ts",
             "lib/submit-confirm.ts"
           ]
         },
@@ -8396,6 +8537,21 @@
             "wiring/trips.ts"
           ]
         },
+        "herdrPaneOf": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts",
+            "routes/dialogs.ts#POST /api/dialog/key"
+          ]
+        },
+        "deliverViaHerdr": {
+          "module": "lib/herdr-inject.ts",
+          "callers": [
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
         "tmuxSocketFlags": {
           "module": "lib/tmux-pane.ts",
           "callers": [
@@ -8416,8 +8572,8 @@
             "lib/submit-confirm.ts"
           ]
         },
-        "PickerIO": {
-          "module": "lib/question-driver.ts",
+        "herdrPickerIO": {
+          "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/keyboard-inject.ts"
           ]
@@ -9590,6 +9746,12 @@
             "lib/spawn-session.ts"
           ]
         },
+        "noteHerdrAgent": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
         "BodyResponse": {
           "module": "lib/body.ts",
           "callers": [
@@ -9601,6 +9763,12 @@
           "module": "lib/body.ts",
           "callers": [
             "lib/status-answer.ts"
+          ]
+        },
+        "isHooklessInput": {
+          "module": "lib/herdr-inject.ts",
+          "callers": [
+            "lib/submit-confirm.ts"
           ]
         },
         "injectText": {
