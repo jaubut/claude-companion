@@ -1,9 +1,9 @@
 import { test, expect } from "bun:test"
-import { type Herdr, closeHerdrWorkspaceWhenIdle, herdrKeyName, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, silentSuccess } from "./herdr"
+import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, herdrAgentFor, herdrKeyName, herdrOwnerFor, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, herdrSendKey, herdrSendText, noteHerdrAgent, silentSuccess } from "./herdr"
 import { parseDialog } from "./dialogs"
 import { inputLine, unstyle } from "./command-menu"
 import { createDialogWatcher } from "./dialog-watch"
-import { stages } from "./inject-verified"
+import { herdrVerifiedDepsFor, injectVerifiedWith, stages } from "./inject-verified"
 import type { Session } from "./sessions"
 import { releaseHerdrWorkspace } from "./herdr-workspace"
 import { herdrAgentBaseName, spawnInHerdr, spawnLinux, spawnMacAuto, type SpawnResult } from "./spawn-session"
@@ -396,4 +396,178 @@ test("only a session this server spawned in herdr releases its workspace", () =>
   releaseHerdrWorkspace(herdrSession({ tmuxPane: "%3" }), () => [], close)
   releaseHerdrWorkspace(herdrSession(), () => [], close)
   expect(panes).toEqual(["w6:p1"])
+})
+
+// ── review fixes (PR #157) ──────────────────────────────────────────────────
+
+test("the shell check is the last herdr read before `workspace close` (no metadata in between)", async () => {
+  const f = closeHerdr(() => AT_SHELL)
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, ...noSleep })).toBe("w6")
+  const v = f.verbs()
+  expect(v.slice(-2)).toEqual(["pane process-info", "workspace close"])
+})
+
+test("a command started while the workspace is read (vim) keeps its workspace", async () => {
+  let vimStarted = false
+  const VIM = { process_info: { shell_pid: 500, foreground_process_group_id: 777, foreground_processes: [{ name: "vim", pid: 777 }] } }
+  const f = fakeHerdr({
+    reply: (args) => {
+      if (args[1] === "process-info") return vimStarted ? VIM : AT_SHELL
+      if (args[0] === "pane" && args[1] === "get") return { pane: { pane_id: args[2], workspace_id: "w6" } }
+      if (args[0] === "workspace" && args[1] === "get") {
+        vimStarted = true // the human types `vim` during the metadata round trip
+        return { workspace: { workspace_id: "w6", pane_count: 1 } }
+      }
+      return {}
+    },
+  })
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, tries: 6, ...noSleep })).toBe("")
+  expect(f.verbs()).not.toContain("workspace close")
+})
+
+test("a new shell in the pane between checks starts the count over", async () => {
+  let n = 0
+  const OTHER_SHELL = { process_info: { shell_pid: 900, foreground_process_group_id: 900 } }
+  const f = closeHerdr(() => (++n === 1 ? AT_SHELL : OTHER_SHELL))
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, tries: 2, ...noSleep })).toBe("")
+  expect(f.verbs()).not.toContain("workspace close")
+})
+
+function ownedHerdr(ws: { workspace_id: string; label: string; terminal_id: string }) {
+  return fakeHerdr({
+    reply: (args) => {
+      if (args[1] === "process-info") return AT_SHELL
+      if (args[0] === "pane" && args[1] === "get") return { pane: { pane_id: args[2], workspace_id: ws.workspace_id, terminal_id: ws.terminal_id } }
+      if (args[0] === "workspace" && args[1] === "get") return { workspace: { workspace_id: ws.workspace_id, pane_count: 1, label: ws.label } }
+      return {}
+    },
+  })
+}
+
+test("a workspace that reuses our pane id but is not ours (label / terminal / workspace id) is never closed", async () => {
+  const owner = { name: "cc-work", workspaceId: "w6", terminalId: "term_a" }
+  const ours = ownedHerdr({ workspace_id: "w6", label: "cc-work", terminal_id: "term_a" })
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: ours.h, owner, ...noSleep })).toBe("w6")
+  for (const other of [
+    { workspace_id: "w6", label: "~", terminal_id: "term_a" },
+    { workspace_id: "w6", label: "cc-work", terminal_id: "term_b" },
+    { workspace_id: "w9", label: "cc-work", terminal_id: "term_a" },
+  ]) {
+    const f = ownedHerdr(other)
+    expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, owner, ...noSleep })).toBe("")
+    expect(f.verbs()).not.toContain("workspace close")
+  }
+})
+
+test("a workspace id that could read as a flag is never passed to `workspace close`", async () => {
+  const f = fakeHerdr({
+    reply: (args) => {
+      if (args[1] === "process-info") return AT_SHELL
+      if (args[0] === "pane" && args[1] === "get") return { pane: { workspace_id: "--all" } }
+      return { workspace: { pane_count: 1 } }
+    },
+  })
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, ...noSleep })).toBe("")
+  expect(f.verbs()).not.toContain("workspace close")
+})
+
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+test("spawn records ownership (workspace + terminal) before `agent start`", async () => {
+  let ownerAtStart: ReturnType<typeof herdrOwnerFor>
+  const f = fakeHerdr({
+    reply: (a) => {
+      if (a[1] === "create") return { workspace: { workspace_id: "wE" }, root_pane: { pane_id: "wE:p1", terminal_id: "term_e" } }
+      if (a[1] === "start") ownerAtStart = herdrOwnerFor("wE:p1")
+      return {}
+    },
+  })
+  await spawnInHerdr(CWD, "claude", undefined, f.h)
+  expect(ownerAtStart!).toEqual({ name: "cc-claude-companion", workspaceId: "wE", terminalId: "term_e" })
+  forgetHerdrAgent("wE:p1")
+})
+
+test("a failed spawn drops its ownership record", async () => {
+  const f = fakeHerdr({
+    reply: (a) => {
+      if (a[1] === "create") return { workspace: { workspace_id: "wF" }, root_pane: { pane_id: "wF:p1" } }
+      if (a[1] === "start") throw Object.assign(new Error("timeout"), { code: "timeout" })
+      return {}
+    },
+  })
+  await spawnInHerdr(CWD, "claude", undefined, f.h)
+  expect(herdrOwnerFor("wF:p1")).toBeUndefined()
+})
+
+test("SessionStart before the spawn noted its agent (herdrAgent empty): exit still releases, with the recorded owner", async () => {
+  noteHerdrAgent("wA:p1", "cc-early", { workspaceId: "wA", terminalId: "term_x" })
+  const seen: Array<{ pane: string; owner?: unknown }> = []
+  const close = async (pane: string, o?: { owner?: unknown }) => { seen.push({ pane, owner: o?.owner }); return "wA" }
+  releaseHerdrWorkspace(herdrSession({ herdrPane: "wA:p1", herdrAgent: "" }), () => [], close)
+  await flush()
+  expect(seen).toEqual([{ pane: "wA:p1", owner: { name: "cc-early", workspaceId: "wA", terminalId: "term_x" } }])
+})
+
+test("ownership is dropped once released: a later session reusing the pane id inherits nothing", async () => {
+  noteHerdrAgent("wB:p1", "cc-gone", { workspaceId: "wB" })
+  const panes: string[] = []
+  const close = async (pane: string) => { panes.push(pane); return "wB" }
+  releaseHerdrWorkspace(herdrSession({ herdrPane: "wB:p1", herdrAgent: "" }), () => [], close)
+  await flush()
+  expect(herdrOwnerFor("wB:p1")).toBeUndefined()
+  expect(herdrAgentFor("wB:p1")).toBe("")
+  // A human's later session on a reused "wB:p1" (its hooks saw no owner).
+  releaseHerdrWorkspace(herdrSession({ herdrPane: "wB:p1", herdrAgent: "" }), () => [], close)
+  await flush()
+  expect(panes).toEqual(["wB:p1"])
+})
+
+test("a release that closed nothing (pane busy) still drops ownership when no session is left in the pane", async () => {
+  noteHerdrAgent("wC:p1", "cc-busy", { workspaceId: "wC" })
+  releaseHerdrWorkspace(herdrSession({ herdrPane: "wC:p1", herdrAgent: "cc-busy" }), () => [], async () => "")
+  await flush()
+  expect(herdrOwnerFor("wC:p1")).toBeUndefined()
+})
+
+// Codex P1: once the key-gate turn is aborted, no Enter / Ctrl-U / chunk.
+test("herdr verified inject: no Enter (and no Ctrl-U) after the turn is aborted", async () => {
+  const ac = new AbortController()
+  const box = "────\n❯ /compact keep: the build is green, next is the herdr close\n────\n"
+  const sendsAfterAbort: string[][] = []
+  const h: Herdr = {
+    async gate() { return null },
+    async call(args) {
+      if (ac.signal.aborted) sendsAfterAbort.push(args)
+      if (args[1] === "layout") return { layout: { panes: [{ pane_id: "w2:p1", rect: { width: 200 } }] } }
+      return {}
+    },
+    async read() {
+      ac.abort() // the gate times out during the read-back and releases the pane
+      return box
+    },
+  }
+  const deps = { ...herdrVerifiedDepsFor(h), sleep: async () => {}, log: () => {} }
+  const r = await injectVerifiedWith({ pane: "w2:p1", socket: "" }, "/compact keep: the build is green, next is the herdr close", deps, ac.signal)
+  expect(r.ok).toBe(false)
+  expect(sendsAfterAbort).toEqual([])
+})
+
+test("herdr adapters never call herdr with an already-aborted signal", async () => {
+  const f = fakeHerdr()
+  const ac = new AbortController()
+  ac.abort()
+  expect(await herdrSendKey("w2:p1", "Enter", f.h, ac.signal)).toBe(false)
+  expect(await herdrSendText("w2:p1", "x", f.h, ac.signal)).toBe(false)
+  expect(f.calls).toEqual([])
+})
+
+test("a fork still in the pane: nothing closed, ownership kept for the fork's own exit", async () => {
+  noteHerdrAgent("wD:p1", "cc-fork", { workspaceId: "wD" })
+  const panes: string[] = []
+  const fork = herdrSession({ key: "claude:tty:/dev/pts/10", herdrPane: "wD:p1" })
+  releaseHerdrWorkspace(herdrSession({ herdrPane: "wD:p1" }), () => [fork], async (pane) => { panes.push(pane); return "" })
+  await flush()
+  expect(panes).toEqual([])
+  expect(herdrOwnerFor("wD:p1")?.name).toBe("cc-fork")
+  forgetHerdrAgent("wD:p1")
 })

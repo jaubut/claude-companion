@@ -123,8 +123,9 @@ async function paneLooksClean(target: PaneTarget, signal: AbortSignal): Promise<
   await dialogWatcher.refresh(target.key)
   const herdrPane = herdrPaneOf(target)
   if ((!target.tmuxPane && !herdrPane) || signal.aborted) return false
+  // herdr reads ANSI; isPaneClean wants the plain text capture-pane gives.
   const text = herdrPane
-    ? await realHerdr.read(herdrPane)
+    ? await realHerdr.read(herdrPane, signal).then((t) => (t === null ? null : unstyle(t)))
     : await capturePane(target.tmuxPane!, signal, { socket: target.tmuxSocket })
   return text !== null && !signal.aborted && isPaneClean(text)
 }

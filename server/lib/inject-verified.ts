@@ -38,7 +38,7 @@ import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
 import { tmuxSendKeys } from "./keyboard-inject"
 import { INJECT_SEND_MS, INJECT_QUEUE_MS } from "./herdr-inject"
-import { herdrGateKey, herdrPaneWidth, herdrSendKey, herdrSendText, realHerdr } from "./herdr"
+import { type Herdr, herdrGateKey, herdrPaneWidth, herdrSendKey, herdrSendText, realHerdr } from "./herdr"
 import { inputText } from "./command-menu"
 import { MIN_INJECT_PANE_WIDTH, capturePane, paneKey, paneTooNarrow, sendKeysArgs, tmuxPaneWidth, type PaneRef } from "./tmux-pane"
 import { COMPACT_TEXT } from "./auto-compact-keep"
@@ -139,6 +139,10 @@ async function typeStaged(ref: PaneRef, text: string, d: VerifiedInjectDeps, sig
 export async function clearInput(ref: PaneRef, d: VerifiedInjectDeps, signal: AbortSignal): Promise<boolean> {
   let left: string | null = null
   for (let i = 0; i < CLEAR_MAX_PRESSES; i++) {
+    if (signal.aborted) {
+      d.log(`inject clear: turn aborted after ${i} Ctrl-U — residue left unknown`)
+      return false
+    }
     await d.key(ref, "C-u", signal)
     const pane = await d.capture(ref, signal)
     if (pane === null) {
@@ -170,8 +174,25 @@ async function attempt(ref: PaneRef, text: string, d: VerifiedInjectDeps, signal
   return { ok: true, text, fellBack: false }
 }
 
+// Once the turn is aborted (key-gate timeout: the gate is released and newer
+// input may already be typing), nothing more reaches the pane: no chunk, no
+// Ctrl-U, no Enter, whatever the transport does with the signal.
+export function untilAborted(d: VerifiedInjectDeps, signal: AbortSignal): VerifiedInjectDeps {
+  return {
+    ...d,
+    type: (ref, text, sig) => (signal.aborted ? Promise.resolve(false) : d.type(ref, text, sig)),
+    key: (ref, key, sig) => (signal.aborted ? Promise.resolve(false) : d.key(ref, key, sig)),
+    capture: async (ref, sig) => {
+      if (signal.aborted) return null
+      const pane = await d.capture(ref, sig)
+      return signal.aborted ? null : pane
+    },
+  }
+}
+
 /** Type in stages → read back → Enter only if the input starts with the command. */
-export async function injectVerifiedWith(ref: PaneRef, text: string, d: VerifiedInjectDeps, signal: AbortSignal): Promise<VerifiedResult> {
+export async function injectVerifiedWith(ref: PaneRef, text: string, deps: VerifiedInjectDeps, signal: AbortSignal): Promise<VerifiedResult> {
+  const d = untilAborted(deps, signal)
   if (d.width) {
     const width = await d.width(ref, signal)
     if (paneTooNarrow(width)) {
@@ -182,7 +203,7 @@ export async function injectVerifiedWith(ref: PaneRef, text: string, d: Verified
   const first = capKeep(oneLine(text))
   const r = await attempt(ref, first, d, signal)
   // A residue stays put: typing the retry on top of it would only mangle more.
-  if (r.ok || r.residue || first === COMPACT_TEXT) return r
+  if (r.ok || r.residue || first === COMPACT_TEXT || signal.aborted) return r
   d.log(`inject verify failed (${r.error}${r.seen ? `, input began "${r.seen}"` : ""}) — retrying plain keep`)
   const second = await attempt(ref, COMPACT_TEXT, d, signal)
   return second.ok ? { ...second, fellBack: true } : second
@@ -206,14 +227,18 @@ const real: VerifiedInjectDeps = {
 // send-text`, keys with `pane send-keys` (C-u → ctrl+u), read back with `pane
 // read --format ansi`, width from `pane layout`. Same staging, read-back,
 // clear-until-empty and pane_too_narrow as tmux.
-export const herdrVerifiedDeps: VerifiedInjectDeps = {
-  type: (ref, text) => herdrSendText(ref.pane, text),
-  capture: (ref) => realHerdr.read(ref.pane),
-  key: (ref, key) => herdrSendKey(ref.pane, key),
-  width: (ref) => herdrPaneWidth(ref.pane),
-  sleep: real.sleep,
-  log: real.log,
+// The turn's signal goes down to every herdr subprocess (killed on abort).
+export function herdrVerifiedDepsFor(h: Herdr): VerifiedInjectDeps {
+  return {
+    type: (ref, text, signal) => herdrSendText(ref.pane, text, h, signal),
+    capture: (ref, signal) => h.read(ref.pane, signal),
+    key: (ref, key, signal) => herdrSendKey(ref.pane, key, h, signal),
+    width: (ref, signal) => herdrPaneWidth(ref.pane, h, signal),
+    sleep: real.sleep,
+    log: real.log,
+  }
 }
+export const herdrVerifiedDeps: VerifiedInjectDeps = herdrVerifiedDepsFor(realHerdr)
 
 /** injectVerified on a herdr pane, in that pane's herdr key-gate turn. */
 export function injectVerifiedHerdr(pane: string, text: string, deps: VerifiedInjectDeps = herdrVerifiedDeps): Promise<VerifiedResult> {
