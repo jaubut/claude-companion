@@ -6,7 +6,7 @@ import { captureReceipt } from "../lib/receipt-capture"
 import { QA_STATUSES, type QaStatus, getQaRow, listQa } from "../lib/receipt-qa-store"
 import { acceptByHuman, kickReceiptQa, resolveByHuman } from "../lib/receipt-qa-worker"
 import { createLimiter } from "../lib/vault-guard"
-import { type Outcome, voiceAudio, voiceChunk, voiceDiscard, voiceFinalize, voiceGet, voiceList, voiceProjects, voiceStart, voiceTranscribe, voiceValidate } from "../lib/voice-memo"
+import { type Outcome, voiceAudio, voiceChunk, voiceDiscard, voiceFinalize, voiceGet, voiceList, voiceProjects, voiceStart, voiceTranscribe, voiceUpload, voiceValidate } from "../lib/voice-memo"
 import { HOP_HEADER, type UpstreamConfig, forwardVault, forwardedDevice, vaultUpstream } from "../lib/vault-upstream"
 
 // Quick Capture + receipt QA (Jeremie, 2026-10-03). Behind the standard /api
@@ -17,6 +17,7 @@ import { HOP_HEADER, type UpstreamConfig, forwardVault, forwardedDevice, vaultUp
 //   GET  /api/receipts/qa/:id/image                                → receipt bytes (private, max-age=300)
 //   POST /api/receipts/qa/:id/resolve  {fields, note?}             → {ok}
 //   POST /api/receipts/qa/:id/accept                               → {ok}
+//   POST /api/capture/voice/upload     multipart {audio(file ≤ 25 MB), transcript?} → {ok, id, filename, bytes, status:"pending", transcript|null}
 //   POST /api/capture/voice/start      {mime}                      → {ok, id, filename}
 //   POST /api/capture/voice/:id/chunk  {seq, audio(base64 ≤ 512 KB)} → {ok, seq, bytes}
 //   POST /api/capture/voice/:id/finalize                           → {ok, bytes, transcript|null}
@@ -114,6 +115,21 @@ async function forwardAudio(up: UpstreamConfig, req: Request, path: string): Pro
     const bytes = new Uint8Array(await res.arrayBuffer())
     if (res.status !== 200) return new Response(bytes, { status: res.status, headers: { "Cache-Control": "no-store", "content-type": mime } })
     return audioResponse(req, bytes, mime)
+  } catch {
+    return fail(502, "upstream_unreachable")
+  }
+}
+
+/** Multipart is passed through byte for byte — the store host parses it. */
+async function forwardRaw(up: UpstreamConfig, req: Request, path: string): Promise<Response> {
+  try {
+    const res = await fetch(up.base + path, {
+      method: "POST", body: await req.arrayBuffer(),
+      headers: { authorization: `Bearer ${getAuthToken()}`, "x-companion-device": forwardedDevice(device(req)), [HOP_HEADER]: "1", "content-type": req.headers.get("content-type") ?? "" },
+      redirect: "manual", signal: AbortSignal.timeout(VOICE_SLOW_UPSTREAM_TIMEOUT_MS),
+    })
+    if (res.status >= 300 && res.status < 400) { void res.body?.cancel(); return fail(502, "upstream_unreachable") }
+    return new Response(await res.text(), { status: res.status, headers: { "Cache-Control": "no-store", "content-type": res.headers.get("content-type") || "application/json" } })
   } catch {
     return fail(502, "upstream_unreachable")
   }
@@ -237,6 +253,21 @@ async function handleVoice(req: Request, url: URL, up: UpstreamConfig | null): P
     const body = await readBody(req)
     if (!body) return fail(400, "bad_json")
     return withIdempotency(req, "capture-voice-start", async () => up ? forwardJson(up, req, p, body) : outcome(await voiceStart(body)))
+  }
+  if (p === `${VOICE_PREFIX}upload`) {
+    if (req.method !== "POST") return fail(405, "method_not_allowed")
+    const wait = limited()
+    if (wait) return wait
+    return withIdempotency(req, "capture-voice-upload", async () => {
+      if (up) return forwardRaw(up, req, p)
+      const form = await req.formData().catch(() => null)
+      if (!form) return fail(400, "bad_form")
+      const audio = form.get("audio")
+      if (!(audio instanceof File)) return fail(400, "audio_required")
+      const transcript = form.get("transcript") ?? ""
+      if (typeof transcript !== "string") return fail(400, "bad_transcript")
+      return outcome(await voiceUpload(new Uint8Array(await audio.arrayBuffer()), transcript))
+    })
   }
   const item = parseVoicePath(p)
   if (!item) return fail(404, "not_found")

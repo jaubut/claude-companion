@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { getAuthToken } from "../lib/auth"
 import { resetIdempotency } from "../lib/idempotency"
 import { recordPeer } from "../lib/vault-guard"
-import { base64Size, transcriptOf } from "../lib/voice-memo"
+import { base64Size, sniffAudio, transcriptOf } from "../lib/voice-memo"
 import { captureLimiter, handleCaptureRoute, parseVoicePath, voiceChunkLimiter } from "./capture"
 
 // /api/capture/voice* + /api/capture/projects against a stateful fake
@@ -28,6 +28,7 @@ let rows = new Map<number, Row>()
 let nextId = 100
 let notes: Array<Record<string, any>> = []
 let autoTranscribe = true
+let fakeDashboardChunkFails = false
 let transcribeCalls = 0
 let hits: Hit[] = []
 let up: Hit[] = []
@@ -78,6 +79,7 @@ async function fakeDashboard(req: Request): Promise<Response> {
     return Response.json({ ok: true, id, filename })
   }
   if (req.method === "POST" && (m = /^\/api\/inbox\/recording\/(\d+)\/chunk$/.exec(p))) {
+    if (fakeDashboardChunkFails) return Response.json({ ok: false, error: "boom" }, { status: 500 })
     const bytes = new Uint8Array(Buffer.from(j.audio, "base64"))
     rows.get(Number(m[1]))!.chunks.set(j.seq, bytes)
     return Response.json({ ok: true, seq: j.seq, bytes: bytes.byteLength })
@@ -485,4 +487,111 @@ test("upstream: every voice route forwards to the store host (bearer, hop, devic
   expect(await call("GET", "/api/capture/voice/8/audio")).toMatchObject({ status: 404, json: { ok: false, error: "not_found" } })
   expect(hits).toEqual([])
   expect((await call("POST", "/api/capture/voice/start", { mime: "audio/mp4" }, { "x-companion-vault-hop": "1" })).status).toBe(508)
+})
+
+// ── One-shot upload (multipart audio + on-device transcript) ──
+
+const DEVICE = "Réunion Julio: drone samedi, budget 2k"
+// ftyp box header → m4a; 1.2 MB so it crosses the 512 KB chunk size twice.
+function m4a(size = 1_200_000): Uint8Array {
+  const b = new Uint8Array(size)
+  b.set([0, 0, 0, 0x20, ...Buffer.from("ftypM4A ")])
+  for (let i = 12; i < size; i++) b[i] = i % 251
+  return b
+}
+
+async function upload(audio: Uint8Array | null, transcript?: string, extra: Record<string, string> = {}, type = "audio/mp4"): Promise<Reply> {
+  const form = new FormData()
+  if (audio) form.append("audio", new File([audio], "memo.m4a", { type }))
+  if (transcript !== undefined) form.append("transcript", transcript)
+  const req = new Request("http://localhost:4245/api/capture/voice/upload", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, ...extra }, body: form })
+  recordPeer(req, "127.0.0.1")
+  const res = (await handleCaptureRoute(req, new URL(req.url)))!
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  const text = new TextDecoder().decode(bytes)
+  return { status: res.status, json: text.startsWith("{") ? JSON.parse(text) : {}, headers: res.headers, bytes }
+}
+
+test("upload → pending with the device transcript → validate (edited) → note links the audio, audio still served", async () => {
+  autoTranscribe = false
+  const audio = m4a()
+  const u = await upload(audio, `  ${DEVICE}  `)
+  expect(u.status).toBe(200)
+  const { id, filename } = u.json
+  expect(u.json).toEqual({ ok: true, id, filename, bytes: audio.byteLength, status: "pending", transcript: DEVICE })
+  expect(JSON.parse(hits[0]!.body)).toEqual({ mime: "audio/mp4", type_hint: "voice-memo" })
+  expect(hits.filter((h) => h.path.endsWith("/chunk")).length).toBe(3)
+  expect(Buffer.from(rows.get(id)!.audio_blob!).equals(Buffer.from(audio))).toBe(true)
+  expect(transcribeCalls).toBe(0)
+  expect(stderr).not.toContain("Julio")
+
+  const list = await call("GET", "/api/capture/voice?status=pending")
+  expect(list.json.items).toEqual([{ id, filename, created_at: "2026-10-06T18:03:00Z", transcript: DEVICE, status: "pending", note_id: null }])
+  // The dashboard's own Deepgram run landing later doesn't override the device text.
+  rows.get(id)!.raw_text = `[voice note: ${filename}]\n\nsomething else`
+  expect((await call("GET", `/api/capture/voice/${id}`)).json.item.transcript).toBe(DEVICE)
+
+  const edited = `${DEVICE} (corrigé)`
+  const v = await call("POST", `/api/capture/voice/${id}/validate`, { transcript: edited, project: "PRJ-WCLS" })
+  expect(v.status).toBe(200)
+  const note = notes[0]!
+  expect(v.json).toEqual({ ok: true, note_id: note.id })
+  expect(note.body).toContain(edited)
+  expect(note.meta).toMatchObject({ audio_filename: filename, project: "PRJ-WCLS", inbox_id: id })
+  expect((await call("GET", `/api/capture/voice/${id}`)).json.item).toMatchObject({ status: "validated", note_id: note.id, transcript: edited })
+  expect((await call("GET", "/api/capture/voice?status=pending")).json.items).toEqual([])
+  const a = await call("GET", `/api/capture/voice/${id}/audio`)
+  expect(a.status).toBe(200)
+  expect(Buffer.from(a.bytes).equals(Buffer.from(audio))).toBe(true)
+})
+
+test("upload refusals: no audio / empty / > 25 MB / not audio → 400, nothing reaches the dashboard", async () => {
+  expect(await upload(null, "x")).toMatchObject({ status: 400, json: { ok: false, error: "audio_required" } })
+  expect(await upload(new Uint8Array(0))).toMatchObject({ status: 400, json: { error: "audio_required" } })
+  const big = m4a(25 * 1024 * 1024 + 1)
+  expect(await upload(big)).toMatchObject({ status: 400, json: { error: "audio_too_large" } })
+  const png = new Uint8Array(64); png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  expect(await upload(png, "x", {}, "audio/mp4")).toMatchObject({ status: 400, json: { error: "bad_audio_type" } })
+  expect(await upload(m4a(1000), "x".repeat(50_001))).toMatchObject({ status: 400, json: { error: "transcript_too_long" } })
+  const notForm = await call("POST", "/api/capture/voice/upload", { audio: "x" })
+  expect(notForm).toMatchObject({ status: 400, json: { error: "bad_form" } })
+  expect((await call("GET", "/api/capture/voice/upload")).status).toBe(405)
+  expect(hits).toEqual([])
+})
+
+test("upload with no transcript keeps the memo pending with transcript null until the dashboard fills it", async () => {
+  autoTranscribe = false
+  const u = await upload(m4a(2000))
+  expect(u.json).toMatchObject({ ok: true, status: "pending", transcript: null })
+})
+
+test("upload: a dashboard failure mid-way discards the half-made row and reports 502", async () => {
+  const realChunk = fakeDashboardChunkFails
+  fakeDashboardChunkFails = true
+  try {
+    const u = await upload(m4a(2000), "x")
+    expect(u).toMatchObject({ status: 502, json: { error: "dashboard_unreachable" } })
+    expect([...rows.values()][0]).toMatchObject({ processed: 1, result_id: "discarded" })
+  } finally { fakeDashboardChunkFails = realChunk }
+})
+
+test("upload upstream: multipart forwarded byte for byte with bearer + hop", async () => {
+  process.env.COMPANION_VAULT_UPSTREAM = `http://127.0.0.1:${upstream.port}`
+  upReply = () => Response.json({ ok: true, id: 7 })
+  const r = await upload(m4a(3000), DEVICE)
+  expect(r.json).toEqual({ ok: true, id: 7 })
+  expect(up[0]).toMatchObject({ method: "POST", path: "/api/capture/voice/upload", auth: `Bearer ${TOKEN}`, hop: "1" })
+  expect(up[0]!.body).toContain(DEVICE)
+  expect(hits).toEqual([])
+})
+
+test("sniffAudio: m4a / wav / mp3 (ID3 + frame) / aac ADTS; junk → null", () => {
+  const pad = (h: number[]): Uint8Array => { const b = new Uint8Array(16); b.set(h); return b }
+  expect(sniffAudio(m4a(16))).toBe("audio/mp4")
+  expect(sniffAudio(pad([...Buffer.from("RIFF"), 0, 0, 0, 0, ...Buffer.from("WAVE")]))).toBe("audio/wav")
+  expect(sniffAudio(pad([...Buffer.from("ID3")]))).toBe("audio/mpeg")
+  expect(sniffAudio(pad([0xff, 0xfb]))).toBe("audio/mpeg")
+  expect(sniffAudio(pad([0xff, 0xf1]))).toBe("audio/aac")
+  expect(sniffAudio(pad([0x89, 0x50]))).toBeNull()
+  expect(sniffAudio(new Uint8Array(4))).toBeNull()
 })
