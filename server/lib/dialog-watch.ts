@@ -1,7 +1,8 @@
 import { parseDialog, dialogSignature, type Dialog } from "./dialogs"
 import type { Session } from "./sessions"
+import { herdrPaneOf } from "./herdr"
 
-// Watches live tmux sessions for an open Claude Code dialog (/model, /mcp,
+// Watches live tmux and herdr sessions for an open Claude Code dialog (/model, /mcp,
 // trust, MCP-enable, a question the hook missed) and mirrors it to clients.
 //
 // Cheap gate first: Claude Code's ~/.claude/sessions/<pid>.json says
@@ -25,7 +26,8 @@ export interface SessionStatus {
 export interface DialogWatchDeps {
   now?(): number
   sessions(): Session[]
-  capture(pane: string, socket?: string): Promise<string | null>
+  // The session's screen, plain text: its tmux pane, else its herdr pane.
+  capture(s: Session): Promise<string | null>
   sessionStatus(pid: string): Promise<SessionStatus | null>
   hasPendingQuestion(s: Session): boolean
   // A question just answered from the phone: its picker is still on screen
@@ -107,7 +109,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
   }
 
   async function check(s: Session): Promise<void> {
-    if (!s.tmuxPane) { close(s.key); return }
+    if (!s.tmuxPane && !herdrPaneOf(s)) { close(s.key); return }
     // Status file and pane parser are both Claude Code's. Codex has no
     // per-session status source (~/.codex/sessions holds rollout event logs
     // only), and its TUI parsed with Claude picker rules can mis-light a
@@ -125,7 +127,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       if (st.status !== "waiting") { questionGone(s.key); close(s.key); return }
     }
     if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
-    const pane = await deps.capture(s.tmuxPane, s.tmuxSocket || undefined)
+    const pane = await deps.capture(s)
     if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)
     // Question pickers are the hooks' business (structured card + driver);

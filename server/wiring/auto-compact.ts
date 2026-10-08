@@ -19,19 +19,19 @@ import { getSessionByKey, type Session } from "../lib/sessions"
 import { readClaudeSessionFile } from "../lib/discover"
 import { transcriptPath } from "../lib/session-titles"
 import { injectRefusal, paneNotReady } from "../lib/inject-guard"
-import { injectVerified } from "../lib/inject-verified"
+import { injectVerified, injectVerifiedHerdr } from "../lib/inject-verified"
+import { herdrPaneOf } from "../lib/herdr"
 import { paneRefOf, paneTooNarrow } from "../lib/tmux-pane"
 import { broadcast } from "../state"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
-import { openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "./dialogs"
+import { openDialogFor, screenSnapshotFor, screenWidthFor, yieldPaneForInject } from "./dialogs"
 
 // Real deps for lib/auto-compact.ts. Two hard rules on the inject:
-//   - only into the session's OWN tmux pane: no pane → "unknown" input state →
-//     the gate refuses (so herdr sessions, which have no tmux pane, are never
-//     auto-compacted in v1 — likewise the /help scrape and dialog mirror); the delivery is passed without a tty so a failed
-//     send-keys can never fall back to the AppleScript (focus-the-terminal)
-//     path;
+//   - only into the session's OWN pane, tmux or herdr: no pane → "unknown"
+//     input state → the gate refuses; the delivery is passed without a tty so
+//     a failed send can never fall back to the AppleScript
+//     (focus-the-terminal) path;
 //   - the same guard as a phone inject (lib/inject-guard.ts): registered,
 //     live tty, no companion flow on the pane, no dialog, empty input box —
 //     then injectConfirmed (submit confirmation / pane lock).
@@ -51,13 +51,18 @@ async function agentStatus(key: string): Promise<string> {
   return s.agentStatus || ""
 }
 
+// The session's own pane: tmux (paneRefOf), else its herdr pane.
+function hasPane(s: Session): boolean {
+  return !!paneRefOf(s) || !!herdrPaneOf(s)
+}
+
 async function inputState(key: string): Promise<InputState> {
   const s = claudeSession(key)
-  if (!s?.tmuxPane) return "unknown"
-  const pane = await paneSnapshotFor(s)
+  if (!s || !hasPane(s)) return "unknown"
+  const pane = await screenSnapshotFor(s)
   if (pane === undefined || pane === null) return "unknown"
   // Too narrow to verify a typed /compact: never armable (inject-verified.ts).
-  if (paneTooNarrow(await paneWidthFor(s))) return "not_ready"
+  if (paneTooNarrow(await screenWidthFor(s))) return "not_ready"
   const reason = paneNotReady(pane)
   if (reason === null) return "empty"
   return reason === "input_not_empty" ? "typing" : "not_ready"
@@ -66,13 +71,13 @@ async function inputState(key: string): Promise<InputState> {
 async function inject(key: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const s = claudeSession(key)
   if (!s) return { ok: false, error: "target_gone" }
-  if (!s.tmuxPane) return { ok: false, error: "no_tmux_pane" }
+  if (!hasPane(s)) return { ok: false, error: "no_tmux_pane" }
   const paneFree = await yieldPaneForInject(s)
   const refusal = injectRefusal({
     lookup: key, target: s, paneFree,
     dialog: paneFree ? await openDialogFor(s) : null,
-    pane: paneFree ? await paneSnapshotFor(s) : undefined,
-    paneWidth: paneFree ? await paneWidthFor(s) : undefined,
+    pane: paneFree ? await screenSnapshotFor(s) : undefined,
+    paneWidth: paneFree ? await screenWidthFor(s) : undefined,
   })
   if (refusal) {
     if (refusal.error === "pane_too_narrow") companionLog(`auto-compact refused → ${key}: pane ${refusal.width} cols wide`)
@@ -80,10 +85,10 @@ async function inject(key: string, text: string): Promise<{ ok: boolean; error?:
   }
   // Typed in stages (never pasted: a pasted slash command does not run) +
   // read-back, Enter only if the input starts with `/compact keep:`
-  // (lib/inject-verified.ts). tmux only, never the osascript fallback.
+  // (lib/inject-verified.ts). tmux or herdr, never the osascript fallback.
   const ref = paneRefOf(s)
-  if (!ref) return { ok: false, error: "no_tmux_pane" }
-  const res = await injectVerified(ref, text)
+  const herdrPane = herdrPaneOf(s)
+  const res = ref ? await injectVerified(ref, text) : await injectVerifiedHerdr(herdrPane, text)
   if (res.ok) return { ok: true }
   // Text left in the box blocks every later inject (input_not_empty): say so
   // on every client, not only in the log.

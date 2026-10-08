@@ -38,6 +38,7 @@ import { keyGate } from "./key-gate"
 import { companionLog } from "./log"
 import { tmuxSendKeys } from "./keyboard-inject"
 import { INJECT_SEND_MS, INJECT_QUEUE_MS } from "./herdr-inject"
+import { herdrGateKey, herdrPaneWidth, herdrSendKey, herdrSendText, realHerdr } from "./herdr"
 import { inputText } from "./command-menu"
 import { MIN_INJECT_PANE_WIDTH, capturePane, paneKey, paneTooNarrow, sendKeysArgs, tmuxPaneWidth, type PaneRef } from "./tmux-pane"
 import { COMPACT_TEXT } from "./auto-compact-keep"
@@ -100,7 +101,13 @@ export function stages(text: string): { head: string; chunks: string[] } {
   const head = text.startsWith(COMMAND) ? COMMAND : ""
   const rest = Array.from(text.slice(head.length))
   const chunks: string[] = []
-  for (let i = 0; i < rest.length; i += CHUNK_CHARS) chunks.push(rest.slice(i, i + CHUNK_CHARS).join(""))
+  for (let i = 0; i < rest.length;) {
+    let end = Math.min(i + CHUNK_CHARS, rest.length)
+    // herdr's `pane send-text` has no `--`: a chunk must never start with "-".
+    while (end < rest.length && rest[end] === "-") end++
+    chunks.push(rest.slice(i, end).join(""))
+    i = end
+  }
   return { head, chunks }
 }
 
@@ -195,9 +202,31 @@ const real: VerifiedInjectDeps = {
   log: (line) => companionLog(line),
 }
 
+// herdr pane (ref.pane = $HERDR_PANE_ID, no socket): typed with `pane
+// send-text`, keys with `pane send-keys` (C-u → ctrl+u), read back with `pane
+// read --format ansi`, width from `pane layout`. Same staging, read-back,
+// clear-until-empty and pane_too_narrow as tmux.
+export const herdrVerifiedDeps: VerifiedInjectDeps = {
+  type: (ref, text) => herdrSendText(ref.pane, text),
+  capture: (ref) => realHerdr.read(ref.pane),
+  key: (ref, key) => herdrSendKey(ref.pane, key),
+  width: (ref) => herdrPaneWidth(ref.pane),
+  sleep: real.sleep,
+  log: real.log,
+}
+
+/** injectVerified on a herdr pane, in that pane's herdr key-gate turn. */
+export function injectVerifiedHerdr(pane: string, text: string, deps: VerifiedInjectDeps = herdrVerifiedDeps): Promise<VerifiedResult> {
+  return injectVerified({ pane, socket: "" }, text, deps, herdrGateKey(pane))
+}
+
 /** One key-gate turn on the pane: nothing else types between the first key and Enter. */
-export async function injectVerified(ref: PaneRef, text: string, deps: VerifiedInjectDeps = real): Promise<VerifiedResult> {
-  const where = paneKey(ref.pane, ref.socket)
+export async function injectVerified(
+  ref: PaneRef,
+  text: string,
+  deps: VerifiedInjectDeps = real,
+  where: string = paneKey(ref.pane, ref.socket),
+): Promise<VerifiedResult> {
   try {
     const r = await keyGate.send(where, "Enter", (signal) => injectVerifiedWith(ref, text, deps, signal), {
       startBy: Date.now() + INJECT_QUEUE_MS,

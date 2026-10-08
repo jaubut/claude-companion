@@ -79,7 +79,7 @@ export const realHerdr: Herdr = {
   },
   async read(pane) {
     const r = await herdrExec(["pane", "read", pane, "--source", "visible", "--format", "ansi"], 1_500)
-    return r.status === 0 && !r.error ? r.stdout : null
+    return r.status === 0 && !r.error ? herdrScreen(r.stdout) : null
   },
   async gate() {
     const mod = await loadClient()
@@ -91,6 +91,84 @@ export const realHerdr: Herdr = {
       return `herdr-down: ${(err as Error).message.slice(0, 120)}`
     }
   },
+}
+
+// `pane read --format ansi` → the shape `tmux capture-pane -e` hands the
+// screen parsers (dialogs, inputLine, command menu): herdr ends rows with CRLF
+// and keeps the trailing blanks tmux drops.
+export function herdrScreen(raw: string): string {
+  return raw.replace(/\r/g, "").replace(/[ \t]+$/gm, "")
+}
+
+// The pane's width in columns (`pane layout`); null when herdr can't say —
+// callers treat that as unknown, not as narrow (same as tmuxPaneWidth).
+export async function herdrPaneWidth(pane: string, h: Herdr = realHerdr): Promise<number | null> {
+  try {
+    const r = await h.call(["pane", "layout", "--pane", pane], 2_000)
+    const panes = (r.layout as { panes?: Array<{ pane_id?: string; rect?: { width?: number } }> } | undefined)?.panes ?? []
+    const w = panes.find((p) => p.pane_id === pane)?.rect?.width
+    return typeof w === "number" && Number.isInteger(w) && w > 0 ? w : null
+  } catch {
+    return null
+  }
+}
+
+// ── Closing a spawned session's workspace ────────────────────────────────
+//
+// A phone spawn runs `agent start` in a shell pane, so after /exit the pane
+// drops back to bash and the `cc-<dir>` workspace stays open. Closed only
+// when it is plainly ours and idle: one pane, and that pane's foreground
+// process group is its shell. Anything else (a human's command, a second
+// pane, an unreadable answer) leaves it alone.
+export async function herdrPaneAtShell(pane: string, h: Herdr = realHerdr): Promise<boolean> {
+  try {
+    const r = await h.call(["pane", "process-info", "--pane", pane], 2_000)
+    const p = r.process_info as { shell_pid?: number; foreground_process_group_id?: number } | undefined
+    return typeof p?.shell_pid === "number" && p.shell_pid > 0 && p.foreground_process_group_id === p.shell_pid
+  } catch {
+    return false
+  }
+}
+
+export interface WorkspaceCloseOpts {
+  h?: Herdr
+  tries?: number
+  intervalMs?: number
+  // False once a new session sits in the pane (a forked background claude,
+  // or someone started claude again): stop, the pane is in use.
+  stillFree?: () => boolean
+  sleep?: (ms: number) => Promise<void>
+}
+
+// SessionEnd fires while claude is still the foreground process, so the shell
+// check is polled for a few seconds. It must hold on two checks in a row: a
+// forked background claude ("Move to background and exit") registers a moment
+// after its parent ends, and closing the workspace under it would hang it up.
+// Returns the closed workspace id, or "".
+export async function closeHerdrWorkspaceWhenIdle(pane: string, opts: WorkspaceCloseOpts = {}): Promise<string> {
+  const h = opts.h ?? realHerdr
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const tries = opts.tries ?? 12
+  let atShell = 0
+  for (let i = 0; i < tries; i++) {
+    await sleep(opts.intervalMs ?? 1_000)
+    if (opts.stillFree && !opts.stillFree()) return ""
+    atShell = (await herdrPaneAtShell(pane, h)) ? atShell + 1 : 0
+    if (atShell < 2) continue
+    try {
+      const got = await h.call(["pane", "get", pane], 2_000)
+      const ws = (got.pane as { workspace_id?: string } | undefined)?.workspace_id ?? ""
+      if (!ws) return ""
+      const info = await h.call(["workspace", "get", ws], 2_000)
+      if ((info.workspace as { pane_count?: number } | undefined)?.pane_count !== 1) return ""
+      if (opts.stillFree && !opts.stillFree()) return ""
+      await h.call(["workspace", "close", ws], 5_000)
+      return ws
+    } catch {
+      return ""
+    }
+  }
+  return ""
 }
 
 // $HERDR_PANE_ID as hooks report it (e.g. "w1:p1"). It ends up in an argv, so

@@ -10,6 +10,8 @@ import { hasPendingApprovalFor } from "../lib/pty-manager"
 import { isQuestionReview, orphanPickerClosed, raiseOrphanQuestion } from "../lib/orphan-question"
 import { capturePane, paneKey, tmuxPaneWidth } from "../lib/tmux-pane"
 import { markWaiting, unmarkWaiting } from "./waiting"
+import { herdrGateKey, herdrPaneOf, herdrPaneWidth, realHerdr } from "../lib/herdr"
+import { unstyle } from "../lib/command-menu"
 
 // Dialog mirror: any Claude Code dialog open in a live tmux session (/model,
 // /mcp, trust, MCP-enable) is parsed off the pane and pushed to clients as a
@@ -26,10 +28,19 @@ async function readSessionStatus(pid: string): Promise<SessionStatus | null> {
 
 export const dialogWatcher = createDialogWatcher({
   sessions: listSessions,
-  // dialog-watch passes the session's socket; with none recorded, the one
-  // live session on that pane id names the server (ambiguous → default
+  // herdr session: `pane read` (ANSI) unstyled to the plain text a bare
+  // capture-pane gives. tmux: the session's socket; with none recorded, the
+  // one live session on that pane id names the server (ambiguous → default
   // server, the old behaviour).
-  capture: (pane: string, socket?: string) => capturePane(pane, undefined, { socket: socket ?? socketForPane(pane) }),
+  capture: async (s) => {
+    const herdrPane = herdrPaneOf(s)
+    if (herdrPane) {
+      const text = await realHerdr.read(herdrPane)
+      return text === null ? null : unstyle(text)
+    }
+    if (!s.tmuxPane) return null
+    return capturePane(s.tmuxPane, undefined, { socket: s.tmuxSocket || socketForPane(s.tmuxPane) })
+  },
   sessionStatus: readSessionStatus,
   // Most specific identity first: two sessions in one folder must not hide
   // each other's pickers (an orphan card can stay up for hours).
@@ -101,7 +112,7 @@ dialogWatcher.start()
 // below saying the pane really is back to an empty prompt.
 // Bounded by the caller (VERIFY_TIMEOUT_MS in lib/command-scrape.ts): on
 // abort the capture is killed and the answer is "not clean" — the mark stays.
-type PaneTarget = { key: string; tmuxPane?: string; tmuxSocket?: string }
+type PaneTarget = { key: string; tmuxPane?: string; tmuxSocket?: string; herdrPane?: string }
 
 async function paneLooksClean(target: PaneTarget, signal: AbortSignal): Promise<boolean> {
   // Refresh first: the watcher skipped this session for the whole scrape, so
@@ -110,8 +121,11 @@ async function paneLooksClean(target: PaneTarget, signal: AbortSignal): Promise<
   // real `dialog_open` refusal, and the user can Escape it from the phone
   // instead of waiting on a mark to expire.
   await dialogWatcher.refresh(target.key)
-  if (!target.tmuxPane || signal.aborted) return false
-  const text = await capturePane(target.tmuxPane, signal, { socket: target.tmuxSocket })
+  const herdrPane = herdrPaneOf(target)
+  if ((!target.tmuxPane && !herdrPane) || signal.aborted) return false
+  const text = herdrPane
+    ? await realHerdr.read(herdrPane)
+    : await capturePane(target.tmuxPane!, signal, { socket: target.tmuxSocket })
   return text !== null && !signal.aborted && isPaneClean(text)
 }
 
@@ -124,7 +138,8 @@ export async function yieldPaneForInject(
   // this pane (lib/key-gate.ts). The delivery itself goes through the same
   // gate; this keeps the verdict honest, so freed never means "free, but a
   // chord window is still open".
-  const pane = target.tmuxPane ? paneKey(target.tmuxPane, target.tmuxSocket) : undefined
+  const herdrPane = herdrPaneOf(target)
+  const pane = herdrPane ? herdrGateKey(herdrPane) : target.tmuxPane ? paneKey(target.tmuxPane, target.tmuxSocket) : undefined
   const { held, freed } = await yieldPane(target.key, { pane, verify: (signal) => paneLooksClean(target, signal) })
   if (held === "list") {
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
@@ -166,4 +181,22 @@ export async function paneWidthFor(
 ): Promise<number | null | undefined> {
   if (!target?.tmuxPane) return undefined
   return tmuxPaneWidth({ pane: target.tmuxPane, socket: target.tmuxSocket ?? "" }, AbortSignal.timeout(PANE_SNAPSHOT_TIMEOUT_MS))
+}
+
+// The session's screen, styled, from whichever pane it has: tmux first
+// (paneSnapshotFor), else herdr `pane read`. Same undefined/null contract.
+// Used by auto-compact; the phone inject guard stays on paneSnapshotFor.
+export async function screenSnapshotFor(
+  target: { tmuxPane?: string; tmuxSocket?: string; herdrPane?: string } | null | undefined,
+): Promise<string | null | undefined> {
+  const herdrPane = herdrPaneOf(target)
+  return herdrPane ? realHerdr.read(herdrPane) : paneSnapshotFor(target)
+}
+
+// Width twin of screenSnapshotFor: herdr's `pane layout`, else tmux.
+export async function screenWidthFor(
+  target: { tmuxPane?: string; tmuxSocket?: string; herdrPane?: string } | null | undefined,
+): Promise<number | null | undefined> {
+  const herdrPane = herdrPaneOf(target)
+  return herdrPane ? herdrPaneWidth(herdrPane) : paneWidthFor(target)
 }

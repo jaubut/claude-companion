@@ -1,5 +1,6 @@
 import type { Session } from "./sessions"
 import type { Dialog } from "./dialogs"
+import { herdrPaneOf } from "./herdr"
 
 // Slash-command autocomplete for the phone (PRJ-OR1T Phase 16).
 //
@@ -228,7 +229,7 @@ export function suggestRefusal(
   typed: string | null,
   ours: string,
 ): SuggestRefusal | null {
-  if (!session?.tmuxPane) return { error: "no_pane" }
+  if (!session || (!session.tmuxPane && !herdrPaneOf(session))) return { error: "no_pane" }
   if (dialog) return { error: "other_dialog" }
   if (session.agentStatus === "busy") return { error: "busy" }
   // An UNREADABLE line (no prompt on the capture, or the capture failed) is

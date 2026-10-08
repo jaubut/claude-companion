@@ -32,6 +32,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
       if (!sent) return Response.json({ ok: false, error: "herdr send-keys failed" }, { status: 500 })
       if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
       companionLog(`\x1b[36mdialog key\x1b[0m ${name} → ${gk}`)
+      setTimeout(() => void dialogWatcher.refresh(session.key), 350)
       return Response.json({ ok: true })
     }
     if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
@@ -66,18 +67,25 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     const body = await req.json() as { key?: string; index?: number }
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
-    if (!session?.tmuxPane) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
+    const herdrPane = herdrPaneOf(session)
+    if (!session || (!session.tmuxPane && !herdrPane)) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
     const dialog = dialogWatcher.current()[session.key]
     const keys = dialog ? pickKeys(dialog, typeof body.index === "number" ? body.index : -1) : null
     if (!keys) return Response.json({ ok: false, error: "no such row" }, { status: 404 })
-    const ref = { pane: session.tmuxPane, socket: session.tmuxSocket ?? "" }
+    const ref = { pane: session.tmuxPane ?? "", socket: session.tmuxSocket ?? "" }
+    // herdr session: `pane send-keys` through the same per-pane gate.
+    const gateKey = herdrPane ? herdrGateKey(herdrPane) : paneKey(ref.pane, ref.socket)
+    const send = async (k: string, signal: AbortSignal): Promise<void> => {
+      if (!herdrPane) { await runTmux(sendKeysArgs(ref, k), signal); return }
+      if (!(await herdrSendKey(herdrPane, k))) throw new Error("herdr send-keys failed")
+    }
     try {
       for (const k of keys) {
-        await keyGate.send(paneKey(ref.pane, ref.socket), k, (signal) => runTmux(sendKeysArgs(ref, k), signal))
+        await keyGate.send(gateKey, k, (signal) => send(k, signal))
         await new Promise((r) => setTimeout(r, 40))
       }
     } catch {
-      return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
+      return Response.json({ ok: false, error: `${herdrPane ? "herdr" : "tmux"} send-keys failed` }, { status: 500 })
     }
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)
     return Response.json({ ok: true, sent: keys.length })

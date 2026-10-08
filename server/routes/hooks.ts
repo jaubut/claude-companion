@@ -14,6 +14,7 @@ import {
   recordSession,
   listSessions,
   removeSessionByKey,
+  releaseHerdrWorkspace,
   setSessionTitle,
 } from "../lib/sessions"
 import { announceKeylessWaiting, markWaiting, unmarkWaiting } from "../wiring/waiting"
@@ -528,6 +529,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     }
     const removedKeys = victims.map((s) => s.key).filter((k) => removeSessionByKey(k))
     for (const k of removedKeys) autoCompactor.forget(k)
+    for (const v of victims) releaseHerdrWorkspace(v)
     const removed = removedKeys.length > 0
     {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"

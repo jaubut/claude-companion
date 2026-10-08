@@ -20,6 +20,8 @@
 import { isAgentPidAlive, processStartMs } from "./agent-pid"
 import { deriveKey, hasStrongIdentity, hasTtyIdentity, makeLabel, mergeTmuxSocket } from "./session-identity"
 import { logRemoval } from "./session-removal-log"
+import { closeHerdrWorkspaceWhenIdle, herdrPaneOf } from "./herdr"
+import { companionLog } from "./log"
 import {
   type WaitingKind,
   type WaitingReason,
@@ -105,6 +107,7 @@ function prune(now: number): boolean {
       if (!isAgentPidAlive(s.pid, s.agent)) {
         sessions.delete(key)
         logRemoval(s, "prune:pid-dead")
+        releaseHerdrWorkspace(s)
         changed = true
       }
       continue
@@ -580,6 +583,20 @@ export function socketForPane(pane: string): string | undefined {
     n++
   }
   return n > 0 ? found : undefined
+}
+
+// A herdr session this server spawned is gone (SessionEnd, pid-dead prune):
+// close its `cc-<dir>` workspace once the pane is back at its shell, and only
+// while no other live session (a forked background claude inherits
+// $HERDR_PANE_ID) sits in that pane.
+export function releaseHerdrWorkspace(s: Session, close = closeHerdrWorkspaceWhenIdle): void {
+  const pane = herdrPaneOf(s)
+  if (!pane || !s.herdrAgent) return
+  const free = () => ![...sessions.values()].some((o) => o.herdrPane === pane)
+  if (!free()) return
+  void close(pane, { stillFree: free }).then((ws) => {
+    if (ws) companionLog(`\x1b[35mherdr workspace closed\x1b[0m ${ws} (pane ${pane} back at its shell)`)
+  })
 }
 
 export function listSessions(): Session[] {

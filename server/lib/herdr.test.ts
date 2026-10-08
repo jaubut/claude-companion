@@ -1,5 +1,10 @@
 import { test, expect } from "bun:test"
-import { type Herdr, herdrKeyName, herdrPaneOf, silentSuccess } from "./herdr"
+import { type Herdr, closeHerdrWorkspaceWhenIdle, herdrKeyName, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, silentSuccess } from "./herdr"
+import { parseDialog } from "./dialogs"
+import { inputLine, unstyle } from "./command-menu"
+import { createDialogWatcher } from "./dialog-watch"
+import { stages } from "./inject-verified"
+import { type Session, releaseHerdrWorkspace } from "./sessions"
 import { herdrAgentBaseName, spawnInHerdr, spawnLinux, spawnMacAuto, type SpawnResult } from "./spawn-session"
 import { injectConfirmed, noteUserPromptSubmit } from "./submit-confirm"
 import { injectText } from "./keyboard-inject"
@@ -253,4 +258,141 @@ test("silentSuccess: exit 0 with no stdout is success (pane send-keys/send-text)
   expect(silentSuccess({ status: 1, stdout: "" })).toBe(false)
   expect(silentSuccess({ status: null, stdout: "" })).toBe(false)
   expect(silentSuccess({ status: 0, stdout: "", error: new Error("spawn") })).toBe(false)
+})
+
+// ── screen reads (pane read → the tmux parsers) ─────────────────────────────
+
+
+// What `capture-pane -p` gives for the /model picker…
+const TMUX_MODEL = [
+  "   Select model",
+  "   Switch between Claude models. Your pick becomes the default for new",
+  "   ❯ 1. Default (recommended) ✔  Opus 5 with 1M context",
+  "     2. Opus (1M context)        Opus 5 with 1M context",
+  "     3. Sonnet                   Sonnet 5",
+  "   Enter to set as default · s to use this session only · Esc to cancel",
+  "",
+].join("\n")
+
+// …and what `herdr pane read --source visible --format ansi` gives for the
+// same screen (shape seen live on Zettlab, herdr 0.9.3): CRLF rows, a reset
+// plus truecolour run per row, trailing blanks kept.
+function herdrShaped(plain: string): string {
+  return plain.split("\n")
+    .map((l, i) => l ? `\x1b[0m\x1b[38;2;153;153;153m${l}${i % 2 ? "\x1b[0m    " : "    \x1b[0m"}` : "")
+    .join("\r\n")
+}
+
+test("herdr read → same dialog as the tmux capture of that screen", () => {
+  const tmux = parseDialog(TMUX_MODEL)
+  expect(tmux?.items.length).toBe(3)
+  expect(parseDialog(unstyle(herdrScreen(herdrShaped(TMUX_MODEL))))).toEqual(tmux)
+})
+
+test("herdrScreen drops CR and trailing blanks; the input line reads the same", () => {
+  expect(herdrScreen("a  \r\nb\r\n")).toBe("a\nb\n")
+  const box = "────\n❯ /compact keep: x\n────\n"
+  expect(inputLine(herdrScreen(herdrShaped(box)))).toBe(inputLine(box))
+})
+
+function herdrSession(over: Partial<Session> = {}): Session {
+  return {
+    key: "claude:tty:/dev/pts/9", agent: "claude", label: "work", title: "", sidConfirmed: true,
+    cwd: "/home/aubut/work", sessionId: "sid", termProgram: "", tty: "/dev/pts/9", iTermSessionId: "",
+    tmuxPane: "", tmuxSocket: "", herdrPane: "w6:p1", herdrAgent: "cc-work", taskId: "", waitingSince: 0,
+    waitingKind: "", waitingRef: "", waitingReasons: [], pid: "100", firstSeenAt: 0, lastSeenAt: 0, model: "",
+    agentStatus: "", waitingFor: "", ...over,
+  }
+}
+
+test("dialog watcher mirrors a dialog on a herdr session (no tmux pane)", async () => {
+  const opened: string[] = []
+  const captured: Session[] = []
+  const w = createDialogWatcher({
+    sessions: () => [herdrSession()],
+    capture: async (s) => { captured.push(s); return unstyle(herdrScreen(herdrShaped(TMUX_MODEL))) },
+    sessionStatus: async () => ({ status: "waiting", waitingFor: "dialog open" }),
+    hasPendingQuestion: () => false,
+    isScraping: () => false,
+    onDialog: (key, d) => opened.push(`${key}:${d.title}`),
+    onDialogClosed: () => {},
+    onStatus: () => {},
+  })
+  await w.tick()
+  expect(captured[0]?.herdrPane).toBe("w6:p1")
+  expect(opened).toEqual(["claude:tty:/dev/pts/9:Select model"])
+})
+
+test("pane width from `pane layout`; unknown when herdr can't say", async () => {
+  const f = fakeHerdr({ reply: () => ({ layout: { panes: [{ pane_id: "w1:p2", rect: { width: 30 } }, { pane_id: "w6:p1", rect: { width: 284 } }] } }) })
+  expect(await herdrPaneWidth("w6:p1", f.h)).toBe(284)
+  expect(f.calls[0]).toEqual(["pane", "layout", "--pane", "w6:p1"])
+  expect(await herdrPaneWidth("w9:p9", f.h)).toBeNull()
+  const down = fakeHerdr({ reply: () => { throw new Error("down") } })
+  expect(await herdrPaneWidth("w6:p1", down.h)).toBeNull()
+})
+
+test("staged chunks never start with '-' (herdr send-text has no `--`)", () => {
+  const text = `/compact keep: ${"a".repeat(184)}--b${"c".repeat(300)}`
+  const { chunks } = stages(text)
+  expect(chunks.join("")).toBe(text.slice("/compact".length))
+  for (const c of chunks) expect(c.startsWith("-")).toBe(false)
+})
+
+// ── workspace close on exit ─────────────────────────────────────────────────
+
+// process-info as herdr 0.9.3 answers it: the shell (bash) or claude in front.
+const AT_SHELL = { process_info: { shell_pid: 500, foreground_process_group_id: 500, foreground_processes: [{ name: "bash", pid: 500 }] } }
+const IN_CLAUDE = { process_info: { shell_pid: 500, foreground_process_group_id: 612, foreground_processes: [{ name: "claude", pid: 612 }] } }
+
+function closeHerdr(front: () => Record<string, unknown>, paneCount = 1) {
+  return fakeHerdr({
+    reply: (args) => {
+      if (args[1] === "process-info") return front()
+      if (args[0] === "pane" && args[1] === "get") return { pane: { pane_id: args[2], workspace_id: "w6" } }
+      if (args[0] === "workspace" && args[1] === "get") return { workspace: { workspace_id: "w6", pane_count: paneCount } }
+      return {}
+    },
+  })
+}
+const noSleep = { sleep: async () => {} }
+
+test("pane at its shell: workspace closed", async () => {
+  const f = closeHerdr(() => AT_SHELL)
+  expect(await herdrPaneAtShell("w6:p1", f.h)).toBe(true)
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, ...noSleep })).toBe("w6")
+  expect(f.calls.at(-1)).toEqual(["workspace", "close", "w6"])
+})
+
+test("claude still in front: polled, closed once the shell is back (twice in a row)", async () => {
+  let n = 0
+  const f = closeHerdr(() => (++n <= 2 ? IN_CLAUDE : AT_SHELL))
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, ...noSleep })).toBe("w6")
+  expect(f.verbs().filter((v) => v === "pane process-info").length).toBe(4)
+})
+
+test("never closed while a command holds the pane, the pane is shared, or a session is back in it", async () => {
+  const busy = closeHerdr(() => IN_CLAUDE)
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: busy.h, tries: 5, ...noSleep })).toBe("")
+  expect(busy.verbs()).not.toContain("workspace close")
+
+  const split = closeHerdr(() => AT_SHELL, 2)
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: split.h, ...noSleep })).toBe("")
+  expect(split.verbs()).not.toContain("workspace close")
+
+  const forked = closeHerdr(() => AT_SHELL)
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: forked.h, stillFree: () => false, ...noSleep })).toBe("")
+  expect(forked.verbs()).not.toContain("workspace close")
+
+  const unreadable = fakeHerdr({ reply: () => { throw new Error("pane_not_found") } })
+  expect(await herdrPaneAtShell("w6:p1", unreadable.h)).toBe(false)
+})
+
+test("only a session this server spawned in herdr releases its workspace", () => {
+  const panes: string[] = []
+  const close = async (pane: string) => { panes.push(pane); return "" }
+  releaseHerdrWorkspace(herdrSession({ herdrAgent: "" }), close)
+  releaseHerdrWorkspace(herdrSession({ tmuxPane: "%3" }), close)
+  releaseHerdrWorkspace(herdrSession(), close)
+  expect(panes).toEqual(["w6:p1"])
 })
