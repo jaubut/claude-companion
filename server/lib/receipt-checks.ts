@@ -185,3 +185,20 @@ export function isPersonalPurpose(f: ExpenseFields): boolean {
 export function groceryByName(f: ExpenseFields): boolean {
   return ALWAYS_PERSONAL.test(String(f.merchant ?? ""))
 }
+
+// ── Meal GL rule: distance from the Granby office decides, never a model ──
+
+export const MEAL_TRAVEL_KM = 50
+export const MEAL_TRAVEL_CODE = "5216"
+export const MEAL_LOCAL_CODE = "5776"
+export const MEAL_ADDRESS_UNRESOLVED = "meal address unresolved"
+const MEAL_CATEGORY = /\b(meals?|restaurants?|repas|resto|restauration)\b/i
+
+export function mealByCategory(f: ExpenseFields): boolean {
+  return MEAL_CATEGORY.test(String(f.category ?? ""))
+}
+
+/** km > 50 → 5216 Travel; km ≤ 50 → 5776 Représentation. */
+export function mealCodeForKm(km: number): string {
+  return km > MEAL_TRAVEL_KM ? MEAL_TRAVEL_CODE : MEAL_LOCAL_CODE
+}

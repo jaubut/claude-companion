@@ -1,4 +1,4 @@
-import { BASE_CHART, groceryByName, isPersonalPurpose } from "./receipt-checks"
+import { BASE_CHART, MEAL_ADDRESS_UNRESOLVED, groceryByName, isPersonalPurpose, mealByCategory } from "./receipt-checks"
 import type { ExpenseFields, QaIssue, QaStatus } from "./receipt-qa-store"
 import { readSecretValue } from "./secret-store"
 
@@ -123,16 +123,44 @@ export interface JevDecision {
   issues: QaIssue[]
   /** Blank saved code + confident Jev + clean receipt: the code Jev books itself. */
   fill?: string
+  /** Meal distance rule: the code booked in code when it differs from the saved one. */
+  rule?: string
 }
+
+/** Outcome of the office-distance lookup for a meal: a code, or why none. */
+export type MealRule = { km: number; code: string } | { unresolved: string }
 
 const fmt = (p: number): string => p.toFixed(2)
 
 /**
+ * The meal distance rule applies to a business meal: category says meal or
+ * Jev's meal noul fires, and neither the grocery rule nor a personal verdict
+ * (saved purpose or Jev's pick) takes it out of the books.
+ */
+export function mealRuleApplies(f: ExpenseFields, jev: JevVerdict): boolean {
+  if (groceryByName(f) || jev.grocery >= NOUL_YES) return false
+  if (isPersonalPurpose(f) || jev.code === PERSONAL_OPTION) return false
+  return mealByCategory(f) || jev.meal >= NOUL_YES
+}
+
+/** Distance decides the meal code; no address/km → to_review, never a guess. */
+function decideMeal(f: ExpenseFields, issues: QaIssue[], meal: MealRule): JevDecision {
+  if ("unresolved" in meal) {
+    issues.push({ field: "address", problem: `${MEAL_ADDRESS_UNRESOLVED}: ${meal.unresolved}` })
+    return { status: "to_review", issues }
+  }
+  const saved = String(f.category_code ?? "").trim()
+  const status = issues.length ? "to_review" : "jev_ok"
+  return saved === meal.code ? { status, issues } : { status, issues, rule: meal.code }
+}
+
+/**
  * All code checks pass AND Jev agrees with the saved code at ≥ 0.9 AND no
  * books-rule flag → jev_ok; the same with a BLANK saved code → jev_ok + `fill`.
- * Anything else → to_review with every issue found.
+ * Anything else → to_review with every issue found. A business meal with a
+ * `meal` outcome is decided by the office-distance rule instead (see decideMeal).
  */
-export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerdict | null): JevDecision {
+export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerdict | null, meal?: MealRule): JevDecision {
   const issues = [...checkIssues]
   if (!jev) {
     issues.push({ field: "jev", problem: "jev_unavailable" })
@@ -144,6 +172,8 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
   if (grocery && !isPersonalPurpose(f)) {
     issues.push({ field: "purpose", problem: "grocery purchase booked as business (groceries are always personal)", suggestion: "Personal — not a business expense" })
   }
+  // Meal with an office-distance outcome: the rule owns the code (Jev's pick and trip noul are moot).
+  if (meal && !grocery) return decideMeal(f, issues, meal)
   if (!grocery && jev.meal >= NOUL_YES && jev.trip < NOUL_YES) {
     issues.push({ field: "purpose", problem: "meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)" })
   }
