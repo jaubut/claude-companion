@@ -82,6 +82,11 @@ beforeAll(async () => {
 beforeEach(() => {
   failing = false
   db.exec("DELETE FROM dispatch_seen")
+  // The sqlite file is shared with other route test files in one `bun test`
+  // process (COMPANION_DB_PATH ??=), and the turn store is persistent by design.
+  // triage.test.ts's hex() mints "c".repeat(32) — this file's ID — and leaves a
+  // "PR ready" turn on 'general'. Start every test with no turns for ID.
+  db.query("DELETE FROM orchestrator_turns WHERE task_id = ?").run(ID)
   db.exec("UPDATE orchestrator_channels SET note_id = NULL, note_title = NULL, note_ref = NULL")
   notes = [{ id: "projects/dash", title: "TLS Dashboard", ref_code: "PRJ-WCLS" }]
   taskRows = [blockedRow]
