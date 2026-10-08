@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { BOOKS_RULES, checkArithmetic, checkTaxRates, isPersonalPurpose, parseMoney } from "./receipt-checks"
+import { BOOKS_RULES, NOT_CLASSIFIABLE, checkArithmetic, checkTaxRates, isPersonalPurpose, parseMoney } from "./receipt-checks"
 import type { ChartEntry } from "./receipt-jev"
 import type { ExpenseFields, QaIssue } from "./receipt-qa-store"
 import { parseCliResult } from "./cli-json"
@@ -128,6 +128,7 @@ export function validatePatch(fields: ExpenseFields, patch: Record<string, strin
     if (v.length > MAX_VALUE || /[\x00-\x09\x0b-\x1f\x7f]/.test(v)) return { ok: false, why: `bad value for ${k}` }
     if (MONEY_FIELDS.has(k) && v !== "" && parseMoney(v) === null) return { ok: false, why: `${k} is not money` }
     if (k === "date" && !validDate(v)) return { ok: false, why: "bad date" }
+    if (k === "category_code" && NOT_CLASSIFIABLE.has(v)) return { ok: false, why: "category_code is never-pick" }
     if (k === "category_code" && v !== "" && !chart.some((c) => c.code === v)) return { ok: false, why: "category_code not in chart" }
   }
   const after: ExpenseFields = { ...fields, ...patch }

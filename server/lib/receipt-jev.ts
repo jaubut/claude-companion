@@ -1,4 +1,4 @@
-import { BASE_CHART, groceryByName, isPersonalPurpose } from "./receipt-checks"
+import { BASE_CHART, NOT_CLASSIFIABLE, groceryByName, isPersonalPurpose } from "./receipt-checks"
 import type { ExpenseFields, QaIssue, QaStatus } from "./receipt-qa-store"
 import { readSecretValue } from "./secret-store"
 
@@ -36,7 +36,7 @@ let chartCache: { at: number; chart: ChartEntry[] } | null = null
 export function resetChartCache(): void { chartCache = null }
 
 function expenseCode(code: string): boolean {
-  return /^5\d{3}$/.test(code) && !code.startsWith("54") && !code.startsWith("51")
+  return /^5\d{3}$/.test(code) && !code.startsWith("54") && !code.startsWith("51") && !NOT_CLASSIFIABLE.has(code)
 }
 
 export async function loadChart(query: ChartQuery, now = Date.now()): Promise<ChartEntry[]> {
@@ -129,7 +129,7 @@ const fmt = (p: number): string => p.toFixed(2)
 
 /**
  * All code checks pass AND Jev agrees with the saved code at ≥ 0.9 AND no
- * books-rule flag → jev_ok; the same with a BLANK saved code → jev_ok + `fill`.
+ * books-rule flag → jev_ok; the same with a BLANK (or never-pick) saved code → jev_ok + `fill`.
  * Anything else → to_review with every issue found.
  */
 export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerdict | null): JevDecision {
@@ -139,7 +139,10 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
     return { status: "to_review", issues }
   }
   // A personal purchase carries no GL code: Jev picking `personal` agrees with it.
-  const saved = String(f.category_code ?? "").trim() || (isPersonalPurpose(f) ? PERSONAL_OPTION : "")
+  // A never-pick code (5200 catch-all…) counts as blank so Jev can replace it.
+  const raw = String(f.category_code ?? "").trim()
+  const neverPick = NOT_CLASSIFIABLE.has(raw)
+  const saved = (neverPick ? "" : raw) || (isPersonalPurpose(f) ? PERSONAL_OPTION : "")
   const grocery = groceryByName(f) || jev.grocery >= NOUL_YES
   if (grocery && !isPersonalPurpose(f)) {
     issues.push({ field: "purpose", problem: "grocery purchase booked as business (groceries are always personal)", suggestion: "Personal — not a business expense" })
@@ -154,7 +157,8 @@ export function decideJev(f: ExpenseFields, checkIssues: QaIssue[], jev: JevVerd
     return { status: "jev_ok", issues, fill: suggestion }
   }
   if (!saved) {
-    issues.push({ field: "category_code", problem: `GL code missing; Jev suggests ${jev.code} (conf ${fmt(jev.confidence)})`, ...(suggestion ? { suggestion } : {}) })
+    const what = neverPick ? `GL code ${raw} is never-pick` : "GL code missing"
+    issues.push({ field: "category_code", problem: `${what}; Jev suggests ${jev.code} (conf ${fmt(jev.confidence)})`, ...(suggestion ? { suggestion } : {}) })
   } else if (jev.code !== saved) {
     issues.push({ field: "category_code", problem: `Jev picks ${jev.code} (conf ${fmt(jev.confidence)}) over saved ${saved}`, ...(suggestion ? { suggestion } : {}) })
   } else if (jev.confidence < JEV_AGREE_MIN) {

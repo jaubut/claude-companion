@@ -89,7 +89,7 @@ beforeEach(() => {
   patchReply = () => Response.json({ ok: true })
   Object.assign(workerDeps, realDeps, {
     dupQuery: async () => [],
-    chartQuery: async () => [{ code: "5776", name: "Frais de représentation" }, { code: "5216", name: "Travel Expenses" }, { code: "2400", name: "Business MC" }],
+    chartQuery: async () => [{ code: "5776", name: "Frais de représentation" }, { code: "5216", name: "Travel Expenses" }, { code: "2400", name: "Business MC" }, { code: "5200", name: "Indirect Expenses" }],
     sonnet: async (prompt: string, imagePath: string) => {
       sonnetCalls.push({ prompt, imagePath })
       return sonnetText === null ? { kind: "error" as const, reason: "exit 1" } : { kind: "ok" as const, text: sonnetText }
@@ -162,6 +162,16 @@ test("decideJev: blank code + conf ≥ 0.9 + clean → jev_ok with fill; any fla
   expect(decideJev(blank, [], V("personal", 0.99)).fill).toBeUndefined()
 })
 
+test("decideJev: never-pick saved code (5200) counts as blank → filled at ≥ 0.9, to_review below", () => {
+  const catchAll = { ...MEAL, category_code: "5200" }
+  expect(decideJev(catchAll, [], V("5776", 0.96, { meal: 0.9, trip: 0.9 }))).toEqual({ status: "jev_ok", issues: [], fill: "5776" })
+  const low = decideJev(catchAll, [], V("5776", 0.6, { meal: 0.9, trip: 0.9 }))
+  expect(low.status).toBe("to_review")
+  expect(low.fill).toBeUndefined()
+  expect(low.issues[0]).toMatchObject({ field: "category_code", suggestion: "5776" })
+  expect(low.issues[0]!.problem).toContain("5200 is never-pick")
+})
+
 // ── Pass 1 end to end ──
 
 test("Jev fill: blank code + confident + clean → PATCH category_code, by:jev change, audit, jev_ok", async () => {
@@ -200,6 +210,15 @@ test("Jev fill refused: grocery flag, conf 0.85, or a non-blank code Jev disagre
   expect(existsSync(auditFile())).toBe(false)
 })
 
+test("Jev fill: saved never-pick 5200 + Jev 5776@0.96 → 5776 booked, audit shows the replaced code", async () => {
+  seed({ category_code: "5200" })
+  jevAnswer = jev("5776", 0.96, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "jev_ok", category_code: "5776" })
+  const audit = readFileSync(auditFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+  expect(audit).toEqual([expect.objectContaining({ by: "jev", field: "category_code", from: "5200", to: "5776" })])
+})
+
 test("Jev fill: dashboard PATCH 5xx → retried later, not dropped", async () => {
   seed({ category_code: "" })
   jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
@@ -223,6 +242,7 @@ test("Jev pass: fake System One agrees → jev_ok; request carries the vault key
   expect(sent.model).toBe("jev-latest")
   expect(Object.keys(sent.questions.gl_code.criteria)).toEqual(expect.arrayContaining(["5216", "5776", "personal"]))
   expect(sent.questions.gl_code.criteria["2400"]).toBeUndefined() // never a card account
+  expect(sent.questions.gl_code.criteria["5200"]).toBeUndefined() // never-pick, even from coa
   expect(frames.map((f) => f.status)).toEqual(["queued", "jev_ok"])
 })
 
@@ -310,6 +330,10 @@ test("Sonnet: a code outside the chart, or amounts still off, are refused", asyn
   sonnetText = '{"resolved":true,"patch":{"category_code":"2400"},"reason":"x"}'
   await drainReceiptQa()
   expect(getQaRow(ID)!.issues.at(-1)!.problem).toContain("not in chart")
+  seed({ category_code: "" }, `${ID}-np`) // Jev still answering 500 → to_review
+  sonnetText = '{"resolved":true,"patch":{"category_code":"5200"},"reason":"x"}'
+  await drainReceiptQa()
+  expect(getQaRow(`${ID}-np`)!.issues.at(-1)!.problem).toContain("never-pick")
   seed({ category_code: "", tps: "$7.00" }, `${ID}-b`)
   sonnetText = '{"resolved":true,"patch":{"category_code":"5776"},"reason":"x"}'
   await drainReceiptQa()
