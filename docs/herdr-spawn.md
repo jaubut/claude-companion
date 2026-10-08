@@ -44,9 +44,10 @@ It is idempotent and:
 3. ensures `herdr.service` (systemd `--user`, shared with the dispatch herdr runner) is
    enabled + started, and linger is on — never restarts a running server by default (that
    would kill worker panes). If the running server's version differs from the binary
-   (reload-config doesn't upgrade it, so the version gate would keep spawns on tmux) or
-   `reload-config` fails, the script stops with exit 2: check no dispatch worker runs
-   (`herdr workspace list`), then re-run with `HERDR_RESTART=1`. It ends by checking that the
+   (reload-config doesn't upgrade it, so the version gate would keep spawns on tmux),
+   `reload-config` fails, or the server doesn't answer within 10s, the script stops with
+   exit 2: check no dispatch worker runs (`herdr workspace list`), then re-run with
+   `HERDR_RESTART=1`, which always restarts an active server. It ends by checking that the
    running server reports `0.9.3`. If a pane is still 120x40 after the first spawn, restart
    herdr the same way;
 4. adds `claude-companion.service.d/herdr.conf` with `HERDR_BIN=%h/.local/bin/herdr`

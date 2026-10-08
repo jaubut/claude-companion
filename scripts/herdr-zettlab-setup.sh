@@ -91,17 +91,27 @@ systemctl --user daemon-reload
 systemctl --user enable herdr.service
 running_version() {
   "$BIN" status server --json 2>/dev/null \
-    | grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/'
+    | grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/' || true
 }
 if systemctl --user is-active --quiet herdr.service; then
   # Never restart by default: that would kill running dispatch workers' panes.
   # A running server keeps its old binary (reload-config doesn't upgrade it) and may
   # not re-apply headless_* — both need a restart, done only with HERDR_RESTART=1.
   need_restart=""
-  rv="$(running_version)"
-  [ "$rv" = "$VERSION" ] || need_restart="running server is v${rv:-unknown}, binary is v$VERSION (version gate keeps spawns on tmux)"
-  if [ -z "$need_restart" ] && [ "$CFG_CHANGED" = 1 ]; then
+  rv=""
+  for _ in 1 2 3 4 5 6 7 8 9 10; do rv="$(running_version)"; [ -n "$rv" ] && break; sleep 1; done
+  if [ -z "$rv" ]; then
+    log "ERROR: herdr.service is active but the server is not answering"
+    need_restart="herdr server not answering"
+  elif [ "$rv" != "$VERSION" ]; then
+    need_restart="running server is v$rv, binary is v$VERSION (version gate keeps spawns on tmux)"
+  elif [ "$CFG_CHANGED" = 1 ]; then
     "$BIN" server reload-config || need_restart="reload-config failed; headless size not applied"
+  fi
+  # HERDR_RESTART=1 always restarts, e.g. the retry after a reload-config failure
+  # (the config is already written, so CFG_CHANGED is 0 on that run).
+  if [ -z "$need_restart" ] && [ "${HERDR_RESTART:-0}" = 1 ]; then
+    need_restart="HERDR_RESTART=1 (re-apply config.toml headless size)"
   fi
   if [ -n "$need_restart" ]; then
     if [ "${HERDR_RESTART:-0}" = 1 ]; then
