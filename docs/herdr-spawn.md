@@ -37,13 +37,18 @@ systemctl --user restart claude-companion
 It is idempotent and:
 
 1. installs herdr `0.9.3` to `~/.local/bin/herdr` (sha256-checked) if the version differs;
-2. sets `[server] headless_cols = 220`, `headless_rows = 60` in `~/.config/herdr/config.toml`
+2. forces `[server] headless_cols = 220`, `headless_rows = 60` in `~/.config/herdr/config.toml`
+   (overwrites existing values, adds whichever key is missing)
    — a pane with no client attached gets this size (default 120x40), and Claude Code
    dialogs + the `/help` scrape need the rows (same reason as tmux `DETACHED_COLS/ROWS`);
 3. ensures `herdr.service` (systemd `--user`, shared with the dispatch herdr runner) is
-   enabled + started, and linger is on — never restarts a running server (that would kill
-   worker panes; `reload-config` instead — if the size doesn't take, restart herdr when
-   no worker runs);
+   enabled + started, and linger is on — never restarts a running server by default (that
+   would kill worker panes). If the running server's version differs from the binary
+   (reload-config doesn't upgrade it, so the version gate would keep spawns on tmux) or
+   `reload-config` fails, the script stops with exit 2: check no dispatch worker runs
+   (`herdr workspace list`), then re-run with `HERDR_RESTART=1`. It ends by checking that the
+   running server reports `0.9.3`. If a pane is still 120x40 after the first spawn, restart
+   herdr the same way;
 4. adds `claude-companion.service.d/herdr.conf` with `HERDR_BIN=%h/.local/bin/herdr`
    (the companion unit's PATH has no `~/.local/bin`; without it the gate reads
    `herdr-down` and every spawn silently stays on tmux);

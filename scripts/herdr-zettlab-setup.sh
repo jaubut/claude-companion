@@ -34,16 +34,26 @@ log "$("$BIN" --version)"
 
 # 2. headless pane size. A pane with no client attached gets [server] headless_*
 # (default 120x40) — same reason the tmux path forces 220x60 (DETACHED_COLS/ROWS).
+# Force both keys inside [server] (replace existing values, add missing ones).
+COLS=220 ROWS=60
 mkdir -p "$(dirname "$CFG")"
 touch "$CFG"
-if ! grep -q '^[[:space:]]*headless_cols' "$CFG"; then
-  if grep -q '^\[server\]' "$CFG"; then
-    log "WARN: $CFG has a [server] table without headless_cols — add headless_cols = 220 / headless_rows = 60 by hand"
-  else
-    printf '\n[server]\nheadless_cols = 220\nheadless_rows = 60\n' >> "$CFG"
-    log "set headless size 220x60 in $CFG"
-  fi
+cfg_new="$(mktemp)"
+awk -v cols="$COLS" -v rows="$ROWS" '
+  function flush() { if (!hc) print "headless_cols = " cols; if (!hr) print "headless_rows = " rows; hc = hr = 1 }
+  /^[[:space:]]*\[/ { if (insrv) flush(); insrv = ($0 ~ /^[[:space:]]*\[server\][[:space:]]*(#.*)?$/); if (insrv) { seen = 1; hc = hr = 0 } print; next }
+  insrv && /^[[:space:]]*headless_cols[[:space:]]*=/ { print "headless_cols = " cols; hc = 1; next }
+  insrv && /^[[:space:]]*headless_rows[[:space:]]*=/ { print "headless_rows = " rows; hr = 1; next }
+  { print }
+  END { if (insrv) flush(); if (!seen) printf "\n[server]\nheadless_cols = %s\nheadless_rows = %s\n", cols, rows }
+' "$CFG" > "$cfg_new"
+CFG_CHANGED=0
+if ! cmp -s "$cfg_new" "$CFG"; then
+  cat "$cfg_new" > "$CFG"
+  CFG_CHANGED=1
+  log "set headless size ${COLS}x${ROWS} in $CFG"
 fi
+rm -f "$cfg_new"
 
 # 3. systemd --user unit (shared with the dispatch herdr runner — one server per host)
 mkdir -p "$UNIT_DIR"
@@ -79,12 +89,35 @@ EOF
 
 systemctl --user daemon-reload
 systemctl --user enable herdr.service
+running_version() {
+  "$BIN" status server --json 2>/dev/null \
+    | grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/'
+}
 if systemctl --user is-active --quiet herdr.service; then
-  # Never restart here: that would kill running dispatch workers' panes.
-  "$BIN" server reload-config || log "WARN: reload-config failed — new size applies after the next herdr restart"
+  # Never restart by default: that would kill running dispatch workers' panes.
+  # A running server keeps its old binary (reload-config doesn't upgrade it) and may
+  # not re-apply headless_* — both need a restart, done only with HERDR_RESTART=1.
+  need_restart=""
+  rv="$(running_version)"
+  [ "$rv" = "$VERSION" ] || need_restart="running server is v${rv:-unknown}, binary is v$VERSION (version gate keeps spawns on tmux)"
+  if [ -z "$need_restart" ] && [ "$CFG_CHANGED" = 1 ]; then
+    "$BIN" server reload-config || need_restart="reload-config failed; headless size not applied"
+  fi
+  if [ -n "$need_restart" ]; then
+    if [ "${HERDR_RESTART:-0}" = 1 ]; then
+      log "restarting herdr.service: $need_restart"
+      systemctl --user restart herdr.service
+    else
+      log "ERROR: $need_restart"
+      log "check no dispatch worker is running (herdr workspace list), then re-run with HERDR_RESTART=1"
+      exit 2
+    fi
+  fi
 else
   systemctl --user start herdr.service
 fi
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ "$(running_version)" = "$VERSION" ] && break; sleep 1; done
+[ "$(running_version)" = "$VERSION" ] || { log "ERROR: herdr server not running v$VERSION: $("$BIN" status server --json 2>&1 | head -c 300)"; exit 1; }
 loginctl show-user "$USER" -p Linger | grep -q 'Linger=yes' || sudo loginctl enable-linger "$USER"
 log "linger: $(loginctl show-user "$USER" -p Linger --value)"
 
