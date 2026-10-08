@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type JevVerdict, decideJev, resetChartCache } from "./receipt-jev"
 import { type ExpenseFields, type QaItem, getQaRow, insertQueued, onReceiptQa, useReceiptQaDb } from "./receipt-qa-store"
+import { DashboardUnreachable } from "./dashboard-client"
 import { MAX_ATTEMPTS, auditFile, drainReceiptQa, workerDeps } from "./receipt-qa-worker"
 import { runSonnetCli } from "./receipt-sonnet"
 import { receiptPushPayload, wireReceiptQa } from "../wiring/receipt-qa"
@@ -306,7 +307,7 @@ test("meal rule: meal detected by Jev's noul alone (category not a meal)", async
   expect(getQaRow(ID)!).toMatchObject({ status: "jev_ok", category_code: "5216" })
 })
 
-test("meal rule: missing / ungeocodable address or endpoint down → to_review 'meal address unresolved', no code written", async () => {
+test("meal rule: missing / ungeocodable address → to_review 'meal address unresolved', no code written", async () => {
   sonnetText = null // keep rows in to_review
   jevAnswer = jev("5776", 0.99, { meal: 0.9, trip: 0.9 })
   seed({ category_code: "", address: "" })
@@ -322,19 +323,68 @@ test("meal rule: missing / ungeocodable address or endpoint down → to_review '
   expect(row).toMatchObject({ status: "to_review", category_code: "" })
   expect(row.issues).toEqual([{ field: "address", problem: "meal address unresolved: address not geocodable" }])
 
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+  expect(existsSync(auditFile())).toBe(false)
+})
+
+test("meal rule: endpoint down (5xx / unreachable) → retried, then to_review 'meal address unresolved' after MAX_ATTEMPTS", async () => {
+  sonnetText = null
+  jevAnswer = jev("5776", 0.99, { meal: 0.9, trip: 0.9 })
   distanceReply = () => new Response("down", { status: 503 })
+  seed({ category_code: "", address: GRANBY })
+  await drainReceiptQa()
+  let row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "queued", attempts: 1, issues: [] })
+  let t = NOW
+  workerDeps.now = () => t
+  for (let i = 1; i < MAX_ATTEMPTS; i++) { t += 3_600_000; await drainReceiptQa() }
+  row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "to_review", category_code: "" })
+  expect(row.issues).toEqual([{ field: "address", problem: "meal address unresolved: office-distance endpoint unavailable" }])
+
+  workerDeps.officeDistance = async () => { throw new DashboardUnreachable(0, "network") }
   seed({ category_code: "", address: GRANBY }, `${ID}-u`)
   await drainReceiptQa()
-  row = getQaRow(`${ID}-u`)!
-  expect(row).toMatchObject({ status: "to_review", category_code: "" })
-  expect(row.issues[0]!.problem).toBe("meal address unresolved: office-distance endpoint unavailable")
-
-  distanceReply = () => Response.json({ error: "not_found" }, { status: 404 }) // endpoint not deployed
-  seed({ category_code: "", address: GRANBY }, `${ID}-4`)
-  await drainReceiptQa()
-  expect(getQaRow(`${ID}-4`)!.issues[0]!.problem).toBe("meal address unresolved: http 404")
-
+  expect(getQaRow(`${ID}-u`)!).toMatchObject({ status: "queued", attempts: 1 })
   expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: endpoint not deployed (404) → old Jev path, jev_ok when Jev agrees, no push", async () => {
+  distanceReply = () => Response.json({ error: "not_found" }, { status: 404 })
+  seed({ address: GRANBY }) // saved 5776
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  await drainReceiptQa()
+  let row = getQaRow(ID)!
+  expect(row).toMatchObject({ status: "jev_ok", category_code: "5776", issues: [], changes: [] })
+  expect(row.jev?.office_km).toBeUndefined()
+  expect(pushes).toHaveLength(0)
+  // No trip/client context: the old flag, not 'meal address unresolved'.
+  sonnetText = null
+  seed({ address: GRANBY }, `${ID}-f`)
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.1 })
+  await drainReceiptQa()
+  row = getQaRow(`${ID}-f`)!
+  expect(row.status).toBe("to_review")
+  expect(row.issues.map((i) => i.problem)).toEqual(["meal without trip or client context (50 km rule: >50 km → 5216, ≤50 km → 5776)"])
+  expect(hits.some((h) => h.method === "PATCH")).toBe(false)
+})
+
+test("meal rule: rule PATCH down until exhaustion → to_review 'not saved' with office_km; Sonnet's empty patch → needs_human, never sonnet_fixed", async () => {
+  seed({ address: MONTREAL }) // saved 5776, rule says 5216
+  jevAnswer = jev("5776", 0.95, { meal: 0.9, trip: 0.9 })
+  patchReply = () => new Response("down", { status: 503 })
+  sonnetText = '{"resolved":true,"patch":{},"reason":"looks fine"}'
+  let t = NOW
+  workerDeps.now = () => t
+  await drainReceiptQa()
+  expect(getQaRow(ID)!).toMatchObject({ status: "queued", attempts: 1 })
+  for (let i = 1; i < MAX_ATTEMPTS; i++) { t += 3_600_000; await drainReceiptQa() }
+  const row = getQaRow(ID)!
+  expect(frames.map((f) => f.status)).toContain("to_review")
+  expect(frames.map((f) => f.status)).not.toContain("sonnet_fixed")
+  expect(row).toMatchObject({ status: "needs_human", category_code: "5776", changes: [] })
+  expect(row.jev).toMatchObject({ office_km: 82.4 })
+  expect(row.issues).toContainEqual({ field: "category_code", problem: "meal rule code 5216 not saved", suggestion: "5216" })
   expect(existsSync(auditFile())).toBe(false)
 })
 

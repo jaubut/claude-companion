@@ -18,7 +18,8 @@ import { vaultUpstream } from "./vault-upstream"
 // Kill switch COMPANION_RECEIPT_QA=off: rows stay `queued`, saves still work.
 // Jev fills a BLANK category_code itself (conf ≥ 0.9, receipt clean, no flag).
 // Business meals: the dashboard office-distance endpoint decides the code
-// (> 50 km → 5216, ≤ 50 km → 5776, by:"rule"); unresolved → to_review.
+// (> 50 km → 5216, ≤ 50 km → 5776, by:"rule"); unresolved → to_review;
+// endpoint down → retried, then unresolved; endpoint not deployed (404) → old Jev path.
 // Every edit made here or by the phone is appended to
 // ~/.config/tls-agent/receipt-qa-audit.jsonl {ts, expense_id, by, field, from, to, reason}.
 
@@ -33,6 +34,9 @@ class Transient extends Error {}
 
 /** Office-distance answer: km, or why there is none. Throws when the endpoint is unreachable. */
 export type OfficeDistance = { km: number } | { km: null; reason: string }
+
+/** The dashboard has no office-distance endpoint (404, no `{km}` body): the meal rule is not live yet. */
+export class OfficeDistanceMissing extends Error {}
 
 export interface WorkerDeps {
   dupQuery: DupQuery
@@ -52,6 +56,7 @@ const defaultDupQuery: DupQuery = async (date, excludeId) => {
 
 const defaultOfficeDistance = async (address: string): Promise<OfficeDistance> => {
   const r = await officeDistance(address)
+  if (r.status === 404 && !(r.json && "km" in r.json)) throw new OfficeDistanceMissing("office-distance endpoint not deployed")
   const km = r.json?.km
   if (r.status >= 200 && r.status < 300 && typeof km === "number" && Number.isFinite(km) && km >= 0) return { km }
   const reason = r.json?.reason
@@ -133,37 +138,57 @@ async function jevPass(row: QaRow): Promise<void> {
   }
   const chart = await loadChart(workerDeps.chartQuery)
   const jev = await workerDeps.jev(row.fields, chart).catch(() => null)
-  const meal = mealRuleApplies(row.fields, jev) ? await mealRule(row.fields) : undefined
+  const meal = mealRuleApplies(row.fields, jev) ? await mealRule(row) : undefined
   const d = decideJev(row.fields, issues, jev, meal)
   // office_km persists the rule's ownership of the code, even when nothing was patched.
   const km = meal && "km" in meal ? { office_km: meal.km } : null
+  if (meal && "km" in meal) ownedKm.set(row.expense_id, meal.km)
   const jevJson = jev || km ? { ...jev, ...km } : null
   if (d.rule && meal && "km" in meal) return ruleSet(row, d, d.rule, meal.km, jevJson)
   if (d.fill && jev) return jevFill(row, d.fill, jev)
   settle(row, d.status, { issues: d.issues, jev: jevJson })
 }
 
-/** Office distance for a meal's extracted address. Never throws; no km → unresolved. */
-async function mealRule(f: ExpenseFields): Promise<MealRule> {
-  const address = String(f.address ?? "").trim()
+/**
+ * Office distance for a meal's extracted address. No address / no km → unresolved.
+ * Endpoint not deployed (404) → undefined: the rule is not live, the old Jev path decides.
+ * Unreachable / 5xx / no key → Transient while attempts remain, then unresolved.
+ */
+async function mealRule(row: QaRow): Promise<MealRule | undefined> {
+  const address = String(row.fields.address ?? "").trim()
   if (!address) return { unresolved: "no address on the receipt" }
   try {
     const d = await workerDeps.officeDistance(address)
     return d.km === null ? { unresolved: d.reason || "address not geocodable" } : { km: d.km, code: mealCodeForKm(d.km) }
-  } catch {
+  } catch (e) {
+    if (e instanceof OfficeDistanceMissing) return undefined
+    const transient = e instanceof DashboardUnreachable || e instanceof DashboardKeyMissing
+    if (transient && row.attempts + 1 < MAX_ATTEMPTS) throw new Transient("office-distance unavailable")
     return { unresolved: "office-distance endpoint unavailable" }
   }
 }
 
+/** office_km found by this run's jevPass, so the exhaustion path in processOne keeps the rule's ownership. */
+const ownedKm = new Map<string, number>()
+
 /** Book the distance rule's meal code (PATCH + by:"rule" change + audit). */
 async function ruleSet(row: QaRow, d: JevDecision, code: string, km: number, jev: Record<string, unknown> | null): Promise<void> {
   const changes = diff(row.fields, { category_code: code }, "rule")
-  if (!await applyPatch(row.expense_id, { category_code: code })) {
-    const issue: QaIssue = { field: "category_code", problem: `dashboard refused the meal rule's ${code}`, suggestion: code }
-    return settle(row, "to_review", { issues: [...d.issues, issue], jev })
+  let saved: boolean
+  try {
+    saved = await applyPatch(row.expense_id, { category_code: code })
+  } catch (e) {
+    if (!(e instanceof Transient) || row.attempts + 1 < MAX_ATTEMPTS) throw e
+    saved = false
   }
+  // Not saved: the row still carries office_km, so Sonnet can never auto-complete the wrong code.
+  if (!saved) return settle(row, "to_review", { issues: [...d.issues, ruleNotSaved(code)], jev })
   audit(row.expense_id, "rule", changes, `meal ${km.toFixed(1)} km from office (${km > MEAL_TRAVEL_KM ? ">" : "≤"} ${MEAL_TRAVEL_KM} km)`)
   settle(row, d.status, { issues: d.issues, jev, fields: { ...row.fields, category_code: code }, changes: [...row.changes, ...changes] })
+}
+
+function ruleNotSaved(code: string): QaIssue {
+  return { field: "category_code", problem: `meal rule code ${code} not saved`, suggestion: code }
 }
 
 function mealAddressUnresolved(row: QaRow): boolean {
@@ -212,6 +237,9 @@ function toHuman(row: QaRow, issues: QaIssue[], extra: Parameters<typeof transit
 
 async function sonnetPass(row: QaRow): Promise<void> {
   if (row.issues.some((i) => i.problem.startsWith(DUPLICATE))) return toHuman(row, row.issues)
+  // The rule's code never reached the dashboard: only a human finishes this row.
+  const km = row.jev?.office_km
+  if (typeof km === "number" && String(row.fields.category_code ?? "") !== mealCodeForKm(km)) return toHuman(row, row.issues)
   const chart = await loadChart(workerDeps.chartQuery)
   const imagePath = await receiptPathFor(row)
   const prompt = buildPrompt({ fields: row.fields, issues: row.issues, jev: row.jev, chart, imagePath })
@@ -260,10 +288,18 @@ async function processOne(row: QaRow): Promise<void> {
     const reason = e instanceof Error ? e.message : "error"
     if (attempts >= MAX_ATTEMPTS) {
       const issue: QaIssue = { field: "qa", problem: `qa_failed: ${reason.slice(0, 120)}` }
-      return row.status === "queued" ? settle(row, "to_review", { issues: [...row.issues, issue] }) : toHuman(row, [...row.issues, issue])
+      if (row.status !== "queued") return toHuman(row, [...row.issues, issue])
+      // A meal whose distance was found keeps the rule's ownership of the code.
+      const km = ownedKm.get(row.expense_id)
+      if (km === undefined) return settle(row, "to_review", { issues: [...row.issues, issue] })
+      const code = mealCodeForKm(km)
+      const meal = String(row.fields.category_code ?? "") !== code ? [ruleNotSaved(code)] : []
+      return settle(row, "to_review", { issues: [...row.issues, ...meal, issue], jev: { ...row.jev, office_km: km } })
     }
     defer(row.expense_id, attempts, workerDeps.now() + backoff(attempts), reason)
     companionLog(`receipt-qa ${row.expense_id} retry ${attempts}/${MAX_ATTEMPTS} (${e instanceof Transient ? "transient" : "error"})`)
+  } finally {
+    ownedKm.delete(row.expense_id)
   }
 }
 
