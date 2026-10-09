@@ -70,6 +70,10 @@ interface Watch {
   wake: (() => void) | null
   // Also resolved by a SessionEnd / SessionStart(clear) for the same session.
   boundary: boolean
+  // The injected text; a hook with other text is the terminal's prompt.
+  text?: string
+  // A hook already got the "from the phone" flag for this watch.
+  phoneSeen: boolean
 }
 
 const watches = new Set<Watch>()
@@ -82,16 +86,21 @@ function matches(w: SubmitIdentity, from: SubmitIdentity): boolean {
   return same(w.key, from.key) || same(w.sessionId, from.sessionId) || same(w.tty, from.tty) || same(w.pane, from.pane)
 }
 
+// No text on either side (older hook, text-less watch) → identity alone decides.
+function sameText(injected: string | undefined, prompt: string | undefined): boolean {
+  return injected === undefined || prompt === undefined || injected.trim() === prompt.trim()
+}
+
 // Called by the /hooks/user-prompt-submit route for every hook fire.
 // Returns true when this hook consumes a phone origin (notePhoneOrigin) or is
 // the first submit seen by a pending phone inject of a prompt (not a slash command / bash-mode input — those are
 // armed with `boundary` and never reach Claude as a prompt): the route tells
 // the hook so Claude gets a "sent from the phone" context note.
-export function noteUserPromptSubmit(from: SubmitIdentity, now: number = Date.now()): boolean {
-  let fromPhone = takePhoneOrigin(from, now)
+export function noteUserPromptSubmit(from: SubmitIdentity, prompt?: string, now: number = Date.now()): boolean {
+  let fromPhone = takePhoneOrigin(from, prompt, now)
   for (const w of watches) {
     if (!matches(w.id, from)) continue
-    if (!w.boundary && w.hits === 0) fromPhone = true
+    if (!w.boundary && !w.phoneSeen && sameText(w.text, prompt)) fromPhone = w.phoneSeen = true
     w.hits++
     w.wake?.()
   }
@@ -103,19 +112,22 @@ export function noteUserPromptSubmit(from: SubmitIdentity, now: number = Date.no
 // non-tmux delivery (AppleScript) arms no watch at all.
 // ponytail: fixed TTL, a turn longer than this loses its phone note.
 export const PHONE_ORIGIN_TTL_MS = 30 * 60_000
-interface PhoneOrigin { id: SubmitIdentity; until: number }
+interface PhoneOrigin { id: SubmitIdentity; text: string; until: number }
 const origins: PhoneOrigin[] = []
 
-export function notePhoneOrigin(id: SubmitIdentity, now: number = Date.now()): { drop(): void } {
-  const o: PhoneOrigin = { id, until: now + PHONE_ORIGIN_TTL_MS }
+export function notePhoneOrigin(id: SubmitIdentity, text: string, now: number = Date.now()): { drop(): void } {
+  const o: PhoneOrigin = { id, text, until: now + PHONE_ORIGIN_TTL_MS }
   origins.push(o)
   return { drop: () => { const i = origins.indexOf(o); if (i >= 0) origins.splice(i, 1) } }
 }
 
-// Consumes the oldest live origin matching this hook.
-function takePhoneOrigin(from: SubmitIdentity, now: number): boolean {
+// Consumes the oldest live origin matching this hook: same terminal/session,
+// same text (a terminal prompt queued ahead must not take it), and never
+// another session id on a reused tty.
+function takePhoneOrigin(from: SubmitIdentity, prompt: string | undefined, now: number): boolean {
   for (let i = origins.length - 1; i >= 0; i--) if (origins[i]!.until <= now) origins.splice(i, 1)
-  const i = origins.findIndex((o) => matches(o.id, from))
+  const i = origins.findIndex((o) =>
+    matches(o.id, from) && sameText(o.text, prompt) && !(o.id.sessionId && from.sessionId && o.id.sessionId !== from.sessionId))
   if (i < 0) return false
   origins.splice(i, 1)
   return true
@@ -126,6 +138,8 @@ function takePhoneOrigin(from: SubmitIdentity, now: number): boolean {
 // hookless input count it — a typed prompt is never "confirmed" by its
 // session dying.
 export function noteSessionBoundary(from: SubmitIdentity): void {
+  // A pending phone prompt does not outlive its session.
+  for (let i = origins.length - 1; i >= 0; i--) if (matches(origins[i]!.id, from)) origins.splice(i, 1)
   for (const w of watches) {
     if (!w.boundary || !matches(w.id, from)) continue
     w.hits++
@@ -133,8 +147,8 @@ export function noteSessionBoundary(from: SubmitIdentity): void {
   }
 }
 
-export function watchSubmit(id: SubmitIdentity, opts: { boundary?: boolean } = {}): SubmitWatch {
-  const w: Watch = { id, hits: 0, wake: null, boundary: !!opts.boundary }
+export function watchSubmit(id: SubmitIdentity, opts: { boundary?: boolean; text?: string } = {}): SubmitWatch {
+  const w: Watch = { id, hits: 0, wake: null, boundary: !!opts.boundary, text: opts.text, phoneSeen: false }
   watches.add(w)
   return {
     wait(ms, clock = realClock) {
@@ -367,7 +381,7 @@ function withPaneLock<T>(pane: string, fn: () => Promise<T>): Promise<T> {
 // hook consumes it; a failed or already-confirmed inject drops the record.
 export async function injectConfirmed(text: string, target: ConfirmTarget | undefined, herdr: Herdr = realHerdr): Promise<InjectOutcome> {
   const origin = target && (target.agent ?? "claude") === "claude" && !isHooklessInput(text)
-    ? notePhoneOrigin({ key: target.key, sessionId: target.sessionId, tty: target.tty })
+    ? notePhoneOrigin({ key: target.key, sessionId: target.sessionId, tty: target.tty }, text)
     : null
   const res = await injectRouted(text, target, herdr)
   if (origin && (!res.ok || res.confirmed)) origin.drop()
@@ -386,7 +400,7 @@ async function injectRouted(text: string, target: ConfirmTarget | undefined, her
   const pane = paneKey(ref.pane, ref.socket)
   return withPaneLock(pane, async (): Promise<InjectOutcome> => {
     const hookless = isHooklessInput(text)
-    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty, pane: ref.pane }, { boundary: hookless })
+    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty, pane: ref.pane }, { boundary: hookless, text })
     try {
       if (!(await injectText(text, { ...target, tmuxPane: ref.pane, tmuxSocket: ref.socket }))) return { ok: false, error: "deliver_failed" }
       const r = await confirmSubmit({
@@ -426,7 +440,7 @@ async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h:
   const where = herdrGateKey(pane)
   return withPaneLock(where, async (): Promise<InjectOutcome> => {
     const hookless = isHooklessInput(text)
-    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty }, { boundary: hookless })
+    const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty }, { boundary: hookless, text })
     try {
       const d = await deliverViaHerdr(pane, text, { typed: hookless, herdr: h })
       if (!d.ok) {

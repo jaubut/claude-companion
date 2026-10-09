@@ -24,11 +24,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/triage.ts` | 487 | lib | 44 | state: DESTRUCTIVE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
+| `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/voice-memo.ts` | 466 | lib | 25 | state: let tdb |
 | `routes/api.ts` | 461 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `lib/submit-confirm.ts` | 459 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 434 | route-host | 3 | routes: 10 |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |

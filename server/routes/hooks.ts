@@ -276,7 +276,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       : null
     // Proof of submission for any phone inject waiting on this session. A
     // match also tells the hook the prompt came from the phone.
-    const fromPhone = noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty })
+    const fromPhone = noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty }, body.prompt)
     // Resets the auto-compact idle window and cancels a pending countdown.
     if (session) autoCompactor.noteUserActivity(session.key)
     // A new prompt means the picker is gone (e.g. "Chat about this").

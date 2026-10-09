@@ -2,7 +2,7 @@ import { test, expect, beforeAll, afterAll } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { PHONE_ORIGIN_TTL_MS, notePhoneOrigin, noteUserPromptSubmit, watchSubmit } from "../lib/submit-confirm"
+import { PHONE_ORIGIN_TTL_MS, notePhoneOrigin, noteSessionBoundary, noteUserPromptSubmit, watchSubmit } from "../lib/submit-confirm"
 
 // /hooks/user-prompt-submit tells the hook whether the prompt is a phone
 // inject (a pending watchSubmit matched), and companion-user-prompt.sh turns
@@ -16,12 +16,12 @@ beforeAll(async () => {
   handleHookRoute = (await import("./hooks")).handleHookRoute
 })
 
-async function submit(sessionId: string, tty: string): Promise<unknown> {
+async function submit(sessionId: string, tty: string, prompt = "hello there"): Promise<unknown> {
   const url = new URL("http://localhost:4245/hooks/user-prompt-submit")
   const req = new Request(url.href, {
     method: "POST",
     headers: { "content-type": "application/json", "x-companion-tty": tty },
-    body: JSON.stringify({ session_id: sessionId, prompt: "hello there" }),
+    body: JSON.stringify({ session_id: sessionId, prompt }),
   })
   const res = await handleHookRoute(req, url)
   return res?.json()
@@ -59,25 +59,49 @@ test("route: a slash-command inject never marks a prompt as from the phone", asy
 
 test("route: a queued phone prompt keeps its origin after the watch closed", async () => {
   const watch = watchSubmit({ sessionId: "origin-e", tty: "/dev/ttys905" })
-  notePhoneOrigin({ sessionId: "origin-e", tty: "/dev/ttys905" })
+  notePhoneOrigin({ sessionId: "origin-e", tty: "/dev/ttys905" }, "hello there")
   watch.close() // injectConfirmed answered "queued"; the hook comes at turn end
   expect(await submit("origin-e", "/dev/ttys905")).toEqual({ fromPhone: true })
   expect(await submit("origin-e", "/dev/ttys905")).toEqual({ fromPhone: false })
 })
 
 test("route: a watchless (AppleScript) phone delivery is still from the phone", async () => {
-  notePhoneOrigin({ tty: "/dev/ttys906" })
+  notePhoneOrigin({ tty: "/dev/ttys906" }, "hello there")
   expect(await submit("origin-f", "/dev/ttys906")).toEqual({ fromPhone: true })
 })
 
 test("phone origin expires after its TTL", () => {
-  notePhoneOrigin({ sessionId: "origin-g" }, 0)
-  expect(noteUserPromptSubmit({ sessionId: "origin-g" }, PHONE_ORIGIN_TTL_MS + 1)).toBe(false)
+  notePhoneOrigin({ sessionId: "origin-g" }, "hello there", 0)
+  expect(noteUserPromptSubmit({ sessionId: "origin-g" }, "hello there", PHONE_ORIGIN_TTL_MS + 1)).toBe(false)
 })
 
 test("a dropped phone origin is not consumed", async () => {
-  notePhoneOrigin({ sessionId: "origin-h", tty: "/dev/ttys907" }).drop()
+  notePhoneOrigin({ sessionId: "origin-h", tty: "/dev/ttys907" }, "hello there").drop()
   expect(await submit("origin-h", "/dev/ttys907")).toEqual({ fromPhone: false })
+})
+
+test("route: a terminal prompt queued ahead of the phone prompt does not take its origin", async () => {
+  const id = { sessionId: "origin-i", tty: "/dev/ttys908" }
+  const watch = watchSubmit(id, { text: "from the phone" })
+  notePhoneOrigin(id, "from the phone")
+  try {
+    expect(await submit("origin-i", "/dev/ttys908", "typed at the Mac")).toEqual({ fromPhone: false })
+    expect(await submit("origin-i", "/dev/ttys908", "  from the phone\n")).toEqual({ fromPhone: true })
+  } finally {
+    watch.close()
+  }
+})
+
+test("route: a session boundary clears the pending phone origins", async () => {
+  notePhoneOrigin({ sessionId: "origin-j", tty: "/dev/ttys909" }, "hello there")
+  noteSessionBoundary({ sessionId: "origin-j" })
+  expect(await submit("origin-j", "/dev/ttys909")).toEqual({ fromPhone: false })
+})
+
+test("route: same terminal, another session id → not from the phone", async () => {
+  notePhoneOrigin({ sessionId: "origin-k", tty: "/dev/ttys910" }, "hello there")
+  expect(await submit("origin-k2", "/dev/ttys910")).toEqual({ fromPhone: false })
+  noteSessionBoundary({ tty: "/dev/ttys910" })
 })
 
 // ── The hook script, against a stub server ──
