@@ -6,6 +6,8 @@ import { REVIEW_CANCEL, REVIEW_SUBMIT, _resetOrphansForTest, isQuestionReview, o
 import { getPendingQuestions, type QuestionAnswer } from "./questions"
 import type { Session } from "./sessions"
 import { type InjectTarget, withPickerIO } from "./keyboard-inject"
+import { type Herdr, herdrScreen } from "./herdr"
+import { herdrPickerIO } from "./herdr-inject"
 
 const INPUT = { questions: [{ question: "Activate the slim CLAUDE.md?", header: "CLAUDE.md", multiSelect: false,
   options: [{ label: "Activate", description: "swap it in" }, { label: "Not yet", description: "keep current" }] }] }
@@ -163,4 +165,71 @@ test("herdr session: the re-raised card's answer is driven into the herdr pane",
   resolveAsk([{ selected: ["Activate"] }])
   await new Promise((r) => setTimeout(r, 20))
   expect(routes).toEqual(["herdr|w6:p1"])
+})
+
+// ── herdr: the REAL review driver on a styled `pane read` (PR #157) ─────────
+
+// What realHerdr.read hands back for a screen: herdr's ANSI read after
+// herdrScreen (CRLF + trailing blanks gone), every row behind an SGR run.
+function herdrStyled(plain: string): string {
+  return herdrScreen(plain.split("\n").map((l) => (l ? `\x1b[0m\x1b[38;2;153;153;153m${l}\x1b[0m   ` : "")).join("\r\n"))
+}
+
+const PROMPT_PANE = "\n────\n❯ \n────\n"
+
+// A herdr pane showing `screens()` and recording every herdr command.
+function herdrPane(screens: (sent: string[][]) => string) {
+  const sent: string[][] = []
+  const h: Herdr = {
+    async gate() { return null },
+    async read() { return herdrStyled(screens(sent)) },
+    async call(args) { sent.push(args); return {} },
+  }
+  return { h, sent }
+}
+
+async function until(cond: () => boolean, ms = 3_000): Promise<void> {
+  const end = Date.now() + ms
+  while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 20))
+}
+
+const HERDR_SESSION = { key: "claude:tty:/dev/pts/9", tmuxPane: "", termProgram: "", tty: "", herdrPane: "w6:p1" }
+
+test("herdr orphan review → Submit: the real driver presses Enter in the herdr pane", async () => {
+  const p = transcript([line([{ type: "tool_use", id: "tuR1", name: "AskUserQuestion", input: INPUT }])])
+  let resolveAsk: (a: QuestionAnswer[]) => void = () => {}
+  const pane = herdrPane((sent) => (sent.length === 0 ? REVIEW_PANE : PROMPT_PANE))
+  const deps = {
+    readOpen: () => openQuestionFromTranscript(p),
+    ask: (() => new Promise<QuestionAnswer[]>((r) => { resolveAsk = r })) as never,
+    herdr: pane.h,
+  }
+  // The watcher hands raiseOrphanQuestion the unstyled screen.
+  expect(raiseOrphanQuestion(session(HERDR_SESSION), REVIEW_PANE, deps)).toBe(true)
+  resolveAsk([{ selected: [REVIEW_SUBMIT] }])
+  await until(() => pane.sent.length > 0)
+  expect(pane.sent).toEqual([["pane", "send-keys", "w6:p1", "enter"]])
+})
+
+test("herdr orphan review → Cancel: the real driver picks 2 then Enter in the herdr pane", async () => {
+  const p = transcript([line([{ type: "tool_use", id: "tuR2", name: "AskUserQuestion", input: INPUT }])])
+  let resolveAsk: (a: QuestionAnswer[]) => void = () => {}
+  const onTwo = REVIEW_PANE.replace("❯ 1. Submit answers", "  1. Submit answers").replace("  2. Cancel", "❯ 2. Cancel")
+  const pane = herdrPane((sent) => (sent.length === 0 ? REVIEW_PANE : sent.length === 1 ? onTwo : PROMPT_PANE))
+  const deps = {
+    readOpen: () => openQuestionFromTranscript(p),
+    ask: (() => new Promise<QuestionAnswer[]>((r) => { resolveAsk = r })) as never,
+    herdr: pane.h,
+  }
+  expect(raiseOrphanQuestion(session(HERDR_SESSION), REVIEW_PANE, deps)).toBe(true)
+  resolveAsk([{ selected: [REVIEW_CANCEL] }])
+  await until(() => pane.sent.length > 1)
+  expect(pane.sent).toEqual([["pane", "send-text", "w6:p1", "2"], ["pane", "send-keys", "w6:p1", "enter"]])
+})
+
+test("herdr picker IO reads the plain shape tmux's `capture-pane -p` gives", async () => {
+  const pane = herdrPane(() => REVIEW_PANE)
+  const text = await herdrPickerIO("w6:p1", pane.h).capture!()
+  expect(text).toBe(herdrScreen(REVIEW_PANE))
+  expect(isQuestionReview(text!)).toBe(true)
 })

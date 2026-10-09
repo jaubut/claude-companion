@@ -21,6 +21,7 @@
 
 import { closeSync, openSync, readSync, statSync } from "node:fs"
 import { companionLog } from "./log"
+import type { Herdr } from "./herdr"
 import { type QuestionAnswer, type QuestionItem, addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput } from "./questions"
 import { REVIEW_RE, answeredCount, driveQuestionPicker, pickerRegion, pickerShowsQuestions } from "./question-driver"
 import { type InjectTarget, withPickerIO } from "./keyboard-inject"
@@ -121,7 +122,7 @@ function reviewShows(pane: string, open: OpenQuestionCall): boolean {
   return open.questions.some((q) => region.includes(q.question.trim().slice(0, 24)))
 }
 
-function defaultDriveReview(target: InjectTarget, choice: string): void {
+function defaultDriveReview(target: InjectTarget, choice: string, herdr?: Herdr): void {
   void withPickerIO(target, async (io, via) => {
     const pane = io.capture ? await io.capture() : null
     if (pane === null || !isQuestionReview(pane)) {
@@ -145,7 +146,7 @@ function defaultDriveReview(target: InjectTarget, choice: string): void {
     const ok = after !== null && (!isQuestionReview(after) || answeredCount(after) > before)
     companionLog(ok ? `${green}review ${choice === REVIEW_CANCEL ? "cancelled" : "submitted"}${reset} → ${via} ${dim}(orphan card)${reset}` : `${red}review press not confirmed${reset} → ${via}`)
     return ok
-  }).catch(() => { /* logged above */ })
+  }, { herdr }).catch(() => { /* logged above */ })
 }
 
 export interface OrphanDeps {
@@ -153,6 +154,8 @@ export interface OrphanDeps {
   ask?: typeof addQuestionRequest
   drive?: (target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[]) => void
   driveReview?: (target: InjectTarget, choice: string) => void
+  // The herdr the default drivers' picker IO talks to (tests pass a fake).
+  herdr?: Herdr
 }
 
 // key → the tool call a card was re-raised for (one card per call).
@@ -163,7 +166,7 @@ function defaultReadOpen(s: Session): OpenQuestionCall | null {
   return openQuestionFromTranscript(transcriptPath(s.cwd, s.sessionId))
 }
 
-function defaultDrive(target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[]): void {
+function defaultDrive(target: InjectTarget, questions: QuestionItem[], answers: QuestionAnswer[], herdr?: Herdr): void {
   void withPickerIO(target, async (io, via) => {
     const pane = io.capture ? await io.capture() : null
     if (pane === null || !pickerShowsQuestions(pane, questions)) {
@@ -173,7 +176,7 @@ function defaultDrive(target: InjectTarget, questions: QuestionItem[], answers: 
     const r = await driveQuestionPicker(io, questions, answers)
     companionLog(r.ok ? `${green}picker driven${reset} → ${via} ${dim}(orphan card)${reset}` : `${red}picker drive failed${reset} → ${via} — ${r.reason}`)
     return r.ok
-  }).catch(() => { /* logged above */ })
+  }, { herdr }).catch(() => { /* logged above */ })
 }
 
 // True when a structured card is up for this picker (raised now, or earlier
@@ -200,8 +203,10 @@ export function raiseOrphanQuestion(s: Session, pane: string, deps: OrphanDeps =
     { expiryMs: ORPHAN_WINDOW_MS },
   ).then((answers) => {
     if (answers.length === 0) return
-    if (review) (deps.driveReview ?? defaultDriveReview)(target, answers[0]?.selected[0] ?? REVIEW_SUBMIT)
-    else (deps.drive ?? defaultDrive)(target, open.questions, answers)
+    const choice = answers[0]?.selected[0] ?? REVIEW_SUBMIT
+    if (review) deps.driveReview ? deps.driveReview(target, choice) : defaultDriveReview(target, choice, deps.herdr)
+    else if (deps.drive) deps.drive(target, open.questions, answers)
+    else defaultDrive(target, open.questions, answers, deps.herdr)
   })
   return true
 }

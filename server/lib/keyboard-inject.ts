@@ -583,8 +583,8 @@ function ttyPickerIO(target: InjectTarget): PickerIO {
 // null when there is nothing to drive. Serialised with the text-inject lock so
 // a phone prompt can't interleave with picker keys.
 export async function withPickerIO<T>(
-  target: InjectTarget,
-  run: (io: PickerIO, via: string) => Promise<T>,
+  target: InjectTarget, run: (io: PickerIO, via: string) => Promise<T>,
+  opts: { herdr?: Herdr } = {}, // tests: a fake herdr for the herdr picker IO
 ): Promise<T | null> {
   return withInjectLock(async () => {
     const pane = target.tmuxPane?.trim() ?? ""
@@ -592,7 +592,7 @@ export async function withPickerIO<T>(
     if (!ref && target.tty && process.platform === "linux") ref = await resolveTmuxRefFromTty(target.tty)
     if (ref) return run(tmuxPickerIO(ref), paneKey(ref.pane, ref.socket))
     const herdrPane = herdrPaneOf(target)
-    if (herdrPane) return run(herdrPickerIO(herdrPane), herdrGateKey(herdrPane))
+    if (herdrPane) return run(herdrPickerIO(herdrPane, opts.herdr), herdrGateKey(herdrPane))
     if (target.tty && process.platform === "darwin") return run(ttyPickerIO(target), target.tty)
     return null
   })

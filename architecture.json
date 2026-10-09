@@ -1641,7 +1641,7 @@
         },
         {
           "path": "lib/herdr-inject.ts",
-          "lines": 76,
+          "lines": 83,
           "kind": "lib",
           "exports": [
             "INJECT_QUEUE_MS",
@@ -1659,7 +1659,8 @@
           "imports": [
             "lib/key-gate.ts",
             "lib/herdr.ts",
-            "lib/question-driver.ts"
+            "lib/question-driver.ts",
+            "lib/command-menu.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2473,7 +2474,7 @@
         },
         {
           "path": "lib/orphan-question.ts",
-          "lines": 220,
+          "lines": 225,
           "kind": "lib",
           "exports": [
             "ORPHAN_WINDOW_MS",
@@ -2497,6 +2498,7 @@
           "apiCalls": [],
           "imports": [
             "lib/log.ts",
+            "lib/herdr.ts",
             "lib/questions.ts",
             "lib/question-driver.ts",
             "lib/keyboard-inject.ts",
@@ -8443,6 +8445,7 @@
             "lib/herdr-inject.ts",
             "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
+            "lib/orphan-question.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts"
           ]
@@ -8482,6 +8485,16 @@
           "callers": [
             "lib/herdr-inject.ts",
             "lib/keyboard-inject.ts"
+          ]
+        },
+        "unstyle": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/herdr-inject.ts",
+            "lib/inject-guard.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "herdrSendKey": {
@@ -8542,15 +8555,6 @@
           "module": "lib/scrape-registry.ts",
           "callers": [
             "lib/hook-common.ts"
-          ]
-        },
-        "unstyle": {
-          "module": "lib/command-menu.ts",
-          "callers": [
-            "lib/inject-guard.ts",
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "wiring/dialogs.ts"
           ]
         },
         "promptLineIndex": {
