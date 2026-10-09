@@ -2,7 +2,7 @@ import { companionLog } from "../lib/log"
 import { broadcast } from "../state"
 import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
 import { isPaneDirty, isScraping, yieldPane } from "../lib/command-scrape"
-import { isPaneClean } from "../lib/command-list"
+import { paneReadsClean } from "../lib/pane-clean"
 import type { Dialog } from "../lib/dialogs"
 import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
 import { getPendingQuestions, questionAnsweredRecently } from "../lib/questions"
@@ -121,13 +121,8 @@ async function paneLooksClean(target: PaneTarget, signal: AbortSignal): Promise<
   // real `dialog_open` refusal, and the user can Escape it from the phone
   // instead of waiting on a mark to expire.
   await dialogWatcher.refresh(target.key)
-  const herdrPane = herdrPaneOf(target)
-  if ((!target.tmuxPane && !herdrPane) || signal.aborted) return false
-  // herdr reads ANSI; isPaneClean wants the plain text capture-pane gives.
-  const text = herdrPane
-    ? await realHerdr.read(herdrPane, signal).then((t) => (t === null ? null : unstyle(t)))
-    : await capturePane(target.tmuxPane!, signal, { socket: target.tmuxSocket })
-  return text !== null && !signal.aborted && isPaneClean(text)
+  // One styled read of the pane, tmux or herdr (lib/pane-clean.ts).
+  return paneReadsClean(target, signal)
 }
 
 export async function yieldPaneForInject(

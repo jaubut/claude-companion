@@ -929,7 +929,7 @@
         },
         {
           "path": "lib/command-list.ts",
-          "lines": 455,
+          "lines": 459,
           "kind": "lib",
           "exports": [
             "CommandEntry",
@@ -2504,6 +2504,29 @@
             "lib/keyboard-inject.ts",
             "lib/session-titles.ts",
             "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/pane-clean.ts",
+          "lines": 31,
+          "kind": "lib",
+          "exports": [
+            "CleanTarget",
+            "PaneReadDeps",
+            "paneReadsClean"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-list.ts",
+            "lib/herdr.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6067,7 +6090,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 204,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
@@ -6091,7 +6114,7 @@
             "state.ts",
             "lib/dialog-watch.ts",
             "lib/command-scrape.ts",
-            "lib/command-list.ts",
+            "lib/pane-clean.ts",
             "lib/dialogs.ts",
             "lib/sessions.ts",
             "lib/questions.ts",
@@ -7851,6 +7874,17 @@
             "lib/codex-feed.ts"
           ]
         },
+        "unstyle": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/command-list.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-guard.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
         "inputLine": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -7879,6 +7913,7 @@
             "lib/dialog-watch.ts",
             "lib/herdr-workspace.ts",
             "lib/keyboard-inject.ts",
+            "lib/pane-clean.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
@@ -8480,6 +8515,7 @@
           "callers": [
             "lib/herdr-inject.ts",
             "lib/inject-verified.ts",
+            "lib/pane-clean.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
@@ -8510,16 +8546,6 @@
           "callers": [
             "lib/herdr-inject.ts",
             "lib/keyboard-inject.ts"
-          ]
-        },
-        "unstyle": {
-          "module": "lib/command-menu.ts",
-          "callers": [
-            "lib/herdr-inject.ts",
-            "lib/inject-guard.ts",
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "wiring/dialogs.ts"
           ]
         },
         "herdrSendKey": {
@@ -8630,6 +8656,7 @@
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/inject-verified.ts",
+            "lib/pane-clean.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "wiring/dialogs.ts",
@@ -8991,6 +9018,12 @@
           "callers": [
             "lib/orphan-question.ts",
             "routes/hooks.ts"
+          ]
+        },
+        "isPaneClean": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/pane-clean.ts"
           ]
         },
         "RepoEntry": {
@@ -12869,8 +12902,8 @@
             "wiring/dialogs.ts"
           ]
         },
-        "isPaneClean": {
-          "module": "lib/command-list.ts",
+        "paneReadsClean": {
+          "module": "lib/pane-clean.ts",
           "callers": [
             "wiring/dialogs.ts"
           ]
