@@ -1,16 +1,21 @@
-import { test, expect } from "bun:test"
+import { test, expect, beforeEach, afterEach } from "bun:test"
 import { type Herdr, closeHerdrWorkspaceWhenIdle, herdrGatedKey, herdrGatedText, forgetHerdrAgent, herdrAgentFor, herdrKeyName, herdrOwnerFor, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, herdrSendKey, herdrSendText, noteHerdrAgent, silentSuccess } from "./herdr"
 import { parseDialog } from "./dialogs"
 import { inputLine, unstyle } from "./command-menu"
 import { createDialogWatcher } from "./dialog-watch"
 import { herdrVerifiedDepsFor, injectVerifiedWith, stages } from "./inject-verified"
 import type { Session } from "./sessions"
-import { releaseHerdrWorkspace } from "./herdr-workspace"
+import { herdrAutocloseEnabled, releaseHerdrWorkspace } from "./herdr-workspace"
 import { herdrAgentBaseName, spawnInHerdr, spawnLinux, spawnMacAuto, type SpawnResult } from "./spawn-session"
 import { injectConfirmed, noteUserPromptSubmit } from "./submit-confirm"
 import { injectText } from "./keyboard-inject"
 import { deliverViaHerdr } from "./herdr-inject"
 import { createKeyGate } from "./key-gate"
+
+// The workspace auto-close is opt-in (COMPANION_HERDR_AUTOCLOSE=1): the close
+// tests below run with it on; the flag-off tests clear it themselves.
+beforeEach(() => { process.env.COMPANION_HERDR_AUTOCLOSE = "1" })
+afterEach(() => { delete process.env.COMPANION_HERDR_AUTOCLOSE })
 
 // A fake herdr: records every argv, answers from `reply` (throw to fail).
 function fakeHerdr(opts: {
@@ -613,4 +618,45 @@ test("an owner known only by name (no workspace or terminal id) never closes a w
   const f = ownedHerdr({ workspace_id: "w6", label: "cc-work", terminal_id: "term_a" })
   expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, owner: { name: "cc-work" }, ...noSleep })).toBe("")
   expect(f.verbs()).not.toContain("workspace close")
+})
+
+// ── workspace auto-close is opt-in (COMPANION_HERDR_AUTOCLOSE) ──────────────
+
+test("auto-close flag: only the exact value 1 turns it on", () => {
+  expect(herdrAutocloseEnabled({})).toBe(false)
+  expect(herdrAutocloseEnabled({ COMPANION_HERDR_AUTOCLOSE: "true" })).toBe(false)
+  expect(herdrAutocloseEnabled({ COMPANION_HERDR_AUTOCLOSE: "yes" })).toBe(false)
+  expect(herdrAutocloseEnabled({ COMPANION_HERDR_AUTOCLOSE: "" })).toBe(false)
+  expect(herdrAutocloseEnabled({ COMPANION_HERDR_AUTOCLOSE: "1" })).toBe(true)
+})
+
+for (const value of [undefined, "true"]) {
+  test(`flag ${value === undefined ? "unset" : `="${value}"`}: release never closes, makes no herdr call, drops the record`, async () => {
+    if (value === undefined) delete process.env.COMPANION_HERDR_AUTOCLOSE
+    else process.env.COMPANION_HERDR_AUTOCLOSE = value
+    noteHerdrAgent("wE:p2", "cc-off", { workspaceId: "wE", terminalId: "term_off" })
+    const f = ownedHerdr({ workspace_id: "wE", label: "cc-off", terminal_id: "term_off" })
+    const closes: string[] = []
+    // The real close, wired to a fake herdr: any call it made would show up.
+    const close = (pane: string, o?: Parameters<typeof closeHerdrWorkspaceWhenIdle>[1]) => {
+      closes.push(pane)
+      return closeHerdrWorkspaceWhenIdle(pane, { ...o, h: f.h, ...noSleep })
+    }
+    releaseHerdrWorkspace(herdrSession({ herdrPane: "wE:p2" }), () => [], close)
+    await flush()
+    expect(closes).toEqual([])
+    expect(f.calls).toEqual([])
+    expect(herdrOwnerFor("wE:p2")).toBeUndefined()
+  })
+}
+
+test("flag=1: the same release closes the workspace (today's behaviour)", async () => {
+  noteHerdrAgent("wE:p3", "cc-on", { workspaceId: "wE", terminalId: "term_on" })
+  const f = ownedHerdr({ workspace_id: "wE", label: "cc-on", terminal_id: "term_on" })
+  let closed: Promise<string> = Promise.resolve("")
+  const close = (pane: string, o?: Parameters<typeof closeHerdrWorkspaceWhenIdle>[1]) =>
+    (closed = closeHerdrWorkspaceWhenIdle(pane, { ...o, h: f.h, ...noSleep }))
+  releaseHerdrWorkspace(herdrSession({ herdrPane: "wE:p3" }), () => [], close)
+  expect(await closed).toBe("wE")
+  expect(f.calls.at(-1)).toEqual(["workspace", "close", "wE"])
 })

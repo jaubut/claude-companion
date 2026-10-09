@@ -24,6 +24,43 @@ Not changed: the Zettlab `~/.bashrc` `claude()` tmux wrapper (manual SSH launche
 dispatch workers (`DISPATCH_WORKER=1`, hidden from the picker). Both share the one herdr
 server per host.
 
+## Closing the workspace on exit (opt-in, off by default)
+
+After `/exit`, a phone-spawned session's `cc-<dir>` workspace stays open (the pane drops
+back to its shell). With `COMPANION_HERDR_AUTOCLOSE=1` (exactly `1`; unset or any other
+value, `true` included, means off) the companion closes it on SessionEnd / pid-dead prune,
+but only if:
+- it is still the workspace this server spawned: workspace id, terminal id and
+  label (= the agent name) match the spawn record;
+- it has one pane, the shell is in front on two checks in a row, and no other session
+  sits in the pane.
+
+Code: `releaseHerdrWorkspace` in `server/lib/herdr-workspace.ts`,
+`closeHerdrWorkspaceWhenIdle` in `server/lib/herdr.ts`.
+
+**Why off by default:** herdr 0.9.3 has no atomic conditional close. `workspace close`
+follows the last check by one CLI round trip. A pane split open, or a command started,
+in that gap is destroyed with the workspace (a reviewer reproduced it with a split on
+PR #157). Off, the release makes no herdr call. It only drops its in-memory record
+and logs `herdr workspace <id> left open (COMPANION_HERDR_AUTOCLOSE off)`.
+
+Enable it:
+- **Zettlab (systemd --user):** a drop-in next to `herdr.conf`, then restart.
+  ```bash
+  mkdir -p ~/.config/systemd/user/claude-companion.service.d
+  printf '[Service]\nEnvironment=COMPANION_HERDR_AUTOCLOSE=1\n' \
+    > ~/.config/systemd/user/claude-companion.service.d/herdr-autoclose.conf
+  systemctl --user daemon-reload && systemctl --user restart claude-companion
+  ```
+- **Mac (launchd):** add the key to `EnvironmentVariables` in
+  `~/Library/LaunchAgents/com.techlabstudio.claude-companion.plist`.
+  ```xml
+  <key>COMPANION_HERDR_AUTOCLOSE</key>
+  <string>1</string>
+  ```
+  Then `launchctl unload` + `launchctl load` that plist.
+  `bun cli.ts daemon install` rewrites the plist, so add the key again after a reinstall.
+
 ## Zettlab host setup
 
 Run in a real SSH login shell — not the Claude Bash sandbox (it scrubs env, so

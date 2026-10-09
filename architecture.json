@@ -1667,9 +1667,10 @@
         },
         {
           "path": "lib/herdr-workspace.ts",
-          "lines": 36,
+          "lines": 50,
           "kind": "lib",
           "exports": [
+            "herdrAutocloseEnabled",
             "releaseHerdrWorkspace"
           ],
           "state": [
@@ -1690,7 +1691,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 319,
+          "lines": 324,
           "kind": "lib",
           "exports": [
             "ExecResult",

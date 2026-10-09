@@ -50,7 +50,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/live.ts` | 329 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
 | `lib/triage-engine.ts` | 325 | lib | 8 | emits: orchestrator_triage |
-| `lib/herdr.ts` | 319 | lib | 25 | state: let clientMod, spawnedAgents: Map |
+| `lib/herdr.ts` | 324 | lib | 25 | state: let clientMod, spawnedAgents: Map |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
@@ -178,6 +178,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/resolver.ts` | 55 | route-host | 3 | routes: 2 |
 | `lib/last-assistant.ts` | 53 | lib | 1 |  |
 | `wiring/dispatch.ts` | 52 | lib | 3 | state: polledListeners: Set |
+| `lib/herdr-workspace.ts` | 50 | lib | 2 | state: releasing: Set |
 | `wiring/proposals.ts` | 50 | lib | 4 |  |
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |
 | `lib/log.ts` | 48 | lib | 5 |  |
@@ -189,7 +190,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
 | `lib/agent-pid.ts` | 37 | lib | 2 |  |
-| `lib/herdr-workspace.ts` | 36 | lib | 1 | state: releasing: Set |
 | `routes/media.ts` | 36 | route-host | 1 | route: GET /api/media/ |
 | `lib/auto-compact-settings.ts` | 35 | lib | 5 |  |
 | `wiring/media.ts` | 35 | lib | 2 | state: let timer |

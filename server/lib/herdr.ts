@@ -226,6 +226,11 @@ export async function closeHerdrWorkspaceWhenIdle(pane: string, opts: WorkspaceC
         continue
       }
       if (opts.stillFree && !opts.stillFree()) return ""
+      // Known race: herdr 0.9.3 has no atomic conditional close, so a pane
+      // split opened (or a command started) after the check above is closed
+      // with the workspace. Codex reproduced a split being destroyed, which is
+      // why the caller only gets here with COMPANION_HERDR_AUTOCLOSE=1
+      // (herdr-workspace.ts herdrAutocloseEnabled; off by default).
       await h.call(["workspace", "close", ws], 5_000)
       return ws
     }
