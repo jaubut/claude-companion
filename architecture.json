@@ -3750,7 +3750,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 418,
+          "lines": 425,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -5412,7 +5412,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 558,
+          "lines": 559,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
