@@ -1,20 +1,11 @@
 import { GaugeStore, MOD_FRESH_MS } from "../lib/gauge"
-import { getSessionByKey, listSessions, type Session } from "../lib/sessions"
+import { resolveSessionKey } from "../lib/session-resolve"
+import type { Session } from "../lib/sessions"
 import { broadcast } from "../state"
 import { autoCompactor } from "./auto-compact"
 
 // Real deps for lib/gauge.ts: the registry resolves a session id to the key
 // the phone uses, frames go out on the shared broadcast.
-
-// The live session running `sessionId`; else the key the reporter named, as
-// long as that session has not since moved to another session id.
-export function resolveGaugeKey(sessionId: string, hint: string): string | null {
-  const bySid = listSessions().find((s) => s.sessionId === sessionId)
-  if (bySid) return bySid.key
-  if (!hint) return null
-  const s = getSessionByKey(hint)
-  return s && (!s.sessionId || s.sessionId === sessionId) ? s.key : null
-}
 
 export const gauge = new GaugeStore({
   now: () => Date.now(),
@@ -24,7 +15,7 @@ export const gauge = new GaugeStore({
     return t
   },
   clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
-  resolveKey: resolveGaugeKey,
+  resolveKey: resolveSessionKey,
   // The literal type (already on the frame) is what archmap's frame scan reads.
   emit: (frame) => broadcast({ ...frame, type: "gauge" }),
 })
