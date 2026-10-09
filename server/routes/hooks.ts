@@ -274,8 +274,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const session = cwd
       ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
       : null
-    // Proof of submission for any phone inject waiting on this session.
-    noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty })
+    // Proof of submission for any phone inject waiting on this session. A
+    // match also tells the hook the prompt came from the phone.
+    const fromPhone = noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty }, body.prompt)
     // Resets the auto-compact idle window and cancels a pending countdown.
     if (session) autoCompactor.noteUserActivity(session.key)
     // A new prompt means the picker is gone (e.g. "Chat about this").
@@ -310,7 +311,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       cwd,
       sessionId: body.session_id ?? "",
     })
-    return Response.json({})
+    return Response.json({ fromPhone })
   }
 
   // ── Permission request hook — multi-choice permission dialogs ──
