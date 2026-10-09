@@ -148,7 +148,7 @@ Last updated: 2026-10-04
 |---|---|---|---|
 | `server/lib/session-resolve.ts` | A | NEW: resolveSessionKey (body moved verbatim from wiring/gauge.ts) | 0 → ~20 ✓ |
 | `server/wiring/gauge.ts` | A | drop `resolveGaugeKey`, import `resolveSessionKey` | 43 → ~32 ✓ |
-| `server/lib/copy-jobs.ts` | A | NEW: CopyJobStore, parseCopyReport, CopyReport, CopyJobItem, CopyJobsFrame, CopyJobsDeps, CopyJobState, FINISHED_KEEP_MS, STALE_MS, EMIT_MIN_MS, MAX_JOBS | 0 → ~230 ✓ |
+| `server/lib/copy-jobs.ts` | A | NEW: CopyJobStore, parseCopyReport, CopyReport, CopyJobItem, CopyJobsFrame, CopyJobsSnapshot (GET body), CopyJobsDeps, CopyJobState, stateOf/rateOf/etaOf (pure derivations, unit-tested), FINISHED_KEEP_MS, STALE_MS, EMIT_MIN_MS, MAX_JOBS — amended 2026-10-09 after drift check #160 | 0 → ~230 ✓ |
 | `server/lib/copy-jobs.test.ts` | A | NEW: fake clock/timers like gauge.test | 0 → ~220 ✓ |
 | `server/wiring/copy-jobs.ts` | A | NEW: copyJobs (store; `emit: (f) => broadcast({ ...f, type: "copy_jobs" })` literal for the frame scan) | 0 → ~25 ✓ |
 | `server/routes/copy-jobs.ts` | A | NEW: handleCopyJobsRoute — POST loopback-or-bearer (copy of routes/gauge.ts gate), GET snapshot | 0 → ~40 ✓ |
