@@ -83,12 +83,19 @@ function matches(w: SubmitIdentity, from: SubmitIdentity): boolean {
 }
 
 // Called by the /hooks/user-prompt-submit route for every hook fire.
-export function noteUserPromptSubmit(from: SubmitIdentity): void {
+// Returns true when this hook is the first submit seen by a pending phone
+// inject of a prompt (not a slash command / bash-mode input — those are
+// armed with `boundary` and never reach Claude as a prompt): the route tells
+// the hook so Claude gets a "sent from the phone" context note.
+export function noteUserPromptSubmit(from: SubmitIdentity): boolean {
+  let fromPhone = false
   for (const w of watches) {
     if (!matches(w.id, from)) continue
+    if (!w.boundary && w.hits === 0) fromPhone = true
     w.hits++
     w.wake?.()
   }
+  return fromPhone
 }
 
 // Called by the SessionEnd hook and by SessionStart with source "clear": the
