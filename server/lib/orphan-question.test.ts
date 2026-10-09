@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { REVIEW_CANCEL, REVIEW_SUBMIT, _resetOrphansForTest, isQuestionReview, openQuestionFromTranscript, orphanPickerClosed, raiseOrphanQuestion, reviewSummary } from "./orphan-question"
 import { getPendingQuestions, type QuestionAnswer } from "./questions"
 import type { Session } from "./sessions"
+import { type InjectTarget, withPickerIO } from "./keyboard-inject"
 
 const INPUT = { questions: [{ question: "Activate the slim CLAUDE.md?", header: "CLAUDE.md", multiSelect: false,
   options: [{ label: "Activate", description: "swap it in" }, { label: "Not yet", description: "keep current" }] }] }
@@ -145,4 +146,21 @@ test("review screen: detected, summarised, raised as a Submit/Cancel card that p
 test("review screen of another question is not claimed", () => {
   const p = transcript([line([{ type: "tool_use", id: "tu8", name: "AskUserQuestion", input: { questions: [{ question: "Completely different question?", header: "X", multiSelect: false, options: [{ label: "a" }, { label: "b" }] }] } }])])
   expect(raiseOrphanQuestion(session(), REVIEW_PANE, { readOpen: () => openQuestionFromTranscript(p), ask: (() => new Promise(() => {})) as never })).toBe(false)
+})
+
+test("herdr session: the re-raised card's answer is driven into the herdr pane", async () => {
+  const p = transcript([line([{ type: "tool_use", id: "tuH", name: "AskUserQuestion", input: INPUT }])])
+  let resolveAsk: (a: QuestionAnswer[]) => void = () => {}
+  const routes: Array<string | null> = []
+  const deps = {
+    readOpen: () => openQuestionFromTranscript(p),
+    ask: (() => new Promise<QuestionAnswer[]>((r) => { resolveAsk = r })) as never,
+    // The real driver's IO choice (withPickerIO), without touching a pane.
+    drive: (t: InjectTarget) => { void withPickerIO(t, async (_io, via) => via).then((via) => routes.push(via)) },
+  }
+  const herdr = session({ key: "claude:tty:/dev/pts/9", tmuxPane: "", termProgram: "", tty: "", herdrPane: "w6:p1" })
+  expect(raiseOrphanQuestion(herdr, PANE, deps)).toBe(true)
+  resolveAsk([{ selected: ["Activate"] }])
+  await new Promise((r) => setTimeout(r, 20))
+  expect(routes).toEqual(["herdr|w6:p1"])
 })

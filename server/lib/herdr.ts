@@ -12,6 +12,8 @@
 // command (herdr resolves the agent hosted in that pane), so sessions
 // addressed by pane need no agent name at all. The name is kept only for logs.
 
+import type { KeyGate } from "./key-gate"
+
 export interface ExecResult { status: number | null; stdout: string; stderr: string; error?: Error }
 
 interface HerdrClientModule {
@@ -182,6 +184,8 @@ async function closableWorkspace(pane: string, h: Herdr, owner: HerdrOwner | und
   const p = got.pane as { workspace_id?: string; terminal_id?: string } | undefined
   const ws = p?.workspace_id ?? ""
   if (!HERDR_WORKSPACE_RE.test(ws)) return ""
+  // A label alone never proves ownership: an owner must carry an id to match.
+  if (owner && !owner.workspaceId && !owner.terminalId) return ""
   if (owner?.workspaceId && owner.workspaceId !== ws) return ""
   if (owner?.terminalId && owner.terminalId !== p?.terminal_id) return ""
   const info = await h.call(["workspace", "get", ws], 2_000)
@@ -282,6 +286,18 @@ export async function herdrSendText(pane: string, text: string, h: Herdr = realH
   } catch {
     return false
   }
+}
+
+// One herdr key / text in the pane's key-gate turn. The turn's AbortSignal
+// goes down to the subprocess: once the gate times out and lets the next turn
+// type, this send is killed (or never started) instead of landing late.
+// False on any failure or timeout.
+type GateSend = Pick<KeyGate, "send">
+export function herdrGatedKey(gate: GateSend, pane: string, key: string, h: Herdr = realHerdr): Promise<boolean> {
+  return gate.send(herdrGateKey(pane), key, (signal) => herdrSendKey(pane, key, h, signal)).catch(() => false)
+}
+export function herdrGatedText(gate: GateSend, pane: string, text: string, h: Herdr = realHerdr): Promise<boolean> {
+  return gate.send(herdrGateKey(pane), text, (signal) => herdrSendText(pane, text, h, signal)).catch(() => false)
 }
 
 // pane id → what this server spawned in it. Recorded right after `workspace

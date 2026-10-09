@@ -189,9 +189,11 @@ export function raiseOrphanQuestion(s: Session, pane: string, deps: OrphanDeps =
   raised.set(s.key, tag)
   const questions = review ? [reviewQuestion(open, pane)] : open.questions
   companionLog(`${yellow}→ phone${reset} orphaned question re-raised${review ? " (review screen)" : ""} ${dim}${questions[0]?.question.slice(0, 80) ?? ""} · ${s.key}${reset}`)
+  // herdrPane too: the watcher re-raises herdr pickers, and withPickerIO
+  // drives a herdr pane only when the target names it.
   const target: InjectTarget = {
     tmuxPane: s.tmuxPane, tmuxSocket: s.tmuxSocket ?? "", tty: s.tty,
-    termProgram: s.termProgram, iTermSessionId: s.iTermSessionId,
+    termProgram: s.termProgram, iTermSessionId: s.iTermSessionId, herdrPane: s.herdrPane ?? "",
   }
   void (deps.ask ?? addQuestionRequest)(
     { agent: "claude", sessionId: s.sessionId, cwd: s.cwd, questions, sessionKey: s.key },

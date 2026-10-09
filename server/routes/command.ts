@@ -5,7 +5,7 @@ import { commandLister } from "../lib/command-offpane-cache"
 import { beginFlow, endFlow } from "../lib/command-scrape"
 import { keyGate, runTmux } from "../lib/key-gate"
 import { type Session, resolveSession } from "../lib/sessions"
-import { herdrGateKey, herdrPaneOf, herdrSendKey, herdrSendText, realHerdr } from "../lib/herdr"
+import { herdrGatedKey, herdrGatedText, herdrPaneOf, realHerdr } from "../lib/herdr"
 import { type PaneRef, capturePane, paneKey, paneRefOf, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 
@@ -55,16 +55,15 @@ function tmuxSuggestPane(ref: PaneRef): SuggestPane {
   }
 }
 
+// Sends ride the pane's key-gate turn with its abort (herdrGatedKey/Text).
 function herdrSuggestPane(pane: string): SuggestPane {
-  const gk = herdrGateKey(pane)
-  const ok = (sent: boolean) => { if (!sent) throw new Error("herdr send failed") }
   return {
     capture: async (escapes = false) => {
       const text = await realHerdr.read(pane)
       return text === null || escapes ? text : unstyle(text)
     },
-    key: (key) => gated(gk, key, async () => ok(await herdrSendKey(pane, key))),
-    literal: (text) => gated(gk, text, async () => ok(await herdrSendText(pane, text))),
+    key: (key) => herdrGatedKey(keyGate, pane, key),
+    literal: (text) => herdrGatedText(keyGate, pane, text),
   }
 }
 

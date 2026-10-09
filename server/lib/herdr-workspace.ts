@@ -17,6 +17,8 @@ const releasing = new Set<string>()
 export function releaseHerdrWorkspace(s: Session, live: () => Session[], close = closeHerdrWorkspaceWhenIdle): void {
   const pane = herdrPaneOf(s)
   if (!pane) return
+  // Without the spawn record only the name is known; the close refuses an
+  // owner with no workspace or terminal id (never on the label alone).
   const owner: HerdrOwner | undefined = herdrOwnerFor(pane) ?? (s.herdrAgent ? { name: s.herdrAgent } : undefined)
   if (!owner) return
   const occupied = () => live().some((o) => o.herdrPane === pane)

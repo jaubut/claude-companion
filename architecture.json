@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-08",
+  "generatedAt": "2026-10-09",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1667,7 +1667,7 @@
         },
         {
           "path": "lib/herdr-workspace.ts",
-          "lines": 34,
+          "lines": 36,
           "kind": "lib",
           "exports": [
             "releaseHerdrWorkspace"
@@ -1690,7 +1690,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 303,
+          "lines": 319,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -1712,6 +1712,8 @@
             "herdrKeyName",
             "herdrSendKey",
             "herdrSendText",
+            "herdrGatedKey",
+            "herdrGatedText",
             "noteHerdrAgent",
             "herdrAgentFor",
             "herdrOwnerFor",
@@ -1725,7 +1727,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/key-gate.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -2468,7 +2472,7 @@
         },
         {
           "path": "lib/orphan-question.ts",
-          "lines": 218,
+          "lines": 220,
           "kind": "lib",
           "exports": [
             "ORPHAN_WINDOW_MS",
@@ -5211,7 +5215,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 236,
+          "lines": 235,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -5250,7 +5254,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 95,
+          "lines": 97,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -8460,7 +8464,6 @@
             "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
             "lib/submit-confirm.ts",
-            "routes/command.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "wiring/dialogs.ts"
@@ -8485,18 +8488,14 @@
           "callers": [
             "lib/herdr-inject.ts",
             "lib/inject-verified.ts",
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick"
+            "lib/submit-confirm.ts"
           ]
         },
         "herdrSendText": {
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
-            "lib/inject-verified.ts",
-            "routes/command.ts"
+            "lib/inject-verified.ts"
           ]
         },
         "closeHerdrWorkspaceWhenIdle": {
@@ -11344,6 +11343,20 @@
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts"
+          ]
+        },
+        "herdrGatedKey": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick"
+          ]
+        },
+        "herdrGatedText": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "routes/command.ts"
           ]
         },
         "paneRefOf": {

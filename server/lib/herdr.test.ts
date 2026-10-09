@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, herdrAgentFor, herdrKeyName, herdrOwnerFor, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, herdrSendKey, herdrSendText, noteHerdrAgent, silentSuccess } from "./herdr"
+import { type Herdr, closeHerdrWorkspaceWhenIdle, herdrGatedKey, herdrGatedText, forgetHerdrAgent, herdrAgentFor, herdrKeyName, herdrOwnerFor, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, herdrSendKey, herdrSendText, noteHerdrAgent, silentSuccess } from "./herdr"
 import { parseDialog } from "./dialogs"
 import { inputLine, unstyle } from "./command-menu"
 import { createDialogWatcher } from "./dialog-watch"
@@ -10,6 +10,7 @@ import { herdrAgentBaseName, spawnInHerdr, spawnLinux, spawnMacAuto, type SpawnR
 import { injectConfirmed, noteUserPromptSubmit } from "./submit-confirm"
 import { injectText } from "./keyboard-inject"
 import { deliverViaHerdr } from "./herdr-inject"
+import { createKeyGate } from "./key-gate"
 
 // A fake herdr: records every argv, answers from `reply` (throw to fail).
 function fakeHerdr(opts: {
@@ -570,4 +571,46 @@ test("a fork still in the pane: nothing closed, ownership kept for the fork's ow
   expect(panes).toEqual([])
   expect(herdrOwnerFor("wD:p1")?.name).toBe("cc-fork")
   forgetHerdrAgent("wD:p1")
+})
+
+// ── review fixes, pass 2 (PR #157 @ 8156885) ────────────────────────────────
+
+// A herdr whose sends take `ms`; like herdrExec, an abort while running kills
+// the subprocess (nothing delivered) — but only if the signal reached it.
+function slowHerdr(ms: number) {
+  const delivered: string[][] = []
+  const h: Herdr = {
+    async gate() { return null },
+    async read() { return "" },
+    async call(args, _t, signal) {
+      await new Promise((r) => setTimeout(r, ms))
+      if (signal?.aborted) throw Object.assign(new Error("aborted"), { code: "aborted" })
+      delivered.push(args)
+      return {}
+    },
+  }
+  return { h, delivered }
+}
+
+test("gated herdr key/text: once the gate times out, the late send never lands", async () => {
+  const gate = createKeyGate({ sendTimeoutMs: 20, settleMs: 0, log: () => {} })
+  const slow = slowHerdr(60)
+  expect(await herdrGatedKey(gate, "w2:p1", "Enter", slow.h)).toBe(false)
+  expect(await herdrGatedText(gate, "w2:p1", "/compact", slow.h)).toBe(false)
+  await new Promise((r) => setTimeout(r, 120))
+  expect(slow.delivered).toEqual([])
+})
+
+test("gated herdr key: in time, it is sent through the pane's gate", async () => {
+  const gate = createKeyGate({ sendTimeoutMs: 500, settleMs: 0, log: () => {} })
+  const fast = slowHerdr(1)
+  expect(await herdrGatedKey(gate, "w2:p1", "Down", fast.h)).toBe(true)
+  expect(await herdrGatedText(gate, "w2:p1", "/mo", fast.h)).toBe(true)
+  expect(fast.delivered).toEqual([["pane", "send-keys", "w2:p1", "down"], ["pane", "send-text", "w2:p1", "/mo"]])
+})
+
+test("an owner known only by name (no workspace or terminal id) never closes a workspace", async () => {
+  const f = ownedHerdr({ workspace_id: "w6", label: "cc-work", terminal_id: "term_a" })
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, owner: { name: "cc-work" }, ...noSleep })).toBe("")
+  expect(f.verbs()).not.toContain("workspace close")
 })
