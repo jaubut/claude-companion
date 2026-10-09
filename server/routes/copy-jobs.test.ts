@@ -13,8 +13,9 @@ import { clients } from "../state"
 
 const dir = mkdtempSync(join(tmpdir(), "copy-jobs-route-"))
 process.env.COMPANION_DB_PATH ??= join(dir, "test.db")
-// Whichever test file asked first fixed the token (lib/auth.ts caches it).
-process.env.COMPANION_AUTH_TOKEN ??= "copy-jobs-test-token-0123456789abcdef"
+// getAuthToken() caches the first token any test file reads, so share the
+// vault tests' value: whichever file runs first, the others still match.
+process.env.COMPANION_AUTH_TOKEN ||= "vault-test-token-0123456789"
 const TOKEN = getAuthToken()
 
 type Route = (req: Request, url: URL) => Promise<Response | null>
