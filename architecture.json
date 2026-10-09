@@ -784,7 +784,7 @@
         },
         {
           "path": "lib/body-tokens.ts",
-          "lines": 236,
+          "lines": 238,
           "kind": "lib",
           "exports": [
             "TOKEN_RANGES",
@@ -811,6 +811,7 @@
           "apiCalls": [],
           "imports": [
             "lib/body.ts",
+            "lib/my-tasks.ts",
             "lib/model-prices.ts",
             "lib/turso.ts"
           ],
@@ -7764,6 +7765,16 @@
             "lib/body-investigator.ts"
           ]
         },
+        "addDays": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "lib/body-tokens.ts",
+            "lib/mytask-triage.ts",
+            "lib/tasks-agent-load.ts",
+            "lib/tasks-agent-rules.ts",
+            "lib/tasks-agent.ts"
+          ]
+        },
         "usdRowSql": {
           "module": "lib/model-prices.ts",
           "callers": [
@@ -8881,15 +8892,6 @@
           "callers": [
             "lib/mytask-triage.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
-          ]
-        },
-        "addDays": {
-          "module": "lib/my-tasks.ts",
-          "callers": [
-            "lib/mytask-triage.ts",
-            "lib/tasks-agent-load.ts",
-            "lib/tasks-agent-rules.ts",
-            "lib/tasks-agent.ts"
           ]
         },
         "setDue": {

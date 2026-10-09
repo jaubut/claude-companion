@@ -69,8 +69,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-menu.ts` | 255 | lib | 11 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/live-repo.ts` | 251 | lib | 24 | state: let probe |
+| `lib/body-tokens.ts` | 238 | lib | 16 |  |
 | `lib/resolver-work.ts` | 238 | lib | 5 |  |
-| `lib/body-tokens.ts` | 236 | lib | 16 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `routes/command.ts` | 228 | route-host | 1 | routes: 2 |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
@@ -382,6 +382,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `createProposal()` | `lib/orchestrator-chat.ts` | `wiring/body-agent.ts`, `wiring/body-fix.ts`, `wiring/body-investigate.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts` |
 | `BodyComponentDetail()` | `lib/body.ts` | `lib/body-agent.ts`, `lib/body-investigate-engine.ts`, `lib/body-investigator.ts`, `lib/resolver-prompt.ts`, `wiring/body-agent.ts` |
 | `BodyHost()` | `lib/body-investigate.ts` | `lib/body-fix.ts`, `lib/body-investigate-engine.ts`, `wiring/body-agent.ts`, `wiring/body-fix.ts`, `wiring/resolver-peer.ts` |
+| `addDays()` | `lib/my-tasks.ts` | `lib/body-tokens.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-load.ts`, `lib/tasks-agent-rules.ts`, `lib/tasks-agent.ts` |
 | `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `lib/suggest-cleanup.ts`, `routes/command.ts#POST /api/command/suggest` |
 | `Turn()` | `lib/orchestrator-chat.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `lib/orchestrator-brain.ts`, `wiring/body.ts`, `wiring/orchestrator.ts` |
 | `TASKS_TZ()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
@@ -403,7 +404,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `toTaskDto()` | `lib/dispatch-tasks.ts` | `lib/body-investigate-engine.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
 | `ESC_SETTLE_MS()` | `lib/command-list.ts` | `lib/command-scrape.ts`, `lib/key-gate.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/model.ts#POST /api/model/cancel` |
 | `Channel()` | `lib/orchestrator-channels.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `routes/orchestrator.ts`, `wiring/body.ts` |
-| `addDays()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-load.ts`, `lib/tasks-agent-rules.ts`, `lib/tasks-agent.ts` |
 | `parseCliResult()` | `lib/cli-json.ts` | `lib/orchestrator-brain.ts`, `lib/readonly-claude.ts`, `lib/receipt-sonnet.ts`, `lib/resolver-fix.ts` |
 | `hookDecisionResponse()` | `lib/hook-common.ts` | `lib/question-hook.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `recordToolStart()` | `lib/activity.ts` | `lib/question-hook.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |

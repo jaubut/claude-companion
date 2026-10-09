@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { BODY_CACHE_TTL_MS } from "./body"
+import { addDays, localDay as zonedDay } from "./my-tasks"
 import { PRICING_AS_OF, unpricedRowSql, usdRowSql } from "./model-prices"
 import type { QueryFn, Row, SqlArg } from "./turso"
 
@@ -79,12 +80,13 @@ export function parseRange(v: string | null): TokenRange | null {
   return (TOKEN_RANGES as readonly string[]).includes(v) ? (v as TokenRange) : null
 }
 
-/** Local calendar day `back` days before `now`, as YYYY-MM-DD. */
+/**
+ * Jeremie's calendar day `back` days before `now`, as YYYY-MM-DD. Pinned to
+ * TASKS_TZ like the collector's `day` column (America/Montreal): on Zettlab's
+ * UTC clock a server-local day rolled over at 20:00 and "today" read empty.
+ */
 export function localDay(now: number, back = 0): string {
-  const d = new Date(now)
-  d.setDate(d.getDate() - back)
-  const p = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return addDays(zonedDay(now), -back)
 }
 
 export function rangeSince(range: TokenRange, now: number): string {
