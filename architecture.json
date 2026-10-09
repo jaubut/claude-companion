@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 104,
+          "lines": 110,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -4761,12 +4761,13 @@
         },
         {
           "path": "lib/voice-memo.ts",
-          "lines": 351,
+          "lines": 466,
           "kind": "lib",
           "exports": [
             "VOICE_HINT",
             "CHUNK_MAX_BYTES",
             "TRANSCRIPT_MAX",
+            "UPLOAD_MAX_BYTES",
             "VoiceStatus",
             "VoiceMemo",
             "ProjectRef",
@@ -4774,11 +4775,13 @@
             "transcriptOf",
             "isoUtc",
             "toMemo",
+            "sniffAudio",
             "base64Size",
             "voiceStart",
             "voiceChunk",
             "voiceFinalize",
             "voiceTranscribe",
+            "voiceUpload",
             "voiceList",
             "voiceGet",
             "AudioOutcome",
@@ -4787,13 +4790,16 @@
             "voiceDiscard",
             "voiceProjects"
           ],
-          "state": [],
+          "state": [
+            "let tdb"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
             "lib/dashboard-client.ts",
+            "lib/db-path.ts",
             "lib/log.ts"
           ],
           "listeners": [],
@@ -5171,9 +5177,10 @@
         },
         {
           "path": "routes/capture.ts",
-          "lines": 323,
+          "lines": 385,
           "kind": "lib",
           "exports": [
+            "VOICE_UPLOAD_PATH",
             "captureLimiter",
             "voiceChunkLimiter",
             "audioResponse",
@@ -6814,6 +6821,12 @@
             "routes/vault.ts"
           ]
         },
+        "VOICE_UPLOAD_PATH": {
+          "module": "routes/capture.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "waitForFirstDiscovery": {
           "module": "lib/discover.ts",
           "callers": [
@@ -7197,6 +7210,7 @@
             "lib/push-tokens.ts",
             "lib/receipt-qa-store.ts",
             "lib/session-titles.ts",
+            "lib/voice-memo.ts",
             "wiring/auto-compact.ts"
           ]
         },
@@ -11270,6 +11284,18 @@
           ]
         },
         "voiceStart": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "UPLOAD_MAX_BYTES": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "routes/capture.ts"
+          ]
+        },
+        "voiceUpload": {
           "module": "lib/voice-memo.ts",
           "callers": [
             "routes/capture.ts"

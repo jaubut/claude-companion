@@ -6,7 +6,7 @@ import { captureReceipt } from "../lib/receipt-capture"
 import { QA_STATUSES, type QaStatus, getQaRow, listQa } from "../lib/receipt-qa-store"
 import { acceptByHuman, kickReceiptQa, resolveByHuman } from "../lib/receipt-qa-worker"
 import { createLimiter } from "../lib/vault-guard"
-import { type Outcome, voiceAudio, voiceChunk, voiceDiscard, voiceFinalize, voiceGet, voiceList, voiceProjects, voiceStart, voiceTranscribe, voiceValidate } from "../lib/voice-memo"
+import { type Outcome, voiceAudio, voiceChunk, voiceDiscard, voiceFinalize, voiceGet, voiceList, voiceProjects, voiceStart, voiceTranscribe, voiceUpload, voiceValidate, UPLOAD_MAX_BYTES } from "../lib/voice-memo"
 import { HOP_HEADER, type UpstreamConfig, forwardVault, forwardedDevice, vaultUpstream } from "../lib/vault-upstream"
 
 // Quick Capture + receipt QA (Jeremie, 2026-10-03). Behind the standard /api
@@ -17,6 +17,7 @@ import { HOP_HEADER, type UpstreamConfig, forwardVault, forwardedDevice, vaultUp
 //   GET  /api/receipts/qa/:id/image                                → receipt bytes (private, max-age=300)
 //   POST /api/receipts/qa/:id/resolve  {fields, note?}             → {ok}
 //   POST /api/receipts/qa/:id/accept                               → {ok}
+//   POST /api/capture/voice/upload     multipart {audio(file ≤ 25 MB), transcript?} → {ok, id, filename, bytes, status:"pending", transcript|null}
 //   POST /api/capture/voice/start      {mime}                      → {ok, id, filename}
 //   POST /api/capture/voice/:id/chunk  {seq, audio(base64 ≤ 512 KB)} → {ok, seq, bytes}
 //   POST /api/capture/voice/:id/finalize                           → {ok, bytes, transcript|null}
@@ -46,6 +47,10 @@ const PROJECTS = "/api/capture/projects"
 // finalize waits on Deepgram, transcribe runs it, audio can be ~30 MB.
 const VOICE_SLOW_UPSTREAM_TIMEOUT_MS = 150_000
 const VOICE_CHUNK_UPSTREAM_TIMEOUT_MS = 30_000
+// Multipart boundaries + the transcript field (≤ 50k chars, UTF-8) on top of the audio.
+const UPLOAD_FORM_OVERHEAD_BYTES = 1024 * 1024
+/** Path of the one-shot upload; the server lifts Bun's idle timeout for it. */
+export const VOICE_UPLOAD_PATH = "/api/capture/voice/upload"
 const VOICE_ACTIONS = ["chunk", "finalize", "transcribe", "audio", "validate", "discard"] as const
 type VoiceAction = typeof VOICE_ACTIONS[number]
 const ACTIONS = ["image", "resolve", "accept"] as const
@@ -114,6 +119,39 @@ async function forwardAudio(up: UpstreamConfig, req: Request, path: string): Pro
     const bytes = new Uint8Array(await res.arrayBuffer())
     if (res.status !== 200) return new Response(bytes, { status: res.status, headers: { "Cache-Control": "no-store", "content-type": mime } })
     return audioResponse(req, bytes, mime)
+  } catch {
+    return fail(502, "upstream_unreachable")
+  }
+}
+
+/** The body, cut off (null) past `max` bytes — a body longer than its declared length never gets buffered whole. */
+async function readCapped(req: Request, max: number): Promise<Uint8Array | null> {
+  const parts: Uint8Array[] = []
+  let total = 0
+  if (req.body) {
+    for await (const chunk of req.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.byteLength
+      if (total > max) return null // leaving the loop cancels the stream
+      parts.push(chunk)
+    }
+  }
+  return new Uint8Array(Buffer.concat(parts))
+}
+
+/** Multipart is passed through byte for byte — the store host parses it. */
+async function forwardRaw(up: UpstreamConfig, req: Request, path: string, body: Uint8Array): Promise<Response> {
+  try {
+    const res = await fetch(up.base + path, {
+      method: "POST", body,
+      headers: {
+        authorization: `Bearer ${getAuthToken()}`, "x-companion-device": forwardedDevice(device(req)), [HOP_HEADER]: "1", "content-type": req.headers.get("content-type") ?? "",
+        // The store host dedupes too: a reply lost on the way back must not become a second memo on retry.
+        ...(req.headers.get("idempotency-key") ? { "idempotency-key": req.headers.get("idempotency-key")! } : {}),
+      },
+      redirect: "manual", signal: AbortSignal.timeout(VOICE_SLOW_UPSTREAM_TIMEOUT_MS),
+    })
+    if (res.status >= 300 && res.status < 400) { void res.body?.cancel(); return fail(502, "upstream_unreachable") }
+    return new Response(await res.text(), { status: res.status, headers: { "Cache-Control": "no-store", "content-type": res.headers.get("content-type") || "application/json" } })
   } catch {
     return fail(502, "upstream_unreachable")
   }
@@ -237,6 +275,30 @@ async function handleVoice(req: Request, url: URL, up: UpstreamConfig | null): P
     const body = await readBody(req)
     if (!body) return fail(400, "bad_json")
     return withIdempotency(req, "capture-voice-start", async () => up ? forwardJson(up, req, p, body) : outcome(await voiceStart(body)))
+  }
+  if (p === VOICE_UPLOAD_PATH) {
+    if (req.method !== "POST") return fail(405, "method_not_allowed")
+    // Refuse before buffering: formData()/arrayBuffer() read the whole body.
+    const rawLength = req.headers.get("content-length") ?? ""
+    if (!/^\d+$/.test(rawLength)) return fail(411, "length_required")
+    const declared = Number(rawLength)
+    if (declared > UPLOAD_MAX_BYTES + UPLOAD_FORM_OVERHEAD_BYTES) {
+      return fail(413, "audio_too_large", `max ${UPLOAD_MAX_BYTES} bytes`)
+    }
+    const wait = limited()
+    if (wait) return wait
+    return withIdempotency(req, "capture-voice-upload", async () => {
+      const raw = await readCapped(req, declared).catch(() => null)
+      if (!raw) return fail(400, "audio_too_large", `max ${UPLOAD_MAX_BYTES} bytes`)
+      if (up) return forwardRaw(up, req, p, raw)
+      const form = await new Response(raw, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData().catch(() => null)
+      if (!form) return fail(400, "bad_form")
+      const audio = form.get("audio")
+      if (!(audio instanceof File)) return fail(400, "audio_required")
+      const transcript = form.get("transcript") ?? ""
+      if (typeof transcript !== "string") return fail(400, "bad_transcript")
+      return outcome(await voiceUpload(new Uint8Array(await audio.arrayBuffer()), transcript))
+    })
   }
   const item = parseVoicePath(p)
   if (!item) return fail(404, "not_found")
