@@ -73,6 +73,12 @@ describe("token range helpers", () => {
     expect(parseRange("30d")).toBe("30d")
     expect(parseRange("1y")).toBeNull()
   })
+  test("today is Jeremie's day even on a UTC clock (Zettlab after 20:00)", () => {
+    const evening = Date.parse("2026-10-09T02:08:00Z") // 22:08 in Montréal
+    expect(rangeSince("today", evening)).toBe("2026-10-08")
+    expect(rangeSince("7d", evening)).toBe("2026-10-02")
+  })
+
   test("rangeSince is inclusive local days", () => {
     expect(rangeSince("today", NOW)).toBe("2026-10-05")
     expect(rangeSince("7d", NOW)).toBe("2026-09-29")
