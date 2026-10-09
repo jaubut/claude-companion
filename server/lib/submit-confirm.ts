@@ -83,12 +83,12 @@ function matches(w: SubmitIdentity, from: SubmitIdentity): boolean {
 }
 
 // Called by the /hooks/user-prompt-submit route for every hook fire.
-// Returns true when this hook is the first submit seen by a pending phone
-// inject of a prompt (not a slash command / bash-mode input — those are
+// Returns true when this hook consumes a phone origin (notePhoneOrigin) or is
+// the first submit seen by a pending phone inject of a prompt (not a slash command / bash-mode input — those are
 // armed with `boundary` and never reach Claude as a prompt): the route tells
 // the hook so Claude gets a "sent from the phone" context note.
-export function noteUserPromptSubmit(from: SubmitIdentity): boolean {
-  let fromPhone = false
+export function noteUserPromptSubmit(from: SubmitIdentity, now: number = Date.now()): boolean {
+  let fromPhone = takePhoneOrigin(from, now)
   for (const w of watches) {
     if (!matches(w.id, from)) continue
     if (!w.boundary && w.hits === 0) fromPhone = true
@@ -96,6 +96,29 @@ export function noteUserPromptSubmit(from: SubmitIdentity): boolean {
     w.wake?.()
   }
   return fromPhone
+}
+
+// A phone prompt whose UserPromptSubmit hook has not come yet. Outlives the
+// watch: a queued prompt fires its hook when Claude's turn ends, and the
+// non-tmux delivery (AppleScript) arms no watch at all.
+// ponytail: fixed TTL, a turn longer than this loses its phone note.
+export const PHONE_ORIGIN_TTL_MS = 30 * 60_000
+interface PhoneOrigin { id: SubmitIdentity; until: number }
+const origins: PhoneOrigin[] = []
+
+export function notePhoneOrigin(id: SubmitIdentity, now: number = Date.now()): { drop(): void } {
+  const o: PhoneOrigin = { id, until: now + PHONE_ORIGIN_TTL_MS }
+  origins.push(o)
+  return { drop: () => { const i = origins.indexOf(o); if (i >= 0) origins.splice(i, 1) } }
+}
+
+// Consumes the oldest live origin matching this hook.
+function takePhoneOrigin(from: SubmitIdentity, now: number): boolean {
+  for (let i = origins.length - 1; i >= 0; i--) if (origins[i]!.until <= now) origins.splice(i, 1)
+  const i = origins.findIndex((o) => matches(o.id, from))
+  if (i < 0) return false
+  origins.splice(i, 1)
+  return true
 }
 
 // Called by the SessionEnd hook and by SessionStart with source "clear": the
@@ -340,7 +363,18 @@ function withPaneLock<T>(pane: string, fn: () => Promise<T>): Promise<T> {
 // confirmed: that is where the hook is guaranteed and the pane is readable.
 // Everything else keeps the old "delivered = sent" answer (confirmed: false).
 // `herdr` is a test seam.
+// A Claude prompt (not /cmd or !cmd) is recorded as a phone origin until its
+// hook consumes it; a failed or already-confirmed inject drops the record.
 export async function injectConfirmed(text: string, target: ConfirmTarget | undefined, herdr: Herdr = realHerdr): Promise<InjectOutcome> {
+  const origin = target && (target.agent ?? "claude") === "claude" && !isHooklessInput(text)
+    ? notePhoneOrigin({ key: target.key, sessionId: target.sessionId, tty: target.tty })
+    : null
+  const res = await injectRouted(text, target, herdr)
+  if (origin && (!res.ok || res.confirmed)) origin.drop()
+  return res
+}
+
+async function injectRouted(text: string, target: ConfirmTarget | undefined, herdr: Herdr): Promise<InjectOutcome> {
   const herdrPane = herdrPaneOf(target)
   if (target && herdrPane) return injectHerdr(text, target, herdrPane, herdr)
   const ref = target && (target.agent ?? "claude") === "claude" ? await confirmPane(target) : null

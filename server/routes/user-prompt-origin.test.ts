@@ -2,7 +2,7 @@ import { test, expect, beforeAll, afterAll } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { watchSubmit } from "../lib/submit-confirm"
+import { PHONE_ORIGIN_TTL_MS, notePhoneOrigin, noteUserPromptSubmit, watchSubmit } from "../lib/submit-confirm"
 
 // /hooks/user-prompt-submit tells the hook whether the prompt is a phone
 // inject (a pending watchSubmit matched), and companion-user-prompt.sh turns
@@ -55,6 +55,29 @@ test("route: a slash-command inject never marks a prompt as from the phone", asy
   } finally {
     watch.close()
   }
+})
+
+test("route: a queued phone prompt keeps its origin after the watch closed", async () => {
+  const watch = watchSubmit({ sessionId: "origin-e", tty: "/dev/ttys905" })
+  notePhoneOrigin({ sessionId: "origin-e", tty: "/dev/ttys905" })
+  watch.close() // injectConfirmed answered "queued"; the hook comes at turn end
+  expect(await submit("origin-e", "/dev/ttys905")).toEqual({ fromPhone: true })
+  expect(await submit("origin-e", "/dev/ttys905")).toEqual({ fromPhone: false })
+})
+
+test("route: a watchless (AppleScript) phone delivery is still from the phone", async () => {
+  notePhoneOrigin({ tty: "/dev/ttys906" })
+  expect(await submit("origin-f", "/dev/ttys906")).toEqual({ fromPhone: true })
+})
+
+test("phone origin expires after its TTL", () => {
+  notePhoneOrigin({ sessionId: "origin-g" }, 0)
+  expect(noteUserPromptSubmit({ sessionId: "origin-g" }, PHONE_ORIGIN_TTL_MS + 1)).toBe(false)
+})
+
+test("a dropped phone origin is not consumed", async () => {
+  notePhoneOrigin({ sessionId: "origin-h", tty: "/dev/ttys907" }).drop()
+  expect(await submit("origin-h", "/dev/ttys907")).toEqual({ fromPhone: false })
 })
 
 // ── The hook script, against a stub server ──
@@ -118,6 +141,14 @@ test("hook: server down → nothing, exit 0", async () => {
   dead.stop(true)
   expect(await runHook(`http://127.0.0.1:${port}`)).toMatchObject({ code: 0, out: "" })
 })
+
+test("hook: a partial fromPhone body cut off by the timeout prints nothing", async () => {
+  answer = () => new Response(new ReadableStream({
+    start(c) { c.enqueue(new TextEncoder().encode('{"fromPhone":true')) }, // never closes
+  }), { headers: { "content-type": "application/json" } })
+  const r = await runHook(`http://127.0.0.1:${stub.port}`)
+  expect(r).toMatchObject({ code: 0, out: "" })
+}, 10_000)
 
 test("hook: a slow server is cut off at ~1 s and prints nothing", async () => {
   answer = () => new Promise((resolve) => setTimeout(() => resolve(Response.json({ fromPhone: true })), 3_000))

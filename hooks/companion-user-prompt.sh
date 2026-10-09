@@ -15,11 +15,13 @@ TTY=$(companion_find_tty)
 AGENT_PID=$(companion_find_agent_pid)
 companion_headers
 
-RESPONSE=$(curl -s --max-time 1 \
+# -f: HTTP errors fail. Any curl failure (incl. a timeout after a partial
+# body) discards the response.
+RESPONSE=$(curl -sf --max-time 1 \
   -X POST "$COMPANION_URL/hooks/user-prompt-submit" \
   -H "Content-Type: application/json" \
   "${COMPANION_HDRS[@]}" \
-  -d "$INPUT" 2>/dev/null)
+  -d "$INPUT" 2>/dev/null) || RESPONSE=""
 
 case "$RESPONSE" in
   *'"fromPhone":true'*)
