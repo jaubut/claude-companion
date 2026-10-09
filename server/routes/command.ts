@@ -1,6 +1,5 @@
-import { CLEAR_LINE_KEY, inputLine, mayClearLine, parseCommandMenu, suggestRefusal, unstyle } from "../lib/command-menu"
+import { inputLine, parseCommandMenu, suggestRefusal, unstyle } from "../lib/command-menu"
 import { companionLog } from "../lib/log"
-import { CLEAR_SETTLE_MS } from "../lib/command-list"
 import { commandLister } from "../lib/command-offpane-cache"
 import { beginFlow, endFlow } from "../lib/command-scrape"
 import { keyGate, runTmux } from "../lib/key-gate"
@@ -8,6 +7,7 @@ import { type Session, resolveSession } from "../lib/sessions"
 import { herdrGatedKey, herdrGatedText, herdrPaneOf, realHerdr } from "../lib/herdr"
 import { type PaneRef, capturePane, paneKey, paneRefOf, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
+import { clearIfOurs, finishSuggestProbe } from "../lib/suggest-cleanup"
 
 // Slash-command autocomplete (PRJ-OR1T Phase 16).
 //
@@ -74,22 +74,6 @@ function suggestPaneOf(session: Session | null): SuggestPane | null {
   return herdrPane ? herdrSuggestPane(herdrPane) : null
 }
 
-// C-u only over an empty line or text this flow typed itself. The line is
-// read fresh, with -e, right before the key: anything else on it (a phone
-// prompt whose Enter never landed, the user typing at the keyboard) is left
-// alone and the caller is told so. Returns true when the line is ours to have
-// cleared (or already empty).
-async function clearIfOurs(pane: SuggestPane, owned: readonly string[], who: string): Promise<boolean> {
-  const typed = inputLine(await pane.capture(true) ?? "")
-  if (!mayClearLine(typed, owned)) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    companionLog(`${yellow}commands${reset} left the input line alone on ${who} — not ours: ${JSON.stringify((typed ?? "<unreadable>").slice(0, 40))}`)
-    return false
-  }
-  if (typed === "") return true
-  return pane.key(CLEAR_LINE_KEY)
-}
-
 export async function handleCommandRoute(req: Request, url: URL): Promise<Response | null> {
   // ── Suggestions for a slash prefix ──
   // Body: { key, prefix } where prefix is what follows "/" ("" lists the menu
@@ -121,6 +105,9 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     if (!beginFlow(session!.key, "suggest")) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
     }
+    // Once `/prefix` may be in the box, any exit that skips the verified
+    // cleanup below releases the pane dirty, never clean by default.
+    let typed = false
     try {
       // Always start from a known-empty line: the previous suggestion left its
       // own prefix there, and Escape does not clear it (it closes the menu and
@@ -129,6 +116,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       if (!(await clearIfOurs(pane, [`/${prefix}`], who))) {
         return Response.json({ ok: false, error: "input_busy" }, { status: 409 })
       }
+      typed = true
       await pane.literal(`/${prefix}`)
 
       // Poll rather than sleep a fixed amount — the same lesson the model
@@ -154,14 +142,19 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       // types into it. No Escape is ever sent here — the probe closes the menu
       // by emptying the line, because Escape keeps the typed text — so the
       // short redraw gap is enough.
-      await clearIfOurs(pane, [`/${prefix}`], who)
-      await sleep(CLEAR_SETTLE_MS)
+      //
+      // The flow ends on what the line reads AFTER the clear (lib/
+      // suggest-cleanup.ts): a failed or ineffective C-u releases the pane
+      // `clean:false`, so the next inject verifies it instead of typing on
+      // top of `/prefix`.
+      await finishSuggestProbe(session!.key, pane, [`/${prefix}`], who, sleep)
 
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       companionLog(`${cyan}commands${reset} "/${prefix}" → ${commands.length} on ${session!.label || session!.key}`)
       return Response.json({ ok: true, key: session!.key, prefix, commands })
     } finally {
-      endFlow(session!.key)
+      // A no-op when finishSuggestProbe already ended the flow.
+      endFlow(session!.key, typed ? { clean: false } : {})
     }
   }
 

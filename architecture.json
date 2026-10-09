@@ -3771,6 +3771,31 @@
           "externals": []
         },
         {
+          "path": "lib/suggest-cleanup.ts",
+          "lines": 76,
+          "kind": "lib",
+          "exports": [
+            "ClearablePane",
+            "clearIfOurs",
+            "leaveInputEmpty",
+            "finishSuggestProbe"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-menu.ts",
+            "lib/command-list.ts",
+            "lib/command-scrape.ts",
+            "lib/log.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/super-auto.ts",
           "lines": 81,
           "kind": "lib",
@@ -5218,7 +5243,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 235,
+          "lines": 228,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -5242,14 +5267,14 @@
           "imports": [
             "lib/command-menu.ts",
             "lib/log.ts",
-            "lib/command-list.ts",
             "lib/command-offpane-cache.ts",
             "lib/command-scrape.ts",
             "lib/key-gate.ts",
             "lib/sessions.ts",
             "lib/herdr.ts",
             "lib/tmux-pane.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "lib/suggest-cleanup.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7156,6 +7181,7 @@
             "lib/session-removal-log.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "lib/suggest-cleanup.ts",
             "lib/super-auto.ts",
             "lib/vault-upstream.ts",
             "lib/voice-memo.ts",
@@ -7170,7 +7196,6 @@
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/body.ts#POST /api/body/alert",
             "routes/capture.ts",
-            "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
@@ -7832,7 +7857,7 @@
             "lib/command-list.ts",
             "lib/inject-guard.ts",
             "lib/submit-confirm.ts",
-            "routes/command.ts",
+            "lib/suggest-cleanup.ts",
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
@@ -10016,6 +10041,31 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "mayClearLine": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts"
+          ]
+        },
+        "CLEAR_LINE_KEY": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts"
+          ]
+        },
+        "CLEAR_SETTLE_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts"
+          ]
+        },
+        "endFlow": {
+          "module": "lib/command-scrape.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts",
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
         "normDate": {
           "module": "lib/my-tasks.ts",
           "callers": [
@@ -11374,18 +11424,6 @@
             "wiring/auto-compact.ts"
           ]
         },
-        "mayClearLine": {
-          "module": "lib/command-menu.ts",
-          "callers": [
-            "routes/command.ts"
-          ]
-        },
-        "CLEAR_LINE_KEY": {
-          "module": "lib/command-menu.ts",
-          "callers": [
-            "routes/command.ts"
-          ]
-        },
         "suggestRefusal": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -11398,20 +11436,20 @@
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
+        "clearIfOurs": {
+          "module": "lib/suggest-cleanup.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
         "parseCommandMenu": {
           "module": "lib/command-menu.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
-        "CLEAR_SETTLE_MS": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "endFlow": {
-          "module": "lib/command-scrape.ts",
+        "finishSuggestProbe": {
+          "module": "lib/suggest-cleanup.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest"
           ]
