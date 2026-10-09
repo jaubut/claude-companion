@@ -114,6 +114,101 @@ Last updated: 2026-10-04
 
 ## Change Plans
 
+### Change Plan — copy-progress (2026-10-09)
+**Request (Jeremie):** live footage-copy progress on the Companion iOS app: the `copy-progress` mod POSTs each 2 s poll of a `rename-footage/ingest.ts --apply` run to the host's server (gauge pattern), the app shows a progress row (label, files x/y, GB done/total, %, rate, ETA, current file; green all-verified, red any failed). Live Activity: decide here or follow-up.
+**Done when:**
+- A copy running on the Mac OR on Zettlab shows as a live row in the iPhone chat (and the iPad conversation pane) within ~2 s of the mod's poll, finishes green/red, disappears ~60 s after finishing.
+- TestFlight build 31 (no decoder for the frame) keeps working against the new server: no crash, no lost frames.
+- `bun test`, tsc and the iOS test target pass; archmap shows `copy_jobs` consumed by `ios:ios/WSFrame.swift` after the iOS map is regenerated.
+
+**Target shape & drift**
+- Leader reference: Foundation `Progress` (kind `.file`, `fileOperationKind .copying`) + Hedge/ShotPut-style offload jobs. Mapping: `totalUnitCount/completedUnitCount` → `totalBytes/doneBytes`; `fileTotalCount/fileCompletedCount` → `totalFiles/doneFiles`; `throughput`/`estimatedTimeRemaining` → `bytesPerSec`/`etaSec` (computed ONCE by the owner, never by each viewer); `fileURL` → `current`; Hedge's checksum-then-copy-then-verify phases → `state` `hashing|copying|done|failed` + `failed` count.
+- Reference for this intent: (1) producers (hooks, mods) report raw facts to their own host's server over loopback; the server is the single owner of live state, derives state/rate/ETA once and broadcasts full, idempotent snapshots; (2) lib = pure store with injected deps, routes = validation, wiring = broadcast/push side effects (house trio); (3) every frame is a typed DTO with a fixture in `contracts/` tested on both sides; (4) iOS: per-host merge in the socket group, one fold point (`AppState.apply`), views read derived state; (5) background surfaces (lock screen) are driven by server APNs pushes, not by an app iOS suspends.
+- Deviations today: copy progress lives only in the mod (terminal UI + fire-and-forget milestone pushes); the mod reads the bearer from a hard-coded `/Users/jeremieaubut/...` path (breaks on Zettlab); the session-id→key resolver is gauge-private (`wiring/gauge.ts#resolveGaugeKey`); the `gauge` frame has no iOS consumer; gauge fixtures are mirrored by hand (contracts:sync covers feed-events only); iOS `CompanionSocket.swift` 648 and `Models.swift` 774 over cap 600; the existing Live Activity is local-only.
+- This change moves toward: server-owned job state + derived fields (1), resolver extracted to `lib/session-resolve.ts` (2), `contracts/copy-jobs/` fixtures (3), `CompanionSocket.swift` split under cap (4). Leaves for follow-up (to file): **F1** APNs Live Activity for copy jobs (see Risks); **F2** server-owned copy milestones (retire the mod's `/api/push/broadcast` call + token read); **F3** iOS consumer for `gauge`; **F4** `Models.swift` split; **F5** `contracts:sync` for gauge + copy-jobs; **F6** archmap adapter for `~/.claude/dev-mods` callers of `/hooks/*` and `/api/push/broadcast`.
+
+**State decisions**
+- Copy jobs: live in `server/lib/copy-jobs.ts` `CopyJobStore` (Map jobId → entry), one instance in `server/wiring/copy-jobs.ts`. Mutated only by `report()` (POST /hooks/copy-progress) and the store's own sweep timer. Announced by `copy_jobs` (full host list, ≤ 1 frame / 2 s per host, trailing; emitted on every accepted report so `at` stays live). Persistence: none (a restart loses the row; the mod's next 2 s report recreates it).
+- Keys: `jobId` (mod sends `basename(outFile)`, opaque, ≤ 200 chars; the outFile path never reaches the wire). `session_id` optional → `sessionKey` resolved at emit time via `resolveSessionKey`; unresolvable → `null`, job still shown (host-level, unlike gauge which hides).
+- Frame of reference: `startedAt` and `copyStartedAt` are stored properties — first non-null value wins, later reports never move them; `totalFiles`/`totalBytes` keep the last non-zero (the mod resets bytes to 0 on a parse miss). Rate = `doneBytes / (now − copyStartedAt)` (same average as the terminal), ETA = remaining / rate; both null while hashing or doneBytes = 0.
+- Lifetime: finished (`finished:true`) → `finishedAt` stamped once, kept `FINISHED_KEEP_MS` 60 s then dropped (server timer, not the mod's); unfinished with no report for `STALE_MS` 120 s → dropped (session killed). `MAX_JOBS` 16, oldest finished evicted first.
+- iOS: `AppState.copyJobs: [String: [CopyJob]]` (host base → list), written only in `AppState+SocketEvents.apply`; replaced whole per frame; cleared for a host in `resetHostState` (its init). Row staleness uses phone receipt time (`receivedAt` > 10 s → dimmed "no update"), never the server's `at`.
+
+**Contracts touched** (from architecture.md)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `copy_jobs` `{type, jobs:[CopyJobItem], at}` | frame NEW | new type | ios:ios/WSFrame.swift (new case), CompanionSocket.swift, CompanionSocketGroup.swift, AppState+SocketEvents.swift | build 31: `WSFrame.init` `default: self = .unknown(type)` (WSFrame.swift:156), each WS message decoded alone (`WSFrame.decode`, :161), `.unknown` ignored (CompanionSocket.swift:581) → safe |
+| `POST /hooks/copy-progress` | hook endpoint NEW | snake_case body, `job_id` required | copy-progress mod (out of repo; map blind spot F6) | new |
+| `GET /api/copy-jobs` → `{ok, jobs}` | endpoint NEW | bearer (global gate) | none (verify + debug; mirrors `GET /api/gauge`) | new |
+| `/ws` open sequence | frame order | `copy_jobs` sent after `init` when the host has jobs | ios:ios/WSFrame.swift | old builds ignore; `init` shape unchanged |
+| `CopyJobItem` | DTO | `jobId, sessionKey?, label, state, totalFiles, doneFiles, totalBytes, doneBytes, failed, current?, startedAt, copyStartedAt?, finishedAt?, bytesPerSec?, etaSec?, at` (ms epoch / seconds) | fixtures `contracts/copy-jobs/{frame,frame.empty,api}.json` | `state` open-ended: iOS maps unknown → neutral |
+
+**Files — one owner each** (server = builder A; iOS = builder B after the server PR is deployed on both hosts)
+| file | owner | change | lines now → after cap check |
+|---|---|---|---|
+| `server/lib/session-resolve.ts` | A | NEW: resolveSessionKey (body moved verbatim from wiring/gauge.ts) | 0 → ~20 ✓ |
+| `server/wiring/gauge.ts` | A | drop `resolveGaugeKey`, import `resolveSessionKey` | 43 → ~32 ✓ |
+| `server/lib/copy-jobs.ts` | A | NEW: CopyJobStore, parseCopyReport, CopyReport, CopyJobItem, CopyJobsFrame, CopyJobsSnapshot (GET body), CopyJobsDeps, CopyJobState, stateOf/rateOf/etaOf (pure derivations, unit-tested), FINISHED_KEEP_MS, STALE_MS, EMIT_MIN_MS, MAX_JOBS — amended 2026-10-09 after drift check #160 | 0 → ~230 ✓ |
+| `server/lib/copy-jobs.test.ts` | A | NEW: fake clock/timers like gauge.test | 0 → ~220 ✓ |
+| `server/wiring/copy-jobs.ts` | A | NEW: copyJobs (store; `emit: (f) => broadcast({ ...f, type: "copy_jobs" })` literal for the frame scan) | 0 → ~25 ✓ |
+| `server/routes/copy-jobs.ts` | A | NEW: handleCopyJobsRoute — POST loopback-or-bearer (copy of routes/gauge.ts gate), GET snapshot | 0 → ~40 ✓ |
+| `server/routes/copy-jobs.test.ts` | A | NEW: through the real server + fake WS client (gauge route test pattern, `COMPANION_DB_PATH`) | 0 → ~170 ✓ |
+| `server/companion-server.ts` | A | add `handleCopyJobsRoute` to the chain after `handleGaugeRoute` | 110 → ~112 ✓ |
+| `server/ws.ts` | A | after `init`, before approval replays: send `copyJobs.frame()` if non-empty | 212 → ~216 ✓ |
+| `contracts/copy-jobs/*.json`, `contracts/README.md` | A | NEW fixtures + a `copy-jobs/` section (hand-mirrored like gauge) | README +18 |
+| `claude companion/SocketEvent.swift` (ios) | B | NEW: SocketEvent, FeedEvent — moved verbatim from CompanionSocket.swift:12-128 (top-level types, no access widening; same MainActor default isolation) + `.copyJobs(base: URL?, jobs: [CopyJob])` | 0 → ~125 ✓ |
+| `claude companion/CompanionSocket.swift` (ios) | B | remove moved types; map `.copyJobs` in `emit` | 648 → ~537 ✓ (fixes over-cap) |
+| `claude companion/CopyJobs.swift` (ios) | B | NEW: CopyJob (Decodable, Equatable, Identifiable; permissive init), CopyJobState, CopyJobsPayload (lossy array: one bad item never drops the rest), CopyJobFormat (GB, %, rate, ETA) | 0 → ~140 ✓ |
+| `claude companion/CopyJobsStrip.swift` (ios) | B | NEW: CopyJobsStrip, CopyJobRow (ProgressView, `Theme.success`/`Theme.danger`, monospaced digits, VoiceOver combined label, no animation under Reduce Motion) | 0 → ~140 ✓ |
+| `claude companion/WSFrame.swift` (ios) | B | `case copyJobs([CopyJob])`, CodingKey `jobs`, `"copy_jobs"` branch | 487 → ~495 ✓ |
+| `claude companion/CompanionSocketGroup.swift` (ios) | B | stamp base: `.copyJobs(base: base, jobs:)` | 275 → ~279 ✓ |
+| `claude companion/AppState.swift` (ios) | B | `@Published var copyJobs: [String: [CopyJob]]` + sorted flat accessor | 414 → ~422 ✓ |
+| `claude companion/AppState+SocketEvents.swift` (ios) | B | fold `.copyJobs`; `resetHostState` clears the host's list | 458 → ~466 ✓ |
+| `claude companion/Tabs/RootTabView.swift` (ios) | B | `CopyJobsStrip()` between `InjectErrorBanner()` and `StatusBar` in ChatTab | 167 → ~168 ✓ |
+| `claude companion/iPad/IPadCockpitView.swift` (ios) | B | same in `conversationPane` | 171 → ~172 ✓ |
+| `claude companionTests/CopyJobsTests.swift` + `Fixtures/copy-jobs/` (ios) | B | NEW: decodes the server fixtures, unknown state, missing fields, host reset | 0 → ~120 ✓ |
+
+Every surface that renders jobs: ChatTab (iPhone) and conversationPane (iPad) — the only two hosts of `StatusBar`; none else (WorkerChatView carries no StatusBar).
+
+**Fan-in paths to guard**
+- `resolveSessionKey()` is reached from `wiring/gauge.ts` (`GaugeStore` emit + `GET /api/gauge`) and `wiring/copy-jobs.ts` — read-only on the registry; `routes/gauge.test.ts` must pass unchanged.
+- `broadcast()` (22 callers) unchanged; copy_jobs is one more caller.
+- `/ws` open in `ws.ts`: order is `init` → `copy_jobs` → approval/question replays. `copy_jobs` before `init` would be wiped by the phone's `hostSynced` reset (same trap the approvals comment documents).
+- Route chain: `handleHookRoute` runs first on every `/hooks/*` — `workerHookGate` + `scrapeHookPassthrough` must keep returning null for `/hooks/copy-progress` (the mod sends no `x-companion-*` headers); covered by a route test through the real server.
+
+**Risks**
+- Live Activity → **follow-up F1, not this plan.** Copies run 10-60 min with the phone locked; iOS suspends the app ~30 s after backgrounding, the WS drops, a local-only ActivityKit bar would freeze at the first few % — worse than the milestone pushes that already arrive. The right path is APNs `liveactivity` (push-to-start token, iOS 17.2+, target is 17.0 → `#available`; per-activity update token registered to the server; `lib/apns.ts` gains the push type; update budget ≤ ~1 per 10-15 s). This plan's `CopyJobItem` (server-derived rate/ETA/state) is designed to be that ContentState unchanged.
+- Old server + new mod: POST → 404 every 2 s → mod must not toast per poll (mod item 3).
+- Zettlab: progress needs no token (loopback), but the mod's milestone pushes read `/Users/jeremieaubut/.claude-companion/auth.token` and fail there (mod item 2); also confirm the mod is installed in Zettlab's Claude config.
+- Map blind spots: mods are not scanned (callers of `/hooks/gauge`, `/api/push/broadcast` show "—") → F6. iOS ref map dated 2026-10-03 (`gauge` shows no consumer, true in source) → regenerate the iOS map before builder B starts.
+- Frame volume: 0.5 frame/s per host while a copy runs; full list ≤ 16 items — negligible.
+- kb offline — no external gotchas checked (KB bearer empty in this sandbox; externals were SwiftUI/Foundation/ActivityKit only, server modules have none).
+
+**Verify**
+1. `bun test server/lib/copy-jobs.test.ts` → parse bounds (job_id required/≤ 200, wrong types = absent), sticky `startedAt`/`copyStartedAt`, last non-zero totals, state derivation, rate/ETA math, finished kept 60 s then a frame without it, 120 s stale drop, ≤ 1 frame / 2 s trailing, MAX_JOBS eviction.
+2. `bun test server/routes/copy-jobs.test.ts` → loopback 200; non-loopback without bearer 403, with bearer 200; bad JSON 400; `GET /api/copy-jobs` without bearer 401 via the real server; WS frame keys == `contracts/copy-jobs/frame.json`; a fake client opened with a live job gets `init` then `copy_jobs`, and no `copy_jobs` when empty.
+3. `bun test` (all, incl. `routes/gauge.test.ts`) + `bun run typecheck` → green.
+4. On the Mac: `curl -s -X POST localhost:4245/hooks/copy-progress -H 'content-type: application/json' -d '{"job_id":"t1","label":"smoke","total_files":4,"total_bytes":4000000000,"done_files":1,"done_bytes":1000000000,"copy_started_at":<ms 60 s ago>,"current":"A001.MP4"}'` then `GET /api/copy-jobs` (bearer) → `state:"copying"`, `bytesPerSec` ≈ 16.7e6, `etaSec` ≈ 180.
+5. iOS: `xcodebuild test -only-testing:"claude companionTests/CopyJobsTests"` + full test target → green; regenerate both maps, `--lint` clean, `copy_jobs` row lists `ios:ios/WSFrame.swift`; CompanionSocket.swift < 600.
+6. Old build: with build 31 on the phone, run step 4 → app stays connected, feed/approvals unaffected.
+7. `mobile-ux-auditor` on CopyJobsStrip.swift + both mount points; CRITICAL/HIGH fixed, then a verification pass.
+8. **Manual pass (Jeremie, running build, both hosts):** (a) start a real `/rename-footage --apply` on the Mac → within ~2 s a row "copying <label>" appears above the status bar in Chat, files x/y and GB climbing, %, MB/s, ETA counting down, current file name; while sources hash it reads "hashing sources" with no rate/ETA. (b) Switch sessions → row stays (host-wide). (c) Lock 30 s, unlock → row resyncs within 2 s, no duplicate. (d) Finish clean → row turns green "all verified", gone ~60 s later. (e) Force a failure (unplug the destination mid-copy, or a test fixture) → red with the failed count. (f) Same run on Zettlab → row appears too, both hosts' jobs side by side when concurrent. (g) iPad: row in the conversation pane. (h) Kill the Claude session mid-copy → row dims "no update" after 10 s, disappears after ~2 min.
+
+**Out of scope:** Live Activity / APNs liveactivity (F1); moving milestone pushes to the server (F2); gauge UI on iOS (F3); Models.swift split (F4); persistence of jobs across server restarts; tapping a row to jump to its session; cancel/retry controls.
+
+**Analyst findings (2026-10-09, 2 analysts: `copy_jobs` frame, `/ws` open order)**
+- Both additive, plan unchanged. Build 31: unknown `type` → `.unknown` (WSFrame.swift:156, `try?` decode per message :161) → ignored (CompanionSocket.swift:581); `receiveLoop` (:361-365) counts it as liveness. No other WS client exists (peers/resolver/broker are HTTP; widgets/NCE/LiveActivity have no WS).
+- Order: insert send between ws.ts:41 (`init`) and :42 (approval replay), synchronous. iOS applies `.initial` fully before the next frame (CompanionSocket.swift:358-369), so `copy_jobs` after `init` survives `resetHostState`.
+- Added verify items: (a) `ws.test.ts` — seeded job → types `["init","copy_jobs","approval","question"]`; empty → no `copy_jobs`. (b) `ws.test.ts:60-76` asserts exact `got` arrays on clients in the broadcast set → copy-jobs tests must reset the store singleton and its timers (no leak across files). (c) iOS: `resetHostState` must clear `copyJobs[base]`; `HostResyncTests` case init → copy_jobs → init clears. (d) iOS guard test: a never-implemented frame type decodes to `.unknown` with no event (build-31 claim is code-read, not test-proven today). (e) `CompanionSocket.emit` is an exhaustive switch → the new case must be handled in emit, Group and AppState in one commit.
+- Risk: TestFlight build 31 binary vs HEAD not independently confirmed (no release tag); HEAD pbxproj = 31, WSFrame.swift last changed ebff255.
+
+**Out-of-repo — `copy-progress` mod (~/.claude/dev-mods/.../copy-progress)**
+1. `hooks/register.tsx` `poll()`: after `update`, POST `http://localhost:4245/hooks/copy-progress` with `{session_id, job_id: basename(outFile), label, started_at, copy_started_at, total_files, total_bytes, done_files, done_bytes, current, failed, finished, at: now}` — no bearer (loopback), no `x-companion-*` headers, fire-and-forget; on the finishing tick, post BEFORE cancelling the timer so `finished:true` lands. Also post once at job creation (`tool.call`) and on `session.start` resumption.
+2. Token path for the milestone pushes: home directory from the environment instead of the hard-coded `/Users/jeremieaubut` (Zettlab is `/home/...`).
+3. Errors: toast at most once per job; a 404 (server without the route) stops posting for that job.
+4. `hooks/parse.test.ts` (or a new `report.test.ts`): the report body builder (snake_case keys, basename job id, no path leak).
+5. Milestone pushes via `/api/push/broadcast` unchanged until F2.
+
 ### Change Plan — opus-resolver (2026-10-04)
 **Request (Jeremie):** "for me to open a PR and review it will ultimately fall onto asking you to solve it. So why not put Opus 5.5 back in the loop of 'needs your attention'." Before an item reaches Jeremie, an Opus 5.5 agent works it as far as it safely can; he then sees nothing (resolved) or a card with Opus's finished work and ONE decision.
 **Done when:**

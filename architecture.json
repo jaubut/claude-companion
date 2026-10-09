@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 110,
+          "lines": 111,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -68,6 +68,7 @@
             "routes/trips.ts",
             "routes/auto-compact.ts",
             "routes/gauge.ts",
+            "routes/copy-jobs.ts",
             "routes/my-tasks.ts",
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
@@ -1196,6 +1197,37 @@
             "lib/command-list.ts",
             "lib/key-gate.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/copy-jobs.ts",
+          "lines": 306,
+          "kind": "lib",
+          "exports": [
+            "FINISHED_KEEP_MS",
+            "STALE_MS",
+            "EMIT_MIN_MS",
+            "MAX_JOBS",
+            "CopyJobState",
+            "CopyJobItem",
+            "CopyJobsFrame",
+            "CopyJobsSnapshot",
+            "CopyReport",
+            "CopyJobsDeps",
+            "parseCopyReport",
+            "stateOf",
+            "rateOf",
+            "etaOf",
+            "CopyJobStore"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -3614,6 +3646,25 @@
           "externals": []
         },
         {
+          "path": "lib/session-resolve.ts",
+          "lines": 15,
+          "kind": "lib",
+          "exports": [
+            "resolveSessionKey"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-titles.ts",
           "lines": 145,
           "kind": "lib",
@@ -5307,6 +5358,39 @@
           "externals": []
         },
         {
+          "path": "routes/copy-jobs.ts",
+          "lines": 31,
+          "kind": "route-host",
+          "exports": [
+            "handleCopyJobsRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/hooks/copy-progress",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/copy-jobs",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/copy-jobs.ts",
+            "lib/vault-guard.ts",
+            "wiring/copy-jobs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/dialogs.ts",
           "lines": 97,
           "kind": "route-host",
@@ -6092,6 +6176,29 @@
           "externals": []
         },
         {
+          "path": "wiring/copy-jobs.ts",
+          "lines": 20,
+          "kind": "lib",
+          "exports": [
+            "copyJobs"
+          ],
+          "state": [],
+          "emits": [
+            "copy_jobs"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/copy-jobs.ts",
+            "lib/session-resolve.ts",
+            "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/dialogs.ts",
           "lines": 199,
           "kind": "lib",
@@ -6260,10 +6367,9 @@
         },
         {
           "path": "wiring/gauge.ts",
-          "lines": 43,
+          "lines": 34,
           "kind": "lib",
           "exports": [
-            "resolveGaugeKey",
             "gauge",
             "gaugeFromTranscript"
           ],
@@ -6276,6 +6382,7 @@
           "apiCalls": [],
           "imports": [
             "lib/gauge.ts",
+            "lib/session-resolve.ts",
             "lib/sessions.ts",
             "state.ts",
             "wiring/auto-compact.ts"
@@ -6758,7 +6865,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 212,
+          "lines": 216,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -6790,7 +6897,8 @@
             "lib/feed.ts",
             "state.ts",
             "wiring/dialogs.ts",
-            "wiring/waiting.ts"
+            "wiring/waiting.ts",
+            "wiring/copy-jobs.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6818,6 +6926,7 @@
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/copy-jobs.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -6867,6 +6976,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
           ]
@@ -6945,6 +7055,12 @@
         },
         "handleCommandRoute": {
           "module": "routes/command.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleCopyJobsRoute": {
+          "module": "routes/copy-jobs.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -7871,12 +7987,12 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/codex-feed.ts",
+            "lib/session-resolve.ts",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/dialogs.ts",
-            "wiring/gauge.ts",
             "wiring/orchestrator.ts",
             "ws.ts"
           ]
@@ -9942,6 +10058,14 @@
             "routes/vault.ts"
           ]
         },
+        "getSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/session-resolve.ts",
+            "wiring/auto-compact.ts",
+            "wiring/waiting.ts"
+          ]
+        },
         "WaitingKind": {
           "module": "lib/waiting.ts",
           "callers": [
@@ -11497,6 +11621,38 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
+        "peerOf": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/copy-jobs.ts#POST /hooks/copy-progress",
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/hooks.ts#POST /hooks/dispatch-event",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "isLoopback": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/copy-jobs.ts#POST /hooks/copy-progress",
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/hooks.ts#POST /hooks/dispatch-event"
+          ]
+        },
+        "parseCopyReport": {
+          "module": "lib/copy-jobs.ts",
+          "callers": [
+            "routes/copy-jobs.ts#POST /hooks/copy-progress"
+          ]
+        },
+        "copyJobs": {
+          "module": "wiring/copy-jobs.ts",
+          "callers": [
+            "routes/copy-jobs.ts#POST /hooks/copy-progress",
+            "routes/copy-jobs.ts#GET /api/copy-jobs",
+            "ws.ts"
+          ]
+        },
         "opensChordWindow": {
           "module": "lib/key-gate.ts",
           "callers": [
@@ -11515,22 +11671,6 @@
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/gauge.ts#GET /api/gauge",
             "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
-        "peerOf": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/gauge.ts#POST /hooks/gauge",
-            "routes/hooks.ts#POST /hooks/dispatch-event",
-            "routes/records.ts",
-            "routes/vault.ts"
-          ]
-        },
-        "isLoopback": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/gauge.ts#POST /hooks/gauge",
-            "routes/hooks.ts#POST /hooks/dispatch-event"
           ]
         },
         "parseModReport": {
@@ -12470,14 +12610,6 @@
             "wiring/auto-compact.ts"
           ]
         },
-        "getSessionByKey": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "wiring/auto-compact.ts",
-            "wiring/gauge.ts",
-            "wiring/waiting.ts"
-          ]
-        },
         "screenSnapshotFor": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -12837,6 +12969,19 @@
           "module": "lib/body.ts",
           "callers": [
             "wiring/body.ts"
+          ]
+        },
+        "CopyJobStore": {
+          "module": "lib/copy-jobs.ts",
+          "callers": [
+            "wiring/copy-jobs.ts"
+          ]
+        },
+        "resolveSessionKey": {
+          "module": "lib/session-resolve.ts",
+          "callers": [
+            "wiring/copy-jobs.ts",
+            "wiring/gauge.ts"
           ]
         },
         "SessionStatus": {

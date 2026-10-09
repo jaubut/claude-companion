@@ -96,3 +96,31 @@ test("open: init goes out BEFORE the pending question/approval replay (iOS reset
   await a
   await q
 })
+
+test("open: copy_jobs goes out right after init, before the replays; none when the host has no jobs", async () => {
+  const { copyJobs } = await import("./wiring/copy-jobs")
+  const { parseCopyReport } = await import("./lib/copy-jobs")
+  const empty = fakeWs()
+  websocket.open!(empty.ws as never)
+  clients.delete(empty.ws)
+  expect(empty.got.some((f) => f.type === "copy_jobs")).toBe(false)
+
+  const q = addQuestionRequest(
+    { agent: "claude", sessionId: "ws-cj-q", cwd: "/tmp", sessionKey: "k-ws-cj-q", questions: [{ header: "h", question: "q?", multiSelect: false, options: [{ label: "a" }] }] },
+    { expiryMs: 60_000 },
+  )
+  const a = addApprovalRequest({ agent: "claude", sessionId: "ws-cj-a", tool: "Bash", input: {}, cwd: "/tmp", sessionKey: "k-ws-cj-a" })
+  const qid = getPendingQuestions().find((r) => r.sessionId === "ws-cj-q")!.id
+  const aid = getPending().find((r) => r.sessionId === "ws-cj-a")!.id
+  copyJobs.report(parseCopyReport({ job_id: "ws-cj.log", label: "cam A", total_files: 2 })!)
+  const phone = fakeWs()
+  websocket.open!(phone.ws as never)
+  clients.delete(phone.ws)
+  // The store is a process-wide singleton: no job or timer may outlive this test.
+  copyJobs.stop()
+  expect(phone.got.map((f) => f.type)).toEqual(["init", "copy_jobs", "approval", "question"])
+  await send({ type: "approve", id: aid })
+  await send({ type: "answer", id: qid, answers: [{ selected: ["a"] }] })
+  await a
+  await q
+})

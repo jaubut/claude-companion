@@ -51,3 +51,27 @@ carry exactly these keys.
   A frame with null ctx fields carries an `account` update too (an account-only report
   for a session with no ctx gauge) — read `account` from every frame. `source` is `"mod"` (live, from the context-gauge mod) or
   `"transcript"` (server estimate; no 5h figure on that path). `at` is ms since epoch.
+
+## `copy-jobs/` — footage-copy progress (`server/lib/copy-jobs.ts`)
+
+Not part of `contracts:sync`; the iOS decoder mirrors these by hand (like `gauge/`).
+`server/routes/copy-jobs.test.ts` checks the live frame, the empty frame and
+`GET /api/copy-jobs` carry exactly these keys.
+
+- `frame.json` — the `copy_jobs` WS frame: every copy job on the host, full list each
+  time (replace, never merge). ≤ 1 frame / 2 s per host (trailing). Also sent right
+  after `init` on `/ws` open when the host has jobs. Covers `copying`, `hashing`
+  (no rate / ETA, null `copyStartedAt`) and `failed` (finished with `failed > 0`).
+- `frame.empty.json` — the last job dropped: `jobs: []` clears the host's row.
+- `api.json` — `GET /api/copy-jobs` (bearer): `{ok, jobs}`, same items.
+
+Item: `jobId` (opaque, the mod's output-file basename), `sessionKey` (registry `key`,
+null when the reporting session is unknown — the job is still shown), `label`, `state`
+(`hashing | copying | done | failed`; open — map an unknown one to neutral),
+`totalFiles` / `doneFiles` / `totalBytes` / `doneBytes` / `failed`, `current` (file name
+or null), `startedAt` / `copyStartedAt` (sticky, ms epoch), `finishedAt` (server time of
+the first finished report; the job drops 60 s later), `bytesPerSec` (average since
+`copyStartedAt`) and `etaSec` (seconds, `copying` only) — derived by the server, null
+when unknown — and `at` (the reporter's time of the last report, ms epoch). Every key is
+always present; nullable ones are null, never missing. An unfinished job with no report
+for 120 s drops.

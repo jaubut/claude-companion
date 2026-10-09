@@ -1,0 +1,60 @@
+{
+  "type": "copy_jobs",
+  "jobs": [
+    {
+      "jobId": "2026-10-09-granby-cam-a.ingest.log",
+      "sessionKey": "claude:tty:/dev/ttys003",
+      "label": "granby cam A",
+      "state": "copying",
+      "totalFiles": 4,
+      "doneFiles": 1,
+      "totalBytes": 4000000000,
+      "doneBytes": 1000000000,
+      "failed": 0,
+      "current": "A001C002.MP4",
+      "startedAt": 1791229900000,
+      "copyStartedAt": 1791229940000,
+      "finishedAt": null,
+      "bytesPerSec": 16666667,
+      "etaSec": 180,
+      "at": 1791230000000
+    },
+    {
+      "jobId": "2026-10-09-drone.ingest.log",
+      "sessionKey": null,
+      "label": "drone",
+      "state": "hashing",
+      "totalFiles": 12,
+      "doneFiles": 0,
+      "totalBytes": 9000000000,
+      "doneBytes": 0,
+      "failed": 0,
+      "current": null,
+      "startedAt": 1791229990000,
+      "copyStartedAt": null,
+      "finishedAt": null,
+      "bytesPerSec": null,
+      "etaSec": null,
+      "at": 1791230000000
+    },
+    {
+      "jobId": "2026-10-09-audio.ingest.log",
+      "sessionKey": "claude:tty:/dev/ttys003",
+      "label": "audio",
+      "state": "failed",
+      "totalFiles": 6,
+      "doneFiles": 6,
+      "totalBytes": 600000000,
+      "doneBytes": 600000000,
+      "failed": 1,
+      "current": null,
+      "startedAt": 1791229000000,
+      "copyStartedAt": 1791229010000,
+      "finishedAt": 1791229975000,
+      "bytesPerSec": 625000,
+      "etaSec": null,
+      "at": 1791229970000
+    }
+  ],
+  "at": 1791230000500
+}

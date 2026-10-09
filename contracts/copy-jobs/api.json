@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "jobs": [
+    {
+      "jobId": "2026-10-09-granby-cam-a.ingest.log",
+      "sessionKey": "claude:tty:/dev/ttys003",
+      "label": "granby cam A",
+      "state": "copying",
+      "totalFiles": 4,
+      "doneFiles": 1,
+      "totalBytes": 4000000000,
+      "doneBytes": 1000000000,
+      "failed": 0,
+      "current": "A001C002.MP4",
+      "startedAt": 1791229900000,
+      "copyStartedAt": 1791229940000,
+      "finishedAt": null,
+      "bytesPerSec": 16666667,
+      "etaSec": 180,
+      "at": 1791230000000
+    },
+    {
+      "jobId": "2026-10-09-sd-b.ingest.log",
+      "sessionKey": null,
+      "label": "cam B",
+      "state": "done",
+      "totalFiles": 3,
+      "doneFiles": 3,
+      "totalBytes": 300000000,
+      "doneBytes": 300000000,
+      "failed": 0,
+      "current": null,
+      "startedAt": 1791229500000,
+      "copyStartedAt": 1791229520000,
+      "finishedAt": 1791229985000,
+      "bytesPerSec": 652174,
+      "etaSec": null,
+      "at": 1791229980000
+    }
+  ]
+}
