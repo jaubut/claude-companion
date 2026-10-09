@@ -28,10 +28,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/voice-memo.ts` | 466 | lib | 25 | state: let tdb |
 | `routes/api.ts` | 461 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
+| `lib/submit-confirm.ts` | 459 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 434 | route-host | 3 | routes: 10 |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
-| `lib/submit-confirm.ts` | 425 | lib | 18 | state: watches: Set, paneLocks: Map |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |

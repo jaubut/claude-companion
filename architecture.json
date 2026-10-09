@@ -3750,7 +3750,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 425,
+          "lines": 459,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -3759,6 +3759,8 @@
             "SubmitClock",
             "SubmitWatch",
             "noteUserPromptSubmit",
+            "PHONE_ORIGIN_TTL_MS",
+            "notePhoneOrigin",
             "noteSessionBoundary",
             "watchSubmit",
             "activeWatchCount",
