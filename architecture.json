@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-08",
+  "generatedAt": "2026-10-09",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -929,7 +929,7 @@
         },
         {
           "path": "lib/command-list.ts",
-          "lines": 455,
+          "lines": 459,
           "kind": "lib",
           "exports": [
             "CommandEntry",
@@ -968,7 +968,7 @@
         },
         {
           "path": "lib/command-menu.ts",
-          "lines": 254,
+          "lines": 255,
           "kind": "lib",
           "exports": [
             "CommandSuggestion",
@@ -990,7 +990,8 @@
           "apiCalls": [],
           "imports": [
             "lib/sessions.ts",
-            "lib/dialogs.ts"
+            "lib/dialogs.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1264,7 +1265,7 @@
         },
         {
           "path": "lib/dialog-watch.ts",
-          "lines": 196,
+          "lines": 198,
           "kind": "lib",
           "exports": [
             "SessionStatus",
@@ -1280,7 +1281,8 @@
           "apiCalls": [],
           "imports": [
             "lib/dialogs.ts",
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1639,7 +1641,7 @@
         },
         {
           "path": "lib/herdr-inject.ts",
-          "lines": 76,
+          "lines": 83,
           "kind": "lib",
           "exports": [
             "INJECT_QUEUE_MS",
@@ -1657,7 +1659,32 @@
           "imports": [
             "lib/key-gate.ts",
             "lib/herdr.ts",
-            "lib/question-driver.ts"
+            "lib/question-driver.ts",
+            "lib/command-menu.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/herdr-workspace.ts",
+          "lines": 50,
+          "kind": "lib",
+          "exports": [
+            "herdrAutocloseEnabled",
+            "releaseHerdrWorkspace"
+          ],
+          "state": [
+            "releasing: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts",
+            "lib/herdr.ts",
+            "lib/log.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1665,7 +1692,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 155,
+          "lines": 324,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -1674,14 +1701,25 @@
             "silentSuccess",
             "Herdr",
             "realHerdr",
+            "herdrScreen",
+            "herdrPaneWidth",
+            "herdrPaneShellPid",
+            "herdrPaneAtShell",
+            "HerdrOwner",
+            "WorkspaceCloseOpts",
+            "closeHerdrWorkspaceWhenIdle",
             "validHerdrPane",
             "herdrPaneOf",
             "herdrGateKey",
             "herdrKeyName",
             "herdrSendKey",
             "herdrSendText",
+            "herdrGatedKey",
+            "herdrGatedText",
             "noteHerdrAgent",
-            "herdrAgentFor"
+            "herdrAgentFor",
+            "herdrOwnerFor",
+            "forgetHerdrAgent"
           ],
           "state": [
             "let clientMod",
@@ -1691,7 +1729,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/key-gate.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1798,7 +1838,7 @@
         },
         {
           "path": "lib/inject-verified.ts",
-          "lines": 214,
+          "lines": 268,
           "kind": "lib",
           "exports": [
             "VERIFIED_TEXT_MAX",
@@ -1814,7 +1854,11 @@
             "stages",
             "landed",
             "clearInput",
+            "untilAborted",
             "injectVerifiedWith",
+            "herdrVerifiedDepsFor",
+            "herdrVerifiedDeps",
+            "injectVerifiedHerdr",
             "injectVerified"
           ],
           "state": [],
@@ -1827,6 +1871,7 @@
             "lib/log.ts",
             "lib/keyboard-inject.ts",
             "lib/herdr-inject.ts",
+            "lib/herdr.ts",
             "lib/command-menu.ts",
             "lib/tmux-pane.ts",
             "lib/auto-compact-keep.ts"
@@ -2429,7 +2474,7 @@
         },
         {
           "path": "lib/orphan-question.ts",
-          "lines": 218,
+          "lines": 225,
           "kind": "lib",
           "exports": [
             "ORPHAN_WINDOW_MS",
@@ -2453,11 +2498,35 @@
           "apiCalls": [],
           "imports": [
             "lib/log.ts",
+            "lib/herdr.ts",
             "lib/questions.ts",
             "lib/question-driver.ts",
             "lib/keyboard-inject.ts",
             "lib/session-titles.ts",
             "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/pane-clean.ts",
+          "lines": 31,
+          "kind": "lib",
+          "exports": [
+            "CleanTarget",
+            "PaneReadDeps",
+            "paneReadsClean"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-list.ts",
+            "lib/herdr.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3613,6 +3682,7 @@
             "lib/agent-pid.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
+            "lib/herdr-workspace.ts",
             "lib/waiting.ts"
           ],
           "listeners": [],
@@ -3621,7 +3691,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 561,
+          "lines": 567,
           "kind": "lib",
           "exports": [
             "SpawnApp",
@@ -3718,6 +3788,31 @@
             "lib/command-menu.ts",
             "lib/tmux-pane.ts",
             "lib/discover.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/suggest-cleanup.ts",
+          "lines": 76,
+          "kind": "lib",
+          "exports": [
+            "ClearablePane",
+            "clearIfOurs",
+            "leaveInputEmpty",
+            "finishSuggestProbe"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-menu.ts",
+            "lib/command-list.ts",
+            "lib/command-scrape.ts",
+            "lib/log.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5171,7 +5266,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 202,
+          "lines": 228,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -5195,13 +5290,14 @@
           "imports": [
             "lib/command-menu.ts",
             "lib/log.ts",
-            "lib/command-list.ts",
             "lib/command-offpane-cache.ts",
             "lib/command-scrape.ts",
             "lib/key-gate.ts",
             "lib/sessions.ts",
+            "lib/herdr.ts",
             "lib/tmux-pane.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "lib/suggest-cleanup.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5209,7 +5305,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 87,
+          "lines": 97,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -5315,7 +5411,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 556,
+          "lines": 558,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -5386,6 +5482,7 @@
             "lib/auto-judge.ts",
             "lib/approval-history-auto.ts",
             "lib/sessions.ts",
+            "lib/herdr-workspace.ts",
             "wiring/waiting.ts",
             "lib/activity.ts",
             "lib/feed.ts",
@@ -5788,7 +5885,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 277,
+          "lines": 282,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -5821,6 +5918,7 @@
             "lib/session-titles.ts",
             "lib/inject-guard.ts",
             "lib/inject-verified.ts",
+            "lib/herdr.ts",
             "lib/tmux-pane.ts",
             "state.ts",
             "lib/apns.ts",
@@ -5992,14 +6090,16 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 170,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "dialogWatcher",
             "yieldPaneForInject",
             "openDialogFor",
             "paneSnapshotFor",
-            "paneWidthFor"
+            "paneWidthFor",
+            "screenSnapshotFor",
+            "screenWidthFor"
           ],
           "state": [],
           "emits": [
@@ -6014,14 +6114,16 @@
             "state.ts",
             "lib/dialog-watch.ts",
             "lib/command-scrape.ts",
-            "lib/command-list.ts",
+            "lib/pane-clean.ts",
             "lib/dialogs.ts",
             "lib/sessions.ts",
             "lib/questions.ts",
             "lib/pty-manager.ts",
             "lib/orphan-question.ts",
             "lib/tmux-pane.ts",
-            "wiring/waiting.ts"
+            "wiring/waiting.ts",
+            "lib/herdr.ts",
+            "lib/command-menu.ts"
           ],
           "listeners": [
             "dialogWatcher.start"
@@ -6953,6 +7055,7 @@
             "lib/agent-pid.ts",
             "lib/command-menu.ts",
             "lib/dialog-watch.ts",
+            "lib/herdr-workspace.ts",
             "lib/hook-common.ts",
             "lib/inject-guard.ts",
             "lib/model-control.ts",
@@ -6960,6 +7063,7 @@
             "lib/question-hook.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
+            "routes/command.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
@@ -7087,6 +7191,7 @@
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
             "lib/discover.ts",
+            "lib/herdr-workspace.ts",
             "lib/inject-verified.ts",
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
@@ -7099,6 +7204,7 @@
             "lib/session-removal-log.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "lib/suggest-cleanup.ts",
             "lib/super-auto.ts",
             "lib/vault-upstream.ts",
             "lib/voice-memo.ts",
@@ -7113,7 +7219,6 @@
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/body.ts#POST /api/body/alert",
             "routes/capture.ts",
-            "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
@@ -7769,13 +7874,24 @@
             "lib/codex-feed.ts"
           ]
         },
+        "unstyle": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/command-list.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-guard.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
         "inputLine": {
           "module": "lib/command-menu.ts",
           "callers": [
             "lib/command-list.ts",
             "lib/inject-guard.ts",
             "lib/submit-confirm.ts",
-            "routes/command.ts",
+            "lib/suggest-cleanup.ts",
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
@@ -7787,6 +7903,22 @@
             "lib/inject-guard.ts",
             "lib/model-control.ts",
             "routes/model.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "herdrPaneOf": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-menu.ts",
+            "lib/dialog-watch.ts",
+            "lib/herdr-workspace.ts",
+            "lib/keyboard-inject.ts",
+            "lib/pane-clean.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/auto-compact.ts",
             "wiring/dialogs.ts"
           ]
         },
@@ -8371,7 +8503,9 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
+            "lib/orphan-question.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts"
           ]
@@ -8380,17 +8514,24 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
+            "lib/pane-clean.ts",
             "lib/spawn-session.ts",
-            "lib/submit-confirm.ts"
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "herdrGateKey": {
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
             "lib/submit-confirm.ts",
-            "routes/dialogs.ts#POST /api/dialog/key"
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/dialogs.ts"
           ]
         },
         "herdrErrorCode": {
@@ -8411,14 +8552,40 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
-            "lib/submit-confirm.ts",
-            "routes/dialogs.ts#POST /api/dialog/key"
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts"
           ]
         },
         "herdrSendText": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/herdr-inject.ts"
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts"
+          ]
+        },
+        "closeHerdrWorkspaceWhenIdle": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-workspace.ts"
+          ]
+        },
+        "HerdrOwner": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-workspace.ts"
+          ]
+        },
+        "herdrOwnerFor": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-workspace.ts"
+          ]
+        },
+        "forgetHerdrAgent": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/herdr-workspace.ts",
+            "lib/spawn-session.ts"
           ]
         },
         "SpawnAgent": {
@@ -8439,13 +8606,6 @@
           "module": "lib/scrape-registry.ts",
           "callers": [
             "lib/hook-common.ts"
-          ]
-        },
-        "unstyle": {
-          "module": "lib/command-menu.ts",
-          "callers": [
-            "lib/inject-guard.ts",
-            "lib/submit-confirm.ts"
           ]
         },
         "promptLineIndex": {
@@ -8496,6 +8656,7 @@
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/inject-verified.ts",
+            "lib/pane-clean.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "wiring/dialogs.ts",
@@ -8505,6 +8666,13 @@
         },
         "tmuxPaneWidth": {
           "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "herdrPaneWidth": {
+          "module": "lib/herdr.ts",
           "callers": [
             "lib/inject-verified.ts",
             "wiring/dialogs.ts"
@@ -8596,14 +8764,6 @@
             "lib/jev-router.ts",
             "wiring/triage.ts",
             "wiring/trips.ts"
-          ]
-        },
-        "herdrPaneOf": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/keyboard-inject.ts",
-            "lib/submit-confirm.ts",
-            "routes/dialogs.ts#POST /api/dialog/key"
           ]
         },
         "deliverViaHerdr": {
@@ -8858,6 +9018,12 @@
           "callers": [
             "lib/orphan-question.ts",
             "routes/hooks.ts"
+          ]
+        },
+        "isPaneClean": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/pane-clean.ts"
           ]
         },
         "RepoEntry": {
@@ -9815,6 +9981,13 @@
             "lib/sessions.ts"
           ]
         },
+        "releaseHerdrWorkspace": {
+          "module": "lib/herdr-workspace.ts",
+          "callers": [
+            "lib/sessions.ts",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
         "deriveKey": {
           "module": "lib/session-identity.ts",
           "callers": [
@@ -9899,6 +10072,31 @@
           "callers": [
             "lib/submit-confirm.ts",
             "wiring/auto-compact.ts"
+          ]
+        },
+        "mayClearLine": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts"
+          ]
+        },
+        "CLEAR_LINE_KEY": {
+          "module": "lib/command-menu.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts"
+          ]
+        },
+        "CLEAR_SETTLE_MS": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts"
+          ]
+        },
+        "endFlow": {
+          "module": "lib/command-scrape.ts",
+          "callers": [
+            "lib/suggest-cleanup.ts",
+            "routes/command.ts#POST /api/command/suggest"
           ]
         },
         "normDate": {
@@ -10860,7 +11058,6 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -10868,7 +11065,6 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -11237,14 +11433,16 @@
             "routes/model.ts"
           ]
         },
-        "mayClearLine": {
-          "module": "lib/command-menu.ts",
+        "herdrGatedKey": {
+          "module": "lib/herdr.ts",
           "callers": [
-            "routes/command.ts"
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick"
           ]
         },
-        "CLEAR_LINE_KEY": {
-          "module": "lib/command-menu.ts",
+        "herdrGatedText": {
+          "module": "lib/herdr.ts",
           "callers": [
             "routes/command.ts"
           ]
@@ -11252,7 +11450,7 @@
         "paneRefOf": {
           "module": "lib/tmux-pane.ts",
           "callers": [
-            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts",
             "routes/model.ts#POST /api/model/open",
             "routes/model.ts#POST /api/model/set",
             "routes/model.ts#POST /api/model/cancel",
@@ -11271,20 +11469,20 @@
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
+        "clearIfOurs": {
+          "module": "lib/suggest-cleanup.ts",
+          "callers": [
+            "routes/command.ts#POST /api/command/suggest"
+          ]
+        },
         "parseCommandMenu": {
           "module": "lib/command-menu.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest"
           ]
         },
-        "CLEAR_SETTLE_MS": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "endFlow": {
-          "module": "lib/command-scrape.ts",
+        "finishSuggestProbe": {
+          "module": "lib/suggest-cleanup.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest"
           ]
@@ -12276,8 +12474,26 @@
             "wiring/waiting.ts"
           ]
         },
+        "screenSnapshotFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "screenWidthFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
         "paneNotReady": {
           "module": "lib/inject-guard.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
+        "injectVerifiedHerdr": {
+          "module": "lib/inject-verified.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
@@ -12686,8 +12902,8 @@
             "wiring/dialogs.ts"
           ]
         },
-        "isPaneClean": {
-          "module": "lib/command-list.ts",
+        "paneReadsClean": {
+          "module": "lib/pane-clean.ts",
           "callers": [
             "wiring/dialogs.ts"
           ]

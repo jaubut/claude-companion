@@ -16,7 +16,7 @@
 // mixes skills, commands and plugins from several roots. Reading the same
 // dialog a person would read is the one thing that stays correct.
 
-import { inputLine } from "./command-menu"
+import { inputLine, unstyle } from "./command-menu"
 
 export interface CommandEntry {
   name: string          // "/model"
@@ -432,8 +432,12 @@ export async function closeHelpOverlay(deps: CloseHelpDeps): Promise<CloseHelpRe
 // "no" — so a blank capture (tmux read the pane mid-repaint, which is exactly
 // what happens right after an Escape) passed as clean and released the flow a
 // frame before the dialog finished painting.
+//
+// Takes a `capture-pane -e` / herdr styled read (a plain one works too, minus
+// dim detection): the overlay is matched on the unstyled text, the input line
+// on the styled one so dim predicted text reads as empty (as paneNotReady).
 export function isPaneClean(pane: string): boolean {
-  if (helpOverlayVisible(pane)) return false
+  if (helpOverlayVisible(unstyle(pane))) return false
   return inputLine(pane) === ""
 }
 

@@ -5,6 +5,7 @@
 import { keyGate } from "./key-gate"
 import { type Herdr, herdrErrorCode, herdrGateKey, herdrSendKey, herdrSendText, realHerdr } from "./herdr"
 import type { PickerIO } from "./question-driver"
+import { unstyle } from "./command-menu"
 
 // An inject's key-gate turn must START within INJECT_QUEUE_MS of the call or
 // it is refused, never typed late (Codex round 3: a wedged sender held it, and
@@ -64,12 +65,18 @@ export async function deliverViaHerdr(
 }
 
 // herdr pane: readable (`pane read`) and keyed (`pane send-keys`/`send-text`).
-export function herdrPickerIO(pane: string): PickerIO {
+// `capture` is unstyled to the plain text tmuxPickerIO's `capture-pane -p`
+// gives: the question driver and the review driver parse plain rows, and a
+// styled screen fails isQuestionReview (no key sent, card dedup → stuck).
+export function herdrPickerIO(pane: string, h: Herdr = realHerdr): PickerIO {
   return {
-    capture: () => realHerdr.read(pane),
-    key: (name) => herdrSendKey(pane, name),
-    digit: (n) => herdrSendKey(pane, String(n)),
-    text: (t) => herdrSendText(pane, t),
+    capture: async () => {
+      const text = await h.read(pane)
+      return text === null ? null : unstyle(text)
+    },
+    key: (name) => herdrSendKey(pane, name, h),
+    digit: (n) => herdrSendKey(pane, String(n), h),
+    text: (t) => herdrSendText(pane, t, h),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   }
 }

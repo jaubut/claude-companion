@@ -1,12 +1,13 @@
-import { CLEAR_LINE_KEY, inputLine, mayClearLine, parseCommandMenu, suggestRefusal } from "../lib/command-menu"
+import { inputLine, parseCommandMenu, suggestRefusal, unstyle } from "../lib/command-menu"
 import { companionLog } from "../lib/log"
-import { CLEAR_SETTLE_MS } from "../lib/command-list"
 import { commandLister } from "../lib/command-offpane-cache"
 import { beginFlow, endFlow } from "../lib/command-scrape"
 import { keyGate, runTmux } from "../lib/key-gate"
-import { resolveSession } from "../lib/sessions"
+import { type Session, resolveSession } from "../lib/sessions"
+import { herdrGatedKey, herdrGatedText, herdrPaneOf, realHerdr } from "../lib/herdr"
 import { type PaneRef, capturePane, paneKey, paneRefOf, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher } from "../wiring/dialogs"
+import { clearIfOurs, finishSuggestProbe } from "../lib/suggest-cleanup"
 
 // Slash-command autocomplete (PRJ-OR1T Phase 16).
 //
@@ -28,33 +29,49 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // phone's /api/dialog/key cannot land inside their chord window, and nothing
 // here can land inside one of the phone's. A send that wedges is killed at the
 // gate's deadline and reads as a failed send (false), never a stuck scrape.
-async function gatedSend(ref: PaneRef, key: string, args: string[]): Promise<boolean> {
+async function gated(gateKey: string, key: string, send: (signal: AbortSignal) => Promise<unknown>): Promise<boolean> {
   try {
-    await keyGate.send(paneKey(ref.pane, ref.socket), key, (signal) => runTmux(args, signal))
+    await keyGate.send(gateKey, key, send)
     return true
   } catch {
     return false
   }
 }
 
-const sendKey = (ref: PaneRef, key: string) => gatedSend(ref, key, sendKeysArgs(ref, key))
-const sendLiteral = (ref: PaneRef, text: string) => gatedSend(ref, text, sendKeysArgs(ref, "-l", text))
-const capture = (ref: PaneRef, escapes = false) => capturePane(ref.pane, undefined, { escapes, socket: ref.socket })
+// The session's pane as this flow drives it: tmux, else herdr. `capture`
+// with escapes = the `capture-pane -e` shape (herdr's read is always styled).
+interface SuggestPane {
+  capture(escapes?: boolean): Promise<string | null>
+  key(key: string): Promise<boolean>
+  literal(text: string): Promise<boolean>
+}
 
-// C-u only over an empty line or text this flow typed itself. The line is
-// read fresh, with -e, right before the key: anything else on it (a phone
-// prompt whose Enter never landed, the user typing at the keyboard) is left
-// alone and the caller is told so. Returns true when the line is ours to have
-// cleared (or already empty).
-async function clearIfOurs(pane: PaneRef, owned: readonly string[], who: string): Promise<boolean> {
-  const typed = inputLine(await capture(pane, true) ?? "")
-  if (!mayClearLine(typed, owned)) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
-    companionLog(`${yellow}commands${reset} left the input line alone on ${who} — not ours: ${JSON.stringify((typed ?? "<unreadable>").slice(0, 40))}`)
-    return false
+function tmuxSuggestPane(ref: PaneRef): SuggestPane {
+  const gk = paneKey(ref.pane, ref.socket)
+  return {
+    capture: (escapes = false) => capturePane(ref.pane, undefined, { escapes, socket: ref.socket }),
+    key: (key) => gated(gk, key, (signal) => runTmux(sendKeysArgs(ref, key), signal)),
+    literal: (text) => gated(gk, text, (signal) => runTmux(sendKeysArgs(ref, "-l", text), signal)),
   }
-  if (typed === "") return true
-  return sendKey(pane, CLEAR_LINE_KEY)
+}
+
+// Sends ride the pane's key-gate turn with its abort (herdrGatedKey/Text).
+function herdrSuggestPane(pane: string): SuggestPane {
+  return {
+    capture: async (escapes = false) => {
+      const text = await realHerdr.read(pane)
+      return text === null || escapes ? text : unstyle(text)
+    },
+    key: (key) => herdrGatedKey(keyGate, pane, key),
+    literal: (text) => herdrGatedText(keyGate, pane, text),
+  }
+}
+
+function suggestPaneOf(session: Session | null): SuggestPane | null {
+  const ref = paneRefOf(session)
+  if (ref) return tmuxSuggestPane(ref)
+  const herdrPane = herdrPaneOf(session)
+  return herdrPane ? herdrSuggestPane(herdrPane) : null
 }
 
 export async function handleCommandRoute(req: Request, url: URL): Promise<Response | null> {
@@ -74,8 +91,8 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
-    const ref = paneRefOf(session)
-    const typedNow = ref ? inputLine(await capture(ref, true) ?? "") : null
+    const io = suggestPaneOf(session)
+    const typedNow = io ? inputLine(await io.capture(true) ?? "") : null
     const refusal = suggestRefusal(
       session,
       dialogWatcher.current()[session?.key ?? ""],
@@ -84,10 +101,13 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     )
     if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
 
-    const pane = ref!
+    const pane = io!
     if (!beginFlow(session!.key, "suggest")) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
     }
+    // Once `/prefix` may be in the box, any exit that skips the verified
+    // cleanup below releases the pane dirty, never clean by default.
+    let typed = false
     try {
       // Always start from a known-empty line: the previous suggestion left its
       // own prefix there, and Escape does not clear it (it closes the menu and
@@ -96,7 +116,8 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       if (!(await clearIfOurs(pane, [`/${prefix}`], who))) {
         return Response.json({ ok: false, error: "input_busy" }, { status: 409 })
       }
-      await sendLiteral(pane, `/${prefix}`)
+      typed = true
+      await pane.literal(`/${prefix}`)
 
       // Poll rather than sleep a fixed amount — the same lesson the model
       // routes learned the hard way: a fixed wait is a guess about a redraw.
@@ -104,7 +125,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       let commands: ReturnType<typeof parseCommandMenu> = []
       for (;;) {
         await sleep(SETTLE_POLL_MS)
-        const pane2 = await capture(pane)
+        const pane2 = await pane.capture()
         if (pane2) {
           commands = parseCommandMenu(pane2)
           if (commands.length) break
@@ -121,14 +142,19 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       // types into it. No Escape is ever sent here — the probe closes the menu
       // by emptying the line, because Escape keeps the typed text — so the
       // short redraw gap is enough.
-      await clearIfOurs(pane, [`/${prefix}`], who)
-      await sleep(CLEAR_SETTLE_MS)
+      //
+      // The flow ends on what the line reads AFTER the clear (lib/
+      // suggest-cleanup.ts): a failed or ineffective C-u releases the pane
+      // `clean:false`, so the next inject verifies it instead of typing on
+      // top of `/prefix`.
+      await finishSuggestProbe(session!.key, pane, [`/${prefix}`], who, sleep)
 
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       companionLog(`${cyan}commands${reset} "/${prefix}" → ${commands.length} on ${session!.label || session!.key}`)
       return Response.json({ ok: true, key: session!.key, prefix, commands })
     } finally {
-      endFlow(session!.key)
+      // A no-op when finishSuggestProbe already ended the flow.
+      endFlow(session!.key, typed ? { clean: false } : {})
     }
   }
 

@@ -20,6 +20,7 @@
 import { isAgentPidAlive, processStartMs } from "./agent-pid"
 import { deriveKey, hasStrongIdentity, hasTtyIdentity, makeLabel, mergeTmuxSocket } from "./session-identity"
 import { logRemoval } from "./session-removal-log"
+import { releaseHerdrWorkspace } from "./herdr-workspace"
 import {
   type WaitingKind,
   type WaitingReason,
@@ -89,12 +90,10 @@ type Listener = (sessions: Session[]) => void
 const sessions = new Map<string, Session>()
 const listeners = new Set<Listener>()
 
-// An agent session can sit idle for hours between turns (user went AFK,
-// waiting on review, etc.) without firing a hook. Pruning on last-seen alone
-// drops those still-alive sessions, which means the phone's pin goes stale
-// while the terminal is literally still open. So: trust process liveness as
-// the primary signal, and only fall back to last-seen when the pid is missing
-// or ambiguous (which would otherwise let orphans linger forever).
+// A session can idle for hours without a hook; pruning on last-seen alone
+// would drop it (and stale the phone's pin) while the terminal is still open.
+// So process liveness is the primary signal; last-seen is the fallback only
+// when the pid is missing or ambiguous (else orphans linger forever).
 const PRUNE_AFTER_MS_NO_PID = 60 * 60 * 1000
 const PRUNE_INTERVAL_MS = 60 * 1000
 
@@ -105,6 +104,7 @@ function prune(now: number): boolean {
       if (!isAgentPidAlive(s.pid, s.agent)) {
         sessions.delete(key)
         logRemoval(s, "prune:pid-dead")
+        releaseHerdrWorkspace(s, listSessions)
         changed = true
       }
       continue

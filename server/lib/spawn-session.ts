@@ -18,7 +18,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
-import { type Herdr, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
+import { type Herdr, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
@@ -402,14 +402,20 @@ export async function spawnInHerdr(
   const name = await uniqueHerdrAgentName(cwd, agent, h)
   let paneId = ""
   let workspaceId = ""
+  let terminalId = ""
   try {
     const r = await h.call(["workspace", "create", "--cwd", cwd, "--label", name, ...envArgs, "--no-focus"])
     workspaceId = (r.workspace as { workspace_id?: string } | undefined)?.workspace_id ?? ""
-    paneId = (r.root_pane as { pane_id?: string } | undefined)?.pane_id ?? ""
+    const root = r.root_pane as { pane_id?: string; terminal_id?: string } | undefined
+    paneId = root?.pane_id ?? ""
+    terminalId = typeof root?.terminal_id === "string" ? root.terminal_id : ""
   } catch (err) {
     return { ok: false, app: "herdr", error: `herdr workspace create: ${(err as Error).message}` }
   }
   if (!paneId) return { ok: false, app: "herdr", error: "herdr workspace create: no root_pane.pane_id" }
+  // Ours from here: claude's SessionStart hook can arrive before `agent start`
+  // returns, and the workspace close on exit looks this record up.
+  noteHerdrAgent(paneId, name, { workspaceId, terminalId })
 
   try {
     if (agent === "kimi") await h.call(["pane", "run", paneId, KIMI_SOURCE])
@@ -421,11 +427,11 @@ export async function spawnInHerdr(
     // Blocked during startup (a dialog): the agent runs and its hooks will
     // register it — the phone can answer from there.
     if (herdrErrorCode(err) !== "agent_not_ready") {
+      forgetHerdrAgent(paneId)
       if (workspaceId) await h.call(["workspace", "close", workspaceId]).catch(() => undefined)
       return { ok: false, app: "herdr", error: `herdr agent start: ${(err as Error).message}` }
     }
   }
-  noteHerdrAgent(paneId, name)
   return { ok: true, app: "herdr", sessionName: name, herdrPane: paneId }
 }
 
