@@ -114,7 +114,7 @@ Last updated: 2026-10-04
 
 ## Change Plans
 
-### Change Plan — copy-progress (2026-10-09)
+### Change Plan — copy-progress (2026-10-09) — ✅ shipped #160 (9503e0d), both hosts 2026-10-09; iOS #104 (78bc1f2), build 48
 **Request (Jeremie):** live footage-copy progress on the Companion iOS app: the `copy-progress` mod POSTs each 2 s poll of a `rename-footage/ingest.ts --apply` run to the host's server (gauge pattern), the app shows a progress row (label, files x/y, GB done/total, %, rate, ETA, current file; green all-verified, red any failed). Live Activity: decide here or follow-up.
 **Done when:**
 - A copy running on the Mac OR on Zettlab shows as a live row in the iPhone chat (and the iPad conversation pane) within ~2 s of the mod's poll, finishes green/red, disappears ~60 s after finishing.
