@@ -72,7 +72,8 @@ async function main(): Promise<never> {
     .catch(() => ({ status: 0, json: { error: "unreachable" } as Record<string, unknown> }))
   if (created.status !== 200 || typeof created.json.id !== "string") finish(`error ${String(created.json.error ?? `http_${created.status}`)}`, 1)
   const id = created.json.id
-  const deadline = Date.parse(String(created.json.expires_at)) + 5_000
+  const expires = Date.parse(String(created.json.expires_at))
+  const deadline = (Number.isFinite(expires) ? expires : Date.now() + 15 * 60_000) + 5_000
 
   while (Date.now() < deadline) {
     const r = await call(base, token, "GET", `/api/vault/requests/${id}?wait=${POLL_WAIT_S}`).catch(() => null)

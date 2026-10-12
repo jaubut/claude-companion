@@ -90,7 +90,10 @@ test("create validates name / hosts / reason / session", async () => {
     { ...ASK, reason: "x".repeat(201) },
     { ...ASK, reason: "two\nlines" },
     { ...ASK, session_id: "a b" },
-  ]) expect((await call("POST", "/api/vault/requests", bad)).status).toBe(400)
+  ]) {
+    resetVaultLimits() // creates have their own 3/min budget
+    expect((await call("POST", "/api/vault/requests", bad)).status).toBe(400)
+  }
   expect(events).toHaveLength(0)
 })
 
@@ -113,13 +116,13 @@ test("(c) second fulfil 409, decline path, expired 410, unknown 404", async () =
   expect((await call("POST", `/api/vault/requests/${id}/decline`)).status).toBe(409)
   expect(syncCalls).toBe(1)
 
-  const d = await create()
+  const d = await create({ ...ASK, name: "OTHER_KEY" })
   expect((await call("POST", `/api/vault/requests/${d}/decline`)).json).toMatchObject({ ok: true, status: "declined" })
   expect(events.at(-1)).toEqual({ type: "secret_request_resolved", id: d, status: "declined" })
   expect((await call("GET", `/api/vault/requests/${d}`)).json.status).toBe("declined")
   expect((await call("POST", `/api/vault/requests/${d}/fulfil`, { value: SECRET })).status).toBe(409)
 
-  const e = await create()
+  const e = await create({ ...ASK, name: "THIRD_KEY" })
   const t0 = Date.now()
   clock.now = () => t0 + REQUEST_TTL_MS + 1
   expect((await call("GET", `/api/vault/requests/${e}`)).json.status).toBe("expired")
@@ -130,6 +133,52 @@ test("(c) second fulfil 409, decline path, expired 410, unknown 404", async () =
   expect((await call("POST", `/api/vault/requests/${unknown}/fulfil`, { value: SECRET })).status).toBe(404)
   expect((await call("GET", `/api/vault/requests/${unknown}`)).status).toBe(404)
   expect(syncCalls).toBe(1)
+})
+
+test("create refuses a name already in the vault (409 exists), hosts unchanged", async () => {
+  const r = await call("POST", "/api/vault/requests", { ...ASK, name: "A_KEY", hosts: ["evil.io"] })
+  expect(r.status).toBe(409)
+  expect(r.json.error).toBe("exists")
+  expect(readFileSync(store, "utf8")).toBe("A_KEY='1'  # a.io\n")
+  expect(events).toHaveLength(0)
+  expect(pushes).toHaveLength(0)
+})
+
+test("open-request cap (5 total, 1 per name) + own create budget; fulfil still 200", async () => {
+  const first = await create()
+  const dup = await call("POST", "/api/vault/requests", ASK)
+  expect(dup.status).toBe(429)
+  expect(dup.json.error).toBe("too_many_pending")
+  await create({ ...ASK, name: "KEY_2" })
+  // 3/min create budget is spent (the 429 dup counted too).
+  const limited = await call("POST", "/api/vault/requests", { ...ASK, name: "KEY_X" })
+  expect(limited.json.error).toBe("rate_limited")
+  resetVaultLimits()
+  for (const n of ["KEY_3", "KEY_4", "KEY_5"]) await create({ ...ASK, name: n })
+  resetVaultLimits()
+  const full = await call("POST", "/api/vault/requests", { ...ASK, name: "KEY_6" })
+  expect(full.status).toBe(429)
+  expect(full.json.error).toBe("too_many_pending")
+  expect((await call("POST", `/api/vault/requests/${first}/fulfil`, { value: SECRET })).status).toBe(200)
+})
+
+test("a slow save past the TTL reports pending, then saved — never expired", async () => {
+  const id = await create()
+  const t0 = Date.now()
+  let release = (): void => {}
+  vaultDeps.sync = () => new Promise((resolve) => {
+    syncCalls++
+    clock.now = () => t0 + REQUEST_TTL_MS + 1
+    release = () => resolve({ ok: true, detail: "" })
+  })
+  const f = call("POST", `/api/vault/requests/${id}/fulfil`, { value: SECRET })
+  for (let i = 0; i < 100 && syncCalls === 0; i++) await Bun.sleep(10)
+  expect(syncCalls).toBe(1)
+  expect((await call("GET", `/api/vault/requests/${id}`)).json.status).toBe("pending")
+  expect((await call("POST", `/api/vault/requests/${id}/decline`)).status).toBe(410)
+  release()
+  expect((await f).status).toBe(200)
+  expect((await call("GET", `/api/vault/requests/${id}`)).json.status).toBe("saved")
 })
 
 test("(d) fulfil ignores name/hosts from the client", async () => {

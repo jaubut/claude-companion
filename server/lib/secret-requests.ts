@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { broadcast } from "../state"
 import { pushToAll } from "./push"
-import { type AuditOrigin, type VaultResult, saveSecret, validHosts, validName } from "./secret-store"
+import { type AuditOrigin, type VaultResult, listSecrets, saveSecret, validHosts, validName } from "./secret-store"
 import { clock } from "./vault-guard"
 
 // Agent-initiated secret requests (POST /api/vault/requests): an agent asks
@@ -16,6 +16,7 @@ export const REQUEST_TTL_MS = 15 * 60_000
 const KEEP_MS = 60 * 60_000
 const MAX_REASON = 200
 const SESSION_RE = /^[A-Za-z0-9._:-]{0,128}$/
+const MAX_OPEN = 5
 
 export type RequestStatus = "pending" | "saved" | "declined" | "expired"
 
@@ -56,8 +57,10 @@ export function resetSecretRequests(): void {
   entries.clear()
 }
 
+// A save in flight past the TTL stays "pending": it ends saved or back to pending, never expired in between.
 function statusOf(e: Entry): RequestStatus {
   if (e.state === "saved" || e.state === "declined") return e.state
+  if (e.state === "saving") return "pending"
   return clock.now() >= e.expiresMs ? "expired" : "pending"
 }
 
@@ -87,7 +90,13 @@ export function createRequest(input: Record<string, unknown>): Outcome {
     return fail(400, "bad_reason", `raison requise, ${MAX_REASON} caractères max, une ligne`)
   }
   if (typeof session !== "string" || !SESSION_RE.test(session)) return fail(400, "bad_session_id", "session_id invalide")
+  // Rotation stays on the vault UI: a request can never overwrite an existing key.
+  if (listSecrets().some((s) => s.name === name)) return fail(409, "exists", `${name} existe déjà dans le coffre — demande un nouveau nom.`)
   prune()
+  const open = listRequests("pending")
+  if (open.length >= MAX_OPEN || open.some((r) => r.name === name)) {
+    return fail(429, "too_many_pending", `Trop de demandes en attente (max ${MAX_OPEN}, une par nom).`)
+  }
   const expiresMs = clock.now() + REQUEST_TTL_MS
   const req = { id: randomUUID(), name, hosts, reason: reason.trim(), session_id: session, expires_at: new Date(expiresMs).toISOString() }
   entries.set(req.id, { req, state: "pending", expiresMs })
@@ -109,8 +118,8 @@ export function listRequests(status?: string): SecretRequest[] {
 function claimable(id: string): Entry | Outcome {
   const e = entries.get(id)
   if (!e) return fail(404, "not_found", "Demande introuvable.")
-  const s = statusOf(e)
-  if (s === "expired") return fail(410, "expired", "Demande expirée — rien enregistré.")
+  if (e.state === "saved" || e.state === "declined") return fail(409, "already_resolved", "Demande déjà traitée.")
+  if (clock.now() >= e.expiresMs) return fail(410, "expired", "Demande expirée — rien enregistré.")
   if (e.state !== "pending") return fail(409, "already_resolved", "Demande déjà traitée.")
   return e
 }

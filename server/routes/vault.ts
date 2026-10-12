@@ -1,7 +1,7 @@
 import { checkBearerHeaderOnly, unauthorized } from "../lib/auth"
 import { companionLog } from "../lib/log"
 import { type AuditOrigin, REVEAL_FORBIDDEN, type RevealResult, type VaultResult, deleteSecret, listSecrets, revealSecret, setSecretHosts, upsertSecret, validName, vaultWritable } from "../lib/secret-store"
-import { type Limiter, clientOrigin, peerOf, readLimiter, revealLimiter, writeLimiter } from "../lib/vault-guard"
+import { type Limiter, clientOrigin, peerOf, readLimiter, requestLimiter, revealLimiter, writeLimiter } from "../lib/vault-guard"
 import { createRequest, declineRequest, fulfilRequest, getRequest, listRequests, type Outcome } from "../lib/secret-requests"
 import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaultUpstream } from "../lib/vault-upstream"
 
@@ -148,7 +148,7 @@ async function requests(req: Request, url: URL, origin: AuditOrigin, up: Upstrea
     // Long-poll: hold up to ?wait= seconds while still pending.
     const until = Date.now() + Math.min(MAX_WAIT_S, Math.max(0, Number(url.searchParams.get("wait")) || 0)) * 1000
     let r = getRequest(id)
-    while (r?.status === "pending" && Date.now() < until) {
+    while (r?.status === "pending" && Date.now() < until && !req.signal.aborted) {
       await Bun.sleep(250)
       r = getRequest(id)
     }
@@ -157,7 +157,7 @@ async function requests(req: Request, url: URL, origin: AuditOrigin, up: Upstrea
   if (req.method !== "POST" || extra.length || (id && !["fulfil", "decline"].includes(action))) {
     return json({ ok: false, error: "method_not_allowed" }, 405)
   }
-  const wait = limited(writeLimiter)
+  const wait = limited(id ? writeLimiter : requestLimiter)
   if (wait) return wait
   if (!id) {
     if (!up && !vaultWritable()) return json({ ok: false, error: "vault_unavailable", message: "Coffre en lecture seule sur cet hôte (tls-secrets.py absent)." }, 501)

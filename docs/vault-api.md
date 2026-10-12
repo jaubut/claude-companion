@@ -20,7 +20,7 @@ behind Face ID). See [Reveal](#reveal-post-apivaultnamereveal).
 |---|---|---|
 | 1 | Network: loopback (`127.0.0.0/8`, `::1`), Tailscale (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), or `tailscale serve` (loopback peer + `X-Forwarded-For` in those ranges, not Funnel) | `403 {ok:false, error:"forbidden_network"}` |
 | 2 | `Authorization: Bearer <token>` header. `?token=` is refused, even when valid | `401` (plain text, `WWW-Authenticate: Bearer`) |
-| 3 | Rate limit, global. Writes: 10/min shared by POST/PATCH/DELETE and `/key`. GET: 60/min. Reveal: 5/min, its own budget | `429 {ok:false, error:"rate_limited", retry_after:<s>}` + `Retry-After: <s>` |
+| 3 | Rate limit, global. Writes: 10/min shared by POST/PATCH/DELETE and `/key`. GET: 60/min. Reveal: 5/min, its own budget. Secret-request create: 3/min, its own budget | `429 {ok:false, error:"rate_limited", retry_after:<s>}` + `Retry-After: <s>` |
 | 4 | Writable host: `tls-secrets.py` must exist. Writes only; GET and reveal still work | `501 {ok:false, error:"vault_unavailable"}`. secrets.env is not read or written |
 
 `X-Forwarded-For` is honoured only when the TCP peer is loopback, which means
@@ -65,8 +65,10 @@ Every response is JSON with `Cache-Control: no-store`, except the 401.
 | 404 | `not_found` | Secret request: unknown id (or the server restarted) |
 | 405 | `method_not_allowed` | Any other method |
 | 409 | `already_resolved` | Secret request already saved or declined |
+| 409 | `exists` | Secret request for a name already in the vault |
 | 410 | `expired` | Secret request past its 15 min TTL |
 | 429 | `rate_limited` | Over budget. See `retry_after` and `Retry-After` |
+| 429 | `too_many_pending` | Secret request: 5 already pending, or one already pending for that name |
 | 500 | `audit_failed` | Reveal only: the audit line could not be written, so no value was returned |
 | 500 | `sync_failed` | `tls-secrets.py sync` failed. The store was rolled back and the value is redacted from the detail |
 | 501 | `vault_unavailable` | `tls-secrets.py` is absent on this host |
@@ -108,7 +110,7 @@ can't reach the session transcript. Code: `server/lib/secret-requests.ts`, route
 | POST | `/api/vault/requests/:id/fulfil` | `{value}` | `{ok:true, id, status:"saved", name, hosts, message}` |
 | POST | `/api/vault/requests/:id/decline` | none | `{ok:true, id, status:"declined"}` |
 
-- **Gates:** 1–3 as above. POST uses the write budget and GET the read budget. Creating a request also needs gate 4 (`501` when the host can't write and isn't in upstream mode).
+- **Gates:** 1–3 as above. Creating a request has its **own** budget (3/min, global), so agents can never use up the phone's fulfil/save budget. Fulfil and decline use the write budget, GET the read budget. Creating a request also needs gate 4 (`501` when the host can't write and isn't in upstream mode).
 - **Validation on create:**
   - `name`: same rule as the vault.
   - `hosts`: 1–5, same format as the vault.
@@ -116,6 +118,8 @@ can't reach the session transcript. Code: `server/lib/secret-requests.ts`, route
   - `session_id`: `[A-Za-z0-9._:-]{0,128}`.
 
   Anything else → `400 bad_name|bad_hosts|bad_reason|bad_session_id`.
+- **No rotation by request:** a name already in the vault → `409 exists` (ask under a new name; rotate on the Vault UI).
+- **Open-request cap:** at most 5 pending requests in total and 1 per name, else `429 too_many_pending`.
 - **Fulfil uses the request's `name` and `hosts`.** The body's `value` is the only client input it reads. Any `name` or `hosts` in the body is ignored. The save runs through the normal upsert: validation, `tls-secrets.py sync`, rollback and audit. In upstream mode it is forwarded. If the save fails (`400 bad_value`, `500 sync_failed`, …), the request stays `pending` so the phone can retry.
 - **Lifecycle:** requests expire 15 min after creation. Each id resolves once.
   - Unknown id → `404 not_found`.
@@ -127,6 +131,7 @@ can't reach the session transcript. Code: `server/lib/secret-requests.ts`, route
   - `{type:"secret_request", id, name, hosts, reason, session_id, expires_at}` when a request is created.
   - `{type:"secret_request_resolved", id, status:"saved"|"declined"}` when it resolves.
 - **APNs** on create: title `Claude needs <NAME>`, body = reason, category `secret_request`, time-sensitive, `collapseId` = id, `userInfo {requestId, name}`.
+- **Trust:** agent and phone share the one Companion bearer, so the phone step is a UI gate only, not an auth boundary.
 - **No value** in any request, event, push, list or status reply. Log lines are `vault request <id> <name> <status|error>` only, never a body or URL query.
 
 ### `ask-secret` (agent CLI)
