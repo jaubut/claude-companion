@@ -62,7 +62,10 @@ Every response is JSON with `Cache-Control: no-store`, except the 401.
 | 403 | `forbidden_network` | The peer is not loopback, tailnet or tailscale serve |
 | 403 | `reveal_forbidden` | Reveal of a vault bootstrap key (`PHASE_SERVICE_TOKEN`, `PHASE_HOST`) |
 | 404 | `not_found` | PATCH, DELETE or reveal on an unknown name |
+| 404 | `not_found` | Secret request: unknown id (or the server restarted) |
 | 405 | `method_not_allowed` | Any other method |
+| 409 | `already_resolved` | Secret request already saved or declined |
+| 410 | `expired` | Secret request past its 15 min TTL |
 | 429 | `rate_limited` | Over budget. See `retry_after` and `Retry-After` |
 | 500 | `audit_failed` | Reveal only: the audit line could not be written, so no value was returned |
 | 500 | `sync_failed` | `tls-secrets.py sync` failed. The store was rolled back and the value is redacted from the detail |
@@ -89,6 +92,64 @@ vault value except the two bootstrap keys, at 5 per minute, each one audited wit
 its claimed device and network origin. Before, a leaked token could overwrite or
 delete secrets but not read them. Face ID is a client-side gate only: the server
 can't verify it. Protect the token like the secrets themselves.
+
+## Secret requests (agent asks, phone answers)
+
+An agent asks for a secret it needs. The phone shows a masked field in the chat,
+and the value goes straight to the vault. It never passes through the agent, so it
+can't reach the session transcript. Code: `server/lib/secret-requests.ts`, routes in
+`server/routes/vault.ts`, agent CLI `scripts/ask-secret.ts`.
+
+| Method | Path | Body | 200 response |
+|---|---|---|---|
+| POST | `/api/vault/requests` | `{name, hosts:string[], reason, session_id?}` | `{ok:true, id, status:"pending", expires_at}` |
+| GET | `/api/vault/requests[?status=pending\|saved\|declined\|expired]` | none | `{ok:true, requests:[{id, name, hosts, reason, session_id, expires_at, status}]}` (for reconnect) |
+| GET | `/api/vault/requests/:id[?wait=<s ≤ 25>]` | none | `{ok:true, id, name, hosts, reason, session_id, expires_at, status}`. With `wait`, the server holds the reply until the request leaves `pending` or the wait runs out |
+| POST | `/api/vault/requests/:id/fulfil` | `{value}` | `{ok:true, id, status:"saved", name, hosts, message}` |
+| POST | `/api/vault/requests/:id/decline` | none | `{ok:true, id, status:"declined"}` |
+
+- **Gates:** 1–3 as above. POST uses the write budget and GET the read budget. Creating a request also needs gate 4 (`501` when the host can't write and isn't in upstream mode).
+- **Validation on create:**
+  - `name`: same rule as the vault.
+  - `hosts`: 1–5, same format as the vault.
+  - `reason`: 1–200 chars, one line.
+  - `session_id`: `[A-Za-z0-9._:-]{0,128}`.
+
+  Anything else → `400 bad_name|bad_hosts|bad_reason|bad_session_id`.
+- **Fulfil uses the request's `name` and `hosts`.** The body's `value` is the only client input it reads. Any `name` or `hosts` in the body is ignored. The save runs through the normal upsert: validation, `tls-secrets.py sync`, rollback and audit. In upstream mode it is forwarded. If the save fails (`400 bad_value`, `500 sync_failed`, …), the request stays `pending` so the phone can retry.
+- **Lifecycle:** requests expire 15 min after creation. Each id resolves once.
+  - Unknown id → `404 not_found`.
+  - Expired → `410 expired`.
+  - Already saved or declined → `409 already_resolved`.
+
+  Requests are kept in memory. A server restart drops them, so `GET /:id` returns 404.
+- **WS events** (broadcast to every client):
+  - `{type:"secret_request", id, name, hosts, reason, session_id, expires_at}` when a request is created.
+  - `{type:"secret_request_resolved", id, status:"saved"|"declined"}` when it resolves.
+- **APNs** on create: title `Claude needs <NAME>`, body = reason, category `secret_request`, time-sensitive, `collapseId` = id, `userInfo {requestId, name}`.
+- **No value** in any request, event, push, list or status reply. Log lines are `vault request <id> <name> <status|error>` only, never a body or URL query.
+
+### `ask-secret` (agent CLI)
+
+```
+bun scripts/ask-secret.ts NAME --host api.example.com [--host h2] --why "reason" [--session ID]
+```
+
+- Uses the hooks' server URL: `COMPANION_URL`, default `http://localhost:$COMPANION_PORT|4245`.
+- Bearer: `COMPANION_AUTH_TOKEN`, else `~/.claude-companion/auth.token`.
+- Creates the request, then long-polls `GET /:id?wait=25` until it resolves or expires.
+- Prints exactly one line:
+
+  | Output | Exit |
+  |---|---|
+  | `saved NAME (hosts: …) — available in new sessions` | 0 |
+  | `declined` | 2 |
+  | `expired` (also after a server restart) | 3 |
+  | `error <code>` on stderr | 1 |
+  | usage | 64 |
+
+- It has no way to take a value: any unknown or extra argument is a usage error and is never echoed.
+- **Not usable in the current session.** `tls-secrets.py sync` writes the sandbox credential mask to `~/.claude/settings.json`, and the agent environment is exported when a session starts. The session that asked must hand off to a new session, or ask Jeremie to restart, before it can use the key.
 
 ## `/key` chat command
 
