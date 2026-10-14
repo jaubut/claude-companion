@@ -1,7 +1,8 @@
 import { checkBearerHeaderOnly, unauthorized } from "../lib/auth"
 import { companionLog } from "../lib/log"
 import { type AuditOrigin, REVEAL_FORBIDDEN, type RevealResult, type VaultResult, deleteSecret, listSecrets, revealSecret, setSecretHosts, upsertSecret, validName, vaultWritable } from "../lib/secret-store"
-import { type Limiter, clientOrigin, peerOf, readLimiter, revealLimiter, writeLimiter } from "../lib/vault-guard"
+import { type Limiter, clientOrigin, peerOf, readLimiter, requestLimiter, revealLimiter, writeLimiter } from "../lib/vault-guard"
+import { createRequest, declineRequest, fulfilRequest, getRequest, listRequests, type Outcome } from "../lib/secret-requests"
 import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaultUpstream } from "../lib/vault-upstream"
 
 // Companion Vault API — values are write-only; only the reveal 200 carries one.
@@ -13,6 +14,9 @@ import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaul
 //   POST   /api/vault/:name/reveal → { ok, name, value } — the ONE exception to
 //          "no response carries a value" (Jeremie, 2026-10-02: iOS shows it
 //          behind Face ID). Own 5/min budget, audited, never logged.
+//   POST   /api/vault/requests  {name, hosts, reason, session_id} → {id} (agent asks)
+//   GET    /api/vault/requests[?status=pending] · GET /api/vault/requests/:id[?wait=s]
+//   POST   /api/vault/requests/:id/fulfil {value} · POST …/:id/decline (phone answers)
 // Gates, in order: network (loopback / tailnet / tailscale serve, else 403) →
 // header-only bearer (`?token=` refused, 401) → rate limit (429) → writable
 // (501 when tls-secrets.py is absent). The /api/* bearer gate in
@@ -24,6 +28,10 @@ import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaul
 // Contract: docs/vault-api.md.
 
 const PREFIX = "/api/vault/"
+const REQUESTS = "/api/vault/requests"
+const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const STATUSES = ["pending", "saved", "declined", "expired"]
+const MAX_WAIT_S = 25
 const REVEAL_SUFFIX = "/reveal"
 const NO_STORE = { "Cache-Control": "no-store" }
 const REVEAL_HEADERS = { "Cache-Control": "no-store", Pragma: "no-cache" }
@@ -118,6 +126,54 @@ function revealReply(r: RevealResult): Response {
   return Response.json(body, { status, headers: REVEAL_HEADERS })
 }
 
+function outcome(o: Outcome, id: string, name = ""): Response {
+  companionLog(`vault request ${id} ${name} ${o.ok ? String(o.body.status) : String(o.body.error)}`.replace(/ +/g, " "))
+  return json(o.body, o.status)
+}
+
+// Gates 1–2 + hop guard already passed. Requests live on THIS server (the
+// phone's WS); in upstream mode only the fulfil's save is forwarded
+// (saveSecret). Log lines: id + name + status only — never a body or query.
+async function requests(req: Request, url: URL, origin: AuditOrigin, up: UpstreamConfig | null): Promise<Response> {
+  const [id = "", action = "", ...extra] = url.pathname.slice(REQUESTS.length + 1).split("/")
+  if (req.method === "GET" && !action) {
+    const wait = limited(readLimiter)
+    if (wait) return wait
+    if (!id) {
+      const status = url.searchParams.get("status") ?? ""
+      if (status && !STATUSES.includes(status)) return json({ ok: false, error: "bad_status" }, 400)
+      return json({ ok: true, requests: listRequests(status || undefined) })
+    }
+    if (!ID_RE.test(id)) return json({ ok: false, error: "not_found" }, 404)
+    // Long-poll: hold up to ?wait= seconds while still pending.
+    const until = Date.now() + Math.min(MAX_WAIT_S, Math.max(0, Number(url.searchParams.get("wait")) || 0)) * 1000
+    let r = getRequest(id)
+    while (r?.status === "pending" && Date.now() < until && !req.signal.aborted) {
+      await Bun.sleep(250)
+      r = getRequest(id)
+    }
+    return r ? json({ ok: true, ...r }) : json({ ok: false, error: "not_found" }, 404)
+  }
+  if (req.method !== "POST" || extra.length || (id && !["fulfil", "decline"].includes(action))) {
+    return json({ ok: false, error: "method_not_allowed" }, 405)
+  }
+  const wait = limited(id ? writeLimiter : requestLimiter)
+  if (wait) return wait
+  if (!id) {
+    if (!up && !vaultWritable()) return json({ ok: false, error: "vault_unavailable", message: "Coffre en lecture seule sur cet hôte (tls-secrets.py absent)." }, 501)
+    const body = await readJson(req)
+    if (!body) return json({ ok: false, error: "bad_json" }, 400)
+    const o = await createRequest(body)
+    return outcome(o, o.ok ? String(o.body.id) : "-", o.ok && typeof body.name === "string" ? body.name : "")
+  }
+  if (!ID_RE.test(id)) return json({ ok: false, error: "not_found" }, 404)
+  const name = getRequest(id)?.name ?? ""
+  if (action === "decline") return outcome(declineRequest(id), id, name)
+  const body = await readJson(req)
+  if (!body) return json({ ok: false, error: "bad_json" }, 400)
+  return outcome(await fulfilRequest(id, body.value, origin), id, name)
+}
+
 export async function handleVaultRoute(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname
   const isCollection = p === "/api/vault" || (p === "/api/secret" && req.method === "POST")
@@ -133,6 +189,9 @@ export async function handleVaultRoute(req: Request, url: URL): Promise<Response
   const up = vaultUpstream()
   // A forwarded call landing on a server that would forward again = a loop.
   if (up && req.headers.get(HOP_HEADER)) return json({ ok: false, error: "upstream_loop" }, 508)
+  if (p === REQUESTS || p.startsWith(`${REQUESTS}/`)) {
+    return requests(req, url, { device_claimed: claimedDevice(req), transport: from.transport, peer: from.peer }, up)
+  }
   const name = isCollection ? "" : p.slice(PREFIX.length)
 
   if (name.endsWith(REVEAL_SUFFIX)) {

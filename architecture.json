@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-10",
+  "generatedAt": "2026-10-14",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 111,
+          "lines": 113,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -3550,6 +3550,45 @@
           "externals": []
         },
         {
+          "path": "lib/secret-requests.ts",
+          "lines": 186,
+          "kind": "lib",
+          "exports": [
+            "REQUEST_TTL_MS",
+            "RequestStatus",
+            "SecretRequest",
+            "RequestDeps",
+            "requestDeps",
+            "resetSecretRequests",
+            "Outcome",
+            "createRequest",
+            "getRequest",
+            "listRequests",
+            "fulfilRequest",
+            "declineRequest"
+          ],
+          "state": [
+            "entries: Map"
+          ],
+          "emits": [
+            "secret_request",
+            "secret_request_resolved"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "state.ts",
+            "lib/push.ts",
+            "lib/secret-store.ts",
+            "lib/vault-guard.ts",
+            "lib/vault-upstream.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/secret-store.ts",
           "lines": 385,
           "kind": "lib",
@@ -4799,7 +4838,7 @@
         },
         {
           "path": "lib/vault-guard.ts",
-          "lines": 134,
+          "lines": 137,
           "kind": "lib",
           "exports": [
             "Transport",
@@ -4815,6 +4854,7 @@
             "writeLimiter",
             "readLimiter",
             "revealLimiter",
+            "requestLimiter",
             "resetVaultLimits",
             "KeyGate",
             "keyCommandGate",
@@ -5926,7 +5966,7 @@
         },
         {
           "path": "routes/vault.ts",
-          "lines": 162,
+          "lines": 221,
           "kind": "lib",
           "exports": [
             "handleVaultRoute"
@@ -5941,6 +5981,7 @@
             "lib/log.ts",
             "lib/secret-store.ts",
             "lib/vault-guard.ts",
+            "lib/secret-requests.ts",
             "lib/vault-upstream.ts"
           ],
           "listeners": [],
@@ -6916,6 +6957,7 @@
           "module": "state.ts",
           "callers": [
             "companion-server.ts",
+            "lib/secret-requests.ts",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#* /api/feed",
@@ -9631,6 +9673,7 @@
           "callers": [
             "lib/receipt-qa-worker.ts",
             "lib/records-expiry.ts",
+            "lib/secret-requests.ts",
             "lib/secret-store.ts",
             "routes/capture.ts",
             "routes/records.ts",
@@ -9686,6 +9729,7 @@
           "module": "lib/push.ts",
           "callers": [
             "lib/records-expiry.ts",
+            "lib/secret-requests.ts",
             "routes/api.ts#POST /api/push/test",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/hooks.ts#POST /hooks/stop",
@@ -10041,14 +10085,61 @@
             "lib/secret-redact.ts"
           ]
         },
+        "clock": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/secret-requests.ts"
+          ]
+        },
+        "listSecrets": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/secret-requests.ts",
+            "routes/vault.ts"
+          ]
+        },
         "forwardVault": {
           "module": "lib/vault-upstream.ts",
           "callers": [
+            "lib/secret-requests.ts",
             "lib/secret-store.ts",
             "routes/capture.ts",
             "routes/records.ts",
             "routes/trips.ts",
             "routes/vault.ts"
+          ]
+        },
+        "validName": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/secret-requests.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "validHosts": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/secret-requests.ts"
+          ]
+        },
+        "AuditOrigin": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/secret-requests.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "VaultResult": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/secret-requests.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "saveSecret": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "lib/secret-requests.ts"
           ]
         },
         "writeLimiter": {
@@ -11474,12 +11565,6 @@
             "routes/capture.ts"
           ]
         },
-        "Outcome": {
-          "module": "lib/voice-memo.ts",
-          "callers": [
-            "routes/capture.ts"
-          ]
-        },
         "voiceAudio": {
           "module": "lib/voice-memo.ts",
           "callers": [
@@ -12502,18 +12587,6 @@
             "routes/trips.ts"
           ]
         },
-        "VaultResult": {
-          "module": "lib/secret-store.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "AuditOrigin": {
-          "module": "lib/secret-store.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
         "upsertSecret": {
           "module": "lib/secret-store.ts",
           "callers": [
@@ -12527,12 +12600,6 @@
           ]
         },
         "setSecretHosts": {
-          "module": "lib/secret-store.ts",
-          "callers": [
-            "routes/vault.ts"
-          ]
-        },
-        "validName": {
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"
@@ -12568,14 +12635,44 @@
             "routes/vault.ts"
           ]
         },
+        "listRequests": {
+          "module": "lib/secret-requests.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "getRequest": {
+          "module": "lib/secret-requests.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "requestLimiter": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
         "vaultWritable": {
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"
           ]
         },
-        "listSecrets": {
-          "module": "lib/secret-store.ts",
+        "createRequest": {
+          "module": "lib/secret-requests.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "declineRequest": {
+          "module": "lib/secret-requests.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "fulfilRequest": {
+          "module": "lib/secret-requests.ts",
           "callers": [
             "routes/vault.ts"
           ]
