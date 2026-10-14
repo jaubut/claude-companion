@@ -127,7 +127,7 @@ export function batchItem(members: BatchMember[], hidden: number, now: number): 
   const version = createHash("sha1").update(members.map((m) => `${m.tripId}:${m.guess.id}`).sort().join(",")).digest("hex").slice(0, 16)
   const n = members.length
   return {
-    source: "trip", refId: BATCH_REF, version: `batch|${version}`, title: `${n} trips ready to file as suggested`, project: "Travel log",
+    source: "trip", refId: `${BATCH_REF}:${version}`, version: `batch|${version}`, title: `${n} trips ready to file as suggested`, project: "Travel log",
     createdAt: oldest, updatedAt: oldest,
     facts: {
       problem: `${n} trips with Jev ≥ 95 % and same-route history all agreeing: classify all as suggested?${hidden ? ` ${hidden} more unclassified trip${hidden === 1 ? "" : "s"} wait in the backlog.` : ""}`,
@@ -255,12 +255,12 @@ export function createTripTriage(deps: TripTriageDeps) {
       return { kind: "done", detail: { review: trips.length } }
     }
     if (option.action.kind !== "approve") return { kind: "error", status: 400, error: "wrong_action" }
-    const cls = await deps.classifications(trips.map((f) => f.tripId))
     let filed = 0
     let skipped = 0
     const failed: string[] = []
     for (const f of trips) {
-      if (cls.get(f.tripId) !== "unclassified") { skipped++; continue }
+      // Re-read right before each write: a trip answered elsewhere during the batch is never overwritten.
+      if ((await deps.classifications([f.tripId])).get(f.tripId) !== "unclassified") { skipped++; continue }
       const r = await deps.service.override(f.tripId, { classification: f.classification, clientSlug: f.clientSlug })
       if (r.status >= 200 && r.status < 300 && r.json?.ok !== false) filed++
       else failed.push(f.tripId)

@@ -103,9 +103,11 @@ const peerFetch = (async (_url: string, init: RequestInit) => {
 let ghState = "OPEN"
 /** `gh pr view --json mergeable,…` (merge intent); {} = GitHub reports nothing. */
 let ghReady: Record<string, unknown> = {}
+let ghDown = false
 const ghCalls: string[][] = []
 const gh: GhFn = async (args) => {
   ghCalls.push(args)
+  if (ghDown && args[1] === "view" && String(args[4]).startsWith("mergeable")) return { code: 1, stdout: "", stderr: "gh: rate limited" }
   if (args[1] === "view" && String(args[4]).startsWith("mergeable")) return { code: 0, stdout: JSON.stringify(ghReady), stderr: "" }
   if (args[1] === "view") return { code: 0, stdout: JSON.stringify({ state: ghState }), stderr: "" }
   if (args[1] === "merge") ghState = "MERGED"
@@ -227,6 +229,7 @@ beforeEach(() => {
   frames.length = 0
   ghState = "OPEN"
   ghReady = {}
+  ghDown = false
   modelFor = new Set()
   invStore = invLib.createInvestigationStore(new Database(":memory:"))
   live.setLiveCap(chat.countLiveTasks() + 3)
@@ -453,6 +456,19 @@ describe("choose → the existing guarded paths", () => {
     harness = makeHarness()
     await sync()
     expect(await itemOf("pr:jaubut/remorquage-pelchat#66")).toBeUndefined()
+  })
+
+  test("hygiene (1c): gh down → a done=1 parked task's card is dropped (needs GitHub's answer); an open task's card stays", async () => {
+    const done = turTask("completed", null, { pr: "https://github.com/jaubut/x/pull/70", done: 1 })
+    const open = turTask("completed", null, { pr: "https://github.com/jaubut/x/pull/71" })
+    for (const [id, n] of [[done, 70], [open, 71]] as const) {
+      turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
+        .run(id, JSON.stringify({ reason: "needs your review", url: `https://github.com/jaubut/x/pull/${n}` }))
+    }
+    ghDown = true
+    await sync()
+    expect(await itemOf("pr:jaubut/x#70")).toBeUndefined()
+    expect(await itemOf("pr:jaubut/x#71")).toMatchObject({ source: "pr", problem: "needs your review" })
   })
 
   test("hygiene (3): a blocked task idle 14+ days leaves triage with a triage:expired row in agent_activity", async () => {

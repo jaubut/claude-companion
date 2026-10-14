@@ -215,7 +215,7 @@ export function prSources(rows: PrRows, now: number): SourceItem[] {
         reason: l.approvalExpired && parkRow !== lastPr ? `Your merge approval expired (7 days). ${why}` : why,
         review: s(t.dispatch_blocker), repo: `${pr.owner}/${pr.repo}`,
       },
-      url: pr.url, hints: { safetyNet },
+      url: pr.url, hints: { safetyNet, ...(done ? { taskDone: true } : {}) },
       ref: { source: "pr", taskId: id, prUrl: pr.url, repo: `${pr.owner}/${pr.repo}`, number: pr.number },
     })
   }

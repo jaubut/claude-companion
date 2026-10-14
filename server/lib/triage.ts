@@ -129,7 +129,7 @@ export interface SourceItem {
   facts: Record<string, string>
   url: string | null
   /** Heuristic hints (criticality, body severity) the severity rule reads. */
-  hints?: { criticality?: string | null; bodySeverity?: string | null; safetyNet?: boolean }
+  hints?: { criticality?: string | null; bodySeverity?: string | null; safetyNet?: boolean; taskDone?: boolean }
   ref: SourceRef
 }
 

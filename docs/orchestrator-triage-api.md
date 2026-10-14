@@ -241,7 +241,7 @@ Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*
 - **Batch card (2026-10-14).** Backlog trips (up to 500 read, all guessed in the background) whose guess is
   near-certain — Jev's own p ≥ 95 % for the guessed class AND ≥ 2 same-route past trips (both ends within 300 m)
   all with that class (and, for business, no other client on that route) — go on ONE card instead of one each, once
-  there are ≥ 2: `id` = `trip:batch`, `title` = "N trips ready to file as suggested", `problem` ends with the hidden
+  there are ≥ 2: `id` = `trip:batch:<membership hash>` (the set changes → new id, so a tap on an older set is refused, never applied to the new one), `title` = "N trips ready to file as suggested", `problem` ends with the hidden
   backlog count (trips on no card at all). Options: `approve` "Classify all N as suggested" · `reject` "Review
   individually" (not destructive: the trips come back as single cards, under the 20 cap) · snooze. `approve` files
   each trip still `unclassified` with its suggested class + client through the same override path; `detail` =

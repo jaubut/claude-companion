@@ -129,7 +129,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   async function withReadiness(src: SourceItem): Promise<SourceItem | null> {
     if (src.ref.source !== "pr") return src
     const ready = await readyOf(src.ref.prUrl)
-    if (!ready) return src
+    // A done task's card needs GitHub to answer: unknown (gh down) drops it, or every old park would come back.
+    if (!ready) return src.hints?.taskDone ? null : src
     if (prGone(ready.state)) return null
     const hold = holdReason(ready)
     const mergeable = hold === "conflict" ? "CONFLICTING" : ready.mergeable

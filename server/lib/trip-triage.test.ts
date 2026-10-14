@@ -230,8 +230,8 @@ describe("batch card (2026-10-14)", () => {
     await r.triage.collect()
     await r.triage.idle()
     const items = await r.triage.collect()
-    const batch = items.find((i) => i.refId === BATCH_REF)!
-    const singles = items.filter((i) => i.refId !== BATCH_REF)
+    const batch = items.find((i) => i.ref.source === "trip_batch")!
+    const singles = items.filter((i) => i.ref.source !== "trip_batch")
     expect(singles).toHaveLength(BACKFILL_CAP)
     expect(singles[0]!.refId).toBe("low_jev")
     expect(batch.ref).toEqual({ source: "trip_batch", hidden: 31 - 5 - BACKFILL_CAP, trips: [
@@ -255,7 +255,7 @@ describe("batch card (2026-10-14)", () => {
       phrase: async () => null, store: createTriageStore(new Database(":memory:")), broadcast: () => {}, now: () => NOW,
     })
     await engine.list()
-    const res = await engine.choose({ id: "trip:batch", optionId: "a" })
+    const res = await engine.choose({ id: (await engine.list()).items.find((i) => i.id.startsWith(`trip:${BATCH_REF}:`))!.id, optionId: "a" })
     expect(res).toMatchObject({ status: 200, body: { ok: true, detail: { filed: 4, skipped: 1, failed: 0 } } })
     expect(r.overrides).toEqual([
       ...[0, 1, 2].map((i) => ({ id: `sure_b${i}`, change: { classification: "business", clientSlug: "humance" } })),
@@ -272,9 +272,44 @@ describe("batch card (2026-10-14)", () => {
     const r = rig({ backlog: [row("s1", "2026-09-01T09:10:00-04:00"), row("s2", "2026-09-02T09:10:00-04:00")], result: () => sure(0.97, hist(3, 3)) })
     await r.triage.collect()
     await r.triage.idle()
-    const batch = (await r.triage.collect()).find((i) => i.refId === BATCH_REF)!
+    const batch = (await r.triage.collect()).find((i) => i.ref.source === "trip_batch")!
     expect(await r.triage.execute(batch, { id: "b", label: "Review individually", action: { kind: "reject" } }, null)).toEqual({ kind: "done", detail: { review: 2 } })
     expect((await r.triage.collect()).map((i) => i.refId)).toEqual(["s1", "s2"])
     expect(r.overrides).toEqual([])
+  })
+
+  test("a tap on an older batch never files a grown set; a trip answered mid-batch is not overwritten", async () => {
+    const backlog = [row("s1", "2026-09-01T09:10:00-04:00"), row("s2", "2026-09-02T09:10:00-04:00")]
+    // Jeremie answers s2 on the dashboard while the batch is filing s1.
+    class Race extends Map<string, string> {
+      override set(k: string, v: string): this {
+        super.set(k, v)
+        if (k === "s1" && !this.has("s2")) super.set("s2", "personal")
+        return this
+      }
+    }
+    const r = rig({ backlog, result: () => sure(0.97, hist(3, 3)), classifications: new Race() })
+    await r.triage.collect()
+    await r.triage.idle()
+    const engine = createTriageEngine({
+      collect: () => r.triage.collect(), current: (s) => r.triage.current(s), execute: (s, o, t) => r.triage.execute(s, o, t),
+      phrase: async () => null, store: createTriageStore(new Database(":memory:")), broadcast: () => {}, now: () => NOW,
+    })
+    const batchId = async () => (await engine.list()).items.find((i) => i.id.startsWith(`trip:${BATCH_REF}:`))!.id
+    const seen = await batchId()
+    backlog.push(row("s3", "2026-09-03T09:10:00-04:00"))
+    r.triage.invalidate()
+    await r.triage.collect()
+    await r.triage.idle()
+    r.triage.invalidate()
+    await engine.refresh()
+    const fresh = await batchId()
+    expect(fresh).not.toBe(seen)
+    expect((await engine.choose({ id: seen, optionId: "a" })).status).toBe(404)
+    expect(r.overrides).toEqual([])
+
+    const res = await engine.choose({ id: fresh, optionId: "a" })
+    expect(res).toMatchObject({ status: 200, body: { ok: true, detail: { filed: 2, skipped: 1, failed: 0 } } })
+    expect(r.overrides.map((o) => o.id)).toEqual(["s1", "s3"])
   })
 })
