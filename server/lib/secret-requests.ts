@@ -1,0 +1,185 @@
+import { randomUUID } from "node:crypto"
+import { broadcast } from "../state"
+import { pushToAll } from "./push"
+import { type AuditOrigin, type VaultResult, listSecrets, saveSecret, validHosts, validName } from "./secret-store"
+import { clock } from "./vault-guard"
+import { forwardVault, vaultUpstream } from "./vault-upstream"
+
+// Agent-initiated secret requests (POST /api/vault/requests): an agent asks
+// for NAME, the phone shows a masked field, the value goes straight to the
+// vault via saveSecret. A request never carries a value — not in the store,
+// the WS events, the push or any response. Name + hosts are fixed at creation;
+// fulfil only supplies the value. In-memory: a server restart drops pending
+// requests (the agent's ask-secret then sees 404 and exits).
+
+export const REQUEST_TTL_MS = 15 * 60_000
+// Resolved requests stay readable this long so a polling agent sees the outcome.
+const KEEP_MS = 60 * 60_000
+const MAX_REASON = 200
+const SESSION_RE = /^[A-Za-z0-9._:-]{0,128}$/
+const MAX_OPEN = 5
+
+export type RequestStatus = "pending" | "saved" | "declined" | "expired"
+
+export interface SecretRequest {
+  id: string
+  name: string
+  hosts: string[]
+  reason: string
+  session_id: string
+  expires_at: string
+  status: RequestStatus
+}
+
+interface Entry { req: Omit<SecretRequest, "status">; state: "pending" | "saving" | "saved" | "declined"; expiresMs: number }
+
+export interface RequestDeps {
+  broadcast: (data: Record<string, unknown>) => void
+  push: (name: string, reason: string, id: string) => void
+}
+
+function pushRequest(name: string, reason: string, id: string): void {
+  void pushToAll({
+    title: `Claude needs ${name}`,
+    body: reason,
+    category: "secret_request",
+    interruptionLevel: "time-sensitive",
+    collapseId: id,
+    userInfo: { requestId: id, name },
+  }).catch(() => { /* a failed push never blocks the request */ })
+}
+
+// Test seam: tests swap these to capture the events.
+export const requestDeps: RequestDeps = { broadcast, push: pushRequest }
+
+const entries = new Map<string, Entry>()
+
+export function resetSecretRequests(): void {
+  entries.clear()
+}
+
+// A save in flight past the TTL stays "pending": it ends saved or back to pending, never expired in between.
+function statusOf(e: Entry): RequestStatus {
+  if (e.state === "saved" || e.state === "declined") return e.state
+  if (e.state === "saving") return "pending"
+  return clock.now() >= e.expiresMs ? "expired" : "pending"
+}
+
+function view(e: Entry): SecretRequest {
+  return { ...e.req, status: statusOf(e) }
+}
+
+function prune(): void {
+  const t = clock.now()
+  for (const [id, e] of entries) if (t - e.expiresMs > KEEP_MS) entries.delete(id)
+}
+
+export type Outcome =
+  | { ok: true; status: 200; body: Record<string, unknown> }
+  | { ok: false; status: number; body: Record<string, unknown> }
+
+function fail(status: number, error: string, message: string): Outcome {
+  return { ok: false, status, body: { ok: false, error, message } }
+}
+
+// Rotation stays on the vault UI: a request can never overwrite an existing key.
+// Asked of the vault that will be written (the upstream one when forwarding);
+// null = couldn't tell, and the caller refuses.
+async function existsInVault(name: string): Promise<boolean | null> {
+  const up = vaultUpstream()
+  if (!up) return listSecrets().some((s) => s.name === name)
+  const r = await forwardVault(up, "GET", "/api/vault", "secret-request")
+  const list = r.status === 200 ? r.json?.secrets : null
+  return Array.isArray(list) ? list.some((s) => (s as { name?: unknown } | null)?.name === name) : null
+}
+
+function existsFail(name: string, exists: boolean | null): Outcome | null {
+  if (exists === null) return fail(502, "vault_unreachable", "Coffre injoignable — rien enregistré.")
+  return exists ? fail(409, "exists", `${name} existe déjà dans le coffre — demande un nouveau nom.`) : null
+}
+
+export async function createRequest(input: Record<string, unknown>): Promise<Outcome> {
+  const { name, hosts, reason } = input
+  const session = input.session_id ?? ""
+  if (!validName(name)) return fail(400, "bad_name", "NOM en MAJUSCULES_ET_CHIFFRES (2–64)")
+  if (!validHosts(hosts) || hosts.length === 0) return fail(400, "bad_hosts", "1 à 5 hôtes (ex. api.example.com ou *.example.com)")
+  if (typeof reason !== "string" || !reason.trim() || reason.length > MAX_REASON || /[\x00-\x1f\x7f]/.test(reason)) {
+    return fail(400, "bad_reason", `raison requise, ${MAX_REASON} caractères max, une ligne`)
+  }
+  if (typeof session !== "string" || !SESSION_RE.test(session)) return fail(400, "bad_session_id", "session_id invalide")
+  const refused = existsFail(name, await existsInVault(name))
+  if (refused) return refused
+  prune()
+  const open = listRequests("pending")
+  if (open.length >= MAX_OPEN || open.some((r) => r.name === name)) {
+    return fail(429, "too_many_pending", `Trop de demandes en attente (max ${MAX_OPEN}, une par nom).`)
+  }
+  const expiresMs = clock.now() + REQUEST_TTL_MS
+  const req = { id: randomUUID(), name, hosts, reason: reason.trim(), session_id: session, expires_at: new Date(expiresMs).toISOString() }
+  entries.set(req.id, { req, state: "pending", expiresMs })
+  requestDeps.broadcast({ type: "secret_request", ...req })
+  requestDeps.push(name, req.reason, req.id)
+  return { ok: true, status: 200, body: { ok: true, id: req.id, status: "pending", expires_at: req.expires_at } }
+}
+
+export function getRequest(id: string): SecretRequest | null {
+  const e = entries.get(id)
+  return e ? view(e) : null
+}
+
+export function listRequests(status?: string): SecretRequest[] {
+  return [...entries.values()].map(view).filter((r) => !status || r.status === status)
+}
+
+/** Live entry that may still be fulfilled/declined, or the refusal. */
+function claimable(id: string): Entry | Outcome {
+  const e = entries.get(id)
+  if (!e) return fail(404, "not_found", "Demande introuvable.")
+  if (e.state === "saved" || e.state === "declined") return fail(409, "already_resolved", "Demande déjà traitée.")
+  if (clock.now() >= e.expiresMs) return fail(410, "expired", "Demande expirée — rien enregistré.")
+  if (e.state !== "pending") return fail(409, "already_resolved", "Demande déjà traitée.")
+  return e
+}
+
+function resolved(e: Entry, status: "saved" | "declined"): void {
+  e.state = status
+  requestDeps.broadcast({ type: "secret_request_resolved", id: e.req.id, status })
+}
+
+/**
+ * Save the value under the REQUEST's name + hosts — the body's value is the
+ * only client input used. A failed save (bad value, sync failure) leaves the
+ * request pending so the phone can retry.
+ */
+export async function fulfilRequest(id: string, value: unknown, origin: Partial<AuditOrigin>): Promise<Outcome> {
+  const e = claimable(id)
+  if (!("req" in e)) return e
+  if (typeof value !== "string") return fail(400, "bad_value", `valeur de ${e.req.name} refusée`)
+  e.state = "saving"
+  // Re-checked at save time: the key may have been added since the request.
+  const refused = existsFail(e.req.name, await existsInVault(e.req.name).catch(() => null))
+  if (refused) {
+    e.state = "pending"
+    return refused
+  }
+  let r: VaultResult
+  try {
+    r = await saveSecret({ name: e.req.name, value, hosts: e.req.hosts }, origin)
+  } catch {
+    r = { ok: false, status: 500, error: "save_failed", message: `${e.req.name} NON enregistré.` }
+  }
+  if (!r.ok) {
+    e.state = "pending"
+    const { status, ...body } = r
+    return { ok: false, status, body: { ...body, ok: false } }
+  }
+  resolved(e, "saved")
+  return { ok: true, status: 200, body: { ok: true, id, status: "saved", name: e.req.name, hosts: e.req.hosts, message: r.message } }
+}
+
+export function declineRequest(id: string): Outcome {
+  const e = claimable(id)
+  if (!("req" in e)) return e
+  resolved(e, "declined")
+  return { ok: true, status: 200, body: { ok: true, id, status: "declined" } }
+}

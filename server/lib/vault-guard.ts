@@ -95,11 +95,14 @@ export const writeLimiter = createLimiter(10, 60_000)
 export const readLimiter = createLimiter(60, 60_000)
 /** POST /api/vault/:name/reveal only — its own budget, not the write one. */
 export const revealLimiter = createLimiter(5, 60_000)
+/** POST /api/vault/requests only — agents can't drain the phone's write budget. */
+export const requestLimiter = createLimiter(3, 60_000)
 
 export function resetVaultLimits(): void {
   writeLimiter.reset()
   readLimiter.reset()
   revealLimiter.reset()
+  requestLimiter.reset()
 }
 
 // ── `/key` typed in the chat (POST /api/inject, WS `input`) ──
