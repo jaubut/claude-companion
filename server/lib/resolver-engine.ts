@@ -257,13 +257,13 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
 
 export type ResolverEngine = ReturnType<typeof createResolverEngine>
 
-/** Once a day, at/after `hour`: "Opus handled N items today: …" (#General). Returns the text posted, or null. */
-export function maybeDigest(store: ResolverStore, now: number, hour: number, post: (text: string) => void): string | null {
+/** Once a day, at/after `hour`: "Opus handled N items today: …" (#General), plus `extra`'s line. Returns the text posted, or null. */
+export function maybeDigest(store: ResolverStore, now: number, hour: number, post: (text: string) => void, extra?: (now: number) => string | null): string | null {
   if (new Date(now).getHours() < hour) return null
   const day = localDay(now)
   if (store.meta("digest_day") === day) return null
   store.setMeta("digest_day", day)
-  const text = digestText(store.countsOn(day))
+  const text = [digestText(store.countsOn(day)), extra?.(now) ?? null].filter((l): l is string => !!l).join("\n") || null
   if (text) post(text)
   return text
 }

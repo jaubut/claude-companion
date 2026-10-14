@@ -288,6 +288,15 @@ describe("digest", () => {
   })
 })
 
+describe("digest + triage TTL line", () => {
+  test("the expired-cards line joins the day's post, and posts alone when Opus did nothing", () => {
+    const posted: string[] = []
+    const evening = Date.parse("2026-10-05T21:05:00")
+    expect(maybeDigest(store, evening, 21, (t) => posted.push(t), () => "🗂 Triage dismissed 1 idle card (14+ days, no activity): x")).toBe("🗂 Triage dismissed 1 idle card (14+ days, no activity): x")
+    expect(posted).toEqual(["🗂 Triage dismissed 1 idle card (14+ days, no activity): x"])
+  })
+})
+
 describe("triage integration", () => {
   function triage(resolver: ReturnType<typeof makeEngine> | null, sources: SourceItem[], frames: Record<string, unknown>[] = []) {
     return createTriageEngine({

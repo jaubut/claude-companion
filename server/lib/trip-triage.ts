@@ -1,4 +1,5 @@
-import type { SourceItem, TriageOption } from "./triage"
+import { createHash } from "node:crypto"
+import type { SourceItem, TripFiling, TriageOption } from "./triage"
 import type { ExecOutcome } from "./triage-engine"
 import { type ClassifyInput, type ClientInfo, type Ends, type TripClassifier, logEvidence } from "./trip-classify"
 import type { TripRow } from "./trip-dashboard"
@@ -13,9 +14,19 @@ import type { LogRow, TripStore } from "./trip-store"
 // computed one at a time in the background. The phrasing is deterministic
 // (lib/triage.ts tripPhrase). A choice PATCHes the dashboard through
 // TripService.override, which also feeds the history.
+// Batch (2026-10-14): backlog trips whose guess is near-certain (Jev ≥ 95 % and
+// every same-route past trip agrees) go on ONE card "classify all as
+// suggested?" instead of one card each; nothing is filed without that tap.
 
-export const BACKFILL_DAYS = 60
+export const BACKFILL_DAYS = 120
 export const BACKFILL_CAP = 20
+/** How much of the backlog is read (and guessed in the background) to find batch trips and count the rest. */
+export const BACKLOG_SCAN = 500
+export const BATCH_JEV_MIN = 0.95
+/** Same-route past trips needed, all agreeing with the guess. */
+export const BATCH_MIN_HISTORY = 2
+export const BATCH_MIN_TRIPS = 2
+export const BATCH_REF = "batch"
 export const BACKFILL_MIN_KM = 0.5
 export const COLLECT_TTL_MS = 60_000
 
@@ -78,6 +89,55 @@ export function tripItem(c: { tripId: string; startedAt: string; km: number | nu
   }
 }
 
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+
+/**
+ * Safe to file without looking: Jev's own p ≥ 95 % for the guessed class, and ≥ BATCH_MIN_HISTORY
+ * past trips on the same route (both ends within 300 m) all with that class — and, for business,
+ * no past trip there for another client.
+ */
+export function batchEligible(g: LogRow): boolean {
+  if (g.classification !== "business" && g.classification !== "personal") return false
+  const jev = g.evidence.jev as { pBusiness?: unknown } | undefined
+  const p = num(jev?.pBusiness)
+  if (p === null || (g.classification === "business" ? p : 1 - p) < BATCH_JEV_MIN) return false
+  const h = (g.evidence.history ?? {}) as { kind?: unknown; n?: unknown; business?: unknown; personal?: unknown; clients?: unknown }
+  const n = num(h.n) ?? 0
+  if (h.kind !== "pair" || n < BATCH_MIN_HISTORY) return false
+  const agree = num(g.classification === "business" ? h.business : h.personal) ?? 0
+  if (agree !== n) return false
+  const clients = h.clients && typeof h.clients === "object" ? Object.keys(h.clients) : []
+  return g.classification === "personal" || clients.every((c) => c === g.clientSlug)
+}
+
+export interface BatchMember { tripId: string; startedAt: string; km: number | null; guess: LogRow }
+
+/** The one card for all batch trips; `hidden` = backlog trips on no card at all. */
+export function batchItem(members: BatchMember[], hidden: number, now: number): SourceItem {
+  const trips: TripFiling[] = members.map((m) => ({
+    tripId: m.tripId, classification: m.guess.classification as "business" | "personal", clientSlug: m.guess.classification === "business" ? m.guess.clientSlug : null,
+  }))
+  const counts = new Map<string, number>()
+  for (const m of members) {
+    const names = (m.guess.evidence.clientNames ?? {}) as Record<string, string>
+    const key = m.guess.classification === "personal" ? "personal" : m.guess.clientSlug ? `business (${names[m.guess.clientSlug] ?? m.guess.clientSlug})` : "business (no client)"
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const oldest = Math.min(...members.map((m) => Date.parse(m.startedAt) || now))
+  const version = createHash("sha1").update(members.map((m) => `${m.tripId}:${m.guess.id}`).sort().join(",")).digest("hex").slice(0, 16)
+  const n = members.length
+  return {
+    source: "trip", refId: BATCH_REF, version: `batch|${version}`, title: `${n} trips ready to file as suggested`, project: "Travel log",
+    createdAt: oldest, updatedAt: oldest,
+    facts: {
+      problem: `${n} trips with Jev ≥ 95 % and same-route history all agreeing: classify all as suggested?${hidden ? ` ${hidden} more unclassified trip${hidden === 1 ? "" : "s"} wait in the backlog.` : ""}`,
+      evidence: [...counts].sort((a, b) => b[1] - a[1]).map(([k, c]) => `${c} ${k}`).join(" · ") + (hidden ? ` · backlog not shown: ${hidden}` : ""),
+    },
+    url: null,
+    ref: { source: "trip_batch", trips, hidden },
+  }
+}
+
 export function createTripTriage(deps: TripTriageDeps) {
   const now = deps.now ?? Date.now
   const log = deps.log ?? (() => {})
@@ -89,6 +149,8 @@ export function createTripTriage(deps: TripTriageDeps) {
   const queued = new Set<string>()
   const attempted = new Set<string>()
   const listeners = new Set<() => void>()
+  // ponytail: in memory — after a restart a declined batch is offered once more (nothing is filed without a tap).
+  const declined = new Set<string>()
   let draining: Promise<void> | null = null
 
   // A guess the card can use: not answered yet, and not a budget timeout (unless re-guessing it already failed).
@@ -138,12 +200,26 @@ export function createTripTriage(deps: TripTriageDeps) {
       else if (!g || g.humanAt === null) enqueue({ tripId: id, startedAt: u.upload.startedAt, km: u.upload.km, input: { ...uploadInput(u.upload), tripId: id }, mode: "triage" })
     }
     const since = new Date(t - BACKFILL_DAYS * 86_400_000).toISOString()
-    for (const r of await deps.backfill(since, BACKFILL_CAP, BACKFILL_MIN_KM)) {
+    const singles: SourceItem[] = []
+    let batch: BatchMember[] = []
+    let backlog = 0
+    for (const r of await deps.backfill(since, BACKLOG_SCAN, BACKFILL_MIN_KM)) {
       if (seen.has(r.id)) continue
+      backlog++
       const g = deps.store.latestLog(r.id)
-      if (g && guessable(g)) items.push(tripItem({ tripId: r.id, startedAt: r.startedAt, km: r.km }, g, t))
-      else if (!g) enqueue({ tripId: r.id, startedAt: r.startedAt, km: r.km, input: rowInput(r), mode: "backfill" })
+      if (g && guessable(g)) {
+        if (!declined.has(r.id) && batchEligible(g)) batch.push({ tripId: r.id, startedAt: r.startedAt, km: r.km, guess: g })
+        else singles.push(tripItem({ tripId: r.id, startedAt: r.startedAt, km: r.km }, g, t))
+      } else if (!g) enqueue({ tripId: r.id, startedAt: r.startedAt, km: r.km, input: rowInput(r), mode: "backfill" })
     }
+    if (batch.length < BATCH_MIN_TRIPS) {
+      singles.push(...batch.map((m) => tripItem(m, m.guess, t)))
+      singles.sort((a, b) => a.createdAt - b.createdAt)
+      batch = []
+    }
+    const shown = singles.slice(0, BACKFILL_CAP)
+    items.push(...shown)
+    if (batch.length) items.push(batchItem(batch, backlog - shown.length - batch.length, t))
     return items
   }
 
@@ -163,6 +239,7 @@ export function createTripTriage(deps: TripTriageDeps) {
 
   /** Re-read one item: null once the dashboard trip is classified. Throws TursoUnreachable. */
   async function current(src: SourceItem): Promise<SourceItem | null> {
+    if (src.ref.source === "trip_batch") return (await build()).find((i) => i.ref.source === "trip_batch") ?? null
     if (src.ref.source !== "trip") return null
     const cls = (await deps.classifications([src.ref.tripId])).get(src.ref.tripId)
     if (cls !== "unclassified") return null
@@ -170,7 +247,31 @@ export function createTripTriage(deps: TripTriageDeps) {
     return g && guessable(g) ? { ...src, version: `unclassified|${g.id}` } : null
   }
 
+  /** Approve = file each trip still unclassified as suggested; reject = one card each from now on. */
+  async function executeBatch(trips: TripFiling[], option: TriageOption): Promise<ExecOutcome> {
+    if (option.action.kind === "reject") {
+      for (const f of trips) declined.add(f.tripId)
+      drop()
+      return { kind: "done", detail: { review: trips.length } }
+    }
+    if (option.action.kind !== "approve") return { kind: "error", status: 400, error: "wrong_action" }
+    const cls = await deps.classifications(trips.map((f) => f.tripId))
+    let filed = 0
+    let skipped = 0
+    const failed: string[] = []
+    for (const f of trips) {
+      if (cls.get(f.tripId) !== "unclassified") { skipped++; continue }
+      const r = await deps.service.override(f.tripId, { classification: f.classification, clientSlug: f.clientSlug })
+      if (r.status >= 200 && r.status < 300 && r.json?.ok !== false) filed++
+      else failed.push(f.tripId)
+    }
+    drop()
+    if (!filed && failed.length) return { kind: "error", status: 502, error: "dashboard_error", extra: { failed: failed.length } }
+    return { kind: "done", detail: { filed, skipped, failed: failed.length } }
+  }
+
   async function execute(src: SourceItem, option: TriageOption, text: string | null): Promise<ExecOutcome> {
+    if (src.ref.source === "trip_batch") return executeBatch(src.ref.trips, option)
     if (src.ref.source !== "trip") return { kind: "error", status: 400, error: "wrong_source" }
     const a = option.action
     let change: { classification: string; clientSlug: string | null }

@@ -420,6 +420,58 @@ describe("choose → the existing guarded paths", () => {
     expect(await itemOf("pr:jaubut/x#9")).toMatchObject({ source: "pr", problem: "Open for more than 2 days with no review activity." })
   })
 
+  test("hygiene (1): GitHub says CLOSED → no card, parked or 48 h safety net (tls-review #15: closed, done=0, no outcome row)", async () => {
+    const quiet = turTask("completed", null, { pr: "https://github.com/jaubut/tls-review/pull/15" })
+    const parked = turTask("completed", null, { pr: "https://github.com/jaubut/tls-review/pull/16" })
+    turso.query("UPDATE tasks SET updated_at = datetime('now', '-3 days') WHERE id = ?").run(quiet)
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
+      .run(parked, JSON.stringify({ reason: "touches auth", url: "https://github.com/jaubut/tls-review/pull/16" }))
+    ghReady = { state: "CLOSED" }
+    await sync()
+    expect(await itemOf("pr:jaubut/tls-review#15")).toBeUndefined()
+    expect(await itemOf("pr:jaubut/tls-review#16")).toBeUndefined()
+    expect(ghCalls.some((c) => c[1] === "view" && String(c[4]).endsWith(",state"))).toBe(true)
+    // Same ledger, GitHub says OPEN: both cards.
+    ghReady = { state: "OPEN" }
+    harness = makeHarness()
+    await sync()
+    expect(await itemOf("pr:jaubut/tls-review#15")).toMatchObject({ problem: "Open for more than 2 days with no review activity." })
+    expect(await itemOf("pr:jaubut/tls-review#16")).toMatchObject({ problem: "touches auth" })
+  })
+
+  test("hygiene (1b): a done=1 task whose PR the shepherd parked stays a card while open (remorquage-pelchat #66); done=1 unparked does not", async () => {
+    const url = "https://github.com/jaubut/remorquage-pelchat/pull/66"
+    const done = turTask("completed", null, { pr: url, done: 1 })
+    const plain = turTask("completed", null, { pr: "https://github.com/jaubut/x/pull/67", done: 1 })
+    turso.query("UPDATE tasks SET updated_at = datetime('now', '-5 days') WHERE id IN (?, ?)").run(done, plain)
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
+      .run(done, JSON.stringify({ reason: "needs your review", url }))
+    await sync()
+    expect(await itemOf("pr:jaubut/remorquage-pelchat#66")).toMatchObject({ source: "pr", problem: "needs your review" })
+    expect(await itemOf("pr:jaubut/x#67")).toBeUndefined()
+    ghReady = { state: "MERGED" }
+    harness = makeHarness()
+    await sync()
+    expect(await itemOf("pr:jaubut/remorquage-pelchat#66")).toBeUndefined()
+  })
+
+  test("hygiene (3): a blocked task idle 14+ days leaves triage with a triage:expired row in agent_activity", async () => {
+    const stale = turTask("blocked", "Which currency?")
+    const fresh = turTask("blocked", "Which bank?")
+    turso.query("UPDATE tasks SET updated_at = datetime('now', '-15 days') WHERE id = ?").run(stale)
+    await sync()
+    expect(await itemOf(`task:${stale}`)).toBeUndefined()
+    expect(await itemOf(`task:${fresh}`)).toBeDefined()
+    const rows = turso.query("SELECT agent_slug, target_kind, target_id, summary, meta FROM agent_activity WHERE action = 'triage:expired'").all() as Record<string, string>[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ agent_slug: "companion", target_kind: "task", target_id: stale })
+    expect(rows[0]!.summary).toStartWith("Triage card dismissed after 15 days idle")
+    expect(JSON.parse(String(rows[0]!.meta))).toMatchObject({ itemId: `task:${stale}`, idleDays: 15 })
+    expect(harness.engine.expiredSince(Date.now() - 60_000).map((c) => c.itemId)).toContain(`task:${stale}`)
+    await sync()
+    expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action = 'triage:expired'").get()).toEqual({ n: 1 })
+  })
+
   test("a Body component whose diagnosis failed twice: requeue forces a new investigation", async () => {
     for (let i = 0; i < 2; i++) {
       const r = invStore.insert({ componentId: "zettlab:svc:y", host: "zettlab", state: "dead", trigger: "sweep", status: "running", runOn: "local", attempt: i + 1 }, Date.now() - 1000 + i)

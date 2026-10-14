@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { type SourceItem, allowedActions, fallbackPhrase, heuristicSeverity, validatePhrase } from "./triage"
 import { createTriageEngine } from "./triage-engine"
 import { createTriageStore } from "./triage-store"
@@ -7,7 +7,7 @@ import type { ClassifyInput, ClassifyResult } from "./trip-classify"
 import type { TripRow } from "./trip-dashboard"
 import { buildTripReport, formatTripReport } from "./trip-report"
 import { createTripStore } from "./trip-store"
-import { createTripTriage, routeText, tripItem, whenText } from "./trip-triage"
+import { BACKFILL_CAP, BATCH_REF, batchEligible, createTripTriage, routeText, tripItem, whenText } from "./trip-triage"
 
 const NOW = Date.parse("2026-10-08T12:00:00-04:00")
 
@@ -192,4 +192,89 @@ test("trip-report: auto-file rate, overrides of filed trips, guess agreement", (
   const text = formatTripReport(rep, 30, 0.85)
   expect(text).toContain("auto-file rate 67 %")
   expect(text).toContain("filed then corrected by Jeremie: 1 of 2")
+})
+
+describe("batch card (2026-10-14)", () => {
+  const hist = (n: number, business: number, clients: Record<string, number> = {}, kind = "pair") => ({ kind, n, business, personal: n - business, clients })
+  const sure = (p: number, history: ReturnType<typeof hist>, over: Partial<ClassifyResult> = {}): ClassifyResult => guess({
+    confidence: 0.9, evidence: { jev: { ok: true, pBusiness: p }, history }, ...over,
+  })
+  const logRow = (r: ClassifyResult) => {
+    const store = createTripStore(new Database(":memory:"))
+    return store.logRow(store.log({ tripKey: "t", tripId: "t", mode: "backfill", classification: r.classification, clientSlug: r.clientSlug, confidence: r.confidence, decision: r.decision, classifiedBy: r.classifiedBy, rule: r.rule, evidence: r.evidence }, NOW))!
+  }
+
+  test("thresholds: Jev ≥ 95 % for the guessed class AND ≥ 2 same-route trips all agreeing (same client for business)", () => {
+    expect(batchEligible(logRow(sure(0.97, hist(3, 3, { humance: 2 }))))).toBe(true)
+    expect(batchEligible(logRow(sure(0.95, hist(2, 2))))).toBe(true)
+    expect(batchEligible(logRow(sure(0.03, hist(2, 0), { classification: "personal", clientSlug: null })))).toBe(true)
+    expect(batchEligible(logRow(sure(0.94, hist(3, 3))))).toBe(false) // Jev under 95 %
+    expect(batchEligible(logRow(sure(0.97, hist(3, 2))))).toBe(false) // one past trip disagrees
+    expect(batchEligible(logRow(sure(0.97, hist(1, 1))))).toBe(false) // too little history
+    expect(batchEligible(logRow(sure(0.97, hist(3, 3, {}, "place"))))).toBe(false) // place, not the same route
+    expect(batchEligible(logRow(sure(0.97, hist(3, 3, { humance: 1, brp: 1 }))))).toBe(false) // another client on this route
+    expect(batchEligible(logRow(sure(0.97, hist(2, 0), { classification: "personal", clientSlug: null })))).toBe(false) // Jev says business, guess personal
+    expect(batchEligible(logRow(guess({ evidence: { history: hist(3, 3) } })))).toBe(false) // no Jev answer (rules / timeout)
+  })
+
+  test("one batch card for the sure trips (with the hidden backlog count); the rest stay single cards, capped", async () => {
+    const backlog: TripRow[] = []
+    const results = new Map<string, ClassifyResult>()
+    const add = (id: string, r: ClassifyResult) => { backlog.push(row(id, `2026-09-${String(backlog.length + 1).padStart(2, "0")}T09:10:00-04:00`)); results.set(id, r) }
+    for (let i = 0; i < 4; i++) add(`sure_b${i}`, sure(0.97, hist(3, 3, { humance: 2 })))
+    add("sure_p", sure(0.02, hist(2, 0), { classification: "personal", clientSlug: null }))
+    add("low_jev", sure(0.9, hist(3, 3)))
+    for (let i = 0; i < 25; i++) add(`plain${i}`, guess())
+    const classes = new Map<string, string>()
+    const r = rig({ backlog, result: (i) => results.get(i.key)!, classifications: classes })
+    await r.triage.collect()
+    await r.triage.idle()
+    const items = await r.triage.collect()
+    const batch = items.find((i) => i.refId === BATCH_REF)!
+    const singles = items.filter((i) => i.refId !== BATCH_REF)
+    expect(singles).toHaveLength(BACKFILL_CAP)
+    expect(singles[0]!.refId).toBe("low_jev")
+    expect(batch.ref).toEqual({ source: "trip_batch", hidden: 31 - 5 - BACKFILL_CAP, trips: [
+      ...[0, 1, 2, 3].map((i) => ({ tripId: `sure_b${i}`, classification: "business" as const, clientSlug: "humance" })),
+      { tripId: "sure_p", classification: "personal", clientSlug: null },
+    ] })
+    expect(batch.facts.problem).toBe("5 trips with Jev ≥ 95 % and same-route history all agreeing: classify all as suggested? 6 more unclassified trips wait in the backlog.")
+    expect(batch.facts.evidence).toBe("4 business (Humance) · 1 personal · backlog not shown: 6")
+    expect(heuristicSeverity(batch)).toBe("low")
+    const p = fallbackPhrase(batch)
+    expect(p.options.map((o) => [o.label, o.action.kind, !!o.destructive])).toEqual([
+      ["Classify all 5 as suggested", "approve", false], ["Review individually", "reject", false], ["Snooze for a day", "snooze", false],
+    ])
+    expect(r.overrides).toEqual([]) // nothing filed without the tap
+
+    // Approve through the engine: each trip still unclassified is filed as suggested.
+    classes.set("sure_b3", "personal") // answered elsewhere meanwhile → skipped
+    r.triage.invalidate()
+    const engine = createTriageEngine({
+      collect: () => r.triage.collect(), current: (s) => r.triage.current(s), execute: (s, o, t) => r.triage.execute(s, o, t),
+      phrase: async () => null, store: createTriageStore(new Database(":memory:")), broadcast: () => {}, now: () => NOW,
+    })
+    await engine.list()
+    const res = await engine.choose({ id: "trip:batch", optionId: "a" })
+    expect(res).toMatchObject({ status: 200, body: { ok: true, detail: { filed: 4, skipped: 1, failed: 0 } } })
+    expect(r.overrides).toEqual([
+      ...[0, 1, 2].map((i) => ({ id: `sure_b${i}`, change: { classification: "business", clientSlug: "humance" } })),
+      { id: "sure_p", change: { classification: "personal", clientSlug: null } },
+    ])
+  })
+
+  test("a single sure trip is no batch; Review individually turns the batch into single cards", async () => {
+    const one = rig({ backlog: [row("s1", "2026-09-01T09:10:00-04:00")], result: () => sure(0.97, hist(3, 3)) })
+    await one.triage.collect()
+    await one.triage.idle()
+    expect((await one.triage.collect()).map((i) => i.refId)).toEqual(["s1"])
+
+    const r = rig({ backlog: [row("s1", "2026-09-01T09:10:00-04:00"), row("s2", "2026-09-02T09:10:00-04:00")], result: () => sure(0.97, hist(3, 3)) })
+    await r.triage.collect()
+    await r.triage.idle()
+    const batch = (await r.triage.collect()).find((i) => i.refId === BATCH_REF)!
+    expect(await r.triage.execute(batch, { id: "b", label: "Review individually", action: { kind: "reject" } }, null)).toEqual({ kind: "done", detail: { review: 2 } })
+    expect((await r.triage.collect()).map((i) => i.refId)).toEqual(["s1", "s2"])
+    expect(r.overrides).toEqual([])
+  })
 })

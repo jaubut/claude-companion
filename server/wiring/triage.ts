@@ -9,10 +9,10 @@ import { runBrainCall } from "../lib/orchestrator-brain"
 import { appendTurn, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
 import { db } from "../lib/orchestrator-db"
-import { type Phrase, type ResolvingItem, type Severity, type SourceItem, type TriageOption, approvalSummary, clip, phrasePrompt } from "../lib/triage"
+import { type Phrase, type ResolvingItem, type Severity, type SourceItem, type TriageOption, approvalSummary, clip, expiredDigest, phrasePrompt } from "../lib/triage"
 import { type ExecOutcome, type TriageEngine, type TriageResolverHook, createTriageEngine } from "../lib/triage-engine"
 import { type GhFn, type PrReadiness, closePr, holdReason, mergePr, prReadiness, realGh } from "../lib/triage-pr"
-import { type ApprovedPr, type BodyLookup, bodySources, prApprovals, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
+import { type ApprovedPr, type BodyLookup, bodySources, latestProposals, prApprovals, prGone, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
 import { type TriageStore, createTriageStore } from "../lib/triage-store"
 import type { TripTriage } from "../lib/trip-triage"
 import { type MyTaskTriage, createMyTaskTriage } from "../lib/mytask-triage"
@@ -120,23 +120,25 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   async function readyOf(url: string): Promise<PrReadiness | null> {
     const hit = readyCache.get(url)
     if (hit && now() - hit.at < PR_READY_TTL_MS) return hit.ready
-    const ready = await prReadiness(gh, url).catch(() => null)
+    const ready = await prReadiness(gh, url, true).catch(() => null)
     readyCache.set(url, { at: now(), ready })
     return ready
   }
 
-  /** The card carries GitHub's mergeable state now (facts only: the item version does not move). */
-  async function withReadiness(src: SourceItem): Promise<SourceItem> {
+  /** The card carries GitHub's mergeable state now (facts only: the item version does not move); null = GitHub says merged/closed. */
+  async function withReadiness(src: SourceItem): Promise<SourceItem | null> {
     if (src.ref.source !== "pr") return src
     const ready = await readyOf(src.ref.prUrl)
     if (!ready) return src
+    if (prGone(ready.state)) return null
     const hold = holdReason(ready)
     const mergeable = hold === "conflict" ? "CONFLICTING" : ready.mergeable
     return { ...src, facts: { ...src.facts, ...(mergeable ? { mergeable } : {}), ...(ready.checks !== "none" ? { checks: ready.checks } : {}) } }
   }
 
-  async function approvedRow(a: ApprovedPr): Promise<ResolvingItem> {
+  async function approvedRow(a: ApprovedPr): Promise<ResolvingItem | null> {
     const ready = await readyOf(a.url)
+    if (prGone(ready?.state)) return null
     const reason = ready ? holdReason(ready) : a.reason
     const summary = approvalSummary(reason)
     return {
@@ -150,8 +152,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     if (!fresh && prCache && now() - prCache.at < PR_ROWS_TTL_MS) return prCache.items
     try {
       const rows = await queryPrRows(dispatch.query, await dispatch.columns())
-      const items = await Promise.all(prSources(rows, now()).map(withReadiness))
-      approved = await Promise.all(prApprovals(rows, now()).map(approvedRow))
+      const items = (await Promise.all(prSources(rows, now()).map(withReadiness))).filter((s): s is SourceItem => !!s)
+      approved = (await Promise.all(prApprovals(rows, now()).map(approvedRow))).filter((r): r is ResolvingItem => !!r)
       prCache = { at: now(), items }
       return items
     } catch (err) {
@@ -179,7 +181,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
 
   async function collect(): Promise<SourceItem[]> {
     const tasks = taskSources(dispatch.snapshot() ?? [], (t) => dispatch.threadIdFor(t))
-    const proposals = listProposals().map((t) => proposalItem(t.taskId)).filter((s): s is SourceItem => !!s)
+    const proposals = latestProposals(listProposals(), (id) => bodyFixStore.card(id)?.componentId ?? null)
+      .map((t) => proposalItem(t.taskId)).filter((s): s is SourceItem => !!s)
     const [prs, lookup, tripItems, mine] = await Promise.all([
       prItems(), bodyLookup(), trips ? trips.collect() : Promise.resolve([]), mytasks ? mytasks.collect() : Promise.resolve([]),
     ])
@@ -196,7 +199,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     }
     if (ref.source === "proposal") return proposalItem(ref.taskId)
     if (ref.source === "pr") return (await prItems(true)).find((p) => p.refId === src.refId) ?? null
-    if (ref.source === "trip") return trips ? trips.current(src) : null
+    if (ref.source === "trip" || ref.source === "trip_batch") return trips ? trips.current(src) : null
     if (ref.source === "mytask") return mytasks ? mytasks.current(src) : null
     return bodySources(investigations(), now(), await bodyLookup()).find((b) => b.refId === src.refId) ?? null
   }
@@ -281,8 +284,11 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
       case "cancel": return taskWrite("cancel", src, null, by)
       case "approve":
         if (src.ref.source === "mytask") return mytasks ? mytasks.execute(src, option) : { kind: "error", status: 400, error: "wrong_source" }
+        if (src.ref.source === "trip_batch") return trips ? trips.execute(src, option, text) : { kind: "error", status: 400, error: "wrong_source" }
         return proposalAction(src, option)
-      case "reject": return proposalAction(src, option)
+      case "reject":
+        if (src.ref.source === "trip_batch") return trips ? trips.execute(src, option, text) : { kind: "error", status: 400, error: "wrong_source" }
+        return proposalAction(src, option)
       case "merge":
       case "close_pr": return prAction(src, a.kind, by)
       case "open_url": return { kind: "done", detail: { url: a.url } }
@@ -303,8 +309,20 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     liveResolver = createLiveResolver({ dispatch, gh, execute, onChange })
     resolver = liveResolver.engine
   }
+  /** The agent_activity row for a TTL-dismissed card (lib/triage-engine.ts expireIdle); Turso down → throws, card kept. */
+  async function expire(src: SourceItem, idleMs: number): Promise<void> {
+    const kind = src.ref.source === "proposal" ? "proposal" : "task"
+    const targetId = src.ref.source === "task" || src.ref.source === "proposal" ? src.ref.taskId : src.refId
+    const days = Math.floor(idleMs / 86_400_000)
+    await dispatch.exec(
+      "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",
+      ["companion", "triage:expired", kind, targetId, clip(`Triage card dismissed after ${days} days idle: ${src.title}`, 200),
+        JSON.stringify({ itemId: `${src.source}:${src.refId}`, version: src.version, idleDays: days, source: "companion", host: HOST_INFO.name })],
+    )
+  }
+
   engine = createTriageEngine({
-    collect, current, phrase, execute, store, resolver,
+    collect, current, phrase, execute, store, resolver, expire,
     severity: opts.severity ?? jevSeverity,
     pending: () => approved,
     broadcast: opts.broadcast ?? wsBroadcast,
@@ -334,7 +352,7 @@ export function startTriage(): () => void {
   // A new trip guess or a human answer (phone PATCH included) re-collects at once.
   const t = ownsTrips() ? tripsLive() : null
   const offTrips = t ? [t.triage.onGuess(() => void engine.refresh()), t.service.onChange(() => void engine.refresh())] : []
-  const offDigest = liveResolver ? startResolverDigest(liveResolver.store) : () => {}
+  const offDigest = liveResolver ? startResolverDigest(liveResolver.store, (now) => expiredDigest(engine.expiredSince(now - 86_400_000))) : () => {}
   const tick = setInterval(() => void engine.refresh(), TRIAGE_TICK_MS)
   ;(tick as unknown as { unref?: () => void }).unref?.()
   void engine.refresh()

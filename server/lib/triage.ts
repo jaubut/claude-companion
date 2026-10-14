@@ -109,6 +109,10 @@ export type SourceRef =
     clientSlug: string | null; clientName: string | null; altSlug: string | null; altName: string | null
   }
   | { source: "mytask"; taskIds: string[]; noteId: string; oldestDue: string; lateDays: number }
+  /** One card for many confident trips (item source stays "trip" on the wire); `hidden` = backlog left out of the cards. */
+  | { source: "trip_batch"; trips: TripFiling[]; hidden: number }
+
+export interface TripFiling { tripId: string; classification: "business" | "personal"; clientSlug: string | null }
 
 /** One thing that needs Jeremie, before phrasing. */
 export interface SourceItem {
@@ -162,6 +166,7 @@ export function allowedActions(src: Pick<SourceItem, "source" | "ref" | "url">):
     case "pr": return ["merge", "close_pr", "open_url", "snooze"]
     case "body": return src.url ? ["requeue", "open_url", "snooze"] : ["requeue", "snooze"]
     case "trip": return ["classify", "classify_custom", "snooze"]
+    case "trip_batch": return ["approve", "reject", "snooze"]
     case "mytask": return ["approve", "snooze"]
   }
 }
@@ -354,6 +359,24 @@ function tripPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "trip" }>
   }
 }
 
+/** The batch trip card: file them all as suggested, or send them back to one card each. Never Opus, never auto. */
+function tripBatchPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "trip_batch" }>): Phrase {
+  const n = ref.trips.length
+  const { options, recommended } = finishOptions([
+    { label: `Classify all ${n} as suggested`, detail: "Each trip is filed with its suggested class and client", action: { kind: "approve" } },
+    { label: "Review individually", detail: "One card per trip instead", action: { kind: "reject" } },
+    snooze,
+  ])
+  const evidence = src.facts.evidence?.trim()
+  return {
+    title: clip(src.title, TITLE_MAX), problem: clip(src.facts.problem || src.title, PROBLEM_MAX),
+    action: clip(`Approve to file all ${n}, or review them one by one.`, ACTION_MAX),
+    // "Review individually" is not destructive: nothing is filed, the trips come back as single cards.
+    options: options.map(({ destructive: _d, ...o }) => o), recommended,
+    ...(evidence ? { context: clip(evidence, CONTEXT_MAX) } : {}),
+  }
+}
+
 function mytaskPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "mytask" }>): Phrase {
   const batch = ref.taskIds.length > 1
   // Money / client / deadline work is never quietly un-dated, however late.
@@ -380,6 +403,7 @@ export function fallbackPhrase(src: SourceItem): Phrase {
   }
   const ref = src.ref
   if (ref.source === "trip") return tripPhrase(src, ref)
+  if (ref.source === "trip_batch") return tripBatchPhrase(src, ref)
   if (ref.source === "mytask") return mytaskPhrase(src, ref)
   if (ref.source === "task" && ref.status === "blocked") {
     return make(why("blocker", "The task is blocked without a reason."), "Answer it so the task restarts, or retry or cancel it.", [
@@ -423,7 +447,7 @@ const URGENT_WORDS = /\b(prod(uction)?|outage|down|client|invoice|facture|paymen
 /** Heuristic severity when Jev gives none. */
 export function heuristicSeverity(src: SourceItem): Severity {
   const h = src.hints ?? {}
-  if (src.ref.source === "trip") return "low"
+  if (src.ref.source === "trip" || src.ref.source === "trip_batch") return "low"
   if (src.ref.source === "mytask") return URGENT_WORDS.test(`${src.title} ${src.facts.evidence ?? ""}`) ? "urgent" : src.ref.lateDays > STALE_DAYS ? "low" : "normal"
   if (src.ref.source === "body") return /^(critical|high)$/i.test(h.criticality ?? "") ? "urgent" : "normal"
   if (src.ref.source === "proposal" && /^(critical|high)$/i.test(h.bodySeverity ?? "")) return "urgent"
@@ -483,4 +507,10 @@ export function triageDigest(items: TriageItem[]): string | null {
   const urgent = items.filter((i) => i.severity === "urgent").length
   const top = items.slice(0, 3).map((i) => i.title).join(" · ")
   return `Triage: ${items.length} item${items.length === 1 ? "" : "s"} wait for Jeremie${urgent ? ` (${urgent} urgent)` : ""} — ${clip(top, 240)}`
+}
+
+/** The daily digest line for cards the TTL dismissed (lib/triage-engine.ts CARD_TTL_MS); null when none. */
+export function expiredDigest(cards: { title: string }[]): string | null {
+  if (!cards.length) return null
+  return `🗂 Triage dismissed ${cards.length} idle card${cards.length === 1 ? "" : "s"} (14+ days, no activity): ${clip(cards.map((c) => c.title).join(" · "), 400)}`
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import type { SourceItem, TriageOption } from "./triage"
-import { type ExecOutcome, HOUR_MS, createTriageEngine } from "./triage-engine"
+import { type SourceItem, type TriageOption, expiredDigest } from "./triage"
+import { CARD_TTL_MS, type ExecOutcome, HOUR_MS, createTriageEngine } from "./triage-engine"
 import { FALLBACK_RETRY_MS, createTriageStore } from "./triage-store"
 import { TursoUnreachable } from "./turso"
 
@@ -274,5 +274,49 @@ describe("merge intent: queued outcome, pending rows, one log line per choose", 
     await e.refresh()
     expect(e.resolving().map((r) => r.id)).toEqual(["pr:9"])
     expect(frames.at(-1)).toMatchObject({ resolving: [{ id: "pr:9" }] })
+  })
+})
+
+describe("card TTL (2026-10-14)", () => {
+  test("task / proposal cards idle 14+ days: logged, dismissed for that version, listed for the digest; new activity brings them back", async () => {
+    const day = 24 * HOUR_MS
+    clock = 100 * day
+    const proposal: SourceItem = {
+      source: "proposal", refId: "p-old", version: "7", title: "Epic Games login agent", project: null, createdAt: clock - 20 * day, updatedAt: clock - 20 * day,
+      facts: { reasoning: "", prompt: "x" }, url: null, ref: { source: "proposal", taskId: "p-old", macFix: false },
+    }
+    const idlePr: SourceItem = {
+      source: "pr", refId: "o/r#1", version: "v", title: "Old PR", project: "Dash", createdAt: clock - 30 * day, updatedAt: clock - 30 * day,
+      facts: { reason: "x" }, url: "https://github.com/o/r/pull/1", ref: { source: "pr", taskId: "t1", prUrl: "https://github.com/o/r/pull/1", repo: "o/r", number: 1 },
+    }
+    sources = [blocked("stale", "v1", clock - CARD_TTL_MS - 1), blocked("fresh", "v1", clock - CARD_TTL_MS + 60_000), proposal, idlePr]
+    const logged: { id: string; days: number }[] = []
+    let failOnce = true
+    const store = createTriageStore(new Database(":memory:"))
+    const e = createTriageEngine({
+      collect: async () => sources, phrase: async () => null, current: async (s) => s,
+      execute: async () => execOut, store, broadcast: () => {}, now: () => clock,
+      expire: async (src, idle) => {
+        if (src.refId === "p-old" && failOnce) { failOnce = false; throw new Error("turso down") }
+        logged.push({ id: src.refId, days: Math.floor(idle / day) })
+      },
+    })
+    await e.refresh()
+    // The proposal's log write failed: it stays a card (never dismissed silently); PRs have no TTL.
+    expect(logged).toEqual([{ id: "stale", days: 14 }])
+    expect(e.items().map((i) => i.id).sort()).toEqual(["pr:o/r#1", "proposal:p-old", "task:fresh"])
+    await e.refresh()
+    expect(logged).toEqual([{ id: "stale", days: 14 }, { id: "p-old", days: 20 }])
+    expect(e.items().map((i) => i.id).sort()).toEqual(["pr:o/r#1", "task:fresh"])
+    // Once per version: another refresh logs nothing more.
+    await e.refresh()
+    expect(logged).toHaveLength(2)
+    expect(e.expiredSince(clock - day).map((c) => c.itemId)).toEqual(["task:stale", "proposal:p-old"])
+    expect(expiredDigest(e.expiredSince(clock - day))).toBe("🗂 Triage dismissed 2 idle cards (14+ days, no activity): Task stale · Epic Games login agent")
+    expect(expiredDigest([])).toBeNull()
+    // Activity (a new version) brings the task back.
+    sources = [blocked("stale", "v2", clock), blocked("fresh", "v1", clock - CARD_TTL_MS + 60_000), proposal]
+    await e.refresh()
+    expect(e.items().map((i) => i.id).sort()).toEqual(["task:fresh", "task:stale"])
   })
 })

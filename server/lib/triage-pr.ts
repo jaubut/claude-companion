@@ -51,6 +51,8 @@ export interface PrReadiness {
   mergeState: string // CLEAN | DIRTY | BEHIND | BLOCKED | UNSTABLE | UNKNOWN | ""
   headSha: string
   checks: ChecksState
+  /** OPEN | MERGED | CLOSED | "" (not reported) */
+  state?: string
 }
 
 const READINESS_FIELDS = "mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
@@ -87,14 +89,14 @@ export function holdReason(r: PrReadiness): HoldReason | null {
   return null
 }
 
-/** Mergeable state, head and checks; null when gh answers nothing usable. Throws GhUnreachable. */
-export async function prReadiness(gh: GhFn, url: string): Promise<PrReadiness | null> {
-  const r = await gh(["pr", "view", url, "--json", READINESS_FIELDS])
+/** Mergeable state, head and checks (+ OPEN/MERGED/CLOSED with `withState`); null when gh answers nothing usable. Throws GhUnreachable. */
+export async function prReadiness(gh: GhFn, url: string, withState = false): Promise<PrReadiness | null> {
+  const r = await gh(["pr", "view", url, "--json", withState ? `${READINESS_FIELDS},state` : READINESS_FIELDS])
   if (r.code !== 0) return null
   try {
     const o = JSON.parse(r.stdout) as Record<string, unknown>
     const s = (v: unknown) => (typeof v === "string" ? v : "")
-    return { mergeable: s(o.mergeable), mergeState: s(o.mergeStateStatus), headSha: s(o.headRefOid), checks: rollupState(o.statusCheckRollup) }
+    return { mergeable: s(o.mergeable), mergeState: s(o.mergeStateStatus), headSha: s(o.headRefOid), checks: rollupState(o.statusCheckRollup), ...(withState ? { state: s(o.state) } : {}) }
   } catch {
     return null
   }
