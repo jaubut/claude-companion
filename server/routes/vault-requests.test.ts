@@ -144,6 +144,17 @@ test("create refuses a name already in the vault (409 exists), hosts unchanged",
   expect(pushes).toHaveLength(0)
 })
 
+test("fulfil refuses when the name was added to the vault after the request (409 exists), store unchanged", async () => {
+  const id = await create()
+  writeFileSync(store, `A_KEY='1'  # a.io\n${ASK.name}='orig'  # us.posthog.com\n`, { mode: 0o600 })
+  const r = await call("POST", `/api/vault/requests/${id}/fulfil`, { value: SECRET })
+  expect(r.status).toBe(409)
+  expect(r.json.error).toBe("exists")
+  expect(readFileSync(store, "utf8")).not.toContain(SECRET)
+  expect(syncCalls).toBe(0)
+  expect((await call("GET", `/api/vault/requests/${id}`)).json.status).toBe("pending")
+})
+
 test("open-request cap (5 total, 1 per name) + own create budget; fulfil still 200", async () => {
   const first = await create()
   const dup = await call("POST", "/api/vault/requests", ASK)

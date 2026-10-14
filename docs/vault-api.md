@@ -65,7 +65,7 @@ Every response is JSON with `Cache-Control: no-store`, except the 401.
 | 404 | `not_found` | Secret request: unknown id (or the server restarted) |
 | 405 | `method_not_allowed` | Any other method |
 | 409 | `already_resolved` | Secret request already saved or declined |
-| 409 | `exists` | Secret request for a name already in the vault |
+| 409 | `exists` | Secret request for a name already in the vault (create or fulfil) |
 | 410 | `expired` | Secret request past its 15 min TTL |
 | 429 | `rate_limited` | Over budget. See `retry_after` and `Retry-After` |
 | 429 | `too_many_pending` | Secret request: 5 already pending, or one already pending for that name |
@@ -118,7 +118,7 @@ can't reach the session transcript. Code: `server/lib/secret-requests.ts`, route
   - `session_id`: `[A-Za-z0-9._:-]{0,128}`.
 
   Anything else → `400 bad_name|bad_hosts|bad_reason|bad_session_id`.
-- **No rotation by request:** a name already in the vault → `409 exists` (ask under a new name; rotate on the Vault UI).
+- **No rotation by request:** a name already in the vault → `409 exists` (ask under a new name; rotate on the Vault UI). Checked at create and again right before the fulfil's save, against the vault that will be written (the upstream one in forwarding mode); if that vault can't be listed → `502 vault_unreachable`, nothing saved, request stays pending.
 - **Open-request cap:** at most 5 pending requests in total and 1 per name, else `429 too_many_pending`.
 - **Fulfil uses the request's `name` and `hosts`.** The body's `value` is the only client input it reads. Any `name` or `hosts` in the body is ignored. The save runs through the normal upsert: validation, `tls-secrets.py sync`, rollback and audit. In upstream mode it is forwarded. If the save fails (`400 bad_value`, `500 sync_failed`, …), the request stays `pending` so the phone can retry.
 - **Lifecycle:** requests expire 15 min after creation. Each id resolves once.

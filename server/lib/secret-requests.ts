@@ -3,6 +3,7 @@ import { broadcast } from "../state"
 import { pushToAll } from "./push"
 import { type AuditOrigin, type VaultResult, listSecrets, saveSecret, validHosts, validName } from "./secret-store"
 import { clock } from "./vault-guard"
+import { forwardVault, vaultUpstream } from "./vault-upstream"
 
 // Agent-initiated secret requests (POST /api/vault/requests): an agent asks
 // for NAME, the phone shows a masked field, the value goes straight to the
@@ -81,7 +82,23 @@ function fail(status: number, error: string, message: string): Outcome {
   return { ok: false, status, body: { ok: false, error, message } }
 }
 
-export function createRequest(input: Record<string, unknown>): Outcome {
+// Rotation stays on the vault UI: a request can never overwrite an existing key.
+// Asked of the vault that will be written (the upstream one when forwarding);
+// null = couldn't tell, and the caller refuses.
+async function existsInVault(name: string): Promise<boolean | null> {
+  const up = vaultUpstream()
+  if (!up) return listSecrets().some((s) => s.name === name)
+  const r = await forwardVault(up, "GET", "/api/vault", "secret-request")
+  const list = r.status === 200 ? r.json?.secrets : null
+  return Array.isArray(list) ? list.some((s) => (s as { name?: unknown } | null)?.name === name) : null
+}
+
+function existsFail(name: string, exists: boolean | null): Outcome | null {
+  if (exists === null) return fail(502, "vault_unreachable", "Coffre injoignable — rien enregistré.")
+  return exists ? fail(409, "exists", `${name} existe déjà dans le coffre — demande un nouveau nom.`) : null
+}
+
+export async function createRequest(input: Record<string, unknown>): Promise<Outcome> {
   const { name, hosts, reason } = input
   const session = input.session_id ?? ""
   if (!validName(name)) return fail(400, "bad_name", "NOM en MAJUSCULES_ET_CHIFFRES (2–64)")
@@ -90,8 +107,8 @@ export function createRequest(input: Record<string, unknown>): Outcome {
     return fail(400, "bad_reason", `raison requise, ${MAX_REASON} caractères max, une ligne`)
   }
   if (typeof session !== "string" || !SESSION_RE.test(session)) return fail(400, "bad_session_id", "session_id invalide")
-  // Rotation stays on the vault UI: a request can never overwrite an existing key.
-  if (listSecrets().some((s) => s.name === name)) return fail(409, "exists", `${name} existe déjà dans le coffre — demande un nouveau nom.`)
+  const refused = existsFail(name, await existsInVault(name))
+  if (refused) return refused
   prune()
   const open = listRequests("pending")
   if (open.length >= MAX_OPEN || open.some((r) => r.name === name)) {
@@ -139,6 +156,12 @@ export async function fulfilRequest(id: string, value: unknown, origin: Partial<
   if (!("req" in e)) return e
   if (typeof value !== "string") return fail(400, "bad_value", `valeur de ${e.req.name} refusée`)
   e.state = "saving"
+  // Re-checked at save time: the key may have been added since the request.
+  const refused = existsFail(e.req.name, await existsInVault(e.req.name).catch(() => null))
+  if (refused) {
+    e.state = "pending"
+    return refused
+  }
   let r: VaultResult
   try {
     r = await saveSecret({ name: e.req.name, value, hosts: e.req.hosts }, origin)

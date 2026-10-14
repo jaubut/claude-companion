@@ -163,7 +163,7 @@ async function requests(req: Request, url: URL, origin: AuditOrigin, up: Upstrea
     if (!up && !vaultWritable()) return json({ ok: false, error: "vault_unavailable", message: "Coffre en lecture seule sur cet hôte (tls-secrets.py absent)." }, 501)
     const body = await readJson(req)
     if (!body) return json({ ok: false, error: "bad_json" }, 400)
-    const o = createRequest(body)
+    const o = await createRequest(body)
     return outcome(o, o.ok ? String(o.body.id) : "-", o.ok && typeof body.name === "string" ? body.name : "")
   }
   if (!ID_RE.test(id)) return json({ ok: false, error: "not_found" }, 404)
