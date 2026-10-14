@@ -218,7 +218,7 @@ Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*
 - **What becomes an item.** (1) Uploads (`POST /api/trips`) whose classifier confidence stayed under
   `COMPANION_TRIP_AUTOFILE_CONF` (0.85): ingested as `unclassified`, the guess kept in companion.db.
   (2) The dashboard backlog: `trip_entries` with `classification='unclassified'`, `status='closed'`, both ends
-  located, `km ≥ 0.5`, started in the last 60 days — oldest 20. An item shows once it has a classifier guess
+  located, `km ≥ 0.5`, started in the last 120 days — oldest 20 single cards (see the batch card below). An item shows once it has a classifier guess
   (computed one at a time in the background, Nominatim-bound), and disappears once the dashboard row is classified
   (from the card, the Trips tab or the web).
 - **Item.** `id` = `trip:<dashboard trip id>`, `project` = `"Travel log"`, `severity` always `low`, `title` =
@@ -238,6 +238,28 @@ Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*
   `409 stale` when the trip was classified elsewhere meanwhile (or the dashboard answers 404);
   `502 dashboard_error` for another dashboard refusal; `503 dashboard_unreachable` when it is down or the key is missing.
   `detail` = `{ classification, clientSlug? }`.
+- **Batch card (2026-10-14).** Backlog trips (up to 500 read, all guessed in the background) whose guess is
+  near-certain — Jev's own p ≥ 95 % for the guessed class AND ≥ 2 same-route past trips (both ends within 300 m)
+  all with that class (and, for business, no other client on that route) — go on ONE card instead of one each, once
+  there are ≥ 2: `id` = `trip:batch:<membership hash>` (the set changes → new id, so a tap on an older set is refused, never applied to the new one), `title` = "N trips ready to file as suggested", `problem` ends with the hidden
+  backlog count (trips on no card at all). Options: `approve` "Classify all N as suggested" · `reject` "Review
+  individually" (not destructive: the trips come back as single cards, under the 20 cap) · snooze. `approve` files
+  each trip still `unclassified` with its suggested class + client through the same override path; `detail` =
+  `{ filed, skipped, failed }`. Never routed to Opus; nothing is filed without the tap. A changed member set
+  (new guess, a trip classified elsewhere) makes a stale `choose` 409.
+
+
+## Queue hygiene (2026-10-14 — additive)
+
+- **PR state from GitHub.** The readiness read (`gh pr view --json …,state`) also drops a PR card (and an approved
+  row) GitHub reports MERGED or CLOSED, whatever the ledger says — the 48 h safety net included. A `done=1` task
+  whose newest `pr:*` row is still `pr:needs-human` keeps its card while the PR is open.
+- **Proposal dedupe.** One proposal card per target: a Body fix by component, else (project note or channel,
+  normalized title). The newest wins; the older stay `proposed` and age out with the TTL.
+- **TTL.** A `task` / `proposal` card with no activity (`updatedAt`) for 14 days is dismissed for that version, with
+  an `agent_activity` row (`agent_slug` companion, `action` `triage:expired`, `target_kind` task|proposal) — no row
+  written (Turso down) = not dismissed. A new version (any activity) brings it back. The day's dismissals join the
+  resolver's 21:00 #General digest.
 
 
 ## Source `mytask` (Jeremie's overdue tasks, 2026-10-06 — additive)

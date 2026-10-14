@@ -6,6 +6,7 @@ import type { Phrase, Severity } from "./triage"
 //                   a fallback row is retried after FALLBACK_RETRY_MS
 //   triage_snoozes  hidden until `until`
 //   triage_choices  the result of a choose per (item, Idempotency-Key), replayed
+//   triage_expired  a card auto-dismissed after CARD_TTL_MS idle, for that version only
 // prune() drops expired snoozes, choices after 7 days, phrases after 30.
 
 export const FALLBACK_RETRY_MS = 10 * 60_000
@@ -15,6 +16,8 @@ export const PHRASE_TTL_MS = 30 * 24 * 60 * 60_000
 export type PhraseOrigin = "model" | "fallback"
 
 export interface CachedPhrase { version: string; phrase: Phrase; severity: Severity; origin: PhraseOrigin; createdAt: number }
+
+export interface ExpiredCard { itemId: string; version: string; title: string; at: number }
 
 export interface ChoiceRecord { itemId: string; idemKey: string; optionId: string; result: Record<string, unknown>; createdAt: number }
 
@@ -26,6 +29,11 @@ export interface TriageStore {
   snooze(itemId: string, until: number): void
   choice(itemId: string, idemKey: string): ChoiceRecord | null
   saveChoice(rec: ChoiceRecord): void
+  /** This exact version was auto-dismissed (a new version = activity, the card comes back). */
+  expired(itemId: string, version: string): boolean
+  expire(card: ExpiredCard): void
+  /** Cards dismissed since `since` (the daily digest). */
+  expiredSince(since: number): ExpiredCard[]
   prune(now: number): void
 }
 
@@ -42,6 +50,7 @@ export function createTriageStore(db: Database): TriageStore {
       item_id TEXT NOT NULL, idem_key TEXT NOT NULL, option_id TEXT NOT NULL, result_json TEXT NOT NULL,
       created_at INTEGER NOT NULL, PRIMARY KEY (item_id, idem_key)
     );
+    CREATE TABLE IF NOT EXISTS triage_expired (item_id TEXT PRIMARY KEY, version TEXT NOT NULL, title TEXT NOT NULL, at INTEGER NOT NULL);
   `)
   return {
     phrase(itemId, version, now) {
@@ -78,6 +87,16 @@ export function createTriageStore(db: Database): TriageStore {
     saveChoice(c) {
       db.query("INSERT OR IGNORE INTO triage_choices (item_id, idem_key, option_id, result_json, created_at) VALUES (?, ?, ?, ?, ?)")
         .run(c.itemId, c.idemKey, c.optionId, JSON.stringify(c.result), c.createdAt)
+    },
+    expired(itemId, version) {
+      return !!db.query("SELECT 1 FROM triage_expired WHERE item_id = ? AND version = ?").get(itemId, version)
+    },
+    expire(c) {
+      db.query("INSERT OR REPLACE INTO triage_expired (item_id, version, title, at) VALUES (?, ?, ?, ?)").run(c.itemId, c.version, c.title, c.at)
+    },
+    expiredSince(since) {
+      return (db.query("SELECT item_id, version, title, at FROM triage_expired WHERE at >= ? ORDER BY at").all(since) as { item_id: string; version: string; title: string; at: number }[])
+        .map((r) => ({ itemId: r.item_id, version: r.version, title: r.title, at: r.at }))
     },
     prune(now) {
       db.query("DELETE FROM triage_snoozes WHERE until <= ?").run(now)

@@ -6,7 +6,7 @@ import type { Task } from "./orchestrator-chat"
 import {
   type SourceItem, type TriageItem, CONFLICT_MERGE_LABEL, PROBLEM_MAX, allowedActions, approvalSummary, buildItem, conflictPhrase, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
 } from "./triage"
-import { APPROVAL_TTL_MS, APPROVED_MERGE, NEEDS_HUMAN, PR_SAFETY_NET_MS, bodyComponentUrl, bodySources, parsePrUrl, prApprovals, prSources, proposalSource, taskSources } from "./triage-sources"
+import { APPROVAL_TTL_MS, APPROVED_MERGE, NEEDS_HUMAN, PR_SAFETY_NET_MS, bodyComponentUrl, bodySources, latestProposals, parsePrUrl, prApprovals, prGone, prSources, proposalSource, taskSources } from "./triage-sources"
 
 // Pure triage: collection per source, phrasing validation + fallback,
 // severity heuristics, ordering. No sqlite-bound module (the investigation
@@ -278,5 +278,58 @@ describe("merge intent (2026-10-05)", () => {
     expect(approvalSummary("conflict")).toBe("Approved — merging once the conflict clears")
     expect(approvalSummary("ci_pending")).toBe("Approved — merging once pending CI clears")
     expect(approvalSummary(null)).toBe("Approved — merging on the PR shepherd's next pass")
+  })
+})
+
+describe("queue hygiene (2026-10-14)", () => {
+  const ptask = (id: string, url: string, done: number, updated = NOW - 1000) => ({ id, text: `PR task ${id}`, done, updated_at: ts(updated), created_at: ts(updated), dispatch_status: "completed", dispatch_blocker: "", dispatch_pr_url: url, note_title: "Remorquage" })
+  const act = (id: number, target: string, action: string, url: string, at = NOW - 500) => ({ id, target_id: target, action, meta: JSON.stringify({ url, reason: "needs your review" }), ts: ts(at) })
+
+  test("(1) GitHub state: MERGED / CLOSED drop the card; OPEN or unknown keep it", () => {
+    expect(prGone("CLOSED")).toBe(true)
+    expect(prGone("MERGED")).toBe(true)
+    expect(prGone("OPEN")).toBe(false)
+    expect(prGone("")).toBe(false)
+    expect(prGone(undefined)).toBe(false)
+  })
+
+  test("(1b) done=1 task whose PR is still parked: shown; done=1 with no park as newest pr:* row, or with an outcome: not shown", () => {
+    const u66 = "https://github.com/jaubut/remorquage-pelchat/pull/66"
+    const u2 = "https://github.com/jaubut/x/pull/2"
+    const u3 = "https://github.com/jaubut/x/pull/3"
+    const u4 = "https://github.com/jaubut/x/pull/4"
+    const old = NOW - PR_SAFETY_NET_MS - 60_000
+    const items = prSources({
+      tasks: [ptask("828e0d7d", u66, 1), ptask("moved-on", u2, 1), ptask("merged", u3, 1), ptask("quiet-done", u4, 1, old)],
+      activity: [
+        act(1, "828e0d7d", NEEDS_HUMAN, u66),
+        act(2, "moved-on", NEEDS_HUMAN, u2), act(3, "moved-on", "pr:watching", u2),
+        act(4, "merged", NEEDS_HUMAN, u3), act(5, "merged", "outcome:merged", u3),
+      ],
+    }, NOW)
+    expect(items.map((i) => i.refId)).toEqual(["jaubut/remorquage-pelchat#66"])
+    expect(items[0]).toMatchObject({ facts: { reason: "needs your review" }, hints: { safetyNet: false }, ref: { taskId: "828e0d7d", number: 66 } })
+  })
+
+  const prop = (taskId: string, title: string, createdAt: number, over: Partial<Task> = {}) => ({
+    taskId, threadId: "body", prompt: `${title}\ndetails`, cwd: "/x", sessionKey: null, tmuxSession: null, reasoning: null, logTail: null,
+    status: "proposed", createdAt, updatedAt: createdAt, title, noteId: "projects/dash", ...over,
+  }) as Task
+
+  test("(2) proposals: same target + normalized title → the newest only; a Body fix by component; other targets kept", () => {
+    const list = [
+      prop("epic1", "Epic Games login agent", 1),
+      prop("epic2", "Epic games — login agent!", 5),
+      prop("mac1", "Mac secrets pull", 2),
+      prop("mac2", "mac secrets pull", 3),
+      prop("probe1", "Add Turso probes", 1),
+      prop("probe2", "Turso probe for the dashboard", 4),
+      prop("other", "Epic Games login agent", 2, { noteId: "projects/other" }),
+      prop("arch", "Architecture map", 1),
+      prop("fix12", "Fix PR 12", 1),
+      prop("fix13", "Fix PR 13", 2),
+    ]
+    const component = (id: string) => (id.startsWith("probe") ? "zettlab:turso" : null)
+    expect(latestProposals(list, component).map((t) => t.taskId)).toEqual(["epic2", "mac2", "probe2", "other", "arch", "fix12", "fix13"])
   })
 })

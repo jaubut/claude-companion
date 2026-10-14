@@ -50,12 +50,17 @@ export interface TriageEngineDeps {
   resolver?: TriageResolverHook | null
   /** Rows for the "Opus is on it" line that are not resolver runs (approved merges waiting on GitHub). */
   pending?: () => ResolvingItem[]
+  /** Log a task / proposal card idle past CARD_TTL_MS (throws = not logged, so not dismissed). Absent = no TTL. */
+  expire?: (src: SourceItem, idleMs: number) => Promise<void>
 }
 
 export interface ChooseInput { id: string; optionId: string; text?: string | null; idemKey?: string | null }
 export interface ChooseResult { status: number; body: Record<string, unknown> }
 
 export const HOUR_MS = 60 * 60_000
+/** A task / proposal card with no activity for this long is auto-dismissed (logged, listed in the daily digest). */
+export const CARD_TTL_MS = 14 * 24 * HOUR_MS
+const EXPIRES: ReadonlySet<string> = new Set(["task", "proposal"])
 
 export function createTriageEngine(deps: TriageEngineDeps) {
   const now = deps.now ?? Date.now
@@ -123,7 +128,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     r?.pump()
     const ask = r?.enabled() ? withAskOpus : (i: TriageItem) => i
     for (const [id, src] of sources) {
-      if (deps.store.snoozedUntil(id, t)) continue
+      if (deps.store.snoozedUntil(id, t) || deps.store.expired(id, src.version)) continue
       r?.consider(id, src)
       const v = r?.view(id, src) ?? null
       if (v?.state === "resolving") {
@@ -169,7 +174,25 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     const list = await deps.collect()
     sources = new Map(list.map((s) => [itemId(s.source, s.refId), s]))
     collected = true
+    await expireIdle()
     render()
+  }
+
+  /** Task / proposal cards idle past CARD_TTL_MS: logged first, then dismissed for that version. */
+  async function expireIdle(): Promise<void> {
+    if (!deps.expire) return
+    const t = now()
+    for (const [id, src] of sources) {
+      const idle = t - src.updatedAt
+      if (!EXPIRES.has(src.source) || idle < CARD_TTL_MS || deps.store.expired(id, src.version)) continue
+      try {
+        await deps.expire(src, idle)
+        deps.store.expire({ itemId: id, version: src.version, title: src.title, at: t })
+        log(`[triage] ${id} expired after ${Math.floor(idle / (24 * HOUR_MS))} days idle`)
+      } catch (err) {
+        log(`[triage] expire ${id} not logged (${(err as Error)?.message ?? err}) — kept`)
+      }
+    }
   }
 
   /** Single-flight; a request during a run triggers exactly one more run. */
@@ -314,6 +337,8 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     items: (): TriageItem[] => items,
     resolving: (): ResolvingItem[] => resolving,
     digest: (): string | null => triageDigest(items),
+    /** Cards auto-dismissed since `since` (the daily digest line). */
+    expiredSince: (since: number) => deps.store.expiredSince(since),
     /** Test seam: every background phrasing finished. */
     async idle(): Promise<void> {
       while (phrasing.size) await Promise.all([...phrasing.values()])

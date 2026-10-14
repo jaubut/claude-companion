@@ -346,11 +346,12 @@ export function repoMapSelfCheck(postToBody: boolean): RepoMapCheck {
 export const DIGEST_TICK_MS = 10 * 60_000
 export const DIGEST_HOUR = 21
 
-export function startResolverDigest(store: ResolverStore): () => void {
+/** `extra` = more lines for the same daily post (triage's TTL-dismissed cards). */
+export function startResolverDigest(store: ResolverStore, extra?: (now: number) => string | null): () => void {
   const hour = Number(process.env.COMPANION_RESOLVER_DIGEST_HOUR ?? DIGEST_HOUR)
   const tick = () => {
     try {
-      maybeDigest(store, Date.now(), Number.isFinite(hour) ? hour : DIGEST_HOUR, (text) => orchEmit(appendTurn("orchestrator", text, null, GENERAL_CHANNEL)))
+      maybeDigest(store, Date.now(), Number.isFinite(hour) ? hour : DIGEST_HOUR, (text) => orchEmit(appendTurn("orchestrator", text, null, GENERAL_CHANNEL)), extra)
     } catch (err) {
       companionLog(`[resolver] digest failed: ${(err as Error)?.message ?? err}`)
     }

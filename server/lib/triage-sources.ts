@@ -48,13 +48,35 @@ export interface ProposalInfo { channelName: string | null; project: string | nu
 
 export function proposalSource(t: Task, info: ProposalInfo): SourceItem | null {
   if (t.status !== "proposed") return null
-  const title = (t.title?.trim() || t.prompt.split("\n").find((l) => l.trim()) || t.prompt).trim()
+  const title = proposalTitle(t)
   return {
     source: "proposal", refId: t.taskId, version: String(t.updatedAt), title: clip(title, 120), project: info.project,
     createdAt: t.createdAt, updatedAt: t.updatedAt,
     facts: { channel: info.channelName ?? t.threadId, reasoning: t.reasoning ?? "", prompt: t.prompt, ...(info.macFix ? { host: "runs live on the Mac" } : {}) },
     url: null, ref: { source: "proposal", taskId: t.taskId, macFix: info.macFix },
   }
+}
+
+/** Title for dedupe: accents, case and punctuation folded away (digits kept: "PR 12" ≠ "PR 13"). */
+export const normalizeTitle = (t: string): string =>
+  t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+
+const proposalTitle = (t: Task): string => (t.title?.trim() || t.prompt.split("\n").find((l) => l.trim()) || t.prompt).trim()
+
+/**
+ * One proposal per target: a Body fix by its component, else by (project note or channel, normalized
+ * title). The newest wins; the older ones leave triage (they stay `proposed` and expire after the TTL).
+ */
+export function latestProposals(tasks: Task[], componentOf: (taskId: string) => string | null): Task[] {
+  const byKey = new Map<string, Task>()
+  for (const t of tasks) {
+    const component = componentOf(t.taskId)
+    const key = component ? `component:${component}` : `${t.noteId || t.threadId}|${normalizeTitle(proposalTitle(t))}`
+    const seen = byKey.get(key)
+    if (!seen || t.createdAt > seen.createdAt || (t.createdAt === seen.createdAt && t.updatedAt > seen.updatedAt)) byKey.set(key, t)
+  }
+  const keep = new Set(byKey.values())
+  return tasks.filter((t) => keep.has(t))
 }
 
 // ── PRs ──────────────────────────────────────────────────────────────────────
@@ -68,16 +90,25 @@ export function parsePrUrl(url: string | null | undefined): PrRef | null {
 
 export interface PrRows { tasks: Row[]; activity: Row[] }
 
-/** Open dispatch PRs (done=0) and their pr:* / outcome:* ledger rows. Column list from a fixed vocabulary only. */
+/** GitHub reports the PR merged or closed: no card, whatever the ledger says ("" / undefined = not known, keep). */
+export const prGone = (state: string | undefined): boolean => !!state && state !== "OPEN"
+
+/**
+ * Open dispatch PRs (done=0) and their pr:* / outcome:* ledger rows, plus done=1 tasks the shepherd
+ * ever parked (a task closed while its PR stays open, e.g. remorquage-pelchat #66): prSources keeps
+ * those only while the park is the newest pr:* row. Column list from a fixed vocabulary only.
+ */
 export async function queryPrRows(query: QueryFn, cols: DispatchColumns): Promise<PrRows> {
   const prCol = cols.prUrl ? "t.dispatch_pr_url" : "NULL"
   const prFilter = cols.prUrl ? "t.dispatch_pr_url LIKE 'https://github.com/%' OR " : ""
+  const parked = "t.id IN (SELECT target_id FROM agent_activity WHERE target_kind = 'task' AND action = ?)"
   const tasks = await query(
-    `SELECT t.id, t.text, t.created_at, t.updated_at, t.dispatch_status, t.dispatch_blocker, ${prCol} AS dispatch_pr_url, n.title AS note_title ` +
+    `SELECT t.id, t.text, t.done, t.created_at, t.updated_at, t.dispatch_status, t.dispatch_blocker, ${prCol} AS dispatch_pr_url, n.title AS note_title ` +
       "FROM tasks t LEFT JOIN notes n ON n.id = t.note_id " +
-      "WHERE t.done = 0 AND t.assignee LIKE 'agent:%' AND t.dispatch_status IN ('pr', 'completed') " +
-      `AND (${prFilter}t.id IN (SELECT target_id FROM agent_activity WHERE target_kind = 'task' AND action = ?)) LIMIT 200`,
-    [NEEDS_HUMAN],
+      "WHERE t.assignee LIKE 'agent:%' AND (" +
+      `(t.done = 0 AND t.dispatch_status IN ('pr', 'completed') AND (${prFilter}${parked})) OR (t.done = 1 AND ${parked})` +
+      ") ORDER BY t.done ASC, t.updated_at DESC LIMIT 200",
+    [NEEDS_HUMAN, NEEDS_HUMAN],
   )
   if (!tasks.length) return { tasks, activity: [] }
   const ids: SqlArg[] = tasks.map((r) => String(r.id))
@@ -163,6 +194,9 @@ export function prSources(rows: PrRows, now: number): SourceItem[] {
     const l = prLedger(byTask.get(id) ?? [], now)
     if (closedByOutcome(l) || l.approvalLive) continue
     const lastPr = l.lastPr
+    const done = Number(t.done) === 1
+    // A done task shows only while the shepherd's park is its newest pr:* row (no safety net, no expired approval).
+    if (done && lastPr?.action !== NEEDS_HUMAN) continue
     const updatedAt = parseTs(t.updated_at)
     const parkRow = lastPr?.action === NEEDS_HUMAN ? lastPr : l.approvalExpired ? l.park : undefined
     const parked = !!parkRow
@@ -181,7 +215,7 @@ export function prSources(rows: PrRows, now: number): SourceItem[] {
         reason: l.approvalExpired && parkRow !== lastPr ? `Your merge approval expired (7 days). ${why}` : why,
         review: s(t.dispatch_blocker), repo: `${pr.owner}/${pr.repo}`,
       },
-      url: pr.url, hints: { safetyNet },
+      url: pr.url, hints: { safetyNet, ...(done ? { taskDone: true } : {}) },
       ref: { source: "pr", taskId: id, prUrl: pr.url, repo: `${pr.owner}/${pr.repo}`, number: pr.number },
     })
   }

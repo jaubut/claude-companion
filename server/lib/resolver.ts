@@ -73,6 +73,7 @@ export function routable(src: SourceItem, opts: { createdByResolver?: (taskId: s
   const ref = src.ref
   switch (ref.source) {
     case "trip": return false
+    case "trip_batch": return false // tax filings: only Jeremie's tap
     case "mytask": return false // Jeremie's own list: his call, never Opus's
     case "proposal": return !opts.createdByResolver?.(ref.taskId)
     case "body": return opts.bodyLocal?.(ref.componentId) ?? true

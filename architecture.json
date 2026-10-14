@@ -3425,7 +3425,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 496,
+          "lines": 497,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -4328,7 +4328,7 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 325,
+          "lines": 350,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
@@ -4337,10 +4337,13 @@
             "ChooseInput",
             "ChooseResult",
             "HOUR_MS",
+            "CARD_TTL_MS",
             "createTriageEngine",
             "TriageEngine"
           ],
-          "state": [],
+          "state": [
+            "EXPIRES: Set"
+          ],
           "emits": [
             "orchestrator_triage"
           ],
@@ -4360,7 +4363,7 @@
         },
         {
           "path": "lib/triage-pr.ts",
-          "lines": 256,
+          "lines": 258,
           "kind": "lib",
           "exports": [
             "GhResult",
@@ -4399,7 +4402,7 @@
         },
         {
           "path": "lib/triage-sources.ts",
-          "lines": 262,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "PR_SAFETY_NET_MS",
@@ -4413,9 +4416,12 @@
             "taskSources",
             "ProposalInfo",
             "proposalSource",
+            "normalizeTitle",
+            "latestProposals",
             "PrRef",
             "parsePrUrl",
             "PrRows",
+            "prGone",
             "queryPrRows",
             "approvalTime",
             "prSources",
@@ -4445,7 +4451,7 @@
         },
         {
           "path": "lib/triage-store.ts",
-          "lines": 89,
+          "lines": 108,
           "kind": "lib",
           "exports": [
             "FALLBACK_RETRY_MS",
@@ -4453,6 +4459,7 @@
             "PHRASE_TTL_MS",
             "PhraseOrigin",
             "CachedPhrase",
+            "ExpiredCard",
             "ChoiceRecord",
             "TriageStore",
             "createTriageStore"
@@ -4471,7 +4478,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 487,
+          "lines": 517,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -4487,6 +4494,7 @@
             "ResolvingItem",
             "TriageItem",
             "SourceRef",
+            "TripFiling",
             "SourceItem",
             "Phrase",
             "TITLE_MAX",
@@ -4517,7 +4525,8 @@
             "prConflicting",
             "buildItem",
             "withAskOpus",
-            "triageDigest"
+            "triageDigest",
+            "expiredDigest"
           ],
           "state": [
             "DESTRUCTIVE: Set"
@@ -4775,17 +4784,25 @@
         },
         {
           "path": "lib/trip-triage.ts",
-          "lines": 204,
+          "lines": 305,
           "kind": "lib",
           "exports": [
             "BACKFILL_DAYS",
             "BACKFILL_CAP",
+            "BACKLOG_SCAN",
+            "BATCH_JEV_MIN",
+            "BATCH_MIN_HISTORY",
+            "BATCH_MIN_TRIPS",
+            "BATCH_REF",
             "BACKFILL_MIN_KM",
             "COLLECT_TTL_MS",
             "TripTriageDeps",
             "routeText",
             "whenText",
             "tripItem",
+            "batchEligible",
+            "BatchMember",
+            "batchItem",
             "createTripTriage",
             "TripTriage"
           ],
@@ -6700,7 +6717,7 @@
         },
         {
           "path": "wiring/resolver.ts",
-          "lines": 362,
+          "lines": 363,
           "kind": "lib",
           "exports": [
             "RESOLVER_ALLOWED",
@@ -6788,7 +6805,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 343,
+          "lines": 362,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -10878,6 +10895,12 @@
             "lib/trip-triage.ts"
           ]
         },
+        "TripFiling": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/trip-triage.ts"
+          ]
+        },
         "rowInput": {
           "module": "lib/trip-service.ts",
           "callers": [
@@ -14037,6 +14060,12 @@
             "wiring/triage.ts"
           ]
         },
+        "prGone": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
         "holdReason": {
           "module": "lib/triage-pr.ts",
           "callers": [
@@ -14062,6 +14091,12 @@
           ]
         },
         "BodyLookup": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "latestProposals": {
           "module": "lib/triage-sources.ts",
           "callers": [
             "wiring/triage.ts"
@@ -14129,6 +14164,12 @@
         },
         "setTriageDigest": {
           "module": "wiring/orchestrator.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "expiredDigest": {
+          "module": "lib/triage.ts",
           "callers": [
             "wiring/triage.ts"
           ]
