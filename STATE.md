@@ -175,12 +175,15 @@ Last updated: 2026-10-04
 | `server/wiring/triage.ts` | wire `repoCards` + runner seams (`unparkPr`, `actOn`, resolver ask); boot sweep in `startTriage` | 384 → ~410 ✓ |
 | `server/lib/triage-sources.ts` | `hints.parked = parkPrefix(reason)` on parked PRs | 298 → ~302 ✓ |
 | `server/lib/resolver.ts` | `Autonomy += "delegated"`, `decide()` branch, `REPO_YES_INSTRUCTION` | 497 → ~520 ✓ |
-| `server/lib/resolver-engine.ts` | `ask(id, src, instruction, autonomy = "elevated")`; order non-normal first | 269 → ~275 ✓ |
-| `server/lib/resolver-prompt.ts` | delegated preamble | 146 → ~156 ✓ |
-| `server/lib/resolver-store.ts` | `ORDER BY (autonomy != 'normal') DESC` | 204 → 204 ✓ |
-| `server/wiring/proposals.ts` / `server/wiring/resolver.ts` | NEW export `reviseProposal` (moved verbatim) / call it | 49 → ~70 · 363 → ~352 ✓ |
-| `docs/orchestrator-triage-api.md` | § Repo cards, Yes, No, run results, held rule | 490 → ~580 |
-| tests: `lib/triage-repos.test.ts`, `lib/repo-rework.test.ts`, `wiring/triage-repos.test.ts` (NEW), `lib/resolver.test.ts`, `lib/triage-engine.test.ts`, `routes/triage.test.ts` | real sqlite via `COMPANION_DB_PATH` / `:memory:` store | — |
+| `server/lib/resolver-engine.ts` | `ask(id, src, instruction, autonomy = "elevated")`; order non-normal first (:96 `!== "normal"`); `startedOn` stays `= normal` | 269 → ~275 ✓ |
+| `server/lib/resolver-prompt.ts` | :102 widen to `autonomy !== "normal"`; delegated preamble + why/confidence line | 146 → ~156 ✓ |
+| `server/lib/resolver-store.ts` | :150 `ORDER BY (autonomy != 'normal') DESC` | 204 → 204 ✓ |
+| `server/wiring/proposals.ts` / `server/wiring/resolver.ts` | NEW export `reviseProposal(…, markCreated)` (moved verbatim, injected `store.markCreated` callback) / call it | 49 → ~70 · 363 → ~352 ✓ |
+| `STATE.md:549` | `autonomy normal\|elevated\|delegated` wording | — |
+| `docs/orchestrator-triage-api.md` | § Repo cards, Yes, No, run results, held rule; autonomy wording (+`delegated`) | 490 → ~580 |
+| `docs/fixtures/orchestrator-triage-repos.json` | NEW: one server frame with `repos[]`, shared by `routes/triage.test.ts` and the iOS decode test | 0 → ~80 |
+| tests: `lib/triage-repos.test.ts`, `lib/repo-rework.test.ts`, `wiring/triage-repos.test.ts`, `wiring/proposals.test.ts`, `lib/resolver-prompt.test.ts` (NEW), `lib/resolver.test.ts`, `lib/resolver-engine.test.ts`, `lib/resolver-work.test.ts`, `lib/triage-engine.test.ts`, `lib/triage.test.ts`, `routes/triage.test.ts` | real sqlite via `COMPANION_DB_PATH` / `:memory:` store | — |
+| untouched on purpose | `wiring/resolver-dry-run.ts:77` | — |
 
 **Fan-in paths to guard**
 - `actOn()` reached from `choose` (per card) and the repo runner: both re-read `current()` and compare versions before `execute`; a second run on the same proposal reads `status !== proposed` → stale, never a double approve.
@@ -204,9 +207,20 @@ Last updated: 2026-10-04
 1. Tests first: `cd server && bun test lib/triage-repos.test.ts lib/repo-rework.test.ts wiring/triage-repos.test.ts lib/resolver.test.ts lib/triage-engine.test.ts routes/triage.test.ts` → cases: snapshot intersection; stale member skipped; new item untouched; held sensitive PR never unparked; unpark meta `by:"manual"`; delegated `why=money` → card, `cancel` → card; replay + `repo_busy`; interrupted sweep; No consent gating cancel; version changes on a value edit with equal counts.
 2. `bun test` (full) + `bunx tsc --noEmit` → green; `bun run tools/archmap/cli.ts . --quiet && … --lint` → no new FAIL.
 3. Zettlab, after deploy: `curl -s -H "Authorization: Bearer $COMPANION_TOKEN" $HOST/api/orchestrator/triage | jq '.repos[] | {repo, version, overview, n: (.members|length), held}'` → one card per repo, items[] unchanged.
-4. POST yes with one tampered member version → 202, that id in `skipped: changed`; same Idempotency-Key again → `Idempotent-Replayed: true`; POST no without note → 422.
+4. POST yes with one tampered member version → 202, that id in `skipped: changed`; same Idempotency-Key again → the stored `triage_repo_runs` row (pattern B, no second run); POST no without note → 422.
 5. Build 52 on the phone against the new server → cards render and per-card choose works (old-client compat).
 6. Manual pass (Jeremie, build 53): Yes on a repo with a proposal + a blocked task → proposal starts, task shows under "Opus is on it", answer turn appears in its channel; a sensitive PR stays as a card under its repo; No with a note → card shows "Opus is reworking" then returns with "Opus re-planned…". Not shipped until clean.
+
+**Analyst findings (2026-10-15)** (folded into Files / Verify above)
+- Publish: the dedupe key and the broadcast must include `repos` (triage-engine.ts:115, :119); `list()` returns `repos` from the same snapshot as `items` (:217). Tests: a repos-only change still emits a frame, no change emits none, `items` byte-identical; `routes/triage.test.ts` GET asserts the `repos` array. Shared fixture JSON (server frame with `repos`) for the iOS decode test.
+- Delegated autonomy: resolver-prompt.ts:102 must widen to `autonomy !== "normal"` (else `REPO_YES_INSTRUCTION` is silently dropped) + a prompt line asking for why/confidence. The delegated branch in `decide()` sits BEFORE the repeat check. resolver-engine.ts:96 ordering and resolver-store.ts:150 ORDER BY use `autonomy != 'normal'`; `startedOn` keeps `= normal`. Delegated runs are excluded from the daily cap and never expire (intended). Pick explicitly whether a delegated unpark sets `rescuedBefore` (proposal: no — a Yes is a human hand-back; state it in a test). resolver-dry-run.ts:77 untouched. Update STATE.md:549 + docs autonomy wording. Tests: resolver.test.ts, resolver-engine.test.ts, resolver-work.test.ts, a prompt test, store round-trip of `delegated`.
+- Revise: `reviseProposal` must still call `store.markCreated` (inject a callback), else the resolver re-resolves its own rescoped proposal. NEW `wiring/proposals.test.ts`.
+- `hints.parked` is set at triage-sources.ts:218; test next to triage.test.ts:311.
+- Routes: repo routes live inside `createTriageHandler` (else 404 fallthrough); decode the percent-encoded repo segment. Idempotency = pattern B (`triage_repo_runs` UNIQUE), NOT `withIdempotency`; replay of an interrupted run returns the stored row.
+- Unpark row: `INSERT agent_activity ('pr:unpark', 'task', <taskId>, meta {url: <park row's meta.url>, by:"manual", via:"companion-repo-yes", reason})` — `target_kind` must be `'task'`.
+- `yesPlan` held rules also cover `stale (no activity` and `dep auto-merge off` parks (they re-park instantly → loop).
+- Follow-up (claude-config, test-only, not this branch): extend `~/.claude/tools/pr-shepherd.test.ts` `ledgerOf` block with a `via:"companion-repo-yes"` row.
+- iOS half notes (go to the iOS plan, not here): `OrchestratorActions` payload is `[String:String]`, so `members` must be emitted as real JSON in the body; separate `.repoStale` decode (`TriageNext` would decode a RepoCard as `.gone`); `triageVisible` busy state for repo actions.
 
 **Out of scope:** shepherd changes (claude-config); repo-level push; Body/mytask folding; per-repo Yes rules (auto-yes); trip card removal (trips-auto-quarterly).
 
