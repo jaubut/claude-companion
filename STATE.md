@@ -560,7 +560,7 @@ Every surface that renders jobs: ChatTab (iPhone) and conversationPane (iPad) �
 - `bun cli.ts resolver-dry-run [--limit N]`: the real items, real Opus (read-only), nothing executed; prints what it WOULD do.
 
 **State decisions**
-- companion.db `resolver_runs(id PK, item_id, rkey, source, ref_key, status queued|running|resolved|prepared|failed|skipped, autonomy normal|elevated, instruction, model, summary, phrase_json, severity, action, reason, created_at, started_at, finished_at, day)` + `resolver_meta(key PK, value)` (last digest day) + `resolver_created(task_id PK)` (proposals Opus created — never re-resolved). Boot: queued/running rows → failed "interrupted by restart".
+- companion.db `resolver_runs(id PK, item_id, rkey, source, ref_key, status queued|running|resolved|prepared|failed|skipped, autonomy normal|elevated|delegated (delegated = Jeremie's Yes on a repo card, 2026-10-15; outside the daily cap, never expires in the queue, never counts as Opus's one PR rescue), instruction, model, summary, phrase_json, severity, action, reason, created_at, started_at, finished_at, day)` + `resolver_meta(key PK, value)` (last digest day) + `resolver_created(task_id PK)` (proposals Opus created — never re-resolved). Boot: queued/running rows → failed "interrupted by restart".
 - Resolver key (not the triage version, so a bumped `updated_at` never burns budget): task = `status|blocker`, PR = last `pr:*` row id, proposal = updatedAt, body = investigation id.
 - Store host only (`!vaultUpstream()`, Zettlab); the Mac runs no resolver.
 
