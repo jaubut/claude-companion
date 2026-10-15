@@ -338,6 +338,13 @@ Last updated: 2026-10-04
 7. **Jeremie's manual pass:** Needs you on the iPhone shows no trip cards. A new drive in the car appears in the Trips tab already marked business or personal. Flipping one in the dashboard review and then waiting 10 min puts it in `trip-report` overrides.
 
 **Out of scope:** classifier move into the dashboard; trip purpose text for the CRA logbook (dashboard follow-up); per-repo Needs you (needs-you plan); iOS Trips tab copy.
+**Build amendments (2026-10-15, PR #167 drift check):**
+- Extra exports: `trip-classify.ts` `HISTORY_MIN_CONF` (the gate constant from State decisions); `trip-report.ts` `CONF_BANDS`, `BandFlips`; `trip-service.ts` `AutofileOutcome`; `trip-autofile.ts` `TripAutofileDeps`, `SweepStats`, `sqlTime` (deps type + test seams).
+- `TripRow` gains `updatedAt` (the human-sync watermark). An upload that ends `unclassified` triggers `autofile.sweep()` via an optional `onUnclassified` callback; the upload path never calls `service.autofile()`.
+- Dead after Step A, removed: `readClassifications`, `trip-store.needsReview()`, the service `onChange` hook.
+- Step A also touched `wiring/resolver.ts` (`target()` trip fallback became unreachable) and `routes/resolver.test.ts` (removed `trips: null` option, a tsc error).
+- The paused sweep self-heals: any Turso read failure pauses it and it retries every tick (`lib/turso.ts` hides "no such column", so it can't be detected specifically).
+- Verify 4: `COMPANION_DB_PATH=<scratch> bun cli.ts trip-report --days 30` runs with no threshold line; on a seeded db it prints the per-band flip lines. Verify 5: `routes/trips.test.ts` "POST: ingested … 200 filed even at 0.55, never a client" (13/13 pass). Verify 6: iOS maps 404 → `.notFound` → `.rejected` (OrchestratorActions.swift:176,195), so a queued trip `choose` is dropped, not retried.
 
 ### Change Plan — needs-you-by-repo (2026-10-15) — server half (iOS half: `~/apps/claude companion/STATE.md` § needs-you-by-repo)
 **Request (Jeremie 2026-10-15):** "needs you should be group by repo… if we can oversee by repo, conflicts can resolve much easier and clearer since we see the right order of things." Server half: every triage card and every resolving row carries the GitHub repo its work lands in, resolved by the routing rule dispatch-run already uses.
