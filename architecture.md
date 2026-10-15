@@ -53,7 +53,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/herdr.ts` | 324 | lib | 25 | state: let clientMod, spawnedAgents: Map |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/trip-triage.ts` | 305 | lib | 18 |  |
-| `lib/live-repo.ts` | 301 | lib | 28 | state: let probe |
+| `lib/live-repo.ts` | 304 | lib | 28 | state: let probe |
 | `lib/triage-sources.ts` | 298 | lib | 25 | state: HOLDS: Set |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
