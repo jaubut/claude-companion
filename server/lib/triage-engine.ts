@@ -241,7 +241,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     if (!option) return fail(400, "unknown_option", { id: input.id })
     seen.kind = option.action.kind
     const text = input.text?.trim() || null
-    if ((option.action.kind === "answer_custom" || option.action.kind === "classify_custom") && !text) return fail(422, "text_required", { id: input.id })
+    if (option.action.kind === "answer_custom" && !text) return fail(422, "text_required", { id: input.id })
     if (text && text.length > ANSWER_MAX) return fail(400, "text_too_long", { id: input.id })
     if (option.action.kind === "ask_opus") return askOpus(input, src, option.action.instruction ?? null, text)
     if (option.action.kind === "snooze") {

@@ -68,12 +68,10 @@ export function resolverConfig(
   }
 }
 
-/** Which items the resolver takes. Trips are Jev + the human; a proposal Opus wrote itself is never re-resolved. */
+/** Which items the resolver takes. A proposal Opus wrote itself is never re-resolved. */
 export function routable(src: SourceItem, opts: { createdByResolver?: (taskId: string) => boolean; bodyLocal?: (componentId: string) => boolean } = {}): boolean {
   const ref = src.ref
   switch (ref.source) {
-    case "trip": return false
-    case "trip_batch": return false // tax filings: only Jeremie's tap
     case "mytask": return false // Jeremie's own list: his call, never Opus's
     case "proposal": return !opts.createdByResolver?.(ref.taskId)
     case "body": return opts.bodyLocal?.(ref.componentId) ?? true

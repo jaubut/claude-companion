@@ -2,12 +2,11 @@ import { type JevOutcome, type JevQuestion, systemOne } from "../lib/jev"
 import { companionLog } from "../lib/log"
 import { db } from "../lib/orchestrator-db"
 import { type ClientInfo, type HistTrip, LEARNED_HOME_RADIUS_M, createTripClassifier, historyFrom, homesFrom } from "../lib/trip-classify"
-import { type BandCount, type TripRow, fetchClients, ingestTrip, patchTrip, readBackfill, readBandCounts, readClassifications, readLocatedTrips, readTrip } from "../lib/trip-dashboard"
+import { type BandCount, type TripRow, fetchClients, ingestTrip, patchTrip, readBandCounts, readLocatedTrips, readTrip } from "../lib/trip-dashboard"
 import { createGeocoder } from "../lib/trip-geocode"
 import { type Place, learnHomes } from "../lib/trip-model"
 import { createTripService } from "../lib/trip-service"
 import { createTripStore } from "../lib/trip-store"
-import { createTripTriage } from "../lib/trip-triage"
 import { tursoQuery } from "../lib/turso"
 import { vaultUpstream } from "../lib/vault-upstream"
 
@@ -55,13 +54,7 @@ function build() {
     store, classifier, ingest: ingestTrip, patch: patchTrip, log: companionLog,
     readRow: async (id) => (await readTrip(tursoQuery, id)).row,
   })
-  const triage = createTripTriage({
-    store, classifier, service, clients: fetchClients, log: companionLog,
-    backfill: (since, limit, minKm) => readBackfill(tursoQuery, since, limit, minKm),
-    classifications: (ids) => readClassifications(tursoQuery, ids),
-  })
-  service.onChange(() => triage.invalidate())
-  return { store, classifier, service, triage, clients }
+  return { store, classifier, service, clients }
 }
 
 export type TripsLive = ReturnType<typeof build>

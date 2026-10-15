@@ -11,8 +11,8 @@ Owner: Companion server (Zettlab owns the orchestrator). Bearer-gated like every
 ```ts
 type TriageItem = {
   id: string                 // stable: `${source}:${refId}` — same item keeps its id across refreshes
-  source: "task" | "proposal" | "pr" | "body" | "trip" | "mytask"
-  refId: string              // dispatch task id / proposal taskId / "<repo>#<pr>" / component id / dashboard trip id
+  source: "task" | "proposal" | "pr" | "body" | "mytask"
+  refId: string              // dispatch task id / proposal taskId / "<repo>#<pr>" / component id / task id or "p:<noteId>" (mytask)
   title: string              // ≤ 80 chars, plain words
   project: string | null     // project title or repo name (human label)
   repo: string | null        // added 2026-10-15: GitHub repo name the work lands in — see "Repo" below
@@ -47,8 +47,6 @@ type TriageAction =
   | { kind: "close_pr" }
   | { kind: "open_url"; url: string }
   | { kind: "snooze"; hours: number }           // hide from triage until then
-  | { kind: "classify"; classification: "business" | "personal"; clientSlug?: string }  // trip: file it as is
-  | { kind: "classify_custom" }                 // trip: business, phone shows the client picker → POST with text = client slug
   | { kind: "ask_opus"; instruction?: string }  // hand the item back to Opus (2026-10-04) → POST with optional text = instruction
 ```
 
@@ -75,7 +73,7 @@ type TriageAction =
   shepherd's Turso marker (see claude-config PR-shepherd contract: tasks with
   `dispatch_status='pr'` and an `agent_activity` row `pr:needs-human` + reason).
 - `body`: investigations that failed twice (no proposal) — options: requeue investigation / open component / snooze.
-- `trip` (added 2026-10-04, travel log): trips the classifier was not sure about — see "Source trip" below.
+- trips: auto-filed, approved per quarter on the dashboard (no triage source since 2026-10-15, trips-auto-quarterly).
 - `mytask` (added 2026-10-06, PRJ-CT4M WP3): Jeremie's own overdue tasks — see "Source mytask" below.
 
 ## Repo (added 2026-10-15, needs-you-by-repo)
@@ -92,7 +90,7 @@ the work lands in, so the phone can group Needs you by repo. `project` stays the
   token-bounded (two or more → null). Output: the entry's `github` basename
   (`jaubut/TLSTUDIO` → `TLSTUDIO`), else its map `name`; no entry → null.
 - `pr` cards and approved-merge rows: the repo from the PR URL (`pr:jaubut/claude-companion-ios#12` → `claude-companion-ios`).
-- `body`, `trip`, `mytask`: null.
+- `body`, `mytask`: null.
 - The repo-map is read once per collect; unreadable → task/proposal `repo: null`, no card dropped, no error.
 - **`repo` never moves `version`** and is not in the phrase prompt or the phrase cache key:
   a card whose repo changes (null → name, a repo-map edit) keeps its id and version, its
@@ -233,44 +231,6 @@ The claude-config PR shepherd reviews each PR through a model cascade before dec
   invisible to triage until the shepherd writes another row (`pr:needs-human` re-parks it), so the shepherd owns
   resolving stale holds.
 
-## Source `trip` (travel log, 2026-10-04 — additive)
-
-Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*` and shows no trip cards.
-
-- **What becomes an item.** (1) Uploads (`POST /api/trips`) whose classifier confidence stayed under
-  `COMPANION_TRIP_AUTOFILE_CONF` (0.85): ingested as `unclassified`, the guess kept in companion.db.
-  (2) The dashboard backlog: `trip_entries` with `classification='unclassified'`, `status='closed'`, both ends
-  located, `km ≥ 0.5`, started in the last 120 days — oldest 20 single cards (see the batch card below). An item shows once it has a classifier guess
-  (computed one at a time in the background, Nominatim-bound), and disappears once the dashboard row is classified
-  (from the card, the Trips tab or the web).
-- **Item.** `id` = `trip:<dashboard trip id>`, `project` = `"Travel log"`, `severity` always `low`, `title` =
-  `Trip Granby → Montréal`, `problem` = `Trip Granby → Montréal, 82 km, Tue 9:10 — business?` (places = the
-  reverse-geocoded cities, or the place names when both ends are in one city; older than 6 days → `Thu Aug 20 9:10`),
-  `context` = one evidence line (`Jev 72 % business · 3 past trips (same route): 3 business (Humance), 0 personal · ends at home`).
-  Phrasing is deterministic — no sonnet call, no Jev severity call.
-- **Options** (`recommended` = the guess):
-  guess business → `Business — <client>` (`classify` business + clientSlug; `Business (no client)` without one) ·
-  `Business — other client` (`classify_custom`) · `Personal` (`classify` personal) · `Snooze for a day`.
-  guess personal → `Personal` · `Business — <best other client>` · `Business — other client` · snooze.
-- **Allowed actions**: `classify` · `classify_custom` · `snooze` (anything else is refused by validation).
-- **choose.** `classify` / `classify_custom` PATCH the dashboard trip (`classification`, `clientSlug`,
-  `classified_by: "human"`) through the server's dashboard key; the answer is recorded as a human override
-  (classifier history + `trip-report`). `classify_custom` needs `text` = a client slug from
-  `GET /api/trips/clients` (`422 text_required` without text, `400 unknown_client` for an unknown slug).
-  `409 stale` when the trip was classified elsewhere meanwhile (or the dashboard answers 404);
-  `502 dashboard_error` for another dashboard refusal; `503 dashboard_unreachable` when it is down or the key is missing.
-  `detail` = `{ classification, clientSlug? }`.
-- **Batch card (2026-10-14).** Backlog trips (up to 500 read, all guessed in the background) whose guess is
-  near-certain — Jev's own p ≥ 95 % for the guessed class AND ≥ 2 same-route past trips (both ends within 300 m)
-  all with that class (and, for business, no other client on that route) — go on ONE card instead of one each, once
-  there are ≥ 2: `id` = `trip:batch:<membership hash>` (the set changes → new id, so a tap on an older set is refused, never applied to the new one), `title` = "N trips ready to file as suggested", `problem` ends with the hidden
-  backlog count (trips on no card at all). Options: `approve` "Classify all N as suggested" · `reject` "Review
-  individually" (not destructive: the trips come back as single cards, under the 20 cap) · snooze. `approve` files
-  each trip still `unclassified` with its suggested class + client through the same override path; `detail` =
-  `{ filed, skipped, failed }`. Never routed to Opus; nothing is filed without the tap. A changed member set
-  (new guess, a trip classified elsewhere) makes a stale `choose` 409.
-
-
 ## Queue hygiene (2026-10-14 — additive)
 
 - **PR state from GitHub.** The readiness read (`gh pr view --json …,state`) also drops a PR card (and an approved
@@ -286,7 +246,7 @@ Trips Jeremie confirms. Store host only (Zettlab); the Mac forwards `/api/trips*
 
 ## Source `mytask` (Jeremie's overdue tasks, 2026-10-06 — additive)
 
-Store host only (like `trip`). Open tasks with `assignee IN ('human:jeremie','human')` and a `due_date` before today
+Store host only. Open tasks with `assignee IN ('human:jeremie','human')` and a `due_date` before today
 (America/Toronto), read through `lib/my-tasks.ts` (contract: docs/tasks-api.md). Deterministic card, no model call,
 no Jev severity, never routed to Opus, no "Ask Opus…" option.
 
@@ -342,13 +302,13 @@ offers "Ask for changes" right after changes were made.
 - `items[]` never holds an item Opus is still working on or has queued. Those are in `resolving[]`, for a
   compact "Opus is on it (N)" line: N = queued + resolving (working runs first, then the queue in order;
   a queued row reads "Opus queued (3)"). In `items`, `resolver.status` is `prepared` (Opus's card) or `failed`
-  (the run fell through: the normal card, marked); absent = Opus never touched it (trip, budget, kill switch).
-- Every non-trip card carries, LAST and never recommended, option `{ id: "opus", label: "Ask Opus…",
+  (the run fell through: the normal card, marked); absent = Opus never touched it (mytask, budget, kill switch).
+- Every non-mytask card carries, LAST and never recommended, option `{ id: "opus", label: "Ask Opus…",
   action: { kind: "ask_opus" } }` while the resolver is on. An Opus card may also carry a prefilled one,
   e.g. `{ label: "Ask for changes", action: { kind: "ask_opus", instruction: "Fix on the PR branch: …" } }`.
 - `POST …/choose` with an `ask_opus` option: `text` (optional) is Jeremie's instruction and wins over a
   prefilled `instruction`. → `200 { ok, id, result: "done", next, detail: { resolver: "resolving" } }`; the item
-  moves to `resolving[]` in the next frame. `409 resolver_disabled` (kill switch / Mac) · `409 not_routable` (trip).
+  moves to `resolving[]` in the next frame. `409 resolver_disabled` (kill switch / Mac) · `409 not_routable` (mytask).
   Choosing any option on an item that is in `resolving[]` → `409 resolving` (`next: null`).
 
 ### What Opus does per source (the server's policy decides; the model only proposes)
@@ -375,7 +335,6 @@ offers "Ask for changes" right after changes were made.
   recommendation. A proposal Opus created itself is never resolved again.
 - **Body failed twice** (components on this host): a deeper read-only investigation (the investigator's tools,
   Opus, 20 min) → a #Body fix proposal or a plain explanation; the component's item then leaves triage.
-- **Trip:** never (Jev + Jeremie).
 - **Mytask:** never (Jeremie's own list; no Ask Opus button).
 
 `ask_opus` = elevated autonomy for that item only: Opus may execute any action the source allows, outside the

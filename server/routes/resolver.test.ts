@@ -111,7 +111,7 @@ function makeHarness() {
   const engine = triageWiring.createLiveTriage({
     dispatch: w, gh, model: async () => null, severity: async () => null,
     investigations: () => invLib.createInvestigationStore(new Database(":memory:")),
-    body: { get: async () => ({ components: [] }) } as never, trips: null, broadcast: () => {},
+    body: { get: async () => ({ components: [] }) } as never, broadcast: () => {},
     resolverLive: {
       db: new Database(":memory:"), config: () => cfg,
       overrides: {
