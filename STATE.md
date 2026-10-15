@@ -204,6 +204,7 @@ Last updated: 2026-10-04
 - By-design expectation edits: `triage.test.ts` merge-intent `prApprovals` expects `repo: "tls-dashboard-v2"` (planned `ApprovedPr.repo`); `triage-engine.test.ts` pending-row fixture gains `repo: null` (setup).
 - An unknown `[autodev:deps:<name>:…]` marker falls through to the next rule (dispatch-run returns null) — display only.
 - Typecheck command is `bunx tsc --noEmit -p tsconfig.server.json` (no `server/tsconfig.json`).
+- `server/lib/live-repo.ts` also exports `repoEntriesSafe()` (parseRepoMap of the live source → `[]` on any failure; the never-throw read `repoOf` uses) and the named type `RepoNameInput` (`{ text, noteHay, cwd? }`, the `repoNameFor` input). Sole caller: `wiring/triage.ts`.
 
 **Analyst findings (2026-10-15, reconciled)**
 - All 5 contracts are ADDITIVE, with no break for shipped iOS. Shipped decoders use explicit `Keys` + `Lossy` and ignore `repo`.
