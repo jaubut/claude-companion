@@ -6,6 +6,8 @@ import type { SourceItem, TriageOption } from "../lib/triage"
 import { type ExecOutcome, createTriageEngine } from "../lib/triage-engine"
 import { type TriageStore, createTriageStore } from "../lib/triage-store"
 import { TursoUnreachable } from "../lib/turso"
+import type { DispatchTask } from "../lib/dispatch-tasks"
+import { actionTurn } from "./triage"
 import { type RepoRunnerDeps, createRepoRunner, sweepInterruptedRuns } from "./triage-repos"
 
 // The repo-card runner (needs-you-repo-yes-no, 2026-10-15) over the real
@@ -260,5 +262,16 @@ describe("No", () => {
     await runner.idle()
     expect(store.repoRun("dash", "n5")).toMatchObject({ status: "failed", summary: "Opus did not answer — nothing changed" })
     expect(executed).toEqual([])
+  })
+})
+
+describe("the answer turn says it came from the Yes (2026-10-15, PR #168 drift check)", () => {
+  const t = { id: "abcdef0123456789", agent: "builder", title: "Invoice totals" } as DispatchTask
+
+  test("a delegated actor appends '(your Yes on <repo>)'; plain Opus and Jeremie's tap read as before", () => {
+    expect(actionTurn("answer", t, "Per line.", "Opus (your Yes on dash)")).toBe("🤖 Opus answered [abcdef01] builder — Invoice totals (your Yes on dash)\nAnswer: Per line.")
+    expect(actionTurn("requeue", t, null, "Opus (your Yes on dash)")).toBe("🤖 Opus requeued [abcdef01] builder — Invoice totals (your Yes on dash)")
+    expect(actionTurn("answer", t, "Per line.", "Opus")).toBe("🤖 Opus answered [abcdef01] builder — Invoice totals\nAnswer: Per line.")
+    expect(actionTurn("cancel", t, null, "triage")).toBe("cancelled [abcdef01] builder — Invoice totals (triage)")
   })
 })

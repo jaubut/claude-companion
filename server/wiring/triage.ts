@@ -88,13 +88,20 @@ async function jevSeverity(src: SourceItem, phrase: Phrase): Promise<Severity | 
   return a?.type === "choice" && a.confidence >= JEV_MIN_CONF && (a.choice === "urgent" || a.choice === "normal" || a.choice === "low") ? a.choice : null
 }
 
-/** `by` = who acted: "triage" (Jeremie's tap) or "Opus" (the resolver). */
+/** "Opus" → "", "Opus (your Yes on dash)" (a delegated run, lib/resolver-work.ts) → " (your Yes on dash)"; null = not Opus. */
+function opusNote(by: string): string | null {
+  if (by === "Opus") return ""
+  return by.startsWith("Opus (") ? ` ${by.slice("Opus ".length)}` : null
+}
+
+/** `by` = who acted: "triage" (Jeremie's tap), "Opus" (the resolver) or "Opus (your Yes on <repo>)" (his Yes, delegated). */
 export function actionTurn(kind: string, t: DispatchTask, answer: string | null, by = "triage"): string {
   const who = `[${t.id.slice(0, 8)}] ${t.agent ?? "agent"} — ${t.title}`
-  if (by === "Opus") {
-    if (kind === "cancel") return `🤖 Opus cancelled ${who}`
-    if (kind === "requeue") return `🤖 Opus requeued ${who}`
-    return `🤖 Opus answered ${who}\nAnswer: ${(answer ?? "").slice(0, 500)}`
+  const yes = opusNote(by)
+  if (yes !== null) {
+    if (kind === "cancel") return `🤖 Opus cancelled ${who}${yes}`
+    if (kind === "requeue") return `🤖 Opus requeued ${who}${yes}`
+    return `🤖 Opus answered ${who}${yes}\nAnswer: ${(answer ?? "").slice(0, 500)}`
   }
   if (kind === "cancel") return `cancelled ${who} (${by})`
   if (kind === "requeue") return `requeued ${who} (${by})`
@@ -290,7 +297,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
       prCache = null
       const cached = dispatch.cached(target.taskId)
       const channelId = cached ? dispatch.threadIdFor(cached) : "general"
-      orchEmit(appendTurn("orchestrator", `${by === "Opus" ? "🤖 Opus " : ""}${kind === "merge" ? "merged" : "closed"} ${src.ref.repo}#${target.number}${by === "Opus" ? "" : ` (${by})`}\n${target.prUrl}`, target.taskId, channelId))
+      const yes = opusNote(by)
+      orchEmit(appendTurn("orchestrator", `${yes !== null ? "🤖 Opus " : ""}${kind === "merge" ? "merged" : "closed"} ${src.ref.repo}#${target.number}${yes ?? ` (${by})`}\n${target.prUrl}`, target.taskId, channelId))
       void dispatch.poll()
     }
     return out
@@ -372,7 +380,7 @@ const metaOf = (raw: unknown): Record<string, unknown> => {
   }
 }
 
-export interface RepoSeamOpts {
+interface RepoSeamOpts {
   dispatch?: DispatchWiring
   /** The resolver store's markCreated (a rescope is never re-resolved); default = the live resolver's. */
   markCreated?: (taskId: string, now: number) => void

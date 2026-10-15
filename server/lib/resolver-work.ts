@@ -59,6 +59,9 @@ export interface PlanReport {
 
 export const BY = "Opus"
 
+/** Who acts in turns: a delegated run (Jeremie's Yes on a repo card) says so — "🤖 Opus answered … (your Yes on <repo>)". */
+const actor = (job: Job): string => (job.autonomy === "delegated" ? `${BY} (your Yes on ${job.src.repo ?? "Other work"})` : BY)
+
 const what = (p: Plan): string => (p.kind === "card" ? "prepare a card" : p.action.kind === "answer" ? `answer: "${clip(p.action.text, 120)}"`
   : p.action.kind === "close_pr" ? `close the PR (${p.action.reason})` : p.action.kind === "reject" ? `reject (${p.action.reason})`
     : p.action.kind === "route" ? `route to ${p.action.repo}` : p.action.kind === "fix" ? `fix run on the PR branch${p.then === "unpark" ? " + hand back to the shepherd" : ", then a card"}`
@@ -187,7 +190,7 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     }
     if (a.kind === "close_pr") await seams.comment(src, `🤖 **Opus resolver** — closing this PR: ${a.reason}`)
     const action: TriageAction = a.kind === "answer" ? { kind: "answer", text: a.text } : { kind: a.kind } as TriageAction
-    const res = await seams.execute(src, action, BY)
+    const res = await seams.execute(src, action, actor(job))
     if (res.kind === "stale") return { kind: "resolved", action: "stale", summary: `already moved${res.reason ? ` (${res.reason})` : ""}`, outcome: "no_change" }
     if (res.kind === "error") return tried(job, out, ctx, a, res.error)
     seams.attempt?.(src, a.kind, null)

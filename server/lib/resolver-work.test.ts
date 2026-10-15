@@ -411,7 +411,7 @@ describe("delegated (Jeremie's Yes on a repo card, 2026-10-15)", () => {
   test("a 0.6 answer with a plain preference → answered by Opus, the run recorded as delegated", async () => {
     model = reply({ action: { kind: "answer", text: "Round per line." }, needsJeremie: true, why: "preference", confidence: 0.6 })
     const out = await work()(job(task(), "delegated", "Yes on the repo"))
-    expect(executed).toEqual([{ action: { kind: "answer", text: "Round per line." }, by: "Opus" }])
+    expect(executed).toEqual([{ action: { kind: "answer", text: "Round per line." }, by: "Opus (your Yes on Other work)" }])
     expect(out).toMatchObject({ kind: "resolved", action: "answer" })
     expect(records[0]!.meta).toMatchObject({ autonomy: "delegated" })
   })
@@ -430,5 +430,15 @@ describe("delegated (Jeremie's Yes on a repo card, 2026-10-15)", () => {
     expect(calls).toContain("fix:Mock the clock")
     expect(calls.some((c) => c.startsWith("unpark:"))).toBe(true)
     expect(out).toMatchObject({ kind: "resolved", action: "fix" })
+  })
+})
+
+describe("delegated: the actor names Jeremie's Yes (2026-10-15, PR #168 drift check)", () => {
+  test("the executor gets 'Opus (your Yes on <repo>)' on a delegated run, plain 'Opus' otherwise", async () => {
+    model = reply({ action: { kind: "answer", text: "Round per line." } })
+    await work()(job({ ...task(), repo: "tls-dashboard-v2" }, "delegated", "Yes on the repo"))
+    await work()(job({ ...task(), repo: "tls-dashboard-v2" }, "elevated", "do it"))
+    await work()(job({ ...task(), repo: "tls-dashboard-v2" }))
+    expect(executed.map((e) => e.by)).toEqual(["Opus (your Yes on tls-dashboard-v2)", "Opus", "Opus"])
   })
 })
