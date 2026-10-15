@@ -311,6 +311,11 @@ describe("repoNameFor (dispatch-run order: marker > cwd > note > text)", () => {
     expect(repoNameFor({ text: "  [repo:companion-ios] fix the sheet", noteHay: "projects/x TLS Dashboard" }, map)).toBe("claude-companion-ios")
   })
 
+  test("[repo:] marker by GitHub name (what the route action writes), any case", () => {
+    expect(repoNameFor({ text: "[repo:claude-companion-ios] split WSFrame", noteHay: "projects/p PRJ-CT4M Claude Companion" }, map)).toBe("claude-companion-ios")
+    expect(repoNameFor({ text: "[repo:tlstudio] x", noteHay: "projects/d TLS Dashboard" }, map)).toBe("TLSTUDIO")
+  })
+
   test("unknown marker name falls through to the next rule", () => {
     expect(repoNameFor({ text: "[repo:nope] x", noteHay: "projects/d TLS Dashboard" }, map)).toBe("tls-dashboard-v2")
     expect(repoNameFor({ text: "[autodev:deps:nope:pkg:1.0] x", noteHay: "projects/d TLS Dashboard" }, map)).toBe("tls-dashboard-v2")
