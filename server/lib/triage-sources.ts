@@ -209,7 +209,7 @@ export function prSources(rows: PrRows, now: number): SourceItem[] {
     const why = parked ? s(m.reason) || "The PR shepherd could not finish this PR alone." : "Open for more than 2 days with no review activity."
     out.push({
       source: "pr", refId: `${pr.owner}/${pr.repo}#${pr.number}`, version: `${s(t.updated_at)}|${lastPr ? s(lastPr.id) : "none"}`,
-      title: clip(s(t.text) || `PR #${pr.number}`, 120), project: s(t.note_title) || pr.repo,
+      title: clip(s(t.text) || `PR #${pr.number}`, 120), project: s(t.note_title) || pr.repo, repo: pr.repo,
       createdAt: since, updatedAt: Math.max(updatedAt, since),
       facts: {
         reason: l.approvalExpired && parkRow !== lastPr ? `Your merge approval expired (7 days). ${why}` : why,
@@ -229,6 +229,8 @@ export interface ApprovedPr {
   url: string
   title: string
   project: string
+  /** GitHub repo name (no owner), from the PR URL. */
+  repo: string
   reason: MergeHold | null
   approvedAt: number
   approvedHeadSha: string
@@ -250,7 +252,7 @@ export function prApprovals(rows: PrRows, now: number): ApprovedPr[] {
     const reason = s(m.reason)
     out.push({
       id: `pr:${pr.owner}/${pr.repo}#${pr.number}`, taskId: id, url: pr.url,
-      title: clip(s(t.text) || `PR #${pr.number}`, 120), project: s(t.note_title) || pr.repo,
+      title: clip(s(t.text) || `PR #${pr.number}`, 120), project: s(t.note_title) || pr.repo, repo: pr.repo,
       reason: HOLDS.has(reason) ? reason as MergeHold : null,
       approvedAt: approvalTime(l.approval!), approvedHeadSha: s(m.approvedHeadSha),
     })

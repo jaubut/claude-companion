@@ -19,7 +19,7 @@ import type { ShFn } from "./resolver-fix"
 // resolver's fix run (→ forwarded to the Mac peer) and as `no_cwd` for live
 // mode, even when a clone exists on this host.
 
-export interface RepoEntry { match: RegExp; path: string; name?: string; project?: string; requires?: string[] }
+export interface RepoEntry { match: RegExp; path: string; name?: string; project?: string; requires?: string[]; /** GitHub "owner/name" (claude-config `github`). */ github?: string }
 
 const toolsDir = (): string => join(process.env.HOME || homedir(), ".claude", "tools")
 
@@ -91,6 +91,8 @@ export function parseRepoMap(source: string, home: string = process.env.HOME || 
       if (m[1]) e.name = m[1]
       const project = m[5] ?? /project:\s*"([^"\n]*)"/.exec(m[6] ?? "")?.[1]
       if (project) e.project = project
+      const github = /github:\s*"([^"\n]*)"/.exec(m[6] ?? "")?.[1]
+      if (github) e.github = github
       const requires = parseRequires(m[6] ?? "")
       if (requires.length) e.requires = requires
       out.push(e)
@@ -247,4 +249,52 @@ export async function localRepoFor(slug: string, hay: string, sh: ShFn, host: Ho
     if (r.ok && r.out.trim().toLowerCase().replace(/\.git$/, "").endsWith(slug.toLowerCase())) return e.path
   }
   return null
+}
+
+// ── which repo a triage card's work lands in (docs/orchestrator-triage-api.md#repo) ──
+
+/** The repo name a card shows: the GitHub name ("TLSTUDIO") when the entry has one, else the map name. */
+export function githubName(entry: Pick<RepoEntry, "github" | "name">): string | null {
+  const gh = entry.github?.trim()
+  if (gh) return gh.slice(gh.lastIndexOf("/") + 1) || null
+  return entry.name ?? null
+}
+
+export interface RepoNameInput { text: string; noteHay?: string | null; cwd?: string | null }
+
+const DEP_MARKER = /\[autodev:deps:([^:\]\s]+):/
+const REPO_MARKER = /^\[repo:([A-Za-z0-9._-]+)\]/
+const escRe = (n: string): string => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/**
+ * The repo a task / proposal targets, by dispatch-run's order (minus `repo_path`):
+ * `[autodev:deps:<name>:…]` / `[repo:<name>]` marker → the proposal's cwd → the note
+ * (`"<noteId> <noteTitle>"`, any host) → the ONE map name the text names (token-bounded).
+ * An unknown marker name falls through. Pure: no file or directory read.
+ */
+export function repoNameFor(input: RepoNameInput, entries: RepoEntry[]): string | null {
+  const byName = (n: string | undefined) => (n ? entries.find((e) => e.name === n) : undefined)
+  const text = String(input.text ?? "")
+  const marked = byName(DEP_MARKER.exec(text)?.[1]) ?? byName(REPO_MARKER.exec(text.trim())?.[1])
+  if (marked) return githubName(marked)
+  if (input.cwd?.trim()) {
+    const at = entriesAt(input.cwd, entries)[0]
+    if (at) return githubName(at)
+  }
+  const hay = input.noteHay?.trim()
+  const viaNote = hay ? entries.find((e) => e.match.test(hay)) : undefined
+  if (viaNote) return githubName(viaNote)
+  const names = [...new Set(entries.map((e) => e.name).filter((n): n is string => !!n))]
+    .filter((n) => new RegExp(`(^|[^\\w-])${escRe(n)}($|[^\\w-])`, "i").test(text))
+  return names.length === 1 ? githubName(byName(names[0])!) : null
+}
+
+/** REPO_MAP entries for a triage pass; [] when unreadable or unparsable (never throws). */
+export function repoEntriesSafe(read: () => string | null = () => readRepoMapSource()): RepoEntry[] {
+  try {
+    const source = read()
+    return source ? parseRepoMap(source) : []
+  } catch {
+    return []
+  }
 }

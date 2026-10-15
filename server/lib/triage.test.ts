@@ -228,7 +228,7 @@ describe("merge intent (2026-10-05)", () => {
     const rows = { tasks: [task], activity: [act(1, NEEDS_HUMAN, { reason: "touches books" }), approve(2, NOW - 1000)] }
     expect(prSources(rows, NOW)).toEqual([])
     expect(prApprovals(rows, NOW)).toEqual([{
-      id: "pr:jaubut/tls-dashboard-v2#164", taskId: "t164", url: URL, title: task.text, project: "Dashboard",
+      id: "pr:jaubut/tls-dashboard-v2#164", taskId: "t164", url: URL, title: task.text, project: "Dashboard", repo: "tls-dashboard-v2",
       reason: "conflict", approvedAt: NOW - 1000, approvedHeadSha: "abc",
     }])
   })
@@ -331,5 +331,45 @@ describe("queue hygiene (2026-10-14)", () => {
     ]
     const component = (id: string) => (id.startsWith("probe") ? "zettlab:turso" : null)
     expect(latestProposals(list, component).map((t) => t.taskId)).toEqual(["epic2", "mac2", "probe2", "other", "arch", "fix12", "fix13"])
+  })
+})
+
+describe("repo field (needs-you-by-repo, 2026-10-15)", () => {
+  test("buildItem always emits repo: null when unset, the value when set (fallback, cached and prepared phrases alike)", () => {
+    const src = blockedSrc()
+    expect(src.repo).toBeUndefined() // collectors stay pure: wiring sets it
+    const fb = buildItem(src, fallbackPhrase(src), "normal")
+    expect(fb).toHaveProperty("repo", null)
+    expect(Object.keys(fb)).toContain("repo")
+    const named = { ...src, repo: "claude-companion" }
+    expect(buildItem(named, fallbackPhrase(named), "low").repo).toBe("claude-companion")
+    const prepared = { ...fallbackPhrase(named), title: "Opus card" }
+    expect(buildItem(named, prepared, "urgent", { status: "prepared", summary: "s", model: "m", finishedAt: 1 }).repo).toBe("claude-companion")
+  })
+
+  test("repo never reaches the phrase prompt", () => {
+    const src = blockedSrc()
+    expect(phrasePrompt({ ...src, repo: "TLSTUDIO" })).toBe(phrasePrompt(src))
+  })
+
+  test("prSources: repo = the GitHub repo NAME from the URL (never owner/repo); version unchanged", () => {
+    const row = { id: "t", text: "x", updated_at: ts(NOW), created_at: ts(NOW), dispatch_status: "completed", dispatch_blocker: "", dispatch_pr_url: "https://github.com/jaubut/claude-companion-ios/pull/12", note_title: "Companion iOS" }
+    const [pr] = prSources({ tasks: [row], activity: [{ id: 1, target_id: "t", action: NEEDS_HUMAN, meta: "{}", ts: ts(NOW) }] }, NOW)
+    expect(pr!.refId).toBe("jaubut/claude-companion-ios#12")
+    expect(pr!.repo).toBe("claude-companion-ios")
+    expect(pr!.version).toBe(`${ts(NOW)}|1`)
+    expect(buildItem(pr!, fallbackPhrase(pr!), "normal").repo).toBe("claude-companion-ios")
+  })
+
+  test("prApprovals: repo set from the PR URL", () => {
+    const URL = "https://github.com/jaubut/TLSTUDIO/pull/4"
+    const row = { id: "t4", text: "Hero", updated_at: ts(NOW - 60_000), created_at: ts(NOW - 60_000), dispatch_status: "completed", dispatch_blocker: "", dispatch_pr_url: URL, note_title: null }
+    const activity = [
+      { id: 1, target_id: "t4", action: NEEDS_HUMAN, meta: JSON.stringify({ url: URL }), ts: ts(NOW - 900) },
+      { id: 2, target_id: "t4", action: APPROVED_MERGE, meta: JSON.stringify({ url: URL, approvedAt: new Date(NOW - 500).toISOString(), approvedHeadSha: "h" }), ts: ts(NOW - 500) },
+    ]
+    const [a] = prApprovals({ tasks: [row], activity }, NOW)
+    expect(a!.repo).toBe("TLSTUDIO")
+    expect(a!.project).toBe("TLSTUDIO")
   })
 })

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   type HostProbe, XCODE_LIVE_REASON, checkRepoMap, fixRepoHere, hostCan, localRepoFor, locateRepoMap, parseRepoMap, parseRequires, repoForNote,
-  repoMapCandidates, repoMapCheckLine, resolveLiveCwd, resolveLiveCwdWhy,
+  githubName, repoEntriesSafe, repoMapCandidates, repoMapCheckLine, repoNameFor, resolveLiveCwd, resolveLiveCwdWhy,
 } from "./live-repo"
 import { detectPrUrl, detectResultRef } from "./dispatch-tasks"
 
@@ -261,6 +261,92 @@ describe("Xcode repo on a host without Xcode", () => {
       expect(resolveLiveCwdWhy({ noteId: "projects/misc", noteTitle: "Misc" }, LINUX)).toEqual({ cwd: null, reason: null })
     } finally {
       f.restore()
+    }
+  })
+})
+
+// Triage `repo` (needs-you-by-repo): dispatch-run's routing order, GitHub name out.
+const GH_MAP = `
+export const REPO_MAP: RepoEntry[] = [
+  { name: "tls-dashboard-v2", match: /dashboard|PRJ-WCLS/i, path: \`\${home}/tls-dashboard-v2\`, project: "PRJ-WCLS", github: "jaubut/tls-dashboard-v2", release: "watch" },
+  { name: "claude-companion", match: /companion|PRJ-CT4M/i, path: \`\${home}/claude-companion\`, github: "jaubut/claude-companion", project: "PRJ-CT4M" },
+  { name: "companion-ios", match: /companion-ios|PRJ-IOS1/i, path: \`\${home}/apps/claude companion\`, project: "PRJ-IOS1", github: "jaubut/claude-companion-ios", requires: ["xcode"] },
+  { name: "tlstudio", match: /tlstudio|PRJ-TLST/i, path: \`\${home}/TLSTUDIO\`, project: "PRJ-TLST", github: "jaubut/TLSTUDIO" },
+  { name: "claude-config", match: /claude-config/i, path: \`\${home}/.claude\`, project: "PRJ-CCFG" },
+];
+`
+
+describe("repo-map github field", () => {
+  test("parses github after project, before project, and before requires; requires/project survive", () => {
+    const map = parseRepoMap(GH_MAP, "/h")
+    expect(map.map((e) => e.github ?? null)).toEqual([
+      "jaubut/tls-dashboard-v2", "jaubut/claude-companion", "jaubut/claude-companion-ios", "jaubut/TLSTUDIO", null,
+    ])
+    expect(map[1]!.project).toBe("PRJ-CT4M") // github BEFORE project
+    expect(map[2]!.requires).toEqual(["xcode"]) // github BEFORE requires
+    expect(map[2]!.project).toBe("PRJ-IOS1")
+  })
+
+  test("githubName: basename of github, else the map name, else null", () => {
+    expect(githubName({ name: "tlstudio", github: "jaubut/TLSTUDIO" })).toBe("TLSTUDIO")
+    expect(githubName({ name: "claude-config" })).toBe("claude-config")
+    expect(githubName({})).toBeNull()
+  })
+
+  test("the live claude-config repo-map (when present): 20 entries, every one with github", () => {
+    const file = join(process.env.HOME ?? "", ".claude", "tools", "repo-map.ts")
+    const source = locateRepoMap([file])?.source
+    if (!source || !/github:/.test(source)) return // not on this host / Step 0 not landed
+    const map = parseRepoMap(source)
+    expect(map.length).toBe(20)
+    expect(map.every((e) => /^jaubut\/[\w.-]+$/.test(e.github ?? ""))).toBe(true)
+  })
+})
+
+describe("repoNameFor (dispatch-run order: marker > cwd > note > text)", () => {
+  const map = parseRepoMap(GH_MAP, "/h")
+
+  test("dep marker and [repo:] marker win over everything", () => {
+    expect(repoNameFor({ text: "[autodev:deps:tlstudio:run:2026-W42] bump", noteHay: "projects/x TLS Dashboard", cwd: "/h/claude-companion" }, map)).toBe("TLSTUDIO")
+    expect(repoNameFor({ text: "  [repo:companion-ios] fix the sheet", noteHay: "projects/x TLS Dashboard" }, map)).toBe("claude-companion-ios")
+  })
+
+  test("unknown marker name falls through to the next rule", () => {
+    expect(repoNameFor({ text: "[repo:nope] x", noteHay: "projects/d TLS Dashboard" }, map)).toBe("tls-dashboard-v2")
+    expect(repoNameFor({ text: "[autodev:deps:nope:pkg:1.0] x", noteHay: "projects/d TLS Dashboard" }, map)).toBe("tls-dashboard-v2")
+  })
+
+  test("cwd equal to an entry path (trailing slash ok) beats the note", () => {
+    expect(repoNameFor({ text: "do it", noteHay: "projects/d TLS Dashboard", cwd: "/h/TLSTUDIO/" }, map)).toBe("TLSTUDIO")
+    expect(repoNameFor({ text: "do it", noteHay: "projects/d TLS Dashboard", cwd: "/elsewhere" }, map)).toBe("tls-dashboard-v2")
+  })
+
+  test("note beats task text; first matching entry wins", () => {
+    expect(repoNameFor({ text: "touch claude-config", noteHay: "projects/p PRJ-CT4M Claude Companion" }, map)).toBe("claude-companion")
+  })
+
+  test("task text naming exactly one map name, token-bounded; two names → null", () => {
+    expect(repoNameFor({ text: "WP1 claude-config: add rule", noteHay: "projects/new New thing" }, map)).toBe("claude-config")
+    expect(repoNameFor({ text: "claude-config-ish refactor", noteHay: "" }, map)).toBeNull()
+    expect(repoNameFor({ text: "sync claude-config and tlstudio", noteHay: null }, map)).toBeNull()
+    expect(repoNameFor({ text: "nothing here", noteHay: "projects/z Zed" }, map)).toBeNull()
+  })
+
+  test("no entries → null", () => {
+    expect(repoNameFor({ text: "[repo:tlstudio] x", noteHay: "projects/d TLS Dashboard", cwd: "/h/TLSTUDIO" }, [])).toBeNull()
+  })
+
+  test("missing repo-map (COMPANION_REPO_MAP → no file) → no entries, null, nothing throws", () => {
+    const saved = process.env.COMPANION_REPO_MAP
+    process.env.COMPANION_REPO_MAP = join(mkdtempSync(join(tmpdir(), "cc-repo-name-")), "missing.ts")
+    try {
+      const entries = repoEntriesSafe()
+      expect(entries).toEqual([])
+      expect(repoNameFor({ text: "[repo:tlstudio] x", noteHay: "projects/d TLS Dashboard" }, entries)).toBeNull()
+      expect(repoEntriesSafe(() => { throw new Error("boom") })).toEqual([])
+    } finally {
+      if (saved === undefined) delete process.env.COMPANION_REPO_MAP
+      else process.env.COMPANION_REPO_MAP = saved
     }
   })
 })

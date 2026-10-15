@@ -265,7 +265,7 @@ describe("merge intent: queued outcome, pending rows, one log line per choose", 
 
   test("pending rows join `resolving` after the resolver's, never twice and never next to a card", async () => {
     sources = [pr("3")]
-    const row = (id: string) => ({ id, source: "pr" as const, title: "Approved — merging once the conflict clears · x", project: "Dash", resolver: { status: "queued" as const, summary: "Approved", model: "pr-shepherd", finishedAt: null } })
+    const row = (id: string) => ({ id, source: "pr" as const, title: "Approved — merging once the conflict clears · x", project: "Dash", repo: null, resolver: { status: "queued" as const, summary: "Approved", model: "pr-shepherd", finishedAt: null } })
     const e = createTriageEngine({
       collect: async () => sources, phrase: async () => null, current: async (s) => s,
       execute: async () => execOut, store: createTriageStore(new Database(":memory:")), broadcast: (f) => frames.push(f), now: () => clock,
@@ -318,5 +318,57 @@ describe("card TTL (2026-10-14)", () => {
     sources = [blocked("stale", "v2", clock), blocked("fresh", "v1", clock - CARD_TTL_MS + 60_000), proposal]
     await e.refresh()
     expect(e.items().map((i) => i.id).sort()).toEqual(["task:fresh", "task:stale"])
+  })
+})
+
+describe("repo field (needs-you-by-repo, 2026-10-15)", () => {
+  test("a repo flip null → name keeps id + version: no re-phrase, exactly one more frame, choose 200 (not 409)", async () => {
+    const e = engine()
+    await e.refresh(); await e.idle()
+    const before = frames.length
+    expect(e.items()[0]).toMatchObject({ id: "task:t1", repo: null })
+    sources = [{ ...blocked("t1"), repo: "claude-companion" }]
+    await e.refresh(); await e.idle()
+    expect(phraseCalls).toEqual(["t1@v1"]) // phrase cache keyed (id, version): still a hit
+    expect(frames.length).toBe(before + 1)
+    expect(e.items()[0]).toMatchObject({ id: "task:t1", repo: "claude-companion", title: "Phrased t1" })
+    await e.refresh(); await e.idle()
+    expect(frames.length).toBe(before + 1) // identical re-render → no frame
+    // current() stays repo-free (only .version is compared)
+    current.set("t1", blocked("t1"))
+    const res = await e.choose({ id: "task:t1", optionId: e.items()[0]!.options[0]!.id })
+    expect(res.status).toBe(200)
+    expect(executed).toHaveLength(1)
+  })
+
+  test("a real version bump is still 409 stale, and `next` carries repo", async () => {
+    sources = [{ ...blocked("t1"), repo: "TLSTUDIO" }]
+    const e = engine()
+    await e.refresh(); await e.idle()
+    const opt = e.items()[0]!.options[0]!.id
+    current.set("t1", blocked("t1", "v2"))
+    sources = [{ ...blocked("t1", "v2"), repo: "TLSTUDIO" }]
+    const res = await e.choose({ id: "task:t1", optionId: opt })
+    expect(res.status).toBe(409)
+    expect(res.body).toMatchObject({ error: "stale", next: { id: "task:t1", repo: "TLSTUDIO" } })
+  })
+
+  test("busy (resolving) rows and pending rows carry repo", async () => {
+    sources = [{ ...blocked("t1"), repo: "claude-companion" }, blocked("t2", "v1", 200)]
+    const info = { status: "resolving" as const, summary: "Opus is on it", model: "opus", finishedAt: null }
+    const e = createTriageEngine({
+      collect: async () => sources, phrase: async () => null, current: async (s) => s,
+      execute: async () => execOut, store: createTriageStore(new Database(":memory:")), broadcast: (f) => frames.push(f), now: () => clock,
+      resolver: {
+        enabled: () => true, pump: () => {}, consider: () => {}, ask: () => ({ ok: false, error: "not_routable" }),
+        view: (_id, src) => ({ state: "resolving", info }),
+      },
+      pending: () => [{ id: "pr:jaubut/TLSTUDIO#4", source: "pr", title: "Approved · x", project: "TLSTUDIO", repo: "TLSTUDIO", resolver: { status: "queued", summary: "Approved", model: "pr-shepherd", finishedAt: null } }],
+    })
+    await e.refresh()
+    expect(e.resolving().map((r) => [r.id, r.repo])).toEqual([
+      ["task:t1", "claude-companion"], ["task:t2", null], ["pr:jaubut/TLSTUDIO#4", "TLSTUDIO"],
+    ])
+    expect(frames.at(-1)).toMatchObject({ resolving: [{ repo: "claude-companion" }, { repo: null }, { repo: "TLSTUDIO" }] })
   })
 })

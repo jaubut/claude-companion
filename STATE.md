@@ -114,6 +114,123 @@ Last updated: 2026-10-04
 
 ## Change Plans
 
+### Change Plan — needs-you-by-repo (2026-10-15) — server half (iOS half: `~/apps/claude companion/STATE.md` § needs-you-by-repo)
+**Request (Jeremie 2026-10-15):** "needs you should be group by repo… if we can oversee by repo, conflicts can resolve much easier and clearer since we see the right order of things." Server half: every triage card and every resolving row carries the GitHub repo its work lands in, resolved by the routing rule dispatch-run already uses.
+**Done when:**
+- `GET /api/orchestrator/triage` `items[]` + `resolving[]` and the `orchestrator_triage` frame carry `repo: string | null` on every entry. Task and proposal cards get it from the repo-map route. PR cards and approved-merge rows get it from the PR URL. Body, trip and mytask cards get `null`.
+- `repo` is never part of `SourceItem.version`. A card whose repo changes (null → name, or a repo-map edit) keeps its id and version. A choose made against it gets 200, not 409. Its phrase cache entry stays valid.
+- If repo-map can't be read, task and proposal cards get `repo: null`. Nothing throws and no cards are dropped. PR cards still get their repo from the URL.
+
+**Reference (leader: GitHub notifications + merge queue)**
+- GitHub notification thread → triage item. `repository.full_name` is a first-class field on every thread → `repo`. The inbox's "Group by repository" → the Needs you sub-headers (iOS half). The merge queue is ordered per repo → cards inside a repo are oldest first, which is merge order.
+- GitHub identifies a repo by `owner/name` and shows `name`. Every repo here is under `jaubut`, so we send the `name` only. Scheme: the GitHub name (`claude-companion-ios`), not the repo-map id (`companion-ios`).
+
+**Target shape & drift**
+- Reference for this intent:
+  - One routing rule, which lives in claude-config `repo-map.ts`. The dispatcher, the PR shepherd and the phone's view all resolve "which repo" through it.
+  - Every queue item carries a work-location key (`repo`) separate from its human label (`project`).
+  - Contracts change additively, and derived display fields never feed versions or idempotency.
+  - Collectors stay pure, and wiring supplies the lookups.
+- Deviations today:
+  - (a) `lib/live-repo.ts` re-parses `repo-map.ts` as text with a regex and has no marker or task-text rules. dispatch-run's order (marker → note → task text, `tools/dispatch-run.ts:292`) is not mirrored anywhere in the Companion.
+  - (b) Repo-map `name` differs from the GitHub name for 4 repos: `companion-ios`/`claude-companion-ios`, `tls-video-assist`/`TLS-Video-Assist`, `tls-viewer-ios`/`NDI-WIRELESS`, `tlstudio`/`TLSTUDIO`. There is no `github` field.
+  - (c) `project` is overloaded: it holds the note title or the repo name (doc line 17; PR cards use `note_title || pr.repo`).
+  - (d) `DispatchTask` never reads `tasks.repo_path` (dispatch-run's authoritative per-task override).
+  - (e) Map blind spot: `routes/triage.ts` is classified as `lib`. `GET /api/orchestrator/triage` and `POST …/triage/<id>/choose` are missing from the endpoints table, although iOS `OrchestratorClient.swift` / `OrchestratorActions.swift` call them.
+- This change moves toward:
+  - (a) live-repo gains the dispatch-run order as one pure function.
+  - (b) Step 0 adds a `github` field to claude-config, and the Companion reads it.
+  - (c) `repo` is split out of `project`.
+- Left for follow-up:
+  - F1: claude-config emits `repo-map.json` (generated) so live-repo stops regex-parsing TS.
+  - F2: read `tasks.repo_path` in `selectCols` behind a `DispatchColumns.repoPath` probe and use it first.
+  - F3: archmap bun adapter: detect `handleXRoute` hosts that match `PREFIX` constants (blind spot (e)).
+
+**State decisions**
+- No new state. `repo` is derived on every `collect()` from the repo-map source, read once per refresh (≤ 1/min plus poll triggers). It is not cached across refreshes, so a repo-map edit lands on the next tick.
+- `repo` lives on `SourceItem.repo?: string | null`. Only `wiring/triage.ts collect()` and `approvedRow()` set it. `buildItem` and the engine's busy rows copy it to the wire as `repo ?? null`.
+- **Version decision:** `taskVersion`, the proposal `updatedAt`, the PR `updated_at|lastPr.id` and the body `latest.id` stay byte-identical. `current()` does not annotate `repo` because it is only compared on `.version`. The publish dedupe key (`JSON.stringify(items)`) does include `repo`. Effect: one extra frame when a repo first resolves. No 409s, no re-phrasing.
+- Announced by the existing `orchestrator_triage` frame. Persistence: none.
+
+**Resolution rule** (new `repoNameFor` in `lib/live-repo.ts`, mirroring `dispatch-run.resolveRepo` minus `repo_path`)
+1. `[autodev:deps:<name>:…]`, then the `[repo:<name>]` prefix on the task text or proposal prompt → entry by name.
+2. Proposal only: `cwd` equal to an entry's path → that entry. A live proposal's cwd is the checkout, as authoritative as `repo_path`.
+3. `"<noteId> <noteTitle>"` → the first entry whose `match` hits, on any host (no `isDir`: the phone groups on the Mac and on Zettlab alike).
+4. Task text naming exactly one map name, token-bounded (`entryForTaskText`). Two or more names → null.
+5. The result is `entry.github` basename when present, else `entry.name`. No entry → `null`.
+- PR card: `ref.repo` (`owner/repo`) → `repo`. Approved row: `parsePrUrl(a.url)?.repo`. Body, trip, mytask: `null`.
+
+**Contracts touched** (from architecture.md)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `orchestrator_triage` | frame | +`items[].repo`, +`resolving[].repo` (string\|null) | ios:WSFrame.swift → CompanionSocket+Frames.swift → AppState+Triage.swift | additive. Shipped builds ignore the key (TriageItem/ResolvingItem decode with explicit `Keys`) |
+| `GET /api/orchestrator/triage` | endpoint | same two fields | ios:OrchestratorClient.swift (map blind spot (e): the row is missing from the endpoints table) | additive, safe |
+| `POST …/triage/<id>/choose` → `next` item, 409 `next` | endpoint | `next` carries `repo` | ios:OrchestratorActions.swift, AppState+Triage.swift (`TriageNext.decode`) | additive, safe |
+| `SourceItem` / `TriageItem` / `ResolvingItem` (`lib/triage.ts`) | export | +optional `repo` field | fan-in: mytask-triage, resolver-engine/-prompt/-work, resolver, triage-engine, triage-sources, trip-triage, wiring/resolver(-dry-run), wiring/triage | optional field. No collector other than wiring/triage has to change |
+| `parseRepoMap()` (`lib/live-repo.ts`) | export | entries gain `github?` | lib/project-catalog.ts, wiring/resolver.ts | additive |
+| claude-config `tools/repo-map.ts` (Step 0) | data | +`github: "jaubut/<repo>"` per entry, placed before `requires` | dispatch-run, dep-scan, release-train (TS import, ignore it). Companion live-repo regex: an extra string field is already tolerated | additive |
+| `docs/orchestrator-triage-api.md` | doc | `repo` field + resolution rule | — | — |
+
+**Files — one owner each** (sequenced: Step 0 merges first. The server works without it, but 4 repos read their map name until it lands.)
+| file | owner | change | lines now → after cap check |
+|---|---|---|---|
+| `~/.claude/tools/repo-map.ts` (claude-config, own PR) | builder | Step 0: `github: "jaubut/<repo>"` on all 20 literals, placed right after `project` (`requires` stays LAST). Duplicate-name pairs share the same value. Plus one header-comment line | 184 → ~186 ✓ |
+| `~/.claude/tools/release-train.test.ts` (same PR) | builder | **by-design test update**: l.475-479 asserts `project: "PRJ-WCLS", release: "watch" },$`, which any `github` placement breaks. Update the expected literal, stated in the PR body | — |
+| `~/.claude/tools/dispatch-select.test.ts` (same PR) | builder | +cases: every entry's `github` matches `^jaubut/[\w.-]+$`; same-name entries agree; the 4 renames are exact (`claude-companion-ios`, `TLS-Video-Assist`, `NDI-WIRELESS`, `TLSTUDIO`) | — |
+| `server/lib/live-repo.ts` | builder | `RepoEntry.github?` + parse `/github:\s*"([^"\n]*)"/` from extras (the regex already tolerates the key: 20 entries parse, 5 `requires` survive). Add `NEW: repoNameFor(input: {text, noteHay, cwd?}, entries)` and `NEW: githubName(entry)` | 250 → ~300 ✓ (600) |
+| `server/lib/live-repo.test.ts` | builder | fixtures with `github` before `requires` AND before `project`; optional live count = 20; rule order: marker > cwd > note > text, ambiguous text → null, `github` basename, unknown marker name falls through | 266 → ~330 |
+| `server/lib/triage.ts` | builder | `repo?: string \| null` on SourceItem. `repo: string \| null` (required) on TriageItem and ResolvingItem. `buildItem` (l.488-494) emits `repo: src.repo ?? null`, so the key is always on the wire | 516 → ~520 ✓ |
+| `server/lib/triage-engine.ts` | builder | busy push (l.135) copies `repo: src.repo ?? null` | 349 → ~350 ✓ |
+| `server/lib/triage-sources.ts` | builder | `ApprovedPr.repo` (l.229) set from `pr.repo` in `prApprovals` (l.252). PR `SourceItem.repo = pr.repo` in `prSources`: the repo NAME only, never `owner/repo`. Collectors stay pure; no repo-map read here | 295 → ~297 ✓ |
+| `server/wiring/triage.ts` | builder | ONE helper (`repoOf`), shared by `collect()`, `proposalItem` (l.176, so `current()` gets it for free) and the task path. It parses `readRepoMapSource()` once per collect inside try/catch → `[]`/null, and never throws (a throw in `collect` makes `refreshOnce` drop the whole list). Task cards annotated via `dispatch.cached(taskId)`, proposals via `getTask` + `getChannel().noteTitle` + `cwd`. `approvedRow` (l.144) → `repo: a.repo` | 361 → ~385 ✓ |
+| `server/lib/triage.test.ts`, `server/lib/triage-engine.test.ts`, `server/routes/triage.test.ts` | builder | new cases (Verify 2–4). The unreadable-repo-map test goes in `routes/triage.test.ts` (there is no wiring/triage test file). Existing assertions stay as written | — |
+| `docs/orchestrator-triage-api.md` | builder | l.56-66: the `repo` field, the rule, and "repo never moves version" | — |
+
+**Fan-in paths to guard**
+- `buildItem()` is reached from `triage-engine.render` (cache, fallback, prepared paths) and the resolver's prepared view. All of them must emit `repo`, because a card that flips null↔name between renders would emit a frame every tick.
+- `readRepoMapSource()` is already read by wiring/orchestrator.ts and wiring/resolver.ts. Read it once per `collect()`, never once per item.
+- `TriageEngineDeps.current` stays repo-free. Its output is only compared on `.version`.
+
+**Risks**
+- Name split before Step 0: a task card reads `companion-ios` while its PR card reads `claude-companion-ios`, so there are two groups. → Step 0 merges first. The iOS group key is case-insensitive (`tlstudio`/`TLSTUDIO`).
+- Note regex false positives: `/dashboard/` claims any note whose title says "dashboard". This is the same routing dispatch-run uses, so it shows the truth about where the work would land. Accepted.
+- Proposals without a note or cwd (chat proposals in #general) → `null` → the iOS fallback shows `project` or "Other". Expected.
+- `tasks.repo_path` override not read (F2): such a task groups by its note. Rare. Logged as F2.
+- Map blind spot (e): the endpoint consumers above come from the iOS map plus a grep, not the server endpoints table. architecture.md:241 also lists the wrong iOS path for the frame consumer. → F3.
+- kb: no non-builtin externals in the touched modules (node:fs, node:path, bun only), so no KB queries were run.
+
+**Build amendment (2026-10-15, PR #165)**
+- `server/lib/resolver-engine.test.ts` added to Files (builder): one `toEqual` on a resolving row expects `repo: null` — resolving rows now always carry `repo` (required field), so tsc and the runtime both require it. By-design consequence, not a behaviour change.
+- By-design expectation edits: `triage.test.ts` merge-intent `prApprovals` expects `repo: "tls-dashboard-v2"` (planned `ApprovedPr.repo`); `triage-engine.test.ts` pending-row fixture gains `repo: null` (setup).
+- An unknown `[autodev:deps:<name>:…]` marker falls through to the next rule (dispatch-run returns null) — display only.
+- Typecheck command is `bunx tsc --noEmit -p tsconfig.server.json` (no `server/tsconfig.json`).
+- `server/lib/live-repo.ts` also exports `repoEntriesSafe()` (parseRepoMap of the live source → `[]` on any failure; the never-throw read `repoOf` uses) and the named type `RepoNameInput` (`{ text, noteHay, cwd? }`, the `repoNameFor` input). Sole caller: `wiring/triage.ts`.
+
+**Analyst findings (2026-10-15, reconciled)**
+- All 5 contracts are ADDITIVE, with no break for shipped iOS. Shipped decoders use explicit `Keys` + `Lossy` and ignore `repo`.
+- None of the version formulas reads `repo`: `taskVersion` (status\|updatedAtRaw), proposal `updatedAt`, PR `updated_at\|lastPr.id`, body `latest.id`. The choose stale check compares version only (triage-engine.ts:258). The phrase cache and `schedule` are keyed (id, version). `current()` needs no repo.
+- `publish()` `lastKey` includes `repo` → one extra frame and a `generatedAt` bump per flip. Accepted.
+- Real risk: fields copied by hand drop `repo` silently. The three sites are `buildItem`, the busy push (engine:135) and `approvedRow` (wiring:144) plus `ApprovedPr`. All three are now Files rows, each with a test.
+- A repo-map failure → `null` inside try/catch, never a throw from `collect`.
+- Required `TriageItem.repo` → `bunx tsc --noEmit` is mandatory, not just `bun test`.
+- Step 0: all 13 distinct GitHub names were checked with `gh`. `github` goes after `project`. It breaks release-train.test.ts:475-479 by design (update in the same PR).
+- Consumers of `parseRepoMap`/live-repo I missed: `wiring/orchestrator.ts:31,457`, `wiring/resolver-peer.ts`, `wiring/live.ts`. They use path/name only, so no edit is needed.
+- Map blind spots confirmed: (e) `routes/triage.ts` is classed as lib, and `architecture.md:241` lists the iOS consumer as `ios/WSFrame.swift` (wrong path; the real one is `claude companion/WSFrame.swift`). Both go into F3.
+- F6 (optional, separate change): the pr-shepherd's `localRepos()`/`writeGhNames` read `entry.github` instead of the remote URL.
+- Baselines before the change: server triage suites 63 pass, live-repo 14 pass, claude-config release-train + dispatch-select 97 pass.
+
+**Verify**
+0. claude-config Step 0: `bun test tools/release-train.test.ts tools/dispatch-select.test.ts` → 97 baseline + new cases pass, with the release-train literal update called out in the PR.
+1. `cd server && bun test lib/live-repo.test.ts` → the rule-order cases pass. A `COMPANION_REPO_MAP` pointing to a missing file → `repoNameFor` returns null and nothing throws.
+2. `bun test lib/triage.test.ts lib/triage-engine.test.ts` → `buildItem` emits `repo` (null when unset). A source with the same version and repo flipped null→"x" keeps `item.id` and `store.phrase(id, version)` hits. `choose` on it → 200 (not 409). Exactly one frame per repo flip, none on an identical re-render.
+3. `bun test routes/triage.test.ts` → the GET body has `repo` on every item. A PR item `pr:jaubut/claude-companion-ios#12` → `"claude-companion-ios"`. Body → null. With an unreadable repo-map → task `repo: null`, item count unchanged.
+4. Full `bun test` (triage suites ≥ 63, live-repo ≥ 14, plus the new cases) + `bunx tsc --noEmit -p server` (mandatory: required `TriageItem.repo`) → green, no new type errors. Tests cover the three copy sites: buildItem, busy row, approved row.
+5. Live on both hosts, after deploy: `curl -s -H "Authorization: Bearer $COMPANION_TOKEN" localhost:<port>/api/orchestrator/triage | jq '[.items[]|{id,repo,project}]'` → task/proposal/PR cards name a repo, body cards are null. The `[repo-map]` startup line is unchanged.
+6. Shipped TestFlight build (before the iOS half ships): Needs you renders exactly as before, with no decode drop (Jeremie checks the card count against the curl).
+7. **Jeremie's manual pass** (with the iOS half): every card sits under the repo he'd expect. A PR card and its originating task card share one group. No card reappears or jumps after a refresh.
+
+**Out of scope:** F1–F3; showing `repo` in the phrase prompt; per-repo ordering on the server (`orderItems` unchanged); reading `repo_path`; any UI.
+
 ### Change Plan — copy-progress (2026-10-09) — ✅ shipped #160 (9503e0d), both hosts 2026-10-09; iOS #104 (78bc1f2), build 48
 **Request (Jeremie):** live footage-copy progress on the Companion iOS app: the `copy-progress` mod POSTs each 2 s poll of a `rename-footage/ingest.ts --apply` run to the host's server (gauge pattern), the app shows a progress row (label, files x/y, GB done/total, %, rate, ETA, current file; green all-verified, red any failed). Live Activity: decide here or follow-up.
 **Done when:**

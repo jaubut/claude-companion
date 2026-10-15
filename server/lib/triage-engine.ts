@@ -132,7 +132,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
       r?.consider(id, src)
       const v = r?.view(id, src) ?? null
       if (v?.state === "resolving") {
-        busy.push({ id, source: src.source, title: src.title, project: src.project, resolver: v.info })
+        busy.push({ id, source: src.source, title: src.title, project: src.project, repo: src.repo ?? null, resolver: v.info })
         continue
       }
       if (v?.state === "resolved") continue

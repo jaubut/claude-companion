@@ -527,3 +527,49 @@ describe("source mytask (Jeremie's overdue tasks)", () => {
     expect(await itemOf("mytask:p:projects/p1")).toBeUndefined()
   })
 })
+
+describe("repo on every item (needs-you-by-repo, 2026-10-15)", () => {
+  const mapFile = join(tempHome, "repo-map-triage.ts")
+  writeFileSync(mapFile, `export const REPO_MAP = [
+  { name: "tls-dashboard-v2", match: /projects\\/dash|PRJ-WCLS/i, path: \`\${home}/tls-dashboard-v2\`, project: "PRJ-WCLS", github: "jaubut/tls-dashboard-v2" },
+  { name: "tlstudio", match: /tlstudio/i, path: \`\${home}/TLSTUDIO\`, project: "PRJ-TLST", github: "jaubut/TLSTUDIO" },
+];
+`)
+  afterAll(() => { delete process.env.COMPANION_REPO_MAP })
+
+  test("GET: task/proposal by the repo-map rule, PR by its URL, body null; unreadable repo-map → task/proposal null, nothing dropped", async () => {
+    process.env.COMPANION_REPO_MAP = mapFile
+    const b = turTask("blocked", "Which currency?")
+    const marked = turTask("blocked", "Which hero?", { text: "[repo:tlstudio] Hero swap" })
+    const p = chat.createProposal("Ship the export", "", "Jeremie asked", channelId, { noteId: "projects/dash" })
+    const pr = turTask("completed", null, { pr: "https://github.com/jaubut/claude-companion-ios/pull/12" })
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('shepherd', 'pr:needs-human', 'task', ?, ?)")
+      .run(pr, JSON.stringify({ reason: "touches auth", url: "https://github.com/jaubut/claude-companion-ios/pull/12" }))
+    for (let i = 0; i < 2; i++) {
+      const r = invStore.insert({ componentId: "zettlab:svc:repo", host: "zettlab", state: "dead", trigger: "sweep", status: "running", runOn: "local", attempt: i + 1 }, Date.now() - 1000 + i)
+      invStore.update(r.id, { status: "failed", finishedAt: Date.now() - 1000 + i, error: "timed out" })
+    }
+    await sync()
+    const body = await get()
+    for (const item of body.items) expect(item).toHaveProperty("repo")
+    const repoOf = (id: string) => body.items.find((i) => i.id === id)?.repo
+    expect(repoOf(`task:${b}`)).toBe("tls-dashboard-v2")
+    expect(repoOf(`task:${marked}`)).toBe("TLSTUDIO")
+    expect(repoOf(`proposal:${p.taskId}`)).toBe("tls-dashboard-v2")
+    expect(repoOf("pr:jaubut/claude-companion-ios#12")).toBe("claude-companion-ios")
+    expect(repoOf("body:zettlab:svc:repo")).toBeNull()
+    expect(frames.at(-1)).toMatchObject({ type: "orchestrator_triage" })
+    expect(((frames.at(-1) as any).items as any[]).every((i) => "repo" in i)).toBe(true)
+    const count = body.items.length
+
+    process.env.COMPANION_REPO_MAP = tempHome // a directory: unreadable as a file
+    await harness.engine.refresh()
+    const after = await get()
+    expect(after.items.length).toBe(count)
+    const again = (id: string) => after.items.find((i) => i.id === id)?.repo
+    expect(again(`task:${b}`)).toBeNull()
+    expect(again(`task:${marked}`)).toBeNull()
+    expect(again(`proposal:${p.taskId}`)).toBeNull()
+    expect(again("pr:jaubut/claude-companion-ios#12")).toBe("claude-companion-ios")
+  })
+})

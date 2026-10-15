@@ -17,6 +17,7 @@ import { type TriageStore, createTriageStore } from "../lib/triage-store"
 import type { TripTriage } from "../lib/trip-triage"
 import { type MyTaskTriage, createMyTaskTriage } from "../lib/mytask-triage"
 import { tursoExec, tursoQuery } from "../lib/turso"
+import { type RepoEntry, repoEntriesSafe, repoNameFor } from "../lib/live-repo"
 import { HOST_INFO, broadcast as wsBroadcast } from "../state"
 import { bodySnapshot } from "./body"
 import { bodyFixStore, bodyInvestigator, investigationStore } from "./body-investigate"
@@ -143,7 +144,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     const reason = ready ? holdReason(ready) : a.reason
     const summary = approvalSummary(reason)
     return {
-      id: a.id, source: "pr", title: clip(`${summary} · ${a.title}`, 120), project: a.project,
+      id: a.id, source: "pr", title: clip(`${summary} · ${a.title}`, 120), project: a.project, repo: a.repo,
       resolver: { status: "queued", summary, model: "pr-shepherd", finishedAt: null },
       approval: { state: "approved_pending", reason, approvedAt: a.approvedAt, approvedHeadSha: a.approvedHeadSha },
     }
@@ -173,17 +174,38 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     }
   }
 
-  function proposalItem(taskId: string): SourceItem | null {
+  /**
+   * The one repo lookup (docs/orchestrator-triage-api.md#repo): dispatch-run's routing over
+   * REPO_MAP, read once per pass by the caller. Display only: never touches `version`. Never throws.
+   */
+  function repoOf(input: { text: string; noteId?: string | null; noteTitle?: string | null; cwd?: string | null }, entries: RepoEntry[]): string | null {
+    try {
+      const noteHay = input.noteId ? `${input.noteId} ${input.noteTitle ?? ""}` : null
+      return repoNameFor({ text: input.text, noteHay, cwd: input.cwd ?? null }, entries)
+    } catch {
+      return null
+    }
+  }
+
+  function proposalItem(taskId: string, entries: RepoEntry[] = repoEntriesSafe()): SourceItem | null {
     const t = getTask(taskId)
     if (!t) return null
     const ch = getChannel(t.threadId)
-    return proposalSource(t, { channelName: ch?.name ?? null, project: ch?.noteTitle ?? null, macFix: bodyFixStore.card(t.taskId)?.host === "mac" })
+    const src = proposalSource(t, { channelName: ch?.name ?? null, project: ch?.noteTitle ?? null, macFix: bodyFixStore.card(t.taskId)?.host === "mac" })
+    if (!src) return null
+    return { ...src, repo: repoOf({ text: t.prompt, noteId: t.noteId || ch?.noteId, noteTitle: ch?.noteTitle, cwd: t.cwd }, entries) }
   }
 
   async function collect(): Promise<SourceItem[]> {
-    const tasks = taskSources(dispatch.snapshot() ?? [], (t) => dispatch.threadIdFor(t))
+    const entries = repoEntriesSafe()
+    const snapshot = dispatch.snapshot() ?? []
+    const byId = new Map(snapshot.map((t) => [t.id, t]))
+    const tasks = taskSources(snapshot, (t) => dispatch.threadIdFor(t)).map((s) => {
+      const t = s.ref.source === "task" ? byId.get(s.ref.taskId) : undefined
+      return t ? { ...s, repo: repoOf({ text: t.title, noteId: t.noteId, noteTitle: t.projectTitle }, entries) } : s
+    })
     const proposals = latestProposals(listProposals(), (id) => bodyFixStore.card(id)?.componentId ?? null)
-      .map((t) => proposalItem(t.taskId)).filter((s): s is SourceItem => !!s)
+      .map((t) => proposalItem(t.taskId, entries)).filter((s): s is SourceItem => !!s)
     const [prs, lookup, tripItems, mine] = await Promise.all([
       prItems(), bodyLookup(), trips ? trips.collect() : Promise.resolve([]), mytasks ? mytasks.collect() : Promise.resolve([]),
     ])
