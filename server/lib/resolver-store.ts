@@ -61,7 +61,7 @@ export interface ResolverStore {
   queued(): RunRow[]
   /** Finished actions on a day, by action (digest). */
   countsOn(day: string): Record<string, number>
-  /** Has this PR / item ref had an action of this kind before (any key)? */
+  /** Has this PR / item ref had an action of this kind before (any key; delegated runs excluded)? */
   hadAction(refKey: string, action: string): boolean
   markCreated(taskId: string, now: number): void
   isCreated(taskId: string): boolean
@@ -147,14 +147,15 @@ export function createResolverStore(db: Database): ResolverStore {
       return (db.query("SELECT COUNT(*) AS n FROM resolver_runs WHERE day = ? AND started_at IS NOT NULL AND autonomy = 'normal'").get(day) as { n: number }).n
     },
     queued() {
-      return (db.query("SELECT * FROM resolver_runs WHERE status = 'queued' ORDER BY (autonomy = 'elevated') DESC, id ASC").all() as Raw[]).map(toRow)
+      return (db.query("SELECT * FROM resolver_runs WHERE status = 'queued' ORDER BY (autonomy != 'normal') DESC, id ASC").all() as Raw[]).map(toRow)
     },
     countsOn(day) {
       const rows = db.query("SELECT action, COUNT(*) AS n FROM resolver_runs WHERE day = ? AND action IS NOT NULL GROUP BY action").all(day) as { action: string; n: number }[]
       return Object.fromEntries(rows.map((r) => [r.action, r.n]))
     },
     hadAction(refKey, action) {
-      return !!db.query("SELECT 1 FROM resolver_runs WHERE ref_key = ? AND action = ? LIMIT 1").get(refKey, action)
+      // A delegated run (Jeremie's Yes) is his hand-back, not Opus's own rescue: it never sets rescuedBefore.
+      return !!db.query("SELECT 1 FROM resolver_runs WHERE ref_key = ? AND action = ? AND autonomy != 'delegated' LIMIT 1").get(refKey, action)
     },
     markCreated(taskId, now) {
       db.query("INSERT OR IGNORE INTO resolver_created (task_id, created_at) VALUES (?, ?)").run(taskId, now)

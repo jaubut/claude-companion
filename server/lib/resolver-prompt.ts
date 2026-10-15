@@ -1,6 +1,6 @@
 import { type BodyComponentDetail } from "./body"
 import { type KnownPaths, buildInvestigationPrompt } from "./body-investigator"
-import { type Autonomy, type ResolverActionKind, resolverActions } from "./resolver"
+import { type Autonomy, REPO_YES_INSTRUCTION, type ResolverActionKind, resolverActions } from "./resolver"
 import { type ActionKind, KIND_HELP, type SourceItem, allowedActions } from "./triage"
 
 // The Opus resolver's prompts (lib/resolver.ts decides what runs; this file
@@ -99,7 +99,12 @@ export function buildResolverPrompt(src: SourceItem, ctx: ResolverContext, job: 
   return [
     ...ROLE,
     "",
-    ...(job.autonomy === "elevated"
+    ...(job.autonomy === "delegated"
+      ? [`Jeremie said Yes to everything pending in this item's repo, with this instruction: "${job.instruction ?? REPO_YES_INSTRUCTION}".`,
+        "Act on your recommendation when the evidence supports it: answer a blocked task, retry a transient failure, route a no-repo task, fix or close a PR the way the rules below allow.",
+        "Set \"why\" honestly: money, client_wording or irreversible keep the item on Jeremie's card whatever your confidence.",
+        "Give a calibrated \"confidence\" (0-1): below 0.5 the item stays a card.", ""]
+      : job.autonomy !== "normal"
       ? [`Jeremie handed this item back to you himself${job.instruction ? ` with this instruction: "${job.instruction}"` : " (no instruction: finish it the way you recommend)"}.`,
         "Follow it: pick the action that does what he asked. \"do it\" / \"fix it\" / \"vas-y\" = execute your recommended action. Set needsJeremie false when his words settle it.",
         "If the work turns out to be already done, his go means: close the item the way this source allows (task: cancel; PR: close_pr; proposal: reject) and say so.",

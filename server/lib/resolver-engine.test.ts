@@ -407,3 +407,58 @@ describe("transient re-queue", () => {
     expect(jobs).toHaveLength(1)
   })
 })
+
+describe("delegated runs (Jeremie's Yes on a repo card, 2026-10-15)", () => {
+  const aged = (x: string, createdAt: number): SourceItem => ({ ...task(x), createdAt })
+
+  test("ask with autonomy delegated: the job carries it, the store round-trips it", () => {
+    const e = makeEngine()
+    const a = task("a")
+    expect(e.ask(id(a), a, "Yes on the repo", "delegated")).toMatchObject({ ok: true })
+    expect(jobs.at(-1)).toMatchObject({ autonomy: "delegated", instruction: "Yes on the repo" })
+    expect(store.latest(id(a), jobs.at(-1)!.run.rkey)).toMatchObject({ autonomy: "delegated", status: "running" })
+    expect(e.ask(id(task("b")), task("b"), "x")).toMatchObject({ ok: true })
+    expect(jobs.at(-1)!.autonomy).toBe("elevated") // the default stays ask_opus's elevated
+  })
+
+  test("non-normal runs start before the normal backlog (delegated and elevated alike); the store orders them first", () => {
+    cfg.maxConcurrent = 0
+    const e = makeEngine()
+    const n = aged("n", 1), d = aged("d", 50), x = aged("x", 60)
+    e.consider(id(n), n)
+    e.ask(id(d), d, "Yes", "delegated")
+    e.ask(id(x), x, "do it", "elevated")
+    expect(store.queued().map((r) => r.autonomy)).toEqual(["delegated", "elevated", "normal"])
+    expect(e.view(id(d), d)?.info.queuePosition).toBe(1)
+    expect(e.view(id(x), x)?.info.queuePosition).toBe(2)
+    expect(e.view(id(n), n)?.info.queuePosition).toBe(3)
+  })
+
+  test("delegated runs never count against the daily budget and never expire in the queue", async () => {
+    cfg.maxPerDay = 1
+    cfg.maxConcurrent = 0
+    const e = makeEngine()
+    const d = task("d")
+    e.ask(id(d), d, "Yes", "delegated")
+    clock += cfg.queueMaxMs + 1
+    e.pump()
+    expect(e.view(id(d), d)?.info.status).toBe("queued")
+    cfg.maxConcurrent = 2
+    e.pump()
+    gates.get("d")!.resolve({ kind: "failed", summary: "x" })
+    await e.idle()
+    expect(store.startedOn(localDay(clock))).toBe(0)
+    const c = task("c")
+    e.consider(id(c), c)
+    expect(jobs.map((j) => j.src.refId)).toEqual(["d", "c"])
+  })
+
+  test("a delegated fix does not count as Opus's one rescue (hadAction ignores delegated runs)", () => {
+    const run = store.insert({ itemId: "pr:o/r#1", rkey: "k", version: "v", source: "pr", refKey: "pr:o/r#1", autonomy: "delegated", instruction: null, model: "m" }, clock)
+    store.update(run.id, { status: "resolved", action: "fix", finishedAt: clock })
+    expect(store.hadAction("pr:o/r#1", "fix")).toBe(false)
+    const own = store.insert({ itemId: "pr:o/r#1", rkey: "k2", version: "v", source: "pr", refKey: "pr:o/r#1", autonomy: "normal", instruction: null, model: "m" }, clock)
+    store.update(own.id, { status: "resolved", action: "fix", finishedAt: clock })
+    expect(store.hadAction("pr:o/r#1", "fix")).toBe(true)
+  })
+})

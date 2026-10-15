@@ -33,7 +33,13 @@ export const RESOLVER_CONTEXT_MAX = 1500
 export const SUMMARY_MAX = 200
 export const RESOLVER_SLUG = "opus-resolver"
 
-export type Autonomy = "normal" | "elevated"
+/** normal = Opus's own pass · elevated = Jeremie's ask_opus on one item · delegated = his Yes on a repo card (lib/triage-repos.ts). */
+export type Autonomy = "normal" | "elevated" | "delegated"
+
+/** A delegated answer below this confidence stays a card. */
+export const DELEGATED_MIN_CONFIDENCE = 0.5
+/** What a delegated run is told (wiring/triage-repos.ts). */
+export const REPO_YES_INSTRUCTION = "Jeremie said Yes to everything pending in this repo: unblock, retry or hand it back the way the evidence supports."
 
 export interface ResolverConfig {
   enabled: boolean
@@ -318,6 +324,8 @@ export function decide(src: Pick<SourceItem, "ref">, out: ResolverOutput, ctx: P
     if (a.kind === "fix") return { kind: "act", action: a, then: ctx.sensitive ? "card" : "unpark", reason: "Jeremie asked Opus" }
     return { kind: "act", action: a, then: "resolved", reason: "Jeremie asked Opus" }
   }
+  // Before the repeat check: a Yes on an item that came back is still Jeremie's go.
+  if (ctx.autonomy === "delegated") return delegated(src, out, a, ctx)
   if (ctx.repeat) return card("came back after Opus handled it once")
   const sure = out.confidence >= CONFIDENT && !out.needsJeremie
   switch (a.kind) {
@@ -345,6 +353,33 @@ export function decide(src: Pick<SourceItem, "ref">, out: ResolverOutput, ctx: P
 }
 
 const pct = (c: number): string => `${Math.round(c * 100)} %`
+
+const HELD_WHY: ReadonlySet<string> = new Set(["money", "client_wording", "irreversible"])
+
+/**
+ * Jeremie's Yes on a repo card: answers act unless money / client wording / irreversible or below
+ * DELEGATED_MIN_CONFIDENCE; requeue / route act; a non-sensitive fix hands the PR back (a Yes is a
+ * human hand-back: an earlier rescue does not block it); close_pr as normal; anything else is a card.
+ */
+function delegated(src: Pick<SourceItem, "ref">, out: ResolverOutput, a: Exclude<ResolverAction, { kind: "none" }>, ctx: PolicyCtx): Plan {
+  const yes = "Jeremie's Yes on the repo"
+  switch (a.kind) {
+    case "answer":
+      if (HELD_WHY.has(out.why)) return card(`needs Jeremie (${out.why})`)
+      return out.confidence < DELEGATED_MIN_CONFIDENCE ? card(`not confident enough to answer (${pct(out.confidence)})`) : { kind: "act", action: a, then: "resolved", reason: `${yes} (${pct(out.confidence)})` }
+    case "requeue":
+    case "route":
+      return { kind: "act", action: a, then: "resolved", reason: yes }
+    case "fix":
+      if (src.ref.source !== "pr") return card("fix is a PR action")
+      return ctx.sensitive ? card("sensitive PR: Jeremie decides") : { kind: "act", action: a, then: "unpark", reason: yes }
+    case "close_pr":
+      if (ctx.sensitive) return card("sensitive PR: Jeremie decides")
+      return out.confidence >= CONFIDENT && !out.needsJeremie && CLOSABLE.has(out.category) ? { kind: "act", action: a, then: "resolved", reason: out.category } : card("not clearly stale, superseded or done")
+    default:
+      return card(`${a.kind} stays Jeremie's call`)
+  }
+}
 
 // ── the prepared card ────────────────────────────────────────────────────────
 
