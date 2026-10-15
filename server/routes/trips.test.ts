@@ -52,8 +52,8 @@ const ROW = {
 }
 
 const RESULT: ClassifyResult = {
-  classification: "business", clientSlug: "humance", clientName: "Humance", confidence: 0.93, decision: "filed", classifiedBy: "jev", rule: null,
-  labels: { start: "Granby", end: "Montréal", startCity: "Granby", endCity: "Montréal" }, altClient: null, evidenceLine: "", evidence: {},
+  classification: "business", confidence: 0.55, classifiedBy: "jev", rule: null,
+  labels: { start: "Granby", end: "Montréal", startCity: "Granby", endCity: "Montréal" }, evidenceLine: "", evidence: {},
 }
 
 beforeAll(() => {
@@ -79,6 +79,7 @@ beforeAll(() => {
       if (u.pathname === "/api/trips/trip_1" && req.method === "PATCH") {
         const p = JSON.parse(body) as Record<string, unknown>
         if (p.classification === "billable") return Response.json({ error: "bad classification" }, { status: 400 })
+        if (p.purpose === "locked") return Response.json({ error: "quarter_locked", quarter: "2026-Q3" }, { status: 423 })
         return Response.json({ ok: true, id: "trip_1", reimbursement: 59.86 })
       }
       return Response.json({ error: "Not found" }, { status: 404 })
@@ -115,7 +116,7 @@ beforeEach(() => {
   store = createTripStore(new Database(":memory:"))
   const service = createTripService({
     store, budgetMs: 50,
-    classifier: { threshold: 0.85, classify: async () => RESULT },
+    classifier: { classify: async () => RESULT },
     ingest: ingestTrip, patch: patchTrip, readRow: async () => null,
   })
   deps = {
@@ -139,13 +140,16 @@ async function call(method: string, path: string, body?: unknown, extra: Record<
   return { status: res.status, json: text.startsWith("{") || text.startsWith("[") ? JSON.parse(text) : null, text, headers: res.headers }
 }
 
-test("POST: ingested with the server-held key → 200 filed; the key never reaches the reply", async () => {
+test("POST: ingested with the server-held key → 200 filed even at 0.55, never a client; the key never reaches the reply", async () => {
   const r = await call("POST", "/api/trips", UPLOAD, { "idempotency-key": UPLOAD.clientTripId })
   expect(r.status).toBe(200)
-  expect(r.json).toMatchObject({ ok: true, tripId: "trip_3F25", classification: "business", clientSlug: "humance", status: "filed" })
+  expect(r.json).toMatchObject({ ok: true, tripId: "trip_3F25", classification: "business", confidence: 0.55, status: "filed" })
+  expect("clientSlug" in r.json).toBe(false)
   const ing = hits.find((h) => h.path === "/api/trips/ingest")!
   expect(ing.key).toBe(DASH_KEY)
-  expect(JSON.parse(ing.body)).toMatchObject({ source: "companion", classification: "business", clientSlug: "humance", classifiedBy: "jev", appVersion: "1.4 (33)" })
+  const pushed = JSON.parse(ing.body) as Record<string, unknown>
+  expect(pushed).toMatchObject({ source: "companion", classification: "business", classifierConfidence: 0.55, classifiedBy: "jev", appVersion: "1.4 (33)" })
+  expect("clientSlug" in pushed || "client_slug" in pushed).toBe(false)
   expect(r.text).not.toContain(DASH_KEY)
 })
 
@@ -226,6 +230,13 @@ test("PATCH: validated, sent as human, passed back; dashboard 400 → 422", asyn
   expect((await call("PATCH", "/api/trips/trip_1", {})).json.error).toBe("nothing_to_change")
   expect((await call("PATCH", "/api/trips/trip_1", { clientSlug: 3 })).json.error).toBe("bad_client")
   expect((await call("PATCH", "/api/trips/trip_9", { classification: "personal" })).status).toBe(404)
+})
+
+test("PATCH: an approved quarter (dashboard 423) → 422 quarter_locked with the quarter; nothing recorded", async () => {
+  const r = await call("PATCH", "/api/trips/trip_1", { classification: "personal", purpose: "locked" })
+  expect(r.status).toBe(422)
+  expect(r.json).toEqual({ ok: false, error: "quarter_locked", quarter: "2026-Q3" })
+  expect(store.latestLog("trip_1")).toBeNull()
 })
 
 test("upstream (the Mac): everything forwarded with the hop header; Zettlab down → 503 so the phone keeps it", async () => {

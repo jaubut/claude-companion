@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import type { JevOutcome, JevQuestion } from "./jev"
-import { type ClassifyDeps, type ClassifyInput, DEFAULT_HOME, type HistTrip, autofileThreshold, bandPrior, blend, historyFrom, homesFrom, candidateClients, createTripClassifier, logEvidence, matchHistory } from "./trip-classify"
+import { type ClassifyDeps, type ClassifyInput, DEFAULT_HOME, HISTORY_MIN_CONF, type HistTrip, bandPrior, blend, historyFrom, homesFrom, candidateClients, createTripClassifier, logEvidence, matchHistory } from "./trip-classify"
+import type { TripRow } from "./trip-dashboard"
 import type { Place } from "./trip-model"
 import type { GeoEntry } from "./trip-store"
 
@@ -42,7 +43,6 @@ function harness(opts: Partial<Omit<ClassifyDeps, "history">> & { answers?: Reco
       if (answers === null) return { ok: false, error: "timeout", latencyMs: 2000 }
       return { ok: true, model: "jev-latest", answers: answers ?? {}, latencyMs: 180 }
     },
-    threshold: 0.85,
     ...over,
   }
   return { deps, calls }
@@ -51,7 +51,7 @@ function harness(opts: Partial<Omit<ClassifyDeps, "history">> & { answers?: Reco
 test("rule: a known vehicle that is not Jeremie's → personal, no Jev call", async () => {
   const h = harness()
   const r = await createTripClassifier(h.deps).classify(trip(HOME, STUDIO, { vehicle: { kind: "bluetooth", name: "Rental", mine: false } }))
-  expect(r).toMatchObject({ classification: "personal", classifiedBy: "rules", rule: "not_my_vehicle", decision: "filed", confidence: 0.95 })
+  expect(r).toMatchObject({ classification: "personal", classifiedBy: "rules", rule: "not_my_vehicle", confidence: 0.95 })
   expect(h.calls.length).toBe(0)
 })
 
@@ -69,34 +69,31 @@ test("rule: not-mine is skipped when the calendar says shoot, and when there is 
 test("rule: home↔home loop under 2 km → personal", async () => {
   const h = harness()
   const r = await createTripClassifier(h.deps).classify(trip(HOME, { lat: 45.4031, lon: -72.7265 }, { km: 1.4 }))
-  expect(r).toMatchObject({ classification: "personal", rule: "home_loop", decision: "filed" })
+  expect(r).toMatchObject({ classification: "personal", rule: "home_loop" })
   const longer = await createTripClassifier(harness({ answers: { kind: choice("personal", { business: 0.2, personal: 0.8 }) } }).deps).classify(trip(HOME, HOME, { km: 25 }))
   expect(longer.rule).toBeNull()
 })
 
-test("Jev confident business + client → filed with the client; evidence goes into the instructions", async () => {
-  const h = harness({ answers: { kind: choice("business", { business: 0.95, personal: 0.05 }), client: choice("humance", { humance: 0.95, brp: 0.03, none: 0.02 }) } })
+test("Jev confident business → business with no client; candidate clients are evidence text only", async () => {
+  const h = harness({ answers: { kind: choice("business", { business: 0.95, personal: 0.05 }) } })
   const r = await createTripClassifier(h.deps).classify(trip(HOME, STUDIO))
-  expect(r).toMatchObject({ classification: "business", clientSlug: "humance", clientName: "Humance", classifiedBy: "jev", decision: "filed" })
+  expect(r).toMatchObject({ classification: "business", classifiedBy: "jev" })
+  expect("clientSlug" in r).toBe(false)
   expect(r.confidence).toBeGreaterThanOrEqual(0.85)
   const q = h.calls[0]!.questions
-  expect(Object.keys(q.client!.type === "choice" ? q.client!.criteria : {})).toEqual(expect.arrayContaining(["humance", "none"]))
+  expect(Object.keys(q)).toEqual(["kind"])
   expect(String(q.kind!.instructions)).toContain("Studio Humance, Montréal")
   expect(String(q.kind!.instructions)).toContain("(home)")
+  expect(String(q.kind!.instructions)).toContain("Known client places near here: Humance")
   expect(r.labels).toEqual({ start: "Rue Principale, Granby", end: "Studio Humance, Montréal", startCity: "Granby", endCity: "Montréal" })
   expect(r.evidenceLine).toContain("Jev 95 % business")
 })
 
-test("below the threshold → needs_review; the threshold is an env knob", async () => {
-  const h = harness({ answers: { kind: choice("business", { business: 0.7, personal: 0.3 }), client: choice("humance", { humance: 0.8, none: 0.2 }) } })
+test("no confidence gate: a lukewarm guess is still a class, with its confidence (= the class confidence)", async () => {
+  const h = harness({ answers: { kind: choice("business", { business: 0.55, personal: 0.45 }) } })
   const r = await createTripClassifier(h.deps).classify(trip(HOME, STUDIO))
-  expect(r.classification).toBe("business")
-  expect(r.decision).toBe("needs_review")
-  const lax = await createTripClassifier({ ...h.deps, threshold: 0.5 }).classify(trip(HOME, STUDIO))
-  expect(lax.decision).toBe("filed")
-  expect(autofileThreshold({ COMPANION_TRIP_AUTOFILE_CONF: "0.9" })).toBe(0.9)
-  expect(autofileThreshold({ COMPANION_TRIP_AUTOFILE_CONF: "nope" })).toBe(0.85)
-  expect(autofileThreshold({})).toBe(0.85)
+  expect(r).toMatchObject({ classification: "business", classifiedBy: "jev", confidence: 0.55 })
+  expect("decision" in r).toBe(false)
 })
 
 test("history at the same route lifts a lukewarm Jev answer over the bar", async () => {
@@ -104,7 +101,7 @@ test("history at the same route lifts a lukewarm Jev answer over the bar", async
   const h = harness({ history: past, answers: { kind: choice("business", { business: 0.7, personal: 0.3 }), client: choice("humance", { humance: 0.8, none: 0.2 }) } })
   const r = await createTripClassifier(h.deps).classify(trip(STUDIO, HOME)) // reversed direction still matches
   expect(r.evidence.history).toMatchObject({ kind: "pair", n: 4, business: 4 })
-  expect(r.decision).toBe("filed")
+  expect(r.confidence).toBeGreaterThan(0.9)
   expect(r.evidenceLine).toContain("4 past trips (same route): 4 business (Humance), 0 personal")
 })
 
@@ -113,15 +110,15 @@ test("history disagreeing with Jev pulls it under the bar", async () => {
   const h = harness({ history: past, answers: { kind: choice("business", { business: 0.8, personal: 0.2 }) } })
   const r = await createTripClassifier(h.deps).classify(trip(HOME, GROCERY, { km: 4 }))
   expect(r.classification).toBe("personal")
-  expect(r.decision).toBe("needs_review")
+  expect(r.confidence).toBeLessThan(0.85)
 })
 
 test("Jev down: history alone decides; no history either → unclassified", async () => {
   const past = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => hist(`p${i}`, HOME, GROCERY, "personal"))
   const r = await createTripClassifier(harness({ history: past, answers: null }).deps).classify(trip(HOME, GROCERY, { km: 4 }))
-  expect(r).toMatchObject({ classification: "personal", classifiedBy: "rules", rule: "history_only", decision: "filed" })
+  expect(r).toMatchObject({ classification: "personal", classifiedBy: "rules", rule: "history_only" })
   const none = await createTripClassifier(harness({ answers: null }).deps).classify(trip(HOME, STUDIO))
-  expect(none).toMatchObject({ classification: "unclassified", confidence: 0, decision: "needs_review", rule: "no_evidence" })
+  expect(none).toMatchObject({ classification: "unclassified", confidence: 0, rule: "no_evidence" })
 })
 
 test("asOf hides later history and the trip itself (no peeking in the smoke)", async () => {
@@ -157,37 +154,31 @@ test("blend: log-odds of Jev and smoothed history", () => {
   expect(blend(null, 3, 3)!).toBeCloseTo(0.8, 5)
 })
 
-test("logEvidence keeps what the triage card needs", async () => {
-  const h = harness({ answers: { kind: choice("personal", { business: 0.4, personal: 0.6 }), client: choice("none", { humance: 0.3, none: 0.7 }) } })
+test("logEvidence keeps the line, the labels and the candidates; never a client", async () => {
+  const h = harness({ answers: { kind: choice("personal", { business: 0.4, personal: 0.6 }) } })
   const r = await createTripClassifier(h.deps).classify(trip(HOME, STUDIO))
   const e = logEvidence(r)
   expect(e.line).toBe(r.evidenceLine)
   expect(e.labels).toEqual(r.labels)
-  expect((e.altClient as { slug: string }).slug).toBe("humance")
-  expect(e.clientNames).toEqual({ humance: "Humance" })
-})
-
-test("the client pick reads Jev's probability for the choice, not its confidence score", async () => {
-  // Real Jev 2026-10-04: {choice:"brp", probabilities:{brp:0.93}, confidence:0.89} vs a 55/45 split with confidence 0.1.
-  const client = { type: "choice" as const, choice: "humance", probabilities: { humance: 0.97, brp: 0.02, none: 0.01 }, confidence: 0.2 }
-  const h = harness({ answers: { kind: choice("business", { business: 0.99, personal: 0.01 }), client } })
-  const r = await createTripClassifier(h.deps).classify(trip(HOME, STUDIO))
-  expect(r.evidence.clientConf).toBeCloseTo(0.97, 2)
+  expect(e.candidates).toEqual(["humance"])
+  expect("clientNames" in e || "altClient" in e).toBe(false)
 })
 
 test("Jev is tempered to 0.1–0.9; the distance base rate can overrule an extreme Jev answer", async () => {
   expect(blend(0.999, 0, 0)!).toBeCloseTo(0.9, 5)
   expect(blend(0.001, 0, 0)!).toBeCloseTo(0.1, 5)
   const priors = async () => [{ minKm: 40, maxKm: 100_000, business: 166, personal: 4 }, { minKm: 0, maxKm: 10, business: 89, personal: 225 }]
-  // A long run Jev calls 1 % business: no longer filed personal, it goes to review.
+  // A long run Jev calls 1 % business: the base rate turns it business, unsure.
   const long = harness({ priors, answers: { kind: choice("personal", { business: 0.01, personal: 0.99 }) } })
   const r = await createTripClassifier(long.deps).classify(trip(HOME, STUDIO, { km: 81 }))
-  expect(r.decision).toBe("needs_review")
+  expect(r.classification).toBe("business")
+  expect(r.confidence).toBeLessThan(0.85)
   expect(r.evidenceLine).toContain("of trips this long are business")
   // A neutral Jev on a long trip: the base rate files it business.
-  const neutral = harness({ priors, answers: { kind: choice("business", { business: 0.5, personal: 0.5 }), client: choice("none", { humance: 0.02, none: 0.98 }) } })
+  const neutral = harness({ priors, answers: { kind: choice("business", { business: 0.5, personal: 0.5 }) } })
   const n = await createTripClassifier(neutral.deps).classify(trip(HOME, STUDIO, { km: 81 }))
-  expect(n).toMatchObject({ classification: "business", clientSlug: null, decision: "filed" })
+  expect(n.classification).toBe("business")
+  expect(n.confidence).toBeGreaterThan(0.9)
   // A band with too few trips adds nothing.
   expect(blend(0.5, 0, 0, { k: 5, n: 5 })!).toBeCloseTo(0.5, 5)
   expect(bandPrior([{ minKm: 0, maxKm: 10, business: 1, personal: 2 }], null)).toBeNull()
@@ -201,17 +192,24 @@ test("homesFrom: a configured home is used with the learned ones; otherwise lear
   expect(DEFAULT_HOME).toBe("45.39,-72.73,1500")
 })
 
+const row = (id: string, classification: string, clientSlug: string | null = null, extra: Partial<TripRow> = {}): TripRow => ({
+  id, startedAt: "2026-09-01T09:00:00Z", endedAt: null, startLat: 1, startLon: 2, endLat: 3, endLon: 4, startLabel: null, endLabel: null, km: 5, durationMin: 6,
+  classification, clientSlug, status: "closed", updatedAt: null, classifiedBy: null, classifierConfidence: null, approvalId: null, ...extra,
+})
+
 test("historyFrom: billable counts as business, unclassified is dropped, Jeremie's answer wins", () => {
-  const row = (id: string, classification: string, clientSlug: string | null = null) => ({ id, startedAt: "2026-09-01T09:00:00Z", endedAt: null, startLat: 1, startLon: 2, endLat: 3, endLon: 4, startLabel: null, endLabel: null, km: 5, durationMin: 6, classification, clientSlug, status: "closed" })
   const h = historyFrom([row("a", "billable", "brp"), row("b", "unclassified"), row("c", "personal")], [{ id: "c", startedAt: "2026-09-01T09:00:00Z", startLat: 1, startLon: 2, endLat: 3, endLon: 4, classification: "business", clientSlug: "humance" }])
   expect(h.map((x) => [x.id, x.classification, x.clientSlug])).toEqual([["a", "business", "brp"], ["c", "business", "humance"]])
 })
 
-test("client share counts only the past business trips that carry a client", async () => {
-  // 20 business trips here, 2 tagged brp, 18 untagged: Jev's brp pick must not be dragged down to 2/20.
-  const past = [...[1, 2].map((i) => hist(`b${i}`, HOME, STUDIO, "business", "brp")), ...Array.from({ length: 18 }, (_, i) => hist(`u${i}`, HOME, STUDIO, "business"))]
-  const h = harness({ history: past, answers: { kind: choice("business", { business: 0.9, personal: 0.1 }), client: choice("brp", { brp: 0.9, humance: 0.05, none: 0.05 }) } })
-  const r = await createTripClassifier(h.deps).classify(trip(HOME, STUDIO))
-  expect(r.clientSlug).toBe("brp")
-  expect(Number(r.evidence.clientConf)).toBeGreaterThan(0.9)
+test("historyFrom quality gate: an unapproved jev 0.6 guess is dropped; human, imports, approved and sure guesses are kept", () => {
+  expect(HISTORY_MIN_CONF).toBe(0.85)
+  const h = historyFrom([
+    row("guess", "business", null, { classifiedBy: "jev", classifierConfidence: 0.6 }),
+    row("human", "personal", null, { classifiedBy: "human", classifierConfidence: 0.6 }),
+    row("import", "business"),
+    row("approved", "business", null, { classifiedBy: "jev", classifierConfidence: 0.6, approvalId: "2026-Q3" }),
+    row("sure", "personal", null, { classifiedBy: "rules", classifierConfidence: 0.9 }),
+  ], [])
+  expect(h.map((x) => x.id)).toEqual(["human", "import", "approved", "sure"])
 })

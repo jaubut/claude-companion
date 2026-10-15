@@ -148,9 +148,6 @@ export function createTripStore(db: Database) {
     unconfirmed(): UploadRow[] {
       return uploads(all("SELECT * FROM trip_uploads WHERE state != 'confirmed' ORDER BY created_at DESC LIMIT 200"))
     },
-    needsReview(): UploadRow[] {
-      return uploads(all("SELECT * FROM trip_uploads WHERE state = 'confirmed' AND review = 'needs_review' AND resolved_at IS NULL AND trip_id IS NOT NULL ORDER BY created_at LIMIT 50"))
-    },
     byTripId(tripId: string): UploadRow | null {
       const r = one("SELECT * FROM trip_uploads WHERE trip_id = ?", tripId)
       return r ? toUpload(r) : null

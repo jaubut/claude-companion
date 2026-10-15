@@ -32,11 +32,12 @@ Last updated: 2026-10-04
 **Why:** Jeremie 2026-10-04: every PR review or blocked question ended with him asking Claude to solve it anyway; Opus should do that work first and leave him one decision.
 **Revisit if:** `resolver:answer` rows get corrected by Jeremie (raise `CONFIDENT`, or route that project's questions to cards), rescues loop with the shepherd (the one-per-PR guard is `resolver_runs.ref_key`), the 20/day budget is hit daily, or a closed PR gets reopened by Jeremie.
 
-### Travel log: the server owns an uploaded trip; Jev + history + distance prior file the sure ones, triage asks the rest
+### Travel log: the server owns an uploaded trip; Jev + history + distance prior file every trip, Jeremie approves per quarter on the dashboard
 **Date:** 2026-10-04 (branch `feat/trips`)
 **Choice:** `POST /api/trips` stores the upload in companion.db (`trip_uploads`) before anything else, classifies it within an 8 s budget, and pushes it to the dashboard's `/api/trips/ingest`. If the dashboard is down, the phone gets 202 `queued` and a 1-min retry loop pushes it later; 503 only when the server cannot store it. The classifier runs the contract rules first, then one Jev call (business/personal + client), blended in log-odds with the place history (ends within 300 m, human overrides first) and a distance base rate. It files at ≥ `COMPANION_TRIP_AUTOFILE_CONF` (0.85); the rest go in as `unclassified` and become triage `trip` cards, along with the dashboard backlog (unclassified, 60 days, oldest 20). The classifier and triage read Turso read-only; every write goes through the dashboard API. Every decision is logged in `trip_classify_log`; `bun cli.ts trip-report` gives the auto-file rate and the overrides of filed trips.
 **Why:** Jeremie 2026-10-04: replace the CarPlay Shortcut; confident trips filed, the rest confirmed from a card.
 **Revisit if:** `trip-report` shows filed trips being corrected (raise the threshold or drop the distance prior's weight), Nominatim rate-limits the backlog, or a calendar source appears on the dashboard (wire the `calendar` seam).
+**Amended 2026-10-15 (trips-auto-quarterly):** no confidence gate and no triage `trip` cards. Every trip is filed business/personal (confidence kept), the classifier never sets a client, and the Turso backlog is filed by `lib/trip-autofile.ts`. Jeremie reviews and approves each GST/QST quarter on the dashboard (`/trips/review`), which locks it; clients are tagged at invoice time. History learns only from human, approved or ≥ 0.85 rows. Why: Jeremie 2026-10-15, "remove travel log approval. too annoying."
 
 ### Brain triage: one phrased decision card per queue item, actions through the existing guarded paths
 **Date:** 2026-10-04 (branch `feat/brain-triage`)
@@ -343,6 +344,13 @@ Last updated: 2026-10-04
 7. **Jeremie's manual pass:** Needs you on the iPhone shows no trip cards. A new drive in the car appears in the Trips tab already marked business or personal. Flipping one in the dashboard review and then waiting 10 min puts it in `trip-report` overrides.
 
 **Out of scope:** classifier move into the dashboard; trip purpose text for the CRA logbook (dashboard follow-up); per-repo Needs you (needs-you plan); iOS Trips tab copy.
+**Build amendments (2026-10-15, PR #167 drift check):**
+- Extra exports: `trip-classify.ts` `HISTORY_MIN_CONF` (the gate constant from State decisions); `trip-report.ts` `CONF_BANDS`, `BandFlips`; `trip-service.ts` `AutofileOutcome`; `trip-autofile.ts` `TripAutofileDeps`, `SweepStats`, `sqlTime` (deps type + test seams).
+- `TripRow` gains `updatedAt` (the human-sync watermark). An upload that ends `unclassified` triggers `autofile.sweep()` via an optional `onUnclassified` callback; the upload path never calls `service.autofile()`.
+- Dead after Step A, removed: `readClassifications`, `trip-store.needsReview()`, the service `onChange` hook.
+- Step A also touched `wiring/resolver.ts` (`target()` trip fallback became unreachable) and `routes/resolver.test.ts` (removed `trips: null` option, a tsc error).
+- The paused sweep self-heals: any Turso read failure pauses it and it retries every tick (`lib/turso.ts` hides "no such column", so it can't be detected specifically).
+- Verify 4: `COMPANION_DB_PATH=<scratch> bun cli.ts trip-report --days 30` runs with no threshold line; on a seeded db it prints the per-band flip lines. Verify 5: `routes/trips.test.ts` "POST: ingested … 200 filed even at 0.55, never a client" (13/13 pass). Verify 6: iOS maps 404 → `.notFound` → `.rejected` (OrchestratorActions.swift:176,195), so a queued trip `choose` is dropped, not retried.
 
 ### Change Plan — needs-you-by-repo (2026-10-15) — server half (iOS half: `~/apps/claude companion/STATE.md` § needs-you-by-repo)
 **Request (Jeremie 2026-10-15):** "needs you should be group by repo… if we can oversee by repo, conflicts can resolve much easier and clearer since we see the right order of things." Server half: every triage card and every resolving row carries the GitHub repo its work lands in, resolved by the routing rule dispatch-run already uses.
