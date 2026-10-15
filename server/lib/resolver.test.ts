@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
-  CONFIDENT, type PolicyCtx, type ResolverOutput, cardSummary, consentOf, consents, decide, digestText, isSensitivePr, outcomePhrase,
+  CONFIDENT, DELEGATED_MIN_CONFIDENCE, type PolicyCtx, REPO_YES_INSTRUCTION, type ResolverOutput, cardSummary, consentOf, consents, decide, digestText, isSensitivePr, outcomePhrase,
   parseResolverOutput, preparedPhrase, resolverConfig, resolverInfo, resolverKey, routable,
 } from "./resolver"
 import type { SourceItem } from "./triage"
@@ -275,5 +275,47 @@ describe("outcome first", () => {
     expect(resolverInfo("prepared", "Fix pushed", "m", 1, { outcome: "done" })).toEqual({ status: "prepared", summary: "Fix pushed", model: "m", finishedAt: 1, outcome: "done" })
     expect(resolverInfo("queued", "Opus queued (3)", "m", null, { queuePosition: 3 })).toMatchObject({ status: "queued", queuePosition: 3 })
     expect(resolverInfo("resolving", "x", "m", null)).toEqual({ status: "resolving", summary: "x", model: "m", finishedAt: null })
+  })
+})
+
+describe("policy: delegated (Jeremie's Yes on a repo card, 2026-10-15)", () => {
+  const delegated: PolicyCtx = { autonomy: "delegated", instruction: REPO_YES_INSTRUCTION, sensitive: false, rescuedBefore: false }
+  const answer = { kind: "answer" as const, text: "Use CAD; the invoice module only supports CAD." }
+
+  test("an answer acts above 0.5 unless the why is money, client wording or irreversible", () => {
+    expect(decide(blockedTask(), output({ action: answer, confidence: 0.6, needsJeremie: true, why: "preference" }), delegated)).toMatchObject({ kind: "act", then: "resolved" })
+    expect(decide(blockedTask(), output({ action: answer, confidence: DELEGATED_MIN_CONFIDENCE - 0.01 }), delegated).kind).toBe("card")
+    for (const why of ["money", "client_wording", "irreversible"]) {
+      expect(decide(blockedTask(), output({ action: answer, confidence: 0.99, why }), delegated).kind).toBe("card")
+    }
+  })
+
+  test("sits before the repeat check: an item that came back still acts on a Yes", () => {
+    expect(decide(blockedTask(), output({ action: answer }), { ...delegated, repeat: true })).toMatchObject({ kind: "act" })
+  })
+
+  test("requeue and route act; cancel / merge / approve / revise / reject stay cards", () => {
+    expect(decide(blockedTask(), output({ action: { kind: "requeue" }, confidence: 0.3 }), delegated).kind).toBe("act")
+    expect(decide(blockedTask(), output({ action: { kind: "route", repo: "dash" }, confidence: 0.3 }), delegated).kind).toBe("act")
+    expect(decide(blockedTask(), output({ action: { kind: "cancel" }, confidence: 1 }), delegated).kind).toBe("card")
+    expect(decide(parkedPr(), output({ action: { kind: "merge" }, confidence: 1 }), delegated).kind).toBe("card")
+    expect(decide(proposal(), output({ action: { kind: "approve" }, confidence: 1 }), delegated).kind).toBe("card")
+    expect(decide(proposal(), output({ action: { kind: "revise", title: "x", prompt: "y" } }), delegated).kind).toBe("card")
+    expect(decide(proposal(), output({ action: { kind: "reject", reason: "dup" }, category: "duplicate" }), delegated).kind).toBe("card")
+  })
+
+  test("fix → unpark on a non-sensitive PR (a Yes is a human hand-back: an earlier rescue does not block it); sensitive → card", () => {
+    const fix = output({ action: { kind: "fix", instructions: "Mock the clock" }, category: "ci_failing" })
+    expect(decide(parkedPr(), fix, delegated)).toMatchObject({ kind: "act", then: "unpark" })
+    expect(decide(parkedPr(), fix, { ...delegated, rescuedBefore: true })).toMatchObject({ kind: "act", then: "unpark" })
+    expect(decide(parkedPr(), fix, { ...delegated, sensitive: true }).kind).toBe("card")
+  })
+
+  test("close_pr as normal: sure + stale / superseded / task done + not sensitive", () => {
+    const close = (category: string, confidence = 0.9) => output({ action: { kind: "close_pr", reason: category }, category, confidence })
+    expect(decide(parkedPr(), close("superseded"), delegated)).toMatchObject({ kind: "act", then: "resolved" })
+    expect(decide(parkedPr(), close("superseded", 0.6), delegated).kind).toBe("card")
+    expect(decide(parkedPr(), close("ambiguous"), delegated).kind).toBe("card")
+    expect(decide(parkedPr(), close("superseded"), { ...delegated, sensitive: true }).kind).toBe("card")
   })
 })

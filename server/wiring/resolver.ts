@@ -9,7 +9,7 @@ import { type DispatchWiring } from "../lib/dispatch-poller"
 import { NO_REPO_BLOCKER, getDispatchTask, getTaskActivity, routeTask } from "../lib/dispatch-tasks"
 import { type RepoMapCheck, checkRepoMap, fixRepoHere, isDir, localRepoFor, parseRepoMap, readRepoMapSource, repoForNote, repoMapCheckLine } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
-import { appendTurn, createProposal, getTask, listProposals } from "../lib/orchestrator-chat"
+import { appendTurn, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
 import { GENERAL_CHANNEL, db as companionDb } from "../lib/orchestrator-db"
 import { QUICK_LOOK_ALLOWED, QUICK_LOOK_DISALLOWED } from "../lib/quick-look"
@@ -28,9 +28,9 @@ import { tursoQuery } from "../lib/turso"
 import type { QueryFn } from "../lib/turso"
 import { bodyReportApplier, investigationStore } from "./body-investigate"
 import { fixOnPeer } from "./resolver-peer"
-import { emitTask, orchEmit } from "./orchestrator"
+import { orchEmit } from "./orchestrator"
 import { HOST_INFO } from "../state"
-import { rejectProposal } from "./proposals"
+import { reviseProposal } from "./proposals"
 
 // The Opus resolver, live (docs/orchestrator-triage-api.md#opus-resolver):
 // the engine (lib/resolver-engine.ts) + the work (lib/resolver-work.ts) wired
@@ -247,17 +247,7 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
     },
     async revise(src, title, prompt, why) {
       if (src.ref.source !== "proposal") return null
-      const old = getTask(src.ref.taskId)
-      if (!old || old.status !== "proposed") return null
-      const res = rejectProposal(old, o.dispatch)
-      if (!res.ok) return null
-      const next = createProposal(prompt, old.cwd, `Opus rescoped [${old.taskId}]: ${why}`.slice(0, 500), old.threadId, {
-        noteId: old.noteId ?? null, agent: old.agent ?? null, title: title || old.title || null,
-      })
-      o.store.markCreated(next.taskId, Date.now())
-      emitTask(next.taskId)
-      orchEmit(appendTurn("orchestrator", `🤖 Opus rescoped [${old.taskId}] → proposal [${next.taskId}]: ${title || prompt.slice(0, 120)}`, next.taskId, old.threadId))
-      return next.taskId
+      return reviseProposal(src.ref.taskId, { title, prompt, why }, (id, at) => o.store.markCreated(id, at), o.dispatch)
     },
     async record(src, action, summary, meta) {
       const [kind, id] = target(src)

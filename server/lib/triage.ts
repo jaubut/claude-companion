@@ -125,7 +125,8 @@ export interface SourceItem {
   facts: Record<string, string>
   url: string | null
   /** Heuristic hints (criticality, body severity) the severity rule reads. */
-  hints?: { criticality?: string | null; bodySeverity?: string | null; safetyNet?: boolean; taskDone?: boolean }
+  /** `parked` = the shepherd's park reason without the cascade's " · Opus:" brief (PRs it parked; lib/triage-repos.ts heldReason). */
+  hints?: { criticality?: string | null; bodySeverity?: string | null; safetyNet?: boolean; taskDone?: boolean; parked?: string }
   ref: SourceRef
 }
 

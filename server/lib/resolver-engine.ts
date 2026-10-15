@@ -9,9 +9,9 @@ import { type Phrase, type ResolverInfo, type ResolverOutcome, type Severity, ty
 //   consider  a new (item, resolver key) → a queued run, within the daily budget
 //   view      queued / resolving (hidden from `items`, listed in `resolving[]`) | resolved (hidden)
 //             | prepared (Opus's card) | failed (the normal card, marked) | null (the normal card)
-//   ask       Jeremie's `ask_opus`: an elevated run, outside the daily budget
-// ≤ maxConcurrent runs at once, one per item. The backlog drains elevated
-// first, then urgent → normal → low, oldest first; a normal run still queued
+//   ask       Jeremie's `ask_opus` (elevated) or his Yes on a repo card (delegated): outside the daily budget
+// ≤ maxConcurrent runs at once, one per item. The backlog drains Jeremie's
+// runs (elevated / delegated) first, then urgent → normal → low, oldest first; a normal run still queued
 // after queueMaxMs falls through. A queued row a restart / the kill switch
 // dropped is queued again on the next render. Every run has a deadline. The
 // kill switch stops new runs and shows every waiting item as a normal card.
@@ -86,14 +86,14 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
   const RANK: Record<Severity, number> = { urgent: 0, normal: 1, low: 2 }
   const priority = deps.priority ?? ((s: SourceItem) => [RANK[heuristicSeverity(s)], s.createdAt] as [number, number])
 
-  /** Queued rows in start order: elevated (Jeremie asked) first, then urgent → low, oldest first. */
+  /** Queued rows in start order: Jeremie's (elevated / delegated) first, then urgent → low, oldest first. */
   let order: RunRow[] | null = null
   function ordered(): RunRow[] {
     if (order) return order
     const key = (r: RunRow): [number, number, number, number] => {
       const src = jobs.get(r.id)
       const [rank, born] = src ? priority(src) : [9, 0]
-      return [r.autonomy === "elevated" ? 0 : 1, rank, born, r.id]
+      return [r.autonomy !== "normal" ? 0 : 1, rank, born, r.id]
     }
     const keyed = deps.store.queued().map((r) => ({ r, k: key(r) }))
     keyed.sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1] || a.k[2] - b.k[2] || a.k[3] - b.k[3])
@@ -159,11 +159,11 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     }
   }
 
-  function ask(id: string, src: SourceItem, instruction: string | null): AskResult {
+  function ask(id: string, src: SourceItem, instruction: string | null, autonomy: Exclude<Autonomy, "normal"> = "elevated"): AskResult {
     if (!deps.config().enabled) return { ok: false, error: "resolver_disabled" }
     if (!deps.routable(src)) return { ok: false, error: "not_routable" }
-    const run = enqueue(id, src, "elevated", instruction?.trim() || null)
-    log(`[resolver] ${id} handed back to Opus${run.instruction ? `: ${run.instruction.slice(0, 80)}` : ""}`)
+    const run = enqueue(id, src, autonomy, instruction?.trim() || null)
+    log(`[resolver] ${id} handed back to Opus (${autonomy})${run.instruction ? `: ${run.instruction.slice(0, 80)}` : ""}`)
     pump()
     changed(false)
     return { ok: true, runId: run.id }

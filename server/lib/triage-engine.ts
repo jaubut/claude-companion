@@ -1,19 +1,23 @@
 import { ANSWER_MAX } from "./dispatch-tasks"
+import type { Autonomy } from "./resolver"
 import type { AskResult, ResolverView } from "./resolver-engine"
 import {
   type Phrase, type ResolvingItem, type Severity, type SourceItem, type TriageItem, type TriageOption,
   buildItem, fallbackPhrase, heuristicSeverity, itemId, orderItems, triageDigest, validatePhrase, withAskOpus,
 } from "./triage"
+import { type RepoCard, buildRepoCards } from "./triage-repos"
 import type { TriageStore } from "./triage-store"
 import { TursoUnreachable } from "./turso"
 
 // The triage loop over injected seams (wiring/triage.ts is the live instance).
 //   refresh  collect → cached phrase for (id, version) or the fallback now +
 //            ONE background phrasing per new/changed item → order → emit the
-//            `orchestrator_triage` frame only when the items changed.
+//            `orchestrator_triage` frame only when the items, the resolving
+//            rows or the repo cards (lib/triage-repos.ts, same snapshot) changed.
 //   choose   Idempotency-Key replay (stored choice records) → 404 / 400 / 422
-//            → snooze locally, or re-read the source (409 stale when its
+//            → snooze locally, or actOn: re-read the source (409 stale when its
 //            version moved) and run the mapped action through the executor.
+//   actOn / ask are also the repo-card runner's way in (wiring/triage-repos.ts).
 
 export type ExecOutcome =
   | { kind: "done"; detail?: Record<string, unknown> }
@@ -29,8 +33,11 @@ export interface TriageResolverHook {
   pump(): void
   consider(id: string, src: SourceItem): void
   view(id: string, src: SourceItem): ResolverView | null
-  ask(id: string, src: SourceItem, instruction: string | null): AskResult
+  /** autonomy: "elevated" (ask_opus, the default) or "delegated" (a Yes on a repo card). */
+  ask(id: string, src: SourceItem, instruction: string | null, autonomy?: Exclude<Autonomy, "normal">): AskResult
 }
+
+type EngineAskResult = AskResult | { ok: false; error: "no_such_item" }
 
 export interface TriageEngineDeps {
   /** Everything that needs Jeremie right now (unphrased). */
@@ -41,7 +48,8 @@ export interface TriageEngineDeps {
   severity?: (src: SourceItem, phrase: Phrase) => Promise<Severity | null>
   /** Re-read one source now; null = it no longer needs Jeremie. May throw TursoUnreachable. */
   current: (src: SourceItem) => Promise<SourceItem | null>
-  execute: (src: SourceItem, option: TriageOption, text: string | null) => Promise<ExecOutcome>
+  /** `by` names the actor in turns ("triage" when absent: Jeremie's tap). */
+  execute: (src: SourceItem, option: TriageOption, text: string | null, by?: string) => Promise<ExecOutcome>
   store: TriageStore
   broadcast: (frame: Record<string, unknown>) => void
   now?: () => number
@@ -69,6 +77,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
   let sources = new Map<string, SourceItem>()
   let items: TriageItem[] = []
   let resolving: ResolvingItem[] = []
+  let repos: RepoCard[] = []
   let generatedAt = 0
   let lastKey = ""
   let collected = false
@@ -109,14 +118,15 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     phrasing.set(key, p)
   }
 
-  function publish(next: TriageItem[], nextResolving: ResolvingItem[]): void {
+  function publish(next: TriageItem[], nextResolving: ResolvingItem[], nextRepos: RepoCard[]): void {
     items = next
     resolving = nextResolving
-    const key = JSON.stringify([next, nextResolving])
+    repos = nextRepos
+    const key = JSON.stringify([next, nextResolving, nextRepos])
     if (key === lastKey) return
     lastKey = key
     generatedAt = now()
-    deps.broadcast({ type: "orchestrator_triage", items, resolving, generatedAt })
+    deps.broadcast({ type: "orchestrator_triage", items, resolving, repos, generatedAt })
   }
 
   /** Rebuild the list from the last collection (cache hits, else fallback + schedule). */
@@ -151,7 +161,10 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     }
     const shown = new Set([...out.map((i) => i.id), ...busy.map((b) => b.id)])
     const waiting = (deps.pending?.() ?? []).filter((p) => !shown.has(p.id))
-    publish(orderItems(out), [...(r ? orderBusy(busy, r) : busy), ...waiting])
+    const ordered = orderItems(out)
+    const nextResolving = [...(r ? orderBusy(busy, r) : busy), ...waiting]
+    const inputs = ordered.map((item) => ({ item, src: sources.get(item.id)! }))
+    publish(ordered, nextResolving, buildRepoCards(inputs, nextResolving, deps.store.latestRuns()))
   }
 
   /** Queue places settle once every item was considered; working runs first, then the queue in order. */
@@ -214,9 +227,9 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     return refreshing
   }
 
-  async function list(): Promise<{ items: TriageItem[]; resolving: ResolvingItem[]; generatedAt: number }> {
+  async function list(): Promise<{ items: TriageItem[]; resolving: ResolvingItem[]; repos: RepoCard[]; generatedAt: number }> {
     if (!collected) await refresh()
-    return { items, resolving, generatedAt: generatedAt || now() }
+    return { items, resolving, repos, generatedAt: generatedAt || now() }
   }
 
   const fail = (status: number, error: string, extra: Record<string, unknown> = {}): ChooseResult => ({ status, body: { ok: false, error, ...extra } })
@@ -249,16 +262,9 @@ export function createTriageEngine(deps: TriageEngineDeps) {
       render()
       return done(input)
     }
-    let cur: SourceItem | null
-    try {
-      cur = await deps.current(src)
-    } catch (err) {
-      return unavailable(err)
-    }
-    if (!cur || cur.version !== src.version) return stale(input.id)
     let out: ExecOutcome
     try {
-      out = await deps.execute(src, option, text)
+      out = await actOn(input.id, option, text, src.version)
     } catch (err) {
       return unavailable(err)
     }
@@ -267,6 +273,31 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     await refresh()
     if (out.kind === "queued") return done(input, out.detail, 202, "queued")
     return done(input, out.detail)
+  }
+
+  /**
+   * The one action core (a card's choose and the repo runner): re-read the source now, refuse when its
+   * version is not the one the caller saw (stale), else run the option through the executor. Throws
+   * when a source is unreachable (TursoUnreachable, gh down).
+   */
+  async function actOn(id: string, option: TriageOption, text: string | null, expectVersion: string | null, by?: string): Promise<ExecOutcome> {
+    const src = sources.get(id)
+    if (!src) return { kind: "stale", reason: "gone" }
+    if (expectVersion !== null && src.version !== expectVersion) return { kind: "stale", reason: "changed" }
+    const cur = await deps.current(src)
+    if (!cur || cur.version !== src.version) return { kind: "stale", reason: "changed" }
+    return by === undefined ? deps.execute(src, option, text) : deps.execute(src, option, text, by)
+  }
+
+  /** Hand one item to the resolver at this autonomy (the repo runner's Yes / No). */
+  function ask(id: string, instruction: string | null, autonomy: Exclude<Autonomy, "normal">): EngineAskResult {
+    const src = sources.get(id)
+    if (!src) return { ok: false, error: "no_such_item" }
+    const r = deps.resolver
+    if (!r) return { ok: false, error: "resolver_disabled" }
+    const out = r.ask(id, src, instruction, autonomy)
+    if (out.ok) render()
+    return out
   }
 
   /** Hand the item back to Opus: the typed text wins over a prefilled instruction. */
@@ -333,9 +364,13 @@ export function createTriageEngine(deps: TriageEngineDeps) {
   }
 
   return {
-    refresh, list, choose, render,
+    refresh, list, choose, render, actOn, ask,
     items: (): TriageItem[] => items,
     resolving: (): ResolvingItem[] => resolving,
+    repos: (): RepoCard[] => repos,
+    /** The last collected source of an item (null = not in the last collection). */
+    source: (id: string): SourceItem | null => sources.get(id) ?? null,
+    resolverOn: (): boolean => deps.resolver?.enabled() ?? false,
     digest: (): string | null => triageDigest(items),
     /** Cards auto-dismissed since `since` (the daily digest line). */
     expiredSince: (since: number) => deps.store.expiredSince(since),

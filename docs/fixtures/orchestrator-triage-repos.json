@@ -1,0 +1,197 @@
+{
+  "type": "orchestrator_triage",
+  "items": [
+    {
+      "id": "pr:jaubut/yes-dash#22",
+      "source": "pr",
+      "refId": "jaubut/yes-dash#22",
+      "title": "Session cookie flags",
+      "project": "Dashboard",
+      "repo": "yes-dash",
+      "severity": "normal",
+      "problem": "touches src/lib/auth.ts — needs your review",
+      "action": "Look at the PR, then merge or close it.",
+      "recommended": "a",
+      "options": [
+        {
+          "id": "a",
+          "label": "Review it on GitHub",
+          "action": {
+            "kind": "open_url",
+            "url": "https://github.com/jaubut/yes-dash/pull/22"
+          }
+        },
+        {
+          "id": "b",
+          "label": "Merge it",
+          "action": {
+            "kind": "merge"
+          }
+        },
+        {
+          "id": "c",
+          "label": "Close without merging",
+          "action": {
+            "kind": "close_pr"
+          },
+          "destructive": true
+        }
+      ],
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987000
+    },
+    {
+      "id": "task:cccccccccccccccccccccccccccccc1f",
+      "source": "task",
+      "refId": "cccccccccccccccccccccccccccccc1f",
+      "title": "Task cc1f",
+      "project": "Dashboard",
+      "repo": null,
+      "severity": "normal",
+      "problem": "Which currency?",
+      "action": "Answer it so the task restarts, or retry or cancel it.",
+      "recommended": "a",
+      "options": [
+        {
+          "id": "a",
+          "label": "Answer it",
+          "action": {
+            "kind": "answer_custom"
+          }
+        },
+        {
+          "id": "b",
+          "label": "Retry as is",
+          "action": {
+            "kind": "requeue"
+          }
+        },
+        {
+          "id": "c",
+          "label": "Cancel the task",
+          "action": {
+            "kind": "cancel"
+          },
+          "destructive": true
+        }
+      ],
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987000
+    },
+    {
+      "id": "proposal:c1c60eb3",
+      "source": "proposal",
+      "refId": "c1c60eb3",
+      "title": "Ship the export",
+      "project": null,
+      "repo": null,
+      "severity": "normal",
+      "problem": "Jeremie asked",
+      "action": "Approve it if it still makes sense.",
+      "recommended": "a",
+      "options": [
+        {
+          "id": "a",
+          "label": "Approve and start it",
+          "action": {
+            "kind": "approve"
+          }
+        },
+        {
+          "id": "b",
+          "label": "Reject it",
+          "action": {
+            "kind": "reject"
+          },
+          "destructive": true
+        },
+        {
+          "id": "c",
+          "label": "Snooze for a day",
+          "action": {
+            "kind": "snooze",
+            "hours": 24
+          }
+        }
+      ],
+      "context": "Ship the export",
+      "createdAt": 1792087987842,
+      "updatedAt": 1792087987842
+    }
+  ],
+  "resolving": [],
+  "repos": [
+    {
+      "id": "repo:yes-dash",
+      "repo": "yes-dash",
+      "name": "yes-dash",
+      "version": "518fab12891d272b",
+      "overview": [
+        "Stays with you: Session cookie flags"
+      ],
+      "counts": {
+        "members": 0,
+        "held": 1,
+        "resolving": 0,
+        "proposals": 0,
+        "tasks": 0,
+        "prs": 1
+      },
+      "members": [],
+      "held": [
+        "pr:jaubut/yes-dash#22"
+      ],
+      "run": {
+        "id": 1,
+        "decision": "yes",
+        "status": "done",
+        "note": null,
+        "summary": "1 handed back",
+        "results": [
+          {
+            "id": "pr:jaubut/yes-dash#21",
+            "result": "handed_back"
+          }
+        ],
+        "createdAt": 1792087987854,
+        "finishedAt": 1792087987855
+      },
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987855
+    },
+    {
+      "id": "repo:_other",
+      "repo": null,
+      "name": "Other work",
+      "version": "b4e50ea66660f1c7",
+      "overview": [
+        "Opus answers: Task cc1f",
+        "Start: Ship the export"
+      ],
+      "counts": {
+        "members": 2,
+        "held": 0,
+        "resolving": 0,
+        "proposals": 1,
+        "tasks": 1,
+        "prs": 0
+      },
+      "members": [
+        {
+          "id": "task:cccccccccccccccccccccccccccccc1f",
+          "version": "blocked|2026-10-15 18:13:07",
+          "does": "ask_opus"
+        },
+        {
+          "id": "proposal:c1c60eb3",
+          "version": "1792087987842",
+          "does": "approve"
+        }
+      ],
+      "held": [],
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987842
+    }
+  ],
+  "generatedAt": 1792087987857
+}

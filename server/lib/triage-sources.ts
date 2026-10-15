@@ -132,6 +132,12 @@ function meta(r: Row | undefined): Record<string, unknown> {
 
 const s = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "")
 
+/** The park reason without the review cascade's ` · Opus: …` brief (claude-config pr-shepherd-park.ts parkPrefix). */
+export function parkPrefix(reason: string): string {
+  const i = reason.indexOf(" · Opus:")
+  return i < 0 ? reason : reason.slice(0, i)
+}
+
 interface PrLedger {
   lastPr: Row | undefined
   outcome: Row | undefined
@@ -215,7 +221,7 @@ export function prSources(rows: PrRows, now: number): SourceItem[] {
         reason: l.approvalExpired && parkRow !== lastPr ? `Your merge approval expired (7 days). ${why}` : why,
         review: s(t.dispatch_blocker), repo: `${pr.owner}/${pr.repo}`,
       },
-      url: pr.url, hints: { safetyNet, ...(done ? { taskDone: true } : {}) },
+      url: pr.url, hints: { safetyNet, ...(done ? { taskDone: true } : {}), ...(parked ? { parked: parkPrefix(s(m.reason)) } : {}) },
       ref: { source: "pr", taskId: id, prUrl: pr.url, repo: `${pr.owner}/${pr.repo}`, number: pr.number },
     })
   }

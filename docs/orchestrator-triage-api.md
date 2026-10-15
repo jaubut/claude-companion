@@ -52,8 +52,8 @@ type TriageAction =
 
 ## Endpoints
 
-- `GET /api/orchestrator/triage` → `{ items: TriageItem[], resolving: ResolvingItem[], generatedAt: number }`
-  (`resolving` added 2026-10-04 — see "Opus resolver")
+- `GET /api/orchestrator/triage` → `{ items: TriageItem[], resolving: ResolvingItem[], repos: RepoCard[], generatedAt: number }`
+  (`resolving` added 2026-10-04 — see "Opus resolver"; `repos` added 2026-10-15 — see "Repo cards")
   Ordered: urgent first, then oldest. Only things that genuinely need Jeremie.
 - `POST /api/orchestrator/triage/<id>/choose` body `{ optionId: string, text?: string }`,
   header `Idempotency-Key`. Performs the mapped action through the EXISTING guarded
@@ -96,6 +96,74 @@ the work lands in, so the phone can group Needs you by repo. `project` stays the
   a card whose repo changes (null → name, a repo-map edit) keeps its id and version, its
   cached phrasing, and a choose against it is 200, not 409. The frame dedupe key does include
   `repo`, so a flip costs exactly one extra frame.
+
+## Repo cards (added 2026-10-15, needs-you-repo-yes-no)
+
+Jeremie: "the needs you should be just an overview of the repo and a yes or no from my hand". GET, the
+`orchestrator_triage` frame and the choose `next` stay as they were (`items[]` / `resolving[]` byte-identical,
+builds ≤ 52 ignore the new key); GET and the frame gain `repos: RepoCard[]`, derived on every render from the
+same snapshot as `items` (never stored). The frame is sent when a card changes, even when `items` did not.
+
+```ts
+type RepoCard = {
+  id: string                 // "repo:<key>"; key = the repo name, or "_other" (task / proposal / PR items with repo null)
+  repo: string | null        // null for "_other"
+  name: string               // the repo name, or "Other work"
+  version: string            // hash of the members' id@version + held ids + the latest run's id/status (values, never counts)
+  overview: string[]         // ≤ 6 plain lines: "Start: …", "Opus answers: …", "Back to the shepherd: …", "Stays with you: …", "Opus is on N more", "+N more"
+  counts: { members: number; held: number; resolving: number; proposals: number; tasks: number; prs: number }
+  members: { id: string; version: string; does: "approve" | "ask_opus" | "hand_back" }[]   // what a Yes acts on
+  held: string[]             // item ids a Yes never touches: they stay individual cards in items[]
+  run?: RepoRunView          // the repo's latest Yes / No run
+  createdAt: number; updatedAt: number
+}
+type RepoRunView = {
+  id: number; decision: "yes" | "no"; status: "running" | "done" | "failed" | "interrupted"
+  note: string | null        // No only
+  summary: string | null     // "2 started · 1 with Opus · 1 failed (live cap) · 1 skipped (changed)" / "Opus re-planned after your No: rejected 2, rescoped 1, kept 1. …"
+  results: { id: string; result: "done" | "with_opus" | "handed_back" | "kept" | "failed" | "skipped"; reason?: string }[]
+  createdAt: number; finishedAt: number | null
+}
+```
+
+- Members are task, proposal and PR items; `body` and `mytask` items are never on a repo card (keep their own cards).
+- **What Yes does** (decided by the server, `lib/triage-repos.ts memberDoes`, never by the client):
+  proposal → approve (default mode; a Mac fix keeps its host) · blocked / failed task → the Opus resolver at
+  autonomy `delegated` · parked PR → a human `pr:unpark` row (`target_kind 'task'`, meta `{url: <the park row's
+  url>, by: "manual", via: "companion-repo-yes", reason}`): the PR shepherd takes it back with its fix budget reset
+  and EVERY gate (CI, review, sensitive paths) — never `pr:approved-merge`, never a merge from the Companion ·
+  PR parked "superseded…" / "task already…" → the resolver, `delegated` (it may close it when sure).
+- **Held** (never a member): PRs parked `touches …` / `sensitive path …` (with or without `dep lane: `), anything
+  "needs your review", `client…` parks, `stale (no activity…)`, `dep auto-merge off…` (the shepherd re-parks those
+  at once), and the 48 h safety net (never parked, never reviewed). Items in `resolving[]` (Opus's runs, approved
+  merges) are counted, never members.
+- **`delegated`** (resolver policy): an answer acts unless `why` is money / client_wording / irreversible or the
+  confidence is below 0.5; requeue / route act; fix → back to the shepherd on a non-sensitive PR, else a card;
+  close_pr as normal (sure + stale / superseded / task done + not sensitive); cancel / merge / approve / revise /
+  reject → a card. Every answer still posts the 🤖 turn in the task's channel.
+
+**Endpoints** (bearer-gated; `<repo>` = the card key, percent-encoded; header `Idempotency-Key`):
+
+- `POST /api/orchestrator/repos/<repo>/yes` `{ version, members: [{id, version}] }` (1–100 members: the card's
+  `members` as the phone showed them). The server acts on the members whose version still matches, in card order;
+  others → `skipped` `changed` (version moved) · `held` · `gone`. Items that arrived after the snapshot are untouched
+  (they wait for the next card). → `202 { ok, repo, runId, result: "running", skipped[] }`.
+- `POST /api/orchestrator/repos/<repo>/no` `{ version, note }` (note 1–2000 chars) → ONE Opus call re-plans the repo
+  from the note: per item keep · reject / revise (proposals) · answer (blocked tasks) · ask_opus (anything: the
+  resolver, elevated, with Opus's instruction) · cancel / close_pr only when the note consents (the `ask_opus` rule:
+  short go words like "vas-y" alone, a longer order only when Opus also reads it as consent); never on held PRs. → `202` as above; the card comes back with a new
+  `version` and `run.summary` saying what Opus changed.
+- Errors: `409 stale` + `next: RepoCard` (Yes: no posted member still matches; No: the card's version moved) ·
+  `409 repo_busy` + `run` (one run per repo at a time) · `409 resolver_disabled` (No on a host without Opus, before
+  any row) · `422 note_required` · `400` bad JSON / members / note too long · `404 no_such_repo` · `503
+  turso_unreachable` (no row written).
+- **Idempotency (pattern B):** each run is one `triage_repo_runs` row, UNIQUE (repo, Idempotency-Key). The same key
+  again → `200 { ok, repo, runId, result: "replay", run }` + `Idempotent-Replayed: true`, whatever the run's status
+  (an interrupted one included); no second run. A server restart closes a `running` row as `interrupted`.
+- The run lands on the card (`run`, a new `version`) and as one orchestrator turn in #General
+  ("✅ Your Yes on <repo>: …" / "🤖 Opus re-planned after your No: …"). Failed items stay members of the next card.
+- Fixture (a real frame with `repos[]` and a finished run, shared with the iOS decode test):
+  `docs/fixtures/orchestrator-triage-repos.json` (regenerate: `UPDATE_FIXTURES=1 bun test routes/triage.test.ts`).
 
 ## Phrasing
 Generated by the brain (lean `claude -p`, sonnet), one call per new/changed item,
@@ -336,6 +404,10 @@ offers "Ask for changes" right after changes were made.
 - **Body failed twice** (components on this host): a deeper read-only investigation (the investigator's tools,
   Opus, 20 min) → a #Body fix proposal or a plain explanation; the component's item then leaves triage.
 - **Mytask:** never (Jeremie's own list; no Ask Opus button).
+
+Autonomy per run: `normal` (Opus's own pass, in the daily budget) · `elevated` (`ask_opus`, below) · `delegated`
+(2026-10-15: Jeremie's Yes on a repo card — see "Repo cards"; outside the daily budget, never expires in the queue,
+never counts as Opus's one rescue on a PR).
 
 `ask_opus` = elevated autonomy for that item only: Opus may execute any action the source allows, outside the
 daily budget. **Consent (2026-10-04):** an instruction that tells Opus to act counts as consent to Opus's

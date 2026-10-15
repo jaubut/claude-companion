@@ -1,4 +1,4 @@
-import { appendTurn, setTaskStatus, type Task } from "../lib/orchestrator-chat"
+import { appendTurn, createProposal, getTask, setTaskStatus, type Task } from "../lib/orchestrator-chat"
 import { cancelDispatchTask, finishLive, liveOwner } from "../lib/dispatch-tasks"
 import { approveBodyFix } from "./body-fix"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
@@ -8,7 +8,8 @@ import { emitTask, fileProposal, orchEmit, writeCtx } from "./orchestrator"
 // Proposal approve / reject: the one path behind POST .../proposal/<id>/{approve|reject}
 // (routes/orchestrator.ts) and the triage `approve` / `reject` options
 // (wiring/triage.ts). A #Body fix for a Mac component keeps its host routing
-// (wiring/body-fix.ts) whatever the mode.
+// (wiring/body-fix.ts) whatever the mode. Revise (Opus's rescope: the resolver
+// and a No on a repo card) rejects the old one and files the new one.
 
 export interface ApproveOpts { mode?: unknown; agent?: string | null; noteId?: string | null; cwd?: string | null }
 
@@ -46,4 +47,25 @@ export function rejectProposal(task: Task, dispatch: DispatchWiring = dispatchWi
     }).catch(() => {})
   }
   return Response.json({ ok: true, taskId: task.taskId, status: "rejected" })
+}
+
+interface Revision { title: string; prompt: string; why: string }
+
+/**
+ * Opus rescoped a proposal: the old one is rejected, the rescoped one filed in the same thread and marked
+ * Opus-created through `markCreated` (the resolver store's: it never re-resolves its own rescope).
+ * Returns the new proposal id; null when the old one is gone or no longer proposed.
+ */
+export function reviseProposal(taskId: string, r: Revision, markCreated: (taskId: string, now: number) => void, dispatch: DispatchWiring = dispatchWiring): string | null {
+  const old = getTask(taskId)
+  if (!old || old.status !== "proposed") return null
+  const res = rejectProposal(old, dispatch)
+  if (!res.ok) return null
+  const next = createProposal(r.prompt, old.cwd, `Opus rescoped [${old.taskId}]: ${r.why}`.slice(0, 500), old.threadId, {
+    noteId: old.noteId ?? null, agent: old.agent ?? null, title: r.title || old.title || null,
+  })
+  markCreated(next.taskId, Date.now())
+  emitTask(next.taskId)
+  orchEmit(appendTurn("orchestrator", `🤖 Opus rescoped [${old.taskId}] → proposal [${next.taskId}]: ${r.title || r.prompt.slice(0, 120)}`, next.taskId, old.threadId))
+  return next.taskId
 }

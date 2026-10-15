@@ -406,3 +406,39 @@ describe("blocked on no repo → route", () => {
     expect(resolverActions(task())).not.toContain("route")
   })
 })
+
+describe("delegated (Jeremie's Yes on a repo card, 2026-10-15)", () => {
+  test("a 0.6 answer with a plain preference → answered by Opus, the run recorded as delegated", async () => {
+    model = reply({ action: { kind: "answer", text: "Round per line." }, needsJeremie: true, why: "preference", confidence: 0.6 })
+    const out = await work()(job(task(), "delegated", "Yes on the repo"))
+    expect(executed).toEqual([{ action: { kind: "answer", text: "Round per line." }, by: "Opus (your Yes on Other work)" }])
+    expect(out).toMatchObject({ kind: "resolved", action: "answer" })
+    expect(records[0]!.meta).toMatchObject({ autonomy: "delegated" })
+  })
+
+  test("money stays Jeremie's card, whatever the confidence", async () => {
+    model = reply({ action: { kind: "answer", text: "Charge 500 $" }, why: "money", confidence: 0.99 })
+    const out = await work()(job(task(), "delegated", "Yes on the repo"))
+    expect(executed).toEqual([])
+    expect(out.kind).toBe("prepared")
+  })
+
+  test("a non-sensitive PR fix is handed back to the shepherd even after an earlier rescue", async () => {
+    ctx.rescuedBefore = true
+    model = reply({ action: { kind: "fix", instructions: "Mock the clock" }, category: "ci_failing" })
+    const out = await work()(job(pr(), "delegated", "Yes on the repo"))
+    expect(calls).toContain("fix:Mock the clock")
+    expect(calls.some((c) => c.startsWith("unpark:"))).toBe(true)
+    expect(out).toMatchObject({ kind: "resolved", action: "fix" })
+  })
+})
+
+describe("delegated: the actor names Jeremie's Yes (2026-10-15, PR #168 drift check)", () => {
+  test("the executor gets 'Opus (your Yes on <repo>)' on a delegated run, plain 'Opus' otherwise", async () => {
+    model = reply({ action: { kind: "answer", text: "Round per line." } })
+    await work()(job({ ...task(), repo: "tls-dashboard-v2" }, "delegated", "Yes on the repo"))
+    await work()(job({ ...task(), repo: "tls-dashboard-v2" }, "elevated", "do it"))
+    await work()(job({ ...task(), repo: "tls-dashboard-v2" }))
+    expect(executed.map((e) => e.by)).toEqual(["Opus (your Yes on tls-dashboard-v2)", "Opus", "Opus"])
+  })
+})
