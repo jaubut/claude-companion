@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
@@ -36,8 +36,6 @@ let fix: typeof import("../wiring/body-fix")
 let fixLib: typeof import("../lib/body-fix")
 let triageWiring: typeof import("../wiring/triage")
 let triageRoute: typeof import("./triage")
-let repoWiring: typeof import("../wiring/triage-repos")
-let triageStoreLib: typeof import("../lib/triage-store")
 let invLib: typeof import("../lib/body-investigate")
 let host: string
 let sqlite: typeof import("../lib/orchestrator-db")["db"]
@@ -160,8 +158,7 @@ function makeHarness() {
     mytasks,
     broadcast: (f) => frames.push(f),
   })
-  const runner = repoWiring.createRepoRunner({ engine, store: triageStoreLib.createTriageStore(sqlite), ...triageWiring.repoSeams({ dispatch: w }) })
-  return { w, engine, runner, handler: triageRoute.createTriageHandler(() => engine, () => runner) }
+  return { w, engine, handler: triageRoute.createTriageHandler(() => engine) }
 }
 let harness: ReturnType<typeof makeHarness>
 
@@ -202,8 +199,6 @@ beforeAll(async () => {
   invLib = await import("../lib/body-investigate")
   triageWiring = await import("../wiring/triage")
   triageRoute = await import("./triage")
-  repoWiring = await import("../wiring/triage-repos")
-  triageStoreLib = await import("../lib/triage-store")
   host = (await import("../state")).HOST_INFO.name
   fixStore = fixLib.createBodyFixStore(sqlite)
   live.setLiveRunner(fakeRunner)
@@ -578,117 +573,3 @@ describe("repo on every item (needs-you-by-repo, 2026-10-15)", () => {
     expect(again("pr:jaubut/claude-companion-ios#12")).toBe("claude-companion-ios")
   })
 })
-
-describe("repo cards: Yes / No (needs-you-repo-yes-no, 2026-10-15)", () => {
-  const fixturePath = join(import.meta.dir, "..", "..", "docs", "fixtures", "orchestrator-triage-repos.json")
-
-  async function repoPost(repo: string, verb: "yes" | "no", payload: unknown, key?: string) {
-    const req = new Request(`http://localhost/api/orchestrator/repos/${encodeURIComponent(repo)}/${verb}`, {
-      method: "POST", body: typeof payload === "string" ? payload : JSON.stringify(payload), headers: key ? { "Idempotency-Key": key } : {},
-    })
-    const res = await harness.handler(req, new URL(req.url))
-    return { status: res!.status, json: await res!.json() as Record<string, any>, replayed: res!.headers.get("Idempotent-Replayed") }
-  }
-
-  function park(id: string, url: string, reason: string) {
-    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
-      .run(id, JSON.stringify({ reason, repo: "yes-dash", url }))
-  }
-
-  async function scene() {
-    const u21 = "https://github.com/jaubut/yes-dash/pull/21"
-    const u22 = "https://github.com/jaubut/yes-dash/pull/22"
-    const t21 = turTask("completed", null, { pr: u21, text: "Flaky upload test" })
-    const t22 = turTask("completed", null, { pr: u22, text: "Session cookie flags" })
-    park(t21, u21, "CI still failing after 2 fixes: test")
-    park(t22, u22, "touches src/lib/auth.ts — needs your review")
-    const b = turTask("blocked", "Which currency?")
-    const p = chat.createProposal("Ship the export", "", "Jeremie asked", channelId, { noteId: "projects/dash" })
-    await sync()
-    return { t21, t22, u21, b, p }
-  }
-
-  test("GET carries repos[] (one card per repo; held PR out of members); items[] unchanged; the shared fixture matches the server shape", async () => {
-    const { b, p } = await scene()
-    const body = await get() as unknown as { items: any[]; resolving: any[]; repos: any[]; generatedAt: number }
-    expect(Array.isArray(body.repos)).toBe(true)
-    const dash = body.repos.find((c) => c.repo === "yes-dash")
-    expect(dash).toMatchObject({ id: "repo:yes-dash", name: "yes-dash", held: ["pr:jaubut/yes-dash#22"], counts: { members: 1, held: 1, prs: 2 } })
-    expect(dash.members).toEqual([{ id: "pr:jaubut/yes-dash#21", version: expect.any(String), does: "hand_back" }])
-    const other = body.repos.find((c) => c.id === "repo:_other")
-    // Own ids only: the shared companion.db may hold other files' proposals (they fold into _other too).
-    expect(other.members.map((m: any) => m.id)).toEqual(expect.arrayContaining([`proposal:${p.taskId}`, `task:${b}`]))
-    expect(body.items.map((i) => i.id)).toContain("pr:jaubut/yes-dash#22")
-    expect(frames.at(-1)).toMatchObject({ type: "orchestrator_triage", repos: expect.any(Array) })
-  })
-
-  test("Yes hands the parked PR back (pr:unpark, by manual, url from the park row); the held PR never moves; replay runs nothing twice", async () => {
-    const { t21, t22, u21 } = await scene()
-    const dash = (await get() as any).repos.find((c: any) => c.repo === "yes-dash")
-    const members = [...dash.members.map((m: any) => ({ id: m.id, version: m.version })), { id: "pr:jaubut/yes-dash#22", version: "x" }]
-    const r = await repoPost("yes-dash", "yes", { version: dash.version, members }, "repo-yes-1")
-    expect(r.status).toBe(202)
-    expect(r.json).toMatchObject({ ok: true, repo: "yes-dash", result: "running", skipped: [{ id: "pr:jaubut/yes-dash#22", reason: "held" }] })
-    await harness.runner.idle()
-    const rows = turso.query("SELECT agent_slug, target_kind, target_id, meta FROM agent_activity WHERE action = 'pr:unpark'").all() as Record<string, string>[]
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ target_kind: "task", target_id: t21 })
-    expect(JSON.parse(rows[0]!.meta!)).toMatchObject({ url: u21, by: "manual", via: "companion-repo-yes" })
-    expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE target_id = ? AND action = 'pr:unpark'").get(t22)).toEqual({ n: 0 })
-    expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action = 'pr:approved-merge'").get()).toEqual({ n: 0 })
-    expect(ghCalls.some((c) => c[1] === "merge")).toBe(false)
-    const replay = await repoPost("yes-dash", "yes", { version: dash.version, members }, "repo-yes-1")
-    expect(replay).toMatchObject({ status: 200, replayed: "true", json: { ok: true, result: "replay", runId: r.json.runId, run: { status: "done" } } })
-    expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action = 'pr:unpark'").get()).toEqual({ n: 1 })
-    const after = (await get() as any).repos.find((c: any) => c.repo === "yes-dash")
-    expect(after.run).toMatchObject({ id: r.json.runId, decision: "yes", status: "done", results: [{ id: "pr:jaubut/yes-dash#21", result: "handed_back" }] })
-    // The shared fixture (iOS decode test): a real frame with a repo card that carries a finished run.
-    const frame = frames.at(-1) as Record<string, any>
-    expect(frame.repos.find((c: any) => c.repo === "yes-dash").run).toMatchObject({ status: "done" })
-    if (process.env.UPDATE_FIXTURES === "1") writeFileSync(fixturePath, `${JSON.stringify(frame, null, 2)}\n`)
-    const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as Record<string, unknown>
-    expect(shapeOf(fixture)).toEqual(shapeOf(frame))
-  })
-
-  test("Yes with a tampered member version: that id is skipped as changed; the proposal it named is untouched", async () => {
-    const { p, b } = await scene()
-    const other = (await get() as any).repos.find((c: any) => c.id === "repo:_other")
-    const own = new Set([`proposal:${p.taskId}`, `task:${b}`])
-    const members = other.members.filter((m: any) => own.has(m.id)).map((m: any) => ({ id: m.id, version: m.id.startsWith("proposal:") ? "tampered" : m.version }))
-    const r = await repoPost("_other", "yes", { version: other.version, members }, "repo-yes-2")
-    expect(r.status).toBe(202)
-    expect(r.json.skipped).toEqual([{ id: `proposal:${p.taskId}`, reason: "changed" }])
-    await harness.runner.idle()
-    expect(chat.getTask(p.taskId)!.status).toBe("proposed")
-  })
-
-  test("validation: 422 note_required, 404 no_such_repo, 400 for bad members / JSON", async () => {
-    await scene()
-    const dash = (await get() as any).repos.find((c: any) => c.repo === "yes-dash")
-    expect((await repoPost("yes-dash", "no", { version: dash.version })).json).toMatchObject({ ok: false, error: "note_required" })
-    expect((await repoPost("yes-dash", "no", { version: dash.version, note: "   " })).status).toBe(422)
-    expect((await repoPost("yes-dash", "no", { version: dash.version, note: "x".repeat(2001) })).status).toBe(400)
-    expect((await repoPost("nope-repo", "yes", { version: "v", members: [{ id: "task:x", version: "1" }] })).status).toBe(404)
-    expect((await repoPost("yes-dash", "yes", { version: dash.version, members: "all" })).status).toBe(400)
-    expect((await repoPost("yes-dash", "yes", { version: dash.version, members: Array.from({ length: 101 }, (_, i) => ({ id: `task:${i}`, version: "1" })) })).status).toBe(400)
-    expect((await repoPost("yes-dash", "yes", "{not json")).status).toBe(400)
-  })
-})
-
-/** The fixture's structure (keys + value types, arrays by their first element): values may differ run to run. */
-function shapeOf(v: unknown): unknown {
-  if (Array.isArray(v)) return v.length ? [v.map(shapeOf).reduce(mergeShape)] : []
-  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v).sort().map((k) => [k, shapeOf((v as Record<string, unknown>)[k])]))
-  return v === null ? "null" : typeof v
-}
-
-/** Union of two element shapes (keys merged; differing leaf types joined): an array's elements differ in optional keys. */
-function mergeShape(a: unknown, b: unknown): unknown {
-  if (Array.isArray(a) && Array.isArray(b)) return a.length && b.length ? [mergeShape(a[0], b[0])] : a.length ? a : b
-  if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
-    const ao = a as Record<string, unknown>, bo = b as Record<string, unknown>
-    const keys = [...new Set([...Object.keys(ao), ...Object.keys(bo)])].sort()
-    return Object.fromEntries(keys.map((k) => [k, k in ao && k in bo ? mergeShape(ao[k], bo[k]) : (ao[k] ?? bo[k])]))
-  }
-  return [...new Set([...String(a).split("|"), ...String(b).split("|")])].sort().join("|")
-}
