@@ -314,7 +314,7 @@ describe("triage integration", () => {
     const first = await t.list()
     expect(first.items.map((i) => i.id)).toEqual(["trip:trip-1"])
     expect(first.items[0]!.options.some((o) => o.action.kind === "ask_opus")).toBe(false)
-    expect(first.resolving).toEqual([{ id: "task:a", source: "task", title: "Task a", project: "Dash", resolver: expect.objectContaining({ status: "resolving", model: "claude-opus-5-5" }) }])
+    expect(first.resolving).toEqual([{ id: "task:a", source: "task", title: "Task a", project: "Dash", repo: null, resolver: expect.objectContaining({ status: "resolving", model: "claude-opus-5-5" }) }])
     expect(frames.at(-1)).toMatchObject({ type: "orchestrator_triage", resolving: [expect.objectContaining({ id: "task:a" })] })
     gates.get("a")!.resolve({ kind: "prepared", phrase: preparedCard(a), summary: "Opus: needs your call on client wording" })
     await r.idle()

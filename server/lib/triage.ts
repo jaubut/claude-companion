@@ -76,6 +76,8 @@ export interface ResolvingItem {
   source: TriageSource
   title: string
   project: string | null
+  /** GitHub repo name the work lands in (display/grouping only, never in a version); null = unknown. */
+  repo: string | null
   resolver: ResolverInfo
   /** Set on an approved merge waiting for GitHub (not an Opus run). */
   approval?: MergeApproval
@@ -87,6 +89,8 @@ export interface TriageItem {
   refId: string
   title: string
   project: string | null
+  /** GitHub repo name the work lands in (display/grouping only, never in a version); null = unknown. */
+  repo: string | null
   severity: Severity
   problem: string
   action: string
@@ -122,6 +126,8 @@ export interface SourceItem {
   version: string
   title: string
   project: string | null
+  /** GitHub repo name (wiring/triage.ts, PR URL). Never part of `version`, the phrase prompt or a cache key. */
+  repo?: string | null
   /** When it started needing Jeremie (ordering: oldest first). */
   createdAt: number
   updatedAt: number
@@ -486,7 +492,7 @@ export const prConflicting = (src: SourceItem): boolean => src.ref.source === "p
 export function buildItem(src: SourceItem, given: Phrase, severity: Severity, resolver?: ResolverInfo): TriageItem {
   const phrase = prConflicting(src) ? conflictPhrase(given) : given
   return {
-    id: itemId(src.source, src.refId), source: src.source, refId: src.refId, title: phrase.title, project: src.project,
+    id: itemId(src.source, src.refId), source: src.source, refId: src.refId, title: phrase.title, project: src.project, repo: src.repo ?? null,
     severity, problem: phrase.problem, action: phrase.action, recommended: phrase.recommended, options: phrase.options,
     ...(phrase.context ? { context: phrase.context } : {}),
     ...(resolver ? { resolver } : {}),
