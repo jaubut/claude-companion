@@ -8,11 +8,11 @@ import { companionLog } from "../lib/log"
 import { runBrainCall } from "../lib/orchestrator-brain"
 import { appendTurn, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
-import { db } from "../lib/orchestrator-db"
+import { GENERAL_CHANNEL, db } from "../lib/orchestrator-db"
 import { type Phrase, type ResolvingItem, type Severity, type SourceItem, type TriageOption, approvalSummary, clip, expiredDigest, phrasePrompt } from "../lib/triage"
 import { type ExecOutcome, type TriageEngine, type TriageResolverHook, createTriageEngine } from "../lib/triage-engine"
 import { type GhFn, type PrReadiness, closePr, holdReason, mergePr, prReadiness, realGh } from "../lib/triage-pr"
-import { type ApprovedPr, type BodyLookup, bodySources, latestProposals, prApprovals, prGone, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
+import { type ApprovedPr, type BodyLookup, NEEDS_HUMAN, bodySources, latestProposals, prApprovals, prGone, prSources, proposalSource, queryPrRows, taskSource, taskSources } from "../lib/triage-sources"
 import { type TriageStore, createTriageStore } from "../lib/triage-store"
 import { type MyTaskTriage, createMyTaskTriage } from "../lib/mytask-triage"
 import { tursoExec, tursoQuery } from "../lib/turso"
@@ -22,8 +22,10 @@ import { bodySnapshot } from "./body"
 import { bodyFixStore, bodyInvestigator, investigationStore } from "./body-investigate"
 import { type DispatchWiring, dispatchWiring, onDispatchPolled } from "./dispatch"
 import { onTaskEmitted, orchEmit, setTriageDigest, vetoAuto, writeCtx } from "./orchestrator"
-import { approveProposal, rejectProposal } from "./proposals"
+import { approveProposal, rejectProposal, reviseProposal } from "./proposals"
 import { type LiveResolver, type ResolverLiveOpts, createLiveResolver, repoMapSelfCheck, startResolverDigest } from "./resolver"
+import { type RepoRunnerDeps, sweepInterruptedRuns } from "./triage-repos"
+import { resolverConfig } from "../lib/resolver"
 import { ownsTrips } from "./trips"
 
 // Brain triage, live instance (docs/orchestrator-triage-api.md): collectors
@@ -111,6 +113,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   const mytasks = opts.mytasks !== undefined ? opts.mytasks
     : ownsTrips() && process.env.NODE_ENV !== "test" ? createMyTaskTriage({ query: tursoQuery, exec: tursoExec, log: companionLog, onWrite: () => wsBroadcast({ type: "tasks_changed", why: "triage" }) }) : null
   let prCache: { at: number; items: SourceItem[] } | null = null
+  prCacheDrop.set(dispatch, () => { prCache = null })
   let approved: ResolvingItem[] = []
   const readyCache = new Map<string, { at: number; ready: PrReadiness | null }>()
 
@@ -355,9 +358,70 @@ export function triageEngine(): TriageEngine {
 
 export const TRIAGE_TICK_MS = 60_000
 
+// ── repo cards: the runner's live seams (wiring/triage-repos.ts) ─────────────
+
+/** Per dispatch wiring: drop the live triage's PR row cache (an unpark must show on the next refresh). */
+const prCacheDrop = new WeakMap<DispatchWiring, () => void>()
+
+const metaOf = (raw: unknown): Record<string, unknown> => {
+  try {
+    const m = JSON.parse(String(raw ?? "{}")) as unknown
+    return m && typeof m === "object" && !Array.isArray(m) ? m as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+export interface RepoSeamOpts {
+  dispatch?: DispatchWiring
+  /** The resolver store's markCreated (a rescope is never re-resolved); default = the live resolver's. */
+  markCreated?: (taskId: string, now: number) => void
+}
+
+/**
+ * Jeremie's Yes on a parked PR: hand it back to the shepherd with a human `pr:unpark` (by "manual": the fix
+ * budget restarts, every gate applies again — never pr:approved-merge). The park row's url is the one the
+ * shepherd reads. Deduped: nothing when the newest pr:* row is already an unpark (or no park is open).
+ */
+async function unparkPr(dispatch: DispatchWiring, src: SourceItem): Promise<"done" | "already"> {
+  if (src.ref.source !== "pr") throw new Error("not a PR")
+  const rows = await dispatch.query(
+    "SELECT action, meta FROM agent_activity WHERE target_kind = 'task' AND target_id = ? AND action LIKE 'pr:%' ORDER BY id DESC LIMIT 50",
+    [src.ref.taskId],
+  )
+  if (!rows.length || rows[0]!.action === "pr:unpark") return "already"
+  const park = rows.find((r) => r.action === NEEDS_HUMAN)
+  if (!park) return "already"
+  const meta = metaOf(park.meta)
+  const url = typeof meta.url === "string" && meta.url ? meta.url : src.ref.prUrl
+  const reason = `your Yes on the ${src.repo ?? "repo"} card`
+  await dispatch.exec(
+    "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, 'pr:unpark', 'task', ?, ?, ?)",
+    ["companion", src.ref.taskId, clip(`${src.ref.repo}#${src.ref.number} handed back to the PR shepherd: ${reason}`, 200),
+      JSON.stringify({ url, by: "manual", via: "companion-repo-yes", reason, host: HOST_INFO.name })],
+  )
+  prCacheDrop.get(dispatch)?.()
+  return "done"
+}
+
+/** The repo runner's live seams over a dispatch wiring (tests pass their own). */
+export function repoSeams(o: RepoSeamOpts = {}): Pick<RepoRunnerDeps, "unparkPr" | "revise" | "rework" | "probe" | "turn"> {
+  const dispatch = o.dispatch ?? dispatchWiring
+  const markCreated = o.markCreated ?? ((id: string, at: number) => liveResolver?.store.markCreated(id, at))
+  return {
+    unparkPr: (src) => unparkPr(dispatch, src),
+    revise: async (src, title, prompt, why) => (src.ref.source === "proposal" ? reviseProposal(src.ref.taskId, { title, prompt, why }, markCreated, dispatch) : null),
+    rework: (prompt) => (process.env.NODE_ENV === "test" ? Promise.resolve(null) : runBrainCall(resolverConfig().model, prompt)),
+    probe: async () => { await dispatch.query("SELECT 1", []) },
+    turn: (text) => orchEmit(appendTurn("orchestrator", text, null, GENERAL_CHANNEL)),
+  }
+}
+
 /** Boot (cli.ts): recompute after every dispatch poll, proposal change and minute; feed the brain digest. */
 export function startTriage(): () => void {
   const engine = triageEngine()
+  const swept = sweepInterruptedRuns(createTriageStore(db), Date.now())
+  if (swept) companionLog(`[repo-cards] ${swept} run(s) a restart interrupted`)
   repoMapSelfCheck(!!liveResolver)
   const offPoll = onDispatchPolled(() => void engine.refresh())
   const offTask = onTaskEmitted(() => void engine.refresh())
