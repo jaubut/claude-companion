@@ -372,3 +372,74 @@ describe("repo field (needs-you-by-repo, 2026-10-15)", () => {
     expect(frames.at(-1)).toMatchObject({ resolving: [{ repo: "claude-companion" }, { repo: null }, { repo: "TLSTUDIO" }] })
   })
 })
+
+describe("repo cards (needs-you-repo-yes-no, 2026-10-15)", () => {
+  function withStore() {
+    const store = createTriageStore(new Database(":memory:"))
+    const asks: { id: string; instruction: string | null; autonomy: string | undefined }[] = []
+    const e = createTriageEngine({
+      collect: async () => sources, phrase: async () => null,
+      current: async (src) => current.has(src.refId) ? current.get(src.refId)! : src,
+      execute: async (src, option, text, by) => { executed.push({ id: src.refId, option, text }); byLog.push(by ?? null); return execOut },
+      store, broadcast: (f) => frames.push(f), now: () => clock,
+      resolver: {
+        enabled: () => true, pump: () => {}, consider: () => {}, view: () => null,
+        ask: (id, _src, instruction, autonomy) => { asks.push({ id, instruction, autonomy }); return { ok: true, runId: 1 } },
+      },
+    })
+    return { e, store, asks }
+  }
+  let byLog: (string | null)[] = []
+  beforeEach(() => { byLog = [] })
+
+  test("GET and the frame carry repos[] from the same snapshot as items", async () => {
+    sources = [{ ...blocked("t1"), repo: "dash" }, { ...blocked("t2", "v1", 200), repo: null }]
+    const { e } = withStore()
+    const l = await e.list()
+    expect(l.repos.map((c) => c.id)).toEqual(["repo:dash", "repo:_other"])
+    expect(l.repos[0]!.members).toEqual([{ id: "task:t1", version: "v1", does: "ask_opus" }])
+    expect(frames.at(-1)).toMatchObject({ type: "orchestrator_triage", repos: [{ id: "repo:dash" }, { id: "repo:_other" }] })
+    expect((frames.at(-1) as { items: unknown }).items).toEqual(l.items)
+  })
+
+  test("a repos-only change (a run row) emits one frame with byte-identical items; no change emits none", async () => {
+    sources = [{ ...blocked("t1"), repo: "dash" }]
+    const { e, store } = withStore()
+    await e.refresh()
+    const before = frames.length
+    const items = JSON.stringify((frames.at(-1) as { items: unknown }).items)
+    e.render()
+    expect(frames.length).toBe(before)
+    store.insertRun({ repoKey: "dash", cardVersion: e.repos()[0]!.version, decision: "yes", note: null, idemKey: "k1" }, clock)
+    e.render()
+    expect(frames.length).toBe(before + 1)
+    expect(JSON.stringify((frames.at(-1) as { items: unknown }).items)).toBe(items)
+    expect(frames.at(-1)).toMatchObject({ repos: [{ id: "repo:dash", run: { status: "running", decision: "yes" } }] })
+  })
+
+  test("actOn: re-reads the source, refuses a version other than the expected one, executes with the actor", async () => {
+    sources = [{ ...blocked("t1"), repo: "dash" }]
+    const { e } = withStore()
+    await e.refresh()
+    const answer: TriageOption = { id: "x", label: "Answer", action: { kind: "answer", text: "CAD" } }
+    expect(await e.actOn("task:t1", answer, null, "v0", "Opus")).toMatchObject({ kind: "stale" })
+    current.set("t1", blocked("t1", "v2"))
+    expect(await e.actOn("task:t1", answer, null, "v1", "Opus")).toMatchObject({ kind: "stale" })
+    current.delete("t1")
+    expect(await e.actOn("task:nope", answer, null, null, "Opus")).toMatchObject({ kind: "stale" })
+    expect(await e.actOn("task:t1", answer, null, "v1", "Opus")).toEqual({ kind: "done" })
+    expect(executed.map((x) => x.id)).toEqual(["t1"])
+    expect(byLog).toEqual(["Opus"])
+    expect(e.source("task:t1")?.version).toBe("v1")
+  })
+
+  test("ask passes the autonomy through to the resolver", async () => {
+    sources = [{ ...blocked("t1"), repo: "dash" }]
+    const { e, asks } = withStore()
+    await e.refresh()
+    expect(e.ask("task:t1", "Yes on dash", "delegated")).toEqual({ ok: true, runId: 1 })
+    expect(e.ask("task:nope", "x", "delegated")).toEqual({ ok: false, error: "no_such_item" })
+    expect(asks).toEqual([{ id: "task:t1", instruction: "Yes on dash", autonomy: "delegated" }])
+    expect(e.resolverOn()).toBe(true)
+  })
+})

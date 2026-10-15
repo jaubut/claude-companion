@@ -311,6 +311,18 @@ describe("queue hygiene (2026-10-14)", () => {
     expect(items[0]).toMatchObject({ facts: { reason: "needs your review" }, hints: { safetyNet: false }, ref: { taskId: "828e0d7d", number: 66 } })
   })
 
+  test("(1c) hints.parked = the park reason's prefix (the cascade's ' · Opus:' brief stripped); safety net and approvals carry none", () => {
+    const u = "https://github.com/jaubut/x/pull/"
+    const old = NOW - PR_SAFETY_NET_MS - 60_000
+    const items = prSources({
+      tasks: [ptask("p1", `${u}1`, 0), ptask("p2", `${u}2`, 0, old)],
+      activity: [{ id: 1, target_id: "p1", action: NEEDS_HUMAN, meta: JSON.stringify({ url: `${u}1`, reason: "touches src/auth.ts — needs your review · Opus: cookie flag dropped" }), ts: ts(NOW - 500) }],
+    }, NOW)
+    expect(items.map((i) => [i.refId, i.hints?.parked])).toEqual([["jaubut/x#1", "touches src/auth.ts — needs your review"], ["jaubut/x#2", undefined]])
+    expect(items[0]!.facts.reason).toContain("· Opus:")
+    expect(items[1]!.hints).toMatchObject({ safetyNet: true })
+  })
+
   const prop = (taskId: string, title: string, createdAt: number, over: Partial<Task> = {}) => ({
     taskId, threadId: "body", prompt: `${title}\ndetails`, cwd: "/x", sessionKey: null, tmuxSession: null, reasoning: null, logTail: null,
     status: "proposed", createdAt, updatedAt: createdAt, title, noteId: "projects/dash", ...over,
