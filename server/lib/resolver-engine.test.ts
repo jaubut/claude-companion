@@ -26,11 +26,11 @@ function task(id: string, blocker = "Which currency?"): SourceItem {
   }
 }
 
-function tripItem(): SourceItem {
+function mytaskItem(): SourceItem {
   return {
-    source: "trip", refId: "trip-1", version: "1", title: "Trip Granby → Montréal", project: "Travel log", createdAt: 1, updatedAt: 1,
-    facts: { problem: "Trip — business?" }, url: null,
-    ref: { source: "trip", tripId: "trip-1", guess: "business", clientSlug: "humance", clientName: "Humance", altSlug: null, altName: null },
+    source: "mytask", refId: "t-1", version: "1", title: "Call the accountant", project: "Admin", createdAt: 1, updatedAt: 1,
+    facts: { problem: "Overdue by 3 days" }, url: null,
+    ref: { source: "mytask", taskIds: ["t-1"], noteId: "tasks/t-1", oldestDue: "2026-10-01", lateDays: 3 },
   }
 }
 
@@ -40,7 +40,7 @@ function makeEngine() {
   return createResolverEngine({
     store,
     config: () => cfg,
-    routable: (src) => src.source !== "trip",
+    routable: (src) => src.source !== "mytask",
     work: (job) => {
       jobs.push(job)
       return new Promise<WorkResult>((resolve) => gates.set(job.src.refId, { resolve }))
@@ -170,9 +170,9 @@ describe("scheduler", () => {
     expect(e.view(id(a), a)?.state).toBe("resolving")
     cfg.enabled = false
     expect(e.ask(id(a), a, null)).toEqual({ ok: false, error: "resolver_disabled" })
-    expect(e.ask(id(tripItem()), tripItem(), null)).toEqual({ ok: false, error: "resolver_disabled" })
+    expect(e.ask(id(mytaskItem()), mytaskItem(), null)).toEqual({ ok: false, error: "resolver_disabled" })
     cfg.enabled = true
-    expect(e.ask(id(tripItem()), tripItem(), null)).toEqual({ ok: false, error: "not_routable" })
+    expect(e.ask(id(mytaskItem()), mytaskItem(), null)).toEqual({ ok: false, error: "not_routable" })
   })
 
   test("a resolved item that comes back on a new version (re-blocked, same question) gets a card-only run, never hidden forever", async () => {
@@ -310,9 +310,9 @@ describe("triage integration", () => {
     const r = makeEngine()
     const a = task("a")
     const frames: Record<string, unknown>[] = []
-    const t = triage(r, [a, tripItem()], frames)
+    const t = triage(r, [a, mytaskItem()], frames)
     const first = await t.list()
-    expect(first.items.map((i) => i.id)).toEqual(["trip:trip-1"])
+    expect(first.items.map((i) => i.id)).toEqual(["mytask:t-1"])
     expect(first.items[0]!.options.some((o) => o.action.kind === "ask_opus")).toBe(false)
     expect(first.resolving).toEqual([{ id: "task:a", source: "task", title: "Task a", project: "Dash", repo: null, resolver: expect.objectContaining({ status: "resolving", model: "claude-opus-5-5" }) }])
     expect(frames.at(-1)).toMatchObject({ type: "orchestrator_triage", resolving: [expect.objectContaining({ id: "task:a" })] })

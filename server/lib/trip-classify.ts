@@ -6,20 +6,22 @@ import type { GeoEntry } from "./trip-store"
 // Trip classifier (trips CONTRACT §4). Contract rules run first: a known vehicle
 // that is not Jeremie's → personal (unless the calendar says shoot), a
 // home↔home loop under 2 km → personal. Otherwise one Jev call: `choice`
-// business/personal, plus `choice` over candidate clients. The evidence goes in
-// the instructions: reverse-geocoded places and OSM categories, home, past
-// classified trips within 300 m, client names/addresses, calendar events
-// ±2 h. History and Jev are blended in log-odds:
+// business/personal. The evidence goes in the instructions: reverse-geocoded
+// places and OSM categories, home, past classified trips within 300 m, known
+// client places near here (evidence only), calendar events ±2 h. History and
+// Jev are blended in log-odds:
 //   logit P(business) = logit(Jev p) + logit((nBiz+1)/(n+2))     n = matching past trips
-//   same for the client, over the business matches; confidence = class × client
-// The trip is filed at ≥ threshold (COMPANION_TRIP_AUTOFILE_CONF, 0.85); otherwise needs_review.
+// There is no confidence gate: every answer is filed with its confidence, and
+// Jeremie approves per quarter on the dashboard. The classifier never picks a
+// client (he names it when he invoices).
 
 export const MATCH_RADIUS_M = 300
 export const HOME_LOOP_KM = 2
 export const CALENDAR_PAD_MS = 2 * 60 * 60_000
 export const MAX_CANDIDATES = 8
 export const RULE_CONF = { notMine: 0.95, homeLoop: 0.9 } as const
-export const DEFAULT_THRESHOLD = 0.85
+/** A machine guess below this only teaches the history once Jeremie has approved its quarter. */
+export const HISTORY_MIN_CONF = 0.85
 /** Jev's probabilities are tempered to this range: on 2026-10-04 real trips it said 1 % business for work runs to Montréal. */
 export const JEV_P_MIN = 0.1
 export const JEV_P_MAX = 0.9
@@ -61,7 +63,6 @@ export interface ClassifyDeps {
   jev: (state: unknown, questions: Record<string, JevQuestion>) => Promise<JevOutcome>
   /** Distance-band base rates; absent = no prior. */
   priors?: () => Promise<BandPrior[]>
-  threshold?: number
 }
 
 export interface ClassifyOpts {
@@ -72,23 +73,14 @@ export interface ClassifyOpts {
 export interface Ends { start: string | null; end: string | null; startCity: string | null; endCity: string | null }
 
 export interface ClassifyResult {
+  /** `unclassified` = Jev failed and there is no history: not filed, retried later. */
   classification: "business" | "personal" | "unclassified"
-  clientSlug: string | null
-  clientName: string | null
   confidence: number
-  decision: "filed" | "needs_review"
   classifiedBy: "rules" | "jev" | "none"
   rule: string | null
   labels: Ends
-  /** Best other client for a "Business — X" option when the guess is personal. */
-  altClient: ClientInfo | null
   evidenceLine: string
   evidence: Record<string, unknown>
-}
-
-export function autofileThreshold(env: Record<string, string | undefined> = process.env): number {
-  const v = Number(env.COMPANION_TRIP_AUTOFILE_CONF)
-  return Number.isFinite(v) && v > 0 && v <= 1 ? v : DEFAULT_THRESHOLD
 }
 
 // ── pure pieces ──────────────────────────────────────────────────────────────
@@ -180,8 +172,6 @@ function historyText(m: HistoryMatch, names: Map<string, string>): string | null
 // ── classifier ───────────────────────────────────────────────────────────────
 
 export function createTripClassifier(deps: ClassifyDeps) {
-  const threshold = deps.threshold ?? autofileThreshold()
-
   async function classify(input: ClassifyInput, opts: ClassifyOpts = {}): Promise<ClassifyResult> {
     const asOf = opts.asOf ?? Date.now()
     const [g0, g1, homes, allHistory, clients, priors] = await Promise.all([
@@ -212,18 +202,17 @@ export function createTripClassifier(deps: ClassifyDeps) {
       history: { kind: match.kind, n: match.trips.length, business: match.nBiz, personal: match.nPers, clients: Object.fromEntries(match.clients) },
       calendar: events.map((ev) => ({ title: ev.title, location: ev.location ?? null })),
     }
-    const finish = (r: Omit<ClassifyResult, "decision" | "labels" | "evidence" | "evidenceLine" | "altClient"> & { altClient?: ClientInfo | null }, extra: Record<string, unknown>, line: string[]): ClassifyResult => ({
-      ...r, altClient: r.altClient ?? null, confidence: round(r.confidence), labels,
-      decision: r.classification !== "unclassified" && r.confidence >= threshold ? "filed" : "needs_review",
-      evidence: { ...base, ...extra, labels, threshold }, evidenceLine: line.filter(Boolean).join(" · "),
+    const finish = (r: Pick<ClassifyResult, "classification" | "confidence" | "classifiedBy" | "rule">, extra: Record<string, unknown>, line: string[]): ClassifyResult => ({
+      ...r, confidence: round(r.confidence), labels,
+      evidence: { ...base, ...extra, labels }, evidenceLine: line.filter(Boolean).join(" · "),
     })
 
     // Rules (contract §4).
     if (input.vehicle && input.vehicle.kind !== "none" && !input.vehicle.mine && !shoot) {
-      return finish({ classification: "personal", clientSlug: null, clientName: null, confidence: RULE_CONF.notMine, classifiedBy: "rules", rule: "not_my_vehicle" }, {}, [`not your vehicle${input.vehicle.name ? ` (${input.vehicle.name})` : ""}`])
+      return finish({ classification: "personal", confidence: RULE_CONF.notMine, classifiedBy: "rules", rule: "not_my_vehicle" }, {}, [`not your vehicle${input.vehicle.name ? ` (${input.vehicle.name})` : ""}`])
     }
     if (startHome && endHome && input.km !== null && input.km < HOME_LOOP_KM) {
-      return finish({ classification: "personal", clientSlug: null, clientName: null, confidence: RULE_CONF.homeLoop, classifiedBy: "rules", rule: "home_loop" }, {}, [`home loop, ${fmtKm(input.km)}`])
+      return finish({ classification: "personal", confidence: RULE_CONF.homeLoop, classifiedBy: "rules", rule: "home_loop" }, {}, [`home loop, ${fmtKm(input.km)}`])
     }
 
     const destCity = !endHome ? labels.endCity : !startHome ? labels.startCity : null
@@ -234,6 +223,7 @@ export function createTripClassifier(deps: ClassifyDeps) {
       `Trip: ${labels.start ?? "unknown place"}${startHome ? " (home)" : ""} → ${labels.end ?? "unknown place"}${endHome ? " (home)" : ""}, ${fmtKm(input.km)}, ${input.durationMin ?? "?"} min, ${shortWhen(input.startedAt)}.`,
       g0?.category || g1?.category ? `Place types: start ${g0?.category ?? "?"}, end ${g1?.category ?? "?"}.` : "",
       hist ? `History: ${hist}.` : "No classified past trips near these places.",
+      candidates.length ? `Known client places near here: ${candidates.map((c) => [c.name, c.address, c.city].filter(Boolean).join(", ")).join("; ")}.` : "",
       events.length ? `Calendar around the trip: ${events.slice(0, 4).map((ev) => `${ev.title}${ev.location ? ` @ ${ev.location}` : ""}`).join("; ")}.` : "",
       input.vehicle ? `Vehicle: ${input.vehicle.kind}${input.vehicle.name ? ` ${input.vehicle.name}` : ""}${input.vehicle.mine ? " (his)" : ""}.` : "",
       hour !== null && (hour < 6 || hour >= 21) ? "Late-night or early-morning trip." : "",
@@ -248,12 +238,6 @@ export function createTripClassifier(deps: ClassifyDeps) {
         },
       },
     }
-    if (candidates.length) {
-      const criteria: Record<string, string> = {}
-      for (const c of candidates) criteria[c.slug] = [c.name, c.address, c.city].filter(Boolean).join(", ")
-      criteria.none = "none of these clients / not client work"
-      questions.client = { type: "choice", instructions: `If this trip was business, which client was it for?\n${evidence}`, criteria }
-    }
     const out = await deps.jev({ trip: base, evidence }, questions).catch((): JevOutcome => ({ ok: false, error: "throw", latencyMs: 0 }))
     const kindA = out.ok ? out.answers.kind : undefined
     const pJev = kindA?.type === "choice" ? (kindA.probabilities.business ?? (kindA.choice === "business" ? kindA.confidence : 1 - kindA.confidence)) : null
@@ -261,28 +245,10 @@ export function createTripClassifier(deps: ClassifyDeps) {
     const pBiz = blend(pJev, match.nBiz, match.nBiz + match.nPers, prior)
     const jevInfo = { ok: out.ok, ...(out.ok ? {} : { error: out.error }), latencyMs: out.latencyMs, pBusiness: pJev === null ? null : round(pJev) }
     if (pBiz === null) {
-      return finish({ classification: "unclassified", clientSlug: null, clientName: null, confidence: 0, classifiedBy: "none", rule: "no_evidence", altClient: candidates[0] ?? null }, { jev: jevInfo, candidates: candidates.map((c) => c.slug) }, ["no Jev answer and no history"])
+      return finish({ classification: "unclassified", confidence: 0, classifiedBy: "none", rule: "no_evidence" }, { jev: jevInfo, candidates: candidates.map((c) => c.slug) }, ["no Jev answer and no history"])
     }
     const business = pBiz >= 0.5
     const classConf = business ? pBiz : 1 - pBiz
-    // Client: Jev's pick blended with how often that client shows up in the business matches.
-    const clientA = out.ok ? out.answers.client : undefined
-    let clientSlug: string | null = null
-    let clientConf = 1
-    if (clientA?.type === "choice") {
-      // `probabilities[choice]`, not `confidence`: Jev's confidence is a separate certainty score.
-      clientSlug = clientA.choice === "none" ? null : clientA.choice
-      const pc = clientA.probabilities[clientA.choice] ?? clientA.confidence
-      // A client's share counts only the business matches that carry a client (most past rows have none).
-      const labelled = [...match.clients.values()].reduce((a, b) => a + b, 0)
-      clientConf = (clientSlug ? blend(pc, match.clients.get(clientSlug) ?? 0, labelled, null, false) : blend(pc, match.nBiz - labelled, match.nBiz, null, false)) ?? pc
-    } else if (match.clients.size) {
-      const [slug, k] = [...match.clients].sort((a, b) => b[1] - a[1])[0]!
-      clientSlug = slug
-      clientConf = (k + 1) / ([...match.clients.values()].reduce((a, b) => a + b, 0) + 2)
-    }
-    const client = clientSlug ? candidates.find((c) => c.slug === clientSlug) ?? { slug: clientSlug, name: names.get(clientSlug) ?? clientSlug } : null
-    const confidence = business ? classConf * clientConf : classConf
     const line = [
       pJev !== null ? `Jev ${pct(pJev)} business` : "Jev unavailable",
       hist ?? "",
@@ -291,23 +257,18 @@ export function createTripClassifier(deps: ClassifyDeps) {
     ]
     return finish({
       classification: business ? "business" : "personal",
-      clientSlug: business ? client?.slug ?? null : null, clientName: business ? client?.name ?? null : null,
-      confidence, classifiedBy: pJev !== null ? "jev" : "rules", rule: pJev !== null ? null : "history_only",
-      altClient: business ? null : client ?? candidates[0] ?? null,
-    }, { jev: jevInfo, prior, pBusiness: round(pBiz), classConf: round(classConf), clientConf: round(clientConf), candidates: candidates.map((c) => c.slug) }, line)
+      confidence: classConf, classifiedBy: pJev !== null ? "jev" : "rules", rule: pJev !== null ? null : "history_only",
+    }, { jev: jevInfo, prior, pBusiness: round(pBiz), candidates: candidates.map((c) => c.slug) }, line)
   }
 
-  return { classify, threshold }
+  return { classify }
 }
 
 export type TripClassifier = ReturnType<typeof createTripClassifier>
 
-/** What the classify log keeps for a decision (the triage card is rebuilt from it). */
+/** What the classify log keeps for a decision (`trip-report`, debugging). */
 export function logEvidence(r: ClassifyResult): Record<string, unknown> {
-  const clientNames: Record<string, string> = {}
-  if (r.clientSlug && r.clientName) clientNames[r.clientSlug] = r.clientName
-  if (r.altClient) clientNames[r.altClient.slug] = r.altClient.name
-  return { ...r.evidence, labels: r.labels, line: r.evidenceLine, altClient: r.altClient, clientNames }
+  return { ...r.evidence, labels: r.labels, line: r.evidenceLine }
 }
 
 // ── evidence sources (pure; wiring/trips.ts feeds them) ──────────────────────
@@ -331,6 +292,8 @@ export function historyFrom(rows: TripRow[], overrides: HistTrip[]): HistTrip[] 
   for (const r of rows) {
     const cls = r.classification === "billable" ? "business" : r.classification
     if (cls !== "business" && cls !== "personal") continue
+    // Quality gate: imports, human answers, approved quarters and sure guesses only — filed low-confidence guesses must not teach it.
+    if (r.classifiedBy !== null && r.classifiedBy !== "human" && r.approvalId === null && (r.classifierConfidence ?? 0) < HISTORY_MIN_CONF) continue
     byId.set(r.id, { id: r.id, startedAt: r.startedAt, startLat: r.startLat, startLon: r.startLon, endLat: r.endLat, endLon: r.endLon, classification: cls, clientSlug: r.clientSlug })
   }
   for (const o of overrides) byId.set(o.id, o) // Jeremie's answer wins over a stale row

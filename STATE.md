@@ -32,11 +32,12 @@ Last updated: 2026-10-04
 **Why:** Jeremie 2026-10-04: every PR review or blocked question ended with him asking Claude to solve it anyway; Opus should do that work first and leave him one decision.
 **Revisit if:** `resolver:answer` rows get corrected by Jeremie (raise `CONFIDENT`, or route that project's questions to cards), rescues loop with the shepherd (the one-per-PR guard is `resolver_runs.ref_key`), the 20/day budget is hit daily, or a closed PR gets reopened by Jeremie.
 
-### Travel log: the server owns an uploaded trip; Jev + history + distance prior file the sure ones, triage asks the rest
+### Travel log: the server owns an uploaded trip; Jev + history + distance prior file every trip, Jeremie approves per quarter on the dashboard
 **Date:** 2026-10-04 (branch `feat/trips`)
 **Choice:** `POST /api/trips` stores the upload in companion.db (`trip_uploads`) before anything else, classifies it within an 8 s budget, and pushes it to the dashboard's `/api/trips/ingest`. If the dashboard is down, the phone gets 202 `queued` and a 1-min retry loop pushes it later; 503 only when the server cannot store it. The classifier runs the contract rules first, then one Jev call (business/personal + client), blended in log-odds with the place history (ends within 300 m, human overrides first) and a distance base rate. It files at ≥ `COMPANION_TRIP_AUTOFILE_CONF` (0.85); the rest go in as `unclassified` and become triage `trip` cards, along with the dashboard backlog (unclassified, 60 days, oldest 20). The classifier and triage read Turso read-only; every write goes through the dashboard API. Every decision is logged in `trip_classify_log`; `bun cli.ts trip-report` gives the auto-file rate and the overrides of filed trips.
 **Why:** Jeremie 2026-10-04: replace the CarPlay Shortcut; confident trips filed, the rest confirmed from a card.
 **Revisit if:** `trip-report` shows filed trips being corrected (raise the threshold or drop the distance prior's weight), Nominatim rate-limits the backlog, or a calendar source appears on the dashboard (wire the `calendar` seam).
+**Amended 2026-10-15 (trips-auto-quarterly):** no confidence gate and no triage `trip` cards. Every trip is filed business/personal (confidence kept), the classifier never sets a client, and the Turso backlog is filed by `lib/trip-autofile.ts`. Jeremie reviews and approves each GST/QST quarter on the dashboard (`/trips/review`), which locks it; clients are tagged at invoice time. History learns only from human, approved or ≥ 0.85 rows. Why: Jeremie 2026-10-15, "remove travel log approval. too annoying."
 
 ### Brain triage: one phrased decision card per queue item, actions through the existing guarded paths
 **Date:** 2026-10-04 (branch `feat/brain-triage`)
@@ -113,6 +114,237 @@ Last updated: 2026-10-04
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — needs-you-repo-yes-no (2026-10-15) — server half (iOS half: `~/apps/claude companion/STATE.md` § needs-you-repo-yes-no)
+**Request (Jeremie):** "the needs you should be just an overview of the repo and a yes or no from my hand for you to make it work. not a granular approach." One card per repo: short plain overview of what is pending, Yes = everything pending (accept proposals, Opus unblocks/retries tasks, PRs merge once CI + reviews pass; sensitive stays individual), No = a note to Opus, which reworks the repo's plan and brings a new card back.
+**Done when:**
+- `GET /api/orchestrator/triage` + `orchestrator_triage` carry `repos[]` (one card per repo, `members[]` = id+version snapshot); `items[]`/`resolving[]` byte-compatible for builds ≤ 52.
+- `POST /api/orchestrator/repos/<repo>/yes {version, members}` acts only on the posted members whose version still matches; sensitive/client PRs never move; 202 + per-item results land on the card (`run`).
+- `POST …/repos/<repo>/no {version, note}` → one Opus rework run; the card comes back with a new version and `run.summary` saying what Opus changed.
+
+**Reference (leader: Renovate Dependency Dashboard + GitHub auto-merge + PR "Request changes")**
+- Dashboard issue per repo listing every pending update → `RepoCard`. Its "approve all pending" checkbox → **Yes**. The dashboard re-renders after each run → new card `version`.
+- `gh pr merge --auto` merges only when required checks + reviews pass, never bypasses protection → Yes on a PR = hand it back to the shepherd's full gates (`pr:unpark`), **not** `pr:approved-merge`.
+- Review "Request changes" + comment → **No + note** → Opus re-plans; the re-request → the reworked card.
+
+**Target shape & drift**
+- Reference: (1) triage = collectors → per-item engine → per-repo projection (pure, derived, never stored); (2) one executor per action, reused by item and repo paths; (3) every autonomous step goes through `lib/resolver.ts decide()` (the single policy); (4) bulk writes are idempotent per (repo, key) and act on a client-held snapshot; (5) the shepherd stays the only merger.
+- Deviations: (a) the per-item action core (re-read → version check → execute) lives inside `runChoice` (triage-engine.ts:249-293), not callable by a second path; (b) `pr:approved-merge` (triage-pr.ts:135) lifts the shepherd's sensitive + review gates (pr-shepherd.ts:444-446, :590) — unusable for a bulk Yes; (c) proposal revise lives inside `liveSeams` (wiring/resolver.ts:249-262), unreachable from triage; (d) map blind spot (prior plan (e)): `routes/triage.ts` classed `lib`, its endpoints absent from the endpoints table — the new repo endpoints will be too.
+- This change moves toward: (a) extract `actOn()` in the engine; (c) move revise into `wiring/proposals.ts reviseProposal()`; (b) avoided by design. Follow-ups: F1 archmap bun adapter learns `PREFIX` route hosts (blind spot d, filed with prior F3); F2 repo-level push ("Opus reworked <repo>") once the card is proven; F3 fold mytask cards into one overview if they exceed ~3/day.
+
+**State decisions**
+- Repo cards: derived on every `render()` in `lib/triage-repos.ts buildRepoCards(items, resolving, runs)`; never stored. `version` = hash of sorted `id@version` of members + held ids + latest run id/status (values, never counts). Publish key includes `repos` (frame only when a card changes).
+- Repo runs: table `triage_repo_runs` in `lib/triage-store.ts` (companion.db): `id, repo_key, card_version, decision yes|no, note, idem_key, status running|done|failed|interrupted, results_json, summary, created_at, finished_at`, UNIQUE(repo_key, idem_key). Mutated only by `wiring/triage-repos.ts`. Boot: `running` → `interrupted`. Announced by `orchestrator_triage` (`repos[].run`) + one orchestrator turn per run. Pruned with choices (7 d).
+- Item snapshot: the client posts `members[{id,version}]`; the server acts on the intersection with the current Yes-able members whose version is unchanged; others → `skipped: changed|gone|held`; items that arrived later are untouched. Zero actionable → 409 `stale` + `next` card.
+- One run per repo at a time: a `running` row for the repo → 409 `repo_busy` (+ the run); same key → replay.
+- Repo key: `repo` GitHub name; null-repo task/proposal/PR items fold into `_other` ("Other work"). Body, mytask and trip items are never members.
+- **Body + mytask: keep as individual cards below the repo cards.** Body's only action is "investigate again" after Opus failed twice (a bulk Yes = a third identical run); mytasks are Jeremie's own list, which `routable()` keeps away from Opus by policy (resolver.ts:80) — a bulk Done / Next week would falsify his calendar. Both have `repo: null`, both are rare. Trip items: removed by trips-auto-quarterly (its edits land in this plan's files, below).
+
+**What Yes does per member** (decided server-side in `yesPlan()`, never from the client)
+| member | action | path |
+|---|---|---|
+| proposal | approve (default mode, Mac fix keeps its host) | `engine.actOn(id, approveOption)` → `approveProposal` |
+| task blocked / failed | Opus decides, autonomy `delegated` | `resolver.ask(id, src, REPO_YES_INSTRUCTION, "delegated")` |
+| PR parked, reason not held | human hand-back, fix budget restarts | `pr:unpark` row, meta `{url, by:"manual", via:"companion-repo-yes", reason}` (`unparkResets` → true, no claude-config change) |
+| PR parked superseded / task already / stale | Opus decides (may close when sure) | `resolver.ask(…, "delegated")` |
+| PR held: park prefix `touches ` / `needs your review` / `sensitive path` / `client` PR, or safety-net (never parked) | none: stays an individual card under the repo card | `hints.parked` from `prSources` |
+| resolving / approved_pending | none (already moving) | — |
+- `delegated` policy in `decide()`: answer acts unless `why ∈ {money, client_wording, irreversible}` or confidence < 0.5; requeue / route act; fix → unpark (non-sensitive) else card; close_pr as normal (sure + CLOSABLE + not sensitive); cancel / merge / approve / revise / reject → card. Outside the daily budget, queued with `elevated`.
+
+**No (rework)** — one Opus call per No (`runBrainCall(opus)`), `lib/repo-rework.ts` pure: prompt = repo, note, every member (title, source, problem, recommended); output `{summary, consent, steps[{id, kind: keep|reject|revise{title,prompt}|answer{text}|cancel|close_pr|ask_opus{instruction}, why}]}`. Policy: reject/revise on proposals, answer on blocked tasks, ask_opus on anything (hands that item to the resolver `elevated` with Opus's instruction); cancel / close_pr only when `consents(note, out.consent)`; never on held PRs. Executed via `engine.actOn` (by "Opus") and `reviseProposal()`. Run summary = "Opus re-planned after your No: rejected 2, rescoped 1, kept 1".
+
+**Contracts touched** (from architecture.md)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `orchestrator_triage` | frame | +`repos[]` (`RepoCard`: id, repo, name, version, overview[], counts, members[{id,version,does}], held[], run?, createdAt, updatedAt) | ios:WSFrame.swift → CompanionSocket+Frames.swift → AppState+SocketEvents.swift | additive; ≤ 52 ignore the key |
+| `GET /api/orchestrator/triage` | endpoint | same `repos[]` | ios:OrchestratorClient.swift (blind spot d) | additive |
+| `POST /api/orchestrator/repos/<repo>/yes` · `/no` | endpoint NEW | 202 `{ok, repo, runId, result:"running", skipped[]}`; 409 `stale`(+next) / `repo_busy`; 422 `note_required`; 404 `no_such_repo`; Idempotency-Key replay | ios:OrchestratorActions.swift (new cases) | new, additive |
+| `pr:unpark` row | data (shepherd) | new writer, `by:"manual"` + `via` | claude-config pr-shepherd.ts:1132 `ledgerOf`, triage-sources.ts:157 | existing contract |
+| `TriageResolverHook.ask` / `Autonomy` | export | +`autonomy` param; +`"delegated"` | resolver-engine, resolver-prompt, resolver-store, resolver-work, wiring/resolver | additive |
+| `SourceItem.hints` | export | +`parked?: string` (park prefix) | fan-in of `SourceItem()` (11 modules) | optional |
+| `rejectProposal` / new `reviseProposal` | export | revise moves out of wiring/resolver | routes/orchestrator.ts, wiring/resolver.ts, wiring/triage.ts | behaviour identical |
+
+**Files — one owner each** (builder; trips-auto-quarterly's enumerated edits to `lib/triage.ts` + `wiring/triage.ts` are applied by this owner as a separate commit, disjoint hunks)
+| file | change | lines now → after |
+|---|---|---|
+| `server/lib/triage-repos.ts` | NEW: `RepoCard, RepoRun, MemberPlan, buildRepoCards, repoKeyOf, yesPlan, heldReason, overviewLines, REPO_OTHER` | 0 → ~210 ✓ |
+| `server/lib/repo-rework.ts` | NEW: `ReworkStep, ReworkOutput, reworkPrompt, parseRework, reworkPolicy` | 0 → ~180 ✓ |
+| `server/wiring/triage-repos.ts` | NEW: `RepoRunner, createRepoRunner, repoRunner, sweepInterruptedRuns` (sequential run, per-item results, turn, refresh) | 0 → ~230 ✓ |
+| `server/lib/triage-engine.ts` | extract `actOn(id, option, text, expectVersion, by)` from `runChoice`; `repos` in publish/list; `source(id)`; `ask` autonomy pass-through; `repoCards` dep | 350 → ~430 ✓ |
+| `server/lib/triage-store.ts` | `triage_repo_runs` + `repoRun/insertRun/updateRun/runningRun/latestRuns`; prune | 108 → ~180 ✓ |
+| `server/routes/triage.ts` | `/api/orchestrator/repos/<repo>/(yes|no)` parse + validate (members ≤ 100, note 1–2000) | 61 → ~130 ✓ |
+| `server/wiring/triage.ts` | wire `repoCards` + runner seams (`unparkPr`, `actOn`, resolver ask); boot sweep in `startTriage` | 384 → ~410 ✓ |
+| `server/lib/triage-sources.ts` | `hints.parked = parkPrefix(reason)` on parked PRs | 298 → ~302 ✓ |
+| `server/lib/resolver.ts` | `Autonomy += "delegated"`, `decide()` branch, `REPO_YES_INSTRUCTION` | 497 → ~520 ✓ |
+| `server/lib/resolver-engine.ts` | `ask(id, src, instruction, autonomy = "elevated")`; order non-normal first (:96 `!== "normal"`); `startedOn` stays `= normal` | 269 → ~275 ✓ |
+| `server/lib/resolver-prompt.ts` | :102 widen to `autonomy !== "normal"`; delegated preamble + why/confidence line | 146 → ~156 ✓ |
+| `server/lib/resolver-store.ts` | :150 `ORDER BY (autonomy != 'normal') DESC` | 204 → 204 ✓ |
+| `server/wiring/proposals.ts` / `server/wiring/resolver.ts` | NEW export `reviseProposal(…, markCreated)` (moved verbatim, injected `store.markCreated` callback) / call it | 49 → ~70 · 363 → ~352 ✓ |
+| `STATE.md:549` | `autonomy normal\|elevated\|delegated` wording | — |
+| `docs/orchestrator-triage-api.md` | § Repo cards, Yes, No, run results, held rule; autonomy wording (+`delegated`) | 490 → ~580 |
+| `docs/fixtures/orchestrator-triage-repos.json` | NEW: one server frame with `repos[]`, shared by `routes/triage.test.ts` and the iOS decode test | 0 → ~80 |
+| tests: `lib/triage-repos.test.ts`, `lib/repo-rework.test.ts`, `wiring/triage-repos.test.ts`, `wiring/proposals.test.ts`, `lib/resolver-prompt.test.ts` (NEW), `lib/resolver.test.ts`, `lib/resolver-engine.test.ts`, `lib/resolver-work.test.ts`, `lib/triage-engine.test.ts`, `lib/triage.test.ts`, `routes/triage.test.ts` | real sqlite via `COMPANION_DB_PATH` / `:memory:` store | — |
+| untouched on purpose | `wiring/resolver-dry-run.ts:77` | — |
+
+**Fan-in paths to guard**
+- `actOn()` reached from `choose` (per card) and the repo runner: both re-read `current()` and compare versions before `execute`; a second run on the same proposal reads `status !== proposed` → stale, never a double approve.
+- `approveProposal()` from routes/orchestrator.ts, wiring/triage.ts, body-agent, body-fix: unchanged; the runner only reaches it through `execute`.
+- `resolver.ask()` from `askOpus` and the runner: one run per (item, rkey) still holds; a Yes on an item already `resolving` is not a member.
+- `pr:unpark` writers: wiring/resolver.ts (`by: opus-resolver`) and the runner (`by: manual`) — dedupe: skip when the newest pr:* row is already an unpark.
+
+**Risks**
+- Bulk double-tap → iOS disables on tap + one SendQueue key; server UNIQUE(repo_key, idem_key) + `repo_busy`; per-item version re-check.
+- Yes racing new items → members snapshot; new items wait for the next card (test).
+- Partial failure (live cap, gh down, Turso 503) → per-item `results[]`, card `run.summary` "4 done · 1 failed (live cap) · 1 changed"; failed items stay members of the next card. Turso unreachable at start → 503, no run row.
+- Opus answers a blocked task wrongly → `delegated` keeps money / client wording / irreversible on cards; every answer posts "🤖 Opus answered … (your Yes on <repo>)" in the task's channel; worker output still passes the PR shepherd's review cascade.
+- Sensitive carve-out leak → double gate: `heldReason` keeps sensitive/client parks out of Yes, and a human unpark does not set `approved`, so the shepherd re-parks any sensitive path anyway (pr-shepherd.ts:446). Resolver `SENSITIVE_RE` lags the shepherd's (missing keyboard-inject/auto-compact/tmux) → follow-up: import one list.
+- Repeated Yes on a hopeless PR resets the fix budget each time → bounded by taps; run summary shows "handed back N times".
+- Trust ramp: Yes-approved proposals count as approvals (resolver channel trust) — intended, a Yes habit is the auto-dispatch signal.
+- No note never reaches Opus (resolver off / other host) → 409 `resolver_disabled` before any row; on the non-store host the runner answers `resolver_disabled` for No and holds tasks under Yes (`opus_off`).
+- Map blind spot (d): repo endpoints will not appear in architecture.md; drift check must read routes/triage.ts by hand.
+- KB: touched modules have no third-party externals (bun:sqlite, node builtins only) — no KB query run.
+
+**Verify**
+1. Tests first: `cd server && bun test lib/triage-repos.test.ts lib/repo-rework.test.ts wiring/triage-repos.test.ts lib/resolver.test.ts lib/triage-engine.test.ts routes/triage.test.ts` → cases: snapshot intersection; stale member skipped; new item untouched; held sensitive PR never unparked; unpark meta `by:"manual"`; delegated `why=money` → card, `cancel` → card; replay + `repo_busy`; interrupted sweep; No consent gating cancel; version changes on a value edit with equal counts.
+2. `bun test` (full) + `bunx tsc --noEmit` → green; `bun run tools/archmap/cli.ts . --quiet && … --lint` → no new FAIL.
+3. Zettlab, after deploy: `curl -s -H "Authorization: Bearer $COMPANION_TOKEN" $HOST/api/orchestrator/triage | jq '.repos[] | {repo, version, overview, n: (.members|length), held}'` → one card per repo, items[] unchanged.
+4. POST yes with one tampered member version → 202, that id in `skipped: changed`; same Idempotency-Key again → the stored `triage_repo_runs` row (pattern B, no second run); POST no without note → 422.
+5. Build 52 on the phone against the new server → cards render and per-card choose works (old-client compat).
+6. Manual pass (Jeremie, build 53): Yes on a repo with a proposal + a blocked task → proposal starts, task shows under "Opus is on it", answer turn appears in its channel; a sensitive PR stays as a card under its repo; No with a note → card shows "Opus is reworking" then returns with "Opus re-planned…". Not shipped until clean.
+
+**Analyst findings (2026-10-15)** (folded into Files / Verify above)
+- Publish: the dedupe key and the broadcast must include `repos` (triage-engine.ts:115, :119); `list()` returns `repos` from the same snapshot as `items` (:217). Tests: a repos-only change still emits a frame, no change emits none, `items` byte-identical; `routes/triage.test.ts` GET asserts the `repos` array. Shared fixture JSON (server frame with `repos`) for the iOS decode test.
+- Delegated autonomy: resolver-prompt.ts:102 must widen to `autonomy !== "normal"` (else `REPO_YES_INSTRUCTION` is silently dropped) + a prompt line asking for why/confidence. The delegated branch in `decide()` sits BEFORE the repeat check. resolver-engine.ts:96 ordering and resolver-store.ts:150 ORDER BY use `autonomy != 'normal'`; `startedOn` keeps `= normal`. Delegated runs are excluded from the daily cap and never expire (intended). Pick explicitly whether a delegated unpark sets `rescuedBefore` (proposal: no — a Yes is a human hand-back; state it in a test). resolver-dry-run.ts:77 untouched. Update STATE.md:549 + docs autonomy wording. Tests: resolver.test.ts, resolver-engine.test.ts, resolver-work.test.ts, a prompt test, store round-trip of `delegated`.
+- Revise: `reviseProposal` must still call `store.markCreated` (inject a callback), else the resolver re-resolves its own rescoped proposal. NEW `wiring/proposals.test.ts`.
+- `hints.parked` is set at triage-sources.ts:218; test next to triage.test.ts:311.
+- Routes: repo routes live inside `createTriageHandler` (else 404 fallthrough); decode the percent-encoded repo segment. Idempotency = pattern B (`triage_repo_runs` UNIQUE), NOT `withIdempotency`; replay of an interrupted run returns the stored row.
+- Unpark row: `INSERT agent_activity ('pr:unpark', 'task', <taskId>, meta {url: <park row's meta.url>, by:"manual", via:"companion-repo-yes", reason})` — `target_kind` must be `'task'`.
+- `yesPlan` held rules also cover `stale (no activity` and `dep auto-merge off` parks (they re-park instantly → loop).
+- Follow-up (claude-config, test-only, not this branch): extend `~/.claude/tools/pr-shepherd.test.ts` `ledgerOf` block with a `via:"companion-repo-yes"` row.
+- iOS half notes (go to the iOS plan, not here): `OrchestratorActions` payload is `[String:String]`, so `members` must be emitted as real JSON in the body; separate `.repoStale` decode (`TriageNext` would decode a RepoCard as `.gone`); `triageVisible` busy state for repo actions.
+
+**Out of scope:** shepherd changes (claude-config); repo-level push; Body/mytask folding; per-repo Yes rules (auto-yes); trip card removal (trips-auto-quarterly).
+
+### Change Plan — trips-auto-quarterly (2026-10-15) — companion server half (dashboard half: tls-dashboard-v2 STATE.md § trips-auto-quarterly · skill half: claude-config `invoice-from-history`)
+**Request (Jeremie 2026-10-15):** "remove travel log approval. too annoying. i want it 100% auto classified without mentioning specific client, then before tax filing, i approve." Approval happens each GST/QST quarter. The classifier never sets a client: "I'm telling it at invoice creation".
+**Done when:**
+- Every closed, located trip ends up `business` or `personal`. There is no confidence gate: a low-confidence guess is still filed, with `classified_by` set to jev or rules and the confidence kept. The classifier never writes `client_slug`.
+- No `trip` or `trip_batch` card ever appears in Needs you. The Turso `unclassified` backlog (166 Q3 trips + 12 Q4 trips today) drains in the background.
+- When Jeremie flips a trip in the dashboard quarterly review, the classifier history and `trip-report` learn from it (recordHuman).
+
+**Target shape & drift**
+- Leader mapping (MileIQ / QuickBooks Solopreneur mileage, from product knowledge, not read this session). Their Drive = our `trip_entries` row. Auto-classify by Work Hours / Frequent Locations = our rules + Jev blended with history. Swipe = one-tap flip in the review. QBO "Close the books" closing date = per-quarter approval, owned by the dashboard.
+- Reference: the dashboard is the system of record and owns the human step (period close). The companion is a stateless classifier worker that writes through the dashboard API. The phone gets no trip decisions in Needs you. Generic triage carries no domain-specific sources.
+- Drift today:
+  - Two review states disagree: `trip_uploads.review` in companion.db vs `classification='unclassified'` in Turso.
+  - Trip phrasing and actions are hard-coded into generic triage (`lib/triage.ts`, `wiring/triage.ts`, `resolver.ts`).
+  - The classifier mixes the tax class with client attribution.
+  - History learns from every classified row, so once low-confidence guesses are filed it learns from its own guesses.
+- This change moves toward:
+  - one review state, in the dashboard;
+  - triage loses the trip source;
+  - the classifier answers business/personal only;
+  - a history quality gate (below).
+- Left for follow-up: moving the classifier into the dashboard; dropping `trip_uploads.review/resolved_at`; showing "quarter locked" on iOS.
+
+**State decisions**
+- Background auto-file queue: lives in NEW `lib/trip-autofile.ts`, in memory: single-flight sweep, retry-at map. It is driven by `startTrips()` on a 10-minute tick and by an upload that ended `unclassified`. It reads Turso read-only (`readBackfill`, minKm 0, since now−400 d, oldest first, 50 per sweep). It writes only through `service.autofile()`.
+- An `unclassified` result means Jev failed and there is no history. It is not filed; it is retried after 1 h, and still unclassified rows block the dashboard's Approve. Dashboard 409 `already_classified` or 423 `quarter_locked` → skipped for good (in memory). Persistence: none (a restart re-reads Turso).
+- Human sync: the autofile sweep reads Turso rows with `classified_by='human' AND updated_at >= watermark` (NEW `readHumanSince` in `trip-dashboard.ts`). It calls `service.recordHuman` only when the trip's latest classify-log row differs (idempotent). The watermark is kept in memory; a restart re-syncs the last 30 days.
+- History quality gate: `historyFrom` and `readBandCounts` count a row only when `classified_by` IS NULL (imports) or 'human', OR `approval_id` IS NOT NULL, OR `classifier_confidence >= HISTORY_MIN_CONF (0.85)`. This stops filed low-confidence guesses from teaching the classifier.
+- `trip_uploads.review`: kept, now derived (`unclassified` → needs_review, otherwise filed). No migration.
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `POST /api/trips` reply | endpoint | `status` is "filed" whenever classified; `clientSlug` never present | ios:Trips/TripsAPI.swift | values unchanged, field optional: safe |
+| `PATCH /api/trips/:id` reply | endpoint | upstream 423 → `422 {error:"quarter_locked", quarter}` | ios:Trips/TripsAPI.swift | new error string; old build shows its generic failure |
+| `orchestrator_triage` frame | frame | no `trip` items; option kinds `classify`/`classify_custom` never sent | ios:WSFrame.swift → Brain/TriageModels.swift | values removed, not fields: old builds just see fewer cards |
+| `POST /api/orchestrator/triage/:id/choose` | endpoint | `trip:*` ids unknown → existing 404; classify kinds → 400 | ios OrchestratorActions.swift (SendQueue replay) | safe if the SendQueue drops on 4xx (Verify 6) |
+| dashboard `PATCH /api/trips/:id` (machine) | endpoint (cross-repo) | NEW body `{classification, classifiedBy:"jev"\|"rules", classifierConfidence}`, conditional on unclassified + unlocked | `lib/trip-dashboard.ts patchTrip` | the dashboard ships first (rollout order) |
+| dashboard `trip_entries.approval_id` | Turso column (read) | read by `readLocatedTrips`, `readBandCounts` | `lib/trip-dashboard.ts` | the column must exist before this deploys |
+| `tripsLive()` | export | loses `.triage`, gains `.autofile` | routes/trips.ts, wiring/triage.ts | in-repo; handoff H7 |
+
+**Files — one owner each** (Step A = needs-you owner's commit, see Handoffs; Step B = this plan's builder, based on A)
+| file | owner | change | lines now → after |
+|---|---|---|---|
+| `server/lib/trip-classify.ts` | builder (B) | drop `threshold`, `autofileThreshold`, `DEFAULT_THRESHOLD`, `decision`, the client question, `clientSlug/clientName/altClient` in the result. Candidate clients stay as evidence text only ("known client places near here"). confidence = classConf. `historyFrom` applies the quality gate | 339 → ~300 ✓ |
+| `server/lib/trip-service.ts` | builder (B) | `ingestPayload` always sends the class, never clientSlug. NEW `autofile(tripId, r)`: PATCH machine body, no recordHuman. `classifyStored` drops `decision` | 219 → ~250 ✓ |
+| `server/lib/trip-autofile.ts` | builder (B) | NEW: `createTripAutofile`, `TripAutofile`, `AUTOFILE_TICK_MS`, `AUTOFILE_BATCH`, `AUTOFILE_WINDOW_DAYS`, `RETRY_UNCLASSIFIED_MS`, `HUMAN_RESYNC_DAYS` | 0 → ~150 ✓ |
+| `server/lib/trip-autofile.test.ts` | builder (B) | NEW, written first (Verify 1) | — |
+| `server/lib/trip-dashboard.ts` | builder (B) | `TripRow` + COLS gain `classifiedBy, classifierConfidence, approvalId`; gate in `readBandCounts`; NEW `readHumanSince` | 189 → ~225 ✓ |
+| `server/lib/trip-store.ts` | builder (B) | delete `needsReview()` | 219 → ~215 ✓ |
+| `server/lib/trip-report.ts` + `cli.ts:144,160` | builder (B) | drop the threshold argument; the header reads "auto-filed, human flips by confidence band" | 70 → ~75 ✓ · 311 ✓ |
+| `server/wiring/trips.ts` | builder (B) | build `autofile` (replaces the `triage` lines removed in A); `startTrips` ticks `autofile.sweep()` | 90 → ~100 ✓ |
+| `server/routes/trips.ts` | builder (B) | map upstream 423 → 422 `quarter_locked` | 193 → ~197 ✓ |
+| `server/lib/trip-classify.test.ts`, `trip-service.test.ts`, `routes/trips.test.ts` | builder (B) | remove the threshold/needs_review cases (requirement removed); add Verify 1 cases | — |
+| `server/lib/trip-triage.ts` + `.test.ts` | needs-you owner (A) | delete (atomic with H2: it imports `TripFiling`) | 304 → 0 |
+| `server/lib/triage.ts`, `wiring/triage.ts`, `lib/triage-engine.ts`, `lib/resolver.ts`, `lib/resolver*.test.ts`, `docs/orchestrator-triage-api.md` | needs-you owner (A) | handoffs H1–H9 | shrink |
+
+**Handoff edits — server (needs-you owner, one commit, before B)**
+- H1 `lib/triage.ts:10`: drop `"trip"` from `TriageSource`.
+- H2 `lib/triage.ts:111-119`: drop the `trip` and `trip_batch` SourceRef variants and the `TripFiling` export.
+- H3 `lib/triage.ts:25-26,174-175,198-199,266-270,280`: drop the `classify`/`classify_custom` action kinds: union, `allowedActions` cases, `KIND_HELP`, parse case, `actionKey` branch.
+- H4 `lib/triage.ts:348-384,411-412`: delete `tripPhrase`, `tripBatchPhrase` and their two dispatch lines.
+- H5 `lib/triage.ts:456,505`: drop the trip clauses in `heuristicSeverity` and `withAskOpus`.
+- H6 `lib/triage-engine.ts:244`: `|| option.action.kind === "classify_custom"` → delete.
+- H7 `wiring/triage.ts`:
+  - :17 drop the import;
+  - :28 keep `ownsTrips`, drop `tripsLive`;
+  - :53-54 drop the `trips` opt;
+  - :71 and :231 drop `src.source === "trip" ||`;
+  - :114 drop the `trips` const;
+  - :209-212 drop `tripItems`;
+  - :225 and :310/:313/:319-320 drop the trip branches (`classify*` cases);
+  - :375-377 drop `offTrips`.
+  - In the same commit, in `wiring/trips.ts`, delete `createTripTriage`, its import and `service.onChange(() => triage.invalidate())`, and drop `triage` from the return (ceded 3 lines; B re-owns the file).
+- H8 `lib/resolver.ts:75-76`: delete both cases. In `resolver-engine.test.ts:29-43,173-175,313-315` and `resolver.test.ts`, swap the trip fixture for a `mytask` item (also non-routable).
+- H9 `docs/orchestrator-triage-api.md:78,236-270`: remove the "Source trip" section and the trip action kinds; add one line: "trips: auto-filed, approved per quarter on the dashboard".
+
+**Handoff edits — iOS (needs-you iOS owner)** (dead once H1–H9 ship; the Trips tab PATCH and `needsReview` pill stay)
+- I1 delete `Brain/TriageClientSheet.swift`.
+- I2 `Brain/BrainQueueView.swift:22,101,167`: delete `pickingClient`, the sheet and `onPickClient`.
+- I3 `Brain/TriageCard.swift:18-31,194,267,294`: delete `onPickClient` and the `.pickClient` cases.
+- I4 `Brain/TriageModels.swift:44-50,123-130,386,411-412`: delete the `.classify`/`.classifyCustom` cases and decoding (they fall to `.unsupported`) and `TriageStep.pickClient`.
+- I5 `Brain/AppState+Triage.swift:101-119`: delete `classifyTripFromTriage`. Clean up the comments at `AppState.swift:150` and `Trips/TripsModel.swift:6`.
+- I6 tests: remove the trip-triage cases at `TripsTests.swift:590-641` and `TripsSnapshotTests.swift:147-149`.
+- Follow-up (not now): Trips tab shows "Q3 approved — reopen on the dashboard" on 422 `quarter_locked`.
+
+**Fan-in paths to guard**
+- `service.override()` (human) is reached from `PATCH /api/trips/:id` (iOS Trips tab). `service.autofile()` is reached from the sweep and the upload path. They are separate: autofile never calls recordHuman and never sends a client. The dashboard's conditional update (`classification='unclassified' AND approval_id IS NULL`) is the race guard against a human flip in the same second.
+- `recordHuman()` is reached from override and the human sync. It must be idempotent: skip when the latest log already has the same `human_classification`. `markHuman`'s no-log INSERT branch is never reached from the sync, because the sync only acts on trips with a log row.
+
+**Risks**
+- Tax correctness: low-confidence auto-files can over-claim business km. → The dashboard review sorts "least sure first", Approve requires 0 unclassified, and the history gate stops self-reinforcement. Per-band flip rate goes in trip-report.
+- Re-pricing: every autofile PATCH reruns `recomputeYear(2026)`. That is about 180 serialized write tx for the backlog. 2026 business km is already over 5,000 in Q1, so Q3 adds are all tier 2 → 50/sweep, one at a time.
+- Rollout order: dashboard (schema + machine PATCH) first, then the companion. Before that, the machine PATCH would be written as `human` (old dashboard), so B must probe once and refuse to sweep if the reply lacks `classifiedBy`.
+- Old iOS builds replaying a queued trip `choose` → 404 → dropped (Verify 6). A stale card cached on the phone can still PATCH the trip directly (human); this is lock-checked.
+- Map blind spot: the dashboard map lists no callers for `/api/trips/ingest` and `/api/trips/clients`, and only `pages/trips.tsx` for PATCH. The companion's `trip-dashboard.ts` calls are not ref-joined (adapter gap: cross-repo HTTP callers).
+- kb offline: no external gotchas checked (`KB_DEV_TOKEN` empty in this sandbox).
+
+**Verify** (tests first, real sqlite via `COMPANION_DB_PATH`)
+1. `bun test server/lib/trip-autofile.test.ts server/lib/trip-classify.test.ts server/lib/trip-service.test.ts`:
+   - a 0.55 business guess is PATCHed with `classifiedBy:"jev"`, `classifierConfidence:0.55`, and no clientSlug key;
+   - an `unclassified` result is not PATCHed and is retried after 1 h;
+   - 409/423 are not retried;
+   - the result never has `clientSlug`;
+   - the human sync twice gives one history row;
+   - the gate drops a jev 0.6 unapproved row and keeps a human one.
+2. `bun test` (full) green after A, and again after B. `grep -rn "trip_batch\|classify_custom\|TripFiling" server` → empty.
+3. On Zettlab after deploy: `GET /api/orchestrator/triage` → no `trip:` ids. Turso `SELECT COUNT(*) FROM trip_entries WHERE classification='unclassified' AND status='closed' AND start_lat IS NOT NULL` falls to about 0 within an hour; Q3 rows show `classified_by IN ('jev','rules')` and `client_slug` unchanged.
+4. `bun cli.ts trip-report --days 30` prints flip rates without a threshold line.
+5. Upload a test trip (POST /api/trips with a fake clientTripId through the fake-dashboard test) → 200 `status:"filed"`, no clientSlug.
+6. Old iOS build (current TestFlight): with a trip card in the SendQueue, deploy → choose gets 404 and the queue drains.
+7. **Jeremie's manual pass:** Needs you on the iPhone shows no trip cards. A new drive in the car appears in the Trips tab already marked business or personal. Flipping one in the dashboard review and then waiting 10 min puts it in `trip-report` overrides.
+
+**Out of scope:** classifier move into the dashboard; trip purpose text for the CRA logbook (dashboard follow-up); per-repo Needs you (needs-you plan); iOS Trips tab copy.
+**Build amendments (2026-10-15, PR #167 drift check):**
+- Extra exports: `trip-classify.ts` `HISTORY_MIN_CONF` (the gate constant from State decisions); `trip-report.ts` `CONF_BANDS`, `BandFlips`; `trip-service.ts` `AutofileOutcome`; `trip-autofile.ts` `TripAutofileDeps`, `SweepStats`, `sqlTime` (deps type + test seams).
+- `TripRow` gains `updatedAt` (the human-sync watermark). An upload that ends `unclassified` triggers `autofile.sweep()` via an optional `onUnclassified` callback; the upload path never calls `service.autofile()`.
+- Dead after Step A, removed: `readClassifications`, `trip-store.needsReview()`, the service `onChange` hook.
+- Step A also touched `wiring/resolver.ts` (`target()` trip fallback became unreachable) and `routes/resolver.test.ts` (removed `trips: null` option, a tsc error).
+- The paused sweep self-heals: any Turso read failure pauses it and it retries every tick (`lib/turso.ts` hides "no such column", so it can't be detected specifically).
+- Verify 4: `COMPANION_DB_PATH=<scratch> bun cli.ts trip-report --days 30` runs with no threshold line; on a seeded db it prints the per-band flip lines. Verify 5: `routes/trips.test.ts` "POST: ingested … 200 filed even at 0.55, never a client" (13/13 pass). Verify 6: iOS maps 404 → `.notFound` → `.rejected` (OrchestratorActions.swift:176,195), so a queued trip `choose` is dropped, not retried.
 
 ### Change Plan — needs-you-by-repo (2026-10-15) — server half (iOS half: `~/apps/claude companion/STATE.md` § needs-you-by-repo)
 **Request (Jeremie 2026-10-15):** "needs you should be group by repo… if we can oversee by repo, conflicts can resolve much easier and clearer since we see the right order of things." Server half: every triage card and every resolving row carries the GitHub repo its work lands in, resolved by the routing rule dispatch-run already uses.

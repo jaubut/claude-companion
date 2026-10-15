@@ -175,8 +175,7 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
     if (ref.source === "task" || ref.source === "pr") return ["task", ref.taskId]
     if (ref.source === "proposal") return ["proposal", ref.taskId]
     if (ref.source === "body") return ["body", ref.componentId]
-    if (ref.source === "mytask") return ["task", src.refId]
-    return ["trip", src.refId]
+    return ["task", src.refId] // mytask
   }
 
   return {

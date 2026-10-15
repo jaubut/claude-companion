@@ -1,69 +1,65 @@
 import type { LogRow } from "./trip-store"
 
 // `bun cli.ts trip-report`: how the trip classifier is doing, from companion.db
-// trip_classify_log. Auto-file rate over uploads; human overrides of filed
-// trips (the errors that matter: they were filed without asking); agreement
-// of the review guesses with Jeremie's answers. Pure.
+// trip_classify_log. Every classified trip is auto-filed (no confidence gate),
+// so the measure is Jeremie's flips (quarterly review, phone) by confidence
+// band: a band that gets flipped often is a band the review must look at. Pure.
+
+export const CONF_BANDS: [number, number][] = [[0, 0.6], [0.6, 0.85], [0.85, 1.01]]
+
+export interface BandFlips { min: number; max: number; answered: number; flipped: number }
 
 export interface TripReport {
-  uploads: number
-  filed: number
-  review: number
+  classified: number
+  byMode: Record<string, number>
+  unclassified: number
   byRule: Record<string, number>
   answered: number
-  filedAnswered: number
-  filedOverridden: number
-  guessAnswered: number
-  guessClassAgree: number
-  guessFullAgree: number
-  overrides: { tripKey: string; was: string; now: string }[]
+  bands: BandFlips[]
+  overrides: { tripKey: string; confidence: number; was: string; now: string }[]
 }
 
-const label = (cls: string, slug: string | null): string => (cls === "business" && slug ? `business/${slug}` : cls)
-const same = (r: LogRow, client: boolean): boolean =>
-  r.classification === r.humanClassification && (!client || r.classification !== "business" || (r.clientSlug ?? null) === (r.humanClientSlug ?? null))
-
 export function buildTripReport(rows: LogRow[]): TripReport {
-  const rep: TripReport = { uploads: 0, filed: 0, review: 0, byRule: {}, answered: 0, filedAnswered: 0, filedOverridden: 0, guessAnswered: 0, guessClassAgree: 0, guessFullAgree: 0, overrides: [] }
+  const rep: TripReport = {
+    classified: 0, byMode: {}, unclassified: 0, byRule: {}, answered: 0,
+    bands: CONF_BANDS.map(([min, max]) => ({ min, max, answered: 0, flipped: 0 })), overrides: [],
+  }
   for (const r of rows) {
-    if (r.mode === "upload") {
-      rep.uploads++
-      if (r.decision === "filed") rep.filed++
-      else rep.review++
+    if (r.mode === "upload" || r.mode === "backfill") {
+      if (r.classification === "unclassified") rep.unclassified++
+      else rep.classified++
+      rep.byMode[r.mode] = (rep.byMode[r.mode] ?? 0) + 1
       const key = r.rule ?? r.classifiedBy
       rep.byRule[key] = (rep.byRule[key] ?? 0) + 1
     }
     if (r.humanAt === null || !r.humanClassification) continue
     rep.answered++
-    if (r.decision === "filed") {
-      rep.filedAnswered++
-      if (!same(r, true)) {
-        rep.filedOverridden++
-        rep.overrides.push({ tripKey: r.tripId ?? r.tripKey, was: label(r.classification, r.clientSlug), now: label(r.humanClassification, r.humanClientSlug) })
-      }
-    } else if (r.classification !== "unclassified") {
-      rep.guessAnswered++
-      if (same(r, false)) rep.guessClassAgree++
-      if (same(r, true)) rep.guessFullAgree++
+    if (r.classification === "unclassified") continue
+    const band = rep.bands.find((b) => r.confidence >= b.min && r.confidence < b.max)
+    if (!band) continue
+    band.answered++
+    if (r.classification !== r.humanClassification) {
+      band.flipped++
+      rep.overrides.push({ tripKey: r.tripId ?? r.tripKey, confidence: r.confidence, was: r.classification, now: r.humanClassification })
     }
   }
   return rep
 }
 
 const pct = (a: number, b: number): string => (b ? `${Math.round((a / b) * 100)} %` : "n/a")
+const bandLabel = (b: BandFlips): string => `${Math.round(b.min * 100)}–${Math.min(100, Math.round(b.max * 100))} %`
 
-export function formatTripReport(r: TripReport, days: number, threshold: number): string {
+export function formatTripReport(r: TripReport, days: number): string {
   const lines = [
-    `Trip classifier — last ${days} days (auto-file at ≥ ${threshold})`,
-    `  uploads classified: ${r.uploads} · filed ${r.filed} · to review ${r.review} · auto-file rate ${pct(r.filed, r.uploads)}`,
+    `Trip classifier — last ${days} days (auto-filed, human flips by confidence band)`,
+    `  classified: ${r.classified} (${Object.entries(r.byMode).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}) · unclassified ${r.unclassified}`,
     `  by path: ${Object.entries(r.byRule).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}`,
     `  human answers: ${r.answered}`,
-    `  filed then corrected by Jeremie: ${r.filedOverridden} of ${r.filedAnswered} answered (${pct(r.filedAnswered - r.filedOverridden, r.filedAnswered)} kept)`,
-    `  review guesses vs Jeremie: class ${pct(r.guessClassAgree, r.guessAnswered)}, class+client ${pct(r.guessFullAgree, r.guessAnswered)} (${r.guessAnswered} answered)`,
+    ...r.bands.map((b) => `  confidence ${bandLabel(b)}: flipped ${b.flipped} of ${b.answered} answered (${pct(b.flipped, b.answered)})`),
   ]
   if (r.overrides.length) {
-    lines.push("  overrides:")
-    for (const o of r.overrides.slice(-15)) lines.push(`    ${o.tripKey}: ${o.was} → ${o.now}`)
+    lines.push("  flips:")
+    for (const o of r.overrides.slice(-15)) lines.push(`    ${o.tripKey} (${Math.round(o.confidence * 100)} %): ${o.was} → ${o.now}`)
   }
   return lines.join("\n")
 }

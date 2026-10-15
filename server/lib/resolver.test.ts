@@ -40,10 +40,10 @@ function bodyItem(id = "zettlab:systemd-service:kb-api", host = "zettlab"): Sour
   }
 }
 
-function trip(): SourceItem {
+function mytask(): SourceItem {
   return {
-    source: "trip", refId: "trip-1", version: "1", title: "Trip", project: "Travel log", createdAt: 1, updatedAt: 1, facts: {}, url: null,
-    ref: { source: "trip", tripId: "trip-1", guess: "business", clientSlug: null, clientName: null, altSlug: null, altName: null },
+    source: "mytask", refId: "t-1", version: "1", title: "Call the accountant", project: "Admin", createdAt: 1, updatedAt: 1, facts: {}, url: null,
+    ref: { source: "mytask", taskIds: ["t-1"], noteId: "tasks/t-1", oldestDue: "2026-10-01", lateDays: 3 },
   }
 }
 
@@ -71,12 +71,12 @@ describe("config + kill switch", () => {
 })
 
 describe("routing per source", () => {
-  test("tasks, PRs, proposals and local Body items go to the resolver; trips never", () => {
+  test("tasks, PRs, proposals and local Body items go to the resolver; mytasks never", () => {
     expect(routable(blockedTask())).toBe(true)
     expect(routable(parkedPr())).toBe(true)
     expect(routable(proposal())).toBe(true)
     expect(routable(bodyItem())).toBe(true)
-    expect(routable(trip())).toBe(false)
+    expect(routable(mytask())).toBe(false)
   })
   test("a proposal Opus created itself is not resolved again; a Mac component on Zettlab is not routed", () => {
     expect(routable(proposal("mine"), { createdByResolver: (id) => id === "mine" })).toBe(false)

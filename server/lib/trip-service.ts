@@ -11,8 +11,11 @@ import type { HistoryRow, Review, TripStore, UploadRow } from "./trip-store"
 // Replies: 200 ingested · 202 queued · 409 duplicate (the stored result) ·
 // 502 dashboard_rejected (a 4xx the dashboard will keep refusing; the phone's
 // retry re-pushes it) · 503 store_unavailable (could not persist it here).
-// Human answers (phone PATCH, triage choose) go through `override`, which
-// records them on the classify log and in the history.
+// No confidence gate: every classified trip goes in filed, never with a client.
+// An `unclassified` one (Jev failed, no history, or past the budget) is handed
+// to the autofile sweep (lib/trip-autofile.ts), which files it later through
+// `autofile` (machine PATCH). Human answers (phone PATCH, dashboard flips seen
+// by the sweep) go through `override` / `recordHuman`: classify log + history.
 
 export const CLASSIFY_BUDGET_MS = 8_000
 export const RETRY_BASE_MS = 60_000
@@ -20,18 +23,27 @@ export const RETRY_MAX_MS = 30 * 60_000
 
 export interface TripServiceDeps {
   store: TripStore
-  classifier: Pick<TripClassifier, "classify" | "threshold">
+  classifier: Pick<TripClassifier, "classify">
   ingest: (payload: Record<string, unknown>) => Promise<IngestOutcome>
   /** Dashboard PATCH. Throws DashboardUnreachable / DashboardKeyMissing. */
   patch: (id: string, body: Record<string, unknown>) => Promise<{ status: number; json: Record<string, unknown> | null }>
   /** Read-only Turso row for coords (history). null when absent or unreadable. */
   readRow: (id: string) => Promise<TripRow | null>
+  /** An upload went in `unclassified` (dashboard id): the autofile sweep takes it from here. */
+  onUnclassified?: (tripId: string) => void
   now?: () => number
   log?: (msg: string) => void
   budgetMs?: number
 }
 
 export interface Reply { status: number; body: Record<string, unknown> }
+
+/** `final` = the dashboard will keep refusing it (409 already_classified, 423 quarter_locked). */
+export type AutofileOutcome =
+  | { kind: "filed"; classifiedBy: string | null }
+  | { kind: "unclassified" }
+  | { kind: "final"; error: string }
+  | { kind: "retry"; error: string }
 
 export const backoffMs = (attempts: number): number => Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempts))
 
@@ -47,43 +59,38 @@ export function rowInput(r: TripRow): ClassifyInput {
   }
 }
 
-/** The dashboard ingest body (CONTRACT §2): a needs_review trip goes in as `unclassified`. */
+/** The dashboard ingest body (CONTRACT §2): the class whatever the confidence, never a client. */
 export function ingestPayload(row: UploadRow): Record<string, unknown> {
-  const filed = row.review === "filed" && row.classification !== "unclassified"
   return {
     ...row.upload, source: "companion",
-    classification: filed ? row.classification : "unclassified",
-    ...(filed && row.classification === "business" && row.clientSlug ? { clientSlug: row.clientSlug } : {}),
+    classification: row.classification === "business" || row.classification === "personal" ? row.classification : "unclassified",
     classifierConfidence: row.confidence,
     classifiedBy: row.classifiedBy === "jev" ? "jev" : "rules",
   }
 }
 
+const reviewOf = (classification: string): Review => (classification === "business" || classification === "personal" ? "filed" : "needs_review")
+
 function resultBody(row: UploadRow, extra: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    tripId: row.tripId, classification: row.classification, ...(row.clientSlug ? { clientSlug: row.clientSlug } : {}),
-    confidence: row.confidence, ...extra,
-  }
+  return { tripId: row.tripId, classification: row.classification, confidence: row.confidence, status: reviewOf(row.classification), ...extra }
 }
 
 export function createTripService(deps: TripServiceDeps) {
   const now = deps.now ?? Date.now
   const log = deps.log ?? (() => {})
   const budget = deps.budgetMs ?? (Number(process.env.COMPANION_TRIP_CLASSIFY_BUDGET_MS) || CLASSIFY_BUDGET_MS)
-  const listeners = new Set<() => void>()
   const inflight = new Map<string, Promise<Reply>>()
-  const changed = () => { for (const fn of listeners) try { fn() } catch { /* listener bug: not ours */ } }
 
-  /** Classify within the budget; past it the trip goes to review with no guess (triage re-guesses it). */
+  /** Classify within the budget; past it the trip goes in unclassified (the autofile sweep re-guesses it). */
   async function classifyStored(u: TripUpload): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<null>((r) => { timer = setTimeout(() => r(null), budget) })
     const res: ClassifyResult | null = await Promise.race([deps.classifier.classify(uploadInput(u)).catch(() => null), late]).finally(() => clearTimeout(timer))
     const t = now()
-    const review: Review = res?.decision ?? "needs_review"
+    const review = reviewOf(res?.classification ?? "unclassified")
     const logId = deps.store.log({
       tripKey: u.clientTripId, tripId: null, mode: "upload",
-      classification: res?.classification ?? "unclassified", clientSlug: res?.clientSlug ?? null, confidence: res?.confidence ?? 0,
+      classification: res?.classification ?? "unclassified", clientSlug: null, confidence: res?.confidence ?? 0,
       decision: review, classifiedBy: res?.classifiedBy ?? "none", rule: res ? res.rule : "timeout",
       evidence: res ? logEvidence(res) : { budgetMs: budget },
     }, t)
@@ -92,7 +99,7 @@ export function createTripService(deps: TripServiceDeps) {
       deps.store.updatePayload(labelled, t)
     }
     deps.store.setResult(u.clientTripId, {
-      classification: res?.classification ?? "unclassified", clientSlug: res?.clientSlug ?? null, confidence: res?.confidence ?? 0,
+      classification: res?.classification ?? "unclassified", clientSlug: null, confidence: res?.confidence ?? 0,
       review, classifiedBy: res?.classifiedBy ?? "none", logId,
     }, t)
     log(`[trips] ${u.clientTripId.slice(0, 8)} → ${res?.classification ?? "unclassified"} ${Math.round((res?.confidence ?? 0) * 100)}% ${review}${res?.rule ? ` (${res.rule})` : ""}`)
@@ -105,10 +112,9 @@ export function createTripService(deps: TripServiceDeps) {
     if (out.kind === "ok") {
       deps.store.confirm(row.clientTripId, out.tripId, t)
       if (row.logId !== null) deps.store.attachTripId(row.logId, out.tripId)
-      changed()
+      if (reviewOf(row.classification) === "needs_review") deps.onUnclassified?.(out.tripId)
       const done = deps.store.upload(row.clientTripId)!
-      const status = done.review === "filed" ? "filed" : "needs_review"
-      return out.duplicate ? { status: 409, body: { ok: false, error: "duplicate", ...resultBody(done, { status }) } } : { status: 200, body: { ok: true, ...resultBody(done, { status }) } }
+      return out.duplicate ? { status: 409, body: { ok: false, error: "duplicate", ...resultBody(done) } } : { status: 200, body: { ok: true, ...resultBody(done) } }
     }
     if (out.kind === "rejected") {
       deps.store.fail(row.clientTripId, out.error, null, t)
@@ -116,13 +122,13 @@ export function createTripService(deps: TripServiceDeps) {
       return { status: 502, body: { ok: false, error: "dashboard_rejected" } }
     }
     deps.store.fail(row.clientTripId, out.error, t + backoffMs(row.attempts), t)
-    return { status: 202, body: { ok: true, ...resultBody(row, { tripId: null, status: "queued", review: row.review }) } }
+    return { status: 202, body: { ok: true, ...resultBody(row, { tripId: null, status: "queued", review: reviewOf(row.classification) }) } }
   }
 
   async function runUpload(u: TripUpload): Promise<Reply> {
     let row = deps.store.upload(u.clientTripId)
     if (row?.state === "confirmed") {
-      return { status: 409, body: { ok: false, error: "duplicate", ...resultBody(row, { status: row.review === "filed" ? "filed" : "needs_review" }) } }
+      return { status: 409, body: { ok: false, error: "duplicate", ...resultBody(row) } }
     }
     if (!row) {
       try {
@@ -178,20 +184,43 @@ export function createTripService(deps: TripServiceDeps) {
     return r ? { tripId, startLat: r.startLat, startLon: r.startLon, endLat: r.endLat, endLon: r.endLon, classification, clientSlug, startedAt: r.startedAt, at: now() } : null
   }
 
-  /** A human answer already written to the dashboard: classify log + history + review resolved. */
+  /** A human answer already written to the dashboard: classify log + history + review resolved. Idempotent. */
   async function recordHuman(tripId: string, classification: string, clientSlug: string | null): Promise<void> {
     const t = now()
     if (classification !== "business" && classification !== "personal") return
     const slug = classification === "business" ? clientSlug : null
+    const latest = deps.store.latestLog(tripId)
+    if (latest && latest.humanClassification === classification && (latest.humanClientSlug ?? null) === slug) return
     deps.store.markHuman(tripId, classification, slug, t)
     const h = await historyRow(tripId, classification, slug)
     if (h) deps.store.saveHistory(h)
     deps.store.resolve(tripId, t)
-    changed()
   }
 
   /**
-   * PATCH a trip as Jeremie (phone Trips tab or a triage choice): `classified_by: "human"`.
+   * File a backlog trip as the machine: PATCH {classification, classifiedBy, classifierConfidence},
+   * which the dashboard applies only to an unclassified trip in an open quarter. Never a client, never recordHuman.
+   */
+  async function autofile(tripId: string, r: ClassifyResult): Promise<AutofileOutcome> {
+    if (r.classification === "unclassified") return { kind: "unclassified" }
+    const classifiedBy = r.classifiedBy === "jev" ? "jev" : "rules"
+    let res: { status: number; json: Record<string, unknown> | null }
+    try {
+      res = await deps.patch(tripId, { classification: r.classification, classifiedBy, classifierConfidence: r.confidence })
+    } catch (e) {
+      return { kind: "retry", error: (e as Error)?.name ?? "error" }
+    }
+    if (res.status === 409 || res.status === 423) return { kind: "final", error: typeof res.json?.error === "string" ? res.json.error : `http_${res.status}` }
+    if (res.status < 200 || res.status >= 300 || res.json?.ok === false) return { kind: "retry", error: `http_${res.status}` }
+    deps.store.log({
+      tripKey: tripId, tripId, mode: "backfill", classification: r.classification, clientSlug: null, confidence: r.confidence,
+      decision: "filed", classifiedBy, rule: r.rule, evidence: logEvidence(r),
+    }, now())
+    return { kind: "filed", classifiedBy: typeof res.json?.classifiedBy === "string" ? res.json.classifiedBy : null }
+  }
+
+  /**
+   * PATCH a trip as Jeremie (phone Trips tab): `classified_by: "human"`.
    * Throws DashboardUnreachable / DashboardKeyMissing; any reply is passed back.
    */
   async function override(tripId: string, change: { classification?: string; clientSlug?: string | null; purpose?: string }): Promise<{ status: number; json: Record<string, unknown> | null }> {
@@ -207,12 +236,8 @@ export function createTripService(deps: TripServiceDeps) {
   }
 
   return {
-    upload, retryDue, override, recordHuman,
+    upload, retryDue, override, recordHuman, autofile,
     queued: (): UploadRow[] => deps.store.unconfirmed(),
-    onChange(fn: () => void): () => void {
-      listeners.add(fn)
-      return () => listeners.delete(fn)
-    },
   }
 }
 

@@ -1,12 +1,12 @@
 import { DashboardKeyMissing, DashboardUnreachable, dashboardJson, dashboardValue, encodeIdPath } from "./dashboard-client"
-import type { ClientInfo } from "./trip-classify"
+import { type ClientInfo, HISTORY_MIN_CONF } from "./trip-classify"
 import { type Trip, normalizeTrip } from "./trip-model"
 import type { QueryFn, Row } from "./turso"
 
 // Travel log ↔ tls-dashboard-v2. Writes and phone-facing reads go through the
 // dashboard API with the server-held key (lib/dashboard-client.ts). The
-// classifier and triage read `trip_entries` read-only from Turso (history, home
-// learning, backfill, stale checks), like the triage PR source.
+// classifier and the autofile sweep read `trip_entries` read-only from Turso
+// (history, home learning, the unclassified backlog, human flips).
 // Dashboard endpoints (tls-dashboard-v2 #175, CONTRACT §2/§3): POST /api/trips/ingest
 // (201 {ok,id,trip,superseded[]} · 409 {error:"duplicate",trip} · 400 {error:"invalid",details[]}),
 // GET /api/trips (camelCase + legacy snake_case in one object, totals = current year),
@@ -121,9 +121,16 @@ export interface TripRow {
   startLabel: string | null; endLabel: string | null
   km: number | null; durationMin: number | null
   classification: string; clientSlug: string | null; status: string | null
+  updatedAt: string | null
+  /** jev | rules | human; null = an import (Shortcut, mileage sheet). */
+  classifiedBy: string | null
+  classifierConfidence: number | null
+  /** Set when Jeremie approved the trip's quarter on the dashboard. */
+  approvalId: string | null
 }
 
-const COLS = "id, started_at, ended_at, start_lat, start_lon, end_lat, end_lon, start_label, end_label, km, duration_min, classification, client_slug, status"
+// approval_id comes with the dashboard's quarterly-approval schema: before it, every read here fails (the sweep pauses).
+const COLS = "id, started_at, ended_at, start_lat, start_lon, end_lat, end_lon, start_label, end_label, km, duration_min, classification, client_slug, status, updated_at, classified_by, classifier_confidence, approval_id"
 const n = (v: unknown): number | null => (v === null || v === undefined || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null)
 const sv = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null)
 
@@ -134,6 +141,8 @@ export function toTripRow(r: Row): TripRow | null {
     id: String(r.id), startedAt: String(r.started_at), endedAt: sv(r.ended_at), startLat: a, startLon: b, endLat: c, endLon: d,
     startLabel: sv(r.start_label), endLabel: sv(r.end_label), km: n(r.km), durationMin: n(r.duration_min),
     classification: sv(r.classification) ?? "unclassified", clientSlug: sv(r.client_slug), status: sv(r.status),
+    updatedAt: sv(r.updated_at), classifiedBy: sv(r.classified_by), classifierConfidence: n(r.classifier_confidence),
+    approvalId: r.approval_id === null || r.approval_id === undefined ? null : String(r.approval_id),
   }
 }
 
@@ -147,11 +156,19 @@ export async function readLocatedTrips(query: QueryFn, limit = 3000): Promise<Tr
   ))
 }
 
-/** The review backlog: unclassified, closed, located, ≥ minKm, since `sinceIso`, oldest first. */
+/** The unclassified backlog (the autofile sweep): closed, located, ≥ minKm, since `sinceIso`, oldest first. */
 export async function readBackfill(query: QueryFn, sinceIso: string, limit: number, minKm: number): Promise<TripRow[]> {
   return rows(await query(
     `SELECT ${COLS} FROM trip_entries WHERE classification = 'unclassified' AND status = 'closed' AND started_at >= ? AND km >= ? AND start_lat IS NOT NULL AND end_lat IS NOT NULL ORDER BY started_at ASC LIMIT ?`,
     [sinceIso, minKm, limit],
+  ))
+}
+
+/** Trips Jeremie classified on the dashboard since `sinceSql` (`YYYY-MM-DD HH:MM:SS`, UTC), oldest change first. */
+export async function readHumanSince(query: QueryFn, sinceSql: string, limit: number): Promise<TripRow[]> {
+  return rows(await query(
+    `SELECT ${COLS} FROM trip_entries WHERE classified_by = 'human' AND updated_at >= ? AND classification IN ('business', 'billable', 'personal') ORDER BY updated_at ASC LIMIT ?`,
+    [sinceSql, limit],
   ))
 }
 
@@ -164,26 +181,18 @@ export async function readTrip(query: QueryFn, id: string): Promise<{ row: TripR
 export interface BandCount { minKm: number; maxKm: number; business: number; personal: number }
 export const KM_BANDS: [number, number][] = [[0, 10], [10, 40], [40, 100_000]]
 
-/** Business / personal counts per distance band over every classified trip (mileage imports included). */
+/** Business / personal counts per distance band (mileage imports included), behind the history quality gate (trip-classify historyFrom). */
 export async function readBandCounts(query: QueryFn): Promise<BandCount[]> {
   const list = await query(
     "SELECT CASE WHEN km < 10 THEN 0 WHEN km < 40 THEN 1 ELSE 2 END AS band, " +
       "SUM(CASE WHEN classification IN ('business', 'billable') THEN 1 ELSE 0 END) AS business, " +
       "SUM(CASE WHEN classification = 'personal' THEN 1 ELSE 0 END) AS personal " +
-      "FROM trip_entries WHERE km IS NOT NULL AND classification IN ('business', 'billable', 'personal') AND (status IS NULL OR status != 'superseded') GROUP BY 1",
-    [],
+      "FROM trip_entries WHERE km IS NOT NULL AND classification IN ('business', 'billable', 'personal') AND (status IS NULL OR status != 'superseded') " +
+      "AND (classified_by IS NULL OR classified_by = 'human' OR approval_id IS NOT NULL OR classifier_confidence >= ?) GROUP BY 1",
+    [HISTORY_MIN_CONF],
   )
   return list.map((r) => {
     const [minKm, maxKm] = KM_BANDS[Number(r.band)] ?? KM_BANDS[2]!
     return { minKm, maxKm, business: Number(r.business) || 0, personal: Number(r.personal) || 0 }
   })
-}
-
-/** Current classification per id (ids missing from the table are absent from the map). */
-export async function readClassifications(query: QueryFn, ids: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>()
-  if (!ids.length) return out
-  const list = await query(`SELECT id, classification FROM trip_entries WHERE id IN (${ids.map(() => "?").join(", ")})`, ids)
-  for (const r of list) out.set(String(r.id), sv(r.classification) ?? "unclassified")
-  return out
 }

@@ -3429,7 +3429,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 497,
+          "lines": 495,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -4482,7 +4482,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 523,
+          "lines": 463,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -4498,7 +4498,6 @@
             "ResolvingItem",
             "TriageItem",
             "SourceRef",
-            "TripFiling",
             "SourceItem",
             "Phrase",
             "TITLE_MAX",
@@ -4547,8 +4546,39 @@
           "externals": []
         },
         {
+          "path": "lib/trip-autofile.ts",
+          "lines": 125,
+          "kind": "lib",
+          "exports": [
+            "AUTOFILE_TICK_MS",
+            "AUTOFILE_BATCH",
+            "AUTOFILE_WINDOW_DAYS",
+            "RETRY_UNCLASSIFIED_MS",
+            "HUMAN_RESYNC_DAYS",
+            "TripAutofileDeps",
+            "SweepStats",
+            "sqlTime",
+            "createTripAutofile",
+            "TripAutofile"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/trip-classify.ts",
+            "lib/trip-dashboard.ts",
+            "lib/trip-service.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/trip-classify.ts",
-          "lines": 340,
+          "lines": 303,
           "kind": "lib",
           "exports": [
             "MATCH_RADIUS_M",
@@ -4556,7 +4586,7 @@
             "CALENDAR_PAD_MS",
             "MAX_CANDIDATES",
             "RULE_CONF",
-            "DEFAULT_THRESHOLD",
+            "HISTORY_MIN_CONF",
             "JEV_P_MIN",
             "JEV_P_MAX",
             "PRIOR_MIN_N",
@@ -4569,7 +4599,6 @@
             "ClassifyOpts",
             "Ends",
             "ClassifyResult",
-            "autofileThreshold",
             "blend",
             "bandPrior",
             "HistoryMatch",
@@ -4600,7 +4629,7 @@
         },
         {
           "path": "lib/trip-dashboard.ts",
-          "lines": 190,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "IngestOutcome",
@@ -4615,11 +4644,11 @@
             "toTripRow",
             "readLocatedTrips",
             "readBackfill",
+            "readHumanSince",
             "readTrip",
             "BandCount",
             "KM_BANDS",
-            "readBandCounts",
-            "readClassifications"
+            "readBandCounts"
           ],
           "state": [],
           "emits": [],
@@ -4704,9 +4733,11 @@
         },
         {
           "path": "lib/trip-report.ts",
-          "lines": 70,
+          "lines": 66,
           "kind": "lib",
           "exports": [
+            "CONF_BANDS",
+            "BandFlips",
             "TripReport",
             "buildTripReport",
             "formatTripReport"
@@ -4725,7 +4756,7 @@
         },
         {
           "path": "lib/trip-service.ts",
-          "lines": 220,
+          "lines": 245,
           "kind": "lib",
           "exports": [
             "CLASSIFY_BUDGET_MS",
@@ -4733,6 +4764,7 @@
             "RETRY_MAX_MS",
             "TripServiceDeps",
             "Reply",
+            "AutofileOutcome",
             "backoffMs",
             "uploadInput",
             "rowInput",
@@ -4757,7 +4789,7 @@
         },
         {
           "path": "lib/trip-store.ts",
-          "lines": 220,
+          "lines": 217,
           "kind": "lib",
           "exports": [
             "UploadState",
@@ -4781,48 +4813,6 @@
           "apiCalls": [],
           "imports": [
             "lib/trip-model.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/trip-triage.ts",
-          "lines": 305,
-          "kind": "lib",
-          "exports": [
-            "BACKFILL_DAYS",
-            "BACKFILL_CAP",
-            "BACKLOG_SCAN",
-            "BATCH_JEV_MIN",
-            "BATCH_MIN_HISTORY",
-            "BATCH_MIN_TRIPS",
-            "BATCH_REF",
-            "BACKFILL_MIN_KM",
-            "COLLECT_TTL_MS",
-            "TripTriageDeps",
-            "routeText",
-            "whenText",
-            "tripItem",
-            "batchEligible",
-            "BatchMember",
-            "batchItem",
-            "createTripTriage",
-            "TripTriage"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/triage.ts",
-            "lib/triage-engine.ts",
-            "lib/trip-classify.ts",
-            "lib/trip-dashboard.ts",
-            "lib/trip-model.ts",
-            "lib/trip-service.ts",
-            "lib/trip-store.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5954,7 +5944,7 @@
         },
         {
           "path": "routes/trips.ts",
-          "lines": 194,
+          "lines": 196,
           "kind": "lib",
           "exports": [
             "tripsLimiter",
@@ -6721,7 +6711,7 @@
         },
         {
           "path": "wiring/resolver.ts",
-          "lines": 363,
+          "lines": 362,
           "kind": "lib",
           "exports": [
             "RESOLVER_ALLOWED",
@@ -6809,7 +6799,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 384,
+          "lines": 371,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -6846,7 +6836,6 @@
             "lib/triage-pr.ts",
             "lib/triage-sources.ts",
             "lib/triage-store.ts",
-            "lib/trip-triage.ts",
             "lib/mytask-triage.ts",
             "lib/turso.ts",
             "lib/live-repo.ts",
@@ -6865,7 +6854,7 @@
         },
         {
           "path": "wiring/trips.ts",
-          "lines": 91,
+          "lines": 93,
           "kind": "lib",
           "exports": [
             "CACHE_TTL_MS",
@@ -6886,13 +6875,13 @@
             "lib/jev.ts",
             "lib/log.ts",
             "lib/orchestrator-db.ts",
+            "lib/trip-autofile.ts",
             "lib/trip-classify.ts",
             "lib/trip-dashboard.ts",
             "lib/trip-geocode.ts",
             "lib/trip-model.ts",
             "lib/trip-service.ts",
             "lib/trip-store.ts",
-            "lib/trip-triage.ts",
             "lib/turso.ts",
             "lib/vault-upstream.ts"
           ],
@@ -7998,6 +7987,7 @@
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
             "lib/triage-sources.ts",
+            "lib/trip-autofile.ts",
             "lib/trip-dashboard.ts",
             "routes/body.ts",
             "routes/goals.ts",
@@ -9023,7 +9013,6 @@
             "lib/resolver.ts",
             "lib/triage-engine.ts",
             "lib/triage-sources.ts",
-            "lib/trip-triage.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
@@ -9053,7 +9042,6 @@
             "lib/mytask-triage.ts",
             "lib/resolver-work.ts",
             "lib/triage-pr.ts",
-            "lib/trip-triage.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
@@ -9064,7 +9052,6 @@
             "lib/mytask-triage.ts",
             "lib/resolver.ts",
             "lib/triage-engine.ts",
-            "lib/trip-triage.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
@@ -10715,6 +10702,44 @@
             "lib/triage.ts"
           ]
         },
+        "ClassifyInput": {
+          "module": "lib/trip-classify.ts",
+          "callers": [
+            "lib/trip-autofile.ts",
+            "lib/trip-service.ts"
+          ]
+        },
+        "ClassifyResult": {
+          "module": "lib/trip-classify.ts",
+          "callers": [
+            "lib/trip-autofile.ts",
+            "lib/trip-service.ts"
+          ]
+        },
+        "TripService": {
+          "module": "lib/trip-service.ts",
+          "callers": [
+            "lib/trip-autofile.ts"
+          ]
+        },
+        "readBackfill": {
+          "module": "lib/trip-dashboard.ts",
+          "callers": [
+            "lib/trip-autofile.ts"
+          ]
+        },
+        "rowInput": {
+          "module": "lib/trip-service.ts",
+          "callers": [
+            "lib/trip-autofile.ts"
+          ]
+        },
+        "readHumanSince": {
+          "module": "lib/trip-dashboard.ts",
+          "callers": [
+            "lib/trip-autofile.ts"
+          ]
+        },
         "GeoEntry": {
           "module": "lib/trip-store.ts",
           "callers": [
@@ -10744,15 +10769,13 @@
         "shortWhen": {
           "module": "lib/trip-model.ts",
           "callers": [
-            "lib/trip-classify.ts",
-            "lib/trip-triage.ts"
+            "lib/trip-classify.ts"
           ]
         },
         "fmtKm": {
           "module": "lib/trip-model.ts",
           "callers": [
-            "lib/trip-classify.ts",
-            "lib/trip-triage.ts"
+            "lib/trip-classify.ts"
           ]
         },
         "localHour": {
@@ -10772,7 +10795,6 @@
           "callers": [
             "lib/trip-classify.ts",
             "lib/trip-service.ts",
-            "lib/trip-triage.ts",
             "wiring/trips.ts"
           ]
         },
@@ -10786,7 +10808,6 @@
           "module": "lib/trip-model.ts",
           "callers": [
             "lib/trip-dashboard.ts",
-            "lib/trip-triage.ts",
             "routes/trips.ts"
           ]
         },
@@ -10808,39 +10829,35 @@
             "lib/trip-dashboard.ts"
           ]
         },
+        "HISTORY_MIN_CONF": {
+          "module": "lib/trip-classify.ts",
+          "callers": [
+            "lib/trip-dashboard.ts"
+          ]
+        },
         "TripStore": {
           "module": "lib/trip-store.ts",
           "callers": [
             "lib/trip-geocode.ts",
-            "lib/trip-service.ts",
-            "lib/trip-triage.ts"
+            "lib/trip-service.ts"
           ]
         },
         "LogRow": {
           "module": "lib/trip-store.ts",
           "callers": [
-            "lib/trip-report.ts",
-            "lib/trip-triage.ts"
+            "lib/trip-report.ts"
           ]
         },
         "TripClassifier": {
           "module": "lib/trip-classify.ts",
           "callers": [
-            "lib/trip-service.ts",
-            "lib/trip-triage.ts"
+            "lib/trip-service.ts"
           ]
         },
         "IngestOutcome": {
           "module": "lib/trip-dashboard.ts",
           "callers": [
             "lib/trip-service.ts"
-          ]
-        },
-        "ClassifyInput": {
-          "module": "lib/trip-classify.ts",
-          "callers": [
-            "lib/trip-service.ts",
-            "lib/trip-triage.ts"
           ]
         },
         "TripUpload": {
@@ -10858,12 +10875,6 @@
             "routes/trips.ts"
           ]
         },
-        "ClassifyResult": {
-          "module": "lib/trip-classify.ts",
-          "callers": [
-            "lib/trip-service.ts"
-          ]
-        },
         "Review": {
           "module": "lib/trip-store.ts",
           "callers": [
@@ -10873,44 +10884,13 @@
         "logEvidence": {
           "module": "lib/trip-classify.ts",
           "callers": [
-            "lib/trip-service.ts",
-            "lib/trip-triage.ts"
+            "lib/trip-service.ts"
           ]
         },
         "HistoryRow": {
           "module": "lib/trip-store.ts",
           "callers": [
             "lib/trip-service.ts"
-          ]
-        },
-        "TripService": {
-          "module": "lib/trip-service.ts",
-          "callers": [
-            "lib/trip-triage.ts"
-          ]
-        },
-        "Ends": {
-          "module": "lib/trip-classify.ts",
-          "callers": [
-            "lib/trip-triage.ts"
-          ]
-        },
-        "TRIP_TZ": {
-          "module": "lib/trip-model.ts",
-          "callers": [
-            "lib/trip-triage.ts"
-          ]
-        },
-        "TripFiling": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/trip-triage.ts"
-          ]
-        },
-        "rowInput": {
-          "module": "lib/trip-service.ts",
-          "callers": [
-            "lib/trip-triage.ts"
           ]
         },
         "checkBearerHeaderOnly": {
@@ -12576,8 +12556,7 @@
         "tripsLive": {
           "module": "wiring/trips.ts",
           "callers": [
-            "routes/trips.ts",
-            "wiring/triage.ts"
+            "routes/trips.ts"
           ]
         },
         "tripSummary": {
@@ -14012,12 +13991,6 @@
             "wiring/triage.ts"
           ]
         },
-        "TripTriage": {
-          "module": "lib/trip-triage.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
         "MyTaskTriage": {
           "module": "lib/mytask-triage.ts",
           "callers": [
@@ -14042,14 +14015,14 @@
             "wiring/triage.ts"
           ]
         },
-        "ownsTrips": {
-          "module": "wiring/trips.ts",
+        "createMyTaskTriage": {
+          "module": "lib/mytask-triage.ts",
           "callers": [
             "wiring/triage.ts"
           ]
         },
-        "createMyTaskTriage": {
-          "module": "lib/mytask-triage.ts",
+        "ownsTrips": {
+          "module": "wiring/trips.ts",
           "callers": [
             "wiring/triage.ts"
           ]
@@ -14270,6 +14243,12 @@
             "wiring/trips.ts"
           ]
         },
+        "TripAutofile": {
+          "module": "lib/trip-autofile.ts",
+          "callers": [
+            "wiring/trips.ts"
+          ]
+        },
         "createTripService": {
           "module": "lib/trip-service.ts",
           "callers": [
@@ -14294,20 +14273,14 @@
             "wiring/trips.ts"
           ]
         },
-        "createTripTriage": {
-          "module": "lib/trip-triage.ts",
+        "createTripAutofile": {
+          "module": "lib/trip-autofile.ts",
           "callers": [
             "wiring/trips.ts"
           ]
         },
-        "readBackfill": {
-          "module": "lib/trip-dashboard.ts",
-          "callers": [
-            "wiring/trips.ts"
-          ]
-        },
-        "readClassifications": {
-          "module": "lib/trip-dashboard.ts",
+        "AUTOFILE_TICK_MS": {
+          "module": "lib/trip-autofile.ts",
           "callers": [
             "wiring/trips.ts"
           ]
