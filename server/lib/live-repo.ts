@@ -274,8 +274,11 @@ const escRe = (n: string): string => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
  */
 export function repoNameFor(input: RepoNameInput, entries: RepoEntry[]): string | null {
   const byName = (n: string | undefined) => (n ? entries.find((e) => e.name === n) : undefined)
+  // A [repo:] marker may carry the GitHub name (the route action writes it), any case.
+  const byMarker = (n: string | undefined) =>
+    byName(n) ?? (n ? entries.find((e) => e.github?.split("/")[1]?.toLowerCase() === n.toLowerCase()) : undefined)
   const text = String(input.text ?? "")
-  const marked = byName(DEP_MARKER.exec(text)?.[1]) ?? byName(REPO_MARKER.exec(text.trim())?.[1])
+  const marked = byName(DEP_MARKER.exec(text)?.[1]) ?? byMarker(REPO_MARKER.exec(text.trim())?.[1])
   if (marked) return githubName(marked)
   if (input.cwd?.trim()) {
     const at = entriesAt(input.cwd, entries)[0]
