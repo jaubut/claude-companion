@@ -224,6 +224,12 @@ Last updated: 2026-10-04
 
 **Out of scope:** shepherd changes (claude-config); repo-level push; Body/mytask folding; per-repo Yes rules (auto-yes); trip card removal (trips-auto-quarterly).
 
+**Build amendments (2026-10-15, PR #168 drift check)**
+- Exports that cross a module boundary (kept): `triage-repos.ts` `MEMBERS_MAX` (routes/triage.ts), `RepoMember` · `RepoRunView` · `runSummary` (wiring/triage-repos.ts), `RepoRunResult` · `RepoRunStatus` (triage-store.ts, wiring); `repo-rework.ts` `NOTE_MAX` (routes), `ReworkMember` · `reworkSummary` (wiring); `wiring/triage-repos.ts` `RepoRunnerDeps` (wiring/triage.ts `repoSeams` return type); `wiring/triage.ts` `repoSeams` (wiring/triage-repos.ts live runner, route test harness). Kept for their own test only: `CardInput`, `memberDoes` (triage-repos.test.ts), `DELEGATED_MIN_CONFIDENCE` (resolver.test.ts). Everything else flagged is module-private now.
+- New module state: `wiring/triage.ts` `prCacheDrop` (WeakMap per dispatch wiring: an unpark drops the live triage's PR row cache so the PR leaves the card on the next refresh); `lib/resolver.ts` `HELD_WHY` (money / client_wording / irreversible: the delegated answer bar); `lib/triage-repos.ts` `MEMBER_SOURCES` (task / proposal / PR: what a repo card holds).
+- Declared deviations: no `repoCards` engine dep (the engine calls `buildRepoCards` with `store.latestRuns()`); `resolver-store.ts hadAction` also excludes `autonomy = 'delegated'` (a Yes never sets rescuedBefore; test in resolver-engine.test.ts); `wiring/triage.ts` ↔ `wiring/triage-repos.ts` import each other (function-level only; archmap lint clean); repo-card route tests live in NEW `routes/triage-repos.test.ts` (triage.test.ts cap).
+- `lib/resolver-work.ts` (added to Files): a delegated run acts as `Opus (your Yes on <repo>)` (repo = `job.src.repo`, "Other work" when null); `wiring/triage.ts actionTurn` / PR close turns read it: "🤖 Opus answered … (your Yes on <repo>)". Tests: resolver-work.test.ts, wiring/triage-repos.test.ts.
+
 ### Change Plan — trips-auto-quarterly (2026-10-15) — companion server half (dashboard half: tls-dashboard-v2 STATE.md § trips-auto-quarterly · skill half: claude-config `invoice-from-history`)
 **Request (Jeremie 2026-10-15):** "remove travel log approval. too annoying. i want it 100% auto classified without mentioning specific client, then before tax filing, i approve." Approval happens each GST/QST quarter. The classifier never sets a client: "I'm telling it at invoice creation".
 **Done when:**

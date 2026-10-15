@@ -3204,14 +3204,11 @@
           "exports": [
             "NOTE_MAX",
             "ReworkStep",
-            "ReworkKind",
             "ReworkOutput",
             "ReworkMember",
             "reworkPrompt",
             "parseRework",
-            "Refused",
             "reworkPolicy",
-            "ReworkCounts",
             "reworkSummary"
           ],
           "state": [],
@@ -3429,7 +3426,7 @@
         },
         {
           "path": "lib/resolver-work.ts",
-          "lines": 238,
+          "lines": 241,
           "kind": "lib",
           "exports": [
             "BodyOutcome",
@@ -4370,7 +4367,6 @@
           "exports": [
             "ExecOutcome",
             "TriageResolverHook",
-            "EngineAskResult",
             "TriageEngineDeps",
             "ChooseInput",
             "ChooseResult",
@@ -4446,17 +4442,12 @@
           "kind": "lib",
           "exports": [
             "REPO_OTHER",
-            "OTHER_NAME",
-            "OVERVIEW_MAX",
             "MEMBERS_MAX",
-            "MemberDoes",
             "RepoMember",
-            "RunResultKind",
             "RepoRunResult",
             "RepoRunStatus",
             "RepoRun",
             "RepoRunView",
-            "RepoCounts",
             "RepoCard",
             "CardInput",
             "MemberPlan",
@@ -4544,8 +4535,6 @@
             "CachedPhrase",
             "ExpiredCard",
             "ChoiceRecord",
-            "NewRepoRun",
-            "RepoRunPatch",
             "TriageStore",
             "createTriageStore"
           ],
@@ -6645,7 +6634,6 @@
             "liveResponse",
             "approveProposal",
             "rejectProposal",
-            "Revision",
             "reviseProposal"
           ],
           "state": [],
@@ -6857,8 +6845,6 @@
           "kind": "lib",
           "exports": [
             "RepoRunnerDeps",
-            "RepoRequest",
-            "RepoReply",
             "createRepoRunner",
             "RepoRunner",
             "sweepInterruptedRuns",
@@ -6889,7 +6875,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 435,
+          "lines": 443,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -6900,7 +6886,6 @@
             "createLiveTriage",
             "triageEngine",
             "TRIAGE_TICK_MS",
-            "RepoSeamOpts",
             "repoSeams",
             "startTriage"
           ],

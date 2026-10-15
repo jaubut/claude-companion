@@ -29,8 +29,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage.ts` | 464 | lib | 45 | state: DESTRUCTIVE: Set |
 | `routes/api.ts` | 461 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
+| `wiring/triage.ts` | 443 | lib | 10 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
-| `wiring/triage.ts` | 435 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `routes/orchestrator.ts` | 434 | route-host | 3 | routes: 10 |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
@@ -38,7 +38,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
-| `lib/triage-engine.ts` | 385 | lib | 10 | state: EXPIRES: Set · emits: orchestrator_triage |
+| `lib/triage-engine.ts` | 385 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
 | `routes/capture.ts` | 385 | lib | 7 |  |
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/dispatch-poller.ts` | 375 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
@@ -70,13 +70,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage-pr.ts` | 258 | lib | 20 |  |
 | `lib/command-menu.ts` | 255 | lib | 11 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
-| `wiring/triage-repos.ts` | 248 | lib | 7 | state: let live |
+| `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
+| `lib/resolver-work.ts` | 241 | lib | 5 |  |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
-| `lib/resolver-work.ts` | 238 | lib | 5 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `routes/command.ts` | 228 | route-host | 1 | routes: 2 |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
-| `lib/triage-repos.ts` | 227 | lib | 22 | state: MEMBER_SOURCES: Set |
+| `lib/triage-repos.ts` | 227 | lib | 17 | state: MEMBER_SOURCES: Set |
 | `lib/orphan-question.ts` | 225 | lib | 11 | state: raised: Map |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `routes/vault.ts` | 221 | lib | 1 |  |
@@ -112,14 +112,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
-| `lib/triage-store.ts` | 171 | lib | 11 |  |
+| `lib/triage-store.ts` | 171 | lib | 9 |  |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `routes/body.ts` | 166 | route-host | 3 | routes: 6 |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/body-fix.ts` | 155 | lib | 11 |  |
-| `lib/repo-rework.ts` | 155 | lib | 11 |  |
+| `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/resolver-prompt.ts` | 152 | lib | 7 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `routes/records.ts` | 150 | lib | 5 |  |
@@ -169,7 +169,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
 | `lib/resolver-fix-policy.ts` | 75 | lib | 4 |  |
 | `wiring/front-door.ts` | 74 | lib | 1 | emits: orchestrator |
-| `wiring/proposals.ts` | 72 | lib | 6 |  |
+| `wiring/proposals.ts` | 72 | lib | 5 |  |
 | `wiring/body.ts` | 71 | lib | 8 | emits: orchestrator_channel, orchestrator, body_alert |
 | `lib/trip-report.ts` | 70 | lib | 3 |  |
 | `lib/resolver-fix-guard.ts` | 69 | lib | 4 |  |
