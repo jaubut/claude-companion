@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14",
+  "generatedAt": "2026-10-15",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -2126,7 +2126,7 @@
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 251,
+          "lines": 301,
           "kind": "lib",
           "exports": [
             "RepoEntry",
@@ -2152,7 +2152,11 @@
             "LiveCwdInput",
             "resolveLiveCwdWhy",
             "resolveLiveCwd",
-            "localRepoFor"
+            "localRepoFor",
+            "githubName",
+            "RepoNameInput",
+            "repoNameFor",
+            "repoEntriesSafe"
           ],
           "state": [
             "let probe"
@@ -4402,7 +4406,7 @@
         },
         {
           "path": "lib/triage-sources.ts",
-          "lines": 296,
+          "lines": 298,
           "kind": "lib",
           "exports": [
             "PR_SAFETY_NET_MS",
@@ -4478,7 +4482,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 517,
+          "lines": 523,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -6805,7 +6809,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 362,
+          "lines": 384,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -6845,6 +6849,7 @@
             "lib/trip-triage.ts",
             "lib/mytask-triage.ts",
             "lib/turso.ts",
+            "lib/live-repo.ts",
             "state.ts",
             "wiring/body.ts",
             "wiring/body-investigate.ts",
@@ -9208,7 +9213,8 @@
         "RepoEntry": {
           "module": "lib/live-repo.ts",
           "callers": [
-            "lib/project-catalog.ts"
+            "lib/project-catalog.ts",
+            "wiring/triage.ts"
           ]
         },
         "isDir": {
@@ -14092,6 +14098,18 @@
         },
         "BodyLookup": {
           "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "repoNameFor": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "repoEntriesSafe": {
+          "module": "lib/live-repo.ts",
           "callers": [
             "wiring/triage.ts"
           ]
