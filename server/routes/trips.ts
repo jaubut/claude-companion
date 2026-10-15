@@ -16,6 +16,7 @@ import { tripsLive } from "../wiring/trips"
 //   GET   /api/trips/clients                                   → [{slug, name}]
 //   GET   /api/trips/:id                                       → Trip (incl. polyline)
 //   PATCH /api/trips/:id          {classification?, clientSlug?, purpose?} → {ok, ...}  (classifiedBy human)
+//                                 · 422 quarter_locked {quarter} once Jeremie approved the trip's quarter
 // The server owns an upload once stored (lib/trip-service.ts). Upstream mode
 // (COMPANION_VAULT_UPSTREAM, the Mac): everything is forwarded to the store host.
 // Never logged: coordinates, labels, the key.
@@ -134,6 +135,7 @@ async function patch(req: Request, id: string, deps: TripsRouteDeps): Promise<Re
   try {
     const r = await deps.override(id, change)
     if (r.status === 404) return fail(404, "not_found")
+    if (r.status === 423) return fail(422, "quarter_locked", { quarter: typeof r.json?.quarter === "string" ? r.json.quarter : null })
     if (r.status < 200 || r.status >= 300 || r.json?.ok === false) return fail(r.status >= 400 && r.status < 500 ? 422 : 502, "dashboard_refused", { upstreamStatus: r.status })
     companionLog(`[trips] ${id} classified by Jeremie${change.classification ? ` → ${change.classification}` : ""}`)
     return json({ ...(r.json ?? {}), ok: true, id, classifiedBy: "human" })
