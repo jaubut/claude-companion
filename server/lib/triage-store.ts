@@ -24,8 +24,8 @@ export interface ExpiredCard { itemId: string; version: string; title: string; a
 
 export interface ChoiceRecord { itemId: string; idemKey: string; optionId: string; result: Record<string, unknown>; createdAt: number }
 
-export interface NewRepoRun { repoKey: string; cardVersion: string; decision: "yes" | "no"; note: string | null; idemKey: string }
-export type RepoRunPatch = Partial<{ status: RepoRunStatus; results: RepoRunResult[]; summary: string | null; finishedAt: number | null }>
+interface NewRepoRun { repoKey: string; cardVersion: string; decision: "yes" | "no"; note: string | null; idemKey: string }
+type RepoRunPatch = Partial<{ status: RepoRunStatus; results: RepoRunResult[]; summary: string | null; finishedAt: number | null }>
 
 export interface TriageStore {
   /** The cached phrase for this exact version; a stale fallback reads as a miss. */

@@ -16,7 +16,7 @@ export type ReworkStep =
   | { id: string; kind: "answer"; text: string; why: string }
   | { id: string; kind: "ask_opus"; instruction: string; why: string }
 
-export type ReworkKind = ReworkStep["kind"]
+type ReworkKind = ReworkStep["kind"]
 
 export interface ReworkOutput {
   summary: string
@@ -107,7 +107,7 @@ export function parseRework(text: string): ReworkOutput | null {
   return null
 }
 
-export interface Refused { id: string; kind: ReworkKind; reason: string }
+interface Refused { id: string; kind: ReworkKind; reason: string }
 
 /** Which of Opus's steps may run: source rules, consent for drops, never a held PR, one step per item. */
 export function reworkPolicy(out: ReworkOutput, members: ReworkMember[], note: string): { run: ReworkStep[]; refused: Refused[] } {
@@ -140,7 +140,7 @@ function allowed(kind: ReworkKind, m: ReworkMember, drop: boolean): string | nul
   }
 }
 
-export interface ReworkCounts { rejected?: number; rescoped?: number; answered?: number; cancelled?: number; closed?: number; handed?: number; kept?: number; failed?: number }
+interface ReworkCounts { rejected?: number; rescoped?: number; answered?: number; cancelled?: number; closed?: number; handed?: number; kept?: number; failed?: number }
 
 const WORDS: [keyof ReworkCounts, string][] = [
   ["rejected", "rejected"], ["rescoped", "rescoped"], ["answered", "answered"], ["cancelled", "cancelled"], ["closed", "closed"],

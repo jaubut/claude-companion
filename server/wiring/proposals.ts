@@ -49,7 +49,7 @@ export function rejectProposal(task: Task, dispatch: DispatchWiring = dispatchWi
   return Response.json({ ok: true, taskId: task.taskId, status: "rejected" })
 }
 
-export interface Revision { title: string; prompt: string; why: string }
+interface Revision { title: string; prompt: string; why: string }
 
 /**
  * Opus rescoped a proposal: the old one is rejected, the rescoped one filed in the same thread and marked

@@ -37,7 +37,7 @@ export interface TriageResolverHook {
   ask(id: string, src: SourceItem, instruction: string | null, autonomy?: Exclude<Autonomy, "normal">): AskResult
 }
 
-export type EngineAskResult = AskResult | { ok: false; error: "no_such_item" }
+type EngineAskResult = AskResult | { ok: false; error: "no_such_item" }
 
 export interface TriageEngineDeps {
   /** Everything that needs Jeremie right now (unphrased). */

@@ -11,17 +11,17 @@ import { type ResolvingItem, type SourceItem, type TriageItem, type TriageSource
 
 /** Task / proposal / PR items with no known repo fold into this card ("Other work"). */
 export const REPO_OTHER = "_other"
-export const OTHER_NAME = "Other work"
-export const OVERVIEW_MAX = 6
+const OTHER_NAME = "Other work"
+const OVERVIEW_MAX = 6
 /** A Yes posts at most this many members (routes/triage.ts). */
 export const MEMBERS_MAX = 100
 
 /** What Yes does to a member: approve a proposal, hand it to Opus (delegated), or hand a parked PR back to the shepherd. */
-export type MemberDoes = "approve" | "ask_opus" | "hand_back"
+type MemberDoes = "approve" | "ask_opus" | "hand_back"
 
 export interface RepoMember { id: string; version: string; does: MemberDoes }
 
-export type RunResultKind = "done" | "with_opus" | "handed_back" | "kept" | "failed" | "skipped"
+type RunResultKind = "done" | "with_opus" | "handed_back" | "kept" | "failed" | "skipped"
 
 export interface RepoRunResult { id: string; result: RunResultKind; reason?: string }
 
@@ -53,7 +53,7 @@ export interface RepoRunView {
   finishedAt: number | null
 }
 
-export interface RepoCounts { members: number; held: number; resolving: number; proposals: number; tasks: number; prs: number }
+interface RepoCounts { members: number; held: number; resolving: number; proposals: number; tasks: number; prs: number }
 
 export interface RepoCard {
   /** `repo:<key>`; the key (repo name or "_other") is the `<repo>` path segment of Yes / No. */

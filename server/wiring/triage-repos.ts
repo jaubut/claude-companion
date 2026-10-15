@@ -39,7 +39,7 @@ export interface RepoRunnerDeps {
   log?: (msg: string) => void
 }
 
-export interface RepoRequest {
+interface RepoRequest {
   /** The card key: the repo name, or "_other". */
   repo: string
   decision: "yes" | "no"
@@ -49,7 +49,7 @@ export interface RepoRequest {
   idemKey: string | null
 }
 
-export interface RepoReply { status: number; body: Record<string, unknown> }
+interface RepoReply { status: number; body: Record<string, unknown> }
 
 const viewOf = (r: RepoRun): RepoRunView => ({
   id: r.id, decision: r.decision, status: r.status, note: r.note, summary: r.summary, results: r.results, createdAt: r.createdAt, finishedAt: r.finishedAt,
