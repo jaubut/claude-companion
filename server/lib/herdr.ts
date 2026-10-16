@@ -240,6 +240,25 @@ export async function closeHerdrWorkspaceWhenIdle(pane: string, opts: WorkspaceC
   return ""
 }
 
+// Cancel of an orchestrator worker: close the workspace herdr's agent `name`
+// sits in, only when that workspace is labelled with the name and holds that
+// one pane (herdr reuses pane/workspace ids). An absent agent, or herdr not
+// able to say, is a no-op. Returns the closed workspace id, or "".
+export async function closeHerdrAgentWorkspace(name: string, h: Herdr = realHerdr): Promise<string> {
+  try {
+    const got = await h.call(["agent", "get", name])
+    const ws = (got.agent as { workspace_id?: string } | undefined)?.workspace_id ?? ""
+    if (!HERDR_WORKSPACE_RE.test(ws)) return ""
+    const info = await h.call(["workspace", "get", ws], 2_000)
+    const w = info.workspace as { pane_count?: number; label?: string } | undefined
+    if (w?.pane_count !== 1 || w.label !== name) return ""
+    await h.call(["workspace", "close", ws], 5_000)
+    return ws
+  } catch {
+    return ""
+  }
+}
+
 // $HERDR_PANE_ID as hooks report it (e.g. "w1:p1"). It ends up in an argv, so
 // anything that could read as a flag or carry junk is dropped.
 const HERDR_PANE_RE = /^[A-Za-z0-9][A-Za-z0-9:_.-]{0,63}$/
