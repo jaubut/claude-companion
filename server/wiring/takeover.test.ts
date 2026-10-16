@@ -79,11 +79,13 @@ const agents = new Set<string>()
 const closed: string[] = []
 let paneAtShell = true
 let paneReadError = false
+let agentGetError = false
 let listOpenCalls = 0
 // One workspace per agent: ws-<name>, pane <name>:p1, labelled with the name.
 const herdr: Herdr = {
   async call(args) {
     if (args[0] === "agent" && args[1] === "get") {
+      if (agentGetError) throw Object.assign(new Error("herdr: timeout"), { code: "timeout" })
       const n = args[2]!
       if (agents.has(n)) return { agent: { agent_status: "idle", pane_id: `${n}:p1`, workspace_id: `ws-${n}`, terminal_id: `term-${n}` } }
       throw Object.assign(new Error("agent_not_found"), { code: "agent_not_found" })
@@ -163,6 +165,7 @@ beforeEach(() => {
   closed.length = 0
   paneAtShell = true
   paneReadError = false
+  agentGetError = false
   listOpenCalls = 0
   prHead = "takeover/aaaaaaaa"
   prCreated = null
@@ -333,6 +336,7 @@ describe("start (claim-then-async)", () => {
     listOpenCalls = 0
     await Promise.all([tk.takeoverTick(), tk.takeoverTick(), tk.takeoverTick()]) // the first awaits herdr on its row
     expect(listOpenCalls).toBe(1)
+    expect(logs.filter((l) => l.startsWith("[takeover] tick skipped: the previous tick has been running for"))).toHaveLength(1)
     await tk.takeoverTick()
     expect(listOpenCalls).toBe(2)
   })
@@ -551,6 +555,19 @@ describe("completion", () => {
     expect(tursoTask(ID).dispatch_status).toBe("running")
     await tk.takeoverTick()
     expect(tursoTask(ID).dispatch_status).toBe("blocked")
+  })
+
+  test("herdr agent get erroring (timeout) is never 'gone': 2 ticks past the grace with a live pane → still running", async () => {
+    await running()
+    tk.setTakeoverDeps({ now: () => Date.now() + 10 * 60_000 })
+    paneAtShell = false
+    agentGetError = true
+    await tk.takeoverTick()
+    await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+    agentGetError = false
+    for (let i = 0; i < 3; i++) await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("running")
   })
 
   test("one row that throws never stalls the others", async () => {

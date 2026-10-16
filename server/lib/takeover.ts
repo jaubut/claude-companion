@@ -172,10 +172,10 @@ const fence = (label: string, body: string): string =>
 /** The first prompt of the session (≤ SEED_MAX, starts with a letter: herdr `agent prompt` refuses a leading dash). */
 export function seedPrompt(s: SeedInput): string {
   const head = [
-    `Takeover of blocked task ${taskId8(s.taskId)}: ${oneLine(s.title, 200)}`,
+    `Takeover of blocked task ${taskId8(s.taskId)} (its title and project are in the TITLE fence below).`,
     "",
     `Jeremie took this dispatch task over in this interactive session (${s.name}). Work it with him.`,
-    `Project: ${oneLine(s.project ?? "unknown", 100)} · repo ${s.repo} · on ${s.host === "mac" ? "the Mac" : "Zettlab"}`,
+    `Repo ${s.repo} · on ${s.host === "mac" ? "the Mac" : "Zettlab"}`,
     `Working tree: ${s.cwd} (a git worktree on branch ${s.branch}, from origin's default branch)`,
     "",
     "Rules:",
@@ -187,6 +187,7 @@ export function seedPrompt(s: SeedInput): string {
     DATA_NOTE,
   ].join("\n")
   const sections: [string, string, number][] = [
+    ["TITLE", `${oneLine(s.title, 200)}\nProject: ${oneLine(s.project ?? "unknown", 100)}`, 400],
     ["BLOCKER", s.origBlocker.trim() || "(no blocker recorded)", 1_000],
     ["TASK DESCRIPTION", s.description.trim(), DESCRIPTION_MAX],
     ...(s.howTo ? [[`HOW-TO ${s.howTo.ref}`, s.howTo.body.trim(), HOW_TO_MAX] as [string, string, number]] : []),

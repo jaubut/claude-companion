@@ -23,6 +23,7 @@ import { OPEN_STATUSES, type TakeoverRow, type TakeoverStatus, type TakeoverStor
 import { taskVersion } from "../lib/triage-sources"
 import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
+import { createLiveness } from "./takeover-liveness"
 import { orchEmit, writeCtx } from "./orchestrator"
 
 // Blocked-task takeover, live (docs/orchestrator-triage-api.md#takeover). The choose
@@ -40,9 +41,7 @@ const GH_EVERY_MS = 30_000
 const SEED_TRIES = 24
 const SEED_RETRY_MS = 5_000
 /** A run never seen with a registered session may take this long to show one before the tick counts misses. */
-const START_GRACE_MS = 3 * 60_000
 const RELEASE_TRIES = 4
-const PANE_ERRORS_MAX = 5
 
 export interface TakeoverDeps {
   dispatch: () => DispatchWiring
@@ -114,10 +113,9 @@ export const takeoverDeps = d
 const running = new Map<string, Promise<void>>()
 /** Names a reconcile or a tick row is working on right now (taken before the first await). */
 const held = new Set<string>()
-const paneErrors = new Map<string, number>()
-let ticking = false
+let tickStartedAt = 0
+let skipLoggedAt = 0
 const misses = new Map<string, number>()
-const seenLive = new Set<string>()
 const ghAt = new Map<string, number>()
 
 /** Test seam: override some deps (and forget the in-memory run state); returns the previous set. */
@@ -125,8 +123,7 @@ export function setTakeoverDeps(patch: Partial<TakeoverDeps>): TakeoverDeps {
   const prev = d()
   deps = { ...prev, ...patch }
   misses.clear()
-  seenLive.clear()
-  paneErrors.clear()
+  live.reset()
   ghAt.clear()
   return prev
 }
@@ -152,56 +149,15 @@ const refuse = (error: string, extra?: Record<string, unknown>): StartResult => 
 const hostLabel = (h: TakeoverHost): string => (h === "mac" ? "the Mac" : "Zettlab")
 const who = (t: Pick<DispatchTask, "id" | "title">): string => `[${taskId8(t.id)}] ${t.title}`
 
-interface HerdrAgentRef { pane: string; workspaceId?: string; terminalId?: string }
-
-/** The live herdr agent of that name (pane + workspace ids), or null when herdr has none. */
-async function herdrAgent(name: string): Promise<HerdrAgentRef | null> {
-  try {
-    const r = await d().herdr.call(["agent", "get", name])
-    const a = (r.agent ?? {}) as { pane_id?: unknown; workspace_id?: unknown; terminal_id?: unknown }
-    return {
-      pane: typeof a.pane_id === "string" ? a.pane_id : "",
-      ...(typeof a.workspace_id === "string" ? { workspaceId: a.workspace_id } : {}),
-      ...(typeof a.terminal_id === "string" ? { terminalId: a.terminal_id } : {}),
-    }
-  } catch {
-    return null
-  }
-}
-
-const sessionLive = (name: string): boolean => d().sessions().some((s) => s.taskId === name)
-
-/** Still running: a registered session carries the name, or herdr's agent pane has more than its shell in front (an idle session fires no hook after a restart). */
-async function sessionAlive(name: string): Promise<boolean> {
-  if (sessionLive(name)) return true
-  const agent = await herdrAgent(name)
-  if (!agent?.pane) return false
-  const front = await paneFront(agent.pane)
-  if (front !== "error") paneErrors.delete(name)
-  if (front !== "error") return front === "busy"
-  // Unreadable pane: alive for a while, gone after PANE_ERRORS_MAX reads in a row.
-  const n = (paneErrors.get(name) ?? 0) + 1
-  paneErrors.set(name, n)
-  return n < PANE_ERRORS_MAX
-}
-
-/** What is in front of a herdr pane (herdrPaneShellPid's read, with a read error kept apart from "busy"). */
-async function paneFront(pane: string): Promise<"shell" | "busy" | "error"> {
-  try {
-    const r = await d().herdr.call(["pane", "process-info", "--pane", pane], 2_000)
-    const p = r.process_info as { shell_pid?: number; foreground_process_group_id?: number } | undefined
-    if (typeof p?.shell_pid !== "number" || p.shell_pid <= 0) return "error"
-    return p.foreground_process_group_id === p.shell_pid ? "shell" : "busy"
-  } catch {
-    return "error"
-  }
-}
+const live = createLiveness(() => d())
+const sessionLive = live.sessionLive
 
 /** Close a finished run's own single-pane workspace (labelled with its name) once the pane is at the shell; true = herdr has no agent left. */
 async function releaseWorkspace(name: string): Promise<boolean> {
-  const agent = await herdrAgent(name)
-  if (!agent) return true
-  if (!agent.pane || sessionLive(name)) return false
+  const found = await live.agentOf(name)
+  if (found.kind === "absent") return true
+  if (found.kind === "error" || !found.ref.pane || sessionLive(name)) return false
+  const agent = found.ref
   const ws = await closeHerdrWorkspaceWhenIdle(agent.pane, {
     h: d().herdr, tries: RELEASE_TRIES, sleep: d().sleep, stillFree: () => !sessionLive(name),
     owner: { name, workspaceId: agent.workspaceId, terminalId: agent.terminalId },
@@ -216,7 +172,9 @@ const FINISHED: readonly TakeoverStatus[] = ["done", "ended", "failed"]
 
 /** A herdr agent holds the name: free when it is a finished run's leftover (released here), else taken. */
 async function nameTaken(name: string): Promise<boolean> {
-  if (!(await herdrAgent(name))) return false
+  const found = await live.agentOf(name)
+  if (found.kind === "absent") return false
+  if (found.kind === "error") return true // herdr could not say: never risk a second agent of that name
   const last = d().store().get(name)
   if (!last || !FINISHED.includes(last.status) || sessionLive(name)) return true
   return !(await releaseWorkspace(name))
@@ -443,7 +401,7 @@ async function flush(row: TakeoverRow): Promise<void> {
 /** Remove a finished run's worktree and workspace once its session is gone; else leave it pending (the tick retries). */
 async function tidy(name: string): Promise<void> {
   const row = d().store().get(name)
-  if (!row?.cleanupPending || OPEN_STATUSES.includes(row.status) || await sessionAlive(name)) return
+  if (!row?.cleanupPending || OPEN_STATUSES.includes(row.status) || await live.alive(name)) return
   await cleanup(row)
   await releaseWorkspace(name).catch(() => false)
   d().store().setCleanup(name, false, d().now())
@@ -500,7 +458,7 @@ const openRow = (name: string): TakeoverRow | null => {
 export async function takeoverStop(name: string, lastMessage: string): Promise<void> {
   const row = openRow(name)
   if (!row) return
-  seenLive.add(name)
+  live.seen(name)
   const pr = await branchPr(row, false, lastMessage)
   if (pr) return finish(name, { status: "completed", prUrl: pr }, "done")
   const what = doneLine(lastMessage)
@@ -516,19 +474,17 @@ export async function takeoverEnded(name: string): Promise<void> {
   return finish(name, { status: "blocked", blocker: endedBlocker(row.origBlocker) }, "ended")
 }
 
-/** Gone = not sessionAlive; counted once seen live, past the start grace, or with no herdr agent (herdr may keep an exited agent's record). */
-async function missing(row: TakeoverRow): Promise<boolean> {
-  if (await sessionAlive(row.name)) {
-    seenLive.add(row.name)
-    return false
-  }
-  return seenLive.has(row.name) || d().now() - row.createdAt > START_GRACE_MS || !(await herdrAgent(row.name))
-}
-
 /** One pass over this host's open runs: retry pending finishes, end runs whose session is gone (2 ticks). */
 export async function takeoverTick(): Promise<void> {
-  if (ticking) return // the previous tick still runs (setInterval has no in-flight guard)
-  ticking = true
+  // setInterval has no in-flight guard: skip while the previous tick runs, and say so (≤ 1 line / min).
+  if (tickStartedAt) {
+    if (d().now() - skipLoggedAt >= 60_000) {
+      skipLoggedAt = d().now()
+      d().log(`[takeover] tick skipped: the previous tick has been running for ${Math.round((d().now() - tickStartedAt) / 1000)} s`)
+    }
+    return
+  }
+  tickStartedAt = d().now()
   try {
     const here = d().localHost()
     let rows: TakeoverRow[] = []
@@ -546,7 +502,7 @@ export async function takeoverTick(): Promise<void> {
       }
     }
   } finally {
-    ticking = false
+    tickStartedAt = 0
   }
 }
 
@@ -557,7 +513,7 @@ async function tickRow(row: TakeoverRow): Promise<void> {
     return
   }
   if (row.status === "finishing") return flush(row)
-  if (!(await missing(row))) {
+  if (!(await live.missing(row.name, row.createdAt))) {
     misses.delete(row.name)
     return
   }
@@ -565,7 +521,7 @@ async function tickRow(row: TakeoverRow): Promise<void> {
   misses.set(row.name, n)
   if (n >= 2) {
     misses.delete(row.name)
-    seenLive.delete(row.name)
+    live.forget(row.name)
     await takeoverEnded(row.name)
   }
 }

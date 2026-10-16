@@ -4023,7 +4023,7 @@
         },
         {
           "path": "lib/takeover.ts",
-          "lines": 206,
+          "lines": 207,
           "kind": "lib",
           "exports": [
             "TakeoverHost",
@@ -6979,8 +6979,32 @@
           "externals": []
         },
         {
+          "path": "wiring/takeover-liveness.ts",
+          "lines": 95,
+          "kind": "lib",
+          "exports": [
+            "START_GRACE_MS",
+            "PANE_ERRORS_MAX",
+            "HerdrAgentRef",
+            "AgentLookup",
+            "LivenessDeps",
+            "createLiveness"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/herdr.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/takeover.ts",
-          "lines": 587,
+          "lines": 543,
           "kind": "lib",
           "exports": [
             "TAKEOVER_HOP",
@@ -7005,10 +7029,9 @@
             "let deps",
             "running: Map",
             "held: Set",
-            "paneErrors: Map",
-            "let ticking",
+            "let tickStartedAt",
+            "let skipLoggedAt",
             "misses: Map",
-            "seenLive: Set",
             "ghAt: Map"
           ],
           "emits": [],
@@ -7034,6 +7057,7 @@
             "lib/triage-sources.ts",
             "lib/turso.ts",
             "wiring/dispatch.ts",
+            "wiring/takeover-liveness.ts",
             "wiring/orchestrator.ts"
           ],
           "listeners": [],
@@ -9056,6 +9080,7 @@
             "lib/orphan-question.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/takeover-liveness.ts",
             "wiring/takeover.ts"
           ]
         },
@@ -9088,7 +9113,8 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
-            "lib/spawn-session.ts"
+            "lib/spawn-session.ts",
+            "wiring/takeover-liveness.ts"
           ]
         },
         "PickerIO": {
@@ -14628,6 +14654,12 @@
         },
         "TakeoverRow": {
           "module": "lib/takeover-store.ts",
+          "callers": [
+            "wiring/takeover.ts"
+          ]
+        },
+        "createLiveness": {
+          "module": "wiring/takeover-liveness.ts",
           "callers": [
             "wiring/takeover.ts"
           ]
