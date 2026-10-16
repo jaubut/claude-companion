@@ -165,8 +165,10 @@ async function cancelLocal(task: OrchTask, dispatch: DispatchWiring): Promise<Re
   if (task.status !== "queued" && task.status !== "dispatched" && task.status !== "running") {
     return Response.json({ ok: false, error: `not cancellable (status ${task.status})` }, { status: 409 })
   }
-  await killWorker(task)
+  // Cancelled before the kill (as cancelLive), so the tail and the prompt pump see
+  // a closed task, not a dead worker.
   setTaskStatus(task.taskId, "cancelled")
+  await killWorker(task)
   emitTask(task.taskId)
   orchEmit(orchAppendTurn("orchestrator", `cancelled [${task.taskId}]`, task.taskId, task.threadId))
   vetoAuto(task.threadId)
