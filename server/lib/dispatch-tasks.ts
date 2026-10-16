@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto"
 import { readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type { ShepherdState, TaskStage } from "./dispatch-stage"
 import type { Task, TaskStatus } from "./orchestrator-chat"
 import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
 
@@ -28,7 +27,6 @@ export interface DispatchTask {
   done: boolean
   blocker: string | null
   owner: string | null
-  /** dispatch_run_id: set when the runner reports start (`dispatch.sh <id> running`); null right after a claim. */
   runId?: string | null
   prUrl: string | null
   resultRef: string | null
@@ -40,8 +38,8 @@ export interface DispatchTask {
   updatedAtRaw: string
 }
 
-/** The one task shape on the wire: `orchestrator_task` frames and `/thread` tasks[]. */
-export interface TaskDto {
+/** The one task shape on the wire: `orchestrator_task` frames and `/thread` tasks[]; dispatch tasks add the stage fields (lib/dispatch-stage.ts). */
+export interface TaskDto extends Partial<import("./dispatch-stage").StageFields> {
   taskId: string
   threadId: string
   prompt: string
@@ -70,14 +68,6 @@ export interface TaskDto {
   dispatchTaskId?: string | null
   /** Live Turso tasks (P4): the local 8-char id worker output frames and worker turns are tagged with. */
   localTaskId?: string | null
-  /** Dispatch tasks: pipeline stage (lib/dispatch-stage.ts). */
-  stage?: TaskStage | null
-  /** stage=shepherd only: the PR shepherd's view of the PR. */
-  shepherd?: ShepherdState
-  /** stage=merged with a PR: when it merged (epoch ms). */
-  mergedAt?: number
-  /** Parsed from prUrl. */
-  prNumber?: number
 }
 
 /** Optional Turso columns (added by P0); absent on an older schema. */
@@ -118,9 +108,9 @@ export function phaseOf(t: DispatchTask): string {
   return effectiveStatus(t) ?? "none"
 }
 
-/** Announce-cursor value: (dispatch_status, updated_at, done, pr_url). */
+/** Announce-cursor value: (dispatch_status, updated_at, done, pr_url, run_id, owner). */
 export function seenKey(t: DispatchTask): string {
-  return JSON.stringify([t.status, t.updatedAtRaw, t.done, t.prUrl])
+  return JSON.stringify([t.status, t.updatedAtRaw, t.done, t.prUrl, t.runId ?? null, t.owner])
 }
 
 /** Turso datetime('now') text ("YYYY-MM-DD HH:MM:SS", UTC) or ISO → epoch ms. */

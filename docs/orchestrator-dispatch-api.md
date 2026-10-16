@@ -78,7 +78,9 @@ from the Turso row and the PR shepherd's `agent_activity` ledger:
 | `running`, headless, `dispatch_run_id` NULL (dispatch-run claimed it; the runner has not reported start through `dispatch.sh <id> running`) | `dispatch` |
 | `running` with a run id, or a live row (`owner` = `companion:<host>`, its own runner) | `builder` |
 | `completed` + PR URL, `done=0` | `shepherd` |
-| `completed` + PR URL, `done=1` (the shepherd, a Merge tap, or dispatch-reconcile marked it merged) | `merged` + `mergedAt` |
+| `completed` + PR URL, `done=1` with an `outcome:merged` ledger row | `merged` + `mergedAt` |
+| `completed` + PR URL, `done=1`, no `outcome:merged`, still parked (see `parked` below) | `shepherd`, `parked: true` |
+| `completed` + PR URL, `done=1`, no `outcome:merged`, not parked (a manual merge with no ledger row) | `merged` + `mergedAt` = `updated_at` |
 | `completed` without a PR (research / note results) | `merged`, no `prNumber` and no `mergedAt` |
 | `blocked` / `failed` / `cancelled` (a closed PR → `cancelled`, dispatch-reconcile) | same name |
 | unknown / NULL | `null` |
@@ -89,9 +91,11 @@ from the Turso row and the PR shepherd's `agent_activity` ledger:
 - `shepherd` (stage `shepherd` only), from the task's newest `pr:*` rows:
   - `ci`: newest `pr:local-gates` (`tests` / `build`): any `fail` → `failing`, else any `pass` →
     `passing`, both `none` → `none`; no row yet → `pending`. GitHub check runs are not polled.
-  - `review`: newest `pr:review` / `pr:approved-merge`: `APPROVE` or Jeremie's approval → `approved`,
+  - `review`: newest `pr:review` / `pr:approved-merge`: `APPROVE` or Jeremie's live approval → `approved`
+    (an approval older than 7 days → `pending`),
     `CHANGES` → `changes`, `UNVERIFIED` / `UNKNOWN` → `none`; no row yet → `pending`.
-  - `parked`: the newest of `pr:needs-human` / `pr:unpark` / `pr:approved-merge` is the park.
+  - `parked`: a `pr:needs-human` newer than every `pr:unpark` and every live `pr:approved-merge`
+    (approval TTL 7 days, `approvedAt` else `ts`, same rule as Needs you). An expired approval parks again.
     `parkedReason` = its reason without the cascade's ` · Opus: …` brief (absent when not parked).
 - The ledger is read once per poll, in one parameterized query, for tasks that have a PR. If that read fails,
   the poll still succeeds and keeps the last ledger.
@@ -104,7 +108,7 @@ from the Turso row and the PR shepherd's `agent_activity` ledger:
 
 | frame | shape | when |
 |---|---|---|
-| `orchestrator_task` | `{task: TaskDto}` | local transition, or a Turso task whose `(dispatch_status, updated_at, done, pr_url)` changed since last seen; re-sent for a note's tasks when its channel link changes |
+| `orchestrator_task` | `{task: TaskDto}` | local transition, or a Turso task whose `(dispatch_status, updated_at, done, pr_url, dispatch_run_id, owner)` changed since last seen; re-sent for a note's tasks when its channel link changes |
 | `orchestrator_channel` | `{channel: Channel}`; Channel gains `noteId, noteTitle, noteRef, counts{queued,running,blocked,pr,failed,mergedToday}` | channel create/auto/link, or its dispatch counts changed |
 | `orchestrator_queue` (new) | `{queue: {cap, live, queued, dispatch:{queued,running,blocked,pr,failed,mergedToday}}}` | after a poll that changed any of it |
 | `orchestrator` | `{turn}` | a Turso task moved into blocked / pr / completed / done: one turn in the owning channel, `turn.taskId` = the Turso id |

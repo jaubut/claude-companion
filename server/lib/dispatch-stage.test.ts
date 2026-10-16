@@ -19,6 +19,8 @@ const act = (action: string, meta: Record<string, unknown> = {}, ts = "2026-10-1
   ({ id: ++seq, target_id: target, action, meta: JSON.stringify(meta), ts })
 // Newest first, like the query.
 const ledger = (...rows: Row[]): Row[] => rows.reverse()
+const NOW = Date.parse("2026-10-16T18:00:00Z")
+const DAY = 24 * 60 * 60_000
 
 describe("taskStage", () => {
   test("queued → queue; blocked / failed / cancelled pass through", () => {
@@ -48,27 +50,37 @@ describe("taskStage", () => {
 
 describe("stageFields", () => {
   test("merged PR: prNumber + mergedAt from the outcome:merged row", () => {
-    const f = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), [act("outcome:merged", {}, "2026-10-16 13:30:00")])
+    const f = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), [act("outcome:merged", {}, "2026-10-16 13:30:00")], NOW)
     expect(f).toEqual({ stage: "merged", prNumber: 42, mergedAt: Date.parse("2026-10-16T13:30:00Z") })
   })
 
   test("merged PR without a ledger row (manual merge): mergedAt falls back to updated_at", () => {
-    expect(stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 })).mergedAt).toBe(Date.parse("2026-10-16T11:00:00Z"))
+    expect(stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), [], NOW).mergedAt).toBe(Date.parse("2026-10-16T11:00:00Z"))
+  })
+
+  test("done=1 PR still parked, no outcome:merged: shepherd + parked, no mergedAt", () => {
+    const f = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), ledger(act("pr:needs-human", { reason: "auth change" })), NOW)
+    expect(f).toEqual({ stage: "shepherd", prNumber: 42, shepherd: { ci: "pending", review: "pending", parked: true, parkedReason: "auth change" } })
+  })
+
+  test("done=1 with an outcome:merged row is merged even after a park", () => {
+    const rows = ledger(act("pr:needs-human", { reason: "x" }), act("outcome:merged", {}, "2026-10-16 14:00:00"))
+    expect(stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), rows, NOW)).toMatchObject({ stage: "merged", mergedAt: Date.parse("2026-10-16T14:00:00Z") })
   })
 
   test("completed without a PR: merged, no prNumber, no mergedAt, no shepherd", () => {
-    expect(stageFields(t({ dispatch_status: "completed" }))).toEqual({ stage: "merged" })
+    expect(stageFields(t({ dispatch_status: "completed" }), [], NOW)).toEqual({ stage: "merged" })
   })
 
   test("only stage=shepherd carries shepherd", () => {
-    expect(stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR })).shepherd).toEqual({ ci: "pending", review: "pending", parked: false })
-    expect(stageFields(t({ dispatch_status: "running", dispatch_run_id: "r" })).shepherd).toBeUndefined()
+    expect(stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR }), [], NOW).shepherd).toEqual({ ci: "pending", review: "pending", parked: false })
+    expect(stageFields(t({ dispatch_status: "running", dispatch_run_id: "r" }), [], NOW).shepherd).toBeUndefined()
   })
 })
 
 describe("shepherdOf", () => {
   test("no ledger yet: pending / pending, not parked", () => {
-    expect(shepherdOf([])).toEqual({ ci: "pending", review: "pending", parked: false })
+    expect(shepherdOf([], NOW)).toEqual({ ci: "pending", review: "pending", parked: false })
   })
 
   test("parked sensitive PR: reason without the cascade brief", () => {
@@ -76,42 +88,53 @@ describe("shepherdOf", () => {
       act("pr:local-gates", { tests: "pass", build: "pass" }),
       act("pr:review", { verdict: "APPROVE" }),
       act("pr:needs-human", { reason: "touches src/lib/auth — needs your review · Opus: cookie flag dropped" }),
-    ))
+    ), NOW)
     expect(s).toEqual({ ci: "passing", review: "approved", parked: true, parkedReason: "touches src/lib/auth — needs your review" })
   })
 
   test("an unpark or Jeremie's approval after the park lifts it", () => {
-    expect(shepherdOf(ledger(act("pr:needs-human", { reason: "x" }), act("pr:unpark"))).parked).toBe(false)
-    const approved = shepherdOf(ledger(act("pr:needs-human", { reason: "x" }), act("pr:approved-merge")))
+    expect(shepherdOf(ledger(act("pr:needs-human", { reason: "x" }), act("pr:unpark")), NOW).parked).toBe(false)
+    const approved = shepherdOf(ledger(act("pr:needs-human", { reason: "x" }), act("pr:approved-merge")), NOW)
     expect(approved).toMatchObject({ parked: false, review: "approved" })
     expect(approved.parkedReason).toBeUndefined()
   })
 
+  test("an approval older than 7 days lifts nothing: parked again, review not approved", () => {
+    const old = new Date(NOW - 8 * DAY).toISOString()
+    const rows = ledger(act("pr:needs-human", { reason: "touches auth" }), act("pr:approved-merge", { approvedAt: old }))
+    expect(shepherdOf(rows, NOW)).toEqual({ ci: "pending", review: "pending", parked: true, parkedReason: "touches auth" })
+    expect(shepherdOf(rows, NOW - 2 * DAY)).toMatchObject({ parked: false, review: "approved" })
+    const done = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), rows, NOW)
+    expect(done).toMatchObject({ stage: "shepherd", shepherd: { parked: true } })
+    expect(done.mergedAt).toBeUndefined()
+  })
+
   test("ci: newest local gates win; a fail anywhere is failing; nothing run is none", () => {
-    expect(shepherdOf(ledger(act("pr:local-gates", { tests: "pass", build: "pass" }), act("pr:local-gates", { tests: "fail", build: "pass" }))).ci).toBe("failing")
-    expect(shepherdOf(ledger(act("pr:local-gates", { tests: "none", build: "none" }))).ci).toBe("none")
-    expect(shepherdOf(ledger(act("pr:local-gates", { tests: "none", build: "pass" }))).ci).toBe("passing")
+    expect(shepherdOf(ledger(act("pr:local-gates", { tests: "pass", build: "pass" }), act("pr:local-gates", { tests: "fail", build: "pass" })), NOW).ci).toBe("failing")
+    expect(shepherdOf(ledger(act("pr:local-gates", { tests: "none", build: "none" })), NOW).ci).toBe("none")
+    expect(shepherdOf(ledger(act("pr:local-gates", { tests: "none", build: "pass" })), NOW).ci).toBe("passing")
   })
 
   test("review: CHANGES → changes; UNVERIFIED → none; newest wins", () => {
-    expect(shepherdOf(ledger(act("pr:review", { verdict: "APPROVE" }), act("pr:review", { verdict: "CHANGES" }))).review).toBe("changes")
-    expect(shepherdOf(ledger(act("pr:review", { verdict: "UNVERIFIED" }))).review).toBe("none")
+    expect(shepherdOf(ledger(act("pr:review", { verdict: "APPROVE" }), act("pr:review", { verdict: "CHANGES" })), NOW).review).toBe("changes")
+    expect(shepherdOf(ledger(act("pr:review", { verdict: "UNVERIFIED" })), NOW).review).toBe("none")
   })
 })
 
 describe("poller: stage fields on the wire and counts", () => {
-  const NOW = Date.parse("2026-10-16T18:00:00Z")
-  const ids = { merged: "1".repeat(32), shep: "2".repeat(32), dispatch: "3".repeat(32), failed: "4".repeat(32), noPr: "5".repeat(32) }
+  const ids = { merged: "1".repeat(32), shep: "2".repeat(32), dispatch: "3".repeat(32), failed: "4".repeat(32), noPr: "5".repeat(32), parkedDone: "6".repeat(32) }
   const tasks: Row[] = [
     row({ id: ids.merged, dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }),
     row({ id: ids.shep, dispatch_status: "completed", dispatch_pr_url: "https://github.com/jaubut/dash/pull/43" }),
     row({ id: ids.dispatch, dispatch_status: "running", dispatch_owner: "zettlab" }),
     row({ id: ids.failed, dispatch_status: "failed", dispatch_blocker: "boom" }),
     row({ id: ids.noPr, dispatch_status: "completed", done: 1 }),
+    row({ id: ids.parkedDone, dispatch_status: "completed", dispatch_pr_url: "https://github.com/jaubut/dash/pull/44", done: 1 }),
   ]
   const activity: Row[] = ledger(
     act("outcome:merged", {}, "2026-10-16 17:00:00", ids.merged),
     act("pr:needs-human", { reason: "touches migrations" }, "2026-10-16 17:00:00", ids.shep),
+    act("pr:needs-human", { reason: "sensitive" }, "2026-10-16 17:00:00", ids.parkedDone),
   )
   const sqls: { sql: string; args: unknown[] }[] = []
   const query: QueryFn = async (sql, args) => {
@@ -142,6 +165,9 @@ describe("poller: stage fields on the wire and counts", () => {
     expect(byId.get(ids.failed)?.stage).toBe("failed")
     expect(byId.get(ids.noPr)?.stage).toBe("merged")
     expect(byId.get(ids.noPr)?.mergedAt).toBeUndefined()
+    // done=1 but parked without outcome:merged: shepherd, and not one of today's merges.
+    expect(byId.get(ids.parkedDone)).toMatchObject({ stage: "shepherd", prNumber: 44, shepherd: { parked: true, parkedReason: "sensitive" } })
+    expect(byId.get(ids.parkedDone)?.mergedAt).toBeUndefined()
     expect(w.queueSummary().dispatch).toEqual({ queued: 0, running: 1, blocked: 0, pr: 1, failed: 1, mergedToday: 1 })
     // Only PR tasks are looked up in the ledger, by parameter.
     const ledgerSql = sqls.find((q) => q.sql.includes("FROM agent_activity"))!
@@ -163,5 +189,23 @@ describe("poller: stage fields on the wire and counts", () => {
     expect(await w.poll()).toBe(true)
     expect(w.tasksFor("general").find((d) => d.taskId === ids.shep)?.shepherd).toEqual({ ci: "pending", review: "pending", parked: false })
     expect(logs.some((l) => l.includes("ledger read failed"))).toBe(true)
+  })
+
+  test("dispatch → builder (runId set, same status / updated_at) sends an orchestrator_task frame", async () => {
+    const id = "7".repeat(32)
+    const live: Row[] = [row({ id, dispatch_status: "running", dispatch_owner: "zettlab" })]
+    const q: QueryFn = async (sql, args) => (sql.includes("FROM tasks t") ? live : query(sql, args))
+    const frames: { type: string; task?: { taskId: string; stage?: string | null } }[] = []
+    const w = createDispatchWiring({
+      query: q, broadcast: (f) => frames.push(f as (typeof frames)[number]), appendTurn: () => ({ id: "0", threadId: "general", role: "orchestrator", text: "", taskId: null, createdAt: 0 }),
+      push: () => {}, pushEnabled: () => false, linkedNotes: () => new Map(), getChannel: () => null,
+      localQueue: () => ({ cap: 3, live: 0, queued: 0 }), mirror, generalChannel: "general", now: () => NOW, log: () => {},
+    })
+    await w.poll()
+    expect(frames.filter((f) => f.type === "orchestrator_task").map((f) => f.task?.stage)).toContain("dispatch")
+    frames.length = 0
+    live[0] = { ...live[0], dispatch_run_id: "run_1" }
+    await w.poll()
+    expect(frames.filter((f) => f.type === "orchestrator_task" && f.task?.taskId === id).map((f) => f.task?.stage)).toEqual(["builder"])
   })
 })

@@ -167,7 +167,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     const c = zero()
     const today = localDay(now())
     for (const t of tasks) {
-      const mergedAt = stageFields(t, ledger.get(t.id)).mergedAt
+      const mergedAt = stageFields(t, ledger.get(t.id) ?? [], now()).mergedAt
       if (mergedAt && localDay(mergedAt) === today) c.mergedToday++
       if (t.done) continue
       const s = effectiveStatus(t)
@@ -184,7 +184,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
   // Live rows (owner companion:*) carry their tmux worker's identity.
   function toDto(t: DispatchTask, links: Map<string, string>): TaskDto {
     const live = t.owner?.startsWith("companion:") ? deps.liveIdentity?.(t.id) ?? null : null
-    return { ...dispatchToDto(t, threadIdFor(t, links), live), ...stageFields(t, ledger.get(t.id)) }
+    return { ...dispatchToDto(t, threadIdFor(t, links), live), ...stageFields(t, ledger.get(t.id) ?? [], now()) }
   }
 
   function tasksFor(channelId: string): TaskDto[] {
