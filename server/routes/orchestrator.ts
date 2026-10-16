@@ -36,7 +36,7 @@ import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { BODY_CHANNEL, type BodySnapshot, type BodyVitals, vitalsHeader } from "../lib/body"
 import { keyCommandGate } from "../lib/vault-guard"
 import { companionLog } from "../lib/log"
-import { sessionCmdArgv } from "../lib/tmux-pane"
+import { killWorker } from "../wiring/worker-io"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
 // approve/reject, task cancel, auto-dispatch toggle; plus the Turso dispatch
@@ -158,20 +158,14 @@ async function taskDetail(id: string, dispatch: DispatchWiring): Promise<Respons
   }
 }
 
-// Cancel a local (tmux-era) task, Phase 7 behaviour: kill its worker if any.
+// Cancel a local task, Phase 7 behaviour: kill its worker if any (tmux or herdr).
 // A live run (P4) is cancelled through its Turso row.
 async function cancelLocal(task: OrchTask, dispatch: DispatchWiring): Promise<Response> {
   if (isLiveLinked(task)) return cancelLiveRoute(task.dispatchTaskId!, dispatch)
   if (task.status !== "queued" && task.status !== "dispatched" && task.status !== "running") {
     return Response.json({ ok: false, error: `not cancellable (status ${task.status})` }, { status: 409 })
   }
-  if (task.tmuxSession) {
-    try {
-      // On the server it was spawned on (COMPANION_TMUX_SOCKET) — a bare
-      // `tmux kill-session` would miss it, or hit a same-named stranger.
-      await Bun.spawn(sessionCmdArgv(task.tmuxSocket, "kill-session", task.tmuxSession), { stdout: "ignore", stderr: "ignore" }).exited
-    } catch { /* already gone */ }
-  }
+  await killWorker(task)
   setTaskStatus(task.taskId, "cancelled")
   emitTask(task.taskId)
   orchEmit(orchAppendTurn("orchestrator", `cancelled [${task.taskId}]`, task.taskId, task.threadId))

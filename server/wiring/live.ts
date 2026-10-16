@@ -13,8 +13,8 @@ import {
 } from "../lib/dispatch-live"
 import { resolveLiveCwdWhy } from "../lib/live-repo"
 import { TursoUnreachable } from "../lib/turso"
-import { capturePane, sessionCmdArgv } from "../lib/tmux-pane"
 import { WIP_CAP, emitTask, executeDispatch, onLiveWorkerDead, orchEmit, writeCtx } from "./orchestrator"
+import { killWorker, workerAlive } from "./worker-io"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
 
 // Live mode (orchestrator-one-queue P4): an opt-in run in a watchable tmux
@@ -25,28 +25,15 @@ import { type DispatchWiring, dispatchWiring } from "./dispatch"
 // worker is gone. The WIP cap applies here only: over it → 429, nothing filed.
 // Contract: docs/orchestrator-dispatch-api.md.
 
-/** The tmux worker runner, behind a seam so tests never spawn tmux. */
+/** The worker runner (tmux or herdr, wiring/worker-io.ts), behind a seam so tests never spawn a worker. */
 export interface LiveRunner {
-  /** Spawn the worker; on ok the local row is `dispatched` with its tmux session (executeDispatch). */
+  /** Spawn the worker; on ok the local row is `dispatched` with its tmux session or herdr agent (executeDispatch). */
   spawn(task: Task): Promise<{ ok: boolean; error?: string }>
   kill(task: Task): Promise<void>
   alive(task: Task): Promise<boolean>
 }
 
-export const tmuxRunner: LiveRunner = {
-  spawn: executeDispatch,
-  async kill(task) {
-    if (!task.tmuxSession) return
-    try {
-      // On the server it was spawned on (COMPANION_TMUX_SOCKET), as cancelLocal does.
-      await Bun.spawn(sessionCmdArgv(task.tmuxSocket, "kill-session", task.tmuxSession), { stdout: "ignore", stderr: "ignore" }).exited
-    } catch { /* already gone */ }
-  },
-  async alive(task) {
-    if (!task.tmuxSession) return false
-    return (await capturePane(task.tmuxSession, undefined, { socket: task.tmuxSocket || undefined })) !== null
-  },
-}
+export const tmuxRunner: LiveRunner = { spawn: executeDispatch, kill: killWorker, alive: workerAlive }
 
 let runner: LiveRunner = tmuxRunner
 let capOverride: number | null = null
@@ -325,6 +312,6 @@ export async function reconcileLiveOnBoot(dispatch: DispatchWiring = dispatchWir
 }
 
 // A worker that died without a stop hook (worker tail saw its pane vanish).
-onLiveWorkerDead((t) => {
-  if (t.dispatchTaskId) void closeLive(t.dispatchTaskId, { status: "failed", blocker: "worker exited without a stop hook" }, dispatchWiring, t.threadId)
+onLiveWorkerDead((t, blocker) => {
+  if (t.dispatchTaskId) void closeLive(t.dispatchTaskId, { status: "failed", blocker }, dispatchWiring, t.threadId)
 })

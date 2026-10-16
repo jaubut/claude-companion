@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { describe, test, expect } from "bun:test"
 import { createWorkerTailManager, type WorkerTailDeps } from "./worker-tail"
 import type { Task } from "./orchestrator-chat"
 
@@ -150,4 +150,68 @@ test("captures the pane on the task's recorded tmux server", async () => {
   await settle()
   expect(seen).toContainEqual(["cc-a", "/tmp/tmux-1000/cc"])
   expect(seen).toContainEqual(["cc-b", undefined]) // NULL column = default server
+})
+
+describe("herdr workers", () => {
+  function herdrHarness(over: Partial<Task> = {}) {
+    const h = harness([makeTask({ tmuxSession: null, herdrAgent: "cc--claude-3", herdrPane: "w3:p1", ...over })])
+    const s = { screen: "claude\n" as string | null, gone: false, goneAsks: 0, captured: 0, read: [] as string[] }
+    h.deps.capturePane = async () => { s.captured++; return null }
+    h.deps.readHerdr = async (pane) => { s.read.push(pane); return s.screen }
+    h.deps.herdrGone = async () => { s.goneAsks++; return s.gone }
+    return { h, s }
+  }
+
+  test("a readable pane with herdrGone false streams and is never dead, also with a dialog up for many ticks", async () => {
+    const { h, s } = herdrHarness()
+    h.deps.pollMs = 1
+    const m = createWorkerTailManager(h.deps)
+    m.watch("t1")
+    await settle()
+    expect(h.lines[0]).toEqual(["claude"])
+    s.screen = "   2 new MCP servers found in .mcp.json\n   Space to select · Enter to confirm · Esc to reject all\n"
+    await Bun.sleep(200)
+    expect(h.dead).toEqual([])
+    expect(m.watching("t1")).toBe(true)
+    expect(h.lines.at(-1)?.[0]).toContain("MCP servers")
+    expect(s.read.every((p) => p === "w3:p1")).toBe(true)
+    expect(s.captured).toBe(0)
+    expect(s.goneAsks).toBeGreaterThan(0) // asked every 4th tick
+  })
+
+  test("readHerdr null × 10 with herdrGone false → never dead, no pane misses", async () => {
+    const { h, s } = herdrHarness()
+    s.screen = null
+    const m = createWorkerTailManager(h.deps)
+    m.watch("t1")
+    await Bun.sleep(150)
+    expect(s.read.length).toBeGreaterThanOrEqual(10)
+    expect(s.goneAsks).toBe(s.read.length) // a failed read always asks
+    expect(h.dead).toEqual([])
+    expect(m.watching("t1")).toBe(true)
+  })
+
+  test("herdrGone true → setTaskDead once", async () => {
+    const { h, s } = herdrHarness()
+    const m = createWorkerTailManager(h.deps)
+    m.watch("t1")
+    await settle()
+    s.screen = null
+    s.gone = true
+    await settle()
+    await settle()
+    expect(h.dead).toEqual(["t1"])
+    expect(h.finished).toEqual(["t1"])
+    expect(m.watching("t1")).toBe(false)
+  })
+
+  test("resumeAll reattaches a herdr task (no tmuxSession) and it ticks past the spawn guard", async () => {
+    const { h, s } = herdrHarness({ status: "dispatched" })
+    const m = createWorkerTailManager(h.deps)
+    m.resumeAll([...h.tasks.values()])
+    expect(m.watching("t1")).toBe(true)
+    await settle()
+    expect(s.read.length).toBeGreaterThan(0)
+    expect(h.lines[0]).toEqual(["claude"])
+  })
 })

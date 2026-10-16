@@ -8,12 +8,17 @@ import type { Task } from "./orchestrator-chat"
 //
 // The pane IS the durable thing (detached tmux survives server restarts), the
 // tail is just a viewer — resumeAll() reattaches pollers on boot.
+//
+// A herdr worker (task.herdrPane) is read with `pane read`, and the screen is
+// only for display: it is dead only when herdrGone() says so (asked when a read
+// fails and every HERDR_GONE_EVERY ticks). A failed read is never a pane miss.
 
 const POLL_MS = 1500
 const TAIL_LINES = 20
 // A vanished pane usually means the worker exited before the stop hook closed
 // the task; tolerate a few misses so a tmux hiccup doesn't finalize early.
 const MAX_PANE_MISSES = 3
+const HERDR_GONE_EVERY = 4
 
 const LIVE_STATUSES = new Set(["dispatched", "running"])
 
@@ -26,6 +31,10 @@ export interface WorkerTailDeps {
   // died without a stop hook (killed tmux, crashed). Mark it so it doesn't sit
   // in 'running' forever.
   setTaskDead(taskId: string): void
+  // herdr workers (wiring/worker-io.ts): the pane's screen (null = unreadable)
+  // and whether herdr still runs the worker. Absent = herdr tasks are not tailed.
+  readHerdr?(pane: string): Promise<string | null>
+  herdrGone?(task: Task): Promise<boolean>
   onLines(task: Task, lines: string[]): void
   onFinished(taskId: string): void
   // Poll interval override (tests). Production uses POLL_MS.
@@ -42,6 +51,7 @@ interface Watch {
   timer: ReturnType<typeof setInterval>
   lastTail: string
   paneMisses: number
+  ticks: number
   ticking: boolean
 }
 
@@ -77,6 +87,7 @@ export function createWorkerTailManager(deps: WorkerTailDeps): WorkerTailManager
         finalize(taskId)
         return
       }
+      if (task.herdrPane) return await tickHerdr(w, task, task.herdrPane)
       if (!task.tmuxSession) return // proposal approved but spawn not recorded yet
       const pane = await deps.capturePane(task.tmuxSession, task.tmuxSocket || undefined)
       if (pane === null) {
@@ -85,15 +96,27 @@ export function createWorkerTailManager(deps: WorkerTailDeps): WorkerTailManager
         return
       }
       w.paneMisses = 0
-      const tail = tailOf(pane).join("\n")
-      if (tail !== w.lastTail) {
-        w.lastTail = tail
-        deps.onLines(task, tail.split("\n"))
-      }
+      show(w, task, pane)
     } finally {
       const still = watches.get(taskId)
       if (still) still.ticking = false
     }
+  }
+
+  function show(w: Watch, task: Task, pane: string): void {
+    const tail = tailOf(pane).join("\n")
+    if (tail !== w.lastTail) {
+      w.lastTail = tail
+      deps.onLines(task, tail.split("\n"))
+    }
+  }
+
+  async function tickHerdr(w: Watch, task: Task, pane: string): Promise<void> {
+    if (!deps.readHerdr) return
+    w.ticks++
+    const screen = await deps.readHerdr(pane)
+    if ((screen === null || w.ticks % HERDR_GONE_EVERY === 0) && await deps.herdrGone?.(task)) return finalize(task.taskId, true)
+    if (screen !== null) show(w, task, screen)
   }
 
   function watch(taskId: string): void {
@@ -102,6 +125,7 @@ export function createWorkerTailManager(deps: WorkerTailDeps): WorkerTailManager
       timer: setInterval(() => void tick(taskId), pollMs),
       lastTail: "",
       paneMisses: 0,
+      ticks: 0,
       ticking: false,
     }
     watches.set(taskId, w)
@@ -113,7 +137,7 @@ export function createWorkerTailManager(deps: WorkerTailDeps): WorkerTailManager
     watching: (taskId) => watches.has(taskId),
     resumeAll(tasks: Task[]): void {
       for (const t of tasks) {
-        if (LIVE_STATUSES.has(t.status) && t.tmuxSession) watch(t.taskId)
+        if (LIVE_STATUSES.has(t.status) && (t.tmuxSession || t.herdrPane)) watch(t.taskId)
       }
     },
   }
