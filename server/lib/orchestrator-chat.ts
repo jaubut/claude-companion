@@ -298,9 +298,12 @@ export function setTaskLogTail(taskId: string, logTail: string): void {
 // the oldest still-unbound dispatched task in the same cwd. cwd is the only
 // signal shared between /api/dispatch (we picked the cwd) and the session-start
 // hook (Claude Code reports its cwd) before we know the session key.
+// The cwd matchers and counts skip herdr workers: they always carry
+// COMPANION_TASK_ID and resolve by id only, so a session of Jeremie's own in the
+// same cwd (a Body fix runs in ~) never binds or closes one.
 export function matchUnboundTaskByCwd(cwd: string): Task | null {
   const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched' ORDER BY created_at ASC LIMIT 1")
+    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched' AND herdr_pane IS NULL ORDER BY created_at ASC LIMIT 1")
     .get(cwd) as TaskRow | null
   return row ? toTask(row) : null
 }
@@ -311,7 +314,7 @@ export function matchUnboundTaskByCwd(cwd: string): Task | null {
 // the key misses; cwd is stable across spawn → session-start → stop.
 export function findRunningTaskByCwd(cwd: string): Task | null {
   const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' ORDER BY updated_at DESC LIMIT 1")
+    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' AND herdr_pane IS NULL ORDER BY updated_at DESC LIMIT 1")
     .get(cwd) as TaskRow | null
   return row ? toTask(row) : null
 }
@@ -365,14 +368,14 @@ export function findRunningTaskByTmuxSession(tmuxSession: string): Task | null {
 // resolver must find real identity or refuse.
 export function countUnboundTasksInCwd(cwd: string): number {
   const row = db
-    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched'")
+    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched' AND herdr_pane IS NULL")
     .get(cwd) as { n: number }
   return row.n
 }
 
 export function countRunningTasksInCwd(cwd: string): number {
   const row = db
-    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND status = 'running'")
+    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' AND herdr_pane IS NULL")
     .get(cwd) as { n: number }
   return row.n
 }

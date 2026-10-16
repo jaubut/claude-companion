@@ -418,3 +418,18 @@ describe("herdr worker handle", () => {
     for (const id of ["legacy1", pending.taskId, sent.taskId]) chat.setTaskStatus(id, "done")
   })
 })
+
+test("a herdr worker in ~ is never bound or closed by a cwd-only hook (no task id)", async () => {
+  const { createWorkerIdentityResolver } = await import("./worker-identity")
+  const resolver = createWorkerIdentityResolver({ ...chat, tmuxSessionForPane: async () => null, now: Date.now, log: () => {} })
+  const home = "/Users/someone-home"
+  const t = chat.createProposal("fix", home, "why", "general")
+  chat.setTaskSpawn(t.taskId, null, null, { agent: "cc--claude-9", pane: "w9:p1" })
+  expect(await resolver.resolve("bind", { cwd: home })).toBeNull()
+  expect((await resolver.resolve("bind", { taskId: t.taskId, cwd: home }))?.taskId).toBe(t.taskId)
+  chat.bindTaskSession(t.taskId, "k-worker")
+  expect(await resolver.resolve("close", { cwd: home })).toBeNull()
+  expect((await resolver.resolve("close", { taskId: t.taskId, cwd: home }))?.taskId).toBe(t.taskId)
+  expect(chat.countRunningTasksInCwd(home)).toBe(0)
+  chat.setTaskStatus(t.taskId, "done")
+})
