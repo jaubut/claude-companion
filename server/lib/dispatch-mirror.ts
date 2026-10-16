@@ -6,7 +6,7 @@ export { seenKey }
 // Announce cursor for the Turso dispatch poller: the last value seen per task,
 // persisted in sqlite `dispatch_seen` so a restart never re-announces a
 // transition. The diff is keyed on the value tuple (dispatch_status,
-// updated_at, done, pr_url), never on counts.
+// updated_at, done, pr_url, run_id, owner), never on counts.
 
 export interface Seen {
   phase: string
