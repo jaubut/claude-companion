@@ -113,7 +113,7 @@ describe("dispatch poller", () => {
     await r.w.poll()
     expect(r.of("orchestrator_task").map((f) => (f.task as { taskId: string }).taskId)).toEqual([ID(3)])
     expect(r.of("orchestrator_queue")).toHaveLength(1)
-    expect(r.of("orchestrator_queue")[0]!.queue).toEqual({ cap: 3, live: 0, queued: 0, dispatch: { queued: 2, running: 0, blocked: 0, pr: 0 } })
+    expect(r.of("orchestrator_queue")[0]!.queue).toEqual({ cap: 3, live: 0, queued: 0, dispatch: { queued: 2, running: 0, blocked: 0, pr: 0, failed: 0, mergedToday: 0 } })
 
     // Value change on task 2 → blocked: one frame, one turn, one push — once.
     r.reset()
@@ -201,7 +201,7 @@ describe("dispatch poller", () => {
     expect(r.w.tasksFor("dash")[0]!.threadId).toBe("dash")
     expect(r.w.tasksFor("general").map((t) => t.taskId)).toEqual([ID(9)])
     expect(r.w.tasksFor("body").map((t) => t.taskId)).toEqual([ID(9)])
-    expect(r.w.decorate(channel("dash")).counts).toEqual({ queued: 1, running: 0, blocked: 0, pr: 0 })
+    expect(r.w.decorate(channel("dash")).counts).toEqual({ queued: 1, running: 0, blocked: 0, pr: 0, failed: 0, mergedToday: 0 })
 
     r.reset()
     rows = [task(8, { note_id: "projects/linked", dispatch_status: "blocked", dispatch_blocker: "y", updated_at: "2026-10-03 15:00:00" }), rows[1]!]

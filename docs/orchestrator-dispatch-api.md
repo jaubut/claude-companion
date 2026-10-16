@@ -36,9 +36,16 @@ and in `GET /api/orchestrator/task/<id>`.
   "owner": "zettlab | companion:<host>",
   "mode": "headless|live",
   "localTaskId": "live only: the 8-char local worker id",
-  "tmuxSocket": "live only"
+  "tmuxSocket": "live only",
+  "stage": "queue|dispatch|builder|shepherd|merged|blocked|failed|cancelled|null",
+  "shepherd": { "ci": "pending|passing|failing|none", "review": "pending|approved|changes|none", "parked": true, "parkedReason": "touches migrations" },
+  "mergedAt": 1759496400000,
+  "prNumber": 7
 }
 ```
+
+`stage`, `shepherd`, `mergedAt` and `prNumber` are `source:"dispatch"` only and optional (absent
+on local tasks and from older servers) — see [Pipeline stage](#pipeline-stage).
 
 - `pr` = Turso `completed` with a PR URL.
 - Legacy `status` for `source:"dispatch"`: queued→queued, running→running,
@@ -59,13 +66,47 @@ and in `GET /api/orchestrator/task/<id>`.
   `status:"filed"` (the card leaves: `isPending` is false) and then the Turso task's own
   frame. `/thread` never lists `filed` rows; their Turso task is listed instead.
 
+## Pipeline stage
+
+The Brain Queue graph (Queue → Dispatch → Builder → Shepherd → Merged, plus Blocked / Failed /
+Cancelled) reads `stage`, which the server derives in `server/lib/dispatch-stage.ts`
+from the Turso row and the PR shepherd's `agent_activity` ledger:
+
+| Turso row | `stage` |
+|---|---|
+| `queued` | `queue` |
+| `running`, headless, `dispatch_run_id` NULL (dispatch-run claimed it; the runner has not reported start through `dispatch.sh <id> running`) | `dispatch` |
+| `running` with a run id, or a live row (`owner` = `companion:<host>`, its own runner) | `builder` |
+| `completed` + PR URL, `done=0` | `shepherd` |
+| `completed` + PR URL, `done=1` (the shepherd, a Merge tap, or dispatch-reconcile marked it merged) | `merged` + `mergedAt` |
+| `completed` without a PR (research / note results) | `merged`, no `prNumber` and no `mergedAt` |
+| `blocked` / `failed` / `cancelled` (a closed PR → `cancelled`, dispatch-reconcile) | same name |
+| unknown / NULL | `null` |
+
+- `prNumber`: parsed from `prUrl`, present whenever a GitHub PR URL is set.
+- `mergedAt` (epoch ms): the `outcome:merged` row's `ts`, else the row's `updated_at` (a manual merge
+  with no ledger row). Use it to tell a merge from a no-PR completion.
+- `shepherd` (stage `shepherd` only), from the task's newest `pr:*` rows:
+  - `ci`: newest `pr:local-gates` (`tests` / `build`): any `fail` → `failing`, else any `pass` →
+    `passing`, both `none` → `none`; no row yet → `pending`. GitHub check runs are not polled.
+  - `review`: newest `pr:review` / `pr:approved-merge`: `APPROVE` or Jeremie's approval → `approved`,
+    `CHANGES` → `changes`, `UNVERIFIED` / `UNKNOWN` → `none`; no row yet → `pending`.
+  - `parked`: the newest of `pr:needs-human` / `pr:unpark` / `pr:approved-merge` is the park.
+    `parkedReason` = its reason without the cascade's ` · Opus: …` brief (absent when not parked).
+- The ledger is read once per poll, in one parameterized query, for tasks that have a PR. If that read fails,
+  the poll still succeeds and keeps the last ledger.
+- `counts` / `queue.dispatch` add `failed` (open failed tasks) and `mergedToday` (PR merges whose
+  `mergedAt` falls on today, in `COMPANION_TASKS_TZ`, default America/Toronto).
+- A change that only touches the ledger (for example a new park) re-sends no `orchestrator_task` frame. The next
+  `GET /api/orchestrator/thread` or a row change carries it. Stage moves always change the row, so they emit.
+
 ## Frames
 
 | frame | shape | when |
 |---|---|---|
 | `orchestrator_task` | `{task: TaskDto}` | local transition, or a Turso task whose `(dispatch_status, updated_at, done, pr_url)` changed since last seen; re-sent for a note's tasks when its channel link changes |
-| `orchestrator_channel` | `{channel: Channel}`; Channel gains `noteId, noteTitle, noteRef, counts{queued,running,blocked,pr}` | channel create/auto/link, or its dispatch counts changed |
-| `orchestrator_queue` (new) | `{queue: {cap, live, queued, dispatch:{queued,running,blocked,pr}}}` | after a poll that changed any of it |
+| `orchestrator_channel` | `{channel: Channel}`; Channel gains `noteId, noteTitle, noteRef, counts{queued,running,blocked,pr,failed,mergedToday}` | channel create/auto/link, or its dispatch counts changed |
+| `orchestrator_queue` (new) | `{queue: {cap, live, queued, dispatch:{queued,running,blocked,pr,failed,mergedToday}}}` | after a poll that changed any of it |
 | `orchestrator` | `{turn}` | a Turso task moved into blocked / pr / completed / done: one turn in the owning channel, `turn.taskId` = the Turso id |
 
 Status flows from the record: the server polls Turso every 20 s; `POST /hooks/dispatch-event`

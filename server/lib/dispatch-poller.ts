@@ -15,9 +15,11 @@ import {
   listProjects,
   phaseOf,
 } from "./dispatch-tasks"
+import { listPrLedger, stageFields } from "./dispatch-stage"
+import { localDay } from "./my-tasks"
 import type { Channel } from "./orchestrator-channels"
 import type { Turn } from "./orchestrator-chat"
-import { type ExecFn, type QueryFn, TursoUnreachable } from "./turso"
+import { type ExecFn, type QueryFn, type Row, TursoUnreachable } from "./turso"
 
 // Turso dispatch poller core (orchestrator-one-queue P1). Status flows from the
 // record: every 20 s (or on a /hooks/dispatch-event nudge) read the agent
@@ -27,7 +29,7 @@ import { type ExecFn, type QueryFn, TursoUnreachable } from "./turso"
 // Channel counts and the `orchestrator_queue` frame follow. Pure over injected
 // seams (no sqlite import) — wiring/dispatch.ts builds the one live instance.
 
-export interface DispatchCounts { queued: number; running: number; blocked: number; pr: number }
+export interface DispatchCounts { queued: number; running: number; blocked: number; pr: number; failed: number; mergedToday: number }
 export type ChannelWithCounts = Channel & { counts: DispatchCounts }
 export interface QueueSummary { cap: number; live: number; queued: number; dispatch: DispatchCounts }
 
@@ -74,7 +76,7 @@ const PROJECTS_TTL_MS = 5 * 60_000
 const PRUNE_EVERY_MS = 60 * 60_000
 const SEEN_MAX_AGE_MS = 30 * 24 * 60 * 60_000
 
-const zero = (): DispatchCounts => ({ queued: 0, running: 0, blocked: 0, pr: 0 })
+const zero = (): DispatchCounts => ({ queued: 0, running: 0, blocked: 0, pr: 0, failed: 0, mergedToday: 0 })
 const DIGEST_MAX = 800
 const DIGEST_BLOCKED = 5
 
@@ -84,7 +86,7 @@ const noExec: ExecFn = async () => { throw new TursoUnreachable("no writer confi
  * The brain's dispatch context (P2/P3): counts, then the top blocked tasks with
  * their reasons, ≤ 800 chars. `scope` names the view ("#Dash", "all projects").
  */
-export function buildDispatchDigest(scope: string, counts: DispatchCounts, blocked: DispatchTask[], max = DIGEST_MAX): string {
+export function buildDispatchDigest(scope: string, counts: Pick<DispatchCounts, "queued" | "running" | "blocked" | "pr">, blocked: DispatchTask[], max = DIGEST_MAX): string {
   const head = `Dispatch queue (${scope}): ${counts.queued} queued · ${counts.running} running · ${counts.blocked} blocked · ${counts.pr} PR open`
   const lines = [head]
   if (blocked.length) lines.push("Blocked (answer one to requeue it):")
@@ -133,6 +135,9 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
   const columnsTtlMs = deps.columnsTtlMs ?? 10 * 60_000
 
   let cache: DispatchTask[] = []
+  /** PR shepherd ledger rows per task id, read with each poll (lib/dispatch-stage.ts). */
+  let ledger = new Map<string, Row[]>()
+  let ledgerFailing = false
   let polledOk = false
   let failing = false
   let inflight: Promise<boolean> | null = null
@@ -160,10 +165,13 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
 
   function countsOf(tasks: DispatchTask[]): DispatchCounts {
     const c = zero()
+    const today = localDay(now())
     for (const t of tasks) {
+      const mergedAt = stageFields(t, ledger.get(t.id)).mergedAt
+      if (mergedAt && localDay(mergedAt) === today) c.mergedToday++
       if (t.done) continue
       const s = effectiveStatus(t)
-      if (s === "queued" || s === "running" || s === "blocked" || s === "pr") c[s]++
+      if (s === "queued" || s === "running" || s === "blocked" || s === "pr" || s === "failed") c[s]++
     }
     return c
   }
@@ -176,7 +184,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
   // Live rows (owner companion:*) carry their tmux worker's identity.
   function toDto(t: DispatchTask, links: Map<string, string>): TaskDto {
     const live = t.owner?.startsWith("companion:") ? deps.liveIdentity?.(t.id) ?? null : null
-    return dispatchToDto(t, threadIdFor(t, links), live)
+    return { ...dispatchToDto(t, threadIdFor(t, links), live), ...stageFields(t, ledger.get(t.id)) }
   }
 
   function tasksFor(channelId: string): TaskDto[] {
@@ -258,6 +266,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     }
     if (failing) log("[dispatch] poll recovered")
     failing = false
+    await readLedger(list)
     const links = deps.linkedNotes()
     announce(list, links)
     cache = list
@@ -269,6 +278,18 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     }
     notifyPolled()
     return true
+  }
+
+  // Shepherd detail is best effort: a failed read keeps the last ledger, never fails the poll.
+  async function readLedger(list: DispatchTask[]): Promise<void> {
+    try {
+      ledger = await listPrLedger(deps.query, list)
+      if (ledgerFailing) log("[dispatch] ledger read recovered")
+      ledgerFailing = false
+    } catch (err) {
+      if (!ledgerFailing) log(`[dispatch] ledger read failed (${(err as Error)?.message ?? "error"})`)
+      ledgerFailing = true
+    }
   }
 
   /** Single-flight: a poll requested while one runs shares it. */
