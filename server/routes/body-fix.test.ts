@@ -281,3 +281,65 @@ describe("approving a Mac body fix on Zettlab", () => {
     expect(fixLib.parseFixRequest({ fixId: "x", host: "mac", componentId: "c", prompt: "p", title: "t", cwd: "rel", noteId: "n", agent: "a" })).toEqual({ error: "cwd must be absolute" })
   })
 })
+
+describe("a fix cwd inside an app bundle", () => {
+  const bundleCwd = join(tempHome, "Library", "GoogleUpdater.app", "Contents", "MacOS")
+
+  function bundleCard() {
+    channels.ensureChannel("body", "Body")
+    const componentId = `mac:launchd:bundle${++seq}`
+    const title = `Fix ${componentId}: restore it`
+    const p = chat.createProposal("Fix it.\nRun on host: mac", bundleCwd, "Body investigation inv: x", "body", { noteId: "projects/dash", agent: "claude", title })
+    store.recordCard({ taskId: p.taskId, host: "mac", componentId, cwd: bundleCwd, noteId: "projects/dash", agent: "claude", title, investigationId: "inv1" }, Date.now())
+    return p
+  }
+  const bodyTexts = () => chat.getThread("body").map((t) => t.text)
+
+  test("forwarded: the Mac runs it in home, the prompt and #Body say so, the turns name the effective cwd", async () => {
+    const p = bundleCard()
+    const r = await approve(p.taskId)
+    expect(r.json).toMatchObject({ ok: true, host: "mac", mode: "live" })
+    const macTaskId = store.run(p.taskId)!
+    expect(spawns).toEqual([{ taskId: macTaskId, cwd: tempHome }])
+    const mac = chat.getTask(macTaskId)!
+    expect(mac.cwd).toBe(tempHome)
+    expect(mac.prompt).toContain(`reported cwd ${bundleCwd} is inside an app bundle — running in ${tempHome}`)
+    const texts = bodyTexts()
+    expect(texts).toContain(`[${macTaskId}] reported cwd ${bundleCwd} is inside an app bundle — running in ${tempHome}`)
+    expect(texts.some((t) => t.startsWith(`live [${macTaskId}]`) && t.endsWith(`in ${tempHome}`))).toBe(true)
+    expect(texts.some((t) => t.startsWith(`approved [${p.taskId}]`) && t.endsWith(`in ~ (reported cwd ${bundleCwd} is inside an app bundle)`))).toBe(true)
+  })
+
+  test("a replayed forward announces the bundle once", async () => {
+    const p = bundleCard()
+    await approve(p.taskId)
+    const macTaskId = store.run(p.taskId)!
+    const req = fixLib.parseFixRequest({ ...fixLib.fixRequestFor(store.card(p.taskId)!, "Fix it.") })
+    if ("error" in req) throw new Error(req.error)
+    await fix.runBodyFix(req, wiring.w, "mac")
+    expect(bodyTexts().filter((t) => t.startsWith(`[${macTaskId}] reported cwd`))).toHaveLength(1)
+    expect(spawns).toHaveLength(1)
+  })
+
+  test("reported on the Mac itself: runs in home with a #Body turn", async () => {
+    const p = bundleCard()
+    const prev = fix.setBodyFixDeps({ localHost: () => "mac" })
+    try {
+      const r = await approve(p.taskId)
+      expect(r.json).toMatchObject({ ok: true, host: "mac", mode: "live" })
+    } finally {
+      fix.setBodyFixDeps(prev)
+    }
+    expect(peerCalls).toHaveLength(0)
+    expect(spawns).toEqual([{ taskId: p.taskId, cwd: tempHome }])
+    expect(bodyTexts()).toContain(`[${p.taskId}] reported cwd ${bundleCwd} is inside an app bundle — running in ${tempHome}`)
+  })
+
+  test("an ordinary fix cwd gets no bundle turn", async () => {
+    const p = card()
+    await approve(p.taskId)
+    const macTaskId = store.run(p.taskId)!
+    expect(bodyTexts().some((t) => t.startsWith(`[${macTaskId}] reported cwd`))).toBe(false)
+    expect(chat.getTask(macTaskId)!.prompt).not.toContain("app bundle")
+  })
+})

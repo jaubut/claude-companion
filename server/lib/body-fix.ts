@@ -83,6 +83,16 @@ export function localizeCwd(cwd: string, home: string = process.env.HOME || home
   return m ? home + (m[1] ?? "") : c
 }
 
+/**
+ * A cwd inside an app bundle (a `…/X.app` path segment, e.g. a launchd job whose
+ * program is GoogleUpdater.app/Contents/MacOS/…) is never a place to fix
+ * anything: run in home instead. Segment match only, so `/x/webapp/y` passes.
+ * Apply after localizeCwd.
+ */
+export function fixCwd(cwd: string, home: string = process.env.HOME || homedir()): { cwd: string; replaced: boolean } {
+  return /(^|\/)[^/]+\.app(\/|$)/.test(cwd) ? { cwd: home, replaced: true } : { cwd, replaced: false }
+}
+
 export function fixRunsElsewhere(card: FixCard | null, local: BodyHost): boolean {
   return !!card && card.host === "mac" && local !== "mac"
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { localizeCwd } from "./body-fix"
+import { fixCwd, localizeCwd } from "./body-fix"
 
 const none = () => false
 const only = (...paths: string[]) => (p: string) => paths.includes(p)
@@ -33,5 +33,25 @@ describe("localizeCwd", () => {
 
   test("leaves non-home paths alone", () => {
     expect(localizeCwd("/opt/app", "/Users/jeremieaubut", none)).toBe("/opt/app")
+  })
+})
+
+describe("fixCwd", () => {
+  const H = "/Users/jeremieaubut"
+
+  test("a cwd inside an app bundle runs in home", () => {
+    const bundle = `${H}/Library/Application Support/Google/GoogleUpdater/150.0/GoogleUpdater.app/Contents/MacOS`
+    expect(fixCwd(bundle, H)).toEqual({ cwd: H, replaced: true })
+    expect(fixCwd("/Applications/Foo.app", H)).toEqual({ cwd: H, replaced: true })
+  })
+
+  test("segment match only: webapp / app / .application paths pass", () => {
+    for (const p of ["/x/webapp/y", "/x/app/y", "/x/app", "/x/my.application/y", "/x/foo.apps/y"]) expect(fixCwd(p, H)).toEqual({ cwd: p, replaced: false })
+  })
+
+  test("applied after localizeCwd: a Zettlab-home bundle path is re-rooted, then replaced", () => {
+    const localized = localizeCwd("/home/aubut/tools/X.app/Contents/MacOS", H, none)
+    expect(localized).toBe(`${H}/tools/X.app/Contents/MacOS`)
+    expect(fixCwd(localized, H)).toEqual({ cwd: H, replaced: true })
   })
 })
