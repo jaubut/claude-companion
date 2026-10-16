@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { HerdrDelivery } from "./herdr-inject"
-import { type PumpOpts, SEED_RETRY_MS, SEED_TRIES, SEED_WAIT_MS, type SeedGate, pumpPrompt, seedGate } from "./herdr-seed"
+import { type PumpOpts, SEED_RETRY_MS, SEED_TRIES, SEED_WAIT_MS, type SeedGate, promptLanded, pumpPrompt, seedGate } from "./herdr-seed"
 
 // Pure: a fake clock (sleep advances it), a scripted gate and delivery.
 
@@ -90,5 +90,30 @@ describe("seedGate", () => {
     expect(await seedGate(async () => IDLE.replace("❯ ", "❯ hello"), status("idle"))).toEqual({ kind: "typing" })
     expect(await seedGate(async () => IDLE, status("idle"))).toEqual({ kind: "ready" })
     expect(await seedGate(async () => null, status(null))).toEqual({ kind: "ready" })
+  })
+})
+
+describe("a refused delivery that landed anyway", () => {
+  test("a timeout whose prompt went in counts as delivered: deliver is called once, never re-sent", async () => {
+    const r = rig(() => ({ kind: "ready" }), () => ({ ok: false, blocked: false, reason: "timeout" }))
+    r.opts.landed = async () => true
+    expect(await pumpPrompt(r.opts)).toEqual({ kind: "delivered" })
+    expect(r.delivered).toHaveLength(1)
+  })
+
+  test("a refusal that did not land is retried as before", async () => {
+    let n = 0
+    const r = rig(() => ({ kind: "ready" }), () => (++n < 3 ? { ok: false, blocked: false, reason: "timeout" } : { ok: true }))
+    r.opts.landed = async () => false
+    expect(await pumpPrompt(r.opts)).toEqual({ kind: "delivered" })
+    expect(r.delivered).toHaveLength(3)
+  })
+
+  test("promptLanded: herdr's agent working, or the prompt's first line on the screen", async () => {
+    const text = "Fix the   Turso\nconnection refused in body"
+    expect(await promptLanded(text, async () => IDLE, async () => "working")).toBe(true)
+    expect(await promptLanded(text, async () => `${IDLE}\n> Fix the Turso`, async () => "idle")).toBe(true)
+    expect(await promptLanded(text, async () => IDLE, async () => "idle")).toBe(false)
+    expect(await promptLanded(text, async () => null, async () => null)).toBe(false)
   })
 })

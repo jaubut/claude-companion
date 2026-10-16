@@ -1,5 +1,5 @@
 import { type Herdr, herdrErrorCode } from "../lib/herdr"
-import { type SeedGate, seedGate as gateOf } from "../lib/herdr-seed"
+import { type SeedGate, seedGate as gateOf, promptLanded } from "../lib/herdr-seed"
 
 // Is a herdr worker still running (takeover runs, orchestrator workers)? The Companion's session
 // registry first, then herdr: the run's agent and what is in front of its pane. An
@@ -113,8 +113,17 @@ export function createLiveness(get: () => LivenessDeps) {
     )
   }
 
+  /** A refused delivery of `text` to the agent's pane that went in anyway (lib/herdr-seed.ts promptLanded). */
+  function landed(name: string, pane: string, text: string): Promise<boolean> {
+    return promptLanded(
+      text,
+      () => get().herdr.read(pane).catch(() => null),
+      async () => { const a = await agentOf(name); return a.kind === "present" ? a.ref.status ?? null : null },
+    )
+  }
+
   return {
-    agentOf, agentAt, sessionLive, alive, missing, seedGate,
+    agentOf, agentAt, landed, sessionLive, alive, missing, seedGate,
     seen: (name: string) => { seenLive.add(name) },
     forget: (name: string) => { seenLive.delete(name); errors.delete(name) },
     reset: () => { seenLive.clear(); errors.clear() },

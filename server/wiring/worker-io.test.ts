@@ -268,3 +268,23 @@ describe("herdr name / pane reuse", () => {
     expect(await io.herdrGone(second)).toBe(false)
   })
 })
+
+describe("a timed-out delivery that landed", () => {
+  test("is not re-sent: herdr says the agent is working → prompt_sent_at stamped once", async () => {
+    let status = "idle"
+    const { h } = fakeHerdr({ "cc-t": { pane: "w30:p1", workspace: "w30", label: "cc-t" } })
+    const base = h.call.bind(h)
+    h.call = async (args) => {
+      const out = await base(args)
+      if (args[0] === "agent" && args[1] === "get") (out.agent as Record<string, unknown>).agent_status = status
+      return out
+    }
+    const r = wire(h, () => { status = "working"; return { ok: false, blocked: false, reason: "timeout" } })
+    const t = track(herdrTask("go", "cc-t", "w30:p1"))
+    io.deliverWorkerPrompt(t)
+    await io.workerIOIdle()
+    expect(r.delivered).toHaveLength(1)
+    expect(r.turns).toEqual([`[${t.taskId}] prompt delivered`])
+    expect(typeof chat.getTask(t.taskId)?.promptSentAt).toBe("number")
+  })
+})

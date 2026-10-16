@@ -29,9 +29,25 @@ export async function seedGate(screen: () => Promise<string | null>, agentStatus
   return raw !== null && inputText(raw) ? { kind: "typing" } : { kind: "ready" }
 }
 
+/**
+ * Did a refused delivery land anyway? herdr-inject's key gate gives up after a few
+ * seconds while `agent prompt` may still go through, so a timeout is not proof of
+ * nothing typed: herdr's agent `working`, or the prompt's opening on the screen, counts as in.
+ */
+export async function promptLanded(text: string, screen: () => Promise<string | null>, agentStatus: () => Promise<string | null>): Promise<boolean> {
+  if ((await agentStatus()) === "working") return true
+  const head = squash(text.split("\n").find((l) => l.trim()) ?? "").slice(0, 60)
+  const raw = head ? await screen() : null
+  return raw !== null && squash(unstyle(raw)).includes(head)
+}
+
+const squash = (s: string): string => s.replace(/\s+/g, " ").trim()
+
 export interface PumpOpts {
   gate: () => Promise<SeedGate>
   deliver: () => Promise<HerdrDelivery>
+  /** Asked after a non-dialog refusal, before retrying: true = it went in after all (promptLanded). */
+  landed?: () => Promise<boolean>
   /** False once the run or task settled (cancel, done): checked before every pass. */
   stillWanted: () => boolean
   /** Called once per dialog title. */
@@ -58,6 +74,7 @@ export async function pumpPrompt(o: PumpOpts): Promise<PumpOutcome> {
     if (gate.kind === "ready") {
       const r = await o.deliver()
       if (r.ok) return { kind: "delivered" }
+      if (!r.blocked && o.landed && await o.landed()) return { kind: "delivered" }
       if (!r.blocked) {
         tries++
         reason = r.reason
