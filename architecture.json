@@ -887,6 +887,24 @@
           "externals": []
         },
         {
+          "path": "lib/claude-mcp-trust.ts",
+          "lines": 37,
+          "kind": "lib",
+          "exports": [
+            "applyMcpChoices",
+            "mcpjsonServerNames"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/cli-json.ts",
           "lines": 40,
           "kind": "lib",
@@ -3843,9 +3861,10 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 585,
+          "lines": 591,
           "kind": "lib",
           "exports": [
+            "ensureFolderTrusted",
             "SpawnApp",
             "SpawnAgent",
             "buildInner",
@@ -3872,7 +3891,8 @@
           "imports": [
             "lib/tmux-pane.ts",
             "lib/herdr.ts",
-            "lib/log.ts"
+            "lib/log.ts",
+            "lib/claude-mcp-trust.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -10689,6 +10709,12 @@
           "module": "lib/agent-pid.ts",
           "callers": [
             "lib/sessions.ts"
+          ]
+        },
+        "applyMcpChoices": {
+          "module": "lib/claude-mcp-trust.ts",
+          "callers": [
+            "lib/spawn-session.ts"
           ]
         },
         "spawnNewSessionFlags": {

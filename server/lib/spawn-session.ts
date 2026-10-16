@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 import { type Herdr, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
+import { applyMcpChoices } from "./claude-mcp-trust"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -29,16 +30,19 @@ import { companionLog } from "./log"
 // ~/.claude.json so the spawned agent boots straight into the session. Once
 // claude runs in a trusted dir it keeps the flag on exit, so this write is a
 // one-time cost per dir.
-function ensureFolderTrusted(cwd: string): void {
-  const home = process.env.HOME
-  if (!home) return
-  const cfgPath = `${home}/.claude.json`
+//
+// mcpFrom (takeover): the main checkout a worktree was cut from — see
+// claude-mcp-trust.ts for how its MCP choices carry over.
+export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${process.env.HOME ?? ""}/.claude.json`): void {
+  if (!process.env.HOME) return
   let cfg: { projects?: Record<string, Record<string, unknown>> }
   try { cfg = JSON.parse(readFileSync(cfgPath, "utf8")) } catch { return }
   const projects = cfg.projects ?? (cfg.projects = {})
   const entry = projects[cwd] ?? (projects[cwd] = {})
-  if (entry.hasTrustDialogAccepted === true) return
-  entry.hasTrustDialogAccepted = true
+  let changed = false
+  if (entry.hasTrustDialogAccepted !== true) { entry.hasTrustDialogAccepted = true; changed = true }
+  if (mcpFrom && applyMcpChoices(entry, projects, mcpFrom, cwd)) changed = true
+  if (!changed) return
   try {
     const tmp = `${cfgPath}.companion-${process.pid}`
     writeFileSync(tmp, JSON.stringify(cfg, null, 2))
@@ -533,6 +537,8 @@ export async function spawnCompanionSession(opts: {
   // herdr only (takeover): a fixed agent name and claude args; a gate failure is
   // an error here, never a tmux fallback.
   herdr?: HerdrSpawnOpts
+  // Takeover: the main checkout whose MCP-server choices the worktree inherits.
+  mcpFrom?: string
 }): Promise<SpawnResult> {
   const cwd = opts.cwd.trim()
   if (!cwd) return { ok: false, error: "cwd required" }
@@ -568,7 +574,7 @@ export async function spawnCompanionSession(opts: {
 
   // Trust the target dir before launching so claude doesn't hang at the
   // folder-trust dialog (codex has no such gate, so skip it there).
-  if (agent !== "codex") ensureFolderTrusted(resolved)
+  if (agent !== "codex") ensureFolderTrusted(resolved, opts.mcpFrom)
 
   if (opts.herdr) {
     const { fallback: _gate, ...r } = await spawnInHerdr(resolved, agent, opts.env, realHerdr, opts.herdr)
