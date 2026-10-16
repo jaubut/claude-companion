@@ -26,6 +26,8 @@ export interface TakeoverRow {
   prUrl: string | null
   /** JSON of the outcome a `finishing` run still has to write to Turso; afterwards the last word. */
   outcome: string | null
+  /** A finished run whose worktree / workspace waits for its session to end (never removed under a live one). */
+  cleanupPending: boolean
   createdAt: number
   updatedAt: number
   endedAt: number | null
@@ -42,20 +44,24 @@ export interface TakeoverStore {
   listOpen(): TakeoverRow[]
   /** CAS: moves the open run `name` from one of `from` to `to`; false when it was not in `from`. */
   move(name: string, from: readonly TakeoverStatus[], to: TakeoverStatus, now: number, patch?: { prUrl?: string | null; outcome?: string | null }): boolean
+  /** Mark / clear the newest run of `name` as waiting for cleanup. */
+  setCleanup(name: string, pending: boolean, now: number): void
+  /** Finished runs still waiting for cleanup, oldest first. */
+  listCleanup(): TakeoverRow[]
 }
 
 const OPEN_SQL = "('starting', 'active', 'finishing')"
 
 interface Raw {
   id: number; name: string; task_id: string; host: string; repo: string; cwd: string; branch: string; status: string
-  orig_blocker: string; task_version: string; pr_url: string | null; outcome: string | null
+  orig_blocker: string; task_version: string; pr_url: string | null; outcome: string | null; cleanup_pending: number
   created_at: number; updated_at: number; ended_at: number | null
 }
 
 const toRow = (r: Raw): TakeoverRow => ({
   id: r.id, name: r.name, taskId: r.task_id, host: r.host as TakeoverHost, repo: r.repo, cwd: r.cwd, branch: r.branch,
   status: r.status as TakeoverStatus, origBlocker: r.orig_blocker, taskVersion: r.task_version, prUrl: r.pr_url,
-  outcome: r.outcome, createdAt: r.created_at, updatedAt: r.updated_at, endedAt: r.ended_at,
+  outcome: r.outcome, cleanupPending: r.cleanup_pending === 1, createdAt: r.created_at, updatedAt: r.updated_at, endedAt: r.ended_at,
 })
 
 export function createTakeoverStore(db: Database): TakeoverStore {
@@ -63,7 +69,7 @@ export function createTakeoverStore(db: Database): TakeoverStore {
     CREATE TABLE IF NOT EXISTS takeovers (
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, task_id TEXT NOT NULL, host TEXT NOT NULL, repo TEXT NOT NULL,
       cwd TEXT NOT NULL, branch TEXT NOT NULL, status TEXT NOT NULL, orig_blocker TEXT NOT NULL, task_version TEXT NOT NULL,
-      pr_url TEXT, outcome TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, ended_at INTEGER
+      pr_url TEXT, outcome TEXT, cleanup_pending INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, ended_at INTEGER
     );
     CREATE UNIQUE INDEX IF NOT EXISTS takeovers_open_task ON takeovers (task_id) WHERE status IN ${OPEN_SQL};
     CREATE UNIQUE INDEX IF NOT EXISTS takeovers_open_name ON takeovers (name) WHERE status IN ${OPEN_SQL};
@@ -100,6 +106,13 @@ export function createTakeoverStore(db: Database): TakeoverStore {
         `UPDATE takeovers SET ${sets.join(", ")} WHERE name = ? AND status IN ${OPEN_SQL} AND status IN (${from.map(() => "?").join(", ")})`,
       ).run(...args, name, ...from)
       return r.changes > 0
+    },
+    setCleanup(name, pending, now) {
+      db.query("UPDATE takeovers SET cleanup_pending = ?, updated_at = ? WHERE id = (SELECT id FROM takeovers WHERE name = ? ORDER BY id DESC LIMIT 1)")
+        .run(pending ? 1 : 0, now, name)
+    },
+    listCleanup() {
+      return (db.query(`SELECT * FROM takeovers WHERE cleanup_pending = 1 AND status NOT IN ${OPEN_SQL} ORDER BY id`).all() as Raw[]).map(toRow)
     },
   }
 }

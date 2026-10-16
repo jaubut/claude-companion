@@ -3999,7 +3999,7 @@
         },
         {
           "path": "lib/takeover-store.ts",
-          "lines": 106,
+          "lines": 119,
           "kind": "lib",
           "exports": [
             "TakeoverStatus",
@@ -4023,7 +4023,7 @@
         },
         {
           "path": "lib/takeover.ts",
-          "lines": 187,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "TakeoverHost",
@@ -4051,6 +4051,7 @@
             "NO_CHANGES_BLOCKER",
             "logSection",
             "SeedInput",
+            "DATA_NOTE",
             "seedPrompt"
           ],
           "state": [],
@@ -6954,7 +6955,7 @@
         },
         {
           "path": "wiring/takeover.ts",
-          "lines": 533,
+          "lines": 593,
           "kind": "lib",
           "exports": [
             "TAKEOVER_HOP",
@@ -14570,8 +14571,20 @@
             "wiring/takeover.ts"
           ]
         },
+        "herdrPaneShellPid": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/takeover.ts"
+          ]
+        },
         "taskVersion": {
           "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/takeover.ts"
+          ]
+        },
+        "takeoverOwner": {
+          "module": "lib/dispatch-live.ts",
           "callers": [
             "wiring/takeover.ts"
           ]

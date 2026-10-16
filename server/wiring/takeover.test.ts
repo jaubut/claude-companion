@@ -41,8 +41,17 @@ turso.exec(`
   );
 `)
 let down = false
+let claimFault: "lost_answer" | "not_sent" | null = null
+let poison: string | null = null
 const exec: ExecFn = async (sql: string, args: SqlArg[]) => {
   if (down) throw new TursoUnreachable("network")
+  if (poison && args.includes(poison) && /^\s*UPDATE tasks/i.test(sql)) throw new Error("poison row")
+  if (claimFault && /dispatch_status = 'running', dispatch_owner = \?/.test(sql)) {
+    const fault = claimFault
+    claimFault = null
+    if (fault === "lost_answer") turso.query(sql).run(...args)
+    throw new TursoUnreachable("network")
+  }
   if (/^\s*(SELECT|WITH)/i.test(sql)) return { rows: turso.query(sql).all(...args) as Row[], affected: 0 }
   return { rows: [], affected: turso.query(sql).run(...args).changes }
 }
@@ -92,10 +101,13 @@ const dirs = new Set<string>()
 const shCalls: string[] = []
 let prList = "[]"
 let prHead = "takeover/aaaaaaaa"
+let prCreated: string | null = null
+const logs: string[] = []
+const fresh = (url: string) => JSON.stringify([{ url, createdAt: new Date(Date.now() + 1_000).toISOString() }])
 let fetchFails = false
 const sh: ShFn = async (cmd, args) => {
   shCalls.push(`${cmd} ${args.join(" ")}`)
-  if (cmd === "gh" && args[1] === "view") return { ok: true, code: 0, out: JSON.stringify({ headRefName: prHead }), err: "" }
+  if (cmd === "gh" && args[1] === "view") return { ok: true, code: 0, out: JSON.stringify({ headRefName: prHead, createdAt: prCreated ?? new Date().toISOString() }), err: "" }
   if (cmd === "gh") return { ok: true, code: 0, out: prList, err: "" }
   if (args.includes("fetch") && fetchFails) return { ok: false, code: 1, out: "", err: "fatal: denied" }
   if (args.includes("symbolic-ref")) return { ok: true, code: 0, out: "origin/main\n", err: "" }
@@ -145,6 +157,10 @@ beforeEach(() => {
   closed.length = 0
   paneAtShell = true
   prHead = "takeover/aaaaaaaa"
+  prCreated = null
+  claimFault = null
+  poison = null
+  logs.length = 0
   gate = null
   down = false
   prList = "[]"
@@ -186,7 +202,7 @@ beforeEach(() => {
     writeCtx: async (d) => ({ exec: d.exec, cols, host: "zettlab", channel: null }),
     now: Date.now,
     sleep: async () => {},
-    log: () => {},
+    log: (m) => { logs.push(m) },
   })
 })
 
@@ -260,6 +276,32 @@ describe("start (claim-then-async)", () => {
     expect((await start({ version: `blocked|${String(tursoTask(ID).updated_at)}` })).ok).toBe(true)
   })
 
+  test("claim answer lost but the UPDATE landed → run stays starting; the tick confirms the owner and starts the session", async () => {
+    claimFault = "lost_answer"
+    await expect(start()).rejects.toBeInstanceOf(TursoUnreachable)
+    expect(tursoTask(ID)).toMatchObject({ dispatch_status: "running", dispatch_owner: `companion:takeover:${NAME}` })
+    expect(spawns).toHaveLength(0)
+    await tk.takeoverTick()
+    await tk.takeoverIdle()
+    expect(spawns).toHaveLength(1)
+    expect(await start()).toMatchObject({ ok: true, detail: { session: NAME, replay: true, status: "active" } })
+  })
+
+  test("claim never sent → the tick marks the run failed (Turso row untouched) and a new start works; a retried choose reconciles too", async () => {
+    claimFault = "not_sent"
+    await expect(start()).rejects.toBeInstanceOf(TursoUnreachable)
+    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+    await tk.takeoverTick()
+    expect(spawns).toHaveLength(0)
+    expect((await start()).ok).toBe(true)
+    await tk.takeoverIdle()
+    seedTask("f".repeat(32))
+    claimFault = "not_sent"
+    await expect(start({ taskId: "f".repeat(32) })).rejects.toBeInstanceOf(TursoUnreachable)
+    expect(await start({ taskId: "f".repeat(32) })).toMatchObject({ ok: true, detail: { session: "tko-zettlab-ffffffff", status: "starting" } })
+    await tk.takeoverIdle()
+  })
+
   test("git fetch failing → failed start, no session", async () => {
     fetchFails = true
     await start()
@@ -288,15 +330,50 @@ describe("completion", () => {
     await tk.takeoverIdle()
   }
 
-  test("Stop with a PR in the turn → completed + pr_url, once; the worktree goes when clean and pushed", async () => {
+  test("Stop with a PR in the turn → completed + pr_url, once; the worktree stays while the session lives, goes once it ends", async () => {
     await running()
+    sessions.push({ key: "k1", taskId: NAME })
     const pr = "https://github.com/jaubut/claude-companion/pull/171"
     await tk.takeoverStop(NAME, `Opened ${pr}`)
     await tk.takeoverStop(NAME, `Opened ${pr}`)
     expect(tursoTask(ID)).toMatchObject({ dispatch_status: "completed", dispatch_pr_url: pr })
     expect(ledger(ID)).toEqual(["dispatch:running", "dispatch:completed"])
     expect(turns.at(-1)).toContain(`opened ${pr}`)
+    const removed = `git -C ${REPO} worktree remove /h/.claude-companion/takeover/${NAME}`
+    await tk.takeoverTick()
+    expect(shCalls).not.toContain(removed)
+    // Registry empty but claude still in the pane (foreground not the shell): still live.
+    sessions.length = 0
+    paneAtShell = false
+    await tk.takeoverTick()
+    await tk.takeoverEnded(NAME)
+    expect(shCalls).not.toContain(removed)
+    expect(closed).toEqual([])
+    paneAtShell = true
+    await tk.takeoverEnded(NAME) // SessionEnd of the finished run
+    expect(shCalls).toContain(removed)
+    expect(closed).toEqual([`ws-${NAME}`])
+    await tk.takeoverTick()
+    expect(shCalls.filter((c) => c === removed)).toHaveLength(1)
+  })
+
+  test("a finished run whose session ends without a hook is tidied by the tick", async () => {
+    await running()
+    sessions.push({ key: "k1", taskId: NAME })
+    await tk.takeoverStop(NAME, "Opened https://github.com/jaubut/claude-companion/pull/171")
+    sessions.length = 0
+    await tk.takeoverTick()
     expect(shCalls).toContain(`git -C ${REPO} worktree remove /h/.claude-companion/takeover/${NAME}`)
+  })
+
+  test("a PR from a previous run on the same branch never completes this one (createdAt before the run)", async () => {
+    await running()
+    prList = JSON.stringify([{ url: "https://github.com/jaubut/claude-companion/pull/150", createdAt: "2026-10-01T10:00:00Z" }])
+    prCreated = "2026-10-01T10:00:00Z"
+    await tk.takeoverStop(NAME, "Back on https://github.com/jaubut/claude-companion/pull/150")
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+    await tk.takeoverEnded(NAME)
+    expect(tursoTask(ID)).toMatchObject({ dispatch_status: "blocked", dispatch_pr_url: null })
   })
 
   test("Stop with TAKEOVER DONE: → completed without a PR; a plain turn changes nothing", async () => {
@@ -311,7 +388,7 @@ describe("completion", () => {
   test("Stop finds the PR on the branch with gh (≤ 1 call / 30 s)", async () => {
     await running()
     await tk.takeoverStop(NAME, "pushed")
-    prList = JSON.stringify([{ url: "https://github.com/jaubut/claude-companion/pull/172" }])
+    prList = fresh("https://github.com/jaubut/claude-companion/pull/172")
     await tk.takeoverStop(NAME, "pushed again")
     expect(tursoTask(ID).dispatch_status).toBe("running")
     expect(shCalls.filter((c) => c.startsWith("gh pr list --head takeover/aaaaaaaa"))).toHaveLength(1)
@@ -327,7 +404,7 @@ describe("completion", () => {
     seedTask("c".repeat(32))
     await start({ taskId: "c".repeat(32) })
     await tk.takeoverIdle()
-    prList = JSON.stringify([{ url: "https://github.com/jaubut/claude-companion/pull/173" }])
+    prList = fresh("https://github.com/jaubut/claude-companion/pull/173")
     await tk.takeoverEnded("tko-zettlab-cccccccc")
     expect(tursoTask("c".repeat(32))).toMatchObject({ dispatch_status: "completed", dispatch_pr_url: "https://github.com/jaubut/claude-companion/pull/173" })
   })
@@ -337,7 +414,7 @@ describe("completion", () => {
     prHead = "dispatch/other-task"
     await tk.takeoverStop(NAME, "See https://github.com/jaubut/claude-companion/pull/99 from the old run")
     expect(tursoTask(ID)).toMatchObject({ dispatch_status: "running", dispatch_pr_url: null })
-    expect(shCalls).toContain("gh pr view https://github.com/jaubut/claude-companion/pull/99 --json headRefName")
+    expect(shCalls).toContain("gh pr view https://github.com/jaubut/claude-companion/pull/99 --json headRefName,createdAt")
   })
 
   test("re-takeover after an ended run: the lingering agent's workspace is closed and the same name starts a new run", async () => {
@@ -394,6 +471,31 @@ describe("completion", () => {
     await tk.takeoverTick()
     expect(tursoTask(ID).dispatch_status).toBe("blocked")
     expect(closed).toEqual([`ws-${NAME}`])
+  })
+
+  test("after a Companion restart (empty registry, no memory) a live pane keeps the run past the start grace", async () => {
+    await running()
+    tk.setTakeoverDeps({ now: () => Date.now() + 10 * 60_000 }) // restart: misses / seen-live forgotten, grace long past
+    paneAtShell = false
+    for (let i = 0; i < 3; i++) await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+    paneAtShell = true
+    await tk.takeoverTick()
+    await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+  })
+
+  test("one row that throws never stalls the others", async () => {
+    await running()
+    seedTask("e".repeat(32))
+    await start({ taskId: "e".repeat(32) })
+    await tk.takeoverIdle()
+    poison = ID
+    agents.clear()
+    for (let i = 0; i < 2; i++) await tk.takeoverTick()
+    expect(tursoTask("e".repeat(32)).dispatch_status).toBe("blocked")
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+    expect(logs.some((l) => l.includes(`tick: ${NAME} failed (poison row)`))).toBe(true)
   })
 
   test("tick: a fresh run never seen live keeps its start grace while herdr has the agent", async () => {

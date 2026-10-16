@@ -4,9 +4,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { localBodyHost } from "../lib/body-investigate"
 import { type PeerConfig, bodyPeer } from "../lib/body-investigate-engine"
-import { type TakeoverOutcome, claimTakeover, detectPrUrl, finishTakeover } from "../lib/dispatch-live"
+import { type TakeoverOutcome, claimTakeover, detectPrUrl, finishTakeover, takeoverOwner } from "../lib/dispatch-live"
 import { type DispatchTask, type LiveIdentity, type WriteOutcome, getDispatchTask } from "../lib/dispatch-tasks"
-import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, realHerdr } from "../lib/herdr"
+import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, herdrPaneShellPid, realHerdr } from "../lib/herdr"
 import { type HerdrDelivery, deliverViaHerdr } from "../lib/herdr-inject"
 import { type RepoEntry, hostCan, isDir, repoEntriesSafe } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
@@ -19,7 +19,7 @@ import {
   NO_CHANGES_BLOCKER, type TakeoverHost, doneLine, endedBlocker, entryByName, failedBlocker, howToRef, logSection, seedPrompt,
   takeoverBranch, takeoverHostFor, takeoverName, taskId8,
 } from "../lib/takeover"
-import { type TakeoverRow, type TakeoverStatus, type TakeoverStore, createTakeoverStore } from "../lib/takeover-store"
+import { OPEN_STATUSES, type TakeoverRow, type TakeoverStatus, type TakeoverStore, createTakeoverStore } from "../lib/takeover-store"
 import type { TriageAction, SourceItem } from "../lib/triage"
 import type { ExecOutcome } from "../lib/triage-engine"
 import { taskVersion } from "../lib/triage-sources"
@@ -166,11 +166,14 @@ async function herdrAgent(name: string): Promise<HerdrAgentRef | null> {
 
 const sessionLive = (name: string): boolean => d().sessions().some((s) => s.taskId === name)
 
-/**
- * Close the workspace a finished run left (autoclose is off by default): only our own
- * single-pane workspace labelled with the run's name, once its pane is back at the shell
- * and no session carries the name. true = herdr no longer has the agent.
- */
+/** Still running: a registered session carries the name, or herdr's agent pane has more than its shell in front (an idle session fires no hook after a restart). */
+async function sessionAlive(name: string): Promise<boolean> {
+  if (sessionLive(name)) return true
+  const agent = await herdrAgent(name)
+  return !!agent?.pane && (await herdrPaneShellPid(agent.pane, d().herdr)) === 0
+}
+
+/** Close a finished run's own single-pane workspace (labelled with its name) once the pane is at the shell; true = herdr has no agent left. */
 async function releaseWorkspace(name: string): Promise<boolean> {
   const agent = await herdrAgent(name)
   if (!agent) return true
@@ -199,7 +202,11 @@ async function nameTaken(name: string): Promise<boolean> {
 export async function startTakeover(input: StartInput): Promise<StartResult> {
   const store = d().store()
   const open = store.openFor(input.taskId)
-  if (open) return { ok: true, detail: detailOf(open, true) }
+  if (open && uncertain(open)) {
+    const r = await reconcileClaim(open)
+    if (r === "unknown") throw new TursoUnreachable("claim still uncertain")
+    if (r === "ours") return { ok: true, detail: detailOf(store.get(open.name)!, true) }
+  } else if (open) return { ok: true, detail: detailOf(open, true) }
   const dispatch = d().dispatch()
   const found = await getDispatchTask(dispatch.query, await dispatch.columns(), input.taskId)
   if (!found) return refuse("stale")
@@ -224,7 +231,10 @@ export async function startTakeover(input: StartInput): Promise<StartResult> {
   try {
     claim = await claimTakeover(await d().writeCtx(dispatch, channel), t.id, t.updatedAtRaw, name, runId)
   } catch (err) {
-    store.move(name, ["starting"], "failed", d().now(), { outcome: "claim failed: Turso unreachable" })
+    // The UPDATE may have landed with its answer lost: the run stays `starting`, marked, and the
+    // tick (or a retried choose) reads the row back before anything else happens.
+    if (err instanceof TursoUnreachable) store.move(name, ["starting"], "starting", d().now(), { outcome: CLAIM_UNCERTAIN })
+    else store.move(name, ["starting"], "failed", d().now(), { outcome: `claim failed: ${(err as Error)?.message ?? err}` })
     throw err
   }
   if (!claim.ok) {
@@ -234,11 +244,45 @@ export async function startTakeover(input: StartInput): Promise<StartResult> {
   }
   dispatch.applyLocal(claim.task)
   d().turn(`🧑‍💻 Takeover: session ${name} starting on ${hostLabel(host)} for ${who(t)} (${input.by})`, t.id, channel)
-  const p = continueStart(row, entry, t, found.description, input.logTail ?? null)
-    .catch((err) => d().log(`[takeover] ${name}: start failed and could not be closed (${(err as Error)?.message ?? err}) — the tick retries`))
-    .finally(() => running.delete(name))
-  running.set(name, p)
+  launch(row, entry, t, found.description, input.logTail ?? null)
   return { ok: true, detail: detailOf(row) }
+}
+
+function launch(row: TakeoverRow, entry: RepoEntry, t: DispatchTask, description: string, logTail: string | null): void {
+  const p = continueStart(row, entry, t, description, logTail)
+    .catch((err) => d().log(`[takeover] ${row.name}: start failed and could not be closed (${(err as Error)?.message ?? err}) — the tick retries`))
+    .finally(() => running.delete(row.name))
+  running.set(row.name, p)
+}
+
+const CLAIM_UNCERTAIN = JSON.stringify({ claim: "uncertain" })
+const uncertain = (row: TakeoverRow): boolean => row.status === "starting" && row.outcome === CLAIM_UNCERTAIN
+
+/** A claim whose answer was lost: ours (running, our owner) → the start goes on; else failed (never landed); unknown = Turso still down. */
+async function reconcileClaim(row: TakeoverRow): Promise<"ours" | "failed" | "unknown"> {
+  const dispatch = d().dispatch()
+  let found: Awaited<ReturnType<typeof getDispatchTask>>
+  try {
+    found = await getDispatchTask(dispatch.query, await dispatch.columns(), row.taskId)
+  } catch (err) {
+    if (err instanceof TursoUnreachable) return "unknown"
+    throw err
+  }
+  const store = d().store()
+  if (!found || found.task.status !== "running" || found.task.owner !== takeoverOwner(row.name)) {
+    store.move(row.name, ["starting"], "failed", d().now(), { outcome: "claim never landed" })
+    return "failed"
+  }
+  store.move(row.name, ["starting"], "starting", d().now(), { outcome: null })
+  dispatch.applyLocal(found.task)
+  const entry = entryByName(row.repo, d().entries())
+  if (!entry) {
+    await finish(row.name, { status: "blocked", blocker: failedBlocker("claim uncertain, repo gone", row.origBlocker) }, "failed")
+    return "ours"
+  }
+  d().log(`[takeover] ${row.name}: claim confirmed after a lost answer — starting the session`)
+  launch(store.get(row.name)!, entry, found.task, found.description, null)
+  return "ours"
 }
 
 async function worktree(row: TakeoverRow, repo: string): Promise<string | null> {
@@ -349,9 +393,18 @@ async function flush(row: TakeoverRow): Promise<void> {
   if (out.ok || out.error !== "no_such_task") dispatch.applyLocal(out.task)
   if (out.ok) d().turn(finishTurn(row, p, out.task), out.task.id, dispatch.threadIdFor(out.task))
   else d().log(`[takeover] ${row.name}: task ${taskId8(row.taskId)} no longer ours (${out.error}) — nothing written`)
+  // A finished-with-PR session may keep going: its worktree and workspace wait for it to end.
+  d().store().setCleanup(row.name, true, d().now())
+  await tidy(row.name)
+}
+
+/** Remove a finished run's worktree and workspace once its session is gone; else leave it pending (the tick retries). */
+async function tidy(name: string): Promise<void> {
+  const row = d().store().get(name)
+  if (!row?.cleanupPending || OPEN_STATUSES.includes(row.status) || await sessionAlive(name)) return
   await cleanup(row)
-  // A finished-with-PR session may keep going; an ended / failed one leaves its workspace behind.
-  if (p.final !== "done" && !sessionLive(row.name)) await releaseWorkspace(row.name).catch(() => false)
+  await releaseWorkspace(name).catch(() => false)
+  d().store().setCleanup(name, false, d().now())
 }
 
 /** Remove the worktree only when it is clean and every commit is on a remote; else keep it and say so. */
@@ -369,29 +422,28 @@ async function cleanup(row: TakeoverRow): Promise<void> {
   if (!rm.ok) d().log(`[takeover] ${row.name}: worktree remove failed (${rm.err.trim().slice(0, 120)}) — kept`)
 }
 
-/**
- * The run's PR, any state (≤ 1 check / 30 s per run unless forced): a URL from the turn counts only when
- * gh says its head is the run's branch (an echoed unrelated PR never completes the task), else the
- * PR listed for the branch.
- */
+/** The run's PR, any state (≤ 1 check / 30 s unless forced): a URL from the turn only when gh says its head is our branch, else the branch's listing. */
 async function branchPr(row: TakeoverRow, force: boolean, text = ""): Promise<string | null> {
   const last = ghAt.get(row.name) ?? 0
   if (!force && d().now() - last < GH_EVERY_MS) return null
   ghAt.set(row.name, d().now())
   const cwd = d().isDir(row.cwd) ? row.cwd : entryByName(row.repo, d().entries())?.path
   if (!cwd) return null
+  // The branch name repeats across takeovers of one task: only a PR opened during this run counts.
+  const ours = (createdAt: unknown): boolean => typeof createdAt === "string" && Date.parse(createdAt) >= row.createdAt
   const said = detectPrUrl(text)
   if (said) {
-    const v = await d().sh("gh", ["pr", "view", said, "--json", "headRefName"], { cwd, timeoutMs: 30_000 })
+    const v = await d().sh("gh", ["pr", "view", said, "--json", "headRefName,createdAt"], { cwd, timeoutMs: 30_000 })
     try {
-      if (v.ok && (JSON.parse(v.out) as { headRefName?: unknown }).headRefName === row.branch) return said
+      const pr = JSON.parse(v.out) as { headRefName?: unknown; createdAt?: unknown }
+      if (v.ok && pr.headRefName === row.branch && ours(pr.createdAt)) return said
     } catch { /* fall through to the branch listing */ }
   }
-  const r = await d().sh("gh", ["pr", "list", "--head", row.branch, "--state", "all", "--json", "url", "--limit", "1"], { cwd, timeoutMs: 30_000 })
+  const r = await d().sh("gh", ["pr", "list", "--head", row.branch, "--state", "all", "--json", "url,createdAt", "--limit", "10"], { cwd, timeoutMs: 30_000 })
   if (!r.ok) return null
   try {
-    const list = JSON.parse(r.out) as { url?: unknown }[]
-    return typeof list[0]?.url === "string" ? detectPrUrl(list[0].url) : null
+    const hit = (JSON.parse(r.out) as { url?: unknown; createdAt?: unknown }[]).find((p) => typeof p.url === "string" && ours(p.createdAt))
+    return typeof hit?.url === "string" ? detectPrUrl(hit.url) : null
   } catch {
     return null
   }
@@ -416,18 +468,15 @@ export async function takeoverStop(name: string, lastMessage: string): Promise<v
 /** SessionEnd / dead pane: one last PR check, else blocked "Takeover ended without a PR…". */
 export async function takeoverEnded(name: string): Promise<void> {
   const row = openRow(name)
-  if (!row) return
+  if (!row) return tidy(name) // a finished run whose session just ended
   const pr = await branchPr(row, true)
   if (pr) return finish(name, { status: "completed", prUrl: pr }, "done")
   return finish(name, { status: "blocked", blocker: endedBlocker(row.origBlocker) }, "ended")
 }
 
-/**
- * Gone = no registered session carries the name. Counted once the run was seen live (or its start grace
- * passed, or herdr has no agent of that name): herdr may keep an exited agent's record.
- */
+/** Gone = not sessionAlive; counted once seen live, past the start grace, or with no herdr agent (herdr may keep an exited agent's record). */
 async function missing(row: TakeoverRow): Promise<boolean> {
-  if (sessionLive(row.name)) {
+  if (await sessionAlive(row.name)) {
     seenLive.add(row.name)
     return false
   }
@@ -437,23 +486,34 @@ async function missing(row: TakeoverRow): Promise<boolean> {
 /** One pass over this host's open runs: retry pending finishes, end runs whose session is gone (2 ticks). */
 export async function takeoverTick(): Promise<void> {
   const here = d().localHost()
-  for (const row of d().store().listOpen()) {
+  const store = d().store()
+  for (const row of [...store.listOpen(), ...store.listCleanup()]) {
     if (row.host !== here || running.has(row.name)) continue
-    if (row.status === "finishing") {
-      await flush(row)
-      continue
+    try {
+      await tickRow(row)
+    } catch (err) {
+      d().log(`[takeover] tick: ${row.name} failed (${(err as Error)?.message ?? err}) — retried next tick`)
     }
-    if (!(await missing(row))) {
-      misses.delete(row.name)
-      continue
-    }
-    const n = (misses.get(row.name) ?? 0) + 1
-    misses.set(row.name, n)
-    if (n >= 2) {
-      misses.delete(row.name)
-      seenLive.delete(row.name)
-      await takeoverEnded(row.name)
-    }
+  }
+}
+
+async function tickRow(row: TakeoverRow): Promise<void> {
+  if (!OPEN_STATUSES.includes(row.status)) return tidy(row.name)
+  if (uncertain(row)) {
+    await reconcileClaim(row)
+    return
+  }
+  if (row.status === "finishing") return flush(row)
+  if (!(await missing(row))) {
+    misses.delete(row.name)
+    return
+  }
+  const n = (misses.get(row.name) ?? 0) + 1
+  misses.set(row.name, n)
+  if (n >= 2) {
+    misses.delete(row.name)
+    seenLive.delete(row.name)
+    await takeoverEnded(row.name)
   }
 }
 

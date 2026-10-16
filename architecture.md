@@ -14,11 +14,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/transcript.ts` | 599 | lib | 14 | state: states: Map, busyImages: WeakMap |
+| `wiring/takeover.ts` | 593 | lib | 16 | state: let liveStore, let deps, running: Map, misses: Map, seenLive: Set, ghAt: Map |
 | `lib/spawn-session.ts` | 585 | lib | 17 |  |
 | `routes/hooks.ts` | 568 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
-| `wiring/takeover.ts` | 533 | lib | 16 | state: let liveStore, let deps, running: Map, misses: Map, seenLive: Set, ghAt: Map |
 | `lib/resolver.ts` | 532 | lib | 47 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 511 | lib | 53 |  |
@@ -97,6 +97,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
+| `lib/takeover.ts` | 203 | lib | 27 |  |
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
@@ -106,7 +107,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/inject-guard.ts` | 187 | lib | 7 |  |
-| `lib/takeover.ts` | 187 | lib | 26 |  |
 | `wiring/body-agent.ts` | 187 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/dashboard-client.ts` | 177 | lib | 29 |  |
@@ -144,6 +144,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/worker-tail.ts` | 121 | lib | 3 | state: LIVE_STATUSES: Set |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
+| `lib/takeover-store.ts` | 119 | lib | 6 |  |
 | `wiring/resolver-peer.ts` | 117 | lib | 7 | state: let store, let deps |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
@@ -151,7 +152,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `companion-server.ts` | 113 | route-host | 1 | routes: 5 |
 | `wiring/body-fix.ts` | 113 | lib | 4 | state: let deps · emits: orchestrator_channel |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
-| `lib/takeover-store.ts` | 106 | lib | 6 |  |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
