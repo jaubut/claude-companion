@@ -6,6 +6,7 @@ import type { Task } from "./orchestrator-chat"
 import {
   type SourceItem, type TriageItem, CONFLICT_MERGE_LABEL, PROBLEM_MAX, allowedActions, approvalSummary, buildItem, conflictPhrase, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
 } from "./triage"
+import { TAKEOVER_ID, withAskOpus, withTakeover } from "./triage"
 import { APPROVAL_TTL_MS, APPROVED_MERGE, NEEDS_HUMAN, PR_SAFETY_NET_MS, bodyComponentUrl, bodySources, latestProposals, parsePrUrl, prApprovals, prGone, prSources, proposalSource, taskSources } from "./triage-sources"
 
 // Pure triage: collection per source, phrasing validation + fallback,
@@ -383,5 +384,52 @@ describe("repo field (needs-you-by-repo, 2026-10-15)", () => {
     const [a] = prApprovals({ tasks: [row], activity }, NOW)
     expect(a!.repo).toBe("TLSTUDIO")
     expect(a!.project).toBe("TLSTUDIO")
+  })
+})
+
+describe("takeover option (blocked-task-takeover)", () => {
+  const target = { repo: "claude-companion", host: "zettlab" as const, pinned: false, candidates: [] }
+
+  test("appended after the phrased options, never the recommendation; a resolved target carries repo + host", () => {
+    const src = blockedSrc()
+    const item = withTakeover(buildItem(src, fallbackPhrase(src), "normal"), target)
+    const last = item.options.at(-1)!
+    expect(last).toEqual({ id: TAKEOVER_ID, label: "Take over in a session", detail: "claude-companion · on Zettlab", action: { kind: "takeover", repo: "claude-companion", host: "zettlab" } })
+    expect(item.recommended).toBe("a")
+    expect(withTakeover(item, target).options.filter((o) => o.id === TAKEOVER_ID)).toHaveLength(1)
+  })
+
+  test("an ambiguous target asks; French cards get French words; Opus stays last", () => {
+    const src = { ...blockedSrc(), facts: { status: "blocked", agent: "builder", blocker: "Quelle devise pour la facture?" } }
+    const ask = { repo: null, host: "zettlab" as const, pinned: false, candidates: [{ repo: "a", host: "zettlab" as const }, { repo: "b", host: "mac" as const }] }
+    const item = withAskOpus(withTakeover(buildItem(src, { ...fallbackPhrase(src), problem: "La tâche est bloquée", action: "Répondre pour la relancer" }, "normal"), ask))
+    const opt = item.options.find((o) => o.id === TAKEOVER_ID)!
+    expect(opt).toMatchObject({ label: "Reprendre en session", detail: "Choisir le repo d'abord", action: { kind: "takeover", candidates: ask.candidates } })
+    expect(item.options.at(-1)!.id).toBe("opus")
+  })
+
+  test("never on a non-task card, nor without a target; the model can never pick it", () => {
+    const src = blockedSrc()
+    const pr = { ...buildItem(src, fallbackPhrase(src), "normal"), source: "pr" as const }
+    expect(withTakeover(pr, target)).toBe(pr)
+    const item = buildItem(src, fallbackPhrase(src), "normal")
+    expect(withTakeover(item, undefined)).toBe(item)
+    expect(allowedActions(src)).not.toContain("takeover")
+    const raw = JSON.stringify({ problem: "p", action: "a", options: [{ label: "Take it", action: { kind: "takeover" } }, { label: "Retry", action: { kind: "requeue" } }] })
+    expect(validatePhrase(raw, src)).toBeNull()
+  })
+
+  test("taskSources marks a takeover-written blocker (held from Opus and the repo-card Yes)", () => {
+    const [ended] = taskSources([dtask({ blocker: "Takeover ended without a PR — Which currency?" })], () => "general")
+    expect(ended!.hints).toEqual({ takeoverEnded: true })
+    expect(blockedSrc().hints).toBeUndefined()
+  })
+
+  test("prSources: a takeover-owned PR never enters the 48 h safety net; a park still shows it", () => {
+    const base = { id: "tk", text: "x", updated_at: ts(NOW - PR_SAFETY_NET_MS - 60_000), created_at: ts(NOW - PR_SAFETY_NET_MS - 60_000), dispatch_status: "completed", dispatch_blocker: "", dispatch_pr_url: "https://github.com/jaubut/claude-companion/pull/9", note_title: null }
+    expect(prSources({ tasks: [{ ...base, dispatch_owner: "companion:takeover:tko-zettlab-abcd1234" }], activity: [] }, NOW)).toHaveLength(0)
+    expect(prSources({ tasks: [{ ...base, dispatch_owner: null }], activity: [] }, NOW)).toHaveLength(1)
+    const parked = [{ id: 1, target_id: "tk", action: NEEDS_HUMAN, meta: "{}", ts: ts(NOW) }]
+    expect(prSources({ tasks: [{ ...base, dispatch_owner: "companion:takeover:tko-zettlab-abcd1234" }], activity: parked }, NOW)).toHaveLength(1)
   })
 })

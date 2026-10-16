@@ -20,6 +20,11 @@ sources `~/.config/kimi/kimi.env` in the pane, env held to `ENV_TOKEN` and passe
 Hooks forward `$HERDR_PANE_ID` (`X-Companion-Herdr-Pane`), so phone messages, approvals
 and picker keys go through `herdr agent prompt` / `pane send-keys`.
 
+A takeover session (`spawnCompanionSession({…, herdr: {name, args}})`, docs/orchestrator-triage-api.md
+§ Takeover) is herdr only: a fixed agent name (`tko-<host>-<id8>`; taken = an error, never a
+suffix), `agent start <name> … -- --remote-control <name>` (args held to `[A-Za-z0-9_.=-]`), and a
+gate failure is an error, never a tmux fallback.
+
 Not changed: the Zettlab `~/.bashrc` `claude()` tmux wrapper (manual SSH launches) and
 dispatch workers (`DISPATCH_WORKER=1`, hidden from the picker). Both share the one herdr
 server per host.

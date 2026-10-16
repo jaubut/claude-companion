@@ -6,7 +6,7 @@ import {
   type HostProbe, XCODE_LIVE_REASON, checkRepoMap, fixRepoHere, hostCan, localRepoFor, locateRepoMap, parseRepoMap, parseRequires, repoForNote,
   githubName, repoEntriesSafe, repoMapCandidates, repoMapCheckLine, repoNameFor, resolveLiveCwd, resolveLiveCwdWhy,
 } from "./live-repo"
-import { detectPrUrl, detectResultRef } from "./dispatch-tasks"
+import { detectPrUrl, detectResultRef } from "./dispatch-live"
 
 // Live-mode cwd resolution (P4): dispatch-run.ts's REPO_MAP read as text.
 

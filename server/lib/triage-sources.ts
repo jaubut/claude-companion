@@ -1,4 +1,6 @@
 import { type DispatchColumns, type DispatchTask, parseTs } from "./dispatch-tasks"
+import { TAKEOVER_OWNER } from "./dispatch-live"
+import { TAKEOVER_ENDED } from "./takeover"
 import { type InvestigationStore, MAX_ATTEMPTS } from "./body-investigate"
 import type { Task } from "./orchestrator-chat"
 import { type MergeHold, type SourceItem, clip } from "./triage"
@@ -37,6 +39,7 @@ export function taskSource(t: DispatchTask, channel: string | null): SourceItem 
     createdAt: t.updatedAt || t.createdAt, updatedAt: t.updatedAt || t.createdAt,
     facts: { status, agent: t.agent ?? "agent", blocker: t.blocker ?? "" },
     url: null, ref: { source: "task", taskId: t.id, status, channel },
+    ...(TAKEOVER_ENDED.test(t.blocker ?? "") ? { hints: { takeoverEnded: true } } : {}),
   }
 }
 
@@ -103,7 +106,7 @@ export async function queryPrRows(query: QueryFn, cols: DispatchColumns): Promis
   const prFilter = cols.prUrl ? "t.dispatch_pr_url LIKE 'https://github.com/%' OR " : ""
   const parked = "t.id IN (SELECT target_id FROM agent_activity WHERE target_kind = 'task' AND action = ?)"
   const tasks = await query(
-    `SELECT t.id, t.text, t.done, t.created_at, t.updated_at, t.dispatch_status, t.dispatch_blocker, ${prCol} AS dispatch_pr_url, n.title AS note_title ` +
+    `SELECT t.id, t.text, t.done, t.created_at, t.updated_at, t.dispatch_status, t.dispatch_blocker, t.dispatch_owner, ${prCol} AS dispatch_pr_url, n.title AS note_title ` +
       "FROM tasks t LEFT JOIN notes n ON n.id = t.note_id " +
       "WHERE t.assignee LIKE 'agent:%' AND (" +
       `(t.done = 0 AND t.dispatch_status IN ('pr', 'completed') AND (${prFilter}${parked})) OR (t.done = 1 AND ${parked})` +
@@ -206,7 +209,8 @@ export function prSources(rows: PrRows, now: number): SourceItem[] {
     const updatedAt = parseTs(t.updated_at)
     const parkRow = lastPr?.action === NEEDS_HUMAN ? lastPr : l.approvalExpired ? l.park : undefined
     const parked = !!parkRow
-    const safetyNet = !lastPr && updatedAt > 0 && now - updatedAt > PR_SAFETY_NET_MS
+    // A takeover PR is Jeremie's own work: never on the 48 h net (still a card once the shepherd parks it).
+    const safetyNet = !lastPr && updatedAt > 0 && now - updatedAt > PR_SAFETY_NET_MS && !s(t.dispatch_owner).startsWith(TAKEOVER_OWNER)
     if (!parked && !safetyNet) continue
     const m = parked ? meta(parkRow) : {}
     const pr = parsePrUrl(s(m.url)) ?? parsePrUrl(s(t.dispatch_pr_url))

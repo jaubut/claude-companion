@@ -519,3 +519,81 @@ Dry run (nothing executed): `bun cli.ts resolver-dry-run [--limit N] [--source t
 5. Handle `409 resolving` and `409 resolver_disabled` from choose: toast ("Opus is still on it" /
    "Opus is off"), refresh the list.
 6. After an `ask_opus` choose: optimistic move of the card into the "Opus is on it" row; the next frame confirms.
+
+## Takeover (2026-10-16 — additive, blocked-task-takeover)
+
+Jeremie takes a blocked task over in an interactive session (herdr, `--remote-control <name>`), bound to the
+Turso row until it opens a PR or ends (CircleCI "Rerun with SSH" + Copilot agent hand-off: the PR completes it).
+Code: `lib/takeover.ts`, `lib/takeover-store.ts`, `lib/dispatch-live.ts`, `wiring/takeover.ts`, `-choose.ts`, `-liveness.ts`.
+
+### Option
+
+Every blocked `task` card carries, after the phrased options and before `opus` (never the recommendation,
+present with the resolver off too, appended by code, never model-phrased):
+
+```jsonc
+{ "id": "takeover", "label": "Take over in a session",   // "Reprendre en session" on a French card
+  "detail": "claude-companion · on Zettlab",              // or "Pick the repo first" when ambiguous
+  "action": { "kind": "takeover", "repo": "claude-companion", "host": "zettlab" } }
+// ambiguous: "action": { "kind": "takeover", "candidates": [{ "repo": "…", "host": "mac" | "zettlab" }] } (≤ 4, may be [])
+```
+
+Target (pure, at collect, never in `version`): repo = a `[repo:<name>]` title marker, else the ONE map name the
+title + blocker name, else ask (candidates = names named ∪ the note-mapped repo). Host = a `mac:`/`zettlab:`
+component id in the title, else an Xcode repo → the Mac (both pinned), else Zettlab first, then the Mac.
+Build 52 decodes an unknown kind as `.unsupported` and hides the option.
+
+### Choose
+
+`POST /api/orchestrator/triage/<id>/choose { optionId: "takeover", text? }` — `text` = the repo name when the
+action has none (checked against REPO_MAP names / GitHub names). Claim-then-async: the server re-reads the row
+(version check), checks the checkout (map entry is a dir here, `requires` met), herdr's gate and the name,
+writes the run row, then claims Turso in ONE guarded UPDATE (`blocked` at the seen `updated_at` → `running`,
+owner `companion:takeover:<name>`, `dispatch_run_id = tko_…`, blocker / completed_at / pr_url cleared), and answers:
+
+```jsonc
+200 { "ok": true, "result": "done", "detail": { "host": "zettlab", "session": "tko-zettlab-ab12cd34",
+      "cwd": "~/.claude-companion/takeover/tko-zettlab-ab12cd34", "branch": "takeover/ab12cd34",
+      "dispatchTaskId": "…", "status": "starting", "replay"?: true } }
+```
+
+Worktree (`git fetch` + `worktree add -b takeover/<id8> <cwd> origin/<default>`), `herdr agent start <name>
+… -- --remote-control <name>` (env `COMPANION_TASK_ID=<name>`) and the seed prompt (task, blocker, description,
+the RES how-to, the last dispatch-log section when the blocker is "Agent reported done but produced no file
+changes"; `agent_not_ready` retried 5 s × 24) run in the background; a failure → the task blocked again with
+`Takeover failed to start (<why>) — <original blocker>` and an orchestrator turn. The session shows in Sessions
+~20 s later. Errors: 422 `repo_required {candidates}` · 409 `stale` / `no_checkout` / `herdr_unavailable {reason}`
+/ `host_unreachable {host, reason}` / `name_taken {session}` · 503 only when Turso is down (SendQueue retries 5xx
+silently). A replay (same Idempotency-Key, or any retry while the run is open) returns the existing run's detail,
+never a second session.
+
+`name` = herdr agent = Remote Control name = `COMPANION_TASK_ID` = `tko-<host>-<id8>` (host `mac` | `zettlab`,
+id8 = the first 8 `[a-z0-9]` of the task id). Hooks send it as `X-Companion-Task-Id`; worker identity never
+resolves a `tko-` id to a worker (no cwd guess).
+
+### Peer hop
+
+Wrong host → `POST /api/orchestrator/takeover` on the peer (`COMPANION_BODY_PEER`, bearer + `x-companion-takeover-hop: 1`)
+`{ taskId, version, repo, host, logTail?, by }` → the same detail; `not_owner` when `host` is not the peer, never
+re-forwarded. First host `no_checkout` → the other (not when pinned); both → 409 `no_checkout`.
+
+### Lifecycle
+
+| event | → |
+|---|---|
+| Stop with a PR URL in the turn whose head `gh pr view` confirms is `takeover/<id8>`, or `gh pr list --head takeover/<id8>` (≤ 1 check / 30 s; only PRs created during this run) | `completed` + `dispatch_pr_url`; worktree + workspace removed only once the session is gone |
+| Stop whose last line is `TAKEOVER DONE: <what>` (no-code fix) | `completed`, no PR (lands in /today's accept bucket) |
+| SessionEnd (not `/clear`) or gone (60 s tick: no registered session with that task id and claude not in front of its herdr pane, 2 ticks in a row, once seen live, or after a 3 min start grace, or `herdr agent get` fails) | one last gh check, else `blocked` `Takeover ended without a PR — <original blocker>` (how-to ref kept); the workspace is closed once its pane is at the shell |
+| Turso down at the finish | run stays `finishing`; the tick retries |
+
+Finish is guarded on `running AND owner = companion:takeover:<name>` (first of Stop / SessionEnd / tick wins).
+The owner stays on the row afterwards. A Companion restart only re-arms the tick (herdr sessions survive it).
+Re-takeover with a finished run's leftover agent (no session): that workspace is closed first. Abort = `/exit`.
+
+### Interplay
+
+- Opus and the repo-card Yes leave a task blocked `Takeover ended…` / `Takeover failed to start…` alone (held: "taken over").
+- `POST /api/orchestrator/task/<id>/{cancel,requeue,unblock}` on a running takeover → 409 `under_takeover {session}`.
+- The 48 h PR safety net skips `companion:takeover:%` rows (a park still shows them); never auto-merged (`dispatch/` only).
+- dispatch-run's stall sweep skips `companion:%` owners, so a running takeover is never reaped.
+- `orchestrator_task` frames of a running takeover carry `sessionKey` (the session on the host that runs it).
