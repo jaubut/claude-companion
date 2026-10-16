@@ -60,7 +60,12 @@ function addColumn(table: string, col: string): void {
 }
 // dispatch_task_id: the Turso tasks.id a proposal was filed as (orchestrator-one-queue P2);
 // note_id / agent / title: where it files to (brain pick, else the channel's note).
-for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT", "dispatch_task_id TEXT", "note_id TEXT", "agent TEXT", "title TEXT"]) {
+// herdr_agent / herdr_pane: a herdr worker's handle (lib/worker-ref.ts); spawned_at /
+// prompt_sent_at: when the worker started and when its prompt was confirmed delivered.
+for (const col of [
+  "tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT", "dispatch_task_id TEXT", "note_id TEXT", "agent TEXT", "title TEXT",
+  "herdr_agent TEXT", "herdr_pane TEXT", "spawned_at INTEGER", "prompt_sent_at INTEGER",
+]) {
   addColumn("orchestrator_tasks", col)
 }
 // note_id links a channel to one Turso project note; title/ref are a display cache.

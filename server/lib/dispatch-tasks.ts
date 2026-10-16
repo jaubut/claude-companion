@@ -66,6 +66,10 @@ export interface TaskDto {
   dispatchTaskId?: string | null
   /** Live Turso tasks (P4): the local 8-char id worker output frames and worker turns are tagged with. */
   localTaskId?: string | null
+  /** Local herdr workers only (tmuxSession null): the agent name, its root pane, when the prompt went in. */
+  herdrAgent?: string | null
+  herdrPane?: string | null
+  promptSentAt?: number | null
 }
 
 /** Optional Turso columns (added by P0); absent on an older schema. */
@@ -190,8 +194,11 @@ export function toTaskDto(t: Task): TaskDto {
   // `filed` (the proposal card leaves) and is never listed on its own.
   const status = isLiveLinked(t) ? "filed" : t.status
   // Spread first: every field the local frame carried before stays (additive).
+  // The herdr handle only on herdr workers, so a tmux task's frame is unchanged.
+  const { spawnedAt: _spawnedAt, herdrAgent, herdrPane, promptSentAt, ...rest } = t
+  const herdr = herdrPane ? { herdrAgent: herdrAgent ?? null, herdrPane, promptSentAt: promptSentAt ?? null } : {}
   return {
-    ...t, status,
+    ...rest, ...herdr, status,
     source: proposal || status === "filed" ? "proposal" : "local", dispatchStatus: null, agent: t.agent ?? null, noteId: t.noteId ?? null,
     projectTitle: null, prUrl: null, resultRef: null, blocker: null, dispatchTaskId: t.dispatchTaskId ?? null,
     done: t.status === "done" || t.status === "cancelled", owner: null, mode: "live",

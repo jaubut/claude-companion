@@ -179,3 +179,22 @@ describe("write helpers (P2)", () => {
     expect(toTaskDto(t)).toMatchObject({ source: "proposal", noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32), done: false })
   })
 })
+
+describe("toTaskDto: herdr workers", () => {
+  const base: Task = {
+    taskId: "abcd1234", threadId: "body", prompt: "p", cwd: "/r", sessionKey: null, tmuxSession: null, reasoning: null,
+    logTail: null, status: "dispatched", createdAt: 1, updatedAt: 2,
+  }
+
+  test("a herdr task carries herdrAgent, herdrPane, promptSentAt and tmuxSession null (never spawnedAt)", () => {
+    const dto = toTaskDto({ ...base, herdrAgent: "cc--claude-3", herdrPane: "w3:p1", spawnedAt: 5, promptSentAt: 7 })
+    expect(dto).toMatchObject({ herdrAgent: "cc--claude-3", herdrPane: "w3:p1", promptSentAt: 7, tmuxSession: null })
+    expect("spawnedAt" in dto).toBe(false)
+  })
+
+  test("a tmux task's DTO is byte-identical to one without the herdr fields", () => {
+    const tmux: Task = { ...base, tmuxSession: "cc-x", tmuxSocket: null }
+    const today = JSON.stringify(toTaskDto(tmux))
+    expect(JSON.stringify(toTaskDto({ ...tmux, herdrAgent: null, herdrPane: null, spawnedAt: 9, promptSentAt: 10 }))).toBe(today)
+  })
+})
