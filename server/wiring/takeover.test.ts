@@ -81,6 +81,7 @@ let paneAtShell = true
 let paneReadError = false
 let agentGetError = false
 let listOpenCalls = 0
+let screen: () => string | null = () => null
 // One workspace per agent: ws-<name>, pane <name>:p1, labelled with the name.
 const herdr: Herdr = {
   async call(args) {
@@ -101,7 +102,7 @@ const herdr: Herdr = {
     }
     return {}
   },
-  async read() { return null },
+  async read() { return screen() },
   async gate() { return gate },
 }
 const dirs = new Set<string>()
@@ -167,6 +168,7 @@ beforeEach(() => {
   paneReadError = false
   agentGetError = false
   listOpenCalls = 0
+  screen = () => null
   prHead = "takeover/aaaaaaaa"
   prCreated = null
   claimFault = null
@@ -383,6 +385,70 @@ describe("start (claim-then-async)", () => {
     await tk.takeoverIdle()
     expect(turns.at(-1)).toContain("seed prompt was not delivered")
     expect(tursoTask("b".repeat(32)).dispatch_status).toBe("running")
+  })
+})
+
+describe("seed behind a start dialog", () => {
+  const DIALOG = [
+    "────────────────────────────────────────",
+    "   2 new MCP servers found in .mcp.json",
+    "   Select any you wish to enable.",
+    "   ❯ 1. ☐ foo",
+    "     2. ☐ bar",
+    "   Space to select · Enter to confirm · Esc to reject all",
+  ].join("\n")
+  const IDLE = "────────────────────────────────────────\n❯ \n────────────────────────────────────────\n  ? for shortcuts"
+  const WAITING = `Takeover ${NAME} is waiting on "2 new MCP servers found in .mcp.json"`
+
+  /** A fake clock (sleep advances it) and a pane that shows the dialog until `clearsAt`; deliveries record the clock. */
+  function fakeClock(clearsAt: number): number[] {
+    let clock = 1_000_000
+    const opened = clock
+    const at: number[] = []
+    const open = () => clock - opened < clearsAt
+    screen = () => (open() ? DIALOG : IDLE)
+    tk.setTakeoverDeps({
+      now: () => clock,
+      sleep: async (ms) => { clock += ms },
+      deliver: async () => {
+        if (open()) return { ok: false, blocked: true, reason: "agent_blocked" }
+        at.push(clock - opened)
+        return { ok: true }
+      },
+    })
+    return at
+  }
+
+  test("a dialog up for 5 min: one turn names it, the seed goes in exactly once after it clears", async () => {
+    const at = fakeClock(5 * 60_000)
+    await start()
+    await tk.takeoverIdle()
+    expect(at).toHaveLength(1)
+    expect(at[0]).toBeGreaterThanOrEqual(5 * 60_000)
+    expect(turns.filter((t) => t.includes(WAITING))).toHaveLength(1)
+    expect(turns.filter((t) => t.includes(`Takeover ${NAME} is ready`))).toHaveLength(1)
+    expect(turns.some((t) => t.includes("seed prompt was not delivered"))).toBe(false)
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+  })
+
+  test("a dialog that never clears: nothing typed into it; after the 2 h cap the 'not delivered' turn, the session stays", async () => {
+    const at = fakeClock(Number.POSITIVE_INFINITY)
+    await start()
+    await tk.takeoverIdle()
+    expect(at).toHaveLength(0)
+    expect(turns.filter((t) => t.includes(WAITING))).toHaveLength(1)
+    expect(turns.at(-1)).toContain("seed prompt was not delivered")
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+  })
+
+  test("typed text in the input box waits too (never pasted onto it); an empty box takes the seed", async () => {
+    let typing = true
+    screen = () => (typing ? IDLE.replace("❯ ", "❯ hello") : IDLE)
+    tk.setTakeoverDeps({ sleep: async () => { typing = false } })
+    await start()
+    await tk.takeoverIdle()
+    expect(delivered).toHaveLength(1)
+    expect(turns.some((t) => t.includes("waiting on"))).toBe(false)
   })
 })
 

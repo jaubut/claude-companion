@@ -7000,12 +7000,13 @@
         },
         {
           "path": "wiring/takeover-liveness.ts",
-          "lines": 95,
+          "lines": 110,
           "kind": "lib",
           "exports": [
             "START_GRACE_MS",
             "PANE_ERRORS_MAX",
             "HerdrAgentRef",
+            "SeedGate",
             "AgentLookup",
             "LivenessDeps",
             "createLiveness"
@@ -7016,6 +7017,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/command-menu.ts",
+            "lib/dialogs.ts",
             "lib/herdr.ts"
           ],
           "listeners": [],
@@ -7024,11 +7027,12 @@
         },
         {
           "path": "wiring/takeover.ts",
-          "lines": 543,
+          "lines": 565,
           "kind": "lib",
           "exports": [
             "TAKEOVER_HOP",
             "TICK_MS",
+            "SEED_WAIT_MS",
             "TakeoverDeps",
             "takeoverDeps",
             "setTakeoverDeps",
@@ -7048,6 +7052,7 @@
             "let liveStore",
             "let deps",
             "running: Map",
+            "seeding: Map",
             "held: Set",
             "let tickStartedAt",
             "let skipLoggedAt",
@@ -8431,7 +8436,8 @@
             "lib/inject-guard.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "wiring/takeover-liveness.ts"
           ]
         },
         "inputLine": {
@@ -8738,7 +8744,8 @@
         "parseDialog": {
           "module": "lib/dialogs.ts",
           "callers": [
-            "lib/dialog-watch.ts"
+            "lib/dialog-watch.ts",
+            "wiring/takeover-liveness.ts"
           ]
         },
         "dialogSignature": {
@@ -9223,7 +9230,8 @@
         "inputText": {
           "module": "lib/command-menu.ts",
           "callers": [
-            "lib/inject-verified.ts"
+            "lib/inject-verified.ts",
+            "wiring/takeover-liveness.ts"
           ]
         },
         "MIN_INJECT_PANE_WIDTH": {
