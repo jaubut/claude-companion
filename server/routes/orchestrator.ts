@@ -21,8 +21,9 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import {
   ANSWER_MAX, DEFAULT_AGENT, DISPATCH_ID, type DispatchTask, type WriteOutcome,
   cancelDispatchTask, fileTask, getDispatchTask, getNote, getTaskActivity, getTaskResult,
-  isLiveLinked, liveOwner, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
+  isLiveLinked, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
 } from "../lib/dispatch-tasks"
+import { liveOwner } from "../lib/dispatch-live"
 import { cancelLive, dispatchLive } from "../wiring/live"
 import { approveProposal, liveResponse, rejectProposal } from "../wiring/proposals"
 import { frontDoor } from "../wiring/front-door"

@@ -1,5 +1,6 @@
 import { appendTurn, createProposal, getTask, setTaskStatus, type Task } from "../lib/orchestrator-chat"
-import { cancelDispatchTask, finishLive, liveOwner } from "../lib/dispatch-tasks"
+import { cancelDispatchTask } from "../lib/dispatch-tasks"
+import { finishLive, liveOwner } from "../lib/dispatch-live"
 import { approveBodyFix } from "./body-fix"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
 import { type LiveStart, approveLive } from "./live"

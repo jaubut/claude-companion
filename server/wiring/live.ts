@@ -6,9 +6,11 @@ import {
 } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
 import {
-  DEFAULT_AGENT, type DispatchTask, type LiveOutcome, type WriteOutcome, claimLive, detectPrUrl, detectResultRef,
-  finishLive, getDispatchTask, getNote, isLiveLinked, listLiveOwned, liveOwner, newDispatchId, resolveAgent,
+  DEFAULT_AGENT, type DispatchTask, type WriteOutcome, getDispatchTask, getNote, isLiveLinked, newDispatchId, resolveAgent,
 } from "../lib/dispatch-tasks"
+import {
+  type LiveOutcome, claimLive, detectPrUrl, detectResultRef, finishLive, listLiveOwned, liveOwner,
+} from "../lib/dispatch-live"
 import { resolveLiveCwdWhy } from "../lib/live-repo"
 import { TursoUnreachable } from "../lib/turso"
 import { capturePane, sessionCmdArgv } from "../lib/tmux-pane"
