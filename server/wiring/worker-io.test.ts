@@ -207,7 +207,7 @@ describe("createLiveness sessionTaskId", () => {
 
   test("alive(name, sessionTaskId) matches a session by task id ≠ agent name", async () => {
     const l = createLiveness(() => ({ herdr: absent, sessions: () => [{ key: "k", taskId: "abcd1234" }], now: () => 0 }))
-    expect(await l.alive("cc--claude-3", "abcd1234")).toBe(true)
+    expect(await l.alive("cc--claude-3", { sessionTaskId: "abcd1234" })).toBe(true)
     expect(await l.alive("cc--claude-3")).toBe(false)
   })
 
@@ -216,5 +216,55 @@ describe("createLiveness sessionTaskId", () => {
     expect(await l.alive("tko-mac-abcd1234")).toBe(true)
     expect(await l.missing("tko-mac-abcd1234", 0)).toBe(false)
     expect(await l.missing("tko-mac-other", 0)).toBe(true)
+  })
+})
+
+describe("herdr name / pane reuse", () => {
+  test("an agent of that name in another pane is a stranger: not alive, gone even inside the start grace", async () => {
+    const { h } = fakeHerdr({ "cc-r": { pane: "w20:p1", workspace: "w20", label: "cc-r", front: "busy" } })
+    const r = wire(h)
+    const t = { ...track(herdrTask("r", "cc-r", "w19:p1")), spawnedAt: r.clock.t - 1_000 }
+    expect(await io.workerAlive(t)).toBe(false)
+    expect(await io.herdrGone(t)).toBe(true)
+  })
+
+  test("a workspace other than the recorded one is a stranger too", async () => {
+    const { h } = fakeHerdr({ "cc-ws": { pane: "w21:p1", workspace: "w22", label: "cc-ws", front: "busy" } })
+    wire(h)
+    const t = chat.createProposal("ws", "/w", "why", "general")
+    chat.setTaskSpawn(t.taskId, null, null, { agent: "cc-ws", pane: "w21:p1", workspace: "w21" })
+    track(t)
+    expect(chat.getTask(t.taskId)?.herdrWorkspace).toBe("w21")
+    expect(await io.workerAlive(chat.getTask(t.taskId)!)).toBe(false)
+  })
+
+  test("never types into a pane the agent no longer owns", async () => {
+    const { h } = fakeHerdr({ "cc-s2": { pane: "w24:p1", workspace: "w24", label: "cc-s2" } })
+    const r = wire(h)
+    const t = track(herdrTask("secret prompt", "cc-s2", "w23:p1"))
+    io.deliverWorkerPrompt(t)
+    await io.workerIOIdle()
+    expect(r.delivered).toEqual([])
+    expect(r.gaveUp).toHaveLength(1)
+  })
+
+  test("kill leaves a same-named agent in another pane alone", async () => {
+    const f = fakeHerdr({ "cc-k2": { pane: "w26:p1", workspace: "w26", label: "cc-k2" } })
+    wire(f.h)
+    await io.killWorker(track(herdrTask("k", "cc-k2", "w25:p1")))
+    expect(f.calls.some((c) => c[0] === "workspace" && c[1] === "close")).toBe(false)
+  })
+
+  test("seen-live state is per task: a new task reusing the agent name gets its own start grace", async () => {
+    const { h } = fakeHerdr({ "cc-same": { pane: "w27:p1", workspace: "w27", label: "cc-same", front: "shell" } })
+    const sessions: { key: string; taskId: string }[] = []
+    const r = wire(h, () => ({ ok: true }), sessions)
+    const first = track(herdrTask("a", "cc-same", "w27:p1"))
+    sessions.push({ key: "k1", taskId: first.taskId })
+    expect(await io.herdrGone({ ...first, spawnedAt: r.clock.t })).toBe(false) // seen live under its own id
+    sessions.length = 0
+    expect(await io.herdrGone({ ...first, spawnedAt: r.clock.t })).toBe(true) // seen live, now gone
+    const second = { ...track(herdrTask("b", "cc-same", "w27:p1")), spawnedAt: r.clock.t - 10_000 }
+    expect(await io.herdrGone(second)).toBe(false)
   })
 })

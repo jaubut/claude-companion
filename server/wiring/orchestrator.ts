@@ -38,6 +38,7 @@ import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
 import { workerLabel, workerRefOf } from "../lib/worker-ref"
+import { herdrOwnerFor } from "../lib/herdr"
 import { BODY_CHANNEL, type BodySnapshot } from "../lib/body"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { bodyDigestFor } from "./body"
@@ -287,7 +288,10 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
     companionLog(`${red}dispatch failed${reset} [${task.taskId}] — ${result.error}`)
     return { ok: false, error: result.error }
   }
-  const herdr = result.app === "herdr" && result.herdrPane ? { agent: result.sessionName ?? "", pane: result.herdrPane } : undefined
+  // The workspace id is what spawnInHerdr noted for the pane (SpawnResult does not carry it).
+  const herdr = result.app === "herdr" && result.herdrPane
+    ? { agent: result.sessionName ?? "", pane: result.herdrPane, workspace: herdrOwnerFor(result.herdrPane)?.workspaceId ?? null }
+    : undefined
   setTaskSpawn(task.taskId, result.sessionName ?? null, result.tmuxSocket || null, herdr)
   const spawned = getTask(task.taskId)
   if (herdr && spawned) deliverWorkerPrompt(spawned)

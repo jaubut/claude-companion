@@ -195,7 +195,7 @@ export function toTaskDto(t: Task): TaskDto {
   const status = isLiveLinked(t) ? "filed" : t.status
   // Spread first: every field the local frame carried before stays (additive).
   // The herdr handle only on herdr workers, so a tmux task's frame is unchanged.
-  const { spawnedAt: _spawnedAt, herdrAgent, herdrPane, promptSentAt, ...rest } = t
+  const { spawnedAt: _spawnedAt, herdrWorkspace: _herdrWorkspace, herdrAgent, herdrPane, promptSentAt, ...rest } = t
   const herdr = herdrPane ? { herdrAgent: herdrAgent ?? null, herdrPane, promptSentAt: promptSentAt ?? null } : {}
   return {
     ...rest, ...herdr, status,

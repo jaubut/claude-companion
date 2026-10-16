@@ -5,12 +5,12 @@ import type { Task } from "./orchestrator-chat"
 // have tmux_session NULL); else a tmux session; else nothing spawned yet.
 
 export type WorkerRef =
-  | { kind: "herdr"; agent: string; pane: string }
+  | { kind: "herdr"; agent: string; pane: string; workspace: string | null }
   | { kind: "tmux"; session: string; socket: string | null }
   | { kind: "none" }
 
-export function workerRefOf(t: Pick<Task, "tmuxSession" | "tmuxSocket" | "herdrAgent" | "herdrPane">): WorkerRef {
-  if (t.herdrPane) return { kind: "herdr", agent: t.herdrAgent ?? "", pane: t.herdrPane }
+export function workerRefOf(t: Pick<Task, "tmuxSession" | "tmuxSocket" | "herdrAgent" | "herdrPane" | "herdrWorkspace">): WorkerRef {
+  if (t.herdrPane) return { kind: "herdr", agent: t.herdrAgent ?? "", pane: t.herdrPane, workspace: t.herdrWorkspace ?? null }
   if (t.tmuxSession) return { kind: "tmux", session: t.tmuxSession, socket: t.tmuxSocket || null }
   return { kind: "none" }
 }

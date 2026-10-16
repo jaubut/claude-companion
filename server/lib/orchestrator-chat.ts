@@ -48,10 +48,12 @@ export interface Task {
   agent?: string | null
   title?: string | null
   dispatchTaskId?: string | null
-  // A herdr worker (lib/worker-ref.ts): its agent name and root pane; tmuxSession
-  // is null then. Absent on tmux and legacy rows.
+  // A herdr worker (lib/worker-ref.ts): its agent name, root pane and workspace
+  // (null when spawn did not report one); tmuxSession is null then. Absent on
+  // tmux and legacy rows.
   herdrAgent?: string | null
   herdrPane?: string | null
+  herdrWorkspace?: string | null
   // When the worker was spawned (the liveness start; createdAt is the proposal
   // time) and when its prompt was confirmed delivered. null before either.
   spawnedAt?: number | null
@@ -89,6 +91,7 @@ interface TaskRow {
   dispatch_task_id: string | null
   herdr_agent: string | null
   herdr_pane: string | null
+  herdr_workspace: string | null
   spawned_at: number | null
   prompt_sent_at: number | null
 }
@@ -117,6 +120,7 @@ function toTask(r: TaskRow): Task {
     dispatchTaskId: r.dispatch_task_id ?? null,
     herdrAgent: r.herdr_agent ?? null,
     herdrPane: r.herdr_pane ?? null,
+    herdrWorkspace: r.herdr_workspace ?? null,
     spawnedAt: r.spawned_at ?? null,
     promptSentAt: r.prompt_sent_at ?? null,
   }
@@ -215,14 +219,17 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
 // picks it up and delivers the prompt. A herdr worker records its agent + pane
 // instead, with tmux_session NULL in the same UPDATE: a herdr name there would
 // feed worker-identity tier 2 and the tmux kill argv.
-export function setTaskSpawn(taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null, herdr?: { agent: string; pane: string }): void {
+export function setTaskSpawn(
+  taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null, herdr?: { agent: string; pane: string; workspace?: string | null },
+): void {
   db.query(
-    "UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, herdr_agent = ?, herdr_pane = ?, spawned_at = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?",
+    "UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, herdr_agent = ?, herdr_pane = ?, herdr_workspace = ?, spawned_at = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?",
   ).run(
     herdr ? null : tmuxSession,
     herdr ? null : tmuxSocket || null,
     herdr?.agent ?? null,
     herdr?.pane ?? null,
+    herdr?.workspace || null,
     Date.now(),
     Date.now(),
     taskId,

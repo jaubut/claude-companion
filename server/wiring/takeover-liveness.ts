@@ -6,12 +6,18 @@ import { type SeedGate, seedGate as gateOf } from "../lib/herdr-seed"
 // idle session fires no hook after a Companion restart, and herdr may keep an exited
 // agent's record, so neither alone decides. A herdr read that errors (a timeout) is
 // never "gone": it spends a budget of PANE_ERRORS_MAX reads in a row, then counts as gone.
+// An orchestrator worker also names the pane it was spawned in (`Expect`): herdr
+// reuses agent names and pane ids, so an agent of that name in another pane (or
+// workspace) is a stranger — the worker is gone. Its counters are keyed by task id.
 
 export const START_GRACE_MS = 3 * 60_000
 export const PANE_ERRORS_MAX = 5
 
 export interface HerdrAgentRef { pane: string; workspaceId?: string; terminalId?: string; status?: string }
 export type AgentLookup = { kind: "present"; ref: HerdrAgentRef } | { kind: "absent" } | { kind: "error" }
+
+/** Who the worker is: the hooks' task id (default: the agent name), and the pane / workspace herdr gave it at spawn. */
+export interface Expect { sessionTaskId?: string; pane?: string; workspaceId?: string | null }
 
 export interface LivenessDeps { herdr: Herdr; sessions: () => { key: string; taskId: string }[]; now: () => number }
 
@@ -41,6 +47,15 @@ export function createLiveness(get: () => LivenessDeps) {
   /** `sessionTaskId`: the COMPANION_TASK_ID the run's hooks carry (a takeover's is its agent name). */
   const sessionLive = (name: string, sessionTaskId = name): boolean => get().sessions().some((s) => s.taskId === sessionTaskId)
 
+  /** agentOf, with an agent of that name in another pane / workspace than expected read as absent (name reuse). */
+  async function agentAt(name: string, e: Expect): Promise<AgentLookup> {
+    const a = await agentOf(name)
+    if (a.kind !== "present") return a
+    if (e.pane && a.ref.pane !== e.pane) return { kind: "absent" }
+    if (e.workspaceId && a.ref.workspaceId && a.ref.workspaceId !== e.workspaceId) return { kind: "absent" }
+    return a
+  }
+
   /** What is in front of a herdr pane (herdrPaneShellPid's read, with a read error kept apart from "busy"). */
   async function paneFront(pane: string): Promise<"shell" | "busy" | "error"> {
     try {
@@ -61,31 +76,33 @@ export function createLiveness(get: () => LivenessDeps) {
   }
 
   /** Still running: a registered session, or claude (not the shell) in front of the agent's pane. */
-  async function alive(name: string, sessionTaskId = name): Promise<boolean> {
-    if (sessionLive(name, sessionTaskId)) {
-      errors.delete(name)
+  async function alive(name: string, e: Expect = {}): Promise<boolean> {
+    const key = e.sessionTaskId ?? name
+    if (sessionLive(name, key)) {
+      errors.delete(key)
       return true
     }
-    const a = await agentOf(name)
-    if (a.kind === "error") return spend(name)
+    const a = await agentAt(name, e)
+    if (a.kind === "error") return spend(key)
     if (a.kind === "absent" || !a.ref.pane) {
-      errors.delete(name)
+      errors.delete(key)
       return false
     }
     const front = await paneFront(a.ref.pane)
-    if (front === "error") return spend(name)
-    errors.delete(name)
+    if (front === "error") return spend(key)
+    errors.delete(key)
     return front === "busy"
   }
 
   /** Gone = not alive; counted once seen live, past the start grace, or when herdr says the agent is absent (an error never counts). */
-  async function missing(name: string, createdAt: number, sessionTaskId = name): Promise<boolean> {
-    if (await alive(name, sessionTaskId)) {
-      seenLive.add(name)
+  async function missing(name: string, createdAt: number, e: Expect = {}): Promise<boolean> {
+    const key = e.sessionTaskId ?? name
+    if (await alive(name, e)) {
+      seenLive.add(key)
       return false
     }
-    if (seenLive.has(name) || get().now() - createdAt > START_GRACE_MS) return true
-    return (await agentOf(name)).kind === "absent"
+    if (seenLive.has(key) || get().now() - createdAt > START_GRACE_MS) return true
+    return (await agentAt(name, e)).kind === "absent"
   }
 
   /** The pane's seed gate (lib/herdr-seed.ts); herdr's agent status only when no dialog shows. */
@@ -97,7 +114,7 @@ export function createLiveness(get: () => LivenessDeps) {
   }
 
   return {
-    agentOf, sessionLive, alive, missing, seedGate,
+    agentOf, agentAt, sessionLive, alive, missing, seedGate,
     seen: (name: string) => { seenLive.add(name) },
     forget: (name: string) => { seenLive.delete(name); errors.delete(name) },
     reset: () => { seenLive.clear(); errors.clear() },

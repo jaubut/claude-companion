@@ -671,13 +671,28 @@ test("closeHerdrAgentWorkspace: closes the agent's own single-pane workspace; a 
     },
   })
   const ours = ws("cc-w")
-  expect(await closeHerdrAgentWorkspace("cc-w", ours.h)).toBe("w6")
+  expect(await closeHerdrAgentWorkspace("cc-w", "w6:p1", ours.h)).toBe("w6")
   expect(ours.calls.at(-1)).toEqual(["workspace", "close", "w6"])
   for (const f of [ws("someone"), ws("cc-w", 2)]) {
-    expect(await closeHerdrAgentWorkspace("cc-w", f.h)).toBe("")
+    expect(await closeHerdrAgentWorkspace("cc-w", "w6:p1", f.h)).toBe("")
     expect(f.calls.some((c) => c[1] === "close")).toBe(false)
   }
   const absent = fakeHerdr()
-  expect(await closeHerdrAgentWorkspace("cc-w", absent.h)).toBe("")
+  expect(await closeHerdrAgentWorkspace("cc-w", "w6:p1", absent.h)).toBe("")
   expect(absent.calls).toEqual([["agent", "get", "cc-w"]])
+})
+
+test("closeHerdrAgentWorkspace: an agent of that name in another pane or workspace (name reuse) is never closed", async () => {
+  const f = fakeHerdr({
+    taken: ["cc-w"],
+    reply: (args) => {
+      if (args[0] === "agent" && args[1] === "get") return { agent: { pane_id: "w8:p1", workspace_id: "w8" } }
+      if (args[0] === "workspace" && args[1] === "get") return { workspace: { label: "cc-w", pane_count: 1 } }
+      return {}
+    },
+  })
+  expect(await closeHerdrAgentWorkspace("cc-w", "w6:p1", f.h)).toBe("")
+  expect(await closeHerdrAgentWorkspace("cc-w", "w8:p1", f.h, "w6")).toBe("")
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+  expect(await closeHerdrAgentWorkspace("cc-w", "w8:p1", f.h, "w8")).toBe("w8")
 })

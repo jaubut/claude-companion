@@ -5,14 +5,16 @@ import { companionLog } from "../lib/log"
 import { LIVE_STATUSES, type Task, getTask, markPromptSent } from "../lib/orchestrator-chat"
 import { listSessions } from "../lib/sessions"
 import { capturePane, paneHasDialog, paneInputReady, sessionCmdArgv } from "../lib/tmux-pane"
-import { workerLabel, workerRefOf } from "../lib/worker-ref"
-import { createLiveness } from "./takeover-liveness"
+import { type WorkerRef, workerLabel, workerRefOf } from "../lib/worker-ref"
+import { type Expect, createLiveness } from "./takeover-liveness"
 
 // Worker IO for orchestrator workers (docs/orchestrator-dispatch-api.md): deliver
 // the prompt, read the screen, ask alive / gone, kill — per runtime (lib/worker-ref.ts),
 // so the callers (orchestrator, live, routes) never branch on tmux. herdr: the
 // prompt goes through the shared seed pump (lib/herdr-seed.ts) and liveness comes
-// from herdr presence (takeover-liveness.ts), never from a screen read. tmux: the
+// from herdr presence (takeover-liveness.ts), never from a screen read. herdr reuses
+// agent names and pane ids, so every herdr check also matches the pane (and
+// workspace) recorded at spawn: an agent of that name elsewhere is a stranger. tmux: the
 // send-keys path as before. prompt_sent_at is stamped on a confirmed delivery
 // either way, so the boot resume never types a prompt twice.
 
@@ -68,11 +70,23 @@ const stillWanted = (taskId: string): boolean => {
   return !!t && LIVE_STATUSES.includes(t.status) && t.promptSentAt == null
 }
 
-async function pumpHerdr(task: Task, agent: string, pane: string): Promise<void> {
+type HerdrRef = Extract<WorkerRef, { kind: "herdr" }>
+const expectOf = (ref: HerdrRef, taskId: string): Expect => ({ sessionTaskId: taskId, pane: ref.pane, workspaceId: ref.workspace })
+
+/** Type the prompt only while our agent still owns the pane; a stranger there (name / pane reuse) refuses. */
+async function deliverOwned(ref: HerdrRef, task: Task): Promise<HerdrDelivery> {
+  const a = await live.agentAt(ref.agent, expectOf(ref, task.taskId))
+  if (a.kind === "absent") return { ok: false, blocked: false, reason: "agent_gone" }
+  if (a.kind === "error") return { ok: false, blocked: false, reason: "herdr_unreadable" }
+  return d().deliver(ref.pane, task.prompt)
+}
+
+async function pumpHerdr(task: Task, ref: HerdrRef): Promise<void> {
   const id = task.taskId
+  const { agent, pane } = ref
   const out = await pumpPrompt({
     gate: () => live.seedGate(agent, pane),
-    deliver: () => d().deliver(pane, task.prompt),
+    deliver: () => deliverOwned(ref, task),
     stillWanted: () => stillWanted(id),
     onDialog: (title) => d().turn(`⏸️ [${id}] worker waiting on ${title ? `"${title}"` : "a dialog"} — answer it on the phone; the prompt goes in once it clears`, task),
     now: () => d().now(),
@@ -98,7 +112,7 @@ export function deliverWorkerPrompt(task: Task): void {
     return
   }
   if (ref.kind !== "herdr" || pumping.has(task.taskId)) return
-  const p = pumpHerdr(task, ref.agent, ref.pane)
+  const p = pumpHerdr(task, ref)
     .catch((err) => d().log(`[orchestrator] [${task.taskId}] prompt pump failed (${(err as Error)?.message ?? err})`))
     .finally(() => pumping.delete(task.taskId))
   pumping.set(task.taskId, p)
@@ -122,23 +136,23 @@ export function readHerdrPane(pane: string): Promise<string | null> {
 export function herdrGone(task: Task): Promise<boolean> {
   const ref = workerRefOf(task)
   if (ref.kind !== "herdr") return Promise.resolve(false)
-  return live.missing(ref.agent, task.spawnedAt ?? task.updatedAt, task.taskId)
+  return live.missing(ref.agent, task.spawnedAt ?? task.updatedAt, expectOf(ref, task.taskId))
 }
 
 /** Still running (live boot reconcile): herdr presence, or a capturable tmux pane. */
 export async function workerAlive(task: Task): Promise<boolean> {
   const ref = workerRefOf(task)
-  if (ref.kind === "herdr") return live.alive(ref.agent, task.taskId)
+  if (ref.kind === "herdr") return live.alive(ref.agent, expectOf(ref, task.taskId))
   if (ref.kind === "tmux") return (await capturePane(ref.session, undefined, { socket: ref.socket || undefined })) !== null
   return false
 }
 
-/** Cancel: close a herdr worker's own workspace (label = agent name), or kill the tmux session on its server. Already gone = no-op. */
+/** Cancel: close a herdr worker's own workspace (label = agent name, still in its pane), or kill the tmux session on its server. Already gone = no-op. */
 export async function killWorker(task: Task): Promise<void> {
   const ref = workerRefOf(task)
   if (ref.kind === "herdr") {
     if (!ref.agent) return
-    const ws = await closeHerdrAgentWorkspace(ref.agent, d().herdr)
+    const ws = await closeHerdrAgentWorkspace(ref.agent, ref.pane, d().herdr, ref.workspace)
     if (ws) {
       forgetHerdrAgent(ref.pane)
       d().log(`[orchestrator] [${task.taskId}] herdr workspace ${ws} closed`)
