@@ -4023,7 +4023,7 @@
         },
         {
           "path": "lib/takeover.ts",
-          "lines": 203,
+          "lines": 206,
           "kind": "lib",
           "exports": [
             "TakeoverHost",
@@ -6099,7 +6099,7 @@
         },
         {
           "path": "routes/triage.ts",
-          "lines": 145,
+          "lines": 146,
           "kind": "lib",
           "exports": [
             "createTriageHandler",
@@ -6119,7 +6119,8 @@
             "lib/triage-repos.ts",
             "wiring/triage.ts",
             "wiring/triage-repos.ts",
-            "wiring/takeover.ts"
+            "wiring/takeover.ts",
+            "wiring/takeover-choose.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6954,31 +6955,58 @@
           "externals": []
         },
         {
+          "path": "wiring/takeover-choose.ts",
+          "lines": 71,
+          "kind": "lib",
+          "exports": [
+            "takeoverAction",
+            "runPeerTakeover"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/triage.ts",
+            "lib/triage-engine.ts",
+            "lib/takeover.ts",
+            "lib/turso.ts",
+            "wiring/takeover.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/takeover.ts",
-          "lines": 593,
+          "lines": 587,
           "kind": "lib",
           "exports": [
             "TAKEOVER_HOP",
             "TICK_MS",
             "TakeoverDeps",
+            "takeoverDeps",
             "setTakeoverDeps",
             "takeoverIdle",
             "TakeoverDetail",
             "StartResult",
             "StartInput",
             "startTakeover",
+            "localLog",
             "takeoverStop",
             "takeoverEnded",
             "takeoverTick",
             "startTakeoverTick",
-            "takeoverIdentity",
-            "takeoverAction",
-            "runPeerTakeover"
+            "takeoverIdentity"
           ],
           "state": [
             "let liveStore",
             "let deps",
             "running: Map",
+            "held: Set",
+            "paneErrors: Map",
+            "let ticking",
             "misses: Map",
             "seenLive: Set",
             "ghAt: Map"
@@ -7003,8 +7031,6 @@
             "lib/spawn-session.ts",
             "lib/takeover.ts",
             "lib/takeover-store.ts",
-            "lib/triage.ts",
-            "lib/triage-engine.ts",
             "lib/triage-sources.ts",
             "lib/turso.ts",
             "wiring/dispatch.ts",
@@ -7081,7 +7107,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 458,
+          "lines": 459,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -7134,7 +7160,8 @@
             "lib/resolver.ts",
             "wiring/trips.ts",
             "lib/takeover.ts",
-            "wiring/takeover.ts"
+            "wiring/takeover.ts",
+            "wiring/takeover-choose.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8915,6 +8942,7 @@
             "routes/tasks-agent.ts",
             "wiring/live.ts",
             "wiring/orchestrator.ts",
+            "wiring/takeover-choose.ts",
             "wiring/takeover.ts",
             "wiring/triage-repos.ts"
           ]
@@ -9359,7 +9387,7 @@
             "lib/triage-sources.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
-            "wiring/takeover.ts",
+            "wiring/takeover-choose.ts",
             "wiring/triage-repos.ts",
             "wiring/triage.ts"
           ]
@@ -9389,7 +9417,7 @@
             "lib/resolver-work.ts",
             "lib/triage-pr.ts",
             "wiring/resolver.ts",
-            "wiring/takeover.ts",
+            "wiring/takeover-choose.ts",
             "wiring/triage-repos.ts",
             "wiring/triage.ts"
           ]
@@ -10399,7 +10427,7 @@
             "lib/resolver-work.ts",
             "lib/resolver.ts",
             "wiring/resolver.ts",
-            "wiring/takeover.ts",
+            "wiring/takeover-choose.ts",
             "wiring/triage-repos.ts"
           ]
         },
@@ -10717,6 +10745,7 @@
           "callers": [
             "lib/takeover-store.ts",
             "lib/triage.ts",
+            "wiring/takeover-choose.ts",
             "wiring/takeover.ts"
           ]
         },
@@ -13025,7 +13054,7 @@
           ]
         },
         "runPeerTakeover": {
-          "module": "wiring/takeover.ts",
+          "module": "wiring/takeover-choose.ts",
           "callers": [
             "routes/triage.ts"
           ]
@@ -13033,7 +13062,8 @@
         "TAKEOVER_HOP": {
           "module": "wiring/takeover.ts",
           "callers": [
-            "routes/triage.ts"
+            "routes/triage.ts",
+            "wiring/takeover-choose.ts"
           ]
         },
         "LOG_MAX": {
@@ -14444,10 +14474,53 @@
             "wiring/resolver.ts"
           ]
         },
+        "takeoverDeps": {
+          "module": "wiring/takeover.ts",
+          "callers": [
+            "wiring/takeover-choose.ts"
+          ]
+        },
+        "StartResult": {
+          "module": "wiring/takeover.ts",
+          "callers": [
+            "wiring/takeover-choose.ts"
+          ]
+        },
+        "StartInput": {
+          "module": "wiring/takeover.ts",
+          "callers": [
+            "wiring/takeover-choose.ts"
+          ]
+        },
+        "TakeoverDetail": {
+          "module": "wiring/takeover.ts",
+          "callers": [
+            "wiring/takeover-choose.ts"
+          ]
+        },
         "entryByName": {
           "module": "lib/takeover.ts",
           "callers": [
+            "wiring/takeover-choose.ts",
             "wiring/takeover.ts"
+          ]
+        },
+        "takeoverHostFor": {
+          "module": "lib/takeover.ts",
+          "callers": [
+            "wiring/takeover-choose.ts"
+          ]
+        },
+        "localLog": {
+          "module": "wiring/takeover.ts",
+          "callers": [
+            "wiring/takeover-choose.ts"
+          ]
+        },
+        "startTakeover": {
+          "module": "wiring/takeover.ts",
+          "callers": [
+            "wiring/takeover-choose.ts"
           ]
         },
         "howToRef": {
@@ -14492,12 +14565,6 @@
             "wiring/takeover.ts"
           ]
         },
-        "takeoverHostFor": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
         "taskId8": {
           "module": "lib/takeover.ts",
           "callers": [
@@ -14512,12 +14579,6 @@
         },
         "takeoverBranch": {
           "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "PEER_TIMEOUT_MS": {
-          "module": "lib/body-investigate-engine.ts",
           "callers": [
             "wiring/takeover.ts"
           ]
@@ -14567,12 +14628,6 @@
         },
         "TakeoverRow": {
           "module": "lib/takeover-store.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "herdrPaneShellPid": {
-          "module": "lib/herdr.ts",
           "callers": [
             "wiring/takeover.ts"
           ]
@@ -14862,7 +14917,7 @@
           ]
         },
         "takeoverAction": {
-          "module": "wiring/takeover.ts",
+          "module": "wiring/takeover-choose.ts",
           "callers": [
             "wiring/triage.ts"
           ]

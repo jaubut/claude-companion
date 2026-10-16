@@ -11,6 +11,7 @@ import type { SpawnResult } from "../lib/spawn-session"
 import type { SourceItem } from "../lib/triage"
 import { type ExecFn, type QueryFn, type Row, type SqlArg, TursoUnreachable } from "../lib/turso"
 import type { DispatchWiring } from "./dispatch"
+import type { TriageAction } from "../lib/triage"
 
 // The takeover run, wired: fake Turso (in-memory bun:sqlite behind QueryFn /
 // ExecFn), fake herdr / spawn / git / gh / peer, the run store on its own
@@ -19,6 +20,7 @@ import type { DispatchWiring } from "./dispatch"
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-takeover-")), "test.db")
 
 let tk: typeof import("./takeover")
+let tc: typeof import("./takeover-choose")
 let storeMod: typeof import("../lib/takeover-store")
 let triageSources: typeof import("../lib/triage-sources")
 let tasks: typeof import("../lib/dispatch-tasks")
@@ -76,6 +78,8 @@ let gate: string | null = null
 const agents = new Set<string>()
 const closed: string[] = []
 let paneAtShell = true
+let paneReadError = false
+let listOpenCalls = 0
 // One workspace per agent: ws-<name>, pane <name>:p1, labelled with the name.
 const herdr: Herdr = {
   async call(args) {
@@ -87,6 +91,7 @@ const herdr: Herdr = {
     const n = (args[2] ?? args[3] ?? "").replace(/^ws-/, "").replace(/:p1$/, "")
     if (args[0] === "pane" && args[1] === "get") return { pane: { workspace_id: `ws-${n}`, terminal_id: `term-${n}` } }
     if (args[0] === "workspace" && args[1] === "get") return { workspace: { pane_count: 1, label: n } }
+    if (args[0] === "pane" && args[1] === "process-info" && paneReadError) throw new Error("herdr: pane read failed")
     if (args[0] === "pane" && args[1] === "process-info") return { process_info: paneAtShell ? { shell_pid: 42, foreground_process_group_id: 42 } : { shell_pid: 42, foreground_process_group_id: 7 } }
     if (args[0] === "workspace" && args[1] === "close") {
       closed.push(args[2]!)
@@ -142,6 +147,7 @@ const start = (over: Partial<import("./takeover").StartInput> = {}) =>
 
 beforeAll(async () => {
   tk = await import("./takeover")
+  tc = await import("./takeover-choose")
   storeMod = await import("../lib/takeover-store")
   triageSources = await import("../lib/triage-sources")
   tasks = await import("../lib/dispatch-tasks")
@@ -156,6 +162,8 @@ beforeEach(() => {
   dirs.clear()
   closed.length = 0
   paneAtShell = true
+  paneReadError = false
+  listOpenCalls = 0
   prHead = "takeover/aaaaaaaa"
   prCreated = null
   claimFault = null
@@ -171,7 +179,11 @@ beforeEach(() => {
   peerAnswer = () => Response.json({ ok: false, error: "no_checkout" }, { status: 409 })
   tk.setTakeoverDeps({
     dispatch: () => dispatch,
-    store: (() => { const s = storeMod.createTakeoverStore(new Database(":memory:")); return () => s })(),
+    store: (() => {
+      const s = storeMod.createTakeoverStore(new Database(":memory:"))
+      const counted = { ...s, listOpen: () => { listOpenCalls++; return s.listOpen() } }
+      return () => counted
+    })(),
     localHost: () => "zettlab",
     entries: () => entries,
     canRun: () => true,
@@ -300,6 +312,52 @@ describe("start (claim-then-async)", () => {
     await expect(start({ taskId: "f".repeat(32) })).rejects.toBeInstanceOf(TursoUnreachable)
     expect(await start({ taskId: "f".repeat(32) })).toMatchObject({ ok: true, detail: { session: "tko-zettlab-ffffffff", status: "starting" } })
     await tk.takeoverIdle()
+  })
+
+  test("concurrent reconciles of one lost claim (two retried chooses + a tick) → exactly one session", async () => {
+    claimFault = "lost_answer"
+    await expect(start()).rejects.toBeInstanceOf(TursoUnreachable)
+    const [a, b] = await Promise.all([start(), start(), tk.takeoverTick()])
+    await tk.takeoverIdle()
+    expect(spawns).toHaveLength(1)
+    expect(a).toMatchObject({ ok: true, detail: { session: NAME, replay: true } })
+    expect(b).toMatchObject({ ok: true, detail: { session: NAME, replay: true } })
+    await tk.takeoverTick()
+    await tk.takeoverIdle()
+    expect(spawns).toHaveLength(1)
+  })
+
+  test("a tick while the previous one still runs is skipped", async () => {
+    await start()
+    await tk.takeoverIdle()
+    listOpenCalls = 0
+    await Promise.all([tk.takeoverTick(), tk.takeoverTick(), tk.takeoverTick()]) // the first awaits herdr on its row
+    expect(listOpenCalls).toBe(1)
+    await tk.takeoverTick()
+    expect(listOpenCalls).toBe(2)
+  })
+
+  test("Turso down on a local choose → the phone gets 503 turso_unreachable (a retry with the same key reconciles)", async () => {
+    const { createTriageEngine } = await import("../lib/triage-engine")
+    const { createTriageStore } = await import("../lib/triage-store")
+    const src: SourceItem = {
+      source: "task", refId: ID, version: VERSION, title: "Fix the companion poller", project: "Companion", createdAt: 1, updatedAt: 1,
+      facts: { status: "blocked", agent: "builder", blocker: "No local repo mapped" }, url: null,
+      ref: { source: "task", taskId: ID, status: "blocked", channel: "general" },
+      takeover: { repo: "claude-companion", host: "zettlab", pinned: false, candidates: [] },
+    }
+    const e = createTriageEngine({
+      collect: async () => [src], phrase: async () => null, current: async (x) => x,
+      execute: (x, o, text) => tc.takeoverAction(x, o.action as Extract<TriageAction, { kind: "takeover" }>, text, "triage"),
+      store: createTriageStore(new Database(":memory:")), broadcast: () => {},
+    })
+    await e.refresh()
+    claimFault = "lost_answer"
+    expect(await e.choose({ id: `task:${ID}`, optionId: "takeover", idemKey: "k" })).toMatchObject({ status: 503, body: { error: "turso_unreachable" } })
+    const again = await e.choose({ id: `task:${ID}`, optionId: "takeover", idemKey: "k" })
+    expect(again).toMatchObject({ status: 200, body: { ok: true, detail: { session: NAME, replay: true } } })
+    await tk.takeoverIdle()
+    expect(spawns).toHaveLength(1)
   })
 
   test("git fetch failing → failed start, no session", async () => {
@@ -485,6 +543,16 @@ describe("completion", () => {
     expect(tursoTask(ID).dispatch_status).toBe("blocked")
   })
 
+  test("an unreadable pane counts as alive for 4 reads, then gone (no registered session)", async () => {
+    await running()
+    tk.setTakeoverDeps({ now: () => Date.now() + 10 * 60_000 })
+    paneReadError = true
+    for (let i = 0; i < 5; i++) await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+    await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+  })
+
   test("one row that throws never stalls the others", async () => {
     await running()
     seedTask("e".repeat(32))
@@ -543,7 +611,7 @@ describe("choose (takeoverAction) and the peer hop", () => {
   }
 
   test("local host first → done with the detail", async () => {
-    const out = await tk.takeoverAction(src(), { kind: "takeover", repo: "claude-companion", host: "zettlab" }, null, "triage")
+    const out = await tc.takeoverAction(src(), { kind: "takeover", repo: "claude-companion", host: "zettlab" }, null, "triage")
     expect(out).toMatchObject({ kind: "done", detail: { host: "zettlab", session: NAME, status: "starting" } })
     expect(fetches).toHaveLength(0)
     await tk.takeoverIdle()
@@ -551,44 +619,44 @@ describe("choose (takeoverAction) and the peer hop", () => {
 
   test("no checkout here → the other host via the peer (hop header body), its detail returned", async () => {
     peerAnswer = () => Response.json({ ok: true, detail: { host: "mac", session: "tko-mac-aaaaaaaa", cwd: "/m", branch: "takeover/aaaaaaaa", dispatchTaskId: ID, status: "starting" } })
-    const out = await tk.takeoverAction(src({ takeover: { repo: "tls-dashboard-v2", host: "zettlab", pinned: false, candidates: [] } }), { kind: "takeover", repo: "tls-dashboard-v2", host: "zettlab" }, null, "triage")
+    const out = await tc.takeoverAction(src({ takeover: { repo: "tls-dashboard-v2", host: "zettlab", pinned: false, candidates: [] } }), { kind: "takeover", repo: "tls-dashboard-v2", host: "zettlab" }, null, "triage")
     expect(out).toMatchObject({ kind: "done", detail: { host: "mac", session: "tko-mac-aaaaaaaa" } })
     expect(fetches[0]).toMatchObject({ url: "https://mac.tail.ts.net/api/orchestrator/takeover", body: { taskId: ID, version: VERSION, repo: "tls-dashboard-v2", host: "mac" } })
   })
 
   test("both refuse → 409 no_checkout; peer unreachable → 409 host_unreachable (never 5xx)", async () => {
     const dash = src({ takeover: { repo: "tls-dashboard-v2", host: "zettlab", pinned: false, candidates: [] } })
-    expect(await tk.takeoverAction(dash, { kind: "takeover", repo: "tls-dashboard-v2", host: "zettlab" }, null, "triage"))
+    expect(await tc.takeoverAction(dash, { kind: "takeover", repo: "tls-dashboard-v2", host: "zettlab" }, null, "triage"))
       .toMatchObject({ kind: "error", status: 409, error: "no_checkout" })
     fetchFails = true
-    expect(await tk.takeoverAction(dash, { kind: "takeover", repo: "tls-dashboard-v2", host: "zettlab" }, null, "triage"))
+    expect(await tc.takeoverAction(dash, { kind: "takeover", repo: "tls-dashboard-v2", host: "zettlab" }, null, "triage"))
       .toMatchObject({ kind: "error", status: 409, error: "host_unreachable" })
   })
 
   test("a pinned Mac target from Zettlab → forwarded only, never started here", async () => {
     peerAnswer = () => Response.json({ ok: true, detail: { host: "mac", session: "tko-mac-aaaaaaaa", cwd: "/m", branch: "b", dispatchTaskId: ID, status: "starting" } })
     const pinned = src({ title: "Fix mac:launchd:com.tls.x: claude-companion", takeover: { repo: "claude-companion", host: "mac", pinned: true, candidates: [] } })
-    expect(await tk.takeoverAction(pinned, { kind: "takeover", repo: "claude-companion", host: "mac" }, null, "triage")).toMatchObject({ kind: "done", detail: { host: "mac" } })
+    expect(await tc.takeoverAction(pinned, { kind: "takeover", repo: "claude-companion", host: "mac" }, null, "triage")).toMatchObject({ kind: "done", detail: { host: "mac" } })
     expect(tursoTask(ID).dispatch_status).toBe("blocked")
   })
 
   test("ask: no repo and no / unknown text → 422 repo_required {candidates}; a typed map name is used", async () => {
     const cands = [{ repo: "claude-companion", host: "zettlab" as const }, { repo: "tls-dashboard-v2", host: "zettlab" as const }]
     const ask = src({ takeover: { repo: null, host: "zettlab", pinned: false, candidates: cands } })
-    expect(await tk.takeoverAction(ask, { kind: "takeover", candidates: cands }, null, "triage"))
+    expect(await tc.takeoverAction(ask, { kind: "takeover", candidates: cands }, null, "triage"))
       .toEqual({ kind: "error", status: 422, error: "repo_required", extra: { candidates: cands } })
-    expect(await tk.takeoverAction(ask, { kind: "takeover", candidates: cands }, "no-such-repo", "triage")).toMatchObject({ status: 422 })
-    expect(await tk.takeoverAction(ask, { kind: "takeover", candidates: cands }, "Claude-Companion", "triage")).toMatchObject({ kind: "done", detail: { session: NAME } })
+    expect(await tc.takeoverAction(ask, { kind: "takeover", candidates: cands }, "no-such-repo", "triage")).toMatchObject({ status: 422 })
+    expect(await tc.takeoverAction(ask, { kind: "takeover", candidates: cands }, "Claude-Companion", "triage")).toMatchObject({ kind: "done", detail: { session: NAME } })
     await tk.takeoverIdle()
   })
 
   test("the peer endpoint refuses another host's run (not_owner) and answers Turso down with 503", async () => {
-    expect(await tk.runPeerTakeover({ taskId: ID, version: VERSION, repo: "claude-companion", host: "mac", by: "triage" }))
+    expect(await tc.runPeerTakeover({ taskId: ID, version: VERSION, repo: "claude-companion", host: "mac", by: "triage" }))
       .toEqual({ status: 409, body: { ok: false, error: "not_owner" } })
     down = true
-    expect((await tk.runPeerTakeover({ taskId: ID, version: VERSION, repo: "claude-companion", host: "zettlab", by: "triage" })).status).toBe(503)
+    expect((await tc.runPeerTakeover({ taskId: ID, version: VERSION, repo: "claude-companion", host: "zettlab", by: "triage" })).status).toBe(503)
     down = false
-    expect(await tk.runPeerTakeover({ taskId: ID, version: VERSION, repo: "claude-companion", host: "zettlab", by: "triage" }))
+    expect(await tc.runPeerTakeover({ taskId: ID, version: VERSION, repo: "claude-companion", host: "zettlab", by: "triage" }))
       .toMatchObject({ status: 200, body: { ok: true, detail: { session: NAME } } })
     await tk.takeoverIdle()
   })

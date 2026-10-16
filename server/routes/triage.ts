@@ -6,7 +6,8 @@ import type { TriageEngine } from "../lib/triage-engine"
 import { MEMBERS_MAX } from "../lib/triage-repos"
 import { triageEngine } from "../wiring/triage"
 import { type RepoRunner, repoRunner } from "../wiring/triage-repos"
-import { TAKEOVER_HOP, runPeerTakeover } from "../wiring/takeover"
+import { TAKEOVER_HOP } from "../wiring/takeover"
+import { runPeerTakeover } from "../wiring/takeover-choose"
 
 // Brain triage endpoints (docs/orchestrator-triage-api.md), bearer-gated like
 // every /api/orchestrator/* route:

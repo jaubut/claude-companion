@@ -524,7 +524,7 @@ Dry run (nothing executed): `bun cli.ts resolver-dry-run [--limit N] [--source t
 
 Jeremie takes a blocked task over in an interactive session (herdr, `--remote-control <name>`), bound to the
 Turso row until it opens a PR or ends (CircleCI "Rerun with SSH" + Copilot agent hand-off: the PR completes it).
-Code: `lib/takeover.ts`, `lib/takeover-store.ts`, `lib/dispatch-live.ts`, `wiring/takeover.ts`.
+Code: `lib/takeover.ts`, `lib/takeover-store.ts`, `lib/dispatch-live.ts`, `wiring/takeover.ts`, `wiring/takeover-choose.ts`.
 
 ### Option
 

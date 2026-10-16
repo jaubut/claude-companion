@@ -6,7 +6,7 @@ import { localBodyHost } from "../lib/body-investigate"
 import { type PeerConfig, bodyPeer } from "../lib/body-investigate-engine"
 import { type TakeoverOutcome, claimTakeover, detectPrUrl, finishTakeover, takeoverOwner } from "../lib/dispatch-live"
 import { type DispatchTask, type LiveIdentity, type WriteOutcome, getDispatchTask } from "../lib/dispatch-tasks"
-import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, herdrPaneShellPid, realHerdr } from "../lib/herdr"
+import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, realHerdr } from "../lib/herdr"
 import { type HerdrDelivery, deliverViaHerdr } from "../lib/herdr-inject"
 import { type RepoEntry, hostCan, isDir, repoEntriesSafe } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
@@ -17,11 +17,9 @@ import { listSessions } from "../lib/sessions"
 import { type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import {
   NO_CHANGES_BLOCKER, type TakeoverHost, doneLine, endedBlocker, entryByName, failedBlocker, howToRef, logSection, seedPrompt,
-  takeoverBranch, takeoverHostFor, takeoverName, taskId8,
+  takeoverBranch, takeoverName, taskId8,
 } from "../lib/takeover"
 import { OPEN_STATUSES, type TakeoverRow, type TakeoverStatus, type TakeoverStore, createTakeoverStore } from "../lib/takeover-store"
-import type { TriageAction, SourceItem } from "../lib/triage"
-import type { ExecOutcome } from "../lib/triage-engine"
 import { taskVersion } from "../lib/triage-sources"
 import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
@@ -44,7 +42,7 @@ const SEED_RETRY_MS = 5_000
 /** A run never seen with a registered session may take this long to show one before the tick counts misses. */
 const START_GRACE_MS = 3 * 60_000
 const RELEASE_TRIES = 4
-const PEER_TIMEOUT_MS = 15_000
+const PANE_ERRORS_MAX = 5
 
 export interface TakeoverDeps {
   dispatch: () => DispatchWiring
@@ -111,7 +109,13 @@ const defaults = (): TakeoverDeps => ({
 
 let deps: TakeoverDeps | null = null
 const d = (): TakeoverDeps => (deps ??= defaults())
+/** The live deps (wiring/takeover-choose.ts). */
+export const takeoverDeps = d
 const running = new Map<string, Promise<void>>()
+/** Names a reconcile or a tick row is working on right now (taken before the first await). */
+const held = new Set<string>()
+const paneErrors = new Map<string, number>()
+let ticking = false
 const misses = new Map<string, number>()
 const seenLive = new Set<string>()
 const ghAt = new Map<string, number>()
@@ -122,6 +126,7 @@ export function setTakeoverDeps(patch: Partial<TakeoverDeps>): TakeoverDeps {
   deps = { ...prev, ...patch }
   misses.clear()
   seenLive.clear()
+  paneErrors.clear()
   ghAt.clear()
   return prev
 }
@@ -170,7 +175,26 @@ const sessionLive = (name: string): boolean => d().sessions().some((s) => s.task
 async function sessionAlive(name: string): Promise<boolean> {
   if (sessionLive(name)) return true
   const agent = await herdrAgent(name)
-  return !!agent?.pane && (await herdrPaneShellPid(agent.pane, d().herdr)) === 0
+  if (!agent?.pane) return false
+  const front = await paneFront(agent.pane)
+  if (front !== "error") paneErrors.delete(name)
+  if (front !== "error") return front === "busy"
+  // Unreadable pane: alive for a while, gone after PANE_ERRORS_MAX reads in a row.
+  const n = (paneErrors.get(name) ?? 0) + 1
+  paneErrors.set(name, n)
+  return n < PANE_ERRORS_MAX
+}
+
+/** What is in front of a herdr pane (herdrPaneShellPid's read, with a read error kept apart from "busy"). */
+async function paneFront(pane: string): Promise<"shell" | "busy" | "error"> {
+  try {
+    const r = await d().herdr.call(["pane", "process-info", "--pane", pane], 2_000)
+    const p = r.process_info as { shell_pid?: number; foreground_process_group_id?: number } | undefined
+    if (typeof p?.shell_pid !== "number" || p.shell_pid <= 0) return "error"
+    return p.foreground_process_group_id === p.shell_pid ? "shell" : "busy"
+  } catch {
+    return "error"
+  }
 }
 
 /** Close a finished run's own single-pane workspace (labelled with its name) once the pane is at the shell; true = herdr has no agent left. */
@@ -203,9 +227,9 @@ export async function startTakeover(input: StartInput): Promise<StartResult> {
   const store = d().store()
   const open = store.openFor(input.taskId)
   if (open && uncertain(open)) {
-    const r = await reconcileClaim(open)
+    const r = await locked(open.name, () => reconcileClaim(open))
     if (r === "unknown") throw new TursoUnreachable("claim still uncertain")
-    if (r === "ours") return { ok: true, detail: detailOf(store.get(open.name)!, true) }
+    if (r !== "failed") return { ok: true, detail: detailOf(store.get(open.name)!, true) } // ours, or a reconcile already on it
   } else if (open) return { ok: true, detail: detailOf(open, true) }
   const dispatch = d().dispatch()
   const found = await getDispatchTask(dispatch.query, await dispatch.columns(), input.taskId)
@@ -255,11 +279,25 @@ function launch(row: TakeoverRow, entry: RepoEntry, t: DispatchTask, description
   running.set(row.name, p)
 }
 
+/** Run `fn` holding `name`; null (nothing run) when another reconcile / tick row holds it. */
+async function locked<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
+  if (held.has(name)) return null
+  held.add(name)
+  try {
+    return await fn()
+  } finally {
+    held.delete(name)
+  }
+}
+
 const CLAIM_UNCERTAIN = JSON.stringify({ claim: "uncertain" })
 const uncertain = (row: TakeoverRow): boolean => row.status === "starting" && row.outcome === CLAIM_UNCERTAIN
 
 /** A claim whose answer was lost: ours (running, our owner) → the start goes on; else failed (never landed); unknown = Turso still down. */
-async function reconcileClaim(row: TakeoverRow): Promise<"ours" | "failed" | "unknown"> {
+async function reconcileClaim(seen: TakeoverRow): Promise<"ours" | "failed" | "unknown"> {
+  // Re-read under the lock: a reconcile that just finished already settled it.
+  const row = d().store().get(seen.name)
+  if (!row || !uncertain(row)) return row?.status === "failed" ? "failed" : "ours"
   const dispatch = d().dispatch()
   let found: Awaited<ReturnType<typeof getDispatchTask>>
   try {
@@ -273,7 +311,8 @@ async function reconcileClaim(row: TakeoverRow): Promise<"ours" | "failed" | "un
     store.move(row.name, ["starting"], "failed", d().now(), { outcome: "claim never landed" })
     return "failed"
   }
-  store.move(row.name, ["starting"], "starting", d().now(), { outcome: null })
+  // Lost the CAS: another path already settled this run.
+  if (!store.move(row.name, ["starting"], "starting", d().now(), { outcome: null })) return "ours"
   dispatch.applyLocal(found.task)
   const entry = entryByName(row.repo, d().entries())
   if (!entry) {
@@ -297,7 +336,7 @@ async function worktree(row: TakeoverRow, repo: string): Promise<string | null> 
   return add.ok ? null : `git worktree add: ${add.err.trim().slice(0, 120) || `exit ${add.code}`}`
 }
 
-function localLog(title: string, blocker: string): string | null {
+export function localLog(title: string, blocker: string): string | null {
   if (!NO_CHANGES_BLOCKER.test(blocker)) return null
   const ref = howToRef(blocker)
   for (const text of d().logs()) {
@@ -329,7 +368,10 @@ async function continueStart(row: TakeoverRow, entry: RepoEntry, t: DispatchTask
     if (why) return await finish(row.name, { status: "blocked", blocker: failedBlocker(why, row.origBlocker) }, "failed")
     const r: SpawnResult = await d().spawn({ cwd: row.cwd, agent: "claude", env: { COMPANION_TASK_ID: row.name }, herdr: { name: row.name, args: ["--remote-control", row.name] } })
     if (!r.ok || !r.herdrPane) return await finish(row.name, { status: "blocked", blocker: failedBlocker(r.error ?? "no herdr pane", row.origBlocker) }, "failed")
-    d().store().move(row.name, ["starting"], "active", d().now())
+    if (!d().store().move(row.name, ["starting"], "active", d().now())) {
+      d().log(`[takeover] ${row.name}: run settled while its session started — no seed`)
+      return
+    }
     const seed = seedPrompt({
       name: row.name, taskId: t.id, title: t.title, project: t.projectTitle, repo: row.repo, host: row.host, cwd: row.cwd, branch: row.branch,
       origBlocker: row.origBlocker, description, howTo: await howTo(howToRef(row.origBlocker) ?? howToRef(description)),
@@ -485,15 +527,26 @@ async function missing(row: TakeoverRow): Promise<boolean> {
 
 /** One pass over this host's open runs: retry pending finishes, end runs whose session is gone (2 ticks). */
 export async function takeoverTick(): Promise<void> {
-  const here = d().localHost()
-  const store = d().store()
-  for (const row of [...store.listOpen(), ...store.listCleanup()]) {
-    if (row.host !== here || running.has(row.name)) continue
+  if (ticking) return // the previous tick still runs (setInterval has no in-flight guard)
+  ticking = true
+  try {
+    const here = d().localHost()
+    let rows: TakeoverRow[] = []
     try {
-      await tickRow(row)
+      rows = [...d().store().listOpen(), ...d().store().listCleanup()]
     } catch (err) {
-      d().log(`[takeover] tick: ${row.name} failed (${(err as Error)?.message ?? err}) — retried next tick`)
+      d().log(`[takeover] tick: run list unreadable (${(err as Error)?.message ?? err})`)
     }
+    for (const row of rows) {
+      if (row.host !== here || running.has(row.name)) continue
+      try {
+        await locked(row.name, () => tickRow(row))
+      } catch (err) {
+        d().log(`[takeover] tick: ${row.name} failed (${(err as Error)?.message ?? err}) — retried next tick`)
+      }
+    }
+  } finally {
+    ticking = false
   }
 }
 
@@ -530,63 +583,4 @@ export function takeoverIdentity(dispatchTaskId: string): LiveIdentity | null {
   if (!row) return null
   const session = d().sessions().find((s) => s.taskId === row.name)
   return { localTaskId: row.name, tmuxSession: null, tmuxSocket: null, sessionKey: session?.key ?? null, logTail: null }
-}
-
-// ── choose (triage execute) and the peer hop ────────────────────────────────
-
-type TakeoverAction = Extract<TriageAction, { kind: "takeover" }>
-
-async function forward(host: TakeoverHost, body: StartInput): Promise<StartResult> {
-  const peer = d().peer()
-  if (!peer) return refuse("host_unreachable", { host, reason: "no peer configured" })
-  try {
-    const res = await d().fetchFn(`${peer.base}/api/orchestrator/takeover`, {
-      method: "POST", redirect: "manual", signal: AbortSignal.timeout(PEER_TIMEOUT_MS),
-      headers: {
-        authorization: `Bearer ${peer.token}`, "content-type": "application/json", [TAKEOVER_HOP]: "1",
-        "idempotency-key": `takeover:${body.taskId}:${body.version}`,
-      },
-      body: JSON.stringify({ ...body, host }),
-    })
-    const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
-    const detail = json?.detail as TakeoverDetail | undefined
-    if (res.status === 200 && json?.ok === true && typeof detail?.session === "string") return { ok: true, detail }
-    if (!json || res.status >= 500 || (res.status >= 300 && res.status < 400)) return refuse("host_unreachable", { host, reason: `http ${res.status}` })
-    const { ok: _ok, error, ...extra } = json
-    return { ok: false, status: res.status === 422 ? 422 : 409, error: String(error ?? "refused"), extra: { host, ...extra } }
-  } catch (err) {
-    return refuse("host_unreachable", { host, reason: (err as Error)?.name ?? "error" })
-  }
-}
-
-/** A card's `takeover` choose: resolve the repo (action, else the typed name), then the host — local or the peer, the other host when the first has no checkout. */
-export async function takeoverAction(src: SourceItem, a: TakeoverAction, text: string | null, by: string): Promise<ExecOutcome> {
-  if (src.ref.source !== "task" || src.ref.status !== "blocked") return { kind: "error", status: 400, error: "wrong_source" }
-  const entries = d().entries()
-  const typed = !a.repo && text ? entryByName(text, entries) : null
-  const repo = a.repo ?? typed?.name ?? null
-  if (!repo) return { kind: "error", status: 422, error: "repo_required", extra: { candidates: a.candidates ?? src.takeover?.candidates ?? [] } }
-  const target = src.takeover
-  const placed = target?.repo === repo ? { host: target.host, pinned: target.pinned } : takeoverHostFor(entryByName(repo, entries), src.title)
-  const hosts: TakeoverHost[] = placed.pinned ? [placed.host] : [placed.host, placed.host === "mac" ? "zettlab" : "mac"]
-  const input: StartInput = { taskId: src.ref.taskId, version: src.version, repo, by, logTail: localLog(src.title, src.facts.blocker ?? "") }
-  for (const host of hosts) {
-    const r = host === d().localHost() ? await startTakeover(input) : await forward(host, input)
-    if (r.ok) return { kind: "done", detail: { ...r.detail } }
-    if (r.error === "stale") return { kind: "stale", reason: "changed" }
-    if (r.error !== "no_checkout") return { kind: "error", status: r.status, error: r.error, ...(r.extra ? { extra: r.extra } : {}) }
-  }
-  return { kind: "error", status: 409, error: "no_checkout", extra: { repo } }
-}
-
-/** POST /api/orchestrator/takeover (peer only): start here, never forward again. */
-export async function runPeerTakeover(input: StartInput & { host: TakeoverHost }): Promise<{ status: number; body: Record<string, unknown> }> {
-  if (input.host !== d().localHost()) return { status: 409, body: { ok: false, error: "not_owner" } }
-  try {
-    const r = await startTakeover(input)
-    return r.ok ? { status: 200, body: { ok: true, detail: r.detail } } : { status: r.status, body: { ok: false, error: r.error, ...r.extra } }
-  } catch (err) {
-    if (err instanceof TursoUnreachable) return { status: 503, body: { ok: false, error: "turso_unreachable" } }
-    throw err
-  }
 }

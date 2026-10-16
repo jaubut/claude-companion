@@ -6,7 +6,7 @@ import { join } from "node:path"
 import type { SourceItem, TriageOption } from "../lib/triage"
 import { type ExecOutcome, type TriageResolverHook, createTriageEngine } from "../lib/triage-engine"
 import { createTriageStore } from "../lib/triage-store"
-import type { runPeerTakeover } from "../wiring/takeover"
+import type { runPeerTakeover } from "../wiring/takeover-choose"
 
 // The takeover option through the triage engine (render + choose + replay) and
 // the peer endpoint's validation. The run itself is wiring/takeover.test.ts.

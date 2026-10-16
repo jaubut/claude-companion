@@ -28,7 +28,8 @@ import { type RepoRunnerDeps, sweepInterruptedRuns } from "./triage-repos"
 import { resolverConfig } from "../lib/resolver"
 import { ownsTrips } from "./trips"
 import { takeoverTarget } from "../lib/takeover"
-import { startTakeoverTick, takeoverAction } from "./takeover"
+import { startTakeoverTick } from "./takeover"
+import { takeoverAction } from "./takeover-choose"
 
 // Brain triage, live instance (docs/orchestrator-triage-api.md): collectors
 // over the poller snapshot, local proposals, Turso PR rows and the Body
