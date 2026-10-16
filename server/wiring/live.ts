@@ -213,7 +213,8 @@ async function startWorker(taskId: string, dispatchTaskId: string, dispatch: Dis
     spawning.delete(taskId)
   }
   if (!r.ok) {
-    if (getTask(taskId)?.status !== "error") setTaskStatus(taskId, "error")
+    const now = getTask(taskId)?.status
+    if (now !== "error" && now !== "cancelled") setTaskStatus(taskId, "error")
     emitTask(taskId)
     await closeLive(dispatchTaskId, { status: "failed", blocker: `spawn failed: ${r.error ?? "unknown"}`.slice(0, 300) }, dispatch, task.threadId)
     return fail(500, r.error ?? "spawn failed", { taskId, dispatchTaskId })

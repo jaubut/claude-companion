@@ -5,7 +5,6 @@ import {
   getThread,
   createProposal,
   getTask,
-  setTaskSpawn,
   bindTaskSession,
   setTaskStatus,
   setTaskLogTail,
@@ -48,7 +47,7 @@ import {
 } from "../lib/dispatch-tasks"
 import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
-import { deliverWorkerPrompt, herdrGone, readHerdrPane, resumeWorkerPrompts, setWorkerIODeps } from "./worker-io"
+import { deliverWorkerPrompt, herdrGone, readHerdrPane, recordSpawn, resumeWorkerPrompts, setWorkerIODeps } from "./worker-io"
 
 // Orchestrator wiring (PRJ-OR1T): the always-on pieces that turn a proposal
 // into a running worker and report back — emit helpers, the WIP queue, the
@@ -292,7 +291,10 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
   const herdr = result.app === "herdr" && result.herdrPane
     ? { agent: result.sessionName ?? "", pane: result.herdrPane, workspace: herdrOwnerFor(result.herdrPane)?.workspaceId ?? null }
     : undefined
-  setTaskSpawn(task.taskId, result.sessionName ?? null, result.tmuxSocket || null, herdr)
+  if (!(await recordSpawn(task, { tmuxSession: result.sessionName ?? null, tmuxSocket: result.tmuxSocket || null, herdr }))) {
+    emitTask(task.taskId)
+    return { ok: false, error: "cancelled during spawn" }
+  }
   const spawned = getTask(task.taskId)
   if (herdr && spawned) deliverWorkerPrompt(spawned)
   emitTask(task.taskId)

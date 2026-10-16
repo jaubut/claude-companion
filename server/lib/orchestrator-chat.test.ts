@@ -384,6 +384,7 @@ describe("herdr worker handle", () => {
     const t = chat.createProposal("h", "/h", "why", "general")
     chat.setTaskSpawn(t.taskId, "cc-old", "/tmp/sock")
     expect(chat.getTask(t.taskId)?.tmuxSession).toBe("cc-old")
+    chat.setTaskStatus(t.taskId, "queued") // requeued: the next spawn lands in herdr
     const before = Date.now()
     chat.setTaskSpawn(t.taskId, "cc--claude-3", "/tmp/sock", { agent: "cc--claude-3", pane: "w3:p1" })
     const got = chat.getTask(t.taskId)!
@@ -432,4 +433,15 @@ test("a herdr worker in ~ is never bound or closed by a cwd-only hook (no task i
   expect((await resolver.resolve("close", { taskId: t.taskId, cwd: home }))?.taskId).toBe(t.taskId)
   expect(chat.countRunningTasksInCwd(home)).toBe(0)
   chat.setTaskStatus(t.taskId, "done")
+})
+
+test("setTaskSpawn only moves a proposed/queued task: a cancel during the spawn wins", () => {
+  const t = chat.createProposal("c", "/c", "why", "general")
+  chat.setTaskStatus(t.taskId, "cancelled")
+  expect(chat.setTaskSpawn(t.taskId, null, null, { agent: "cc-c", pane: "w1:p1" })).toBe(false)
+  expect(chat.getTask(t.taskId)).toMatchObject({ status: "cancelled", herdrPane: null, spawnedAt: null })
+  const q = chat.createQueuedTask("q", "/c")
+  expect(chat.setTaskSpawn(q.taskId, "cc-q")).toBe(true)
+  expect(chat.getTask(q.taskId)?.status).toBe("dispatched")
+  chat.setTaskStatus(q.taskId, "done")
 })

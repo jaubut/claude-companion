@@ -2,7 +2,7 @@ import { type Herdr, closeHerdrAgentWorkspace, forgetHerdrAgent, realHerdr } fro
 import { type HerdrDelivery, deliverViaHerdr } from "../lib/herdr-inject"
 import { pumpPrompt } from "../lib/herdr-seed"
 import { companionLog } from "../lib/log"
-import { LIVE_STATUSES, type Task, getTask, markPromptSent } from "../lib/orchestrator-chat"
+import { LIVE_STATUSES, type Task, getTask, markPromptSent, setTaskSpawn } from "../lib/orchestrator-chat"
 import { listSessions } from "../lib/sessions"
 import { capturePane, paneHasDialog, paneInputReady, sessionCmdArgv } from "../lib/tmux-pane"
 import { type WorkerRef, workerLabel, workerRefOf } from "../lib/worker-ref"
@@ -120,6 +120,19 @@ export function deliverWorkerPrompt(task: Task): void {
     .catch((err) => d().log(`[orchestrator] [${task.taskId}] prompt pump failed (${(err as Error)?.message ?? err})`))
     .finally(() => pumping.delete(task.taskId))
   pumping.set(task.taskId, p)
+}
+
+export interface SpawnedWorker { tmuxSession: string | null; tmuxSocket: string | null; herdr?: { agent: string; pane: string; workspace: string | null } }
+
+/** Record a fresh worker on its task (setTaskSpawn). False when the task left proposed/queued meanwhile (a cancel during the spawn): the fresh worker is killed. */
+export async function recordSpawn(task: Task, w: SpawnedWorker): Promise<boolean> {
+  if (setTaskSpawn(task.taskId, w.tmuxSession, w.tmuxSocket, w.herdr)) return true
+  await killWorker({
+    ...task, tmuxSession: w.herdr ? null : w.tmuxSession, tmuxSocket: w.herdr ? null : w.tmuxSocket,
+    herdrAgent: w.herdr?.agent ?? null, herdrPane: w.herdr?.pane ?? null, herdrWorkspace: w.herdr?.workspace ?? null,
+  })
+  d().log(`[orchestrator] [${task.taskId}] ${d().getTask(task.taskId)?.status ?? "gone"} during its spawn — fresh worker killed, no prompt`)
+  return false
 }
 
 /** Boot: restart the pump for herdr rows still waiting on their prompt (listPendingHerdrPrompts); tmux rows are never re-typed. */

@@ -218,12 +218,14 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
 // it is on — "" / null = default) and flip to dispatched so reconcileDispatch
 // picks it up and delivers the prompt. A herdr worker records its agent + pane
 // instead, with tmux_session NULL in the same UPDATE: a herdr name there would
-// feed worker-identity tier 2 and the tmux kill argv.
+// feed worker-identity tier 2 and the tmux kill argv. Only from proposed/queued:
+// false when the task moved meanwhile (cancelled during the spawn).
 export function setTaskSpawn(
   taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null, herdr?: { agent: string; pane: string; workspace?: string | null },
-): void {
-  db.query(
-    "UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, herdr_agent = ?, herdr_pane = ?, herdr_workspace = ?, spawned_at = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?",
+): boolean {
+  return db.query(
+    "UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, herdr_agent = ?, herdr_pane = ?, herdr_workspace = ?, spawned_at = ?, status = 'dispatched', updated_at = ? " +
+      "WHERE task_id = ? AND status IN ('proposed', 'queued')",
   ).run(
     herdr ? null : tmuxSession,
     herdr ? null : tmuxSocket || null,
@@ -233,7 +235,7 @@ export function setTaskSpawn(
     Date.now(),
     Date.now(),
     taskId,
-  )
+  ).changes > 0
 }
 
 // The worker's prompt is in (wiring/worker-io.ts, on a confirmed delivery): the

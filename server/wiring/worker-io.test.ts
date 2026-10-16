@@ -325,3 +325,26 @@ describe("fail fast", () => {
     expect(r.clock.t).toBe(1_000_000)
   })
 })
+
+describe("cancel during spawn", () => {
+  test("the task was cancelled while herdr spawned: not recorded, the fresh worker's workspace is closed, no prompt", async () => {
+    const f = fakeHerdr({ "cc-x": { pane: "w33:p1", workspace: "w33", label: "cc-x" } })
+    const r = wire(f.h)
+    const t = track(chat.createProposal("x", "/w", "why", "general"))
+    chat.setTaskStatus(t.taskId, "cancelled")
+    expect(await io.recordSpawn(t, { tmuxSession: "cc-x", tmuxSocket: null, herdr: { agent: "cc-x", pane: "w33:p1", workspace: "w33" } })).toBe(false)
+    expect(f.calls).toContainEqual(["workspace", "close", "w33"])
+    expect(chat.getTask(t.taskId)).toMatchObject({ status: "cancelled", herdrPane: null })
+    await io.workerIOIdle()
+    expect(r.delivered).toEqual([])
+  })
+
+  test("a proposed task is recorded as before", async () => {
+    const f = fakeHerdr({})
+    wire(f.h)
+    const t = track(chat.createProposal("y", "/w", "why", "general"))
+    expect(await io.recordSpawn(t, { tmuxSession: "cc-y", tmuxSocket: null, herdr: { agent: "cc-y", pane: "w34:p1", workspace: "w34" } })).toBe(true)
+    expect(chat.getTask(t.taskId)).toMatchObject({ status: "dispatched", herdrPane: "w34:p1", herdrWorkspace: "w34", tmuxSession: null })
+    expect(f.calls).toEqual([])
+  })
+})
