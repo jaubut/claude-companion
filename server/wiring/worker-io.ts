@@ -112,7 +112,9 @@ async function pumpHerdr(task: Task, ref: HerdrRef): Promise<void> {
 export function deliverWorkerPrompt(task: Task): void {
   const ref = workerRefOf(task)
   if (ref.kind === "tmux") {
-    void sendToTmux(ref.session, task.prompt, ref.socket || undefined).then((ok) => { if (ok) d().markPromptSent(task.taskId) })
+    void sendToTmux(ref.session, task.prompt, ref.socket || undefined)
+      .then((ok) => { if (ok) d().markPromptSent(task.taskId) })
+      .catch((err) => d().log(`[orchestrator] [${task.taskId}] tmux prompt failed (${(err as Error)?.message ?? err})`))
     return
   }
   if (ref.kind !== "herdr" || pumping.has(task.taskId)) return

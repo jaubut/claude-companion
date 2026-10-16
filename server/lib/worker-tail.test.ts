@@ -215,3 +215,18 @@ describe("herdr workers", () => {
     expect(h.lines[0]).toEqual(["claude"])
   })
 })
+
+test("herdr: a read or gone check that throws is a quiet tick — no death, no unhandled rejection, the next read streams", async () => {
+  const h = harness([makeTask({ tmuxSession: null, herdrAgent: "cc-x", herdrPane: "w5:p1" })])
+  let fail = true
+  h.deps.readHerdr = async () => { if (fail) throw new Error("herdr timeout"); return "back\n" }
+  h.deps.herdrGone = async () => { if (fail) throw new Error("herdr timeout"); return false }
+  const m = createWorkerTailManager(h.deps)
+  m.watch("t1")
+  await settle()
+  expect(h.dead).toEqual([])
+  expect(m.watching("t1")).toBe(true)
+  fail = false
+  await settle()
+  expect(h.lines.at(-1)).toEqual(["back"])
+})

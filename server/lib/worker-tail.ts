@@ -111,11 +111,13 @@ export function createWorkerTailManager(deps: WorkerTailDeps): WorkerTailManager
     }
   }
 
+  // A herdr call that throws is a tick with nothing learned: never a death, never an unhandled rejection.
   async function tickHerdr(w: Watch, task: Task, pane: string): Promise<void> {
     if (!deps.readHerdr) return
     w.ticks++
-    const screen = await deps.readHerdr(pane)
-    if ((screen === null || w.ticks % HERDR_GONE_EVERY === 0) && await deps.herdrGone?.(task)) return finalize(task.taskId, true)
+    const screen = await deps.readHerdr(pane).catch(() => null)
+    const gone = screen === null || w.ticks % HERDR_GONE_EVERY === 0 ? await deps.herdrGone?.(task).catch(() => false) : false
+    if (gone) return finalize(task.taskId, true)
     if (screen !== null) show(w, task, screen)
   }
 
