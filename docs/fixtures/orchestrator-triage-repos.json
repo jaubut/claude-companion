@@ -37,14 +37,14 @@
           "destructive": true
         }
       ],
-      "createdAt": 1792156224000,
-      "updatedAt": 1792156224000
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987000
     },
     {
-      "id": "task:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee6",
+      "id": "task:cccccccccccccccccccccccccccccc1f",
       "source": "task",
-      "refId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee6",
-      "title": "Task eee6",
+      "refId": "cccccccccccccccccccccccccccccc1f",
+      "title": "Task cc1f",
       "project": "Dashboard",
       "repo": null,
       "severity": "normal",
@@ -84,13 +84,13 @@
           }
         }
       ],
-      "createdAt": 1792156224000,
-      "updatedAt": 1792156224000
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987000
     },
     {
-      "id": "proposal:b07578a8",
+      "id": "proposal:c1c60eb3",
       "source": "proposal",
-      "refId": "b07578a8",
+      "refId": "c1c60eb3",
       "title": "Ship the export",
       "project": null,
       "repo": null,
@@ -124,8 +124,8 @@
         }
       ],
       "context": "Ship the export",
-      "createdAt": 1792156224562,
-      "updatedAt": 1792156224562
+      "createdAt": 1792087987842,
+      "updatedAt": 1792087987842
     }
   ],
   "resolving": [],
@@ -162,19 +162,19 @@
             "result": "handed_back"
           }
         ],
-        "createdAt": 1792156224569,
-        "finishedAt": 1792156224570
+        "createdAt": 1792087987854,
+        "finishedAt": 1792087987855
       },
-      "createdAt": 1792156224000,
-      "updatedAt": 1792156224570
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987855
     },
     {
       "id": "repo:_other",
       "repo": null,
       "name": "Other work",
-      "version": "32d1546ee9a515d6",
+      "version": "b4e50ea66660f1c7",
       "overview": [
-        "Opus answers: Task eee6",
+        "Opus answers: Task cc1f",
         "Start: Ship the export"
       ],
       "counts": {
@@ -187,20 +187,20 @@
       },
       "members": [
         {
-          "id": "task:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee6",
-          "version": "blocked|2026-10-16 13:10:24",
+          "id": "task:cccccccccccccccccccccccccccccc1f",
+          "version": "blocked|2026-10-15 18:13:07",
           "does": "ask_opus"
         },
         {
-          "id": "proposal:b07578a8",
-          "version": "1792156224562",
+          "id": "proposal:c1c60eb3",
+          "version": "1792087987842",
           "does": "approve"
         }
       ],
       "held": [],
-      "createdAt": 1792156224000,
-      "updatedAt": 1792156224562
+      "createdAt": 1792087987000,
+      "updatedAt": 1792087987842
     }
   ],
-  "generatedAt": 1792156224571
+  "generatedAt": 1792087987857
 }

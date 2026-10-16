@@ -315,6 +315,23 @@ describe("completion", () => {
     expect(tursoTask("c".repeat(32))).toMatchObject({ dispatch_status: "completed", dispatch_pr_url: "https://github.com/jaubut/claude-companion/pull/173" })
   })
 
+  test("a second takeover after an ended one: a lingering herdr agent of that name → 409 name_taken, nothing written; once gone → same name, new run", async () => {
+    await running()
+    await tk.takeoverEnded(NAME)
+    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+    expect(agents.has(NAME)).toBe(true) // autoclose off: the old agent lingers
+    const v2 = `blocked|${String(tursoTask(ID).updated_at)}`
+    const before = ledger(ID)
+    expect(await start({ version: v2 })).toMatchObject({ ok: false, status: 409, error: "name_taken", extra: { session: NAME } })
+    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+    expect(ledger(ID)).toEqual(before)
+    agents.delete(NAME)
+    expect(await start({ version: v2 })).toMatchObject({ ok: true, detail: { session: NAME, status: "starting" } })
+    await tk.takeoverIdle()
+    expect(tursoTask(ID)).toMatchObject({ dispatch_status: "running", dispatch_owner: `companion:takeover:${NAME}` })
+    expect(spawns).toHaveLength(2)
+  })
+
   test("tick: a live session keeps it; a dead pane (2 misses) ends it", async () => {
     await running()
     sessions.push({ key: "k1", taskId: NAME })
