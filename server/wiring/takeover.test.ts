@@ -65,11 +65,23 @@ const entries: RepoEntry[] = [
 ]
 let gate: string | null = null
 const agents = new Set<string>()
+const closed: string[] = []
+let paneAtShell = true
+// One workspace per agent: ws-<name>, pane <name>:p1, labelled with the name.
 const herdr: Herdr = {
   async call(args) {
     if (args[0] === "agent" && args[1] === "get") {
-      if (agents.has(args[2]!)) return { agent: { agent_status: "idle" } }
+      const n = args[2]!
+      if (agents.has(n)) return { agent: { agent_status: "idle", pane_id: `${n}:p1`, workspace_id: `ws-${n}`, terminal_id: `term-${n}` } }
       throw Object.assign(new Error("agent_not_found"), { code: "agent_not_found" })
+    }
+    const n = (args[2] ?? args[3] ?? "").replace(/^ws-/, "").replace(/:p1$/, "")
+    if (args[0] === "pane" && args[1] === "get") return { pane: { workspace_id: `ws-${n}`, terminal_id: `term-${n}` } }
+    if (args[0] === "workspace" && args[1] === "get") return { workspace: { pane_count: 1, label: n } }
+    if (args[0] === "pane" && args[1] === "process-info") return { process_info: paneAtShell ? { shell_pid: 42, foreground_process_group_id: 42 } : { shell_pid: 42, foreground_process_group_id: 7 } }
+    if (args[0] === "workspace" && args[1] === "close") {
+      closed.push(args[2]!)
+      agents.delete(args[2]!.replace(/^ws-/, ""))
     }
     return {}
   },
@@ -79,9 +91,11 @@ const herdr: Herdr = {
 const dirs = new Set<string>()
 const shCalls: string[] = []
 let prList = "[]"
+let prHead = "takeover/aaaaaaaa"
 let fetchFails = false
 const sh: ShFn = async (cmd, args) => {
   shCalls.push(`${cmd} ${args.join(" ")}`)
+  if (cmd === "gh" && args[1] === "view") return { ok: true, code: 0, out: JSON.stringify({ headRefName: prHead }), err: "" }
   if (cmd === "gh") return { ok: true, code: 0, out: prList, err: "" }
   if (args.includes("fetch") && fetchFails) return { ok: false, code: 1, out: "", err: "fatal: denied" }
   if (args.includes("symbolic-ref")) return { ok: true, code: 0, out: "origin/main\n", err: "" }
@@ -128,6 +142,9 @@ beforeEach(() => {
   for (const a of [applied, shCalls, spawns, delivered, turns, sessions, fetches]) a.length = 0
   agents.clear()
   dirs.clear()
+  closed.length = 0
+  paneAtShell = true
+  prHead = "takeover/aaaaaaaa"
   gate = null
   down = false
   prList = "[]"
@@ -315,21 +332,74 @@ describe("completion", () => {
     expect(tursoTask("c".repeat(32))).toMatchObject({ dispatch_status: "completed", dispatch_pr_url: "https://github.com/jaubut/claude-companion/pull/173" })
   })
 
-  test("a second takeover after an ended one: a lingering herdr agent of that name → 409 name_taken, nothing written; once gone → same name, new run", async () => {
+  test("Stop naming an unrelated PR (gh: another head) → not completed; the branch's own PR still counts", async () => {
     await running()
-    await tk.takeoverEnded(NAME)
-    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+    prHead = "dispatch/other-task"
+    await tk.takeoverStop(NAME, "See https://github.com/jaubut/claude-companion/pull/99 from the old run")
+    expect(tursoTask(ID)).toMatchObject({ dispatch_status: "running", dispatch_pr_url: null })
+    expect(shCalls).toContain("gh pr view https://github.com/jaubut/claude-companion/pull/99 --json headRefName")
+  })
+
+  test("re-takeover after an ended run: the lingering agent's workspace is closed and the same name starts a new run", async () => {
+    await running()
+    sessions.push({ key: "k1", taskId: NAME })
+    await tk.takeoverEnded(NAME) // session still registered: workspace kept
+    expect(closed).toEqual([])
+    sessions.length = 0
     expect(agents.has(NAME)).toBe(true) // autoclose off: the old agent lingers
     const v2 = `blocked|${String(tursoTask(ID).updated_at)}`
-    const before = ledger(ID)
-    expect(await start({ version: v2 })).toMatchObject({ ok: false, status: 409, error: "name_taken", extra: { session: NAME } })
-    expect(tursoTask(ID).dispatch_status).toBe("blocked")
-    expect(ledger(ID)).toEqual(before)
-    agents.delete(NAME)
     expect(await start({ version: v2 })).toMatchObject({ ok: true, detail: { session: NAME, status: "starting" } })
+    expect(closed).toEqual([`ws-${NAME}`])
     await tk.takeoverIdle()
     expect(tursoTask(ID)).toMatchObject({ dispatch_status: "running", dispatch_owner: `companion:takeover:${NAME}` })
     expect(spawns).toHaveLength(2)
+  })
+
+  test("a live agent of that name (open run, live session, or claude still in the pane) → 409 name_taken, nothing written", async () => {
+    seedTask("d".repeat(32))
+    agents.add("tko-zettlab-dddddddd") // no run row: not ours
+    expect(await start({ taskId: "d".repeat(32) })).toMatchObject({ ok: false, status: 409, error: "name_taken" })
+    await running()
+    await tk.takeoverEnded(NAME)
+    closed.length = 0
+    agents.add(NAME)
+    sessions.push({ key: "k1", taskId: NAME })
+    const v2 = `blocked|${String(tursoTask(ID).updated_at)}`
+    const before = ledger(ID)
+    expect(await start({ version: v2 })).toMatchObject({ ok: false, status: 409, error: "name_taken" })
+    sessions.length = 0
+    paneAtShell = false
+    expect(await start({ version: v2 })).toMatchObject({ ok: false, status: 409, error: "name_taken" })
+    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+    expect(ledger(ID)).toEqual(before)
+    expect(closed).toEqual([])
+  })
+
+  test("ended with the session gone → its workspace is released", async () => {
+    await running()
+    await tk.takeoverEnded(NAME)
+    expect(closed).toEqual([`ws-${NAME}`])
+    expect(agents.has(NAME)).toBe(false)
+  })
+
+  test("tick: herdr keeps the agent record but no session for 2 ticks → ended + workspace released; a session keeps it", async () => {
+    await running()
+    sessions.push({ key: "k1", taskId: NAME })
+    for (let i = 0; i < 3; i++) await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+    sessions.length = 0
+    expect(agents.has(NAME)).toBe(true)
+    await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("running")
+    await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("blocked")
+    expect(closed).toEqual([`ws-${NAME}`])
+  })
+
+  test("tick: a fresh run never seen live keeps its start grace while herdr has the agent", async () => {
+    await running()
+    for (let i = 0; i < 3; i++) await tk.takeoverTick()
+    expect(tursoTask(ID).dispatch_status).toBe("running")
   })
 
   test("tick: a live session keeps it; a dead pane (2 misses) ends it", async () => {

@@ -6954,7 +6954,7 @@
         },
         {
           "path": "wiring/takeover.ts",
-          "lines": 461,
+          "lines": 533,
           "kind": "lib",
           "exports": [
             "TAKEOVER_HOP",
@@ -6979,6 +6979,7 @@
             "let deps",
             "running: Map",
             "misses: Map",
+            "seenLive: Set",
             "ghAt: Map"
           ],
           "emits": [],
@@ -9086,7 +9087,8 @@
         "closeHerdrWorkspaceWhenIdle": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/herdr-workspace.ts"
+            "lib/herdr-workspace.ts",
+            "wiring/takeover.ts"
           ]
         },
         "HerdrOwner": {
@@ -9105,7 +9107,8 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-workspace.ts",
-            "lib/spawn-session.ts"
+            "lib/spawn-session.ts",
+            "wiring/takeover.ts"
           ]
         },
         "SpawnAgent": {

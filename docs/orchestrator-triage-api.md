@@ -581,14 +581,14 @@ re-forwarded. First host `no_checkout` → the other (not when pinned); both →
 
 | event | → |
 |---|---|
-| Stop with a PR URL in the turn, or `gh pr list --head takeover/<id8>` (≤ 1 call / 30 s) | `completed` + `dispatch_pr_url` |
+| Stop with a PR URL in the turn whose head `gh pr view` confirms is `takeover/<id8>`, or `gh pr list --head takeover/<id8>` (≤ 1 check / 30 s) | `completed` + `dispatch_pr_url` |
 | Stop whose last line is `TAKEOVER DONE: <what>` (no-code fix) | `completed`, no PR (lands in /today's accept bucket) |
-| SessionEnd (not `/clear`) or a dead pane (60 s tick: no registered session with that task id AND `herdr agent get` fails, 2 misses) | one last gh check, else `blocked` `Takeover ended without a PR — <original blocker>` (how-to ref kept) |
+| SessionEnd (not `/clear`) or gone (60 s tick: no registered session with that task id on 2 ticks in a row, once seen live, or after a 3 min start grace, or `herdr agent get` fails) | one last gh check, else `blocked` `Takeover ended without a PR — <original blocker>` (how-to ref kept); the workspace is closed once its pane is at the shell |
 | Turso down at the finish | run stays `finishing`; the tick retries |
 
 Finish is guarded on `running AND owner = companion:takeover:<name>` (first of Stop / SessionEnd / tick wins).
 The owner stays on the row afterwards. A Companion restart only re-arms the tick (herdr sessions survive it).
-Abort = `/exit` in the session.
+Re-takeover with a finished run's leftover agent (no session): that workspace is closed first. Abort = `/exit`.
 
 ### Interplay
 

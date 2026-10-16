@@ -6,7 +6,7 @@ import { localBodyHost } from "../lib/body-investigate"
 import { type PeerConfig, bodyPeer } from "../lib/body-investigate-engine"
 import { type TakeoverOutcome, claimTakeover, detectPrUrl, finishTakeover } from "../lib/dispatch-live"
 import { type DispatchTask, type LiveIdentity, type WriteOutcome, getDispatchTask } from "../lib/dispatch-tasks"
-import { type Herdr, realHerdr } from "../lib/herdr"
+import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, realHerdr } from "../lib/herdr"
 import { type HerdrDelivery, deliverViaHerdr } from "../lib/herdr-inject"
 import { type RepoEntry, hostCan, isDir, repoEntriesSafe } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
@@ -41,6 +41,9 @@ export const TICK_MS = 60_000
 const GH_EVERY_MS = 30_000
 const SEED_TRIES = 24
 const SEED_RETRY_MS = 5_000
+/** A run never seen with a registered session may take this long to show one before the tick counts misses. */
+const START_GRACE_MS = 3 * 60_000
+const RELEASE_TRIES = 4
 const PEER_TIMEOUT_MS = 15_000
 
 export interface TakeoverDeps {
@@ -110,6 +113,7 @@ let deps: TakeoverDeps | null = null
 const d = (): TakeoverDeps => (deps ??= defaults())
 const running = new Map<string, Promise<void>>()
 const misses = new Map<string, number>()
+const seenLive = new Set<string>()
 const ghAt = new Map<string, number>()
 
 /** Test seam: override some deps (and forget the in-memory run state); returns the previous set. */
@@ -117,6 +121,7 @@ export function setTakeoverDeps(patch: Partial<TakeoverDeps>): TakeoverDeps {
   const prev = d()
   deps = { ...prev, ...patch }
   misses.clear()
+  seenLive.clear()
   ghAt.clear()
   return prev
 }
@@ -142,8 +147,52 @@ const refuse = (error: string, extra?: Record<string, unknown>): StartResult => 
 const hostLabel = (h: TakeoverHost): string => (h === "mac" ? "the Mac" : "Zettlab")
 const who = (t: Pick<DispatchTask, "id" | "title">): string => `[${taskId8(t.id)}] ${t.title}`
 
+interface HerdrAgentRef { pane: string; workspaceId?: string; terminalId?: string }
+
+/** The live herdr agent of that name (pane + workspace ids), or null when herdr has none. */
+async function herdrAgent(name: string): Promise<HerdrAgentRef | null> {
+  try {
+    const r = await d().herdr.call(["agent", "get", name])
+    const a = (r.agent ?? {}) as { pane_id?: unknown; workspace_id?: unknown; terminal_id?: unknown }
+    return {
+      pane: typeof a.pane_id === "string" ? a.pane_id : "",
+      ...(typeof a.workspace_id === "string" ? { workspaceId: a.workspace_id } : {}),
+      ...(typeof a.terminal_id === "string" ? { terminalId: a.terminal_id } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+const sessionLive = (name: string): boolean => d().sessions().some((s) => s.taskId === name)
+
+/**
+ * Close the workspace a finished run left (autoclose is off by default): only our own
+ * single-pane workspace labelled with the run's name, once its pane is back at the shell
+ * and no session carries the name. true = herdr no longer has the agent.
+ */
+async function releaseWorkspace(name: string): Promise<boolean> {
+  const agent = await herdrAgent(name)
+  if (!agent) return true
+  if (!agent.pane || sessionLive(name)) return false
+  const ws = await closeHerdrWorkspaceWhenIdle(agent.pane, {
+    h: d().herdr, tries: RELEASE_TRIES, sleep: d().sleep, stillFree: () => !sessionLive(name),
+    owner: { name, workspaceId: agent.workspaceId, terminalId: agent.terminalId },
+  })
+  if (!ws) return false
+  forgetHerdrAgent(agent.pane)
+  d().log(`[takeover] ${name}: herdr workspace ${ws} closed (run finished, session gone)`)
+  return true
+}
+
+const FINISHED: readonly TakeoverStatus[] = ["done", "ended", "failed"]
+
+/** A herdr agent holds the name: free when it is a finished run's leftover (released here), else taken. */
 async function nameTaken(name: string): Promise<boolean> {
-  return d().herdr.call(["agent", "get", name]).then(() => true, () => false)
+  if (!(await herdrAgent(name))) return false
+  const last = d().store().get(name)
+  if (!last || !FINISHED.includes(last.status) || sessionLive(name)) return true
+  return !(await releaseWorkspace(name))
 }
 
 /** The local start (choose on this host, or the peer endpoint). Throws TursoUnreachable before the claim lands. */
@@ -301,6 +350,8 @@ async function flush(row: TakeoverRow): Promise<void> {
   if (out.ok) d().turn(finishTurn(row, p, out.task), out.task.id, dispatch.threadIdFor(out.task))
   else d().log(`[takeover] ${row.name}: task ${taskId8(row.taskId)} no longer ours (${out.error}) — nothing written`)
   await cleanup(row)
+  // A finished-with-PR session may keep going; an ended / failed one leaves its workspace behind.
+  if (p.final !== "done" && !sessionLive(row.name)) await releaseWorkspace(row.name).catch(() => false)
 }
 
 /** Remove the worktree only when it is clean and every commit is on a remote; else keep it and say so. */
@@ -318,13 +369,24 @@ async function cleanup(row: TakeoverRow): Promise<void> {
   if (!rm.ok) d().log(`[takeover] ${row.name}: worktree remove failed (${rm.err.trim().slice(0, 120)}) — kept`)
 }
 
-/** The PR opened from the run's branch, any state (≤ 1 gh call / 30 s per run unless forced). */
-async function branchPr(row: TakeoverRow, force: boolean): Promise<string | null> {
+/**
+ * The run's PR, any state (≤ 1 check / 30 s per run unless forced): a URL from the turn counts only when
+ * gh says its head is the run's branch (an echoed unrelated PR never completes the task), else the
+ * PR listed for the branch.
+ */
+async function branchPr(row: TakeoverRow, force: boolean, text = ""): Promise<string | null> {
   const last = ghAt.get(row.name) ?? 0
   if (!force && d().now() - last < GH_EVERY_MS) return null
   ghAt.set(row.name, d().now())
   const cwd = d().isDir(row.cwd) ? row.cwd : entryByName(row.repo, d().entries())?.path
   if (!cwd) return null
+  const said = detectPrUrl(text)
+  if (said) {
+    const v = await d().sh("gh", ["pr", "view", said, "--json", "headRefName"], { cwd, timeoutMs: 30_000 })
+    try {
+      if (v.ok && (JSON.parse(v.out) as { headRefName?: unknown }).headRefName === row.branch) return said
+    } catch { /* fall through to the branch listing */ }
+  }
   const r = await d().sh("gh", ["pr", "list", "--head", row.branch, "--state", "all", "--json", "url", "--limit", "1"], { cwd, timeoutMs: 30_000 })
   if (!r.ok) return null
   try {
@@ -340,11 +402,12 @@ const openRow = (name: string): TakeoverRow | null => {
   return row && (row.status === "starting" || row.status === "active") ? row : null
 }
 
-/** Stop hook of a `tko-` session: a PR (in the turn, or on the branch) or a `TAKEOVER DONE:` line → completed. */
+/** Stop hook of a `tko-` session: its PR (named in the turn and confirmed by gh, or on the branch) or a `TAKEOVER DONE:` line → completed. */
 export async function takeoverStop(name: string, lastMessage: string): Promise<void> {
   const row = openRow(name)
   if (!row) return
-  const pr = detectPrUrl(lastMessage) ?? await branchPr(row, false)
+  seenLive.add(name)
+  const pr = await branchPr(row, false, lastMessage)
   if (pr) return finish(name, { status: "completed", prUrl: pr }, "done")
   const what = doneLine(lastMessage)
   if (what) return finish(name, { status: "completed", what }, "done")
@@ -359,11 +422,19 @@ export async function takeoverEnded(name: string): Promise<void> {
   return finish(name, { status: "blocked", blocker: endedBlocker(row.origBlocker) }, "ended")
 }
 
-async function alive(row: TakeoverRow): Promise<boolean> {
-  return d().sessions().some((s) => s.taskId === row.name) || await nameTaken(row.name)
+/**
+ * Gone = no registered session carries the name. Counted once the run was seen live (or its start grace
+ * passed, or herdr has no agent of that name): herdr may keep an exited agent's record.
+ */
+async function missing(row: TakeoverRow): Promise<boolean> {
+  if (sessionLive(row.name)) {
+    seenLive.add(row.name)
+    return false
+  }
+  return seenLive.has(row.name) || d().now() - row.createdAt > START_GRACE_MS || !(await herdrAgent(row.name))
 }
 
-/** One pass over this host's open runs: retry pending finishes, end runs whose session is gone (2 misses). */
+/** One pass over this host's open runs: retry pending finishes, end runs whose session is gone (2 ticks). */
 export async function takeoverTick(): Promise<void> {
   const here = d().localHost()
   for (const row of d().store().listOpen()) {
@@ -372,7 +443,7 @@ export async function takeoverTick(): Promise<void> {
       await flush(row)
       continue
     }
-    if (await alive(row)) {
+    if (!(await missing(row))) {
       misses.delete(row.name)
       continue
     }
@@ -380,6 +451,7 @@ export async function takeoverTick(): Promise<void> {
     misses.set(row.name, n)
     if (n >= 2) {
       misses.delete(row.name)
+      seenLive.delete(row.name)
       await takeoverEnded(row.name)
     }
   }
