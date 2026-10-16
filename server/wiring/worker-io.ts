@@ -80,7 +80,9 @@ async function deliverOwned(ref: HerdrRef, task: Task): Promise<HerdrDelivery> {
   if (a.kind === "error") return { ok: false, blocked: false, reason: "herdr_unreadable" }
   // Still booting: wait (lib/herdr-seed.ts WAIT_CODES), never spend a try on it.
   if (a.ref.interactiveReady === false) return { ok: false, blocked: false, reason: "agent not interactive-ready yet", code: "agent_not_ready" }
-  return d().deliver(ref.pane, task.prompt)
+  const r = await d().deliver(ref.pane, task.prompt)
+  // herdr-inject's local refusal: no retry can make herdr take a leading dash.
+  return !r.ok && r.reason === "leading_dash" ? { ...r, code: "leading_dash" } : r
 }
 
 async function pumpHerdr(task: Task, ref: HerdrRef): Promise<void> {

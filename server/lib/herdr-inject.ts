@@ -26,7 +26,7 @@ export function isHooklessInput(text: string): boolean {
   return /^\/[A-Za-z][\w:.-]*(?:\s|$)/.test(t)
 }
 
-/** `code`: herdr's error code when it refused (agent_not_ready…), or the local refusal (leading_dash). */
+/** `code`: herdr's error code when herdr refused (agent_not_ready…). */
 export type HerdrDelivery = { ok: true } | { ok: false; blocked: boolean; reason: string; code?: string }
 
 // One key-gate turn on the herdr pane (same Escape-window rules as tmux).
@@ -42,7 +42,7 @@ export async function deliverViaHerdr(
 ): Promise<HerdrDelivery> {
   // herdr 0.9.3 has no `--` end-of-options separator (`agent prompt` takes
   // `--` as the text), so text with a leading dash would parse as an option.
-  if (text.startsWith("-")) return { ok: false, blocked: false, reason: "leading_dash", code: "leading_dash" }
+  if (text.startsWith("-")) return { ok: false, blocked: false, reason: "leading_dash" }
   const h = opts.herdr ?? realHerdr
   const typed = opts.typed ?? isHooklessInput(text)
   try {
