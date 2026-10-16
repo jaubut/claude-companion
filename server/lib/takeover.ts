@@ -26,6 +26,10 @@ export interface TargetInput { title: string; blocker: string; noteHay?: string 
 export const CANDIDATES_MAX = 4
 const REPO_MARKER = /^\[repo:([A-Za-z0-9._-]+)\]/
 const COMPONENT_HOST = /\b(mac|zettlab):[\w.-]+:/i
+/** Host tooling lives in claude-config (~/.claude tools/launchd): a launchd/systemd component id, or a blocker pointing there. */
+const CONFIG_TITLE = /\b(mac:launchd|zettlab:systemd)[\w-]*:/i
+const CONFIG_BLOCKER = /~\/\.claude(?![\w-])|claude-config|(^|[^\w-])tools\/|LaunchAgents/i
+const CONFIG_REPO = "claude-config"
 const escRe = (n: string): string => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /** The map entry for a name: the map name, else the GitHub repo name (any case). */
@@ -61,7 +65,8 @@ export function takeoverTarget(input: TargetInput, entries: RepoEntry[]): Takeov
   if (named.length === 1) return pick(entryByName(named[0], entries)!)
   const hay = input.noteHay?.trim()
   const viaNote = hay ? entries.find((e) => e.name && e.match.test(hay))?.name : undefined
-  const names = [...new Set([...named, ...(viaNote ? [viaNote] : [])])].slice(0, CANDIDATES_MAX)
+  const config = CONFIG_TITLE.test(title) || CONFIG_BLOCKER.test(input.blocker) ? entryByName(CONFIG_REPO, entries)?.name : undefined
+  const names = [...new Set([...(config ? [config] : []), ...named, ...(viaNote ? [viaNote] : [])])].slice(0, CANDIDATES_MAX)
   const candidates = names.map((n) => ({ repo: n, host: takeoverHostFor(entryByName(n, entries), title).host }))
   return { repo: null, ...takeoverHostFor(null, title), candidates }
 }
