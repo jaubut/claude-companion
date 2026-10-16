@@ -16,9 +16,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript.ts` | 599 | lib | 14 | state: states: Map, busyImages: WeakMap |
 | `lib/spawn-session.ts` | 585 | lib | 17 |  |
 | `routes/hooks.ts` | 568 | route-host | 1 | emits: user_prompt · routes: 9 |
+| `wiring/takeover.ts` | 565 | lib | 17 | state: let liveStore, let deps, running: Map, seeding: Map, held: Set, let tickStartedAt, let skipLoggedAt, misses: Map, ghAt: Map |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
-| `wiring/takeover.ts` | 543 | lib | 16 | state: let liveStore, let deps, running: Map, held: Set, let tickStartedAt, let skipLoggedAt, misses: Map, ghAt: Map |
 | `lib/resolver.ts` | 532 | lib | 47 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 511 | lib | 53 |  |
@@ -151,6 +151,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `companion-server.ts` | 113 | route-host | 1 | routes: 5 |
 | `wiring/body-fix.ts` | 113 | lib | 4 | state: let deps · emits: orchestrator_channel |
+| `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
@@ -159,7 +160,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/dialogs.ts` | 97 | route-host | 1 | routes: 2 |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
-| `wiring/takeover-liveness.ts` | 95 | lib | 6 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
@@ -382,6 +382,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `cwdFromPayload()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `metaFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `SqlArg()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/dispatch-live.ts`, `lib/dispatch-tasks.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts` |
+| `unstyle()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/herdr-inject.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `wiring/dialogs.ts`, `wiring/takeover-liveness.ts` |
 | `PaneRef()` | `lib/tmux-pane.ts` | `lib/discover.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/question-hook.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/model.ts` |
 | `getDispatchTask()` | `lib/dispatch-tasks.ts` | `lib/dispatch-live.ts`, `routes/orchestrator.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts`, `wiring/takeover.ts`, `wiring/triage.ts` |
 | `herdrGateKey()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/dialogs.ts` |
@@ -391,7 +392,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getChannel()` | `lib/orchestrator-channels.ts` | `routes/orchestrator.ts`, `wiring/dispatch.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `QuestionAnswer()` | `lib/questions.ts` | `lib/approval-history.ts`, `lib/orphan-question.ts`, `lib/question-driver.ts`, `lib/question-hook.ts`, `routes/api.ts#* /api/feed`, `ws.ts` |
 | `ApnsPayload()` | `lib/apns.ts` | `lib/body-alert.ts`, `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `lib/push.ts`, `wiring/body.ts`, `wiring/receipt-qa.ts` |
-| `unstyle()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/herdr-inject.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `wiring/dialogs.ts` |
 | `Dialog()` | `lib/dialogs.ts` | `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `routes/model.ts`, `wiring/dialogs.ts` |
 | `sendKeysArgs()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts` |
 | `GENERAL_CHANNEL()` | `lib/orchestrator-db.ts` | `lib/orchestrator-chat.ts`, `routes/orchestrator.ts`, `wiring/dispatch.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
@@ -559,6 +559,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `paneHasDialog()` | `lib/tmux-pane.ts` | `lib/command-offpane.ts`, `wiring/orchestrator.ts` |
 | `paneInputReady()` | `lib/tmux-pane.ts` | `lib/command-offpane.ts`, `wiring/orchestrator.ts` |
 | `readSecretValue()` | `lib/secret-store.ts` | `lib/dashboard-client.ts`, `lib/receipt-jev.ts` |
+| `parseDialog()` | `lib/dialogs.ts` | `lib/dialog-watch.ts`, `wiring/takeover-liveness.ts` |
 | `isScrapeTarget()` | `lib/scrape-registry.ts` | `lib/discover.ts`, `lib/hook-common.ts` |
 | `tmuxSocketFromEnv()` | `lib/tmux-pane.ts` | `lib/discover.ts`, `lib/hook-common.ts` |
 | `validHerdrPane()` | `lib/herdr.ts` | `lib/discover.ts`, `lib/hook-common.ts` |
@@ -574,6 +575,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `PickerIO()` | `lib/question-driver.ts` | `lib/herdr-inject.ts`, `lib/keyboard-inject.ts` |
 | `herdrSendText()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts` |
 | `closeHerdrWorkspaceWhenIdle()` | `lib/herdr.ts` | `lib/herdr-workspace.ts`, `wiring/takeover.ts` |
+| `inputText()` | `lib/command-menu.ts` | `lib/inject-verified.ts`, `wiring/takeover-liveness.ts` |
 | `tmuxSendKeys()` | `lib/keyboard-inject.ts` | `lib/inject-verified.ts`, `lib/submit-confirm.ts` |
 | `tmuxPaneWidth()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `wiring/dialogs.ts` |
 | `herdrPaneWidth()` | `lib/herdr.ts` | `lib/inject-verified.ts`, `wiring/dialogs.ts` |
