@@ -320,7 +320,7 @@ async function pumpSeed(j: SeedJob): Promise<void> {
   const out = await pumpPrompt({
     gate: () => live.seedGate(name, j.pane),
     deliver: () => d().deliver(j.pane, j.text),
-    landed: () => live.landed(name, j.pane, j.text),
+    landed: () => live.landed(name, j.pane, j.text, d().sleep),
     stillWanted: () => d().store().get(name)?.status === "active",
     onDialog: (title) => d().turn(`⏸️ Takeover ${name} is waiting on ${title ? `"${title}"` : "a dialog"} — answer it in Sessions (Remote Control: ${name}); the task prompt goes in once it clears`, j.taskId, j.channel),
     now: () => d().now(),

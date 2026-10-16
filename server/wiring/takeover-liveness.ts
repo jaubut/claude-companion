@@ -1,4 +1,5 @@
-import { type Herdr, herdrErrorCode } from "../lib/herdr"
+import { type Herdr, herdrErrorCode, herdrGatedKey } from "../lib/herdr"
+import { keyGate } from "../lib/key-gate"
 import { type SeedGate, seedGate as gateOf, promptLanded } from "../lib/herdr-seed"
 
 // Is a herdr worker still running (takeover runs, orchestrator workers)? The Companion's session
@@ -106,21 +107,25 @@ export function createLiveness(get: () => LivenessDeps) {
     return (await agentAt(name, e)).kind === "absent"
   }
 
-  /** The pane's seed gate (lib/herdr-seed.ts); herdr's agent status only when no dialog shows. */
-  function seedGate(name: string, pane: string): Promise<SeedGate> {
-    return gateOf(
-      () => get().herdr.read(pane).catch(() => null),
-      async () => { const a = await agentOf(name); return a.kind === "present" ? a.ref.status ?? null : null },
-    )
+  /** herdr's status of the agent, only while it sits in `pane` (a same-named agent elsewhere says nothing). */
+  async function statusIn(name: string, pane: string): Promise<string | null> {
+    const a = await agentAt(name, { pane })
+    return a.kind === "present" ? a.ref.status ?? null : null
   }
 
-  /** A refused delivery of `text` to the agent's pane that went in anyway (lib/herdr-seed.ts promptLanded). */
-  function landed(name: string, pane: string, text: string): Promise<boolean> {
-    return promptLanded(
-      text,
-      () => get().herdr.read(pane).catch(() => null),
-      async () => { const a = await agentOf(name); return a.kind === "present" ? a.ref.status ?? null : null },
-    )
+  /** The pane's seed gate (lib/herdr-seed.ts); herdr's agent status only when no dialog shows. */
+  function seedGate(name: string, pane: string): Promise<SeedGate> {
+    return gateOf(() => get().herdr.read(pane).catch(() => null), () => statusIn(name, pane))
+  }
+
+  /** A refused delivery of `text` to the agent's pane that went in anyway (lib/herdr-seed.ts promptLanded); an unsubmitted paste gets one Enter. */
+  function landed(name: string, pane: string, text: string, sleep: (ms: number) => Promise<void>): Promise<boolean> {
+    return promptLanded(text, {
+      screen: () => get().herdr.read(pane).catch(() => null),
+      agentStatus: () => statusIn(name, pane),
+      enter: () => herdrGatedKey(keyGate, pane, "Enter", get().herdr),
+      sleep,
+    })
   }
 
   return {

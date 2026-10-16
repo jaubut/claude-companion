@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { HerdrDelivery } from "./herdr-inject"
-import { type PumpOpts, SEED_RETRY_MS, SEED_TRIES, SEED_WAIT_MS, type SeedGate, promptLanded, pumpPrompt, seedGate } from "./herdr-seed"
+import { type LandedIO, type PumpOpts, SEED_RETRY_MS, SEED_TRIES, SEED_WAIT_MS, type SeedGate, promptLanded, pumpPrompt, seedGate } from "./herdr-seed"
 
 // Pure: a fake clock (sleep advances it), a scripted gate and delivery.
 
@@ -109,12 +109,13 @@ describe("a refused delivery that landed anyway", () => {
     expect(r.delivered).toHaveLength(3)
   })
 
-  test("promptLanded: herdr's agent working, or the prompt's first line on the screen", async () => {
+  test("promptLanded: herdr's agent working, or the prompt's first line in the transcript", async () => {
     const text = "Fix the   Turso\nconnection refused in body"
-    expect(await promptLanded(text, async () => IDLE, async () => "working")).toBe(true)
-    expect(await promptLanded(text, async () => `${IDLE}\n> Fix the Turso`, async () => "idle")).toBe(true)
-    expect(await promptLanded(text, async () => IDLE, async () => "idle")).toBe(false)
-    expect(await promptLanded(text, async () => null, async () => null)).toBe(false)
+    const io = (screen: string | null, status: string | null) => landedIO([screen], [status]).io
+    expect(await promptLanded(text, io(IDLE, "working"))).toBe(true)
+    expect(await promptLanded(text, io(`> Fix the Turso connection\n${IDLE}`, "idle"))).toBe(true)
+    expect(await promptLanded(text, io(IDLE, "idle"))).toBe(false)
+    expect(await promptLanded(text, io(null, null))).toBe(false)
   })
 })
 
@@ -141,5 +142,58 @@ describe("refusals no retry can fix", () => {
     expect(await pumpPrompt(r.opts)).toEqual({ kind: "gave_up", reason: "leading_dash" })
     expect(r.delivered).toHaveLength(1)
     expect(r.clock.t).toBe(0)
+  })
+})
+
+/** Scripted screens / statuses (the last one repeats) and a count of Enters sent. */
+function landedIO(screens: (string | null)[], statuses: (string | null)[]) {
+  const st = { enters: 0, sleeps: 0, si: 0, ai: 0 }
+  const next = <T>(xs: T[], k: "si" | "ai"): T => xs[Math.min(st[k]++, xs.length - 1)]!
+  const io: LandedIO = {
+    screen: async () => next(screens, "si"),
+    agentStatus: async () => next(statuses, "ai"),
+    enter: async () => { st.enters++; return true },
+    sleep: async () => { st.sleeps++ },
+  }
+  return { io, st }
+}
+
+describe("promptLanded: the input box", () => {
+  const text = "Fix the Turso connection refused in body"
+  const box = (typed: string) => IDLE.replace("❯ ", `❯ ${typed}`)
+
+  test("an unsubmitted paste in the input box: Enter once, then delivered (box empty)", async () => {
+    const { io, st } = landedIO([box("Fix the Turso connection refused in body"), IDLE], ["idle", "idle"])
+    expect(await promptLanded(text, io)).toBe(true)
+    expect(st.enters).toBe(1)
+  })
+
+  test("a long paste shown as [Pasted text #1 …]: Enter, never re-pasted; agent working → delivered", async () => {
+    const { io, st } = landedIO([box("[Pasted text #1 +42 lines]")], ["idle", "working"])
+    expect(await promptLanded(text, io)).toBe(true)
+    expect(st.enters).toBe(1)
+    const r = rig(() => ({ kind: "ready" }), () => ({ ok: false, blocked: false, reason: "timeout" }))
+    r.opts.landed = () => promptLanded(text, io)
+    expect(await pumpPrompt(r.opts)).toEqual({ kind: "delivered" })
+    expect(r.delivered).toHaveLength(1)
+  })
+
+  test("Enter sent but the box still holds it: not landed (the pump then waits on the typed text, no re-paste)", async () => {
+    const stuck = box("Fix the Turso connection refused in body")
+    const { io, st } = landedIO([stuck, stuck], ["idle", "idle"])
+    expect(await promptLanded(text, io)).toBe(false)
+    expect(st.enters).toBe(1)
+  })
+
+  test("the text only in the transcript above an empty box: landed, no Enter", async () => {
+    const { io, st } = landedIO([`> Fix the Turso connection refused in body\n\n⏺ Looking at it\n${IDLE}`], ["idle"])
+    expect(await promptLanded(text, io)).toBe(true)
+    expect(st.enters).toBe(0)
+  })
+
+  test("other text in the box (Jeremie typing) is not our paste: no Enter, not landed", async () => {
+    const { io, st } = landedIO([box("hello there")], ["idle"])
+    expect(await promptLanded(text, io)).toBe(false)
+    expect(st.enters).toBe(0)
   })
 })

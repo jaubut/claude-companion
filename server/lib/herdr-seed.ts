@@ -34,18 +34,43 @@ export async function seedGate(screen: () => Promise<string | null>, agentStatus
   return raw !== null && inputText(raw) ? { kind: "typing" } : { kind: "ready" }
 }
 
+export interface LandedIO {
+  screen: () => Promise<string | null>
+  agentStatus: () => Promise<string | null>
+  /** One Enter through the pane's key gate (herdrGatedKey); true once sent. */
+  enter: () => Promise<boolean>
+  sleep: (ms: number) => Promise<void>
+}
+
+/** Time for Claude Code to take a submitted prompt before the re-check. */
+export const SUBMIT_SETTLE_MS = 500
+
 /**
  * Did a refused delivery land anyway? herdr-inject's key gate gives up after a few
  * seconds while `agent prompt` may still go through, so a timeout is not proof of
- * nothing typed: herdr's agent `working`, or the prompt's opening on the screen, counts as in.
+ * nothing typed. In: herdr's agent `working`, or the prompt's opening in the
+ * transcript (above the input box). The paste sitting UNSUBMITTED in the input box
+ * (its opening, or a long paste's `[Pasted text #N …]` marker: Enter was lost) gets
+ * one Enter, then counts as in once the agent works or the box is empty. Never re-pasted.
  */
-export async function promptLanded(text: string, screen: () => Promise<string | null>, agentStatus: () => Promise<string | null>): Promise<boolean> {
-  if ((await agentStatus()) === "working") return true
+export async function promptLanded(text: string, io: LandedIO): Promise<boolean> {
+  if ((await io.agentStatus()) === "working") return true
   const head = squash(text.split("\n").find((l) => l.trim()) ?? "").slice(0, 60)
-  const raw = head ? await screen() : null
-  return raw !== null && squash(unstyle(raw)).includes(head)
+  const raw = head ? await io.screen() : null
+  if (raw === null) return false
+  const box = inputText(raw)
+  if (box && (squash(box).includes(head) || PASTED_RE.test(box))) {
+    if (!(await io.enter())) return false
+    await io.sleep(SUBMIT_SETTLE_MS)
+    if ((await io.agentStatus()) === "working") return true
+    const after = await io.screen()
+    return after !== null && inputText(after) === ""
+  }
+  // The box does not hold it, so a match on the screen is in the transcript above it.
+  return squash(unstyle(raw)).includes(head)
 }
 
+const PASTED_RE = /\[Pasted text #\d+/i
 const squash = (s: string): string => s.replace(/\s+/g, " ").trim()
 
 export interface PumpOpts {

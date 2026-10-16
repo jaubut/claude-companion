@@ -92,7 +92,7 @@ async function pumpHerdr(task: Task, ref: HerdrRef): Promise<void> {
     gate: () => live.seedGate(agent, pane),
     deliver: () => deliverOwned(ref, task),
     // Only while our agent still owns the pane: a stranger's screen or status proves nothing.
-    landed: async () => (await live.agentAt(agent, expectOf(ref, id))).kind === "present" && live.landed(agent, pane, task.prompt),
+    landed: async () => (await live.agentAt(agent, expectOf(ref, id))).kind === "present" && live.landed(agent, pane, task.prompt, d().sleep),
     stillWanted: () => stillWanted(id),
     onDialog: (title) => d().turn(`⏸️ [${id}] worker waiting on ${title ? `"${title}"` : "a dialog"} — answer it on the phone; the prompt goes in once it clears`, task),
     now: () => d().now(),
