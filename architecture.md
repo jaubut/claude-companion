@@ -37,7 +37,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
-| `lib/body-investigator.ts` | 389 | lib | 25 |  |
+| `lib/body-investigator.ts` | 392 | lib | 25 |  |
 | `lib/triage-engine.ts` | 387 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `routes/capture.ts` | 385 | lib | 7 |  |
@@ -119,9 +119,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `routes/body.ts` | 166 | route-host | 3 | routes: 6 |
+| `lib/body-fix.ts` | 165 | lib | 12 |  |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
-| `lib/body-fix.ts` | 155 | lib | 11 |  |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/resolver-prompt.ts` | 152 | lib | 7 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
@@ -144,6 +144,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/hook-common.ts` | 133 | lib | 9 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
+| `wiring/body-fix.ts` | 122 | lib | 4 | state: let deps · emits: orchestrator_channel |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/takeover-store.ts` | 119 | lib | 6 |  |
 | `wiring/resolver-peer.ts` | 117 | lib | 7 | state: let store, let deps |
@@ -151,7 +152,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `companion-server.ts` | 113 | route-host | 1 | routes: 5 |
-| `wiring/body-fix.ts` | 113 | lib | 4 | state: let deps · emits: orchestrator_channel |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `wiring/takeover-liveness.ts` | 106 | lib | 6 |  |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
@@ -463,6 +463,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `isProblemState()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `wiring/body-investigate.ts`, `wiring/triage.ts` |
 | `KnownPaths()` | `lib/body-investigator.ts` | `lib/body-investigate-engine.ts`, `lib/resolver-prompt.ts`, `wiring/body-agent.ts` |
 | `getAuthToken()` | `lib/auth.ts` | `lib/body-investigate-engine.ts`, `lib/vault-upstream.ts`, `routes/capture.ts` |
+| `fixCwd()` | `lib/body-fix.ts` | `lib/body-investigator.ts`, `wiring/body-agent.ts`, `wiring/body-fix.ts` |
 | `InvestigationResult()` | `lib/body-investigate.ts` | `lib/body-investigator.ts`, `lib/resolver-work.ts`, `wiring/resolver.ts` |
 | `runReadonlyClaude()` | `lib/readonly-claude.ts` | `lib/body-investigator.ts`, `lib/quick-look.ts`, `wiring/resolver.ts` |
 | `DispatchColumns()` | `lib/dispatch-tasks.ts` | `lib/dispatch-live.ts`, `lib/dispatch-poller.ts`, `lib/triage-sources.ts` |
