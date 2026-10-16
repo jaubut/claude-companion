@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 import { type Herdr, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
+import { applyMcpChoices } from "./claude-mcp-trust"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -30,13 +31,8 @@ import { companionLog } from "./log"
 // claude runs in a trusted dir it keeps the flag on exit, so this write is a
 // one-time cost per dir.
 //
-// mcpFrom (takeover): the main checkout a worktree was cut from. A fresh
-// worktree path is a new project to Claude Code, so a repo with .mcp.json would
-// stop at the "new MCP servers found" picker. Carry the main checkout's MCP
-// choices over; with none to carry, disable every server in the worktree's
-// .mcp.json — a takeover never silently enables project MCP servers.
-const MCP_KEYS = ["enabledMcpjsonServers", "disabledMcpjsonServers", "enableAllProjectMcpServers"] as const
-
+// mcpFrom (takeover): the main checkout a worktree was cut from — see
+// claude-mcp-trust.ts for how its MCP choices carry over.
 export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${process.env.HOME ?? ""}/.claude.json`): void {
   if (!process.env.HOME) return
   let cfg: { projects?: Record<string, Record<string, unknown>> }
@@ -45,31 +41,13 @@ export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${
   const entry = projects[cwd] ?? (projects[cwd] = {})
   let changed = false
   if (entry.hasTrustDialogAccepted !== true) { entry.hasTrustDialogAccepted = true; changed = true }
-  if (mcpFrom && !MCP_KEYS.some((k) => k in entry)) {
-    const main = projects[mcpFrom] ?? {}
-    for (const k of MCP_KEYS) if (k in main) entry[k] = main[k]
-    // Claude Code seeds empty lists on every project entry, so a copy can still
-    // leave servers unanswered — those go to disabled too, or the picker shows.
-    if (entry.enableAllProjectMcpServers !== true) {
-      const listed = (k: string) => (Array.isArray(entry[k]) ? (entry[k] as unknown[]) : [])
-      const seen = new Set([...listed("enabledMcpjsonServers"), ...listed("disabledMcpjsonServers")])
-      entry.disabledMcpjsonServers = [...listed("disabledMcpjsonServers"), ...mcpjsonServerNames(cwd).filter((n) => !seen.has(n))]
-    }
-    changed = true
-  }
+  if (mcpFrom && applyMcpChoices(entry, projects, mcpFrom, cwd)) changed = true
   if (!changed) return
   try {
     const tmp = `${cfgPath}.companion-${process.pid}`
     writeFileSync(tmp, JSON.stringify(cfg, null, 2))
     renameSync(tmp, cfgPath)
   } catch { /* best-effort — worst case the trust dialog still appears */ }
-}
-
-function mcpjsonServerNames(cwd: string): string[] {
-  try {
-    const servers: unknown = JSON.parse(readFileSync(`${cwd}/.mcp.json`, "utf8")).mcpServers
-    return servers && typeof servers === "object" ? Object.keys(servers) : []
-  } catch { return [] }
 }
 
 export type SpawnApp = "terminal" | "iterm" | "tmux" | "herdr" | "auto"

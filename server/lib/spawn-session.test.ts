@@ -169,7 +169,7 @@ test("ensureFolderTrusted disables every .mcp.json server when the main checkout
 
 test("ensureFolderTrusted keeps MCP choices already on the worktree entry and skips MCP without mcpFrom", () => {
   const f = mcpFixture({ "/repo": { enabledMcpjsonServers: ["railway"] } })
-  const wtEntry = { hasTrustDialogAccepted: true, disabledMcpjsonServers: ["railway"] }
+  const wtEntry = { hasTrustDialogAccepted: true, disabledMcpjsonServers: ["railway", "perplexity"] }
   writeFileSync(f.cfgPath, JSON.stringify({ projects: { "/repo": { enabledMcpjsonServers: ["railway"] }, [f.wt]: wtEntry } }))
   ensureFolderTrusted(f.wt, "/repo", f.cfgPath)
   expect(f.read().projects[f.wt]).toEqual(wtEntry)
@@ -182,4 +182,13 @@ test("ensureFolderTrusted disables .mcp.json servers the copied choices leave un
   const f = mcpFixture({ "/repo": { enabledMcpjsonServers: ["railway"], disabledMcpjsonServers: [], enableAllProjectMcpServers: false } })
   ensureFolderTrusted(f.wt, "/repo", f.cfgPath)
   expect(f.read().projects[f.wt]).toEqual({ hasTrustDialogAccepted: true, enabledMcpjsonServers: ["railway"], disabledMcpjsonServers: ["perplexity"], enableAllProjectMcpServers: false })
+})
+
+test("ensureFolderTrusted treats empty lists on a retried worktree entry as unanswered", () => {
+  const f = mcpFixture({})
+  writeFileSync(f.cfgPath, JSON.stringify({ projects: { "/repo": { enabledMcpjsonServers: ["railway"] }, [f.wt]: { hasTrustDialogAccepted: true, enabledMcpjsonServers: [], disabledMcpjsonServers: [] } } }))
+  ensureFolderTrusted(f.wt, "/repo", f.cfgPath)
+  const e = f.read().projects[f.wt]
+  expect(e.enabledMcpjsonServers).toEqual(["railway"])
+  expect(e.disabledMcpjsonServers).toEqual(["perplexity"])
 })
