@@ -137,16 +137,17 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
+| `wiring/takeover-liveness.ts` | 138 | lib | 7 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/worker-identity.ts` | 134 | lib | 6 |  |
 | `lib/hook-common.ts` | 133 | lib | 9 |  |
-| `wiring/takeover-liveness.ts` | 133 | lib | 7 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `wiring/body-fix.ts` | 122 | lib | 4 | state: let deps · emits: orchestrator_channel |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
+| `lib/herdr-seed.ts` | 119 | lib | 11 |  |
 | `lib/takeover-store.ts` | 119 | lib | 6 |  |
 | `wiring/resolver-peer.ts` | 117 | lib | 7 | state: let store, let deps |
 | `lib/model-control.ts` | 115 | lib | 9 |  |
@@ -161,7 +162,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/dialogs.ts` | 97 | route-host | 1 | routes: 2 |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
-| `lib/herdr-seed.ts` | 94 | lib | 9 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
@@ -366,10 +366,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `herdrPaneOf()` | `lib/herdr.ts` | `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/herdr-workspace.ts`, `lib/keyboard-inject.ts`, `lib/pane-clean.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/auto-compact.ts`, `wiring/dialogs.ts` |
 | `pushToAll()` | `lib/push.ts` | `lib/records-expiry.ts`, `lib/secret-requests.ts`, `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/receipt-qa.ts` |
 | `getTask()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/body-fix.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/triage.ts`, `wiring/worker-io.ts` |
+| `keyGate()` | `lib/key-gate.ts` | `lib/command-scrape.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts`, `wiring/takeover-liveness.ts` |
 | `withIdempotency()` | `lib/idempotency.ts` | `routes/api.ts#POST /api/resolve`, `routes/api.ts#POST /api/answer`, `routes/api.ts#POST /api/inject`, `routes/capture.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/trips.ts` |
 | `resolveSession()` | `lib/sessions.ts` | `routes/api.ts#* /api/feed`, `routes/attach.ts#POST /api/attach`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
 | `dispatchWiring()` | `wiring/dispatch.ts` | `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/body-fix.ts`, `wiring/front-door.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/takeover.ts`, `wiring/triage.ts` |
-| `keyGate()` | `lib/key-gate.ts` | `lib/command-scrape.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts` |
 | `recordSession()` | `lib/sessions.ts` | `lib/discover.ts`, `lib/rehydrate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start` |
 | `Herdr()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/orphan-question.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `wiring/takeover-liveness.ts`, `wiring/takeover.ts`, `wiring/worker-io.ts` |
 | `realHerdr()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/pane-clean.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `wiring/dialogs.ts`, `wiring/takeover.ts`, `wiring/worker-io.ts` |
@@ -447,6 +447,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `LIVE_STATUSES()` | `lib/orchestrator-chat.ts` | `lib/worker-tail.ts`, `wiring/live.ts`, `wiring/orchestrator.ts`, `wiring/worker-io.ts` |
 | `buildComponentDetail()` | `lib/body.ts` | `routes/body.ts#GET /api/body/component/`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/resolver.ts` |
 | `runTmux()` | `lib/key-gate.ts` | `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts` |
+| `herdrGatedKey()` | `lib/herdr.ts` | `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/takeover-liveness.ts` |
 | `isModelPicker()` | `lib/model-control.ts` | `routes/model.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel` |
 | `getThread()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/front-door.ts`, `wiring/orchestrator.ts` |
 | `resolveAgent()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/live.ts`, `wiring/orchestrator.ts` |
@@ -514,7 +515,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `CompactionStats()` | `lib/auto-compact-stats.ts` | `routes/body.ts`, `routes/body.ts#GET /api/body/tokens`, `wiring/auto-compact.ts` |
 | `createLimiter()` | `lib/vault-guard.ts` | `routes/capture.ts`, `routes/records.ts`, `routes/trips.ts` |
 | `UpstreamConfig()` | `lib/vault-upstream.ts` | `routes/capture.ts`, `routes/records.ts`, `routes/vault.ts` |
-| `herdrGatedKey()` | `lib/herdr.ts` | `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick` |
 | `isLoopback()` | `lib/vault-guard.ts` | `routes/copy-jobs.ts#POST /hooks/copy-progress`, `routes/gauge.ts#POST /hooks/gauge`, `routes/hooks.ts#POST /hooks/dispatch-event` |
 | `copyJobs()` | `wiring/copy-jobs.ts` | `routes/copy-jobs.ts#POST /hooks/copy-progress`, `routes/copy-jobs.ts#GET /api/copy-jobs`, `ws.ts` |
 | `gauge()` | `wiring/gauge.ts` | `routes/gauge.ts#POST /hooks/gauge`, `routes/gauge.ts#GET /api/gauge`, `routes/hooks.ts#POST /hooks/session-end` |

@@ -1747,7 +1747,7 @@
         },
         {
           "path": "lib/herdr-seed.ts",
-          "lines": 94,
+          "lines": 119,
           "kind": "lib",
           "exports": [
             "SEED_TRIES",
@@ -1755,6 +1755,8 @@
             "SEED_WAIT_MS",
             "SeedGate",
             "seedGate",
+            "LandedIO",
+            "SUBMIT_SETTLE_MS",
             "promptLanded",
             "PumpOpts",
             "PumpOutcome",
@@ -7058,7 +7060,7 @@
         },
         {
           "path": "wiring/takeover-liveness.ts",
-          "lines": 133,
+          "lines": 138,
           "kind": "lib",
           "exports": [
             "START_GRACE_MS",
@@ -7076,6 +7078,7 @@
           "apiCalls": [],
           "imports": [
             "lib/herdr.ts",
+            "lib/key-gate.ts",
             "lib/herdr-seed.ts"
           ],
           "listeners": [],
@@ -8840,7 +8843,8 @@
             "routes/command.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
-            "routes/model.ts"
+            "routes/model.ts",
+            "wiring/takeover-liveness.ts"
           ]
         },
         "readSecretValue": {
@@ -12339,7 +12343,8 @@
           "callers": [
             "routes/command.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick"
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/takeover-liveness.ts"
           ]
         },
         "herdrGatedText": {
