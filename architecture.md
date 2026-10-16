@@ -17,13 +17,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 591 | lib | 18 |  |
 | `routes/hooks.ts` | 568 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
-| `wiring/takeover.ts` | 554 | lib | 16 | state: let liveStore, let deps, running: Map, seeding: Map, held: Set, let tickStartedAt, let skipLoggedAt, misses: Map, ghAt: Map |
+| `wiring/takeover.ts` | 555 | lib | 16 | state: let liveStore, let deps, running: Map, seeding: Map, held: Set, let tickStartedAt, let skipLoggedAt, misses: Map, ghAt: Map |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/resolver.ts` | 532 | lib | 47 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 518 | lib | 53 |  |
+| `wiring/orchestrator.ts` | 490 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/triage.ts` | 485 | lib | 47 | state: DESTRUCTIVE: Set |
-| `wiring/orchestrator.ts` | 484 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
@@ -31,9 +31,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/api.ts` | 461 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
 | `wiring/triage.ts` | 459 | lib | 10 | state: let liveResolver, let live, prCacheDrop: WeakMap |
+| `lib/orchestrator-chat.ts` | 444 | lib | 35 |  |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
-| `routes/orchestrator.ts` | 433 | route-host | 3 | routes: 10 |
-| `lib/orchestrator-chat.ts` | 432 | lib | 35 |  |
+| `routes/orchestrator.ts` | 435 | route-host | 3 | routes: 10 |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
@@ -47,10 +47,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `wiring/resolver.ts` | 352 | lib | 13 |  |
+| `lib/herdr.ts` | 346 | lib | 26 | state: let clientMod, spawnedAgents: Map |
 | `lib/tmux-pane.ts` | 346 | lib | 25 |  |
-| `lib/herdr.ts` | 343 | lib | 26 | state: let clientMod, spawnedAgents: Map |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
-| `wiring/live.ts` | 318 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
+| `wiring/live.ts` | 319 | lib | 15 | state: let runner, let capOverride, let reserved, spawning: Set · listens: onLiveWorkerDead |
 | `lib/triage-sources.ts` | 308 | lib | 26 | state: HOLDS: Set |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/live-repo.ts` | 304 | lib | 28 | state: let probe |
@@ -76,6 +76,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver-work.ts` | 241 | lib | 5 |  |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
+| `wiring/worker-io.ts` | 231 | lib | 11 | state: let deps, pumping: Map |
 | `lib/triage-repos.ts` | 228 | lib | 17 | state: MEMBER_SOURCES: Set |
 | `routes/command.ts` | 228 | route-host | 1 | routes: 2 |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
@@ -105,11 +106,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dialog-watch.ts` | 198 | lib | 5 |  |
 | `lib/resolver-fix.ts` | 197 | lib | 14 | state: PROTECTED: Set |
 | `routes/trips.ts` | 196 | lib | 5 |  |
-| `wiring/worker-io.ts` | 196 | lib | 9 | state: let deps, pumping: Map |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/inject-guard.ts` | 187 | lib | 7 |  |
 | `wiring/body-agent.ts` | 187 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
+| `lib/body-fix.ts` | 179 | lib | 12 |  |
 | `lib/dashboard-client.ts` | 177 | lib | 29 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
@@ -119,7 +120,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `routes/body.ts` | 166 | route-host | 3 | routes: 6 |
-| `lib/body-fix.ts` | 165 | lib | 12 |  |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
@@ -129,10 +129,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/feed.ts` | 149 | lib | 10 | state: feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
+| `lib/worker-tail.ts` | 147 | lib | 3 | state: LIVE_STATUSES: Set |
 | `routes/triage.ts` | 146 | lib | 2 |  |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 7 | state: db: Database |
-| `lib/worker-tail.ts` | 145 | lib | 3 | state: LIVE_STATUSES: Set |
 | `lib/jev.ts` | 143 | lib | 16 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
@@ -142,6 +142,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
 | `lib/worker-identity.ts` | 134 | lib | 6 |  |
 | `lib/hook-common.ts` | 133 | lib | 9 |  |
+| `wiring/takeover-liveness.ts` | 133 | lib | 7 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `wiring/body-fix.ts` | 122 | lib | 4 | state: let deps · emits: orchestrator_channel |
@@ -153,7 +154,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `companion-server.ts` | 113 | route-host | 1 | routes: 5 |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
-| `wiring/takeover-liveness.ts` | 106 | lib | 6 |  |
 | `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
 | `lib/orchestrator-db.ts` | 104 | lib | 2 |  |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
@@ -161,12 +161,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/dialogs.ts` | 97 | route-host | 1 | routes: 2 |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
+| `lib/herdr-seed.ts` | 94 | lib | 9 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
 | `lib/trip-geocode.ts` | 87 | lib | 8 |  |
+| `lib/herdr-inject.ts` | 84 | lib | 6 |  |
 | `lib/orchestrator-queue.ts` | 84 | lib | 6 |  |
-| `lib/herdr-inject.ts` | 83 | lib | 6 |  |
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
 | `lib/tasks-agent-testdb.test-util.ts` | 82 | lib | 4 |  |
@@ -179,7 +180,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/proposals.ts` | 73 | lib | 5 |  |
 | `wiring/body.ts` | 71 | lib | 8 | emits: orchestrator_channel, orchestrator, body_alert |
 | `wiring/takeover-choose.ts` | 71 | lib | 2 |  |
-| `lib/herdr-seed.ts` | 70 | lib | 8 |  |
 | `lib/resolver-fix-guard.ts` | 69 | lib | 4 |  |
 | `routes/attach.ts` | 67 | route-host | 1 | route: POST /api/attach |
 | `lib/trip-report.ts` | 66 | lib | 5 |  |
@@ -582,6 +582,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `herdrSendText()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts` |
 | `inputText()` | `lib/command-menu.ts` | `lib/herdr-seed.ts`, `lib/inject-verified.ts` |
 | `closeHerdrWorkspaceWhenIdle()` | `lib/herdr.ts` | `lib/herdr-workspace.ts`, `wiring/takeover.ts` |
+| `herdrOwnerFor()` | `lib/herdr.ts` | `lib/herdr-workspace.ts`, `wiring/orchestrator.ts` |
 | `tmuxSendKeys()` | `lib/keyboard-inject.ts` | `lib/inject-verified.ts`, `lib/submit-confirm.ts` |
 | `tmuxPaneWidth()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `wiring/dialogs.ts` |
 | `herdrPaneWidth()` | `lib/herdr.ts` | `lib/inject-verified.ts`, `wiring/dialogs.ts` |

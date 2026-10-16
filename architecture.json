@@ -608,7 +608,7 @@
         },
         {
           "path": "lib/body-fix.ts",
-          "lines": 165,
+          "lines": 179,
           "kind": "lib",
           "exports": [
             "FIX_TIMEOUT_MS",
@@ -1720,7 +1720,7 @@
         },
         {
           "path": "lib/herdr-inject.ts",
-          "lines": 83,
+          "lines": 84,
           "kind": "lib",
           "exports": [
             "INJECT_QUEUE_MS",
@@ -1747,7 +1747,7 @@
         },
         {
           "path": "lib/herdr-seed.ts",
-          "lines": 70,
+          "lines": 94,
           "kind": "lib",
           "exports": [
             "SEED_TRIES",
@@ -1755,6 +1755,7 @@
             "SEED_WAIT_MS",
             "SeedGate",
             "seedGate",
+            "promptLanded",
             "PumpOpts",
             "PumpOutcome",
             "pumpPrompt"
@@ -1799,7 +1800,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 343,
+          "lines": 346,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -2491,7 +2492,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 432,
+          "lines": 444,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -5286,7 +5287,7 @@
         },
         {
           "path": "lib/worker-tail.ts",
-          "lines": 145,
+          "lines": 147,
           "kind": "lib",
           "exports": [
             "WorkerTailDeps",
@@ -5998,7 +5999,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 433,
+          "lines": 435,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6704,7 +6705,7 @@
         },
         {
           "path": "wiring/live.ts",
-          "lines": 318,
+          "lines": 319,
           "kind": "lib",
           "exports": [
             "LiveRunner",
@@ -6776,7 +6777,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 484,
+          "lines": 490,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -6833,6 +6834,7 @@
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/worker-ref.ts",
+            "lib/herdr.ts",
             "lib/body.ts",
             "lib/orchestrator-db.ts",
             "wiring/body.ts",
@@ -7056,13 +7058,14 @@
         },
         {
           "path": "wiring/takeover-liveness.ts",
-          "lines": 106,
+          "lines": 133,
           "kind": "lib",
           "exports": [
             "START_GRACE_MS",
             "PANE_ERRORS_MAX",
             "HerdrAgentRef",
             "AgentLookup",
+            "Expect",
             "LivenessDeps",
             "createLiveness"
           ],
@@ -7081,7 +7084,7 @@
         },
         {
           "path": "wiring/takeover.ts",
-          "lines": 554,
+          "lines": 555,
           "kind": "lib",
           "exports": [
             "TAKEOVER_HOP",
@@ -7335,13 +7338,15 @@
         },
         {
           "path": "wiring/worker-io.ts",
-          "lines": 196,
+          "lines": 231,
           "kind": "lib",
           "exports": [
             "WorkerIODeps",
             "setWorkerIODeps",
             "workerIOIdle",
             "deliverWorkerPrompt",
+            "SpawnedWorker",
+            "recordSpawn",
             "resumeWorkerPrompts",
             "readHerdrPane",
             "herdrGone",
@@ -9303,7 +9308,8 @@
         "herdrOwnerFor": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/herdr-workspace.ts"
+            "lib/herdr-workspace.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "forgetHerdrAgent": {
@@ -14284,12 +14290,6 @@
             "wiring/media.ts"
           ]
         },
-        "setTaskSpawn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
         "bindTaskSession": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -14370,6 +14370,12 @@
           ]
         },
         "deliverWorkerPrompt": {
+          "module": "wiring/worker-io.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "recordSpawn": {
           "module": "wiring/worker-io.ts",
           "callers": [
             "wiring/orchestrator.ts"
@@ -14764,6 +14770,12 @@
           ]
         },
         "seedGate": {
+          "module": "lib/herdr-seed.ts",
+          "callers": [
+            "wiring/takeover-liveness.ts"
+          ]
+        },
+        "promptLanded": {
           "module": "lib/herdr-seed.ts",
           "callers": [
             "wiring/takeover-liveness.ts"
@@ -15387,6 +15399,24 @@
           ]
         },
         "markPromptSent": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/worker-io.ts"
+          ]
+        },
+        "WorkerRef": {
+          "module": "lib/worker-ref.ts",
+          "callers": [
+            "wiring/worker-io.ts"
+          ]
+        },
+        "Expect": {
+          "module": "wiring/takeover-liveness.ts",
+          "callers": [
+            "wiring/worker-io.ts"
+          ]
+        },
+        "setTaskSpawn": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/worker-io.ts"
