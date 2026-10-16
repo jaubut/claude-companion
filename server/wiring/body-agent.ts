@@ -5,7 +5,7 @@ import { BODY_CHANNEL, BODY_CHANNEL_NAME, type BodyComponentDetail, buildCompone
 import {
   type BodyAgentStore, DEFAULT_BODY_AGENT, OPEN_DISPATCH_STATES, agentFor, agentTitle, buildAgentPrompt, createBodyAgentStore,
 } from "../lib/body-agent"
-import { type FixCard, localizeCwd, postFix } from "../lib/body-fix"
+import { type FixCard, fixCwd, localizeCwd, postFix } from "../lib/body-fix"
 import { type BodyHost, type InvestigationRecord, hostFromId, localBodyHost, ownerHost } from "../lib/body-investigate"
 import { DEFAULT_NOTE_ID, type PeerConfig, bodyPeer } from "../lib/body-investigate-engine"
 import { type KnownPaths, knownPaths } from "../lib/body-investigator"
@@ -112,7 +112,7 @@ type Started = { ok: true; taskId: string; dispatchTaskId: string } | { ok: fals
 async function runLocal(componentId: string, p: Plan, dispatch: DispatchWiring): Promise<Started> {
   const { channel, created } = ensureChannel(BODY_CHANNEL, BODY_CHANNEL_NAME)
   if (created) broadcast({ type: "orchestrator_channel", channel })
-  const cwd = localizeCwd(p.cwd)
+  const cwd = fixCwd(localizeCwd(p.cwd)).cwd
   const t = createProposal(p.prompt, cwd, `Body agent run on ${componentId} (tapped "Get an agent on it")`, BODY_CHANNEL, {
     noteId: p.noteId, agent: p.agent, title: p.title,
   })

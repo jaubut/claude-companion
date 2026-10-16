@@ -115,6 +115,143 @@ Last updated: 2026-10-04
 
 ## Change Plans
 
+### Change Plan — orch-herdr-dispatch (2026-10-16)
+**Request (Jeremie):** orchestrator dispatch (`executeDispatch`, Body auto-fix via `wiring/body-fix.ts`, `workerQueue`, `reconcileDispatch`, `workerTail`) must work when `spawnCompanionSession` lands in herdr (the "auto" default since #150). Persist the herdr identity, deliver the prompt through herdr (sharing the takeover seed path), tail with `pane read`, decide dead from herdr presence rather than tmux capture, keep a start dialog from killing the task or losing the prompt, refuse a Body cwd inside an `.app` bundle, keep tmux/Linux working, and cover `wiring/live.ts`.
+**Evidence:** prod 2026-10-16. A herdr spawn returns `sessionName` = herdr agent name ("cc--claude-3"). `setTaskSpawn` stores that as `tmux_session`. `sendToTmux` gets `capturePane` null, so it returns silently and nothing is delivered. `workerTail` counts 3 misses and calls `setTaskDead`, so the task is `error` about 7 s after spawn. All 12 Body fixes errored, and the last `done` row is from 2026-10-04. `tmuxRunner.alive` / `.kill` (live.ts) and `cancelLocal` (routes/orchestrator.ts) have the same tmux-only assumption: the boot reconcile fails every herdr worker, and cancel leaves it running.
+**Done when:**
+- A Body fix approved on the phone (Mac, auto → herdr) gets its prompt typed into the herdr pane. The task goes dispatched → running → done, and the live tail streams in #Body.
+- A start dialog (MCP picker, trust) holds the prompt: the task stays live, one "waiting on" turn appears, the dialog mirror shows it, and the prompt goes in after the phone answers. Restarting Companion meanwhile neither loses the prompt nor sends it twice.
+- A launchd component whose cwd is inside `*.app/` runs its fix in `~`, and the prompt and #Body turn say so. Workers on app=tmux and on Zettlab (spawnLinux tmux fallback) behave exactly as today.
+
+**Target shape & drift**
+- Leader reference: Kubernetes CRI (`k8s.io/cri-api` RuntimeService). One control plane drives many runtimes through a runtime-neutral handle, and status comes from the runtime, never from scraping. Mapping: `RunPodSandbox/CreateContainer` → spawn · `runtimeClassName` → `WorkerRef.kind` · `ContainerStatus` → herdr `agent get` (interactive_ready, agent_status, foreground pid) · `Attach/ExecSync` → `agent prompt` · `ReadLogs` → `pane read` · `StopContainer` → `workspace close`. The herdr ops come from herdr 0.9.5's own CLI surface (`agent get/prompt/wait`, `pane read/process-info`, `workspace get/close`).
+- Reference for this intent: (1) a task stores a typed worker handle (`kind` + ids), never a bare tmux name; (2) one worker-IO module owns read/deliver/alive/kill per kind, and the callers (orchestrator, live, routes, takeover) never branch on tmux; (3) liveness comes from runtime presence, the screen is only for display; (4) "prompt pending" is persisted state with one owner, so delivery is exactly-once across restarts; (5) dialogs are surfaced to the phone, never auto-keyed blind.
+- Deviations today: `tmux_session` is overloaded (it held the herdr name). Worker IO is spread over 4 sites (orchestrator `sendToTmux`, live `tmuxRunner`, routes `cancelLocal`, takeover). Dead = capture null. A pending prompt is held in memory only (takeover, #172). The tmux path auto-presses Escape on any dialog, which rejects MCP servers. The Body cwd is guessed from the first absolute plist argument. `spawn-session.ts` is 591/600.
+- This change moves toward (1)–(4) for orchestrator workers: `WorkerRef` + `wiring/worker-io.ts` + persisted `prompt_sent_at` + herdr presence. For herdr it applies (5).
+- Left for follow-up (to file, `agent:builder`, PRJ-OR1T): (a) tmux path: wait and surface dialogs instead of pressing Escape; (b) persist takeover pending seeds the same way (`prompt_sent_at` on takeover rows); (c) split `spawn-session.ts`: herdr spawn → `lib/spawn-herdr.ts`; (d) the Body component registry carries an explicit repo/cwd instead of the plist heuristic; (e) pre-seed MCP choices for orchestrator cwds so `~/.claude` spawns skip the picker; (f) worker-identity tier 2b for herdr (`herdrPane` → task) when a worker has no task id.
+
+**Sequencing vs #172:** build on it, then extract. #172 (MERGED eb62b5e 2026-10-16; this branch is rebased on it) already has the right semantics: `pumpSeed` waits on a dialog without spending a try, never types over user input, has a 2 h ceiling, and announces each dialog once. Its `seedGate` reuses the dialog mirror's `parseDialog`. Extracting a helper now would conflict in the same 30 lines of takeover.ts. So: **step 0 = merge #172 (done)**. **Step 1** moves its loop and `seedGate` into a pure `lib/herdr-seed.ts`. takeover.ts keeps a thin wrapper. The 39 takeover tests stay unchanged and must still pass. Orchestrator workers then use the same `pumpPrompt`.
+
+**State decisions**
+- Worker handle: in `lib/orchestrator-chat.ts` (Task) and the `orchestrator_tasks` columns `herdr_agent TEXT` and `herdr_pane TEXT`. These are new columns (additive `addColumn`), not a reuse of tmux_session/tmux_socket with a discriminator. Reason: `tmux_session` feeds worker-identity tier 2 and the kill argv, so a herdr name there is a wrong-target bug, as today showed. Discriminator: `herdr_pane IS NOT NULL` ⇒ herdr (`lib/worker-ref.ts workerRefOf`). Herdr rows have `tmux_session = NULL`. Written only by `setTaskSpawn` (from executeDispatch).
+- Spawn time: `spawned_at INTEGER` (new column), set by `setTaskSpawn`. `Task.createdAt` is the proposal time and `updated_at` moves on every log-tail or status write, so neither can be the liveness start. Pre-migration rows read NULL and fall back to `updated_at`.
+- Prompt delivered: `prompt_sent_at INTEGER` (new column). Set by `markPromptSent` from worker-io on a confirmed delivery, for both tmux and herdr. Read by the boot resume. In-process dedupe: `pumping: Set<taskId>` in worker-io.
+- Herdr delivery starts in `executeDispatch`, right after `setTaskSpawn`, the same as takeover's `continueStart`. It does not wait for the bind, because a start dialog delays SessionStart. `reconcileOnce` only binds herdr tasks; their turn reads `[id] worker live` (no "sending prompt"). tmux tasks keep bind → `sendToTmux` unchanged.
+- Pump stop flag: before each pass `pumpPrompt` calls `stillWanted()` = `getTask(id).status ∈ LIVE_STATUSES` (guard line in worker-io), so a phone cancel stops it on the next pass. Outcomes: delivered → `markPromptSent` and turn `[id] prompt delivered`. Dialog → one turn per title: `⏸️ [id] worker waiting on "<title>" — answer it on the phone; the prompt goes in once it clears`. Gave up (24 non-dialog refusals or 2 h) → task `error` plus `liveWorkerDead` (Turso failed, blocker `prompt never delivered: <reason>`). The workspace is left open for inspection.
+- Liveness: one `createLiveness` instance in worker-io. Herdr worker gone = `missing(agent, spawnedAt, taskId)`: a registered session with `taskId`, or claude in front of the agent's pane, counts as alive. It has the 3 min start grace and a 5-error budget. A dialog keeps claude in front, so the worker is alive. A herdr worker is dead **only** when `herdrGone()` returns true. A null `readHerdr` never counts toward `paneMisses`; it only triggers a `herdrGone` check, which is awaited inside `tick` under the `ticking` guard. tmux keeps capture-null × 3.
+- Persistence: sqlite `orchestrator_tasks` only. No new frame; changes are announced by the existing `orchestrator_task` / `orchestrator` / `orchestrator_worker_output` frames.
+
+**Contracts touched** (architecture.md)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `orchestrator_task` | frame | +`herdrAgent`, `herdrPane`, `promptSentAt` (via `toTaskDto` `...t` spread); `tmuxSession` null for herdr | ios:ios/WSFrame.swift (OrchestratorModels.swift: `tmuxSession` `try?` optional, explicit CodingKeys ignore new keys) | additive, safe |
+| `orchestrator` | frame | new turn texts only | ios:ios/WSFrame.swift | shape unchanged |
+| `orchestrator_worker_output` | frame | same shape, herdr screen lines | ios:ios/WSFrame.swift | unchanged |
+| `GET /api/orchestrator/task/…`, `/thread` | endpoint | same DTO additions | ios OrchestratorActions.swift, OrchestratorClient.swift | additive |
+| `POST /api/body/fix` | endpoint | response unchanged; cwd may be replaced | wiring/body-fix.ts `postFix` (Zettlab → Mac) | same shape |
+| `orchestrator_tasks` | sqlite | +3 nullable columns | lib/orchestrator-chat.ts only | additive migration |
+| `setTaskSpawn()` | export | +optional 4th `herdr: {agent, pane}` | wiring/orchestrator.ts, orchestrator-chat.test.ts (3-arg calls unchanged) | additive |
+| `createLiveness().alive/missing` | export | +optional `sessionTaskId` (default = name) | wiring/takeover.ts | additive |
+| `WorkerTailDeps` | export | +optional `readHerdr(pane)`, `herdrGone(task)` | wiring/orchestrator.ts | additive |
+| `LiveIdentity` (dispatch-poller) | internal | unchanged (`tmuxSession` null for herdr) | lib/dispatch-poller.ts, wiring/dispatch.ts | — |
+
+**Files: one builder, sequenced WS-A; WS-B (Body cwd) touches disjoint files and can run in parallel**
+| file | owner | change | lines now → after cap check |
+|---|---|---|---|
+| `server/lib/herdr-seed.ts` | A1 | NEW: SeedGate, seedGate, PumpOpts, PumpOutcome, pumpPrompt, SEED_TRIES, SEED_RETRY_MS, SEED_WAIT_MS (moved from #172); fix round: `promptLanded`, `PumpOpts.landed`, WAIT_CODES (agent_not_ready), FATAL_CODES (leading_dash, agent_gone) | 0 → 93 ✓ |
+| `server/wiring/takeover.ts` | A1 | pumpSeed → wrapper over pumpPrompt (+ `landed`) | 564 (post-#172) → 554 ✓ |
+| `server/wiring/takeover-liveness.ts` | A1 | seedGate delegates; alive/missing take `Expect {sessionTaskId, pane, workspaceId}` (counters keyed by sessionTaskId, default = name); `agentAt` (pane/workspace mismatch = absent), `landed`, `HerdrAgentRef.interactiveReady` | 109 → 132 ✓ |
+| `server/lib/orchestrator-db.ts` | A2 | addColumn herdr_agent, herdr_pane, spawned_at, prompt_sent_at, herdr_workspace (fix round) | 98 → 103 ✓ |
+| `server/lib/orchestrator-chat.ts` | A2 | Task/TaskRow/toTask fields (herdrAgent, herdrPane, spawnedAt, promptSentAt); setTaskSpawn 4th arg writes herdr cols, `tmux_session = NULL` and `spawned_at` in the **same** UPDATE; markPromptSent; `listPendingHerdrPrompts()` = `herdr_pane IS NOT NULL AND prompt_sent_at IS NULL AND status IN LIVE`; fix round: `herdrWorkspace`, setTaskSpawn `WHERE status IN ('proposed','queued')` → boolean, cwd matchers + counts `AND herdr_pane IS NULL` | 393 → 443 ✓ |
+| `server/lib/dispatch-tasks.ts` | A2 | `TaskDto` (:40) declares `herdrAgent`, `herdrPane`, `promptSentAt` (optional, nullable); `toTaskDto` sets them on herdr tasks only, never spawnedAt / herdrWorkspace | 510 → 517 ✓ |
+| `server/lib/worker-ref.ts` | A3 | NEW: WorkerRef (herdr carries `workspace`), workerRefOf, workerLabel | 0 → 23 ✓ |
+| `server/lib/herdr.ts` | A3 | + closeHerdrAgentWorkspace(name, pane, h, workspaceId?): `agent get` (pane must match, workspace when known) → `workspace get`, label === name and pane_count 1 → `workspace close`; absent = no-op | 324 → 345 ✓ |
+| `server/lib/herdr-inject.ts` | fix | `HerdrDelivery` failure + optional `code` (herdr's error code; the local `leading_dash` refusal keeps its shape, worker-io tags it fatal) | 81 → 83 ✓ |
+| `server/wiring/worker-io.ts` | A3 | NEW: WorkerIODeps, setWorkerIODeps, workerIOIdle, sendToTmux (moved, returns sent), deliverWorkerPrompt, resumeWorkerPrompts, readHerdrPane, herdrGone, workerAlive, killWorker; fix round: recordSpawn + its SpawnedWorker param type, pane-owned delivery (`deliverOwned`) | 0 → 228 ✓ |
+| `server/wiring/orchestrator.ts` | A4 | sendToTmux out; executeDispatch records herdr (+ workspace from `herdrOwnerFor`) via `recordSpawn` + starts the pump; reconcileOnce: herdr = bind only, turn `worker live`; tail deps; boot `resumeWorkerPrompts(listPendingHerdrPrompts())`, never tmux rows; `workerFailed(taskId, blocker)` | 491 → 489 ✓ |
+| `server/lib/worker-tail.ts` | A4 | :80 guard `if (!task.tmuxSession && !task.herdrPane) return`; :116 resumeAll filter accepts herdrPane; herdr branch: readHerdr each tick; awaited `herdrGone(task)` when the read is null and every 4th tick; dead only on `herdrGone` true; `paneMisses` stays tmux-only | 121 → ~145 ✓ |
+| `server/wiring/live.ts` | A4 | `tmuxRunner` (name kept) = {spawn: executeDispatch, kill: killWorker, alive: workerAlive}; onLiveWorkerDead blocker arg; a spawn failure keeps a `cancelled` row | 331 → 318 ✓ |
+| `server/routes/orchestrator.ts` | A4 | cancelLocal → `cancelled` then killWorker(task) | 439 → 434 ✓ |
+| `docs/orchestrator-dispatch-api.md` | A4 | herdr workers: identity, delivery, dialogs, liveness | doc |
+| `server/lib/body-fix.ts` | B | + fixCwd(cwd, home, exists) → {cwd, replaced}: a `<x>.app` segment (any case) followed by `Contents`, in an Applications folder, or holding `Contents/` on disk → home; `~/code/tls.app` and `/x/webapp/y` pass | 154 → 178 ✓ |
+| `server/wiring/body-fix.ts` | B | approveBodyFix local branch and runBodyFix use `fixCwd(localizeCwd(x))` (fixCwd after localize); when replaced: a prompt line ("reported cwd <x> is inside an app bundle — running in <home>") and a #Body turn; the :94 turn prints the **effective** cwd | 113 → ~125 ✓ |
+| `server/wiring/body-agent.ts` | B | :115 `const cwd = fixCwd(localizeCwd(p.cwd)).cwd` (one line, belt and braces) | 186 → 186 ✓ |
+| `server/lib/body-investigator.ts` | B | knownPaths: `gitRoot` is computed from the ORIGINAL cwd first (an `.app` inside a repo keeps its repo-based fix), then only an `.app` cwd is dropped → `repo ?? null` → engine default `~/.claude` when there is no repo | 389 → ~394 ✓ |
+| tests: `lib/herdr-seed.test.ts` NEW, `wiring/worker-io.test.ts` NEW (incl. createLiveness `sessionTaskId`), `lib/worker-tail.test.ts`, `lib/orchestrator-chat.test.ts`, `lib/dispatch-tasks.test.ts`, `lib/body-fix-cwd.test.ts`, `lib/body-investigator.test.ts`, `lib/herdr.test.ts`, `routes/body-fix.test.ts`, `routes/orchestrator-idempotency.test.ts` (add cases only) | A/B | — | takeover.test.ts not edited (746 lines post-#172) |
+`lib/spawn-session.ts` (591/600) is **not touched**: its `SpawnResult.app/herdrPane/sessionName` already carry everything needed.
+
+**Fan-in paths to guard**
+- `executeDispatch()` is reached from `workerQueue.dispatch` (30 s tick, boot drain, stop hook, dead worker) and from `runner.spawn` (approveLive ← routes approve-live, `runBodyFix`/`approveBodyFix`, body-agent, proposals, dispatchLive). Exactly one pump per task: the `pumping` set plus `prompt_sent_at`.
+- `reconcileDispatch()` fires from about 10 onSessions call sites. For herdr it must never deliver (bind only), otherwise the prompt is sent twice.
+- Dead path: `setTaskDead` (tail) and pump give-up both reach `liveWorkerDead → closeLive`. Both act only if the status is still LIVE, so a Stop hook `done` that races wins.
+- `killWorker()` from `cancelLocal` and `cancelLive`: an already-closed workspace or absent agent is a no-op, and a workspace whose label ≠ the agent name is never closed (herdr reuses pane/workspace ids).
+- `deliverViaHerdr()` (keyboard-inject, submit-confirm, takeover, now worker-io) goes through the per-pane keyGate, so a phone inject and the pump serialize.
+
+**Risks**
+- kb offline: no external gotchas checked (KB_DEV_TOKEN masked in this sandbox). The touched modules have no npm externals besides builtins.
+- herdr `agent prompt` refuses text that starts with `-` (`leading_dash`, not blocked) → it counts tries and gives up after about 2 min. Mitigation: worker-io prefixes nothing, but a test asserts the give-up turn names the reason.
+- MCP picker on every `~/.claude` spawn: the prompt waits for the phone. Body fixes are unattended, so a fix can hold a WIP slot for up to 2 h. Mitigation: a waiting turn plus the dialog mirror push; follow-up (e).
+- A worker with no `COMPANION_TASK_ID` in hooks: herdr has no tier-2 pane → session, so several Body fixes in `~/.claude` hit the ambiguous-cwd refuse. Mitigation: `--env` already carries it (the takeover path proves it); verify step 6 checks `sessions[].taskId`. Follow-up (f).
+- Map blind spot: the archmap fan-in lists no caller of `tmuxRunner` outside live.ts, and the tests swap it through `setLiveRunner` (orchestrator-live.test.ts, body-fix.test.ts). Those must stay green without edits.
+- Herdr rows from before this change (all `error`) are not resumed: the boot resume filters on status LIVE.
+
+**Verify**
+1. `bun test server/lib/herdr-seed.test.ts`: dialog for 5 min then cleared → `agent prompt` called exactly once; **status flipped to cancelled mid-wait → deliver never called and the outcome is `dropped` on the next pass**; typed input → waits; 24 non-dialog refusals → `gave_up` with the reason (`leading_dash`) in the outcome.
+2. `bun test server/wiring/takeover.test.ts` → 39 pass, file unedited (the extraction preserves #172's behaviour).
+3. `bun test server/lib/worker-tail.test.ts`:
+   - Herdr task with a readable pane and `herdrGone` false streams lines and is never dead, also with a dialog screen up for 10 fake minutes.
+   - **`readHerdr` null × 10 with `herdrGone` false → never dead, `paneMisses` untouched.**
+   - `herdrGone` true → `setTaskDead` once.
+   - A herdr task (no tmuxSession) is reattached by `resumeAll` and ticks past the :80 guard.
+   - The existing tmux cases are unchanged.
+4. `bun test server/lib/orchestrator-chat.test.ts` (real sqlite via `COMPANION_DB_PATH`):
+   - Herdr `setTaskSpawn` on a row whose tmux_session was set → tmux_session NULL, pane, agent and spawned_at set in one UPDATE.
+   - The 3-arg calls are unchanged.
+   - `listPendingHerdrPrompts` returns herdr + `prompt_sent_at IS NULL` + LIVE rows only: **a pre-migration tmux row with NULL prompt_sent_at is excluded**.
+5. `bun test server/wiring/worker-io.test.ts`:
+   - Boot resume pumps only rows from `listPendingHerdrPrompts`.
+   - `killWorker` closes only a workspace whose label matches, and an absent agent is a no-op.
+   - Liveness uses `spawnedAt`, not `createdAt`: a proposal 1 h old, spawned 30 s ago with the agent not yet registered, is not missing.
+   - `createLiveness.alive(name, sessionTaskId)` matches a session by task id ≠ agent name; the default `sessionTaskId = name` keeps takeover behaviour.
+6. `bun test server/lib/dispatch-tasks.test.ts`: `toTaskDto` of a herdr task carries `herdrAgent`, `herdrPane`, `promptSentAt` and `tmuxSession: null`; a tmux task's DTO is byte-identical to today.
+7. `bun test server/lib/body-fix-cwd.test.ts server/lib/body-investigator.test.ts server/routes/body-fix.test.ts server/routes/orchestrator-live.test.ts server/routes/body-agent.test.ts`:
+   - `fixCwd` on `…/GoogleUpdater.app/Contents/MacOS` → home + replaced; on `/x/webapp/y` and `/x/app/y` → unchanged.
+   - fixCwd is applied after localizeCwd (a `/home/aubut/X.app/…` card is localized, then replaced).
+   - A launchd plist whose program is `<repo>/Foo.app/Contents/MacOS/foo` keeps `repo = <repo>`; one outside any repo → cwd null, repo null.
+   - The runBodyFix turn names the effective cwd.
+8. `bunx tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p tsconfig.server.json`, then `bun run tools/archmap/cli.ts . --lint` → clean, every file under 600.
+9. Prod e2e on the Mac (branch deployed to the Mac companion): approve one #Body fix on the phone. Expect:
+   - log `orchestrator dispatch [id] → … (herdr cc-…, pane wX:p1)`;
+   - `sqlite3 ~/.claude-companion/companion.db "SELECT status, tmux_session, herdr_agent, herdr_pane, spawned_at, prompt_sent_at FROM orchestrator_tasks ORDER BY created_at DESC LIMIT 1"` → running, tmux_session NULL, pane and both stamps set;
+   - `herdr pane read <pane>` shows the prompt; `GET /api/status` session has `taskId`;
+   - the turn reads `worker live`, then `prompt delivered`; the live tail streams in #Body; the task reaches done and the Turso row completed.
+10. Dialog e2e: dispatch into a scratch dir with a fresh `.mcp.json`. The phone shows the dialog mirror plus one "waiting on" turn, and the task stays dispatched for more than 3 min, not error. Restart Companion while it waits → log shows the pump resumed for that row only. Answer on the phone → the prompt lands once.
+11. Cancel e2e: cancel from the phone → `herdr workspace list` no longer shows it; Turso cancelled; no prompt typed afterwards.
+12. tmux regression: on Zettlab with `HERDR_BIN=/nonexistent` (gate fails → tmux fallback), dispatch one task → prompt arrives via send-keys and the task reaches done. Restart Companion: no tmux prompt is re-typed. On the Mac, `app=tmux` spawn via the phone works as before.
+13. **Jeremie manual pass (the plan is not shipped until it is clean):**
+   - (a) Approve a Body fix → within about 10 s the #Body card shows "prompt delivered" and a live terminal tail, not `error`.
+   - (b) The MCP picker case → a "waiting on" card and the dialog sheet on the phone; answering it makes the prompt appear in the session.
+   - (c) A launchd card for an `.app` component says it runs in `~`, and the approval turn shows that same cwd.
+   - (d) Cancel removes the herdr workspace from the Mac's herdr sidebar.
+   - (e) A 3rd concurrent fix queues, then starts when one finishes.
+   - (f) Build 53 on the phone: task cards decode as before (no blank or missing cards).
+
+**Analyst findings (2026-10-16, 4 analysts; all additive, iOS build 53 safe: iOS never reads `tmuxSession`, and explicit CodingKeys ignore new keys)**
+1. `TaskDto` (lib/dispatch-tasks.ts:40) must declare the new fields → Files row and Verify 6.
+2. worker-tail :80 guard and :116 resumeAll filter must accept `herdrPane`. Herdr death comes only from `herdrGone()`; a null read never counts as a miss; the check is awaited under the `ticking` guard → State decisions, Files, Verify 3.
+3. The liveness start is spawn time, not `Task.createdAt` (proposal time). New `spawned_at` column; `updated_at` was rejected because log-tail and status writes move it → State decisions, Verify 5.
+4. Boot resume is limited to herdr rows (`herdr_pane IS NOT NULL AND prompt_sent_at IS NULL AND LIVE`), never pre-migration tmux rows → `listPendingHerdrPrompts`, Verify 4 and 12.
+5. The herdr reconcile turn reads `worker live`, not "sending prompt".
+6. Herdr `setTaskSpawn` NULLs `tmux_session` in the same UPDATE.
+7. Body: the :94 turn prints the effective cwd; body-investigator takes `gitRoot` from the original cwd and drops only the `.app` cwd; fixCwd is applied after localizeCwd and matches path segments only (`/x/webapp/y` passes); one-line fixCwd at body-agent.ts:115 included.
+8. `createLiveness` `sessionTaskId` tests go in worker-io.test.ts; takeover.test.ts stays unedited.
+
+**Amended (build, 2026-10-16, PR #174):**
+- Deviations in the first build: `live.ts` keeps the export name `tmuxRunner` (4 route tests restore it via `setLiveRunner(live.tmuxRunner)`); worker-io exports `readHerdrPane(pane)` (instead of `readWorker`), `herdrGone(task)`, `workerIOIdle()` and `WorkerIODeps`; `pumping` is a `Map<taskId, Promise>` (not a Set) so tests can await it; `toTaskDto` puts the herdr keys on herdr tasks only (a tmux DTO stays byte-identical); `onLiveWorkerDead(fn(task, blocker))` so a give-up closes Turso with `prompt never delivered: <reason>`; a confirmed tmux send-keys also stamps `prompt_sent_at`; `routes/body-fix.test.ts` was added to the tests row (WS-B).
+- Review fix round: (1) the cwd matchers and counts skip herdr rows (`herdr_pane IS NULL`): herdr workers resolve by task id only, so a hook from Jeremie's own session in `~` never binds/closes a Body fix. (2) New column `herdr_workspace` (from the pane's spawn record); liveness, delivery and kill require the agent to still sit in the recorded pane (and workspace): a mismatch = gone. Orchestrator liveness counters are keyed by task id. (3) After a non-dialog refusal the pump asks `landed` (agent `working`, or the prompt's first line on screen) before retrying, so a timed-out send that went in is never re-sent; takeover uses it too. (4) `setTaskSpawn` only moves proposed/queued (boolean); a cancel during the spawn → `recordSpawn` kills the fresh worker, no pump. (5) `agent_not_ready` / `interactive_ready:false` is waited out (≤ SEED_WAIT_MS), not a try. (6) cancelLocal sets `cancelled` before the kill. (7) The tmux send chain and the herdr tail tick catch. (8) `leading_dash` / `agent_gone` give up at once. (9) `.app` guard: case-insensitive, Contents evidence required (see the body-fix.ts row).
+
+**Out of scope:** Body diagnosis dedup (9 fixes for one Turso ConnectionRefused blip at 23:50, to file separately); follow-ups (a)–(f) above; iOS changes (none needed); spawn-session.ts edits.
+
 ### Change Plan — blocked-task-takeover (2026-10-16) — server half (iOS half: note below → `~/apps/claude companion/STATE.md` § blocked-task-takeover)
 **Request (Jeremie):** a "Take over in a session" option on blocked dispatch-task triage cards. Choosing it resolves the right repo and host, spawns a real interactive Claude session there (herdr, `--remote-control <name>`), seeded with the task, its blocker, the RES how-to and the last dispatch log, and binds it to the Turso task (running → completed + PR | blocked again). The session shows in Companion's session list so the phone can drive it.
 **Done when:**

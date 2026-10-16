@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BodyComponentDetail } from "./body"
+import { fixCwd } from "./body-fix"
 import type { InvestigationReport, InvestigationResult, RecommendedFix } from "./body-investigate"
 import { BASE_DISALLOWED, readonlyArgs, readonlyCwd, readonlyEnv, runReadonlyClaude } from "./readonly-claude"
 import { redactSecrets } from "./secret-redact"
@@ -169,6 +170,8 @@ export function knownPaths(component: { id: string; kind: unknown; name: unknown
     out = { files: fs.exists(local) ? [join(local, ".github/workflows")] : [], commands: [], cwd: fs.exists(local) ? local : null, repo: null }
   } else out = { files: [], commands: [], cwd: null, repo: null }
   out.repo = gitRoot(out.cwd, fs)
+  // An app bundle is never a fix cwd: its repo keeps the fix, else the engine default applies.
+  if (out.cwd && fixCwd(out.cwd, fs.home, fs.exists).replaced) out.cwd = out.repo
   return out
 }
 

@@ -26,7 +26,8 @@ export function isHooklessInput(text: string): boolean {
   return /^\/[A-Za-z][\w:.-]*(?:\s|$)/.test(t)
 }
 
-export type HerdrDelivery = { ok: true } | { ok: false; blocked: boolean; reason: string }
+/** `code`: herdr's error code when herdr refused (agent_not_ready…). */
+export type HerdrDelivery = { ok: true } | { ok: false; blocked: boolean; reason: string; code?: string }
 
 // One key-gate turn on the herdr pane (same Escape-window rules as tmux).
 // Normal text: `herdr agent prompt` (bracketed paste + Enter as one write; it
@@ -60,7 +61,7 @@ export async function deliverViaHerdr(
     }, { startBy: opts.deadline ?? Date.now() + INJECT_QUEUE_MS, timeoutMs: INJECT_SEND_MS })
   } catch (err) {
     const code = herdrErrorCode(err)
-    return { ok: false, blocked: code === "agent_blocked", reason: err instanceof Error ? err.message : String(err) }
+    return { ok: false, blocked: code === "agent_blocked", reason: err instanceof Error ? err.message : String(err), ...(code ? { code } : {}) }
   }
 }
 

@@ -378,3 +378,70 @@ describe("getThread returns the NEWEST turns, not the oldest", () => {
     expect(chat.getThread(c.id, 200).map((t) => t.text)).toEqual(["one", "two"])
   })
 })
+
+describe("herdr worker handle", () => {
+  test("herdr setTaskSpawn nulls tmux_session and sets agent, pane and spawned_at in one UPDATE", () => {
+    const t = chat.createProposal("h", "/h", "why", "general")
+    chat.setTaskSpawn(t.taskId, "cc-old", "/tmp/sock")
+    expect(chat.getTask(t.taskId)?.tmuxSession).toBe("cc-old")
+    chat.setTaskStatus(t.taskId, "queued") // requeued: the next spawn lands in herdr
+    const before = Date.now()
+    chat.setTaskSpawn(t.taskId, "cc--claude-3", "/tmp/sock", { agent: "cc--claude-3", pane: "w3:p1" })
+    const got = chat.getTask(t.taskId)!
+    expect(got).toMatchObject({ tmuxSession: null, tmuxSocket: null, herdrAgent: "cc--claude-3", herdrPane: "w3:p1", status: "dispatched", promptSentAt: null })
+    expect(got.spawnedAt!).toBeGreaterThanOrEqual(before)
+    chat.setTaskStatus(t.taskId, "done")
+  })
+
+  test("3-arg setTaskSpawn keeps the tmux shape and stamps spawned_at", () => {
+    const t = chat.createProposal("t", "/h", "why", "general")
+    expect(chat.getTask(t.taskId)?.spawnedAt).toBeNull()
+    chat.setTaskSpawn(t.taskId, "cc-t", "/tmp/sock")
+    expect(chat.getTask(t.taskId)).toMatchObject({ tmuxSession: "cc-t", tmuxSocket: "/tmp/sock", herdrAgent: null, herdrPane: null })
+    expect(typeof chat.getTask(t.taskId)?.spawnedAt).toBe("number")
+    chat.setTaskStatus(t.taskId, "done")
+  })
+
+  test("listPendingHerdrPrompts: herdr + no prompt yet + live only; a pre-migration tmux row is excluded", () => {
+    const raw = new Database(dbPath)
+    raw.query("INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, tmux_session, status, created_at, updated_at) VALUES ('legacy1','general','p','/l','cc-l','running',2,2)").run()
+    raw.close()
+    const pending = chat.createProposal("p", "/h", "why", "general")
+    const sent = chat.createProposal("s", "/h", "why", "general")
+    const closed = chat.createProposal("c", "/h", "why", "general")
+    for (const [t, pane] of [[pending, "w1:p1"], [sent, "w2:p1"], [closed, "w3:p1"]] as const) {
+      chat.setTaskSpawn(t.taskId, null, null, { agent: `cc-${t.taskId}`, pane })
+    }
+    chat.markPromptSent(sent.taskId)
+    chat.setTaskStatus(closed.taskId, "cancelled")
+    expect(typeof chat.getTask(sent.taskId)?.promptSentAt).toBe("number")
+    expect(chat.listPendingHerdrPrompts().map((t) => t.taskId)).toEqual([pending.taskId])
+    for (const id of ["legacy1", pending.taskId, sent.taskId]) chat.setTaskStatus(id, "done")
+  })
+})
+
+test("a herdr worker in ~ is never bound or closed by a cwd-only hook (no task id)", async () => {
+  const { createWorkerIdentityResolver } = await import("./worker-identity")
+  const resolver = createWorkerIdentityResolver({ ...chat, tmuxSessionForPane: async () => null, now: Date.now, log: () => {} })
+  const home = "/Users/someone-home"
+  const t = chat.createProposal("fix", home, "why", "general")
+  chat.setTaskSpawn(t.taskId, null, null, { agent: "cc--claude-9", pane: "w9:p1" })
+  expect(await resolver.resolve("bind", { cwd: home })).toBeNull()
+  expect((await resolver.resolve("bind", { taskId: t.taskId, cwd: home }))?.taskId).toBe(t.taskId)
+  chat.bindTaskSession(t.taskId, "k-worker")
+  expect(await resolver.resolve("close", { cwd: home })).toBeNull()
+  expect((await resolver.resolve("close", { taskId: t.taskId, cwd: home }))?.taskId).toBe(t.taskId)
+  expect(chat.countRunningTasksInCwd(home)).toBe(0)
+  chat.setTaskStatus(t.taskId, "done")
+})
+
+test("setTaskSpawn only moves a proposed/queued task: a cancel during the spawn wins", () => {
+  const t = chat.createProposal("c", "/c", "why", "general")
+  chat.setTaskStatus(t.taskId, "cancelled")
+  expect(chat.setTaskSpawn(t.taskId, null, null, { agent: "cc-c", pane: "w1:p1" })).toBe(false)
+  expect(chat.getTask(t.taskId)).toMatchObject({ status: "cancelled", herdrPane: null, spawnedAt: null })
+  const q = chat.createQueuedTask("q", "/c")
+  expect(chat.setTaskSpawn(q.taskId, "cc-q")).toBe(true)
+  expect(chat.getTask(q.taskId)?.status).toBe("dispatched")
+  chat.setTaskStatus(q.taskId, "done")
+})

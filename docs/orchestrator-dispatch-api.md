@@ -52,7 +52,9 @@ and in `GET /api/orchestrator/task/<id>`.
   The local worker row is never listed on its own, and on the wire it reads `status:"filed"`
   (the proposal card leaves).
 - Local tasks keep every field they had (`tmuxSocket` included); `source` is
-  `proposal` for proposed/rejected/filed, else `local`; `mode` is `live` (tmux worker).
+  `proposal` for proposed/rejected/filed, else `local`; `mode` is `live` (tmux or herdr worker).
+  A herdr worker also carries `herdrAgent`, `herdrPane` and `promptSentAt` (ms, null until the
+  prompt went in), with `tmuxSession: null`; a tmux task's DTO has none of these keys.
 - Proposals (P2) also carry `noteId` / `agent` (the brain's validated pick, else null),
   `title`, and `dispatchTaskId` (the Turso id once approve started; set on `filed`).
   Status `filed` = handed to Turso. The server sends one `orchestrator_task` frame with
@@ -180,6 +182,34 @@ Opt-in: `approve {mode:"live"}` or `POST /dispatch {mode:"live"}`. Default mode 
   pane vanished without a stop hook → `failed` ("worker exited without a stop hook").
 - **Cancel** from the phone: owned by this host → guarded `running → cancelled` (`done=1`), then the
   tmux worker is killed. Owned by another host → 409 `running_on_<owner>` (unchanged).
-- **Restart.** On boot, this host's running live rows whose tmux worker is gone are closed: `failed`
+- **Restart.** On boot, this host's running live rows whose worker is gone are closed: `failed`
   with blocker "companion restarted; worker lost" (or `completed` / `cancelled` when the local row
   already says so and only the Turso write was lost). Other hosts' rows are never touched.
+
+## Herdr workers
+
+`spawnCompanionSession` lands in herdr when its gate passes (Mac "auto"); otherwise tmux, unchanged.
+Worker IO lives in `server/wiring/worker-io.ts`; the handle is `lib/worker-ref.ts`.
+
+- **Identity.** `orchestrator_tasks.herdr_agent` / `herdr_pane` (set by `setTaskSpawn`, with
+  `tmux_session = NULL` in the same UPDATE). `herdr_pane IS NOT NULL` ⇒ herdr. `spawned_at` is the
+  spawn time (the liveness start; `created_at` is the proposal time). The worker carries
+  `COMPANION_TASK_ID` in its env, so its hooks bind by task id (worker-identity tier 1).
+- **Delivery.** Starts at spawn (`executeDispatch`), not at bind: a start dialog delays SessionStart.
+  The prompt goes through the shared seed pump (`lib/herdr-seed.ts`, as takeover): `herdr agent
+  prompt` once nothing stands in the way. A confirmed delivery stamps `prompt_sent_at` and posts
+  `[id] prompt delivered`. The bind turn reads `[id] worker live` and never delivers. On boot, rows
+  with `herdr_pane` set, `prompt_sent_at` NULL and status dispatched/running get their pump back;
+  tmux rows are never re-typed (their prompt goes in on bind via send-keys).
+- **Dialogs.** A start dialog (MCP picker, trust) or herdr's agent `blocked` holds the prompt without
+  spending a try; one turn per title: `⏸️ [id] worker waiting on "<title>" — answer it on the
+  phone; the prompt goes in once it clears`. Answer it from the dialog mirror. Nothing is keyed blind.
+  Typed input also waits. 24 non-dialog refusals (e.g. `leading_dash`) or 2 h → the task goes
+  `error` (a live row → Turso `failed`, blocker `prompt never delivered: <reason>`); the workspace is
+  left open for inspection. A cancel stops the pump on its next pass.
+- **Liveness.** The tail reads the screen with `pane read` for display only. Dead = herdr no longer
+  runs it: no registered session with the task id and no claude in front of the agent's pane, past a
+  3 min start grace from `spawned_at` (herdr read errors spend a budget of 5). Asked when a read fails
+  and every 4th tick; a failed read is never a pane miss. A dialog keeps claude in front: alive.
+- **Cancel.** Closes the agent's workspace only when its label is the agent name and it holds one
+  pane (herdr reuses ids); an absent agent is a no-op.

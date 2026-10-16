@@ -83,6 +83,30 @@ export function localizeCwd(cwd: string, home: string = process.env.HOME || home
   return m ? home + (m[1] ?? "") : c
 }
 
+/**
+ * A cwd inside an app bundle (e.g. a launchd job whose program is
+ * GoogleUpdater.app/Contents/MacOS/…) is never a place to fix anything: run in
+ * home instead. A `<x>.app` segment (any case) is a bundle when the next segment
+ * is `Contents`, when it sits in an Applications folder, or when it has a
+ * `Contents/` dir on disk — so a repo named `~/code/tls.app` and `/x/webapp/y`
+ * pass. Apply after localizeCwd.
+ */
+export function fixCwd(
+  cwd: string, home: string = process.env.HOME || homedir(), exists: (p: string) => boolean = existsSync,
+): { cwd: string; replaced: boolean } {
+  return inAppBundle(cwd, exists) ? { cwd: home, replaced: true } : { cwd, replaced: false }
+}
+
+function inAppBundle(cwd: string, exists: (p: string) => boolean): boolean {
+  const segs = cwd.split("/")
+  return segs.some((seg, i) => {
+    if (!/^.+\.app$/i.test(seg)) return false
+    if (segs[i + 1]?.toLowerCase() === "contents") return true
+    if (/^applications$/i.test(segs[i - 1] ?? "")) return true
+    return exists(join(segs.slice(0, i + 1).join("/") || "/", "Contents"))
+  })
+}
+
 export function fixRunsElsewhere(card: FixCard | null, local: BodyHost): boolean {
   return !!card && card.host === "mac" && local !== "mac"
 }

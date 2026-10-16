@@ -5,7 +5,6 @@ import {
   getThread,
   createProposal,
   getTask,
-  setTaskSpawn,
   bindTaskSession,
   setTaskStatus,
   setTaskLogTail,
@@ -20,8 +19,10 @@ import {
   countUnboundTasksInCwd,
   countRunningTasksInCwd,
   listLiveTasks,
+  listPendingHerdrPrompts,
   stampDispatchId,
   markFiled,
+  LIVE_STATUSES,
   type Turn as OrchTurn,
   type Task as OrchTask,
 } from "../lib/orchestrator-chat"
@@ -31,10 +32,12 @@ import { type Catalog, buildCatalog, catalogLines } from "../lib/project-catalog
 import { readRepoMapSource } from "../lib/live-repo"
 import { createWorkerTailManager } from "../lib/worker-tail"
 import { createQueue, wipCap } from "../lib/orchestrator-queue"
-import { capturePane, paneInputReady, paneHasDialog, sessionCmdArgv, tmuxSessionForPane } from "../lib/tmux-pane"
+import { capturePane, tmuxSessionForPane } from "../lib/tmux-pane"
 import { createWorkerIdentityResolver } from "../lib/worker-identity"
 import { listSessions, type Session } from "../lib/sessions"
 import { spawnCompanionSession, type SpawnResult } from "../lib/spawn-session"
+import { workerLabel, workerRefOf } from "../lib/worker-ref"
+import { herdrOwnerFor } from "../lib/herdr"
 import { BODY_CHANNEL, type BodySnapshot } from "../lib/body"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { bodyDigestFor } from "./body"
@@ -44,10 +47,11 @@ import {
 } from "../lib/dispatch-tasks"
 import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
+import { deliverWorkerPrompt, herdrGone, readHerdrPane, recordSpawn, resumeWorkerPrompts, setWorkerIODeps } from "./worker-io"
 
 // Orchestrator wiring (PRJ-OR1T): the always-on pieces that turn a proposal
 // into a running worker and report back — emit helpers, the WIP queue, the
-// worker tail, prompt delivery into tmux, dispatch reconcile on session
+// worker tail, prompt delivery (wiring/worker-io.ts), dispatch reconcile on session
 // registration, and the brain. Module singletons; the queue tick, resumeAll
 // and the boot drain run at import time, before the server starts serving.
 
@@ -85,9 +89,20 @@ export function setTriageDigest(fn: (() => string | null) | null): void {
 
 // Live mode (P4): wiring/live.ts closes the Turso row when a worker dies
 // without a stop hook. Registered there (it imports this module, not the reverse).
-let liveWorkerDead: ((task: OrchTask) => void) | null = null
-export function onLiveWorkerDead(fn: (task: OrchTask) => void): void {
+let liveWorkerDead: ((task: OrchTask, blocker: string) => void) | null = null
+export function onLiveWorkerDead(fn: (task: OrchTask, blocker: string) => void): void {
   liveWorkerDead = fn
+}
+
+// A live worker that will not finish (dead pane, prompt never delivered): error,
+// close its Turso row, free its slot. Only while still live, so a racing Stop
+// hook's done wins.
+function workerFailed(taskId: string, blocker: string): void {
+  const t = getTask(taskId)
+  if (!t || !LIVE_STATUSES.includes(t.status)) return
+  setTaskStatus(taskId, "error")
+  if (t.dispatchTaskId) liveWorkerDead?.(t, blocker)
+  void workerQueue.drain() // the dead worker's slot is free
 }
 
 // Broadcast a new/updated channel so every device's channel rail live-updates
@@ -136,18 +151,18 @@ if (typeof (drainTimer as unknown as { unref?: () => void }).unref === "function
 // Live worker tail (Phase 6, hybrid output model): stream the dispatched
 // worker's tmux pane into its channel as transient frames; the final snapshot
 // persists on the task row when it finishes. Workers outlive server restarts in
-// detached tmux, so resumeAll reattaches viewers on boot. A pane that vanishes
-// while the task is still live means the worker died without a stop hook — the
-// task is marked error instead of sitting in 'running' forever.
+// detached tmux (or herdr), so resumeAll reattaches viewers on boot. A worker
+// that vanishes while the task is still live (tmux: pane gone; herdr: herdrGone)
+// died without a stop hook — the task is marked error instead of sitting in
+// 'running' forever.
 export const workerTail = createWorkerTailManager({
   capturePane: (sessionName, socket) => capturePane(sessionName, undefined, { socket }),
+  readHerdr: readHerdrPane,
+  herdrGone,
   getTask,
   setTaskLogTail,
   setTaskDead(taskId) {
-    setTaskStatus(taskId, "error")
-    const t = getTask(taskId)
-    if (t?.dispatchTaskId) liveWorkerDead?.(t)
-    void workerQueue.drain() // the dead worker's slot is free
+    workerFailed(taskId, "worker exited without a stop hook")
   },
   onLines(task, lines) {
     broadcast({ type: "orchestrator_worker_output", taskId: task.taskId, channel: task.threadId, lines, ts: Date.now() })
@@ -156,46 +171,17 @@ export const workerTail = createWorkerTailManager({
     emitTask(taskId) // now carries logTail — clients collapse the live card
   },
 })
+setWorkerIODeps({
+  turn: (text, task) => orchEmit(orchAppendTurn("orchestrator", text, task.taskId, task.threadId)),
+  gaveUp(task, blocker) {
+    workerFailed(task.taskId, blocker)
+    emitTask(task.taskId)
+  },
+})
 workerTail.resumeAll(listLiveTasks())
+// herdr prompts still pending from before a restart (never tmux rows: their prompt goes in on bind).
+resumeWorkerPrompts(listPendingHerdrPrompts())
 void workerQueue.drain() // queued work left over from before a restart
-
-// Deliver a dispatched prompt straight to the worker's tmux session by name.
-// We spawned it (cc-<name>), so send-keys -t <session> hits its active pane no
-// matter how the session surfaced in the registry. This is the reliable path: a
-// tmux-wrapped worker discovered via ps has no tmuxPane recorded and its client
-// tty has no Terminal tab, so AppleScript/tty inject fails ("no tab for tty").
-// tmux send-keys does not care — it just needs the TUI to be input-ready first.
-// `socket` is the server the worker was spawned on (task.tmuxSocket).
-async function sendToTmux(sessionName: string, text: string, socket?: string): Promise<void> {
-  const keys = (...rest: string[]) =>
-    Bun.spawn(sessionCmdArgv(socket, "send-keys", sessionName, ...rest), { stdout: "ignore", stderr: "ignore" }).exited
-  let ready = false
-  for (let i = 0; i < 30; i++) {
-    const pane = await capturePane(sessionName, undefined, { socket })
-    if (pane === null) return // worker session gone
-    if (paneHasDialog(pane)) {
-      // Dismiss the onboarding dialog (Escape = reject MCP enable / decline
-      // trust), then keep polling for the real input box.
-      await keys("Escape")
-      await new Promise((r) => setTimeout(r, 1500))
-      continue
-    }
-    if (paneInputReady(pane)) { ready = true; break }
-    await new Promise((r) => setTimeout(r, 2000))
-  }
-  if (!ready) {
-    const reset = "\x1b[0m"; const red = "\x1b[31m"
-    companionLog(`${red}orchestrator → tmux timeout${reset} ${sessionName} never became input-ready`)
-    return
-  }
-  try {
-    await keys("-l", text)
-    await new Promise((r) => setTimeout(r, 300))
-    await keys("Enter")
-    const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-    companionLog(`${cyan}orchestrator → tmux${reset} ${sessionName} "${text.slice(0, 50)}"`)
-  } catch { /* worker session gone */ }
-}
 
 // Worker → task correlation (PRJ-OR1T Phase 8). The policy itself is a pure
 // module; this is the one wired instance, sharing the real sqlite matchers and
@@ -222,7 +208,9 @@ const workerIdentity = createWorkerIdentityResolver({
 export const resolveWorkerTask = workerIdentity.resolve
 
 // Orchestrator (PRJ-OR1T): when a worker session appears for a dispatched task's
-// cwd, bind it and fire the queued prompt into its tmux session. Driven off
+// cwd, bind it and fire the queued prompt into its tmux session. A herdr worker
+// is only bound here: its prompt pump started at spawn (a start dialog delays
+// SessionStart), so delivering again would send it twice. Driven off
 // onSessions so it catches the worker no matter how it registered — session-start
 // hook, ps discovery, or rehydrate (the session-start hook alone is unreliable; a
 // spawned worker often surfaces via ps-scan first). Idempotent: the resolver
@@ -253,12 +241,12 @@ async function reconcileOnce(sessions: Session[]): Promise<void> {
     if (!pending) continue
     bindTaskSession(pending.taskId, s.key || s.cwd)
     emitTask(pending.taskId)
-    orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live — sending prompt`, pending.taskId, pending.threadId))
-    const { tmuxSession, tmuxSocket, prompt } = pending
-    // sendToTmux self-paces: it polls the pane until the TUI is input-ready
+    const herdr = workerRefOf(pending).kind === "herdr"
+    orchEmit(orchAppendTurn("orchestrator", `[${pending.taskId}] worker live${herdr ? "" : " — sending prompt"}`, pending.taskId, pending.threadId))
+    // The tmux send self-paces: it polls the pane until the TUI is input-ready
     // before send-keys, so binding the instant ps-discovery sees the worker is
     // fine — the prompt won't land until Claude can actually receive it.
-    if (tmuxSession) void sendToTmux(tmuxSession, prompt, tmuxSocket || undefined)
+    if (!herdr) deliverWorkerPrompt(pending)
   }
 }
 
@@ -271,7 +259,8 @@ function candidateCwds(): string[] {
 }
 
 // Spawn a worker for an approved proposal and record its tmux session so
-// reconcileDispatch delivers the prompt. The task stays 'proposed' (which
+// reconcileDispatch delivers the prompt (herdr: its agent + pane, and the
+// prompt pump starts here). The task stays 'proposed' (which
 // reconcile ignores) until setTaskSpawn flips it to 'dispatched' AFTER the tmux
 // session exists — so a worker is never bound before we know where to send.
 export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; error?: string }> {
@@ -298,10 +287,20 @@ export async function executeDispatch(task: OrchTask): Promise<{ ok: boolean; er
     companionLog(`${red}dispatch failed${reset} [${task.taskId}] — ${result.error}`)
     return { ok: false, error: result.error }
   }
-  setTaskSpawn(task.taskId, result.sessionName ?? null, result.tmuxSocket || null)
+  // The workspace id is what spawnInHerdr noted for the pane (SpawnResult does not carry it).
+  const herdr = result.app === "herdr" && result.herdrPane
+    ? { agent: result.sessionName ?? "", pane: result.herdrPane, workspace: herdrOwnerFor(result.herdrPane)?.workspaceId ?? null }
+    : undefined
+  if (!(await recordSpawn(task, { tmuxSession: result.sessionName ?? null, tmuxSocket: result.tmuxSocket || null, herdr }))) {
+    emitTask(task.taskId)
+    return { ok: false, error: "cancelled during spawn" }
+  }
+  const spawned = getTask(task.taskId)
+  if (herdr && spawned) deliverWorkerPrompt(spawned)
   emitTask(task.taskId)
   workerTail.watch(task.taskId)
-  companionLog(`${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(tmux ${result.sessionName ?? "?"})${reset}`)
+  const label = spawned ? workerLabel(workerRefOf(spawned)) : `tmux ${result.sessionName ?? "?"}`
+  companionLog(`${cyan}orchestrator dispatch${reset} [${task.taskId}] → ${task.cwd} ${dim}(${label})${reset}`)
   const verb = task.status === "queued" ? "starting" : "approved"
   orchEmit(orchAppendTurn("orchestrator", `${verb} [${task.taskId}] — worker dispatched`, task.taskId, task.threadId))
   return { ok: true }

@@ -55,6 +55,32 @@ describe("known paths from the id", () => {
   })
 })
 
+describe("known paths: app bundle cwd", () => {
+  const bundlePlist = (program: string) => `<?xml version="1.0"?><plist><dict>
+<key>Label</key><string>com.x.updater</string>
+<key>ProgramArguments</key><array><string>${program}</string><string>--wake</string></array>
+</dict></plist>`
+
+  test("a bundle inside a repo keeps the repo as cwd and repo", () => {
+    const fs = fakeFs({ "/Users/j/Library/LaunchAgents/com.x.updater.plist": bundlePlist("/Users/j/proj/Foo.app/Contents/MacOS/foo") }, ["/Users/j/proj/.git"])
+    const p = knownPaths({ id: "mac:launchd:com.x.updater", kind: "launchd", name: "com.x.updater" }, fs)
+    expect(p.repo).toBe("/Users/j/proj")
+    expect(p.cwd).toBe("/Users/j/proj")
+  })
+
+  test("a bundle outside any repo → cwd null, repo null (engine default applies)", () => {
+    const fs = fakeFs({ "/Users/j/Library/LaunchAgents/com.x.updater.plist": bundlePlist("/Users/j/Library/Google/GoogleUpdater.app/Contents/MacOS/GoogleUpdater") })
+    const p = knownPaths({ id: "mac:launchd:com.x.updater", kind: "launchd", name: "com.x.updater" }, fs)
+    expect(p.cwd).toBeNull()
+    expect(p.repo).toBeNull()
+  })
+
+  test("a webapp dir is not a bundle", () => {
+    const fs = fakeFs({ "/Users/j/Library/LaunchAgents/com.x.updater.plist": bundlePlist("/Users/j/webapp/run.sh") })
+    expect(knownPaths({ id: "mac:launchd:com.x.updater", kind: "launchd", name: "com.x.updater" }, fs).cwd).toBe("/Users/j/webapp")
+  })
+})
+
 const DETAIL: BodyComponentDetail = {
   ok: true, generated_at: "g",
   component: {

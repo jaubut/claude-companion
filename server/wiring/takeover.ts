@@ -8,6 +8,7 @@ import { type TakeoverOutcome, claimTakeover, detectPrUrl, finishTakeover, takeo
 import { type DispatchTask, type LiveIdentity, type WriteOutcome, getDispatchTask } from "../lib/dispatch-tasks"
 import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, realHerdr } from "../lib/herdr"
 import { type HerdrDelivery, deliverViaHerdr } from "../lib/herdr-inject"
+import { pumpPrompt } from "../lib/herdr-seed"
 import { type RepoEntry, hostCan, isDir, repoEntriesSafe } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
@@ -38,11 +39,6 @@ import { orchEmit, writeCtx } from "./orchestrator"
 export const TAKEOVER_HOP = "x-companion-takeover-hop"
 export const TICK_MS = 60_000
 const GH_EVERY_MS = 30_000
-/** Refusals with no dialog in the way (agent not ready…) before the seed is given up. */
-const SEED_TRIES = 24
-const SEED_RETRY_MS = 5_000
-/** A seed waiting on a dialog or typed input stays pending this long at most. */
-export const SEED_WAIT_MS = 2 * 60 * 60_000
 /** A run never seen with a registered session may take this long to show one before the tick counts misses. */
 const RELEASE_TRIES = 4
 
@@ -318,26 +314,20 @@ async function howTo(ref: string | null): Promise<{ ref: string; body: string } 
 
 interface SeedJob { row: TakeoverRow; pane: string; text: string; taskId: string; channel: string }
 
-/** Deliver the seed once nothing is in the way, while the run is active; a dialog in the way is named in the task's channel once. */
+/** Deliver the seed once nothing is in the way, while the run is active (lib/herdr-seed.ts); a dialog in the way is named in the task's channel once. */
 async function pumpSeed(j: SeedJob): Promise<void> {
   const { name } = j.row
-  const since = d().now()
-  const alerted = new Set<string>()
-  let tries = 0
-  while (tries < SEED_TRIES && d().now() - since < SEED_WAIT_MS) {
-    if (d().store().get(name)?.status !== "active") return d().log(`[takeover] ${name}: run settled before its seed went in — seed dropped`)
-    const gate = await live.seedGate(name, j.pane)
-    if (gate.kind === "dialog" && !alerted.has(gate.title)) {
-      alerted.add(gate.title)
-      d().turn(`⏸️ Takeover ${name} is waiting on ${gate.title ? `"${gate.title}"` : "a dialog"} — answer it in Sessions (Remote Control: ${name}); the task prompt goes in once it clears`, j.taskId, j.channel)
-    }
-    if (gate.kind === "ready") {
-      const r = await d().deliver(j.pane, j.text)
-      if (r.ok) return d().turn(`Takeover ${name} is ready on ${hostLabel(j.row.host)} — open it in Sessions (Remote Control: ${name})`, j.taskId, j.channel)
-      if (!r.blocked) tries++
-    }
-    await d().sleep(SEED_RETRY_MS)
-  }
+  const out = await pumpPrompt({
+    gate: () => live.seedGate(name, j.pane),
+    deliver: () => d().deliver(j.pane, j.text),
+    landed: () => live.landed(name, j.pane, j.text, d().sleep),
+    stillWanted: () => d().store().get(name)?.status === "active",
+    onDialog: (title) => d().turn(`⏸️ Takeover ${name} is waiting on ${title ? `"${title}"` : "a dialog"} — answer it in Sessions (Remote Control: ${name}); the task prompt goes in once it clears`, j.taskId, j.channel),
+    now: () => d().now(),
+    sleep: (ms) => d().sleep(ms),
+  })
+  if (out.kind === "dropped") return d().log(`[takeover] ${name}: run settled before its seed went in — seed dropped`)
+  if (out.kind === "delivered") return d().turn(`Takeover ${name} is ready on ${hostLabel(j.row.host)} — open it in Sessions (Remote Control: ${name})`, j.taskId, j.channel)
   d().turn(`Takeover ${name}: the session runs but the seed prompt was not delivered — tell it the task yourself`, j.taskId, j.channel)
 }
 

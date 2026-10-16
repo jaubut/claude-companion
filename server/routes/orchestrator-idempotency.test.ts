@@ -194,6 +194,38 @@ test("task cancel: replayed on retry; the same key on another task's cancel is n
   expect(chat.getTask(b.taskId)?.status).toBe("cancelled")
 })
 
+test("task cancel of a herdr worker: the row reads cancelled before the kill reaches herdr, and its workspace closes", async () => {
+  const io = await import("../wiring/worker-io")
+  const t = chat.createProposal("idem herdr cancel", "/tmp", "why", "general")
+  chat.setTaskSpawn(t.taskId, null, null, { agent: "cc-idem", pane: "w40:p1", workspace: "w40" })
+  const seen: (string | undefined)[] = []
+  const closed: string[] = []
+  const prev = io.setWorkerIODeps({
+    herdr: {
+      async gate() { return null },
+      async read() { return null },
+      async call(args) {
+        if (args[0] === "agent" && args[1] === "get") {
+          seen.push(chat.getTask(t.taskId)?.status)
+          return { agent: { pane_id: "w40:p1", workspace_id: "w40" } }
+        }
+        if (args[0] === "workspace" && args[1] === "get") return { workspace: { label: "cc-idem", pane_count: 1 } }
+        if (args[0] === "workspace" && args[1] === "close") closed.push(args[2]!)
+        return {}
+      },
+    },
+    log: () => {},
+  })
+  try {
+    const res = await post(`/api/orchestrator/task/${t.taskId}/cancel`, {}, "c-herdr")
+    expect(res.status).toBe(200)
+    expect(seen).toEqual(["cancelled"])
+    expect(closed).toEqual(["w40"])
+  } finally {
+    io.setWorkerIODeps(prev)
+  }
+})
+
 // ── channel create, auto toggle ──
 
 test("channel create: same key creates one channel", async () => {

@@ -48,6 +48,16 @@ export interface Task {
   agent?: string | null
   title?: string | null
   dispatchTaskId?: string | null
+  // A herdr worker (lib/worker-ref.ts): its agent name, root pane and workspace
+  // (null when spawn did not report one); tmuxSession is null then. Absent on
+  // tmux and legacy rows.
+  herdrAgent?: string | null
+  herdrPane?: string | null
+  herdrWorkspace?: string | null
+  // When the worker was spawned (the liveness start; createdAt is the proposal
+  // time) and when its prompt was confirmed delivered. null before either.
+  spawnedAt?: number | null
+  promptSentAt?: number | null
 }
 
 /** Where a proposal files to; every field optional (resolved at approve time). */
@@ -79,6 +89,11 @@ interface TaskRow {
   agent: string | null
   title: string | null
   dispatch_task_id: string | null
+  herdr_agent: string | null
+  herdr_pane: string | null
+  herdr_workspace: string | null
+  spawned_at: number | null
+  prompt_sent_at: number | null
 }
 
 function toTurn(r: TurnRow): Turn {
@@ -103,6 +118,11 @@ function toTask(r: TaskRow): Task {
     agent: r.agent ?? null,
     title: r.title ?? null,
     dispatchTaskId: r.dispatch_task_id ?? null,
+    herdrAgent: r.herdr_agent ?? null,
+    herdrPane: r.herdr_pane ?? null,
+    herdrWorkspace: r.herdr_workspace ?? null,
+    spawnedAt: r.spawned_at ?? null,
+    promptSentAt: r.prompt_sent_at ?? null,
   }
 }
 
@@ -196,14 +216,32 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
 
 // Approve a proposal: record the spawned worker's tmux session (and the server
 // it is on — "" / null = default) and flip to dispatched so reconcileDispatch
-// picks it up and delivers the prompt.
-export function setTaskSpawn(taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null): void {
-  db.query("UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?").run(
-    tmuxSession,
-    tmuxSocket || null,
+// picks it up and delivers the prompt. A herdr worker records its agent + pane
+// instead, with tmux_session NULL in the same UPDATE: a herdr name there would
+// feed worker-identity tier 2 and the tmux kill argv. Only from proposed/queued:
+// false when the task moved meanwhile (cancelled during the spawn).
+export function setTaskSpawn(
+  taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null, herdr?: { agent: string; pane: string; workspace?: string | null },
+): boolean {
+  return db.query(
+    "UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, herdr_agent = ?, herdr_pane = ?, herdr_workspace = ?, spawned_at = ?, status = 'dispatched', updated_at = ? " +
+      "WHERE task_id = ? AND status IN ('proposed', 'queued')",
+  ).run(
+    herdr ? null : tmuxSession,
+    herdr ? null : tmuxSocket || null,
+    herdr?.agent ?? null,
+    herdr?.pane ?? null,
+    herdr?.workspace || null,
+    Date.now(),
     Date.now(),
     taskId,
-  )
+  ).changes > 0
+}
+
+// The worker's prompt is in (wiring/worker-io.ts, on a confirmed delivery): the
+// boot resume never types it again.
+export function markPromptSent(taskId: string): void {
+  db.query("UPDATE orchestrator_tasks SET prompt_sent_at = ?, updated_at = ? WHERE task_id = ?").run(Date.now(), Date.now(), taskId)
 }
 
 // ---- filing (orchestrator-one-queue P2) -------------------------------------
@@ -269,9 +307,12 @@ export function setTaskLogTail(taskId: string, logTail: string): void {
 // the oldest still-unbound dispatched task in the same cwd. cwd is the only
 // signal shared between /api/dispatch (we picked the cwd) and the session-start
 // hook (Claude Code reports its cwd) before we know the session key.
+// The cwd matchers and counts skip herdr workers: they always carry
+// COMPANION_TASK_ID and resolve by id only, so a session of Jeremie's own in the
+// same cwd (a Body fix runs in ~) never binds or closes one.
 export function matchUnboundTaskByCwd(cwd: string): Task | null {
   const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched' ORDER BY created_at ASC LIMIT 1")
+    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched' AND herdr_pane IS NULL ORDER BY created_at ASC LIMIT 1")
     .get(cwd) as TaskRow | null
   return row ? toTask(row) : null
 }
@@ -282,7 +323,7 @@ export function matchUnboundTaskByCwd(cwd: string): Task | null {
 // the key misses; cwd is stable across spawn → session-start → stop.
 export function findRunningTaskByCwd(cwd: string): Task | null {
   const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' ORDER BY updated_at DESC LIMIT 1")
+    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' AND herdr_pane IS NULL ORDER BY updated_at DESC LIMIT 1")
     .get(cwd) as TaskRow | null
   return row ? toTask(row) : null
 }
@@ -336,14 +377,14 @@ export function findRunningTaskByTmuxSession(tmuxSession: string): Task | null {
 // resolver must find real identity or refuse.
 export function countUnboundTasksInCwd(cwd: string): number {
   const row = db
-    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched'")
+    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched' AND herdr_pane IS NULL")
     .get(cwd) as { n: number }
   return row.n
 }
 
 export function countRunningTasksInCwd(cwd: string): number {
   const row = db
-    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND status = 'running'")
+    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' AND herdr_pane IS NULL")
     .get(cwd) as { n: number }
   return row.n
 }
@@ -371,6 +412,15 @@ export function listProposals(limit = 200): Task[] {
 // listed or not — the worker tail resumes these on boot.
 export function listLiveTasks(): Task[] {
   return (db.query("SELECT * FROM orchestrator_tasks WHERE status IN ('dispatched', 'running') ORDER BY created_at ASC").all() as TaskRow[]).map(toTask)
+}
+
+// Herdr workers still waiting for their prompt (boot resume, wiring/worker-io.ts).
+// tmux rows never match: their prompt goes in on bind, and pre-migration rows
+// read NULL prompt_sent_at.
+export function listPendingHerdrPrompts(): Task[] {
+  return (db.query(
+    "SELECT * FROM orchestrator_tasks WHERE herdr_pane IS NOT NULL AND prompt_sent_at IS NULL AND status IN ('dispatched', 'running') ORDER BY created_at ASC",
+  ).all() as TaskRow[]).map(toTask)
 }
 
 // ---- backpressure (PRJ-OR1T Phase 7) --------------------------------------

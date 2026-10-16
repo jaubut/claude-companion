@@ -1,20 +1,24 @@
-import { inputText, unstyle } from "../lib/command-menu"
-import { parseDialog } from "../lib/dialogs"
-import { type Herdr, herdrErrorCode } from "../lib/herdr"
+import { type Herdr, herdrErrorCode, herdrGatedKey } from "../lib/herdr"
+import { keyGate } from "../lib/key-gate"
+import { type SeedGate, seedGate as gateOf, promptLanded } from "../lib/herdr-seed"
 
-// Is a takeover session still running (wiring/takeover.ts)? The Companion's session
+// Is a herdr worker still running (takeover runs, orchestrator workers)? The Companion's session
 // registry first, then herdr: the run's agent and what is in front of its pane. An
 // idle session fires no hook after a Companion restart, and herdr may keep an exited
 // agent's record, so neither alone decides. A herdr read that errors (a timeout) is
 // never "gone": it spends a budget of PANE_ERRORS_MAX reads in a row, then counts as gone.
+// An orchestrator worker also names the pane it was spawned in (`Expect`): herdr
+// reuses agent names and pane ids, so an agent of that name in another pane (or
+// workspace) is a stranger — the worker is gone. Its counters are keyed by task id.
 
 export const START_GRACE_MS = 3 * 60_000
 export const PANE_ERRORS_MAX = 5
 
-export interface HerdrAgentRef { pane: string; workspaceId?: string; terminalId?: string; status?: string }
-/** What stands between a pending seed and the pane: a dialog (its title, "" when untitled), text Jeremie typed, or nothing. */
-export type SeedGate = { kind: "dialog"; title: string } | { kind: "typing" } | { kind: "ready" }
+export interface HerdrAgentRef { pane: string; workspaceId?: string; terminalId?: string; status?: string; interactiveReady?: boolean }
 export type AgentLookup = { kind: "present"; ref: HerdrAgentRef } | { kind: "absent" } | { kind: "error" }
+
+/** Who the worker is: the hooks' task id (default: the agent name), and the pane / workspace herdr gave it at spawn. */
+export interface Expect { sessionTaskId?: string; pane?: string; workspaceId?: string | null }
 
 export interface LivenessDeps { herdr: Herdr; sessions: () => { key: string; taskId: string }[]; now: () => number }
 
@@ -26,7 +30,7 @@ export function createLiveness(get: () => LivenessDeps) {
   async function agentOf(name: string): Promise<AgentLookup> {
     try {
       const r = await get().herdr.call(["agent", "get", name])
-      const a = (r.agent ?? {}) as { pane_id?: unknown; workspace_id?: unknown; terminal_id?: unknown; agent_status?: unknown }
+      const a = (r.agent ?? {}) as { pane_id?: unknown; workspace_id?: unknown; terminal_id?: unknown; agent_status?: unknown; interactive_ready?: unknown }
       return {
         kind: "present",
         ref: {
@@ -34,6 +38,7 @@ export function createLiveness(get: () => LivenessDeps) {
           ...(typeof a.workspace_id === "string" ? { workspaceId: a.workspace_id } : {}),
           ...(typeof a.terminal_id === "string" ? { terminalId: a.terminal_id } : {}),
           ...(typeof a.agent_status === "string" ? { status: a.agent_status } : {}),
+          ...(typeof a.interactive_ready === "boolean" ? { interactiveReady: a.interactive_ready } : {}),
         },
       }
     } catch (err) {
@@ -41,7 +46,17 @@ export function createLiveness(get: () => LivenessDeps) {
     }
   }
 
-  const sessionLive = (name: string): boolean => get().sessions().some((s) => s.taskId === name)
+  /** `sessionTaskId`: the COMPANION_TASK_ID the run's hooks carry (a takeover's is its agent name). */
+  const sessionLive = (name: string, sessionTaskId = name): boolean => get().sessions().some((s) => s.taskId === sessionTaskId)
+
+  /** agentOf, with an agent of that name in another pane / workspace than expected read as absent (name reuse). */
+  async function agentAt(name: string, e: Expect): Promise<AgentLookup> {
+    const a = await agentOf(name)
+    if (a.kind !== "present") return a
+    if (e.pane && a.ref.pane !== e.pane) return { kind: "absent" }
+    if (e.workspaceId && a.ref.workspaceId && a.ref.workspaceId !== e.workspaceId) return { kind: "absent" }
+    return a
+  }
 
   /** What is in front of a herdr pane (herdrPaneShellPid's read, with a read error kept apart from "busy"). */
   async function paneFront(pane: string): Promise<"shell" | "busy" | "error"> {
@@ -63,45 +78,58 @@ export function createLiveness(get: () => LivenessDeps) {
   }
 
   /** Still running: a registered session, or claude (not the shell) in front of the agent's pane. */
-  async function alive(name: string): Promise<boolean> {
-    if (sessionLive(name)) {
-      errors.delete(name)
+  async function alive(name: string, e: Expect = {}): Promise<boolean> {
+    const key = e.sessionTaskId ?? name
+    if (sessionLive(name, key)) {
+      errors.delete(key)
       return true
     }
-    const a = await agentOf(name)
-    if (a.kind === "error") return spend(name)
+    const a = await agentAt(name, e)
+    if (a.kind === "error") return spend(key)
     if (a.kind === "absent" || !a.ref.pane) {
-      errors.delete(name)
+      errors.delete(key)
       return false
     }
     const front = await paneFront(a.ref.pane)
-    if (front === "error") return spend(name)
-    errors.delete(name)
+    if (front === "error") return spend(key)
+    errors.delete(key)
     return front === "busy"
   }
 
   /** Gone = not alive; counted once seen live, past the start grace, or when herdr says the agent is absent (an error never counts). */
-  async function missing(name: string, createdAt: number): Promise<boolean> {
-    if (await alive(name)) {
-      seenLive.add(name)
+  async function missing(name: string, createdAt: number, e: Expect = {}): Promise<boolean> {
+    const key = e.sessionTaskId ?? name
+    if (await alive(name, e)) {
+      seenLive.add(key)
       return false
     }
-    if (seenLive.has(name) || get().now() - createdAt > START_GRACE_MS) return true
-    return (await agentOf(name)).kind === "absent"
+    if (seenLive.has(key) || get().now() - createdAt > START_GRACE_MS) return true
+    return (await agentAt(name, e)).kind === "absent"
   }
 
-  /** A dialog on the pane (parsed like the phone's mirror) or herdr's agent `blocked`; else typed input; else ready. An unreadable pane is ready (the delivery itself refuses). */
-  async function seedGate(name: string, pane: string): Promise<SeedGate> {
-    const raw = await get().herdr.read(pane).catch(() => null)
-    const dialog = raw === null ? null : parseDialog(unstyle(raw))
-    if (dialog) return { kind: "dialog", title: dialog.title }
-    const a = await agentOf(name)
-    if (a.kind === "present" && a.ref.status === "blocked") return { kind: "dialog", title: "" }
-    return raw !== null && inputText(raw) ? { kind: "typing" } : { kind: "ready" }
+  /** herdr's status of the agent, only while it sits in `pane` (a same-named agent elsewhere says nothing). */
+  async function statusIn(name: string, pane: string): Promise<string | null> {
+    const a = await agentAt(name, { pane })
+    return a.kind === "present" ? a.ref.status ?? null : null
+  }
+
+  /** The pane's seed gate (lib/herdr-seed.ts); herdr's agent status only when no dialog shows. */
+  function seedGate(name: string, pane: string): Promise<SeedGate> {
+    return gateOf(() => get().herdr.read(pane).catch(() => null), () => statusIn(name, pane))
+  }
+
+  /** A refused delivery of `text` to the agent's pane that went in anyway (lib/herdr-seed.ts promptLanded); an unsubmitted paste gets one Enter. */
+  function landed(name: string, pane: string, text: string, sleep: (ms: number) => Promise<void>): Promise<boolean> {
+    return promptLanded(text, {
+      screen: () => get().herdr.read(pane).catch(() => null),
+      agentStatus: () => statusIn(name, pane),
+      enter: () => herdrGatedKey(keyGate, pane, "Enter", get().herdr),
+      sleep,
+    })
   }
 
   return {
-    agentOf, sessionLive, alive, missing, seedGate,
+    agentOf, agentAt, landed, sessionLive, alive, missing, seedGate,
     seen: (name: string) => { seenLive.add(name) },
     forget: (name: string) => { seenLive.delete(name); errors.delete(name) },
     reset: () => { seenLive.clear(); errors.clear() },
