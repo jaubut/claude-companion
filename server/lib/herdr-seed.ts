@@ -16,6 +16,8 @@ export const SEED_WAIT_MS = 2 * 60 * 60_000
 
 /** Refusals that mean "not yet" (a slow boot): waited out like a dialog, bounded by SEED_WAIT_MS, never a try. */
 const WAIT_CODES: readonly string[] = ["agent_not_ready"]
+/** Refusals no retry can fix (a prompt herdr cannot take, the agent gone from its pane): give up at once. */
+const FATAL_CODES: readonly string[] = ["leading_dash", "agent_gone"]
 
 /** What stands between a pending prompt and the pane: a dialog (its title, "" when untitled), text Jeremie typed, or nothing. */
 export type SeedGate = { kind: "dialog"; title: string } | { kind: "typing" } | { kind: "ready" }
@@ -77,6 +79,7 @@ export async function pumpPrompt(o: PumpOpts): Promise<PumpOutcome> {
     if (gate.kind === "ready") {
       const r = await o.deliver()
       if (r.ok) return { kind: "delivered" }
+      if (FATAL_CODES.includes(r.code ?? "")) return { kind: "gave_up", reason: r.reason }
       const wait = r.blocked || WAIT_CODES.includes(r.code ?? "")
       if (!wait && o.landed && await o.landed()) return { kind: "delivered" }
       if (!wait) {

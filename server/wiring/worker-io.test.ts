@@ -310,3 +310,18 @@ describe("a slow boot", () => {
     expect(r.turns).toEqual([`[${t.taskId}] prompt delivered`])
   })
 })
+
+describe("fail fast", () => {
+  test("a prompt starting with '-' fails the task at once with the reason (real deliverViaHerdr refusal)", async () => {
+    const { h } = fakeHerdr({ "cc-dash": { pane: "w32:p1", workspace: "w32", label: "cc-dash" } })
+    const r = wire(h)
+    const { deliverViaHerdr } = await import("../lib/herdr-inject")
+    io.setWorkerIODeps({ deliver: async (pane, text) => { r.delivered.push({ pane, text }); return deliverViaHerdr(pane, text, { herdr: h }) } })
+    const t = track(herdrTask("--help", "cc-dash", "w32:p1"))
+    io.deliverWorkerPrompt(t)
+    await io.workerIOIdle()
+    expect(r.delivered).toHaveLength(1)
+    expect(r.gaveUp).toEqual(["prompt never delivered: leading_dash"])
+    expect(r.clock.t).toBe(1_000_000)
+  })
+})

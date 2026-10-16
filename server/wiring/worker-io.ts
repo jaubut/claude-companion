@@ -76,7 +76,7 @@ const expectOf = (ref: HerdrRef, taskId: string): Expect => ({ sessionTaskId: ta
 /** Type the prompt only while our agent still owns the pane; a stranger there (name / pane reuse) refuses. */
 async function deliverOwned(ref: HerdrRef, task: Task): Promise<HerdrDelivery> {
   const a = await live.agentAt(ref.agent, expectOf(ref, task.taskId))
-  if (a.kind === "absent") return { ok: false, blocked: false, reason: "agent_gone" }
+  if (a.kind === "absent") return { ok: false, blocked: false, reason: "agent_gone", code: "agent_gone" }
   if (a.kind === "error") return { ok: false, blocked: false, reason: "herdr_unreadable" }
   // Still booting: wait (lib/herdr-seed.ts WAIT_CODES), never spend a try on it.
   if (a.ref.interactiveReady === false) return { ok: false, blocked: false, reason: "agent not interactive-ready yet", code: "agent_not_ready" }

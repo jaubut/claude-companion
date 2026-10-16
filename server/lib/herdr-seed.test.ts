@@ -133,3 +133,13 @@ describe("a slow boot (agent_not_ready)", () => {
     expect(r.clock.t).toBeGreaterThanOrEqual(SEED_WAIT_MS)
   })
 })
+
+describe("refusals no retry can fix", () => {
+  test("leading_dash gives up on the first refusal, naming it", async () => {
+    const r = rig(() => ({ kind: "ready" }), () => ({ ok: false, blocked: false, reason: "leading_dash", code: "leading_dash" }))
+    r.opts.landed = async () => { throw new Error("never asked: nothing was sent") }
+    expect(await pumpPrompt(r.opts)).toEqual({ kind: "gave_up", reason: "leading_dash" })
+    expect(r.delivered).toHaveLength(1)
+    expect(r.clock.t).toBe(0)
+  })
+})
