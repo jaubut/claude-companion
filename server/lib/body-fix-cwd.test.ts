@@ -55,3 +55,23 @@ describe("fixCwd", () => {
     expect(fixCwd(localized, H)).toEqual({ cwd: H, replaced: true })
   })
 })
+
+describe("fixCwd: what counts as a bundle", () => {
+  const H = "/Users/jeremieaubut"
+
+  test("case-insensitive: X.APP/contents and an Applications folder", () => {
+    expect(fixCwd("/x/Foo.APP/contents/MacOS", H, none)).toEqual({ cwd: H, replaced: true })
+    expect(fixCwd(`${H}/Applications/Tool.App`, H, none)).toEqual({ cwd: H, replaced: true })
+  })
+
+  test("a repo dir named like an app passes: no Contents segment, no Contents/ dir", () => {
+    for (const p of [`${H}/code/tls.app`, `${H}/code/tls.app/src`, `${H}/code/TLS.App/server`]) expect(fixCwd(p, H, none)).toEqual({ cwd: p, replaced: false })
+  })
+
+  test("a .app dir with a Contents/ dir on disk is a bundle, also with no Contents segment in the path", () => {
+    const exists = only(`${H}/Downloads/Thing.app/Contents`)
+    expect(fixCwd(`${H}/Downloads/Thing.app`, H, exists)).toEqual({ cwd: H, replaced: true })
+    expect(fixCwd(`${H}/Downloads/Thing.app/Resources`, H, exists)).toEqual({ cwd: H, replaced: true })
+    expect(fixCwd(`${H}/code/tls.app`, H, exists)).toEqual({ cwd: `${H}/code/tls.app`, replaced: false })
+  })
+})

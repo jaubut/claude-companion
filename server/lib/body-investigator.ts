@@ -171,7 +171,7 @@ export function knownPaths(component: { id: string; kind: unknown; name: unknown
   } else out = { files: [], commands: [], cwd: null, repo: null }
   out.repo = gitRoot(out.cwd, fs)
   // An app bundle is never a fix cwd: its repo keeps the fix, else the engine default applies.
-  if (out.cwd && fixCwd(out.cwd, fs.home).replaced) out.cwd = out.repo
+  if (out.cwd && fixCwd(out.cwd, fs.home, fs.exists).replaced) out.cwd = out.repo
   return out
 }
 
