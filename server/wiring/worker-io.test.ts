@@ -288,3 +288,25 @@ describe("a timed-out delivery that landed", () => {
     expect(typeof chat.getTask(t.taskId)?.promptSentAt).toBe("number")
   })
 })
+
+describe("a slow boot", () => {
+  test("not interactive-ready: nothing typed and no tries spent until it is, then one delivery", async () => {
+    let ready = false
+    const { h } = fakeHerdr({ "cc-boot": { pane: "w31:p1", workspace: "w31", label: "cc-boot" } })
+    const base = h.call.bind(h)
+    h.call = async (args) => {
+      const out = await base(args)
+      if (args[0] === "agent" && args[1] === "get") (out.agent as Record<string, unknown>).interactive_ready = ready
+      return out
+    }
+    const r = wire(h)
+    const start = r.clock.t
+    io.setWorkerIODeps({ sleep: async (ms) => { r.clock.t += ms; if (r.clock.t - start > 10 * 60_000) ready = true } })
+    const t = track(herdrTask("boot", "cc-boot", "w31:p1"))
+    io.deliverWorkerPrompt(t)
+    await io.workerIOIdle()
+    expect(r.delivered).toHaveLength(1)
+    expect(r.gaveUp).toEqual([])
+    expect(r.turns).toEqual([`[${t.taskId}] prompt delivered`])
+  })
+})

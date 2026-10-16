@@ -13,7 +13,7 @@ import { type SeedGate, seedGate as gateOf, promptLanded } from "../lib/herdr-se
 export const START_GRACE_MS = 3 * 60_000
 export const PANE_ERRORS_MAX = 5
 
-export interface HerdrAgentRef { pane: string; workspaceId?: string; terminalId?: string; status?: string }
+export interface HerdrAgentRef { pane: string; workspaceId?: string; terminalId?: string; status?: string; interactiveReady?: boolean }
 export type AgentLookup = { kind: "present"; ref: HerdrAgentRef } | { kind: "absent" } | { kind: "error" }
 
 /** Who the worker is: the hooks' task id (default: the agent name), and the pane / workspace herdr gave it at spawn. */
@@ -29,7 +29,7 @@ export function createLiveness(get: () => LivenessDeps) {
   async function agentOf(name: string): Promise<AgentLookup> {
     try {
       const r = await get().herdr.call(["agent", "get", name])
-      const a = (r.agent ?? {}) as { pane_id?: unknown; workspace_id?: unknown; terminal_id?: unknown; agent_status?: unknown }
+      const a = (r.agent ?? {}) as { pane_id?: unknown; workspace_id?: unknown; terminal_id?: unknown; agent_status?: unknown; interactive_ready?: unknown }
       return {
         kind: "present",
         ref: {
@@ -37,6 +37,7 @@ export function createLiveness(get: () => LivenessDeps) {
           ...(typeof a.workspace_id === "string" ? { workspaceId: a.workspace_id } : {}),
           ...(typeof a.terminal_id === "string" ? { terminalId: a.terminal_id } : {}),
           ...(typeof a.agent_status === "string" ? { status: a.agent_status } : {}),
+          ...(typeof a.interactive_ready === "boolean" ? { interactiveReady: a.interactive_ready } : {}),
         },
       }
     } catch (err) {

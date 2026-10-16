@@ -8,11 +8,14 @@ import type { HerdrDelivery } from "./herdr-inject"
 // phone answers the dialog, never a blind key. Pure: the callers own the turns,
 // the run state and the herdr calls.
 
-/** Refusals with no dialog in the way (agent not ready…) before the prompt is given up. */
+/** Refusals with no dialog in the way and no wait to sit out (see WAIT_CODES) before the prompt is given up. */
 export const SEED_TRIES = 24
 export const SEED_RETRY_MS = 5_000
 /** A prompt waiting on a dialog or typed input stays pending this long at most. */
 export const SEED_WAIT_MS = 2 * 60 * 60_000
+
+/** Refusals that mean "not yet" (a slow boot): waited out like a dialog, bounded by SEED_WAIT_MS, never a try. */
+const WAIT_CODES: readonly string[] = ["agent_not_ready"]
 
 /** What stands between a pending prompt and the pane: a dialog (its title, "" when untitled), text Jeremie typed, or nothing. */
 export type SeedGate = { kind: "dialog"; title: string } | { kind: "typing" } | { kind: "ready" }
@@ -74,8 +77,9 @@ export async function pumpPrompt(o: PumpOpts): Promise<PumpOutcome> {
     if (gate.kind === "ready") {
       const r = await o.deliver()
       if (r.ok) return { kind: "delivered" }
-      if (!r.blocked && o.landed && await o.landed()) return { kind: "delivered" }
-      if (!r.blocked) {
+      const wait = r.blocked || WAIT_CODES.includes(r.code ?? "")
+      if (!wait && o.landed && await o.landed()) return { kind: "delivered" }
+      if (!wait) {
         tries++
         reason = r.reason
       }

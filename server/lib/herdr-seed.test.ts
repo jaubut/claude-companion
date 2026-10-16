@@ -117,3 +117,19 @@ describe("a refused delivery that landed anyway", () => {
     expect(await promptLanded(text, async () => null, async () => null)).toBe(false)
   })
 })
+
+describe("a slow boot (agent_not_ready)", () => {
+  test("is waited out without spending tries: 40 not-ready refusals, then it goes in", async () => {
+    let n = 0
+    const r = rig(() => ({ kind: "ready" }), () => (++n <= 40 ? { ok: false, blocked: false, reason: "agent is not ready", code: "agent_not_ready" } : { ok: true }))
+    expect(40).toBeGreaterThan(SEED_TRIES)
+    expect(await pumpPrompt(r.opts)).toEqual({ kind: "delivered" })
+    expect(r.delivered).toHaveLength(41)
+  })
+
+  test("never ready: bounded by the 2 h cap", async () => {
+    const r = rig(() => ({ kind: "ready" }), () => ({ ok: false, blocked: false, reason: "agent is not ready", code: "agent_not_ready" }))
+    expect(await pumpPrompt(r.opts)).toEqual({ kind: "gave_up", reason: "waited 2 h" })
+    expect(r.clock.t).toBeGreaterThanOrEqual(SEED_WAIT_MS)
+  })
+})
