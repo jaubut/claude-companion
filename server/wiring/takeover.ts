@@ -324,7 +324,7 @@ async function continueStart(row: TakeoverRow, entry: RepoEntry, t: DispatchTask
   try {
     const why = await worktree(row, entry.path)
     if (why) return await finish(row.name, { status: "blocked", blocker: failedBlocker(why, row.origBlocker) }, "failed")
-    const r: SpawnResult = await d().spawn({ cwd: row.cwd, agent: "claude", env: { COMPANION_TASK_ID: row.name }, herdr: { name: row.name, args: ["--remote-control", row.name] } })
+    const r: SpawnResult = await d().spawn({ cwd: row.cwd, agent: "claude", env: { COMPANION_TASK_ID: row.name }, herdr: { name: row.name, args: ["--remote-control", row.name] }, mcpFrom: entry.path })
     if (!r.ok || !r.herdrPane) return await finish(row.name, { status: "blocked", blocker: failedBlocker(r.error ?? "no herdr pane", row.origBlocker) }, "failed")
     if (!d().store().move(row.name, ["starting"], "active", d().now())) {
       d().log(`[takeover] ${row.name}: run settled while its session started — no seed`)

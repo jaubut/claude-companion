@@ -1,5 +1,8 @@
 import { test, expect } from "bun:test"
-import { DETACHED_COLS, DETACHED_ROWS, buildInner, buildTmuxLaunch, detachedNewSessionArgs, detachedSpawnArgv, homeSpawnCwd } from "./spawn-session"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { DETACHED_COLS, DETACHED_ROWS, buildInner, buildTmuxLaunch, detachedNewSessionArgs, detachedSpawnArgv, ensureFolderTrusted, homeSpawnCwd } from "./spawn-session"
 
 // The inner command tmux runs. Both spawn paths build it here — the Mac one
 // wraps it in `tmux new-session -s <sess> '<inner>'` for AppleScript, the Linux
@@ -129,4 +132,54 @@ test("Terminal/iTerm launch line: set → quoted -L/-f before new-session", () =
   })
   expect(line.startsWith(`tmux -L 'cc' -f '/Users/j/My Conf'\\''s/cc.conf' new-session -s 'cc-x' `)).toBe(true)
   expect(line.endsWith(` \\; set-option -t 'cc-x' detach-on-destroy on`)).toBe(true)
+})
+
+// Takeover worktree: carry the main checkout's MCP choices, else disable every .mcp.json server.
+function mcpFixture(projects: Record<string, Record<string, unknown>>) {
+  const dir = mkdtempSync(join(tmpdir(), "trust-"))
+  const wt = join(dir, "wt")
+  mkdirSync(wt)
+  writeFileSync(join(wt, ".mcp.json"), JSON.stringify({ mcpServers: { perplexity: {}, railway: {} } }))
+  const cfgPath = join(dir, ".claude.json")
+  writeFileSync(cfgPath, JSON.stringify({ numStartups: 7, projects }))
+  const read = () => JSON.parse(readFileSync(cfgPath, "utf8"))
+  return { dir, wt, cfgPath, read }
+}
+
+test("ensureFolderTrusted copies the main checkout's MCP choices onto the worktree entry", () => {
+  const main = { hasTrustDialogAccepted: true, enabledMcpjsonServers: ["railway"], disabledMcpjsonServers: ["perplexity"], enableAllProjectMcpServers: false, allowedTools: ["x"] }
+  const f = mcpFixture({ "/repo": main, "/other": { a: 1 } })
+  ensureFolderTrusted(f.wt, "/repo", f.cfgPath)
+  const cfg = f.read()
+  expect(cfg.projects[f.wt]).toEqual({ hasTrustDialogAccepted: true, enabledMcpjsonServers: ["railway"], disabledMcpjsonServers: ["perplexity"], enableAllProjectMcpServers: false })
+  expect(cfg.projects["/repo"]).toEqual(main)
+  expect(cfg.projects["/other"]).toEqual({ a: 1 })
+  expect(cfg.numStartups).toBe(7)
+  expect(readdirSync(f.dir).filter((n) => n.includes(".companion-"))).toEqual([]) // atomic tmp+rename leaves no tmp
+})
+
+test("ensureFolderTrusted disables every .mcp.json server when the main checkout has no entry", () => {
+  const f = mcpFixture({ "/other": { a: 1 } })
+  ensureFolderTrusted(f.wt, "/repo", f.cfgPath)
+  const cfg = f.read()
+  expect(cfg.projects[f.wt]).toEqual({ hasTrustDialogAccepted: true, disabledMcpjsonServers: ["perplexity", "railway"] })
+  expect(cfg.projects["/repo"]).toBeUndefined()
+  expect(cfg.projects["/other"]).toEqual({ a: 1 })
+})
+
+test("ensureFolderTrusted keeps MCP choices already on the worktree entry and skips MCP without mcpFrom", () => {
+  const f = mcpFixture({ "/repo": { enabledMcpjsonServers: ["railway"] } })
+  const wtEntry = { hasTrustDialogAccepted: true, disabledMcpjsonServers: ["railway"] }
+  writeFileSync(f.cfgPath, JSON.stringify({ projects: { "/repo": { enabledMcpjsonServers: ["railway"] }, [f.wt]: wtEntry } }))
+  ensureFolderTrusted(f.wt, "/repo", f.cfgPath)
+  expect(f.read().projects[f.wt]).toEqual(wtEntry)
+  const g = mcpFixture({})
+  ensureFolderTrusted(g.wt, undefined, g.cfgPath)
+  expect(g.read().projects[g.wt]).toEqual({ hasTrustDialogAccepted: true })
+})
+
+test("ensureFolderTrusted disables .mcp.json servers the copied choices leave unanswered", () => {
+  const f = mcpFixture({ "/repo": { enabledMcpjsonServers: ["railway"], disabledMcpjsonServers: [], enableAllProjectMcpServers: false } })
+  ensureFolderTrusted(f.wt, "/repo", f.cfgPath)
+  expect(f.read().projects[f.wt]).toEqual({ hasTrustDialogAccepted: true, enabledMcpjsonServers: ["railway"], disabledMcpjsonServers: ["perplexity"], enableAllProjectMcpServers: false })
 })
