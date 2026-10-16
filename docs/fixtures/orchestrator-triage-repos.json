@@ -37,14 +37,14 @@
           "destructive": true
         }
       ],
-      "createdAt": 1792087987000,
-      "updatedAt": 1792087987000
+      "createdAt": 1792156224000,
+      "updatedAt": 1792156224000
     },
     {
-      "id": "task:cccccccccccccccccccccccccccccc1f",
+      "id": "task:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee6",
       "source": "task",
-      "refId": "cccccccccccccccccccccccccccccc1f",
-      "title": "Task cc1f",
+      "refId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee6",
+      "title": "Task eee6",
       "project": "Dashboard",
       "repo": null,
       "severity": "normal",
@@ -73,15 +73,24 @@
             "kind": "cancel"
           },
           "destructive": true
+        },
+        {
+          "id": "takeover",
+          "label": "Take over in a session",
+          "detail": "Pick the repo first",
+          "action": {
+            "kind": "takeover",
+            "candidates": []
+          }
         }
       ],
-      "createdAt": 1792087987000,
-      "updatedAt": 1792087987000
+      "createdAt": 1792156224000,
+      "updatedAt": 1792156224000
     },
     {
-      "id": "proposal:c1c60eb3",
+      "id": "proposal:b07578a8",
       "source": "proposal",
-      "refId": "c1c60eb3",
+      "refId": "b07578a8",
       "title": "Ship the export",
       "project": null,
       "repo": null,
@@ -115,8 +124,8 @@
         }
       ],
       "context": "Ship the export",
-      "createdAt": 1792087987842,
-      "updatedAt": 1792087987842
+      "createdAt": 1792156224562,
+      "updatedAt": 1792156224562
     }
   ],
   "resolving": [],
@@ -153,19 +162,19 @@
             "result": "handed_back"
           }
         ],
-        "createdAt": 1792087987854,
-        "finishedAt": 1792087987855
+        "createdAt": 1792156224569,
+        "finishedAt": 1792156224570
       },
-      "createdAt": 1792087987000,
-      "updatedAt": 1792087987855
+      "createdAt": 1792156224000,
+      "updatedAt": 1792156224570
     },
     {
       "id": "repo:_other",
       "repo": null,
       "name": "Other work",
-      "version": "b4e50ea66660f1c7",
+      "version": "32d1546ee9a515d6",
       "overview": [
-        "Opus answers: Task cc1f",
+        "Opus answers: Task eee6",
         "Start: Ship the export"
       ],
       "counts": {
@@ -178,20 +187,20 @@
       },
       "members": [
         {
-          "id": "task:cccccccccccccccccccccccccccccc1f",
-          "version": "blocked|2026-10-15 18:13:07",
+          "id": "task:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee6",
+          "version": "blocked|2026-10-16 13:10:24",
           "does": "ask_opus"
         },
         {
-          "id": "proposal:c1c60eb3",
-          "version": "1792087987842",
+          "id": "proposal:b07578a8",
+          "version": "1792156224562",
           "does": "approve"
         }
       ],
       "held": [],
-      "createdAt": 1792087987000,
-      "updatedAt": 1792087987842
+      "createdAt": 1792156224000,
+      "updatedAt": 1792156224562
     }
   ],
-  "generatedAt": 1792087987857
+  "generatedAt": 1792156224571
 }
