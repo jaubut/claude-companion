@@ -38,8 +38,11 @@ import { orchEmit, writeCtx } from "./orchestrator"
 export const TAKEOVER_HOP = "x-companion-takeover-hop"
 export const TICK_MS = 60_000
 const GH_EVERY_MS = 30_000
+/** Refusals with no dialog in the way (agent not ready…) before the seed is given up. */
 const SEED_TRIES = 24
 const SEED_RETRY_MS = 5_000
+/** A seed waiting on a dialog or typed input stays pending this long at most. */
+export const SEED_WAIT_MS = 2 * 60 * 60_000
 /** A run never seen with a registered session may take this long to show one before the tick counts misses. */
 const RELEASE_TRIES = 4
 
@@ -111,6 +114,8 @@ const d = (): TakeoverDeps => (deps ??= defaults())
 /** The live deps (wiring/takeover-choose.ts). */
 export const takeoverDeps = d
 const running = new Map<string, Promise<void>>()
+/** Pending seeds (in memory: a Companion restart drops them), apart from `running` so the tick keeps checking the run. */
+const seeding = new Map<string, Promise<void>>()
 /** Names a reconcile or a tick row is working on right now (taken before the first await). */
 const held = new Set<string>()
 let tickStartedAt = 0
@@ -130,7 +135,7 @@ export function setTakeoverDeps(patch: Partial<TakeoverDeps>): TakeoverDeps {
 
 /** Test seam: every background start finished. */
 export async function takeoverIdle(): Promise<void> {
-  while (running.size) await Promise.all([...running.values()])
+  while (running.size || seeding.size) await Promise.all([...running.values(), ...seeding.values()])
 }
 
 export interface TakeoverDetail {
@@ -311,12 +316,29 @@ async function howTo(ref: string | null): Promise<{ ref: string; body: string } 
   return typeof body === "string" && body.trim() ? { ref, body } : null
 }
 
-async function deliverSeed(pane: string, text: string): Promise<boolean> {
-  for (let i = 0; i < SEED_TRIES; i++) {
-    if ((await d().deliver(pane, text)).ok) return true
+interface SeedJob { row: TakeoverRow; pane: string; text: string; taskId: string; channel: string }
+
+/** Deliver the seed once nothing is in the way, while the run is active; a dialog in the way is named in the task's channel once. */
+async function pumpSeed(j: SeedJob): Promise<void> {
+  const { name } = j.row
+  const since = d().now()
+  const alerted = new Set<string>()
+  let tries = 0
+  while (tries < SEED_TRIES && d().now() - since < SEED_WAIT_MS) {
+    if (d().store().get(name)?.status !== "active") return d().log(`[takeover] ${name}: run settled before its seed went in — seed dropped`)
+    const gate = await live.seedGate(name, j.pane)
+    if (gate.kind === "dialog" && !alerted.has(gate.title)) {
+      alerted.add(gate.title)
+      d().turn(`⏸️ Takeover ${name} is waiting on ${gate.title ? `"${gate.title}"` : "a dialog"} — answer it in Sessions (Remote Control: ${name}); the task prompt goes in once it clears`, j.taskId, j.channel)
+    }
+    if (gate.kind === "ready") {
+      const r = await d().deliver(j.pane, j.text)
+      if (r.ok) return d().turn(`Takeover ${name} is ready on ${hostLabel(j.row.host)} — open it in Sessions (Remote Control: ${name})`, j.taskId, j.channel)
+      if (!r.blocked) tries++
+    }
     await d().sleep(SEED_RETRY_MS)
   }
-  return false
+  d().turn(`Takeover ${name}: the session runs but the seed prompt was not delivered — tell it the task yourself`, j.taskId, j.channel)
 }
 
 async function continueStart(row: TakeoverRow, entry: RepoEntry, t: DispatchTask, description: string, logTail: string | null): Promise<void> {
@@ -335,10 +357,10 @@ async function continueStart(row: TakeoverRow, entry: RepoEntry, t: DispatchTask
       origBlocker: row.origBlocker, description, howTo: await howTo(howToRef(row.origBlocker) ?? howToRef(description)),
       log: logTail ?? localLog(t.title, row.origBlocker),
     })
-    const delivered = await deliverSeed(r.herdrPane, seed)
-    d().turn(delivered
-      ? `Takeover ${row.name} is ready on ${hostLabel(row.host)} — open it in Sessions (Remote Control: ${row.name})`
-      : `Takeover ${row.name}: the session runs but the seed prompt was not delivered — tell it the task yourself`, t.id, channel)
+    const p = pumpSeed({ row, pane: r.herdrPane, text: seed, taskId: t.id, channel })
+      .catch((err) => d().log(`[takeover] ${row.name}: seed failed (${(err as Error)?.message ?? err})`))
+      .finally(() => seeding.delete(row.name))
+    seeding.set(row.name, p)
   } catch (err) {
     await finish(row.name, { status: "blocked", blocker: failedBlocker((err as Error)?.message ?? "error", row.origBlocker) }, "failed")
   }

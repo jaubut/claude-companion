@@ -560,7 +560,9 @@ owner `companion:takeover:<name>`, `dispatch_run_id = tko_…`, blocker / comple
 Worktree (`git fetch` + `worktree add -b takeover/<id8> <cwd> origin/<default>`), `herdr agent start <name>
 … -- --remote-control <name>` (env `COMPANION_TASK_ID=<name>`) and the seed prompt (task, blocker, description,
 the RES how-to, the last dispatch-log section when the blocker is "Agent reported done but produced no file
-changes"; `agent_not_ready` retried 5 s × 24) run in the background; a failure → the task blocked again with
+changes"; while the run is active the seed stays pending behind a start dialog or typed input — polled every 5 s,
+up to 2 h, one orchestrator turn per dialog title naming it — and goes in once the pane is clear; other
+refusals like `agent_not_ready` retried 5 s × 24) run in the background; a failure → the task blocked again with
 `Takeover failed to start (<why>) — <original blocker>` and an orchestrator turn. The session shows in Sessions
 ~20 s later. Errors: 422 `repo_required {candidates}` · 409 `stale` / `no_checkout` / `herdr_unavailable {reason}`
 / `host_unreachable {host, reason}` / `name_taken {session}` · 503 only when Turso is down (SendQueue retries 5xx
