@@ -1,4 +1,5 @@
 import { NO_REPO_BLOCKER } from "./dispatch-tasks"
+import { TAKEOVER_ENDED } from "./takeover"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -79,6 +80,7 @@ export function routable(src: SourceItem, opts: { createdByResolver?: (taskId: s
   const ref = src.ref
   switch (ref.source) {
     case "mytask": return false // Jeremie's own list: his call, never Opus's
+    case "task": return !TAKEOVER_ENDED.test(src.facts.blocker ?? "") // he took it over himself: his call
     case "proposal": return !opts.createdByResolver?.(ref.taskId)
     case "body": return opts.bodyLocal?.(ref.componentId) ?? true
     default: return true

@@ -91,6 +91,7 @@ const OPUS_PARK = /^(?:superseded|task already)/i
 
 /** Why a PR stays out of a Yes (it keeps its own card); null = Yes may act on it. */
 export function heldReason(src: Pick<SourceItem, "hints" | "ref">): string | null {
+  if (src.ref.source === "task") return src.hints?.takeoverEnded ? "taken over" : null
   if (src.ref.source !== "pr") return null
   const parked = src.hints?.parked
   if (parked === undefined) return "not reviewed yet" // the 48 h safety net: never parked, never reviewed
@@ -101,7 +102,7 @@ export function heldReason(src: Pick<SourceItem, "hints" | "ref">): string | nul
 export function memberDoes(src: Pick<SourceItem, "hints" | "ref">): MemberDoes | null {
   switch (src.ref.source) {
     case "proposal": return "approve"
-    case "task": return "ask_opus"
+    case "task": return heldReason(src) === null ? "ask_opus" : null
     case "pr":
       if (heldReason(src) !== null) return null
       return OPUS_PARK.test(src.hints?.parked?.trim() ?? "") ? "ask_opus" : "hand_back"

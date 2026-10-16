@@ -405,3 +405,18 @@ describe("live task DTO", () => {
     expect(tasks.toTaskDto(chat.getTask(p.taskId)!)).toMatchObject({ status: "filed", dispatchTaskId: id, mode: "live" })
   })
 })
+
+describe("a running takeover (blocked-task-takeover)", () => {
+  test("cancel / requeue / unblock → 409 under_takeover with the session; the row stays running", async () => {
+    const { handler } = makeWiring()
+    const id = tid()
+    seedRunning(id, "companion:takeover:tko-zettlab-abcd1234")
+    for (const [action, body] of [["cancel", undefined], ["requeue", undefined], ["unblock", { answer: "x" }]] as const) {
+      const r = await call(handler, "POST", `/api/orchestrator/task/${id}/${action}`, body)
+      expect(r.status).toBe(409)
+      expect(r.json).toMatchObject({ ok: false, error: "under_takeover", session: "tko-zettlab-abcd1234" })
+    }
+    expect(tursoTask(id)!.dispatch_status).toBe("running")
+    expect(activity(id)).toHaveLength(0)
+  })
+})

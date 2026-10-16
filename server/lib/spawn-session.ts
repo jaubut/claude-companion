@@ -389,17 +389,27 @@ async function uniqueHerdrAgentName(cwd: string, agent: SpawnAgent, h: Herdr): P
 // Bounded below the phone's patience; claude is normally ready in 2-5 s.
 export const HERDR_START_TIMEOUT_MS = 20_000
 
+/** A fixed agent name (an identity token: taken = error, never suffixed) and plain-token agent args after `--`. */
+export interface HerdrSpawnOpts { name: string; args?: string[] }
+
+const AGENT_ARG = /^[A-Za-z0-9_.=-]+$/
+
 export async function spawnInHerdr(
   cwd: string,
   agent: SpawnAgent,
   env?: Record<string, string>,
   h: Herdr = realHerdr,
+  opts?: HerdrSpawnOpts,
 ): Promise<SpawnResult> {
   const envArgs = checkEnv(env).flatMap(([k, v]) => ["--env", `${k}=${v}`])
+  const agentArgs = opts?.args ?? []
+  const badArg = agentArgs.find((a) => !AGENT_ARG.test(a))
+  if (badArg !== undefined) return { ok: false, app: "herdr", error: `spawn args: unsafe value ${JSON.stringify(badArg)}` }
   const gate = await h.gate()
   if (gate) return { ok: false, app: "herdr", error: gate, fallback: gate }
 
-  const name = await uniqueHerdrAgentName(cwd, agent, h)
+  if (opts && await herdrNameTaken(opts.name, h)) return { ok: false, app: "herdr", error: `name_taken: ${opts.name}` }
+  const name = opts?.name ?? await uniqueHerdrAgentName(cwd, agent, h)
   let paneId = ""
   let workspaceId = ""
   let terminalId = ""
@@ -420,7 +430,8 @@ export async function spawnInHerdr(
   try {
     if (agent === "kimi") await h.call(["pane", "run", paneId, KIMI_SOURCE])
     await h.call(
-      ["agent", "start", name, "--kind", agent === "codex" ? "codex" : "claude", "--pane", paneId, "--timeout", String(HERDR_START_TIMEOUT_MS)],
+      ["agent", "start", name, "--kind", agent === "codex" ? "codex" : "claude", "--pane", paneId, "--timeout", String(HERDR_START_TIMEOUT_MS),
+        ...(agentArgs.length ? ["--", ...agentArgs] : [])],
       HERDR_START_TIMEOUT_MS + 5_000,
     )
   } catch (err) {
@@ -519,6 +530,9 @@ export async function spawnCompanionSession(opts: {
   // Extra environment for the spawned agent, exported inside its tmux command
   // so hooks launched by that agent inherit it (PRJ-OR1T Phase 8).
   env?: Record<string, string>
+  // herdr only (takeover): a fixed agent name and claude args; a gate failure is
+  // an error here, never a tmux fallback.
+  herdr?: HerdrSpawnOpts
 }): Promise<SpawnResult> {
   const cwd = opts.cwd.trim()
   if (!cwd) return { ok: false, error: "cwd required" }
@@ -556,6 +570,10 @@ export async function spawnCompanionSession(opts: {
   // folder-trust dialog (codex has no such gate, so skip it there).
   if (agent !== "codex") ensureFolderTrusted(resolved)
 
+  if (opts.herdr) {
+    const { fallback: _gate, ...r } = await spawnInHerdr(resolved, agent, opts.env, realHerdr, opts.herdr)
+    return r
+  }
   if (process.platform !== "darwin") return spawnLinux(resolved, app, agent, opts.env)
 
   if (app === "tmux") return spawnInTmuxDetached(resolved, agent, opts.env)
