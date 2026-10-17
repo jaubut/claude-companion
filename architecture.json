@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-16",
+  "generatedAt": "2026-10-17",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 113,
+          "lines": 114,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -70,6 +70,7 @@
             "routes/gauge.ts",
             "routes/copy-jobs.ts",
             "routes/my-tasks.ts",
+            "routes/taste.ts",
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
             "lib/vault-guard.ts",
@@ -6118,6 +6119,25 @@
           "externals": []
         },
         {
+          "path": "routes/taste.ts",
+          "lines": 91,
+          "kind": "lib",
+          "exports": [
+            "handleTasteRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dashboard-client.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/triage.ts",
           "lines": 146,
           "kind": "lib",
@@ -7538,6 +7558,12 @@
         },
         "handleResolverRoute": {
           "module": "routes/resolver.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleTasteRoute": {
+          "module": "routes/taste.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -9823,6 +9849,7 @@
             "lib/trip-dashboard.ts",
             "lib/voice-memo.ts",
             "routes/capture.ts",
+            "routes/taste.ts",
             "routes/trips.ts"
           ]
         },
@@ -9846,6 +9873,7 @@
             "lib/trip-dashboard.ts",
             "lib/voice-memo.ts",
             "routes/capture.ts",
+            "routes/taste.ts",
             "routes/trips.ts"
           ]
         },
@@ -11344,7 +11372,8 @@
         "dashboardJson": {
           "module": "lib/dashboard-client.ts",
           "callers": [
-            "lib/trip-dashboard.ts"
+            "lib/trip-dashboard.ts",
+            "routes/taste.ts"
           ]
         },
         "Trip": {
@@ -13079,6 +13108,12 @@
           "module": "lib/tasks-agent-chat.ts",
           "callers": [
             "routes/tasks-agent.ts"
+          ]
+        },
+        "dashboardBytes": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "routes/taste.ts"
           ]
         },
         "TriageEngine": {

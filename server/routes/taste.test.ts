@@ -145,6 +145,23 @@ describe("GET /api/taste/items/:id/image", () => {
   })
 })
 
+describe("image route hardening", () => {
+  test("upstream 403 keeps its status; non-raster mime → 502, never served", async () => {
+    reply = () => new Response("nope", { status: 403 })
+    expect((await call("GET", "/api/taste/items/12/image")).status).toBe(403)
+    reply = () => new Response("<svg onload=alert(1)>", { headers: { "content-type": "image/svg+xml" } })
+    const r = await call("GET", "/api/taste/items/12/image")
+    expect(r.status).toBe(502)
+    expect(await r.text()).not.toContain("<svg")
+  })
+  test("served image is sandboxed", async () => {
+    reply = () => new Response(PNG, { headers: { "content-type": "image/png; charset=binary" } })
+    const r = await call("GET", "/api/taste/items/12/image")
+    expect(r.headers.get("content-type")).toBe("image/png")
+    expect(r.headers.get("content-security-policy")).toContain("sandbox")
+  })
+})
+
 describe("GET /api/taste/stats + upstream errors", () => {
   test("stats pass through", async () => {
     const stats = [{ dataset: "websites", verdict: "unswiped", count: 155 }]

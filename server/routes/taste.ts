@@ -7,7 +7,7 @@ import { DashboardKeyMissing, DashboardUnreachable, dashboardBytes, dashboardJso
 //   POST /api/taste/swipe {item_id, verdict, reason_tag?} → {ok:true}   (re-swipe overwrites)
 //   GET  /api/taste/items/:id/image                      → image bytes (nosniff)
 //   GET  /api/taste/stats                                → {stats:[{dataset, verdict, count}]}
-// Dashboard 4xx pass through (status + JSON body); 5xx/network/redirect → 502
+// Dashboard 4xx pass through (JSON routes: status + body; image: status); 5xx/network/redirect → 502
 // dashboard_unreachable; no key in the vault → 503 dashboard_key_missing.
 
 const VERDICTS = ["like", "dislike"]
@@ -59,14 +59,23 @@ async function swipe(req: Request): Promise<Response> {
   return relay("POST", "/api/taste/swipe", { item_id, verdict, ...(reason_tag != null ? { reason_tag } : {}) })
 }
 
+// Screenshots are <=~250 KB, so buffering (dashboardBytes) is fine. Only raster
+// types are served: the Companion origin must never serve SVG/HTML from upstream.
+const IMAGE_MIME = /^image\/(png|jpeg|webp|gif)$/
 async function image(id: string): Promise<Response> {
   try {
     const got = await dashboardBytes(`/api/taste/items/${id}/image`)
     if (!got) return fail(404, "not_found")
+    const mime = got.mime.split(";")[0]!.trim().toLowerCase()
+    if (!IMAGE_MIME.test(mime)) return fail(502, "bad_upstream_mime")
     return new Response(got.bytes, {
-      headers: { "Content-Type": got.mime, "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400" },
+      headers: { "Content-Type": mime, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'", "Cache-Control": "private, max-age=86400" },
     })
-  } catch (e) { return dashboardError(e) }
+  } catch (e) {
+    if (e instanceof DashboardUnreachable && e.status != null && e.status >= 400 && e.status < 500 && e.status !== 429) return fail(e.status, "upstream_error", { upstreamStatus: e.status })
+    if (e instanceof DashboardKeyMissing || e instanceof DashboardUnreachable) return dashboardError(e)
+    return fail(502, "dashboard_unreachable") // body read failed mid-transfer
+  }
 }
 
 export async function handleTasteRoute(req: Request, url: URL): Promise<Response | null> {
