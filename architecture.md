@@ -34,9 +34,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/orchestrator.ts` | 439 | route-host | 3 | routes: 10 |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/questions.ts` | 428 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
+| `lib/dispatch-poller.ts` | 407 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
-| `lib/dispatch-poller.ts` | 396 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
 | `lib/triage-engine.ts` | 387 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
@@ -134,8 +134,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev.ts` | 143 | lib | 16 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
+| `lib/dispatch-stage.ts` | 139 | lib | 8 |  |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
-| `lib/dispatch-stage.ts` | 138 | lib | 8 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |

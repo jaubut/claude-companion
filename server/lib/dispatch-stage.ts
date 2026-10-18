@@ -35,7 +35,7 @@ export const LEDGER_ACTIONS = [NEEDS_HUMAN, "pr:unpark", APPROVED_MERGE, "pr:loc
  * queued → queue; running → dispatch while a headless claim waits for its runner's
  * start (dispatch-run claims, then `dispatch.sh running` sets dispatch_run_id), else
  * builder (live rows are their own runner); completed + PR → shepherd until done=1,
- * then merged (stageFields keeps a still-parked PR in shepherd); completed without a PR → merged.
+ * then merged (stageFields keeps an ever-parked PR in shepherd until outcome:merged); completed without a PR → merged.
  */
 export function taskStage(t: Pick<DispatchTask, "status" | "done" | "prUrl" | "owner" | "runId">): TaskStage | null {
   switch (t.status) {
@@ -95,8 +95,9 @@ export function shepherdOf(rows: Row[], now: number): ShepherdState {
 
 /**
  * Optional DTO fields for one task. A done=1 PR is merged on an outcome:merged row
- * (`mergedAt` = its ts); without one it stays in shepherd while still parked, else
- * `mergedAt` falls back to the row's updated_at (a manual merge with no ledger row).
+ * (`mergedAt` = its ts). Without one, a PR the shepherd ever parked stays in shepherd
+ * (parked, or approved / unparked but not merged yet: done=1 closed the task, not the PR);
+ * a never-parked one falls back to `mergedAt` = updated_at (a manual merge with no ledger row).
  */
 export function stageFields(t: DispatchTask, rows: Row[], now: number): StageFields {
   let stage = taskStage(t)
@@ -105,7 +106,7 @@ export function stageFields(t: DispatchTask, rows: Row[], now: number): StageFie
   if (stage === "merged" && t.prUrl) {
     const merged = newest(rows, ["outcome:merged"])
     if (merged) mergedAt = parseTs(merged.ts) || t.updatedAt
-    else if (shepherdOf(rows, now).parked) stage = "shepherd"
+    else if (newest(rows, [NEEDS_HUMAN])) stage = "shepherd"
     else mergedAt = t.updatedAt
   }
   return {

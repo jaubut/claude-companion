@@ -209,3 +209,71 @@ describe("poller: stage fields on the wire and counts", () => {
     expect(frames.filter((f) => f.type === "orchestrator_task" && f.task?.taskId === id).map((f) => f.task?.stage)).toEqual(["builder"])
   })
 })
+
+describe("ledger-only changes (Codex review on #169)", () => {
+  test("done=1 parked PR approved while CI fails stays in shepherd until outcome:merged", () => {
+    const rows = ledger(
+      act("pr:local-gates", { tests: "fail", build: "pass" }),
+      act("pr:needs-human", { reason: "touches auth" }),
+      act("pr:approved-merge", { approvedAt: new Date(NOW - DAY).toISOString() }),
+    )
+    const f = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), rows, NOW)
+    expect(f).toEqual({ stage: "shepherd", prNumber: 42, shepherd: { ci: "failing", review: "approved", parked: false } })
+    expect(f.mergedAt).toBeUndefined()
+    const unparked = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), ledger(act("pr:needs-human", { reason: "x" }), act("pr:unpark")), NOW)
+    expect(unparked.stage).toBe("shepherd")
+    const merged = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), [act("outcome:merged", {}, "2026-10-16 17:00:00"), ...rows], NOW)
+    expect(merged).toMatchObject({ stage: "merged", mergedAt: Date.parse("2026-10-16T17:00:00Z") })
+  })
+
+  test("a ledger-only change (park, then its approval) re-sends the task frame; no turn, nothing when unchanged", async () => {
+    const id = "8".repeat(32)
+    const tasks: Row[] = [row({ id, dispatch_status: "completed", dispatch_pr_url: PR })]
+    let activity: Row[] = []
+    const q: QueryFn = async (sql) => {
+      if (sql.includes("pragma_table_info")) return [{ name: "dispatch_pr_url" }]
+      if (sql.includes("FROM tasks t")) return tasks
+      if (sql.includes("FROM agent_activity")) return activity
+      return []
+    }
+    const store = new Map<string, { phase: string; updatedAt: string; key: string }>()
+    const mirror: Mirror = {
+      seenKey, lastSeen: (k) => store.get(k) ?? null,
+      markSeen: (d) => { store.set(d.id, { phase: phaseOf(d), updatedAt: d.updatedAtRaw, key: seenKey(d) }) },
+      seenCount: () => store.size, pruneSeen: () => 0,
+    }
+    const frames: { type: string; task?: { taskId: string; shepherd?: { parked: boolean; review: string } } }[] = []
+    let turns = 0
+    let clock = NOW
+    const w = createDispatchWiring({
+      query: q, broadcast: (f) => frames.push(f as (typeof frames)[number]),
+      appendTurn: () => { turns++; return { id: "0", threadId: "general", role: "orchestrator", text: "", taskId: null, createdAt: 0 } },
+      push: () => {}, pushEnabled: () => false, linkedNotes: () => new Map(), getChannel: () => null,
+      localQueue: () => ({ cap: 3, live: 0, queued: 0 }), mirror, generalChannel: "general", now: () => clock, log: () => {},
+    })
+    const taskFrames = () => frames.filter((f) => f.type === "orchestrator_task" && f.task?.taskId === id)
+    await w.poll()
+    frames.length = 0
+    turns = 0
+
+    activity = [act("pr:needs-human", { reason: "touches auth" }, "2026-10-16 12:00:00", id)]
+    await w.poll()
+    expect(taskFrames().map((f) => f.task?.shepherd?.parked)).toEqual([true])
+    expect(turns).toBe(0)
+
+    frames.length = 0
+    await w.poll()
+    expect(taskFrames()).toEqual([])
+
+    activity = [act("pr:approved-merge", { approvedAt: new Date(NOW).toISOString() }, "2026-10-16 13:00:00", id), ...activity]
+    await w.poll()
+    expect(taskFrames().map((f) => f.task?.shepherd)).toEqual([expect.objectContaining({ parked: false, review: "approved" })])
+
+    // The approval expiring (no new row) parks it again: the frame follows.
+    frames.length = 0
+    clock = NOW + 8 * DAY
+    await w.poll()
+    expect(taskFrames().map((f) => f.task?.shepherd)).toEqual([expect.objectContaining({ parked: true, review: "pending" })])
+    expect(turns).toBe(0)
+  })
+})

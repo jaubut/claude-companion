@@ -150,6 +150,8 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
   let lastPrune = 0
   let lastQueueKey = ""
   let lastChannelCounts = new Map<string, string>()
+  /** Derived stage fields per task at the last poll: a ledger-only change (park, approval, its expiry) re-sends the task frame. */
+  let lastStages = new Map<string, string>()
 
   // Optional P0 columns, probed once and re-probed every 10 min (or after a
   // failed poll) so an ALTER on the live schema is picked up without a restart.
@@ -234,9 +236,17 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     const pushAllowed = polledOk && deps.pushEnabled()
     let pushes = 0
     let overflow = 0
+    const stages = new Map<string, string>()
     for (const t of list) {
+      const stageKey = JSON.stringify(stageFields(t, ledger.get(t.id) ?? [], now()))
+      stages.set(t.id, stageKey)
+      const prevStage = lastStages.get(t.id)
       const prev = mirror.lastSeen(t.id)
-      if (prev && prev.key === mirror.seenKey(t)) continue
+      if (prev && prev.key === mirror.seenKey(t)) {
+        // Row unchanged: re-send only when the ledger moved the derived stage fields (never a turn or push).
+        if (prevStage !== undefined && prevStage !== stageKey) emitTask(t, links)
+        continue
+      }
       mirror.markSeen(t, now())
       emitTask(t, links)
       const phase = phaseOf(t)
@@ -246,6 +256,7 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
       if (!pushAllowed || !PUSH.has(phase)) continue
       if (pushes < MAX_PUSHES_PER_POLL) { deps.push(pushPayload(t, phase, channelId)); pushes++ } else overflow++
     }
+    lastStages = stages
     if (overflow > 0) {
       deps.push({
         title: "Dispatch", body: `${overflow} more blocked / PR updates`, category: "dispatch_task",

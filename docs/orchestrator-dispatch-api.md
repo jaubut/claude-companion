@@ -79,8 +79,8 @@ from the Turso row and the PR shepherd's `agent_activity` ledger:
 | `running` with a run id, or a live row (`owner` = `companion:<host>`, its own runner) | `builder` |
 | `completed` + PR URL, `done=0` | `shepherd` |
 | `completed` + PR URL, `done=1` with an `outcome:merged` ledger row | `merged` + `mergedAt` |
-| `completed` + PR URL, `done=1`, no `outcome:merged`, still parked (see `parked` below) | `shepherd`, `parked: true` |
-| `completed` + PR URL, `done=1`, no `outcome:merged`, not parked (a manual merge with no ledger row) | `merged` + `mergedAt` = `updated_at` |
+| `completed` + PR URL, `done=1`, no `outcome:merged`, ever parked (`pr:needs-human` row; still parked, or approved / unparked but not merged yet) | `shepherd` |
+| `completed` + PR URL, `done=1`, no `outcome:merged`, never parked (a manual merge with no ledger row) | `merged` + `mergedAt` = `updated_at` |
 | `completed` without a PR (research / note results) | `merged`, no `prNumber` and no `mergedAt` |
 | `blocked` / `failed` / `cancelled` (a closed PR → `cancelled`, dispatch-reconcile) | same name |
 | unknown / NULL | `null` |
@@ -101,8 +101,9 @@ from the Turso row and the PR shepherd's `agent_activity` ledger:
   the poll still succeeds and keeps the last ledger.
 - `counts` / `queue.dispatch` add `failed` (open failed tasks) and `mergedToday` (PR merges whose
   `mergedAt` falls on today, in `COMPANION_TASKS_TZ`, default America/Toronto).
-- A change that only touches the ledger (for example a new park) re-sends no `orchestrator_task` frame. The next
-  `GET /api/orchestrator/thread` or a row change carries it. Stage moves always change the row, so they emit.
+- A change that only touches the ledger (a new park, an approval, an approval expiring) re-sends the task's
+  `orchestrator_task` frame on the next poll when its derived `stage` / `shepherd` / `mergedAt` / `prNumber` change.
+  It posts no thread turn and no push. The first poll of a boot only records the derived fields.
 
 ## Frames
 
