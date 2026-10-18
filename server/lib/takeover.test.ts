@@ -70,6 +70,15 @@ describe("takeoverTarget: host tooling → claude-config first", () => {
     expect(takeoverTarget({ title: "Fix the sweep", blocker: "belongs in claude-config", noteHay: hay }, entries).repo).toBe("claude-config")
     expect(first("Fix the sweep", "see ~/.claude_old/x.log")).toEqual(["claude-companion"])
     expect(first("Fix the sweep", "mytools/x is wrong")).toEqual(["claude-companion"])
+    expect(first("Fix the sweep", "see server/tools/foo.ts and packages/tools/")).toEqual(["claude-companion"])
+  })
+
+  test("a host-tooling signal overrides a single repo named only in the blocker", () => {
+    expect(takeoverTarget({ title: "Fix mac:launchd:com.tls.jules-sweep: x", blocker: "Wrong repo: claude-companion has no launchd; edit ~/.claude/tools", noteHay: hay }, entries))
+      .toEqual({ repo: null, host: "mac", pinned: true, candidates: [{ repo: "claude-config", host: "mac" }, { repo: "claude-companion", host: "mac" }] })
+    expect(first("Fix the sweep", "Wrong repo claude-companion; fix lives in ~/.claude/tools/jules-sweep.ts")).toEqual(["claude-config", "claude-companion"])
+    expect(first("Fix the sweep", "claude-companion is wrong, belongs in claude-config")).toEqual(["claude-config", "claude-companion"])
+    expect(takeoverTarget({ title: "Fix the sweep", blocker: "No local repo mapped — expected tls-dashboard-v2", noteHay: hay }, entries).repo).toBe("tls-dashboard-v2")
   })
 })
 
