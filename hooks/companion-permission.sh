@@ -7,6 +7,9 @@
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$HOOK_DIR/_lib.sh"
 
+# Headless claude -p (dispatch worker, shepherd fix/cascade, PR review, nightly crons): no one can answer, so fall through now (same as server down).
+[ "${DISPATCH_HEADLESS:-}" = 1 ] && exit 0
+
 COMPANION_URL="http://localhost:4245"
 
 if ! curl -s --max-time 1 "$COMPANION_URL/health" > /dev/null 2>&1; then
