@@ -34,6 +34,16 @@ describe("reviseProposal", () => {
     expect(chat.getThread(thread).some((t) => t.text.startsWith(`🤖 Opus rescoped [${old.taskId}] → proposal [${id}]: CSV only`))).toBe(true)
   })
 
+  test("a rescope keeps the old title's [repo:<name>] routing marker", () => {
+    const thread = channels.createChannel("proposals-revise-marker").id
+    threads.push(thread)
+    const old = chat.createProposal("Fix it", "/tmp/x", "body", thread, { noteId: "projects/o", agent: "builder", title: "[repo:tls-dashboard-v2] Fix mac:launchd:x: restore it" })
+    const id = reviseProposal(old.taskId, { title: "Restore only the plist", prompt: "Restore the plist", why: "smaller" }, () => {})
+    expect(chat.getTask(id!)!.title).toBe("[repo:tls-dashboard-v2] Restore only the plist")
+    const again = reviseProposal(id!, { title: "[repo:claude-config] Move it", prompt: "Move it", why: "other repo" }, () => {})
+    expect(chat.getTask(again!)!.title).toBe("[repo:claude-config] Move it")
+  })
+
   test("a proposal that already moved (or is unknown) is not revised and nothing is marked", () => {
     const thread = channels.createChannel("proposals-revise-moved").id
     threads.push(thread)

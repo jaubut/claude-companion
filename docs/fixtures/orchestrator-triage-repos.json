@@ -73,6 +73,15 @@
             "kind": "cancel"
           },
           "destructive": true
+        },
+        {
+          "id": "takeover",
+          "label": "Take over in a session",
+          "detail": "Pick the repo first",
+          "action": {
+            "kind": "takeover",
+            "candidates": []
+          }
         }
       ],
       "createdAt": 1792087987000,

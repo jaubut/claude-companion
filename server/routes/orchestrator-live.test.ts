@@ -314,7 +314,8 @@ describe("finishLive (stop hook)", () => {
     const ctx = { exec, cols: { prUrl: true, resultRef: true }, host, channel: null }
     const id = tid()
     seedRunning(id, "companion:other-host")
-    expect(await tasks.finishLive(ctx, id, { status: "completed" })).toMatchObject({ ok: false, error: "conflict" })
+    const liveLib = await import("../lib/dispatch-live")
+    expect(await liveLib.finishLive(ctx, id, { status: "completed" })).toMatchObject({ ok: false, error: "conflict" })
     expect(tursoTask(id)!.dispatch_status).toBe("running")
     expect(activity(id)).toHaveLength(0)
   })
@@ -402,5 +403,20 @@ describe("live task DTO", () => {
     expect(frame).toMatchObject({ mode: "live", localTaskId: p.taskId })
     // The local row on the wire reads `filed` (the proposal card leaves).
     expect(tasks.toTaskDto(chat.getTask(p.taskId)!)).toMatchObject({ status: "filed", dispatchTaskId: id, mode: "live" })
+  })
+})
+
+describe("a running takeover (blocked-task-takeover)", () => {
+  test("cancel / requeue / unblock → 409 under_takeover with the session; the row stays running", async () => {
+    const { handler } = makeWiring()
+    const id = tid()
+    seedRunning(id, "companion:takeover:tko-zettlab-abcd1234")
+    for (const [action, body] of [["cancel", undefined], ["requeue", undefined], ["unblock", { answer: "x" }]] as const) {
+      const r = await call(handler, "POST", `/api/orchestrator/task/${id}/${action}`, body)
+      expect(r.status).toBe(409)
+      expect(r.json).toMatchObject({ ok: false, error: "under_takeover", session: "tko-zettlab-abcd1234" })
+    }
+    expect(tursoTask(id)!.dispatch_status).toBe("running")
+    expect(activity(id)).toHaveLength(0)
   })
 })

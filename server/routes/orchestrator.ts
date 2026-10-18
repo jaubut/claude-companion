@@ -21,8 +21,9 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import {
   ANSWER_MAX, DEFAULT_AGENT, DISPATCH_ID, type DispatchTask, type WriteOutcome,
   cancelDispatchTask, fileTask, getDispatchTask, getNote, getTaskActivity, getTaskResult,
-  isLiveLinked, liveOwner, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
+  isLiveLinked, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
 } from "../lib/dispatch-tasks"
+import { TAKEOVER_OWNER, liveOwner } from "../lib/dispatch-live"
 import { cancelLive, dispatchLive } from "../wiring/live"
 import { approveProposal, liveResponse, rejectProposal } from "../wiring/proposals"
 import { frontDoor } from "../wiring/front-door"
@@ -213,6 +214,10 @@ async function dispatchAction(req: Request, id: string, action: TaskAction, disp
   if (!out.ok && out.error === "no_such_task") return Response.json({ ok: false, error: "no such task" }, { status: 404 })
   if (!out.ok && action === "cancel" && out.error === "running" && out.task.owner === liveOwner(HOST_INFO.name)) {
     return cancelLiveRoute(id, dispatch)
+  }
+  if (!out.ok && out.error === "running" && out.task.owner?.startsWith(TAKEOVER_OWNER)) {
+    const session = out.task.owner.slice(TAKEOVER_OWNER.length)
+    return Response.json({ ok: false, error: "under_takeover", session, dispatchStatus: "running", owner: out.task.owner, task: dispatch.dto(out.task) }, { status: 409 })
   }
   if (!out.ok) {
     const task = dispatch.dto(out.task)

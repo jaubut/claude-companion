@@ -1,5 +1,6 @@
 import { appendTurn, createProposal, getTask, setTaskStatus, type Task } from "../lib/orchestrator-chat"
-import { cancelDispatchTask, finishLive, liveOwner } from "../lib/dispatch-tasks"
+import { cancelDispatchTask } from "../lib/dispatch-tasks"
+import { finishLive, liveOwner } from "../lib/dispatch-live"
 import { approveBodyFix } from "./body-fix"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
 import { type LiveStart, approveLive } from "./live"
@@ -61,8 +62,11 @@ export function reviseProposal(taskId: string, r: Revision, markCreated: (taskId
   if (!old || old.status !== "proposed") return null
   const res = rejectProposal(old, dispatch)
   if (!res.ok) return null
+  // Keep the old title's `[repo:<name>]` routing marker (Body fixes): dispatch-run routes on it.
+  const marker = /^\[repo:[A-Za-z0-9._-]+\] /.exec(old.title ?? "")?.[0] ?? ""
+  const title = r.title && marker && !r.title.startsWith("[repo:") ? marker + r.title : r.title || old.title || null
   const next = createProposal(r.prompt, old.cwd, `Opus rescoped [${old.taskId}]: ${r.why}`.slice(0, 500), old.threadId, {
-    noteId: old.noteId ?? null, agent: old.agent ?? null, title: r.title || old.title || null,
+    noteId: old.noteId ?? null, agent: old.agent ?? null, title,
   })
   markCreated(next.taskId, Date.now())
   emitTask(next.taskId)

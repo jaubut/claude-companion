@@ -96,7 +96,7 @@ function history(turns: Turn[]): string {
 // `.result`), or null on any failure. Caller decides how to parse it.
 async function runClaudeOnce(model: string, prompt: string): Promise<string | null> {
   const bin = resolveClaudeBin()
-  const proc = Bun.spawn(brainArgs(bin, model), { stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", cwd: BRAIN_CWD })
+  const proc = Bun.spawn(brainArgs(bin, model), { stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", cwd: BRAIN_CWD, env: { ...process.env, DISPATCH_HEADLESS: "1" } })
   const timer = setTimeout(() => { try { proc.kill() } catch { /* gone */ } }, CALL_TIMEOUT_MS)
   let out: string
   try {
