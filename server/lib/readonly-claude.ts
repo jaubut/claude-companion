@@ -92,7 +92,7 @@ export async function runReadonlyClaude(prompt: string, spec: ReadonlySpec, opts
   try {
     const cwd = opts.cwd ?? readonlyCwd()
     mkdirSync(cwd, { recursive: true })
-    proc = Bun.spawn(readonlyArgs(bin, spec), { cwd, env: readonlyEnv(), stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe" })
+    proc = Bun.spawn(readonlyArgs(bin, spec), { cwd, env: { ...readonlyEnv(), DISPATCH_HEADLESS: "1" }, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe" })
   } catch {
     return { ok: false, error: "spawn failed" }
   }

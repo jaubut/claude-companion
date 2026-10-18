@@ -46,7 +46,7 @@ export const runSonnetCli: SonnetRunner = async (prompt, imagePath) => {
   if (!bin) return { kind: "error", reason: "claude binary not found" }
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(sonnetArgs(bin, prompt, imagePath), { stdin: "ignore", stdout: "pipe", stderr: "ignore", cwd: existsSync(SONNET_CWD) ? SONNET_CWD : undefined })
+    proc = Bun.spawn(sonnetArgs(bin, prompt, imagePath), { stdin: "ignore", stdout: "pipe", stderr: "ignore", cwd: existsSync(SONNET_CWD) ? SONNET_CWD : undefined, env: { ...process.env, DISPATCH_HEADLESS: "1" } })
   } catch {
     return { kind: "error", reason: "spawn failed" }
   }
