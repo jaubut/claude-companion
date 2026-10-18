@@ -1,4 +1,4 @@
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import type { ApnsPayload } from "./apns"
 import { BODY_CHANNEL, type BodyComponentDetail, isHealthIntent } from "./body"
 import { clampChars, collapseIdFor } from "./body-alert"
@@ -12,7 +12,7 @@ import {
 } from "./body-investigator"
 import { getAuthToken } from "./auth"
 import type { FixCard } from "./body-fix"
-import { toTaskDto } from "./dispatch-tasks"
+import { repoMarker, toTaskDto } from "./dispatch-tasks"
 import { companionLog } from "./log"
 import type { Task } from "./orchestrator-chat"
 import type { ExecFn } from "./turso"
@@ -235,6 +235,8 @@ export interface ApplyDeps {
   pushEnabled: () => boolean
   writeEvent: (componentId: string, at: string, state: string, detail: string) => Promise<void>
   noteId: () => string
+  /** GitHub repo name of the checkout at `cwd` (its origin remote); null when unknown on this host. */
+  repoName?: (cwd: string) => string | null
   /** A Mac component's card: remember host + cwd so approval runs live on the Mac (lib/body-fix.ts). */
   recordFixCard?: (card: FixCard) => void
   home: string
@@ -245,6 +247,13 @@ export interface ApplyDeps {
 }
 
 const PUSH_SEVERITIES = new Set(["high", "critical"])
+const REPO_NAME = /^[A-Za-z0-9._-]+$/
+
+/** "git@github.com:o/name.git" / "https://github.com/o/name" → "name". */
+export function repoNameFromRemote(url: string): string | null {
+  const name = url.trim().replace(/\/+$/, "").replace(/\.git$/, "").split(/[/:]/).pop() ?? ""
+  return REPO_NAME.test(name) ? name : null
+}
 
 export function createReportApplier(deps: ApplyDeps): (r: InvestigationReport, rec: InvestigationRecord) => Promise<string | null> {
   const now = deps.now ?? Date.now
@@ -252,6 +261,13 @@ export function createReportApplier(deps: ApplyDeps): (r: InvestigationReport, r
   const say = (text: string, taskId: string | null = null) => {
     const turn = deps.appendTurn(text, taskId)
     deps.broadcast({ type: "orchestrator", turn })
+  }
+  // dispatch-run routes on a leading `[repo:<name>]`; without it every fix ran in the orchestrator note's repo.
+  // A Mac checkout seen from Zettlab has no git here: its directory name is the repo-map name. ~/.claude = claude-config.
+  const repoFor = (r: InvestigationReport): string => {
+    if (!r.repo || !r.cwd) return "claude-config"
+    const name = deps.repoName?.(r.cwd) ?? basename(r.cwd)
+    return name === ".claude" || !REPO_NAME.test(name) ? "claude-config" : name
   }
   return async (r, rec) => {
     const { created, channel } = deps.ensureChannel()
@@ -265,7 +281,7 @@ export function createReportApplier(deps: ApplyDeps): (r: InvestigationReport, r
         // A Mac fix runs on the Mac: write a host-neutral path; the Mac localizes it (lib/body-fix.ts localizeCwd).
         const cwd = r.cwd || (r.host !== (deps.localHost?.() ?? localBodyHost()) ? "~/.claude" : join(deps.home, ".claude"))
         const agent = r.repo ? "builder" : "claude"
-        const title = clampChars(`${res.retire ? "Retire" : "Fix"} ${r.componentId}: ${res.recommendedFix.summary}`, 120)
+        const title = clampChars(`${repoMarker(repoFor(r))}${res.retire ? "Retire" : "Fix"} ${r.componentId}: ${res.recommendedFix.summary}`, 120)
         const reasoning = `Body investigation ${rec.id}: ${res.rootCause} (confidence ${Math.round(res.confidence * 100)}%, ${res.recommendedFix.risk} risk)`
         const noteId = deps.noteId()
         const task = deps.createProposal(proposalPrompt({ componentId: r.componentId, host: r.host, state: r.state, investigationId: rec.id, cwd }, res), cwd, reasoning, { noteId, agent, title })

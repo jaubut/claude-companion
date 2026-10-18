@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-17",
+  "generatedAt": "2026-10-18",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -638,7 +638,7 @@
         },
         {
           "path": "lib/body-investigate-engine.ts",
-          "lines": 367,
+          "lines": 383,
           "kind": "lib",
           "exports": [
             "PEER_TIMEOUT_MS",
@@ -652,6 +652,7 @@
             "BodyInvestigator",
             "createBodyInvestigator",
             "ApplyDeps",
+            "repoNameFromRemote",
             "createReportApplier",
             "investigationPush",
             "writeInvestigationEvent",
@@ -6371,7 +6372,7 @@
         },
         {
           "path": "wiring/body-investigate.ts",
-          "lines": 105,
+          "lines": 110,
           "kind": "lib",
           "exports": [
             "SWEEP_MS",
@@ -6812,7 +6813,7 @@
         },
         {
           "path": "wiring/proposals.ts",
-          "lines": 73,
+          "lines": 76,
           "kind": "lib",
           "exports": [
             "ApproveOpts",
@@ -8221,6 +8222,12 @@
         },
         "clampChars": {
           "module": "lib/body-alert.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "repoMarker": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/body-investigate-engine.ts"
           ]
@@ -13632,6 +13639,12 @@
           ]
         },
         "createReportApplier": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "repoNameFromRemote": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
             "wiring/body-investigate.ts"
