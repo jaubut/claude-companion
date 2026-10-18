@@ -1,10 +1,13 @@
-import { db } from "../lib/orchestrator-db"
+import { Database } from "bun:sqlite"
+import { mkdirSync } from "node:fs"
+import { dirname } from "node:path"
+import { companionDbPath } from "../lib/db-path"
 import { type CanvasStatus, type CanvasStore, createCanvasStore, sessionStatuses } from "../lib/canvas"
 import { listActivities, onActivity } from "../lib/activity"
 import { listSessions, onSessions } from "../lib/sessions"
 import { HOST_INFO, broadcast } from "../state"
 
-// Live canvas (PRJ-FL49 P5): the store on the shared companion.db connection
+// Live canvas (PRJ-FL49 P5): the store on companion.db (its own lazy connection)
 // and the tri-state status, pushed as `canvas` frames. Ops:
 //   snapshot     { host, nodes, edges, status }      — on WS open (ws.ts), non-empty board only
 //   node         { node }                            — created or moved/edited
@@ -15,7 +18,31 @@ import { HOST_INFO, broadcast } from "../state"
 // Status rides the sessions + activity listeners; the activity heartbeat ticks
 // every 1.5 s, so a frame goes out only when the map actually differs.
 
-export const canvasStore: CanvasStore = createCanvasStore(db)
+// Opened lazily, on first use, at companionDbPath() like the other stores: ws.ts
+// imports this module, so an eager open (or importing orchestrator-db) would pin
+// the db before a test points COMPANION_DB_PATH at its own fixture.
+let store: CanvasStore | null = null
+
+function openStore(): CanvasStore {
+  if (!store) {
+    const path = companionDbPath()
+    mkdirSync(dirname(path), { recursive: true })
+    const d = new Database(path)
+    d.exec("PRAGMA busy_timeout = 3000") // companion.db is shared with other stores
+    store = createCanvasStore(d)
+  }
+  return store
+}
+
+export const canvasStore: CanvasStore = {
+  nodes: () => openStore().nodes(),
+  edges: () => openStore().edges(),
+  addNode: (input, now) => openStore().addNode(input, now),
+  patchNode: (id, patch, now) => openStore().patchNode(id, patch, now),
+  removeNode: (id) => openStore().removeNode(id),
+  addEdge: (input, now) => openStore().addEdge(input, now),
+  removeEdge: (id) => openStore().removeEdge(id),
+}
 
 let lastStatus: Record<string, CanvasStatus> = sessionStatuses(listSessions(), listActivities())
 

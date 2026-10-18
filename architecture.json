@@ -6513,7 +6513,7 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 47,
+          "lines": 74,
           "kind": "lib",
           "exports": [
             "canvasStore",
@@ -6521,6 +6521,7 @@
             "canvasSnapshot"
           ],
           "state": [
+            "let store",
             "let lastStatus"
           ],
           "emits": [
@@ -6530,7 +6531,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/orchestrator-db.ts",
+            "lib/db-path.ts",
             "lib/canvas.ts",
             "lib/activity.ts",
             "lib/sessions.ts",
@@ -7958,7 +7959,8 @@
             "lib/receipt-qa-store.ts",
             "lib/session-titles.ts",
             "lib/voice-memo.ts",
-            "wiring/auto-compact.ts"
+            "wiring/auto-compact.ts",
+            "wiring/canvas.ts"
           ]
         },
         "redactSecrets": {
