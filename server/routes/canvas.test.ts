@@ -86,6 +86,17 @@ describe("REST", () => {
     expect(bad.status).toBe(400)
     await call("DELETE", `/api/canvas/nodes/${id}`)
   })
+
+  test("client ids must match [A-Za-z0-9_-]+", async () => {
+    for (const bad of ["a/b", "..", "."]) {
+      const r = await call("POST", "/api/canvas/nodes", { ...agent, id: bad })
+      expect(r.status).toBe(400)
+      expect(r.json.error).toBe("invalid_id")
+    }
+    expect((await call("POST", "/api/canvas/nodes", { ...agent, id: "n_1-x" })).status).toBe(201)
+    expect((await call("PATCH", "/api/canvas/nodes/n_1-x", { x: 1 })).status).toBe(200)
+    expect((await call("DELETE", "/api/canvas/nodes/n_1-x")).status).toBe(200)
+  })
 })
 
 describe("live", () => {

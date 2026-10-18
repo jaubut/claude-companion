@@ -162,7 +162,7 @@ function parseFields(b: Record<string, unknown>, required: boolean): Parsed<Node
 export function parseNodeInput(raw: unknown): Parsed<NodeInput> {
   if (!isObj(raw)) return { ok: false, error: "invalid_body" }
   if (!NODE_KINDS.includes(raw.kind as NodeKind)) return { ok: false, error: "invalid_kind" }
-  if (raw.id !== undefined && (typeof raw.id !== "string" || !raw.id || raw.id.length > ID_MAX)) return { ok: false, error: "invalid_id" }
+  if (raw.id !== undefined && (typeof raw.id !== "string" || !raw.id || raw.id.length > ID_MAX || !/^[A-Za-z0-9_-]+$/.test(raw.id))) return { ok: false, error: "invalid_id" }
   const f = parseFields(raw, true)
   if (!f.ok) return f
   const { x, y, w, h } = f.value as Required<Pick<NodePatch, "x" | "y" | "w" | "h">>
