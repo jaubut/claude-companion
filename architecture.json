@@ -640,7 +640,7 @@
         },
         {
           "path": "lib/body-investigate-engine.ts",
-          "lines": 367,
+          "lines": 383,
           "kind": "lib",
           "exports": [
             "PEER_TIMEOUT_MS",
@@ -654,6 +654,7 @@
             "BodyInvestigator",
             "createBodyInvestigator",
             "ApplyDeps",
+            "repoNameFromRemote",
             "createReportApplier",
             "investigationPush",
             "writeInvestigationEvent",
@@ -6431,7 +6432,7 @@
         },
         {
           "path": "wiring/body-investigate.ts",
-          "lines": 105,
+          "lines": 110,
           "kind": "lib",
           "exports": [
             "SWEEP_MS",
@@ -6905,7 +6906,7 @@
         },
         {
           "path": "wiring/proposals.ts",
-          "lines": 73,
+          "lines": 76,
           "kind": "lib",
           "exports": [
             "ApproveOpts",
@@ -8351,6 +8352,12 @@
         },
         "clampChars": {
           "module": "lib/body-alert.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts"
+          ]
+        },
+        "repoMarker": {
+          "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/body-investigate-engine.ts"
           ]
@@ -13784,6 +13791,12 @@
           ]
         },
         "createReportApplier": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts"
+          ]
+        },
+        "repoNameFromRemote": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
             "wiring/body-investigate.ts"

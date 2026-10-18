@@ -251,7 +251,7 @@ describe("sweep", () => {
 })
 
 describe("report applier", () => {
-  function applier(o: { pushEnabled?: boolean; localHost?: "mac" | "zettlab" } = {}) {
+  function applier(o: { pushEnabled?: boolean; localHost?: "mac" | "zettlab"; repoName?: (cwd: string) => string | null } = {}) {
     const turns: { text: string; taskId: string | null }[] = []
     const frames: Record<string, unknown>[] = []
     const proposals: { prompt: string; cwd: string; reasoning: string; target: unknown }[] = []
@@ -277,6 +277,7 @@ describe("report applier", () => {
       now: () => T0,
       log: () => {},
       recordFixCard: (c) => cards.push(c),
+      repoName: o.repoName,
     })
     return { apply, turns, frames, proposals, pushes, events, cards }
   }
@@ -290,13 +291,13 @@ describe("report applier", () => {
     const a = applier()
     expect(await a.apply(base, rec())).toBe("prop0001")
     expect(a.turns[0]!.text).toStartWith("🔍 mac:launchd:x — script deleted (confidence 90%)")
-    expect(a.proposals[0]).toMatchObject({ cwd: "/Users/j/tools", target: { noteId: "projects/x", agent: "builder", title: "Fix mac:launchd:x: restore it" } })
+    expect(a.proposals[0]).toMatchObject({ cwd: "/Users/j/tools", target: { noteId: "projects/x", agent: "builder", title: "[repo:tools] Fix mac:launchd:x: restore it" } })
     expect(a.proposals[0]!.prompt).toContain("1. git checkout run.ts")
     expect(a.turns[1]).toMatchObject({ taskId: "prop0001" })
     expect(a.turns[1]!.text).toContain("· host mac")
     expect(a.turns[1]!.text).toContain("Approve to run it live on the mac (in /Users/j/tools).")
     // a Mac card remembers its host + cwd, so approval runs live on the Mac
-    expect(a.cards).toEqual([{ taskId: "prop0001", host: "mac", componentId: "mac:launchd:x", cwd: "/Users/j/tools", noteId: "projects/x", agent: "builder", title: "Fix mac:launchd:x: restore it", investigationId: "inv1" }])
+    expect(a.cards).toEqual([{ taskId: "prop0001", host: "mac", componentId: "mac:launchd:x", cwd: "/Users/j/tools", noteId: "projects/x", agent: "builder", title: "[repo:tools] Fix mac:launchd:x: restore it", investigationId: "inv1" }])
     expect(a.frames.map((f) => f.type)).toEqual(["orchestrator_channel", "orchestrator", "orchestrator", "orchestrator_task"])
     expect(a.events).toEqual([["mac:launchd:x", new Date(T0).toISOString(), "dead", "investigation inv1: script deleted (90%, med) · fix proposed [prop0001]"]])
     expect(a.pushes).toHaveLength(0)
@@ -324,6 +325,40 @@ describe("report applier", () => {
     expect(a.events[0]![3]).toContain("· no fix")
     await a.apply({ ...base, cwd: null, repo: false }, rec())
     expect(a.proposals[0]).toMatchObject({ cwd: "/Users/j/.claude", target: { agent: "claude" } })
+  })
+
+  test("the title leads with dispatch-run's [repo:<name>] marker: the checkout's GitHub name, else claude-config", async () => {
+    const asked: string[] = []
+    const a = applier({ repoName: (cwd) => { asked.push(cwd); return "tls-dashboard-v2" } })
+    await a.apply({ ...base, cwd: "/Users/j/dash" }, rec())
+    expect(asked).toEqual(["/Users/j/dash"])
+    expect(a.proposals[0]!.target).toMatchObject({ title: "[repo:tls-dashboard-v2] Fix mac:launchd:x: restore it" })
+    await a.apply({ ...base, result: { ...RESULT, retire: true } }, rec())
+    expect(a.proposals[1]!.target).toMatchObject({ title: "[repo:tls-dashboard-v2] Retire mac:launchd:x: restore it" })
+    // no repo (cwd falls back to ~/.claude) → claude-config, never looked up
+    await a.apply({ ...base, cwd: null, repo: false }, rec())
+    expect(a.proposals[2]!.target).toMatchObject({ title: "[repo:claude-config] Fix mac:launchd:x: restore it" })
+    expect(asked).toHaveLength(2)
+    // lookup unknown on this host (a Mac path on Zettlab): the directory name; ~/.claude itself = claude-config
+    const z = applier({ localHost: "zettlab", repoName: () => null })
+    await z.apply({ ...base, cwd: "/Users/j/claude-companion" }, rec())
+    await z.apply({ ...base, cwd: "/Users/j/.claude" }, rec())
+    expect(z.proposals.map((p) => (p.target as { title: string }).title)).toEqual([
+      "[repo:claude-companion] Fix mac:launchd:x: restore it", "[repo:claude-config] Fix mac:launchd:x: restore it",
+    ])
+    // clamping keeps the marker (it is the head of the title)
+    await z.apply({ ...base, result: { ...RESULT, recommendedFix: { ...RESULT.recommendedFix!, summary: "x".repeat(300) } } }, rec())
+    const long = (z.proposals[2]!.target as { title: string }).title
+    expect(long).toStartWith("[repo:tools] Fix mac:launchd:x: xxx")
+    expect([...long]).toHaveLength(120)
+    expect(/^\[repo:([A-Za-z0-9._-]+)\]/.exec(long)?.[1]).toBe("tools")
+  })
+
+  test("repoNameFromRemote: ssh / https / trailing .git", () => {
+    expect(m.repoNameFromRemote("git@github.com:jaubut/claude-config.git\n")).toBe("claude-config")
+    expect(m.repoNameFromRemote("https://github.com/jaubut/tls-dashboard-v2.git")).toBe("tls-dashboard-v2")
+    expect(m.repoNameFromRemote("https://github.com/jaubut/claude-companion")).toBe("claude-companion")
+    expect(m.repoNameFromRemote("")).toBeNull()
   })
 
   test("failure: turn + event; push only on the second failure (and only with a sender)", async () => {

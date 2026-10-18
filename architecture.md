@@ -41,9 +41,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage-engine.ts` | 387 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `routes/capture.ts` | 385 | lib | 7 |  |
+| `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/dispatch-poller.ts` | 375 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
-| `lib/body-investigate-engine.ts` | 367 | lib | 19 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `wiring/resolver.ts` | 352 | lib | 13 |  |
@@ -152,9 +152,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `wiring/body-fix.ts` | 113 | lib | 4 | state: let deps · emits: orchestrator_channel |
+| `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
-| `wiring/body-investigate.ts` | 105 | lib | 8 | state: let applier, let live |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `lib/orchestrator-db.ts` | 99 | lib | 2 |  |
@@ -176,10 +176,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
+| `wiring/proposals.ts` | 76 | lib | 5 |  |
 | `lib/resolver-fix-policy.ts` | 75 | lib | 4 |  |
 | `wiring/canvas.ts` | 74 | lib | 3 | state: let store, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `wiring/front-door.ts` | 74 | lib | 1 | emits: orchestrator |
-| `wiring/proposals.ts` | 73 | lib | 5 |  |
 | `wiring/body.ts` | 71 | lib | 8 | emits: orchestrator_channel, orchestrator, body_alert |
 | `wiring/takeover-choose.ts` | 71 | lib | 2 |  |
 | `lib/resolver-fix-guard.ts` | 69 | lib | 4 |  |

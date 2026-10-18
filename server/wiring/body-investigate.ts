@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"
 import { apnsConfigured } from "../lib/apns"
 import { BODY_CHANNEL, BODY_CHANNEL_NAME, buildComponentDetail } from "../lib/body"
@@ -6,7 +7,7 @@ import { createBodyFixStore } from "../lib/body-fix"
 import { type InvestigationStore, createInvestigationStore, investigateEnabled, isProblemState, localBodyHost } from "../lib/body-investigate"
 import {
   type BodyInvestigator, DEFAULT_NOTE_ID, bodyPeer, createBodyInvestigator, createReportApplier, investigationDigestFor as engineDigestFor,
-  peerForwarder, peerReporter, writeInvestigationEvent,
+  peerForwarder, peerReporter, repoNameFromRemote, writeInvestigationEvent,
 } from "../lib/body-investigate-engine"
 import { knownPaths, runInvestigatorCli } from "../lib/body-investigator"
 import { companionLog } from "../lib/log"
@@ -51,6 +52,10 @@ export function bodyReportApplier(): ReturnType<typeof createReportApplier> {
     writeEvent: (id, at, state, detail) => writeInvestigationEvent(tursoExec, id, at, state, detail),
     noteId: () => process.env.COMPANION_BODY_NOTE_ID?.trim() || DEFAULT_NOTE_ID,
     home: process.env.HOME || homedir(),
+    repoName: (cwd) => {
+      const res = spawnSync("git", ["-C", cwd, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 5_000 })
+      return res.status === 0 ? repoNameFromRemote(res.stdout) : null
+    },
     recordFixCard: (card) => bodyFixStore.recordCard(card, Date.now()),
   })
   return applier
