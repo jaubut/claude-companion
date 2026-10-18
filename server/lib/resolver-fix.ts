@@ -152,7 +152,7 @@ export async function runPrFix(f: FixInput, deps: FixDeps): Promise<FixOutcome> 
     const modules = join(f.repo, "node_modules")
     if (existsSync(modules)) (deps.linkModules ?? ((a, b) => symlinkSync(a, b)))(modules, join(dir, "node_modules"))
     const start = (await git(dir, "rev-parse", "HEAD")).out.trim()
-    const run = await deps.sh(bin, fixArgs(f, dir), { cwd: dir, timeoutMs: f.timeoutMs, env: fixEnv() })
+    const run = await deps.sh(bin, fixArgs(f, dir), { cwd: dir, timeoutMs: f.timeoutMs, env: { ...fixEnv(), DISPATCH_HEADLESS: "1" } })
     if (!run.ok) return { kind: "failed", error: `fix run failed (exit ${run.code}) ${run.err.slice(0, 160)}` }
     const reply = parseFixReply(run.out)
     if (!reply) return { kind: "failed", error: "unparseable fix-run output" }
