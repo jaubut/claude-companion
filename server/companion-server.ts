@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "./lib/auth"
-import { type WsData, broadcast, clientInfo } from "./state"
+import { type WsData, HOST_INFO, broadcast, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { handleApiRoute } from "./routes/api"
@@ -24,6 +24,8 @@ import { handleMyTasksRoute } from "./routes/my-tasks"
 import { handleTasteRoute } from "./routes/taste"
 import { createTasksAgentRoute } from "./routes/tasks-agent"
 import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
+import { createCanvasRoute } from "./routes/canvas"
+import { canvasSend, canvasStatus, canvasStore } from "./wiring/canvas"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
@@ -37,6 +39,7 @@ const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
+const handleCanvasRoute = createCanvasRoute({ store: canvasStore, status: canvasStatus, host: HOST_INFO.name, notify: broadcast, send: canvasSend })
 
 export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
@@ -91,7 +94,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleResolverRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleResolverRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleCanvasRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }
