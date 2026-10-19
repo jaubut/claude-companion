@@ -100,6 +100,8 @@ export function shepherdOf(rows: Row[], now: number): ShepherdState {
  * a never-parked one falls back to `mergedAt` = updated_at (a manual merge with no ledger row).
  */
 export function stageFields(t: DispatchTask, rows: Row[], now: number): StageFields {
+  // Ledger rows are keyed by task id; a requeued task's new PR must not inherit the old PR's rows (outcome:merged carries no url).
+  rows = rows.filter((r) => { const u = meta(r).url; return u === undefined || u === t.prUrl })
   let stage = taskStage(t)
   const prNumber = parsePrUrl(t.prUrl)?.number
   let mergedAt: number | undefined

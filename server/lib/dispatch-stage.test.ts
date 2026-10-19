@@ -49,6 +49,12 @@ describe("taskStage", () => {
 })
 
 describe("stageFields", () => {
+  test("requeued to a new PR: the old PR's park and review rows don't carry over", () => {
+    const OLD = "https://github.com/jaubut/dash/pull/41"
+    const rows = ledger(act("pr:review", { verdict: "CHANGES", url: OLD }), act("pr:needs-human", { reason: "auth change", url: OLD }))
+    const f = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR }), rows, NOW)
+    expect(f.shepherd).toMatchObject({ parked: false, review: "pending" })
+  })
   test("merged PR: prNumber + mergedAt from the outcome:merged row", () => {
     const f = stageFields(t({ dispatch_status: "completed", dispatch_pr_url: PR, done: 1 }), [act("outcome:merged", {}, "2026-10-16 13:30:00")], NOW)
     expect(f).toEqual({ stage: "merged", prNumber: 42, mergedAt: Date.parse("2026-10-16T13:30:00Z") })
