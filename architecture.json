@@ -4045,7 +4045,7 @@
         },
         {
           "path": "lib/takeover.ts",
-          "lines": 207,
+          "lines": 216,
           "kind": "lib",
           "exports": [
             "TakeoverHost",

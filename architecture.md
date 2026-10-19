@@ -85,6 +85,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/command-offpane-cache.ts` | 216 | lib | 14 | state: let launchMemo, warnedOld: Set |
+| `lib/takeover.ts` | 216 | lib | 27 |  |
 | `ws.ts` | 216 | lib | 1 | emits: init, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `lib/dialogs.ts` | 212 | lib | 7 |  |
@@ -93,7 +94,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
-| `lib/takeover.ts` | 207 | lib | 27 |  |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
