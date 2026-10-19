@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-18",
+  "generatedAt": "2026-10-19",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1467,7 +1467,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 375,
+          "lines": 407,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -1499,6 +1499,8 @@
             "lib/apns.ts",
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
+            "lib/dispatch-stage.ts",
+            "lib/my-tasks.ts",
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-chat.ts",
             "lib/turso.ts"
@@ -1508,8 +1510,36 @@
           "externals": []
         },
         {
+          "path": "lib/dispatch-stage.ts",
+          "lines": 141,
+          "kind": "lib",
+          "exports": [
+            "TaskStage",
+            "ShepherdState",
+            "StageFields",
+            "LEDGER_ACTIONS",
+            "taskStage",
+            "shepherdOf",
+            "stageFields",
+            "listPrLedger"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-tasks.ts",
+            "lib/triage-sources.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 511,
+          "lines": 513,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -8364,6 +8394,8 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/body.ts",
+            "lib/dispatch-poller.ts",
+            "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/tasks-agent-row.ts",
@@ -8382,6 +8414,7 @@
             "lib/body.ts",
             "lib/dispatch-live.ts",
             "lib/dispatch-poller.ts",
+            "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
@@ -8408,6 +8441,7 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/dispatch-live.ts",
+            "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/tasks-agent-row.ts",
             "lib/tasks-agent-testdb.test-util.ts",
@@ -8894,7 +8928,8 @@
         "ledger": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-live.ts"
+            "lib/dispatch-live.ts",
+            "lib/dispatch-poller.ts"
           ]
         },
         "FileInput": {
@@ -8915,6 +8950,7 @@
           "callers": [
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
+            "lib/dispatch-stage.ts",
             "lib/status-answer.ts",
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
@@ -9029,6 +9065,56 @@
             "wiring/takeover-choose.ts",
             "wiring/takeover.ts",
             "wiring/triage-repos.ts"
+          ]
+        },
+        "stageFields": {
+          "module": "lib/dispatch-stage.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "listPrLedger": {
+          "module": "lib/dispatch-stage.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "NEEDS_HUMAN": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "APPROVAL_TTL_MS": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "approvalTime": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "parkPrefix": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "parsePrUrl": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "parseTs": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-stage.ts",
+            "lib/triage-sources.ts"
           ]
         },
         "TaskStatus": {
@@ -11215,12 +11301,6 @@
           "callers": [
             "lib/triage-engine.ts",
             "routes/orchestrator.ts"
-          ]
-        },
-        "parseTs": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/triage-sources.ts"
           ]
         },
         "TAKEOVER_OWNER": {
@@ -15050,12 +15130,6 @@
         },
         "LiveResolver": {
           "module": "wiring/resolver.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "NEEDS_HUMAN": {
-          "module": "lib/triage-sources.ts",
           "callers": [
             "wiring/triage.ts"
           ]
