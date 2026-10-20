@@ -4,7 +4,7 @@ import { pickKeys } from "../lib/dialogs"
 import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { paneKey, sendKeysArgs } from "../lib/tmux-pane"
-import { dialogWatcher } from "../wiring/dialogs"
+import { dialogWatcher, endQuestionsOnEscape } from "../wiring/dialogs"
 import { herdrGateKey, herdrGatedKey, herdrPaneOf } from "../lib/herdr"
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -32,6 +32,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
       if (!sent) return Response.json({ ok: false, error: "herdr send-keys failed" }, { status: 500 })
       if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
       companionLog(`\x1b[36mdialog key\x1b[0m ${name} → ${gk}`)
+      if (name === "Escape") endQuestionsOnEscape(session, "escape")
       setTimeout(() => void dialogWatcher.refresh(session.key), 350)
       return Response.json({ ok: true })
     }
@@ -56,6 +57,9 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
     const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     companionLog(`${cyan}dialog key${reset} ${name} → ${gateKey}`)
+    // Esc rejects a pending question's picker, and Claude Code fires no hook
+    // for that: end the card here (Canvas Cancel / phone Esc).
+    if (name === "Escape") endQuestionsOnEscape(session, "escape")
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)
     return Response.json({ ok: true })
   }

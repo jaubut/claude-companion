@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
-import { QUESTION_ORPHAN_MS, createDialogWatcher, type DialogWatchDeps, type SessionStatus } from "./dialog-watch"
+import { PICKER_GONE_MS, QUESTION_ORPHAN_MS, createDialogWatcher, type DialogWatchDeps, type SessionStatus } from "./dialog-watch"
 import type { Session } from "./sessions"
-import { ANSWER_GRACE_MS, addQuestionRequest, getPendingQuestions, questionAnsweredRecently, resolveQuestion } from "./questions"
+import { ANSWER_GRACE_MS, addQuestionRequest, cancelQuestionsFor, getPendingQuestions, onQuestionExpired, questionAnsweredRecently, resolveQuestion } from "./questions"
 import type { Dialog } from "./dialogs"
 
 const MODEL_PANE = `
@@ -375,4 +375,98 @@ test("cursor movement re-emits (signature changes); session vanishing closes", a
   h.sessions = []
   await w.tick()
   expect(h.closed).toEqual(["claude:tty:/dev/pts/8"])
+})
+
+// Esc at the terminal on a carded question: Claude Code fires no hook for the
+// rejected call, so the watcher ends the card once its picker is gone.
+function cardedHarness(t: { now: number }) {
+  const ended: [string, string, string][] = []
+  const off = onQuestionExpired((r, d, via) => ended.push([r.id, d, via]))
+  const pendingHere = (s: Session) => getPendingQuestions().filter((q) => q.sessionKey === s.key)
+  const { h, w } = harness({
+    now: () => t.now,
+    hasPendingQuestion: (s) => pendingHere(s).length > 0,
+    pendingQuestionIds: (s) => pendingHere(s).map((q) => q.id),
+    onCardedPickerGone: (s) => { cancelQuestionsFor({ sessionKey: s.key }, "expired", "picker closed") },
+  })
+  const ask = () => {
+    void addQuestionRequest({ sessionId: "sid", cwd: "/home/aubut", sessionKey: h.sessions[0]!.key, questions: [] }, { expiryMs: 60_000 })
+    return pendingHere(h.sessions[0]!).at(-1)!.id
+  }
+  return { h, w, ended, off, ask, pending: () => pendingHere(h.sessions[0]!) }
+}
+
+test("a carded question whose picker closed (terminal Esc) ends: resolved as expired, pending empty", async () => {
+  const t = { now: 1_000_000 }
+  const { h, w, ended, off, ask, pending } = cardedHarness(t)
+  const id = ask()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  expect(h.opened).toEqual([])
+  h.status = { status: "idle", waitingFor: "" }
+  h.pane = IDLE_PANE
+  await w.tick()
+  expect(pending()).toHaveLength(1) // inside the grace PostToolUse could still call it answered
+  t.now += PICKER_GONE_MS
+  await w.tick()
+  expect(pending()).toEqual([])
+  expect(ended).toContainEqual([id, "expired", "picker closed"])
+  off()
+})
+
+test("with no status file the pane alone says the carded picker is gone", async () => {
+  const t = { now: 1_000_000 }
+  const { h, w, off, ask, pending } = cardedHarness(t)
+  ask()
+  h.status = null
+  h.pane = QUESTION_PANE
+  await w.tick()
+  h.pane = IDLE_PANE
+  await w.tick()
+  t.now += PICKER_GONE_MS
+  await w.tick()
+  expect(pending()).toEqual([])
+  off()
+})
+
+test("a carded question answered at the terminal stays PostToolUse's: ended as answered, not by the watcher", async () => {
+  const t = { now: 1_000_000 }
+  const { h, w, ended, off, ask } = cardedHarness(t)
+  const id = ask()
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  h.status = { status: "busy", waitingFor: "" }
+  await w.tick()
+  cancelQuestionsFor({ sessionKey: h.sessions[0]!.key }, "answered", "PostToolUse")
+  t.now += PICKER_GONE_MS
+  await w.tick()
+  expect(ended.filter(([i]) => i === id)).toEqual([[id, "answered", "PostToolUse"]])
+  off()
+})
+
+test("a carded question whose picker never showed (PreToolUse phase) or a NEW question after one closed is left alone", async () => {
+  const t = { now: 1_000_000 }
+  const { h, w, off, ask, pending } = cardedHarness(t)
+  ask()
+  h.status = { status: "busy", waitingFor: "" }
+  await w.tick()
+  t.now += PICKER_GONE_MS * 10
+  await w.tick()
+  expect(pending()).toHaveLength(1)
+  // Its picker shows, it is answered at the terminal, the next question is
+  // asked before the watcher sees the first one gone.
+  h.status = { status: "waiting", waitingFor: "dialog open" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  cancelQuestionsFor({ sessionKey: h.sessions[0]!.key }, "answered", "PostToolUse")
+  const next = ask()
+  h.status = { status: "busy", waitingFor: "" }
+  await w.tick()
+  t.now += PICKER_GONE_MS * 10
+  await w.tick()
+  expect(pending().map((q) => q.id)).toEqual([next])
+  cancelQuestionsFor({ sessionKey: h.sessions[0]!.key }, "expired")
+  off()
 })
