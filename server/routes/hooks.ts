@@ -130,7 +130,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // ── AskUserQuestion / request_user_input fast path ─────────────
     if (worker.is && isQuestionTool(tool)) return hookPassthroughResponse(agent)
     {
-      const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, session, headerMeta })
+      const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, toolUseId: body.tool_use_id, session, headerMeta })
       if (handled) return handled
     }
 
@@ -351,7 +351,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // 2026-09-25, so every phone answer and every expiry deny on this path
     // was silently dropped).
     {
-      const handled = await questionFastPath({ agent, eventName: "PermissionRequest", tool, input, sessionId, cwd, tty, session, headerMeta })
+      const handled = await questionFastPath({ agent, eventName: "PermissionRequest", tool, input, sessionId, cwd, tty, toolUseId: body.tool_use_id, session, headerMeta })
       if (handled) return handled
     }
 
