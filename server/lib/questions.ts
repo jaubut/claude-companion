@@ -334,9 +334,11 @@ export function parseQuestionInput(input: unknown): QuestionItem[] | null {
 const RECENT_ANSWER_TTL_MS = 180_000
 const recentlyAnswered = new Map<string, { at: number; answers: QuestionAnswer[] }>()
 // Questions whose phone window ended with no answer, with the hook phase that
-// lapsed and the question id. A PreToolUse lapse is re-asked by the
-// PermissionRequest sibling (same id); a PermissionRequest lapse is final.
-const recentlyFellThrough = new Map<string, { at: number; phase: "PreToolUse" | "PermissionRequest"; id: string }>()
+// lapsed, the question id and the tool call it belonged to. A PreToolUse lapse
+// is re-asked by the PermissionRequest sibling (same id); a PermissionRequest
+// lapse is final — for that tool call only.
+interface FellThrough { phase: "PreToolUse" | "PermissionRequest"; id: string; toolUseId: string }
+const recentlyFellThrough = new Map<string, FellThrough & { at: number }>()
 
 export function questionDedupeKey(sessionId: string, cwd: string, questions: QuestionItem[]): string {
   const who = sessionId || cwd || "?"
@@ -372,21 +374,22 @@ export function markQuestionFellThrough(
   now = Date.now(),
   phase: "PreToolUse" | "PermissionRequest" = "PermissionRequest",
   id = "",
+  toolUseId = "",
 ): void {
-  recentlyFellThrough.set(key, { at: now, phase, id })
+  recentlyFellThrough.set(key, { at: now, phase, id, toolUseId })
   for (const [k, v] of recentlyFellThrough) {
     if (now - v.at > RECENT_ANSWER_TTL_MS) recentlyFellThrough.delete(k)
   }
 }
 
-export function fellThrough(key: string, now = Date.now()): { phase: "PreToolUse" | "PermissionRequest"; id: string } | null {
+export function fellThrough(key: string, now = Date.now()): FellThrough | null {
   const v = recentlyFellThrough.get(key)
   if (v === undefined) return null
   if (now - v.at > RECENT_ANSWER_TTL_MS) {
     recentlyFellThrough.delete(key)
     return null
   }
-  return { phase: v.phase, id: v.id }
+  return { phase: v.phase, id: v.id, toolUseId: v.toolUseId }
 }
 
 export function didQuestionFallThrough(key: string, now = Date.now()): boolean {

@@ -163,6 +163,9 @@ export interface QuestionHookInput {
   sessionId: string
   cwd: string
   tty: string
+  // Claude Code's tool_use_id: tells a sibling hook (same call) from a re-ask
+  // of the same text (new call). Empty when the hook didn't send one.
+  toolUseId?: string
   session: Session | null
   headerMeta: Partial<Session>
 }
@@ -201,7 +204,11 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
     return answeredResponse(p.agent, p.eventName, p.input, questions, prior)
   }
   const afterAnswer = deps.afterAnswer ?? defaultAfterAnswer
-  const fell = fellThrough(dedupeKey)
+  // A lapse belongs to its tool call: a NEW call with the same text (re-asked
+  // after Esc) gets a fresh phone card. Without ids on both sides, assume same call.
+  const lapsed = fellThrough(dedupeKey)
+  const newCall = !!lapsed?.toolUseId && !!p.toolUseId && lapsed.toolUseId !== p.toolUseId
+  const fell = newCall ? null : lapsed
   // A lapse is final for a PreToolUse sibling (it would block the picker
   // again) and for anything after the PermissionRequest window.
   if (fell && (p.eventName === "PreToolUse" || fell.phase === "PermissionRequest")) {
@@ -250,7 +257,7 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
     // No phone answer (window ran out, or it was answered / dropped at the
     // terminal). Never deny: that made Claude carry on without an answer.
     // No decision lets Claude Code show — or keep showing — its own picker.
-    markQuestionFellThrough(dedupeKey, Date.now(), p.eventName, id)
+    markQuestionFellThrough(dedupeKey, Date.now(), p.eventName, id, p.toolUseId ?? "")
     companionLog(`${yellow}question unanswered on phone${reset} — terminal picker takes it (${p.eventName}${park ? ", card stays up for the sibling" : ""})`)
     return hookPassthroughResponse(p.agent)
   }

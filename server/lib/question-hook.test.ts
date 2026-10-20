@@ -175,6 +175,25 @@ test("both windows lapse → passthrough; a further sibling does not ask again; 
   expect(await again!.json()).toEqual({})
 })
 
+test("cancelled (Esc) then re-asked with the same text: a NEW tool call gets a phone card, the same call passes through", async () => {
+  const inp = hookInput({ sessionId: "reask-1", toolUseId: "tu-1" })
+  const pending = questionFastPath(inp, { afterAnswer: () => {} })
+  await Bun.sleep(5)
+  expect(cancelQuestionsFor({ sessionId: "reask-1" }, "expired")).toBe(1)
+  expect(await (await pending)!.json()).toEqual({})
+
+  const same = fakeAsk([])
+  const sibling = await questionFastPath(inp, { ask: same.ask })
+  expect(same.calls.length).toBe(0)
+  expect(await sibling!.json()).toEqual({})
+
+  const fresh = fakeAsk([{ selected: ["Blue"] }])
+  const res = await questionFastPath({ ...inp, toolUseId: "tu-2" }, { ask: fresh.ask, afterAnswer: () => {} })
+  expect(fresh.calls.length).toBe(1)
+  const body = await res!.json() as { hookSpecificOutput: { decision: { updatedInput: { answers: unknown } } } }
+  expect(body.hookSpecificOutput.decision.updatedInput.answers).toEqual({ "Which color test?": "Blue" })
+})
+
 // ---- real queue: the card survives the gap between the two windows ----------
 
 // The real queue with the windows shrunk: PreToolUse 20 ms, park 300 ms.
