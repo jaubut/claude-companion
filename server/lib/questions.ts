@@ -376,20 +376,29 @@ export function markQuestionFellThrough(
   id = "",
   toolUseId = "",
 ): void {
-  recentlyFellThrough.set(key, { at: now, phase, id, toolUseId })
+  // One record per tool call: a later call with the same text must not
+  // overwrite an earlier call's lapse (its delayed sibling still passes through).
+  recentlyFellThrough.set(fellKey(key, toolUseId), { at: now, phase, id, toolUseId })
   for (const [k, v] of recentlyFellThrough) {
     if (now - v.at > RECENT_ANSWER_TTL_MS) recentlyFellThrough.delete(k)
   }
 }
 
-export function fellThrough(key: string, now = Date.now()): FellThrough | null {
-  const v = recentlyFellThrough.get(key)
-  if (v === undefined) return null
-  if (now - v.at > RECENT_ANSWER_TTL_MS) {
-    recentlyFellThrough.delete(key)
-    return null
+const fellKey = (key: string, toolUseId: string) => `${key}\u0000${toolUseId}`
+
+// With `toolUseId`: that call's lapse, or an id-less lapse of the same text
+// (can't tell, assume same call). Without: the latest lapse of that text.
+export function fellThrough(key: string, now = Date.now(), toolUseId = ""): FellThrough | null {
+  let hit: (FellThrough & { at: number }) | undefined
+  if (toolUseId) {
+    hit = recentlyFellThrough.get(fellKey(key, toolUseId)) ?? recentlyFellThrough.get(fellKey(key, ""))
+  } else {
+    for (const [k, v] of recentlyFellThrough) {
+      if (k.startsWith(fellKey(key, "")) && (!hit || v.at > hit.at)) hit = v
+    }
   }
-  return { phase: v.phase, id: v.id, toolUseId: v.toolUseId }
+  if (!hit || now - hit.at > RECENT_ANSWER_TTL_MS) return null
+  return { phase: hit.phase, id: hit.id, toolUseId: hit.toolUseId }
 }
 
 export function didQuestionFallThrough(key: string, now = Date.now()): boolean {

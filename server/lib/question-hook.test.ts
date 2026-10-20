@@ -194,6 +194,19 @@ test("cancelled (Esc) then re-asked with the same text: a NEW tool call gets a p
   expect(body.hookSpecificOutput.decision.updatedInput.answers).toEqual({ "Which color test?": "Blue" })
 })
 
+test("two cancelled calls with the same text: the first call's late sibling still passes through", async () => {
+  for (const tu of ["tu-a", "tu-b"]) {
+    const pending = questionFastPath(hookInput({ sessionId: "reask-2", toolUseId: tu }), { afterAnswer: () => {} })
+    await Bun.sleep(5)
+    expect(cancelQuestionsFor({ sessionId: "reask-2" }, "expired")).toBe(1)
+    expect(await (await pending)!.json()).toEqual({})
+  }
+  const late = fakeAsk([])
+  const sibling = await questionFastPath(hookInput({ sessionId: "reask-2", toolUseId: "tu-a" }), { ask: late.ask })
+  expect(late.calls.length).toBe(0)
+  expect(await sibling!.json()).toEqual({})
+})
+
 // ---- real queue: the card survives the gap between the two windows ----------
 
 // The real queue with the windows shrunk: PreToolUse 20 ms, park 300 ms.

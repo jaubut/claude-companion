@@ -206,9 +206,7 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
   const afterAnswer = deps.afterAnswer ?? defaultAfterAnswer
   // A lapse belongs to its tool call: a NEW call with the same text (re-asked
   // after Esc) gets a fresh phone card. Without ids on both sides, assume same call.
-  const lapsed = fellThrough(dedupeKey)
-  const newCall = !!lapsed?.toolUseId && !!p.toolUseId && lapsed.toolUseId !== p.toolUseId
-  const fell = newCall ? null : lapsed
+  const fell = fellThrough(dedupeKey, Date.now(), p.toolUseId ?? "")
   // A lapse is final for a PreToolUse sibling (it would block the picker
   // again) and for anything after the PermissionRequest window.
   if (fell && (p.eventName === "PreToolUse" || fell.phase === "PermissionRequest")) {
