@@ -4,8 +4,8 @@ import { createDialogWatcher, type SessionStatus } from "../lib/dialog-watch"
 import { isPaneDirty, isScraping, yieldPane } from "../lib/command-scrape"
 import { paneReadsClean } from "../lib/pane-clean"
 import type { Dialog } from "../lib/dialogs"
-import { listSessions, setSessionStatus, socketForPane } from "../lib/sessions"
-import { getPendingQuestions, questionAnsweredRecently } from "../lib/questions"
+import { listSessions, setSessionStatus, socketForPane, type Session } from "../lib/sessions"
+import { cancelQuestionsFor, getPendingQuestions, questionAnsweredRecently } from "../lib/questions"
 import { hasPendingApprovalFor } from "../lib/pty-manager"
 import { isQuestionReview, orphanPickerClosed, raiseOrphanQuestion } from "../lib/orphan-question"
 import { capturePane, paneKey, tmuxPaneWidth } from "../lib/tmux-pane"
@@ -26,6 +26,18 @@ async function readSessionStatus(pid: string): Promise<SessionStatus | null> {
   }
 }
 
+// Most specific identity first: two sessions in one folder must not hide
+// each other's pickers (an orphan card can stay up for hours).
+const pendingQuestionsOf = (s: Session) => getPendingQuestions().filter((q) =>
+  q.sessionKey ? q.sessionKey === s.key : q.sessionId ? q.sessionId === s.sessionId : q.cwd === s.cwd)
+
+// The picker of a carded question went away with no hook (Esc at the
+// terminal): end the card now instead of at the next prompt.
+export function endQuestionsOnEscape(s: Session, via: string): void {
+  const n = cancelQuestionsFor({ sessionKey: s.key, sessionId: s.sessionId }, "expired", via)
+  if (n > 0) companionLog(`\x1b[36mquestion closed\x1b[0m \x1b[2m— ${via} (${n}) · ${s.key}\x1b[0m`)
+}
+
 export const dialogWatcher = createDialogWatcher({
   sessions: listSessions,
   // herdr session: `pane read` (ANSI) unstyled to the plain text a bare
@@ -42,10 +54,9 @@ export const dialogWatcher = createDialogWatcher({
     return capturePane(s.tmuxPane, undefined, { socket: s.tmuxSocket || socketForPane(s.tmuxPane) })
   },
   sessionStatus: readSessionStatus,
-  // Most specific identity first: two sessions in one folder must not hide
-  // each other's pickers (an orphan card can stay up for hours).
-  hasPendingQuestion: (s) => getPendingQuestions().some((q) =>
-    q.sessionKey ? q.sessionKey === s.key : q.sessionId ? q.sessionId === s.sessionId : q.cwd === s.cwd),
+  hasPendingQuestion: (s) => pendingQuestionsOf(s).length > 0,
+  pendingQuestionIds: (s) => pendingQuestionsOf(s).map((q) => q.id),
+  onCardedPickerGone: (s) => endQuestionsOnEscape(s, "picker closed"),
   questionAnsweredRecently: (s) => questionAnsweredRecently(s.key),
   hasPendingApproval: (s) => hasPendingApprovalFor(s.key, s.sessionId),
   isScraping,
