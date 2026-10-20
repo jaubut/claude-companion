@@ -8,8 +8,8 @@ import { clients } from "../state"
 
 // Esc on a pending question (Canvas Cancel / phone Esc → /api/dialog/key):
 // Claude Code fires no hook for the rejected call, so the route ends the card
-// itself. The pane sits on a throwaway tmux socket with no server: the route
-// spawns the real send-keys and does not gate on its exit code.
+// itself — only once send-keys succeeded. A throwaway tmux server holds the
+// pane; a second session points at a socket with no server (delivery fails).
 
 type Route = (req: Request, url: URL) => Promise<Response | null>
 let handleDialogRoute: Route
@@ -19,6 +19,7 @@ const socket = join(dir, "tmux.sock")
 const frames: Array<Record<string, unknown>> = []
 const fake = { send: (m: string) => { frames.push(JSON.parse(m)) } } as unknown as Parameters<typeof clients.add>[0]
 let session: Session
+let dead: Session
 
 beforeAll(async () => {
   process.env.COMPANION_DB_PATH = join(dir, "test.db")
@@ -27,9 +28,13 @@ beforeAll(async () => {
   const { dialogWatcher } = await import("../wiring/dialogs")
   stopWatcher = () => dialogWatcher.stop()
   clients.add(fake)
-  session = recordSession({ cwd: "/tmp/dialog-key-esc", agent: "claude", sessionId: "esc-sid", tmuxPane: "%91919", tmuxSocket: socket, tty: "/dev/pts/9191" })!
+  Bun.spawnSync(["tmux", "-S", socket, "new-session", "-d", "-x", "80", "-y", "24"])
+  const pane = Bun.spawnSync(["tmux", "-S", socket, "display", "-p", "#{pane_id}"]).stdout.toString().trim()
+  session = recordSession({ cwd: "/tmp/dialog-key-esc", agent: "claude", sessionId: "esc-sid", tmuxPane: pane, tmuxSocket: socket, tty: "/dev/pts/9191" })!
+  dead = recordSession({ cwd: "/tmp/dialog-key-dead", agent: "claude", sessionId: "dead-sid", tmuxPane: "%91919", tmuxSocket: join(dir, "none.sock"), tty: "/dev/pts/9192" })!
 })
 afterAll(() => {
+  Bun.spawnSync(["tmux", "-S", socket, "kill-server"])
   stopWatcher()
   clients.delete(fake)
 })
@@ -59,4 +64,10 @@ test("other keys leave a pending question alone", async () => {
   expect(pendingHere()).toHaveLength(1)
   await handleDialogRoute(...post({ key: session.key, name: "Escape" }))
   expect(pendingHere()).toEqual([])
+})
+
+test("Escape that never reached the pane (tmux failed) leaves the question pending", async () => {
+  void addQuestionRequest({ sessionId: "dead-sid", cwd: dead.cwd, questions, sessionKey: dead.key }, { expiryMs: 60_000 })
+  await handleDialogRoute(...post({ key: dead.key, name: "Escape" }))
+  expect(getPendingQuestions().filter((q) => q.sessionKey === dead.key)).toHaveLength(1)
 })

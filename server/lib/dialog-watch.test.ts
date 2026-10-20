@@ -470,3 +470,19 @@ test("a carded question whose picker never showed (PreToolUse phase) or a NEW qu
   cancelQuestionsFor({ sessionKey: h.sessions[0]!.key }, "expired")
   off()
 })
+
+test("status still 'waiting' after Esc: the capture without the picker ends the card", async () => {
+  const t = { now: 1_000_000 }
+  const { h, w, off, ask, pending } = cardedHarness(t)
+  ask()
+  h.status = { status: "waiting", waitingFor: "input needed" }
+  h.pane = QUESTION_PANE
+  await w.tick()
+  h.pane = IDLE_PANE
+  await w.tick()
+  expect(pending()).toHaveLength(1)
+  t.now += PICKER_GONE_MS
+  await w.tick()
+  expect(pending()).toEqual([])
+  off()
+})

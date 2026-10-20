@@ -170,12 +170,12 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       questionSince.delete(s.key)
       close(s.key)
       if (!carded) return
-      // Watch the carded picker: seen on screen, then gone. The status file
-      // leaving "waiting" is the gone signal; the pane alone only without one.
+      // Watch the carded picker: seen on screen, then gone. A capture without
+      // it counts even while the status file still says "waiting": nothing
+      // rewrites it after an Esc. Gone must hold PICKER_GONE_MS of ticks.
       const pane = await deps.capture(s)
       if (ours(s.key) || pane === null) return
-      if (isPicker(pane)) cardedPicker(s, true)
-      else if (!st) cardedPicker(s, false)
+      cardedPicker(s, isPicker(pane))
       return
     }
     const pane = await deps.capture(s)
