@@ -2,7 +2,8 @@ import { test, expect } from "bun:test"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DETACHED_COLS, DETACHED_ROWS, buildInner, buildTmuxLaunch, detachedNewSessionArgs, detachedSpawnArgv, ensureFolderTrusted, homeSpawnCwd } from "./spawn-session"
+import { DETACHED_COLS, DETACHED_ROWS, buildInner, buildTmuxLaunch, detachedNewSessionArgs, detachedSpawnArgv, ensureFolderTrusted, homeSpawnCwd, spawnInTmuxDetached } from "./spawn-session"
+import type { DetachedDeps } from "./tmux-spawn-confirm"
 
 // The inner command tmux runs. Both spawn paths build it here — the Mac one
 // wraps it in `tmux new-session -s <sess> '<inner>'` for AppleScript, the Linux
@@ -191,4 +192,64 @@ test("ensureFolderTrusted treats empty lists on a retried worktree entry as unan
   const e = f.read().projects[f.wt]
   expect(e.enabledMcpjsonServers).toEqual(["railway"])
   expect(e.disabledMcpjsonServers).toEqual(["perplexity"])
+})
+
+// ── Headless spawn: no silent ok when the agent dies at once (2026-10-21) ──
+// A fake tmux: `has` answers has-session per call (names free first, then the
+// post-launch check), `dead` is what #{pane_dead} reads.
+function fakeTmux(opts: { which?: string | null; alive?: boolean; dead?: string; pane?: string }) {
+  const calls: string[][] = []
+  let launched = false
+  const deps: DetachedDeps = {
+    which: () => (opts.which === undefined ? "/usr/local/bin/claude" : opts.which),
+    sleep: async () => {},
+    run: async (argv) => {
+      calls.push(argv)
+      const sub = (name: string) => argv.includes(name)
+      if (sub("new-session")) { launched = true; return { code: 0, stdout: "", stderr: "" } }
+      if (sub("has-session")) return { code: launched && (opts.alive ?? true) ? 0 : 1, stdout: "", stderr: "" }
+      if (sub("display-message")) return { code: 0, stdout: `${opts.dead ?? "0"}\n`, stderr: "" }
+      if (sub("capture-pane")) return { code: 0, stdout: opts.pane ?? "", stderr: "" }
+      return { code: 0, stdout: "", stderr: "" }
+    },
+  }
+  const SUBS = ["new-session", "set-option", "has-session", "set-window-option", "display-message", "capture-pane", "kill-session"]
+  return { deps, calls, subs: () => calls.map((c) => c.find((a) => SUBS.includes(a))) }
+}
+
+test("headless spawn: agent missing from PATH → agent_not_found, tmux never called", async () => {
+  const f = fakeTmux({ which: null })
+  const r = await spawnInTmuxDetached("/x/repo", "claude", undefined, f.deps)
+  expect(r.ok).toBe(false)
+  expect(r.error).toStartWith("agent_not_found: claude not on PATH (")
+  expect(f.calls).toEqual([])
+})
+
+test("headless spawn: new-session exits 0 but the session is gone → session_exited", async () => {
+  const f = fakeTmux({ alive: false })
+  const r = await spawnInTmuxDetached("/x/repo", "claude", undefined, f.deps)
+  expect(r).toEqual({ ok: false, app: "tmux", error: "session_exited" })
+  expect(f.subs()).toContain("new-session")
+})
+
+test("headless spawn: pane dead on the check → session_exited with its last output, session killed", async () => {
+  const f = fakeTmux({ dead: "1", pane: "/bin/sh: 1: claude: not found\n\n" })
+  const r = await spawnInTmuxDetached("/x/repo", "claude", undefined, f.deps)
+  expect(r).toEqual({ ok: false, app: "tmux", error: "session_exited: /bin/sh: 1: claude: not found" })
+  expect(f.subs().at(-1)).toBe("kill-session")
+})
+
+test("headless spawn: happy path → ok with the session name, remain-on-exit turned back off", async () => {
+  const f = fakeTmux({})
+  const r = await spawnInTmuxDetached("/x/repo", "claude", undefined, f.deps)
+  expect(r.ok).toBe(true)
+  expect(r.app).toBe("tmux")
+  expect(r.sessionName).toBe("cc-repo")
+  const create = f.calls.find((c) => c.includes("new-session"))!
+  expect(create.slice(create.indexOf("new-session"))).toEqual([
+    "new-session", "-d", "-x", "220", "-y", "60", "-s", "cc-repo", "/bin/sh", "-c", "cd '/x/repo' && claude",
+    ";", "set-window-option", "-t", "cc-repo", "remain-on-exit", "on",
+  ])
+  expect(f.calls.some((c) => c.join(" ").endsWith("remain-on-exit off"))).toBe(true)
+  expect(f.subs()).not.toContain("kill-session")
 })

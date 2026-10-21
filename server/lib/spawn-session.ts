@@ -21,6 +21,7 @@ import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } fro
 import { type Herdr, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
 import { applyMcpChoices } from "./claude-mcp-trust"
+import { type DetachedDeps, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -265,12 +266,12 @@ async function tmuxSessionExists(name: string): Promise<boolean> {
   return !timedOut && code === 0
 }
 
-async function uniqueTmuxSessionName(cwd: string, agent: SpawnAgent): Promise<string> {
+async function uniqueTmuxSessionName(cwd: string, agent: SpawnAgent, exists = tmuxSessionExists): Promise<string> {
   const base = agentTmuxSessionName(cwd, agent)
-  if (!(await tmuxSessionExists(base))) return base
+  if (!(await exists(base))) return base
   for (let i = 2; i < 100; i++) {
     const candidate = `${base}-${i}`
-    if (!(await tmuxSessionExists(candidate))) return candidate
+    if (!(await exists(candidate))) return candidate
   }
   return `${base}-${Date.now()}`
 }
@@ -301,39 +302,23 @@ async function spawnInTerminal(cwd: string, agent: SpawnAgent, env?: Record<stri
 // then `tmux attach -t cc-<name>` (`tmux -L <COMPANION_TMUX_SOCKET> attach …`
 // when a spawn server is configured). detach-on-destroy=on so claude exiting
 // cleanly drops you back to the shell instead of switching sessions.
-async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
-  const sessionName = await uniqueTmuxSessionName(cwd, agent)
-  const inner = buildInner(cwd, agent, env)
-  // Create the session detached, at an explicit size (see
-  // detachedNewSessionArgs — an 80x24 pane cripples every dialog we read).
-  // Run the inner command via /bin/sh so the single-quote escaping works.
-  // tmux passes through $TMUX/$TMUX_PANE so the session-start hook fires the
-  // moment claude initializes.
-  const create = Bun.spawn(
-    detachedSpawnArgv(sessionName, inner),
-    { stdout: "pipe", stderr: "pipe" },
-  )
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    create.kill()
-  }, 8_000)
-  const stderr = await new Response(create.stderr).text()
-  const code = await create.exited
-  clearTimeout(timer)
-  if (timedOut) return { ok: false, app: "tmux", error: "tmux new-session timed out" }
-  if (code !== 0) return { ok: false, app: "tmux", error: stderr.trim() || `tmux exit ${code}` }
-
-  // Force detach-on-destroy so a human attaching later (`tmux attach -t
-  // cc-foo`) is dropped back to their shell when claude exits — instead of
-  // tmux switching them to some unrelated sibling session. Best-effort:
-  // failure here is non-fatal, the session still works.
-  const opt = Bun.spawn(
-    [...tmuxArgv(), ...spawnServerFlags(), "set-option", "-t", sessionName, "detach-on-destroy", "on"],
-    { stdout: "ignore", stderr: "ignore" },
-  )
-  await opt.exited
-
+export async function spawnInTmuxDetached(
+  cwd: string,
+  agent: SpawnAgent,
+  env?: Record<string, string>,
+  deps: DetachedDeps = realDetachedDeps,
+): Promise<SpawnResult> {
+  // tmux new-session -d exits 0 even when the agent dies at once (2026-10-21:
+  // a launchd PATH without ~/.local/bin → `claude: not found`, the server quit,
+  // the phone waited for a card that never came) — check before and after.
+  const bin = agent === "codex" ? "codex" : "claude"
+  if (!deps.which(bin)) return { ok: false, app: "tmux", error: `agent_not_found: ${bin} not on PATH (${process.env.PATH ?? ""})` }
+  const has = async (n: string) => (await deps.run([...tmuxArgv(), ...spawnServerFlags(), "has-session", "-t", `=${n}`])).code === 0
+  const sessionName = await uniqueTmuxSessionName(cwd, agent, has)
+  // Sized create (see detachedNewSessionArgs — an 80x24 pane cripples every
+  // dialog we read); the inner command runs via /bin/sh.
+  const error = await createConfirmed(sessionName, detachedSpawnArgv(sessionName, buildInner(cwd, agent, env)), deps)
+  if (error) return { ok: false, app: "tmux", error }
   // Socket path resolved after the create: the server (and its dir) now exist.
   return { ok: true, app: "tmux", sessionName, tmuxSocket: spawnSocketPath() }
 }
