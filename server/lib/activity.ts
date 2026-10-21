@@ -182,11 +182,12 @@ function isStale(s: PathState, now: number): boolean {
     p.grewAt = now
   }
   const seen = pill.key ? agentStatusByKey.get(pill.key) : undefined
-  // Idle/shell first seen after the last event and transcript growth means the
-  // turn is over, even with a tool_start left open (Esc, denied tool: no
-  // PostToolUse ever comes).
-  const lastProgress = Math.max(s.lastEventAt, p.grewAt)
-  if ((seen?.status === "idle" || seen?.status === "shell") && seen.since > lastProgress && now - lastProgress >= IDLE_GRACE_MS) return true
+  // Idle/shell first seen after the last hook event means the turn is over,
+  // even with a tool_start left open (Esc, denied tool: no PostToolUse ever
+  // comes). Transcript growth only delays this by IDLE_GRACE_MS, never cancels
+  // it: the interrupt itself writes to the transcript, and grewAt is stamped
+  // when a poll notices that, often after the idle status was.
+  if ((seen?.status === "idle" || seen?.status === "shell") && seen.since > s.lastEventAt && now - Math.max(s.lastEventAt, p.grewAt) >= IDLE_GRACE_MS) return true
   // A long-running tool (build, test suite) is legitimately silent.
   if (s.toolStarts.size > 0) return false
   const turnStart = pill.turnStartedAt || s.turnStartedAt

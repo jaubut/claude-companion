@@ -420,3 +420,21 @@ test("open tool_start: status shell (claude exited) clears the pill", async () =
   expect(pill(A.key)).toBeUndefined()
   expect(getState({ tty: A.tty, cwd: A.cwd }).toolStarts.size).toBe(0)
 })
+
+test("open tool_start: the interrupt's own transcript write, noticed after idle, still clears", async () => {
+  const t = tmpTranscript()
+  try {
+    prompt(A, t.path)
+    recordToolStart({ tool: "Bash", input: { command: "ls" }, summary: "ls", verdict: "auto-allow", transcriptPath: t.path, cwd: A.cwd, sessionId: A.sessionId, tty: A.tty, sessionKey: A.key })
+    await sleep(5)
+    // Esc writes "[Request interrupted by user]" as the status flips to idle;
+    // the reconcile that stamps idle is also the poll that notices the growth.
+    appendFileSync(t.path, JSON.stringify({ type: "user", message: { content: "[Request interrupted by user]" } }) + "\n")
+    reconcileActivityLiveness(withStatus(A.key, "idle"))
+    expect(pill(A.key)?.tool).toBe("Bash")
+    expireStaleActivity(Date.now() + IDLE_GRACE_MS + 1_000)
+    expect(pill(A.key)).toBeUndefined()
+  } finally {
+    t.done()
+  }
+})
