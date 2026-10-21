@@ -66,8 +66,15 @@ onSessions(refreshStatus)
 onActivity(refreshStatus)
 
 // null on an empty board (no frame on open, like copy_jobs); GET /api/canvas always answers.
+// Also null on a db error: ws.ts calls this between init and the approval/question
+// replay, and a throw there would leave the phone with its pending items wiped.
 export function canvasSnapshot(): Record<string, unknown> | null {
-  const nodes = canvasStore.nodes()
-  if (nodes.length === 0) return null
-  return { type: "canvas", op: "snapshot", host: HOST_INFO.name, nodes, edges: canvasStore.edges(), status: canvasStatus() }
+  try {
+    const nodes = canvasStore.nodes()
+    if (nodes.length === 0) return null
+    return { type: "canvas", op: "snapshot", host: HOST_INFO.name, nodes, edges: canvasStore.edges(), status: canvasStatus() }
+  } catch (err) {
+    console.error("[canvas] snapshot failed:", err)
+    return null
+  }
 }

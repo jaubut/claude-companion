@@ -42,3 +42,13 @@ test("snapshot: null on an empty board, the board once it has a node", () => {
   expect(canvas.canvasSnapshot()).toMatchObject({ type: "canvas", op: "snapshot", nodes: [{ id: node.id }], edges: [] })
   canvas.canvasStore.removeNode(node.id)
 })
+
+test("snapshot: a canvas db error yields no frame instead of throwing (ws open keeps replaying)", () => {
+  const nodes = canvas.canvasStore.nodes
+  canvas.canvasStore.nodes = () => { throw new Error("SQLITE_CORRUPT") }
+  try {
+    expect(canvas.canvasSnapshot()).toBeNull()
+  } finally {
+    canvas.canvasStore.nodes = nodes
+  }
+})
