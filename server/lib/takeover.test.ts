@@ -17,6 +17,7 @@ const entries: RepoEntry[] = [
   { name: "claude-companion", match: /companion server|PRJ-OR1T/i, path: "/h/claude-companion" },
   { name: "claude-companion-ios", match: /companion-ios|PRJ-CIOS/i, path: "/h/apps/claude companion", requires: ["xcode"], github: "jaubut/claude-companion-ios" },
   { name: "TLSTUDIO", match: /tlstudio|PRJ-TLS1/i, path: "/h/TLSTUDIO" },
+  { name: "claude-config", match: /claude-config|PRJ-LGDV/i, path: "/h/.claude", github: "jaubut/claude-config" },
 ]
 
 describe("takeoverTarget", () => {
@@ -44,6 +45,40 @@ describe("takeoverTarget", () => {
       .toMatchObject({ repo: "tls-dashboard-v2", host: "mac", pinned: true })
     expect(takeoverTarget({ title: "[repo:claude-companion-ios] Fix tests", blocker: "" }, entries)).toMatchObject({ host: "mac", pinned: true })
     expect(takeoverTarget({ title: "zettlab:systemd-service:kb-api: claude-companion", blocker: "" }, entries)).toMatchObject({ host: "zettlab", pinned: true })
+  })
+})
+
+describe("takeoverTarget: host tooling → claude-config first", () => {
+  const hay = "projects/2026-06-22-companion-orchestrator Companion server"
+  const first = (title: string, blocker: string) => takeoverTarget({ title, blocker, noteHay: hay }, entries).candidates.map((c) => c.repo)
+
+  test("a mac:launchd: / zettlab:systemd: component id", () => {
+    expect(first("Fix mac:launchd:com.tls.jules-sweep: Make the sweep tolerate transient Turso errors", "Wrong repo — how-to: RES-2K6V"))
+      .toEqual(["claude-config", "claude-companion"])
+    expect(takeoverTarget({ title: "Fix mac:launchd:com.tls.recovery-agent: creds", blocker: "", noteHay: hay }, entries))
+      .toMatchObject({ repo: null, host: "mac", pinned: true, candidates: [{ repo: "claude-config", host: "mac" }, { repo: "claude-companion", host: "mac" }] })
+    expect(first("Fix zettlab:systemd:kb-api: restart loop", "")).toEqual(["claude-config", "claude-companion"])
+  })
+
+  test("a blocker naming ~/.claude, tools/ or LaunchAgents", () => {
+    expect(first("Fix the sweep", "The fix lives in ~/.claude, not here")).toEqual(["claude-config", "claude-companion"])
+    expect(first("Fix the sweep", "edit tools/jules-sweep.ts")).toEqual(["claude-config", "claude-companion"])
+    expect(first("Retire the launcher", "`~/Library/LaunchAgents` doesn't exist here")).toEqual(["claude-config", "claude-companion"])
+  })
+
+  test("a blocker naming claude-config alone picks it; no signal → unchanged", () => {
+    expect(takeoverTarget({ title: "Fix the sweep", blocker: "belongs in claude-config", noteHay: hay }, entries).repo).toBe("claude-config")
+    expect(first("Fix the sweep", "see ~/.claude_old/x.log")).toEqual(["claude-companion"])
+    expect(first("Fix the sweep", "mytools/x is wrong")).toEqual(["claude-companion"])
+    expect(first("Fix the sweep", "see server/tools/foo.ts and packages/tools/")).toEqual(["claude-companion"])
+  })
+
+  test("a host-tooling signal overrides a single repo named only in the blocker", () => {
+    expect(takeoverTarget({ title: "Fix mac:launchd:com.tls.jules-sweep: x", blocker: "Wrong repo: claude-companion has no launchd; edit ~/.claude/tools", noteHay: hay }, entries))
+      .toEqual({ repo: null, host: "mac", pinned: true, candidates: [{ repo: "claude-config", host: "mac" }, { repo: "claude-companion", host: "mac" }] })
+    expect(first("Fix the sweep", "Wrong repo claude-companion; fix lives in ~/.claude/tools/jules-sweep.ts")).toEqual(["claude-config", "claude-companion"])
+    expect(first("Fix the sweep", "claude-companion is wrong, belongs in claude-config")).toEqual(["claude-config", "claude-companion"])
+    expect(takeoverTarget({ title: "Fix the sweep", blocker: "No local repo mapped — expected tls-dashboard-v2", noteHay: hay }, entries).repo).toBe("tls-dashboard-v2")
   })
 })
 
