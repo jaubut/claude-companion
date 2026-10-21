@@ -123,7 +123,8 @@ function startPoll(): void {
 // prompt: no UserPromptSubmit hook, nothing in the transcript. recordUserPrompt
 // has already put up "Thinking", and the heartbeat alone would keep it counting
 // forever (audit 2026-09-24: 8+ min of fake Thinking on an idle session). Two
-// clear paths, both suspended while a tool_start is still open:
+// clear paths, both suspended while a tool_start is still open (isStale's
+// idle/shell-after-last-event rule is the one exception):
 //
 //   1. TTL — no hook event and no transcript growth for ACTIVITY_TTL_MS. When
 //      Claude Code's status reads "busy" the window stretches to BUSY_TTL_MS
@@ -174,8 +175,6 @@ function markTurnStart(s: PathState, now: number): void {
 function isStale(s: PathState, now: number): boolean {
   const pill = s.activity
   if (!pill) return false
-  // A long-running tool (build, test suite) is legitimately silent.
-  if (s.toolStarts.size > 0) return false
   const p = progressFor(s, now)
   const size = transcriptSize(s)
   if (size !== p.size) {
@@ -183,6 +182,14 @@ function isStale(s: PathState, now: number): boolean {
     p.grewAt = now
   }
   const seen = pill.key ? agentStatusByKey.get(pill.key) : undefined
+  // Idle/shell first seen after the last hook event means the turn is over,
+  // even with a tool_start left open (Esc, denied tool: no PostToolUse ever
+  // comes). Transcript growth only delays this by IDLE_GRACE_MS, never cancels
+  // it: the interrupt itself writes to the transcript, and grewAt is stamped
+  // when a poll notices that, often after the idle status was.
+  if ((seen?.status === "idle" || seen?.status === "shell") && seen.since > s.lastEventAt && now - Math.max(s.lastEventAt, p.grewAt) >= IDLE_GRACE_MS) return true
+  // A long-running tool (build, test suite) is legitimately silent.
+  if (s.toolStarts.size > 0) return false
   const turnStart = pill.turnStartedAt || s.turnStartedAt
   if (seen?.status === "idle" && seen.since > turnStart && size <= p.turnSize && now - turnStart >= IDLE_GRACE_MS) return true
   const ttl = seen?.status === "busy" ? BUSY_TTL_MS : ACTIVITY_TTL_MS
@@ -195,6 +202,7 @@ export function expireStaleActivity(now = Date.now(), opts: { emit?: boolean } =
   for (const s of activeStates()) {
     if (!isStale(s, now)) continue
     s.activity = null
+    s.toolStarts.clear()
     cleared = true
   }
   if (cleared && opts.emit !== false) {
