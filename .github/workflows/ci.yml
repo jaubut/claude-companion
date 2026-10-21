@@ -33,4 +33,4 @@ jobs:
           bun run tools/archmap/cli.ts . --check --lint --baseline /tmp/archmap-base.json
 
       - name: Tests
-        run: bun test
+        run: bun test --isolate
