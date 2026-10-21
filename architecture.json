@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 117,
+          "lines": 118,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -892,18 +892,21 @@
         },
         {
           "path": "lib/canvas.ts",
-          "lines": 211,
+          "lines": 315,
           "kind": "lib",
           "exports": [
             "NODE_KINDS",
             "NodeKind",
             "EDGE_KINDS",
             "EdgeKind",
+            "EDGE_STATES",
+            "EdgeState",
             "CanvasNode",
             "CanvasEdge",
             "NodeInput",
             "NodePatch",
             "EdgeInput",
+            "SendResult",
             "EdgeAddResult",
             "CanvasStore",
             "createCanvasStore",
@@ -911,7 +914,11 @@
             "parseNodePatch",
             "parseEdgeInput",
             "CanvasStatus",
-            "sessionStatuses"
+            "sessionStatuses",
+            "PROMPT_MAX",
+            "ContextPrompt",
+            "oneLine",
+            "contextPrompt"
           ],
           "state": [
             "BLOCKING: Set"
@@ -922,7 +929,8 @@
           "apiCalls": [],
           "imports": [
             "lib/activity.ts",
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/turso.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5328,10 +5336,11 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 461,
+          "lines": 469,
           "kind": "route-host",
           "exports": [
-            "handleApiRoute"
+            "handleApiRoute",
+            "deliverInject"
           ],
           "state": [
             "HISTORY_KINDS: Set",
@@ -5604,7 +5613,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 94,
+          "lines": 120,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",
@@ -6545,15 +6554,18 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 81,
+          "lines": 126,
           "kind": "lib",
           "exports": [
             "canvasStore",
+            "setCanvasDeliver",
+            "canvasSend",
             "canvasStatus",
             "canvasSnapshot"
           ],
           "state": [
             "let store",
+            "let deliver",
             "let lastStatus"
           ],
           "emits": [
@@ -6566,7 +6578,9 @@
             "lib/db-path.ts",
             "lib/canvas.ts",
             "lib/activity.ts",
+            "lib/log.ts",
             "lib/sessions.ts",
+            "lib/turso.ts",
             "state.ts"
           ],
           "listeners": [
@@ -7518,6 +7532,18 @@
             "wiring/front-door.ts"
           ]
         },
+        "deliverInject": {
+          "module": "routes/api.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "setCanvasDeliver": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "createCanvasRoute": {
           "module": "routes/canvas.ts",
           "callers": [
@@ -7540,6 +7566,12 @@
           ]
         },
         "canvasStore": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasSend": {
           "module": "wiring/canvas.ts",
           "callers": [
             "companion-server.ts"
@@ -7967,6 +7999,7 @@
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/canvas.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -8545,6 +8578,7 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/body.ts",
+            "lib/canvas.ts",
             "lib/dispatch-live.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-stage.ts",
@@ -10210,6 +10244,7 @@
             "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/canvas.ts",
             "wiring/dispatch.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
@@ -12304,6 +12339,13 @@
             "routes/body.ts#POST /api/body/investigate"
           ]
         },
+        "SendResult": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
         "CanvasStore": {
           "module": "lib/canvas.ts",
           "callers": [
@@ -12312,6 +12354,13 @@
           ]
         },
         "CanvasStatus": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "CanvasEdge": {
           "module": "lib/canvas.ts",
           "callers": [
             "routes/canvas.ts",
@@ -13973,6 +14022,12 @@
           ]
         },
         "createCanvasStore": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "contextPrompt": {
           "module": "lib/canvas.ts",
           "callers": [
             "wiring/canvas.ts"

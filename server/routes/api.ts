@@ -296,7 +296,15 @@ async function handleInject(req: Request): Promise<Response> {
       return Response.json(body, { status })
     }
   }
+  return deliverInject(text, key, cwd)
+}
 
+/**
+ * The guarded delivery behind POST /api/inject (refusals, waiting-badge clear,
+ * submit confirmation). Also the canvas Context-edge send (wiring/canvas.ts),
+ * so a canvas prompt passes the exact same inject guards as a phone prompt.
+ */
+export async function deliverInject(text: string, key?: string, cwd?: string): Promise<Response> {
   const lookup = key || cwd || ""
   let target = lookup ? resolveSession(lookup) : null
   // The target the caller actually named, captured before the fallback below

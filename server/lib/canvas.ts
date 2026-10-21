@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import type { Activity } from "./activity"
 import type { Session } from "./sessions"
+import type { QueryFn } from "./turso"
 
 // Canvas graph store (PRJ-FL49 P5): the Mac board's nodes and edges live on the
 // server (companion.db `canvas_nodes` / `canvas_edges`) so every client renders
@@ -12,6 +13,15 @@ export type NodeKind = (typeof NODE_KINDS)[number]
 // v1 = Context only (brief decision 1, 2026-10-17).
 export const EDGE_KINDS = ["context"] as const
 export type EdgeKind = (typeof EDGE_KINDS)[number]
+// P6 propose-first: an edge is born `proposed` (the agent node shows "Send?");
+// only an explicit send moves it on. `sending` is the claim that stops a double tap
+// from typing the prompt twice; `failed` (inject refused, source gone) may be re-sent.
+export const EDGE_STATES = ["proposed", "sending", "sent", "failed"] as const
+export type EdgeState = (typeof EDGE_STATES)[number]
+// Hop limit = 1: context flows from a note/task straight into an agent and never
+// out of one, so no edge can chain into another and no A→B→A loop can form.
+const CONTEXT_SOURCES: readonly NodeKind[] = ["note", "task"]
+const CONTEXT_TARGET: NodeKind = "agent"
 
 export interface CanvasNode {
   id: string
@@ -24,6 +34,9 @@ export interface CanvasNode {
   h: number
   /** Kind-specific client payload (note text, host label, …), opaque to the server. */
   data: Record<string, unknown>
+  /** Server-set: the agent's Session.sessionId when `ref` was last set. A Session.key is tty-based
+   *  and outlives the agent on it, so a send checks this before typing (wiring/canvas.ts). */
+  boundSid?: string
   createdAt: number
   updatedAt: number
 }
@@ -33,14 +46,20 @@ export interface CanvasEdge {
   kind: EdgeKind
   from: string
   to: string
+  state: EdgeState
+  /** Why the last send failed (an inject refusal code, source_not_found, …); "" otherwise. */
+  error: string
+  sentAt: number | null
   createdAt: number
+  updatedAt: number
 }
 
-export type NodeInput = Pick<CanvasNode, "kind" | "ref" | "x" | "y" | "w" | "h" | "data"> & { id?: string }
-export type NodePatch = Partial<Pick<CanvasNode, "ref" | "x" | "y" | "w" | "h" | "data">>
+export type NodeInput = Pick<CanvasNode, "kind" | "ref" | "x" | "y" | "w" | "h" | "data"> & { id?: string; boundSid?: string }
+export type NodePatch = Partial<Pick<CanvasNode, "ref" | "x" | "y" | "w" | "h" | "data" | "boundSid">>
 export type EdgeInput = Pick<CanvasEdge, "kind" | "from" | "to">
+export type SendResult = { ok: true } | { ok: false; status: number; error: string; detail?: Record<string, unknown> }
 
-export type EdgeAddResult = { ok: true; edge: CanvasEdge } | { ok: false; error: "node_not_found" | "self_edge" | "edge_exists" }
+export type EdgeAddResult = { ok: true; edge: CanvasEdge } | { ok: false; error: "node_not_found" | "self_edge" | "edge_exists" | "invalid_endpoints" }
 
 export interface CanvasStore {
   nodes(): CanvasNode[]
@@ -52,16 +71,25 @@ export interface CanvasStore {
   removeNode(id: string): { edgeIds: string[] } | null
   addEdge(input: EdgeInput, now: number): EdgeAddResult
   removeEdge(id: string): boolean
+  node(id: string): CanvasNode | null
+  edge(id: string): CanvasEdge | null
+  /** proposed|failed → sending, atomically; null when the edge is unknown or already sending/sent. */
+  claimEdge(id: string, now: number): CanvasEdge | null
+  /** sending → sent|failed; null when the edge was removed meanwhile. */
+  settleEdge(id: string, result: { ok: true } | { ok: false; error: string }, now: number): CanvasEdge | null
 }
 
-interface RawNode { id: string; kind: string; ref: string; x: number; y: number; w: number; h: number; data: string; created_at: number; updated_at: number }
-interface RawEdge { id: string; kind: string; from_id: string; to_id: string; created_at: number }
+interface RawNode { id: string; kind: string; ref: string; x: number; y: number; w: number; h: number; data: string; bound_sid: string; created_at: number; updated_at: number }
+interface RawEdge { id: string; kind: string; from_id: string; to_id: string; state: string; error: string; sent_at: number | null; created_at: number; updated_at: number }
 
 const toNode = (r: RawNode): CanvasNode => ({
   id: r.id, kind: r.kind as NodeKind, ref: r.ref, x: r.x, y: r.y, w: r.w, h: r.h,
-  data: JSON.parse(r.data) as Record<string, unknown>, createdAt: r.created_at, updatedAt: r.updated_at,
+  data: JSON.parse(r.data) as Record<string, unknown>, boundSid: r.bound_sid, createdAt: r.created_at, updatedAt: r.updated_at,
 })
-const toEdge = (r: RawEdge): CanvasEdge => ({ id: r.id, kind: r.kind as EdgeKind, from: r.from_id, to: r.to_id, createdAt: r.created_at })
+const toEdge = (r: RawEdge): CanvasEdge => ({
+  id: r.id, kind: r.kind as EdgeKind, from: r.from_id, to: r.to_id, state: r.state as EdgeState, error: r.error,
+  sentAt: r.sent_at, createdAt: r.created_at, updatedAt: r.updated_at,
+})
 
 export function createCanvasStore(db: Database): CanvasStore {
   db.exec(`
@@ -75,9 +103,23 @@ export function createCanvasStore(db: Database): CanvasStore {
       UNIQUE (kind, from_id, to_id)
     );
   `)
+  // P6 columns, added in place on a board created before them.
+  const cols = new Set((db.query("PRAGMA table_info(canvas_edges)").all() as { name: string }[]).map((c) => c.name))
+  if (!cols.has("state")) db.exec("ALTER TABLE canvas_edges ADD COLUMN state TEXT NOT NULL DEFAULT 'proposed'")
+  if (!cols.has("error")) db.exec("ALTER TABLE canvas_edges ADD COLUMN error TEXT NOT NULL DEFAULT ''")
+  if (!cols.has("sent_at")) db.exec("ALTER TABLE canvas_edges ADD COLUMN sent_at INTEGER")
+  if (!cols.has("updated_at")) db.exec("ALTER TABLE canvas_edges ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+  const nodeCols = new Set((db.query("PRAGMA table_info(canvas_nodes)").all() as { name: string }[]).map((c) => c.name))
+  if (!nodeCols.has("bound_sid")) db.exec("ALTER TABLE canvas_nodes ADD COLUMN bound_sid TEXT NOT NULL DEFAULT ''")
+  // A send cut short by a restart never reported back: offer it again rather than leave it stuck.
+  db.query("UPDATE canvas_edges SET state = 'failed', error = 'server_restart' WHERE state = 'sending'").run()
   const getNode = (id: string): CanvasNode | null => {
     const r = db.query("SELECT * FROM canvas_nodes WHERE id = ?").get(id) as RawNode | null
     return r ? toNode(r) : null
+  }
+  const getEdge = (id: string): CanvasEdge | null => {
+    const r = db.query("SELECT * FROM canvas_edges WHERE id = ?").get(id) as RawEdge | null
+    return r ? toEdge(r) : null
   }
   const removeNodeTx = db.transaction((id: string): { edgeIds: string[] } | null => {
     if (db.query("DELETE FROM canvas_nodes WHERE id = ?").run(id).changes === 0) return null
@@ -91,8 +133,8 @@ export function createCanvasStore(db: Database): CanvasStore {
     addNode(input, now) {
       const id = input.id ?? crypto.randomUUID()
       const r = db.query(
-        "INSERT OR IGNORE INTO canvas_nodes (id, kind, ref, x, y, w, h, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      ).run(id, input.kind, input.ref, input.x, input.y, input.w, input.h, JSON.stringify(input.data), now, now)
+        "INSERT OR IGNORE INTO canvas_nodes (id, kind, ref, x, y, w, h, data, bound_sid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(id, input.kind, input.ref, input.x, input.y, input.w, input.h, JSON.stringify(input.data), input.boundSid ?? "", now, now)
       return { node: getNode(id)!, created: r.changes > 0 }
     },
     patchNode(id, patch, now) {
@@ -102,6 +144,7 @@ export function createCanvasStore(db: Database): CanvasStore {
         if (patch[k] !== undefined) { sets.push(`${k} = ?`); args.push(patch[k]) }
       }
       if (patch.data !== undefined) { sets.push("data = ?"); args.push(JSON.stringify(patch.data)) }
+      if (patch.boundSid !== undefined) { sets.push("bound_sid = ?"); args.push(patch.boundSid) }
       sets.push("updated_at = ?")
       args.push(now)
       const r = db.query(`UPDATE canvas_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...args, id)
@@ -110,14 +153,30 @@ export function createCanvasStore(db: Database): CanvasStore {
     removeNode: (id) => removeNodeTx(id),
     addEdge(input, now) {
       if (input.from === input.to) return { ok: false, error: "self_edge" }
-      if (!getNode(input.from) || !getNode(input.to)) return { ok: false, error: "node_not_found" }
+      const from = getNode(input.from)
+      const to = getNode(input.to)
+      if (!from || !to) return { ok: false, error: "node_not_found" }
+      if (!CONTEXT_SOURCES.includes(from.kind) || to.kind !== CONTEXT_TARGET) return { ok: false, error: "invalid_endpoints" }
       const id = crypto.randomUUID()
-      const r = db.query("INSERT OR IGNORE INTO canvas_edges (id, kind, from_id, to_id, created_at) VALUES (?, ?, ?, ?, ?)")
-        .run(id, input.kind, input.from, input.to, now)
+      const r = db.query(
+        "INSERT OR IGNORE INTO canvas_edges (id, kind, from_id, to_id, state, error, sent_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'proposed', '', NULL, ?, ?)",
+      ).run(id, input.kind, input.from, input.to, now, now)
       if (r.changes === 0) return { ok: false, error: "edge_exists" }
-      return { ok: true, edge: { id, kind: input.kind, from: input.from, to: input.to, createdAt: now } }
+      return { ok: true, edge: getEdge(id)! }
     },
     removeEdge: (id) => db.query("DELETE FROM canvas_edges WHERE id = ?").run(id).changes > 0,
+    node: getNode,
+    edge: getEdge,
+    claimEdge(id, now) {
+      const r = db.query("UPDATE canvas_edges SET state = 'sending', error = '', updated_at = ? WHERE id = ? AND state IN ('proposed', 'failed')").run(now, id)
+      return r.changes > 0 ? getEdge(id) : null
+    },
+    settleEdge(id, result, now) {
+      const r = result.ok
+        ? db.query("UPDATE canvas_edges SET state = 'sent', error = '', sent_at = ?, updated_at = ? WHERE id = ? AND state = 'sending'").run(now, now, id)
+        : db.query("UPDATE canvas_edges SET state = 'failed', error = ?, updated_at = ? WHERE id = ? AND state = 'sending'").run(result.error, now, id)
+      return r.changes > 0 ? getEdge(id) : null
+    },
   }
 }
 
@@ -207,4 +266,49 @@ export function sessionStatuses(sessions: Session[], activities: Activity[]): Re
     out[s.key] = s.waitingReasons.some((r) => BLOCKING.has(r.kind)) ? "needs-you" : busy.has(s.key) ? "working" : "resting"
   }
   return out
+}
+
+// ── Context prompt (P6) ─────────────────────────────────────────────────────
+//
+// What a Context edge types into its agent: the source node's content, read
+// server-side at send time (a Turso task or note, else a free note's own text).
+// One line: the inject path types it with `send-keys -l` + Enter, and a raw
+// newline mid-prompt would not submit cleanly; control bytes never reach the pane.
+
+export const PROMPT_MAX = 4000
+
+export type ContextPrompt = { ok: true; text: string } | { ok: false; error: "source_not_found" | "source_empty" }
+
+const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "")
+
+export function oneLine(text: string): string {
+  const flat = text.replace(/\s*\n\s*/g, " | ").replace(/[\x00-\x1f\x7f]/g, " ").replace(/ {2,}/g, " ").trim()
+  return flat.length > PROMPT_MAX ? `${flat.slice(0, PROMPT_MAX - 1)}…` : flat
+}
+
+const noteLabel = (refCode: string, title: string): string => [refCode, title && `"${title}"`].filter(Boolean).join(" ")
+
+export async function contextPrompt(node: CanvasNode, query: QueryFn): Promise<ContextPrompt> {
+  if (node.kind === "task") {
+    if (!node.ref) return { ok: false, error: "source_not_found" }
+    const [t] = await query(
+      "SELECT t.text, t.description, n.title, n.ref_code FROM tasks t LEFT JOIN notes n ON n.id = t.note_id WHERE t.id = ?",
+      [node.ref],
+    )
+    if (!t) return { ok: false, error: "source_not_found" }
+    if (!str(t.text)) return { ok: false, error: "source_empty" }
+    const note = noteLabel(str(t.ref_code), str(t.title))
+    const desc = str(t.description)
+    const head = `Canvas task (Turso task ${node.ref}${note ? `, note ${note}` : ""}) — start working on it: `
+    return { ok: true, text: oneLine(head + str(t.text) + (desc ? `\n${desc}` : "")) }
+  }
+  // A note: the Turso note by id or ref_code, else the sticky's own text.
+  if (node.ref) {
+    const [n] = await query("SELECT title, body, ref_code FROM notes WHERE id = ? OR ref_code = ? LIMIT 1", [node.ref, node.ref])
+    if (!n) return { ok: false, error: "source_not_found" }
+    if (!str(n.body)) return { ok: false, error: "source_empty" }
+    return { ok: true, text: oneLine(`Canvas note context (${noteLabel(str(n.ref_code), str(n.title)) || node.ref}): ${str(n.body)}`) }
+  }
+  const text = str(node.data.text)
+  return text ? { ok: true, text: oneLine(`Canvas note context: ${text}`) } : { ok: false, error: "source_empty" }
 }

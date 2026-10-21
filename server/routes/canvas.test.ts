@@ -3,14 +3,23 @@ import { Database } from "bun:sqlite"
 import type { Server, ServerWebSocket } from "bun"
 import { createCanvasStore } from "../lib/canvas"
 import { broadcast, clients, type WsData } from "../state"
-import { createCanvasRoute } from "./canvas"
+import { type SendResult, createCanvasRoute } from "./canvas"
 
 // Canvas REST round trip + the P5 check: two WS clients see the same move live.
 // A real Bun server: the route over an in-memory store, notify = the real
 // broadcast to the real `clients` set, two real WebSocket clients.
 
 const store = createCanvasStore(new Database(":memory:"))
-const route = createCanvasRoute({ store, status: () => ({ "claude:tty:/dev/ttys001": "working" }), host: "testhost", notify: broadcast })
+const sent: string[] = []
+let sendResult: SendResult | Error = { ok: true }
+const route = createCanvasRoute({
+  store, status: () => ({ "claude:tty:/dev/ttys001": "working" }), host: "testhost", notify: broadcast,
+  send: async (edge) => {
+    sent.push(edge.id)
+    if (sendResult instanceof Error) throw sendResult
+    return sendResult
+  },
+})
 let server: Server<WsData>
 let base: string
 
@@ -96,6 +105,62 @@ describe("REST", () => {
     expect((await call("POST", "/api/canvas/nodes", { ...agent, id: "n_1-x" })).status).toBe(201)
     expect((await call("PATCH", "/api/canvas/nodes/n_1-x", { x: 1 })).status).toBe(200)
     expect((await call("DELETE", "/api/canvas/nodes/n_1-x")).status).toBe(200)
+  })
+})
+
+describe("context edges (P6)", () => {
+  test("only note|task → agent", async () => {
+    const aid = ((await call("POST", "/api/canvas/nodes", agent)).json.node as { id: string }).id
+    await call("POST", "/api/canvas/nodes", { kind: "note", x: 0, y: 0, w: 1, h: 1, id: "ep-note" })
+    await call("POST", "/api/canvas/nodes", { kind: "preview", x: 0, y: 0, w: 1, h: 1, id: "ep-preview" })
+    for (const [from, to] of [[aid, "ep-note"], ["ep-note", "ep-preview"], ["ep-preview", aid]]) {
+      const r = await call("POST", "/api/canvas/edges", { from, to })
+      expect(r.status).toBe(400)
+      expect(r.json.error).toBe("invalid_endpoints")
+    }
+    for (const id of [aid, "ep-note", "ep-preview"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("proposed → Send? → sent once; a refusal leaves it failed and re-sendable", async () => {
+    const aid = ((await call("POST", "/api/canvas/nodes", agent)).json.node as { id: string }).id
+    await call("POST", "/api/canvas/nodes", { kind: "task", ref: "task-1", x: 0, y: 0, w: 1, h: 1, id: "send-task" })
+    const e = (await call("POST", "/api/canvas/edges", { from: "send-task", to: aid })).json.edge as { id: string; state: string }
+    expect(e.state).toBe("proposed")
+    sent.length = 0
+
+    sendResult = { ok: false, status: 409, error: "pane_not_ready", detail: { reason: "busy", ok: true } }
+    const refused = await call("POST", `/api/canvas/edges/${e.id}/send`)
+    expect(refused.status).toBe(409)
+    expect(refused.json).toMatchObject({ ok: false, error: "pane_not_ready", reason: "busy", edge: { state: "failed", error: "pane_not_ready" } })
+
+    sendResult = new Error("turso down")
+    const thrown = await call("POST", `/api/canvas/edges/${e.id}/send`)
+    expect(thrown.status).toBe(503)
+    expect(store.edge(e.id)).toMatchObject({ state: "failed", error: "send_failed" })
+
+    sendResult = { ok: true }
+    const ok = await call("POST", `/api/canvas/edges/${e.id}/send`)
+    expect(ok.status).toBe(200)
+    expect(ok.json.edge).toMatchObject({ state: "sent", error: "", sentAt: expect.any(Number) })
+    const again = await call("POST", `/api/canvas/edges/${e.id}/send`)
+    expect(again.status).toBe(409)
+    expect(again.json.error).toBe("edge_sent")
+    expect(sent).toEqual([e.id, e.id, e.id])
+
+    expect((await call("POST", "/api/canvas/edges/nope/send")).status).toBe(404)
+    for (const id of [aid, "send-task"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("a double tap types once", async () => {
+    const aid = ((await call("POST", "/api/canvas/nodes", agent)).json.node as { id: string }).id
+    await call("POST", "/api/canvas/nodes", { kind: "note", x: 0, y: 0, w: 1, h: 1, id: "tap-note", data: { text: "x" } })
+    const e = (await call("POST", "/api/canvas/edges", { from: "tap-note", to: aid })).json.edge as { id: string }
+    sent.length = 0
+    sendResult = { ok: true }
+    const [a, b] = await Promise.all([call("POST", `/api/canvas/edges/${e.id}/send`), call("POST", `/api/canvas/edges/${e.id}/send`)])
+    expect([a.status, b.status].sort()).toEqual([200, 409])
+    expect(sent).toEqual([e.id])
+    for (const id of [aid, "tap-note"]) await call("DELETE", `/api/canvas/nodes/${id}`)
   })
 })
 

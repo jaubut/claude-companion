@@ -2,9 +2,11 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { companionDbPath } from "../lib/db-path"
-import { type CanvasStatus, type CanvasStore, createCanvasStore, sessionStatuses } from "../lib/canvas"
+import { type CanvasEdge, type CanvasStatus, type CanvasStore, type SendResult, contextPrompt, createCanvasStore, sessionStatuses } from "../lib/canvas"
 import { listActivities, onActivity } from "../lib/activity"
+import { companionLog } from "../lib/log"
 import { listSessions, onSessions } from "../lib/sessions"
+import { tursoQuery } from "../lib/turso"
 import { HOST_INFO, broadcast } from "../state"
 
 // Live canvas (PRJ-FL49 P5): the store on companion.db (its own lazy connection)
@@ -37,11 +39,54 @@ function openStore(): CanvasStore {
 export const canvasStore: CanvasStore = {
   nodes: () => openStore().nodes(),
   edges: () => openStore().edges(),
-  addNode: (input, now) => openStore().addNode(input, now),
-  patchNode: (id, patch, now) => openStore().patchNode(id, patch, now),
+  // Setting `ref` (re)binds the node to whichever agent holds that session right now.
+  addNode: (input, now) => openStore().addNode({ ...input, boundSid: sidOf(input.ref) }, now),
+  patchNode: (id, patch, now) => openStore().patchNode(id, patch.ref === undefined ? patch : { ...patch, boundSid: sidOf(patch.ref) }, now),
   removeNode: (id) => openStore().removeNode(id),
   addEdge: (input, now) => openStore().addEdge(input, now),
   removeEdge: (id) => openStore().removeEdge(id),
+  node: (id) => openStore().node(id),
+  edge: (id) => openStore().edge(id),
+  claimEdge: (id, now) => openStore().claimEdge(id, now),
+  settleEdge: (id, result, now) => openStore().settleEdge(id, result, now),
+}
+
+// P6 Context edge send: the server reads the source (Turso task / note, or the
+// sticky's text) at send time and types it into the agent node's session through
+// the same guarded path as a phone inject (deliverInject: refusals, pane lock,
+// submit confirmation). Local sessions only: a node bound to the other host's
+// session answers that host's 410 target_gone, like an inject to a gone key.
+// ponytail: no per-edge auto-send yet; add it on the Phase 7 trust ramp when Jeremie asks.
+// The guarded inject behind POST /api/inject (routes/api.ts). Handed in by
+// companion-server.ts at boot: wiring never imports up into routes/.
+type Deliver = (text: string, key?: string, cwd?: string) => Promise<Response>
+let deliver: Deliver | null = null
+export function setCanvasDeliver(fn: Deliver): void {
+  deliver = fn
+}
+
+function sidOf(ref: string): string {
+  return ref ? listSessions().find((s) => s.key === ref)?.sessionId ?? "" : ""
+}
+
+export async function canvasSend(edge: CanvasEdge): Promise<SendResult> {
+  const from = canvasStore.node(edge.from)
+  const to = canvasStore.node(edge.to)
+  if (!from || !to) return { ok: false, status: 404, error: "node_not_found" }
+  // An empty key would make deliverInject fall back to the frontmost session.
+  if (!to.ref) return { ok: false, status: 410, error: "target_gone" }
+  const live = listSessions().find((s) => s.key === to.ref)
+  if (!live) return { ok: false, status: 410, error: "target_gone" }
+  // The key is tty-based: another agent on that tty would pass every inject guard. Re-pointing rebinds.
+  if (!live.sessionId || live.sessionId !== to.boundSid) return { ok: false, status: 409, error: "target_changed" }
+  const prompt = await contextPrompt(from, tursoQuery)
+  if (!prompt.ok) return { ok: false, status: prompt.error === "source_not_found" ? 404 : 400, error: prompt.error }
+  companionLog(`canvas send ${edge.id}: ${from.kind} ${from.ref || from.id} → ${to.ref}`)
+  if (!deliver) return { ok: false, status: 503, error: "deliver_unavailable" }
+  const res = await deliver(prompt.text, to.ref)
+  const body = (await res.json()) as Record<string, unknown>
+  if (res.ok && body.ok === true) return { ok: true }
+  return { ok: false, status: res.ok ? 502 : res.status, error: typeof body.error === "string" ? body.error : "deliver_failed", detail: body }
 }
 
 let lastStatus: Record<string, CanvasStatus> = sessionStatuses(listSessions(), listActivities())
