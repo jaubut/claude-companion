@@ -1,8 +1,15 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-04
+Last updated: 2026-10-21
 
 ## Active Decisions
+
+### One work stream: Companion files `pending` rows, never claims (task d2487443, 2026-10-21)
+**Date:** 2026-10-21 (plan: `docs/one-stream-plan.md`)
+**Choice:** code work has one path: tasks row → `pending` → dashboard `/tasks` release stamp (task_stamps, C-020, MFA) → `queued` → dispatch-run → builder PR → shepherd → merged. Companion approve / dispatch / #Body taps file a `pending` row and nothing else. Deleted: live mode (claimLive, tmux worker runner), Mac live fix forward, blocked-task takeover (it becomes guarded unblock/requeue), the resolver's own PR fix run. Relay ACK no longer claims a row; the planner claims via dispatch.sh from `queued`.
+**Why:** Jeremie 2026-10-21: "ONE pipeline, no side channels". Turso `tasks_queue_guard_ins` already refuses Companion's `queued` insert (origin defaults to `unknown`), so headless approve is broken today, and `claimLive` inserts `running`, which skips the stamp.
+**Rejected:** keeping live mode behind the stamp (that is still a second runner); a Companion-side approve with an API key (MFA stays dashboard-only).
+**Revisit if:** Mac-only fixes get claimed by Zettlab (add host routing to repo-map / dispatch-run, plan Q1), or the dashboard stamp round-trip turns out too slow from the phone.
 
 ### Canvas graph store + tri-state status (PRJ-FL49 P5)
 **Date:** 2026-10-18
