@@ -3942,7 +3942,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 594,
+          "lines": 576,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
@@ -3955,6 +3955,7 @@
             "DETACHED_ROWS",
             "detachedNewSessionArgs",
             "detachedSpawnArgv",
+            "spawnInTmuxDetached",
             "herdrAgentBaseName",
             "HERDR_START_TIMEOUT_MS",
             "HerdrSpawnOpts",
@@ -3973,7 +3974,8 @@
             "lib/tmux-pane.ts",
             "lib/herdr.ts",
             "lib/log.ts",
-            "lib/claude-mcp-trust.ts"
+            "lib/claude-mcp-trust.ts",
+            "lib/tmux-spawn-confirm.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4460,6 +4462,28 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/tmux-spawn-confirm.ts",
+          "lines": 66,
+          "kind": "lib",
+          "exports": [
+            "TmuxArgvRunner",
+            "DetachedDeps",
+            "realDetachedDeps",
+            "createConfirmed"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/tmux-pane.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -11032,6 +11056,24 @@
         },
         "spawnSocketPath": {
           "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "DetachedDeps": {
+          "module": "lib/tmux-spawn-confirm.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "realDetachedDeps": {
+          "module": "lib/tmux-spawn-confirm.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "createConfirmed": {
+          "module": "lib/tmux-spawn-confirm.ts",
           "callers": [
             "lib/spawn-session.ts"
           ]
