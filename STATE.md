@@ -4,6 +4,12 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Canvas graph store + tri-state status (PRJ-FL49 P5)
+**Date:** 2026-10-18
+**Choice:** companion.db `canvas_nodes` / `canvas_edges` (one board per host, positions last-write-wins), REST under `/api/canvas` (contract in the routes/canvas.ts header), `canvas` WS frame with `op` = snapshot | node | node_removed | edge | edge_removed | status. Status per Session.key: `needs-you` (approval/question/dialog reason) > `working` (live activity pill) > `resting`. Edges are only `context` and stored but not executed (that's P6).
+**Why:** `turn-end` counts as resting, not needs-you. Every session holds `turn-end` from its Stop hook until the next inject, so counting it as needs-you would leave almost no session resting. The snapshot is sent on WS open only when the board has nodes, the same rule as `copy_jobs`, which keeps the shipped init order. The Mac client should `GET /api/canvas` on connect.
+**Revisit if:** Jeremie wants a finished turn shown as needs-you, or P6 needs per-edge mode/hop state (add the columns then).
+
 ### Tasks agent: deterministic digest/proposals/load, log-first writes, chat via Jev hint + Opus
 **Date:** 2026-10-06 (autodev `ct4m-wp5-tasks-agent-server`, PRJ-CT4M WP5)
 **Choice:** `GET /api/tasks/agent` → digest (agent changes on Jeremie's tasks since the device's last open, baseline in companion.db; Undo only where the activity meta carries `from`), proposals (slip >= 2 → reschedule/drop; unassigned + pm-assign.py agent route → assign, never queued; same-note normalized duplicates → merge; > 12 words without an opening action verb → split, Haiku drafts 2-5 subtasks that Jeremie confirms) and a 14-day load meter (dated tasks vs read-only Google Calendar busy hours, > 4 tasks or > 6 h flags). Every agent write is one Turso transaction: compare-and-set write + its `agent_activity` row (inserted only if `changes() > 0`), both or neither; a lost race writes nothing (409 `changed_since`). Chat (live mode only; `off`/`shadow` never route there, `off` never consumes a confirm): new Jev intent `my_tasks`, or a keyword hint when Jev said chat or failed → one tool-less Opus call → list / move / done through the transactional tasks-agent writes (a failed plan on a hint-only route falls back to the brain); > 3 tasks → `tasks_agent_confirm` card, applied as a compare-and-set against the due/done seen at plan time (changed tasks skipped and reported). Contract: `docs/tasks-agent-api.md`.

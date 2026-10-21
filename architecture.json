@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 114,
+          "lines": 117,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -73,6 +73,8 @@
             "routes/taste.ts",
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
+            "routes/canvas.ts",
+            "wiring/canvas.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -883,6 +885,44 @@
           "apiCalls": [],
           "imports": [
             "lib/auto-judge.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/canvas.ts",
+          "lines": 211,
+          "kind": "lib",
+          "exports": [
+            "NODE_KINDS",
+            "NodeKind",
+            "EDGE_KINDS",
+            "EdgeKind",
+            "CanvasNode",
+            "CanvasEdge",
+            "NodeInput",
+            "NodePatch",
+            "EdgeInput",
+            "EdgeAddResult",
+            "CanvasStore",
+            "createCanvasStore",
+            "parseNodeInput",
+            "parseNodePatch",
+            "parseEdgeInput",
+            "CanvasStatus",
+            "sessionStatuses"
+          ],
+          "state": [
+            "BLOCKING: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/activity.ts",
+            "lib/sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5563,6 +5603,26 @@
           "externals": []
         },
         {
+          "path": "routes/canvas.ts",
+          "lines": 94,
+          "kind": "lib",
+          "exports": [
+            "CanvasRouteDeps",
+            "createCanvasRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/canvas.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/capture.ts",
           "lines": 385,
           "kind": "lib",
@@ -6484,6 +6544,39 @@
           "externals": []
         },
         {
+          "path": "wiring/canvas.ts",
+          "lines": 81,
+          "kind": "lib",
+          "exports": [
+            "canvasStore",
+            "canvasStatus",
+            "canvasSnapshot"
+          ],
+          "state": [
+            "let store",
+            "let lastStatus"
+          ],
+          "emits": [
+            "canvas"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/db-path.ts",
+            "lib/canvas.ts",
+            "lib/activity.ts",
+            "lib/sessions.ts",
+            "state.ts"
+          ],
+          "listeners": [
+            "onSessions",
+            "onActivity"
+          ],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/copy-jobs.ts",
           "lines": 20,
           "kind": "lib",
@@ -7334,7 +7427,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 216,
+          "lines": 220,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -7367,7 +7460,8 @@
             "state.ts",
             "wiring/dialogs.ts",
             "wiring/waiting.ts",
-            "wiring/copy-jobs.ts"
+            "wiring/copy-jobs.ts",
+            "wiring/canvas.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7396,6 +7490,7 @@
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
@@ -7421,6 +7516,39 @@
           "callers": [
             "companion-server.ts",
             "wiring/front-door.ts"
+          ]
+        },
+        "createCanvasRoute": {
+          "module": "routes/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "HOST_INFO": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/api.ts#* /api/status",
+            "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
+            "wiring/canvas.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts",
+            "ws.ts"
+          ]
+        },
+        "canvasStore": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasStatus": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
           ]
         },
         "disableAutoSelectFamily": {
@@ -7648,6 +7776,7 @@
           "callers": [
             "lib/activity.ts",
             "lib/agent-pid.ts",
+            "lib/canvas.ts",
             "lib/command-menu.ts",
             "lib/dialog-watch.ts",
             "lib/herdr-workspace.ts",
@@ -7864,7 +7993,8 @@
             "lib/receipt-qa-store.ts",
             "lib/session-titles.ts",
             "lib/voice-memo.ts",
-            "wiring/auto-compact.ts"
+            "wiring/auto-compact.ts",
+            "wiring/canvas.ts"
           ]
         },
         "redactSecrets": {
@@ -8470,6 +8600,14 @@
             "lib/branch-guard.ts"
           ]
         },
+        "Activity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/canvas.ts",
+            "lib/transcript.ts",
+            "wiring/events.ts"
+          ]
+        },
         "FeedEvent": {
           "module": "lib/feed.ts",
           "callers": [
@@ -8486,6 +8624,7 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/canvas.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
             "wiring/takeover.ts",
@@ -11130,13 +11269,6 @@
             "lib/tasks-agent.ts"
           ]
         },
-        "Activity": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "lib/transcript.ts",
-            "wiring/events.ts"
-          ]
-        },
         "readAppended": {
           "module": "lib/transcript-cursor.ts",
           "callers": [
@@ -11846,19 +11978,6 @@
             "ws.ts"
           ]
         },
-        "HOST_INFO": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts#* /api/status",
-            "routes/orchestrator.ts",
-            "wiring/body-agent.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts",
-            "ws.ts"
-          ]
-        },
         "getActivity": {
           "module": "lib/activity.ts",
           "callers": [
@@ -11870,6 +11989,7 @@
           "module": "lib/activity.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/canvas.ts",
             "ws.ts"
           ]
         },
@@ -12182,6 +12302,38 @@
           "module": "lib/body-investigator.ts",
           "callers": [
             "routes/body.ts#POST /api/body/investigate"
+          ]
+        },
+        "CanvasStore": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "CanvasStatus": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "parseNodeInput": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
+        "parseNodePatch": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
+        "parseEdgeInput": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
           ]
         },
         "createLimiter": {
@@ -13820,6 +13972,32 @@
             "wiring/body.ts"
           ]
         },
+        "createCanvasStore": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "sessionStatuses": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "onSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/canvas.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "onActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "wiring/canvas.ts",
+            "wiring/events.ts"
+          ]
+        },
         "CopyJobStore": {
           "module": "lib/copy-jobs.ts",
           "callers": [
@@ -14082,18 +14260,6 @@
         },
         "onFeedReset": {
           "module": "lib/feed.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "onActivity": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "onSessions": {
-          "module": "lib/sessions.ts",
           "callers": [
             "wiring/events.ts"
           ]
@@ -15328,6 +15494,12 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/waiting.ts"
+          ]
+        },
+        "canvasSnapshot": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "ws.ts"
           ]
         }
       },
