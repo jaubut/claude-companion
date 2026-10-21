@@ -326,10 +326,13 @@ async function spawnInTmuxDetached(cwd: string, agent: SpawnAgent, env?: Record<
 
   // Force detach-on-destroy so a human attaching later (`tmux attach -t
   // cc-foo`) is dropped back to their shell when claude exits — instead of
-  // tmux switching them to some unrelated sibling session. Best-effort:
-  // failure here is non-fatal, the session still works.
+  // tmux switching them to some unrelated sibling session. mouse=on so the
+  // wheel scrolls (copy-mode) in a Canvas terminal node attached to it; set per
+  // session, never globally. Best-effort: failure here is non-fatal, the
+  // session still works.
   const opt = Bun.spawn(
-    [...tmuxArgv(), ...spawnServerFlags(), "set-option", "-t", sessionName, "detach-on-destroy", "on"],
+    [...tmuxArgv(), ...spawnServerFlags(), "set-option", "-t", sessionName, "detach-on-destroy", "on",
+      ";", "set-option", "-t", sessionName, "mouse", "on"],
     { stdout: "ignore", stderr: "ignore" },
   )
   await opt.exited

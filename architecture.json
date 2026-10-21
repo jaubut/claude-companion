@@ -3942,7 +3942,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 591,
+          "lines": 594,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
