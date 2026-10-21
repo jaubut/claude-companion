@@ -14,7 +14,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/transcript.ts` | 599 | lib | 14 | state: states: Map, busyImages: WeakMap |
-| `lib/spawn-session.ts` | 591 | lib | 18 |  |
+| `lib/spawn-session.ts` | 594 | lib | 18 |  |
 | `routes/hooks.ts` | 568 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `wiring/takeover.ts` | 565 | lib | 17 | state: let liveStore, let deps, running: Map, seeding: Map, held: Set, let tickStartedAt, let skipLoggedAt, misses: Map, ghAt: Map |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
