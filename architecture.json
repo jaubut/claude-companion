@@ -4468,7 +4468,7 @@
         },
         {
           "path": "lib/tmux-spawn-confirm.ts",
-          "lines": 60,
+          "lines": 66,
           "kind": "lib",
           "exports": [
             "TmuxArgvRunner",

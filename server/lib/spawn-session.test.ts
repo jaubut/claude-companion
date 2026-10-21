@@ -197,7 +197,7 @@ test("ensureFolderTrusted treats empty lists on a retried worktree entry as unan
 // ── Headless spawn: no silent ok when the agent dies at once (2026-10-21) ──
 // A fake tmux: `has` answers has-session per call (names free first, then the
 // post-launch check), `dead` is what #{pane_dead} reads.
-function fakeTmux(opts: { which?: string | null; alive?: boolean; dead?: string; pane?: string }) {
+function fakeTmux(opts: { which?: string | null; alive?: boolean; dead?: string; pane?: string; readFails?: boolean }) {
   const calls: string[][] = []
   let launched = false
   const deps: DetachedDeps = {
@@ -208,7 +208,7 @@ function fakeTmux(opts: { which?: string | null; alive?: boolean; dead?: string;
       const sub = (name: string) => argv.includes(name)
       if (sub("new-session")) { launched = true; return { code: 0, stdout: "", stderr: "" } }
       if (sub("has-session")) return { code: launched && (opts.alive ?? true) ? 0 : 1, stdout: "", stderr: "" }
-      if (sub("display-message")) return { code: 0, stdout: `${opts.dead ?? "0"}\n`, stderr: "" }
+      if (sub("display-message")) return opts.readFails ? { code: 1, stdout: "", stderr: "no server running" } : { code: 0, stdout: `${opts.dead ?? "0"}\n`, stderr: "" }
       if (sub("capture-pane")) return { code: 0, stdout: opts.pane ?? "", stderr: "" }
       return { code: 0, stdout: "", stderr: "" }
     },
@@ -252,4 +252,16 @@ test("headless spawn: happy path → ok with the session name, remain-on-exit tu
   ])
   expect(f.calls.some((c) => c.join(" ").endsWith("remain-on-exit off"))).toBe(true)
   expect(f.subs()).not.toContain("kill-session")
+})
+
+test("headless spawn: session vanishes before pane_dead is read → session_exited, not ok", async () => {
+  const f = fakeTmux({ readFails: true })
+  const r = await spawnInTmuxDetached("/x/repo", "claude", undefined, f.deps)
+  expect(r).toEqual({ ok: false, app: "tmux", error: "session_exited" })
+})
+
+test("headless spawn: spawned session gets mouse=on for Canvas scrolling", async () => {
+  const f = fakeTmux({})
+  await spawnInTmuxDetached("/x/repo", "claude", undefined, f.deps)
+  expect(f.calls.some((c) => c.join(" ").endsWith("set-option -t cc-repo mouse on"))).toBe(true)
 })

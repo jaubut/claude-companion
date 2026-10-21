@@ -44,15 +44,21 @@ export async function createConfirmed(sessionName: string, createArgv: string[],
 
   // detach-on-destroy so a human attaching later (`tmux attach -t cc-foo`) is
   // dropped back to their shell when claude exits, not switched to a sibling
-  // session. Best-effort: the session works without it.
-  await tmux("set-option", "-t", sessionName, "detach-on-destroy", "on")
+  // session. mouse=on so the wheel scrolls (copy-mode) in a Canvas terminal
+  // node attached to it; set per session, never globally. Best-effort: the
+  // session works without them.
+  await tmux("set-option", "-t", sessionName, "detach-on-destroy", "on", ";", "set-option", "-t", sessionName, "mouse", "on")
 
   await deps.sleep(SESSION_SURVIVE_MS)
   if ((await tmux("has-session", "-t", `=${sessionName}`)).code !== 0) return "session_exited"
   // remain-on-exit off BEFORE reading pane_dead: a pane dying after this closes
   // normally, one already dead stays readable — no window for a zombie session.
   await tmux("set-window-option", "-t", sessionName, "remain-on-exit", "off")
-  if ((await tmux("display-message", "-p", "-t", sessionName, "#{pane_dead}")).stdout.trim() !== "1") return null
+  // Only a readable "0" is alive: a session that vanished in between fails the
+  // read with empty stdout, which must not count as success.
+  const dead = await tmux("display-message", "-p", "-t", sessionName, "#{pane_dead}")
+  if (dead.code === 0 && dead.stdout.trim() === "0") return null
+  if (dead.code !== 0) return "session_exited"
   const tail = (await tmux("capture-pane", "-p", "-t", sessionName)).stdout.trim().split("\n").slice(-5).join("\n").slice(-500)
   await tmux("kill-session", "-t", `=${sessionName}`)
   return tail ? `session_exited: ${tail}` : "session_exited"

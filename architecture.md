@@ -185,12 +185,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/takeover-choose.ts` | 71 | lib | 2 |  |
 | `lib/resolver-fix-guard.ts` | 69 | lib | 4 |  |
 | `routes/attach.ts` | 67 | route-host | 1 | route: POST /api/attach |
+| `lib/tmux-spawn-confirm.ts` | 66 | lib | 4 |  |
 | `lib/trip-report.ts` | 66 | lib | 5 |  |
 | `lib/waiting.ts` | 66 | lib | 6 |  |
 | `state.ts` | 65 | lib | 7 |  |
 | `lib/auto-compact-guard.ts` | 61 | lib | 5 |  |
 | `lib/tasks-agent-store.ts` | 61 | lib | 4 |  |
-| `lib/tmux-spawn-confirm.ts` | 60 | lib | 4 |  |
 | `lib/session-identity.ts` | 58 | lib | 6 |  |
 | `lib/auto-compact-stats.ts` | 55 | lib | 6 |  |
 | `lib/dispatch-worker.ts` | 55 | lib | 5 | state: cache: Map |
