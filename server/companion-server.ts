@@ -2,7 +2,7 @@ import { checkBearer, unauthorized } from "./lib/auth"
 import { type WsData, HOST_INFO, broadcast, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
-import { handleApiRoute } from "./routes/api"
+import { deliverInject, handleApiRoute } from "./routes/api"
 import { handleOrchestratorRoute } from "./routes/orchestrator"
 import { handleTriageRoute } from "./routes/triage"
 import { handleDialogRoute } from "./routes/dialogs"
@@ -25,7 +25,7 @@ import { handleTasteRoute } from "./routes/taste"
 import { createTasksAgentRoute } from "./routes/tasks-agent"
 import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
 import { createCanvasRoute } from "./routes/canvas"
-import { canvasSend, canvasStatus, canvasStore } from "./wiring/canvas"
+import { canvasSend, canvasStatus, canvasStore, setCanvasDeliver } from "./wiring/canvas"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
@@ -39,6 +39,7 @@ const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
+setCanvasDeliver(deliverInject)
 const handleCanvasRoute = createCanvasRoute({ store: canvasStore, status: canvasStatus, host: HOST_INFO.name, notify: broadcast, send: canvasSend })
 
 export function createCompanionServer(port: number) {

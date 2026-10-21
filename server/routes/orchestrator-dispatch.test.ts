@@ -106,8 +106,8 @@ describe("GET /api/orchestrator/thread", () => {
     expect(json.tasks.find((t: { taskId: string }) => t.taskId === ID)).toMatchObject({
       source: "dispatch", status: "error", dispatchStatus: "blocked", blocker: "no repo mapped", projectTitle: "TLS Dashboard", threadId: "general",
     })
-    expect(json.queue).toEqual({ cap: 3, live: 0, queued: 0, dispatch: { queued: 0, running: 0, blocked: 1, pr: 0 } })
-    expect(json.channels.find((c: { id: string }) => c.id === "general").counts).toEqual({ queued: 0, running: 0, blocked: 1, pr: 0 })
+    expect(json.queue).toEqual({ cap: 3, live: 0, queued: 0, dispatch: { queued: 0, running: 0, blocked: 1, pr: 0, failed: 0, mergedToday: 0 } })
+    expect(json.channels.find((c: { id: string }) => c.id === "general").counts).toEqual({ queued: 0, running: 0, blocked: 1, pr: 0, failed: 0, mergedToday: 0 })
   })
 
   test("Turso down before the first poll: the thread still answers with local tasks only", async () => {

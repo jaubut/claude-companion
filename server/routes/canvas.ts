@@ -1,4 +1,5 @@
-import { type CanvasEdge, type CanvasStatus, type CanvasStore, parseEdgeInput, parseNodeInput, parseNodePatch } from "../lib/canvas"
+import { type CanvasEdge, type CanvasStatus, type CanvasStore, parseEdgeInput, parseNodeInput, parseNodePatch, type SendResult } from "../lib/canvas"
+export type { SendResult }
 
 // Canvas graph REST (PRJ-FL49 P5). Bearer-gated like every /api/*. Every write
 // is broadcast as a `canvas` frame (wiring/canvas.ts lists the ops), so a move
@@ -15,7 +16,6 @@ import { type CanvasEdge, type CanvasStatus, type CanvasStore, parseEdgeInput, p
 // A failed send answers with the inject refusal's status + error (409 pane_not_ready / dialog_open …,
 // 410 target_gone …) and leaves the edge `failed` with that error, ready to be sent again.
 
-export type SendResult = { ok: true } | { ok: false; status: number; error: string; detail?: Record<string, unknown> }
 
 export interface CanvasRouteDeps {
   store: CanvasStore

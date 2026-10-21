@@ -56,3 +56,37 @@ test("snapshot: null on an empty board, the board once it has a node", () => {
   expect(canvas.canvasSnapshot()).toMatchObject({ type: "canvas", op: "snapshot", nodes: [{ id: node.id }], edges: [] })
   canvas.canvasStore.removeNode(node.id)
 })
+
+test("snapshot: a canvas db error yields no frame instead of throwing (ws open keeps replaying)", () => {
+  const nodes = canvas.canvasStore.nodes
+  canvas.canvasStore.nodes = () => { throw new Error("SQLITE_CORRUPT") }
+  try {
+    expect(canvas.canvasSnapshot()).toBeNull()
+  } finally {
+    canvas.canvasStore.nodes = nodes
+  }
+})
+
+test("send: a different agent on the bound session's tty → 409 target_changed, nothing typed; re-pointing rebinds", async () => {
+  const first = sessions.recordSession({ cwd: "/tmp/canvas-bind", tty: "/dev/pts/78", sessionId: "sid-first" }, { sessionIdConfirmed: true })!
+  const note = canvas.canvasStore.addNode({ kind: "note", ref: "", x: 0, y: 0, w: 1, h: 1, data: { text: "do the thing" } }, 1).node
+  const agent = canvas.canvasStore.addNode({ kind: "agent", ref: first.key, x: 0, y: 0, w: 1, h: 1, data: {} }, 1).node
+  expect(agent.boundSid).toBe("sid-first")
+
+  // The first agent exits; a new one starts on the same tty (same Session.key, new sessionId).
+  sessions.removeSessionByKey(first.key)
+  const second = sessions.recordSession({ cwd: "/tmp/canvas-bind", tty: "/dev/pts/78", sessionId: "sid-second" }, { sessionIdConfirmed: true })!
+  expect(second.key).toBe(first.key)
+
+  const r = canvas.canvasStore.addEdge({ kind: "context", from: note.id, to: agent.id }, 1)
+  if (!r.ok) throw new Error(r.error)
+  expect(await canvas.canvasSend(r.edge)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+
+  // Re-pointing the node at the session (same key) binds it to the new agent.
+  expect(canvas.canvasStore.patchNode(agent.id, { ref: second.key }, 2)?.boundSid).toBe("sid-second")
+  // A client-sent data patch never clears the binding.
+  expect(canvas.canvasStore.patchNode(agent.id, { data: { label: "x" } }, 3)?.boundSid).toBe("sid-second")
+
+  for (const n of [note, agent]) canvas.canvasStore.removeNode(n.id)
+  sessions.removeSessionByKey(second.key)
+})

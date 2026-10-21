@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-18",
+  "generatedAt": "2026-10-21",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 114,
+          "lines": 118,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -73,6 +73,8 @@
             "routes/taste.ts",
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
+            "routes/canvas.ts",
+            "wiring/canvas.ts",
             "lib/vault-guard.ts",
             "ws.ts",
             "lib/apns.ts",
@@ -889,6 +891,52 @@
           "externals": []
         },
         {
+          "path": "lib/canvas.ts",
+          "lines": 315,
+          "kind": "lib",
+          "exports": [
+            "NODE_KINDS",
+            "NodeKind",
+            "EDGE_KINDS",
+            "EdgeKind",
+            "EDGE_STATES",
+            "EdgeState",
+            "CanvasNode",
+            "CanvasEdge",
+            "NodeInput",
+            "NodePatch",
+            "EdgeInput",
+            "SendResult",
+            "EdgeAddResult",
+            "CanvasStore",
+            "createCanvasStore",
+            "parseNodeInput",
+            "parseNodePatch",
+            "parseEdgeInput",
+            "CanvasStatus",
+            "sessionStatuses",
+            "PROMPT_MAX",
+            "ContextPrompt",
+            "oneLine",
+            "contextPrompt"
+          ],
+          "state": [
+            "BLOCKING: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/activity.ts",
+            "lib/sessions.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/claude-mcp-trust.ts",
           "lines": 37,
           "kind": "lib",
@@ -1318,13 +1366,14 @@
         },
         {
           "path": "lib/dialog-watch.ts",
-          "lines": 198,
+          "lines": 250,
           "kind": "lib",
           "exports": [
             "SessionStatus",
             "DialogWatchDeps",
             "DialogWatcher",
             "QUESTION_ORPHAN_MS",
+            "PICKER_GONE_MS",
             "createDialogWatcher"
           ],
           "state": [],
@@ -1467,7 +1516,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 375,
+          "lines": 407,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -1499,6 +1548,8 @@
             "lib/apns.ts",
             "lib/body.ts",
             "lib/dispatch-tasks.ts",
+            "lib/dispatch-stage.ts",
+            "lib/my-tasks.ts",
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-chat.ts",
             "lib/turso.ts"
@@ -1508,8 +1559,36 @@
           "externals": []
         },
         {
+          "path": "lib/dispatch-stage.ts",
+          "lines": 141,
+          "kind": "lib",
+          "exports": [
+            "TaskStage",
+            "ShepherdState",
+            "StageFields",
+            "LEDGER_ACTIONS",
+            "taskStage",
+            "shepherdOf",
+            "stageFields",
+            "listPrLedger"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-tasks.ts",
+            "lib/triage-sources.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 511,
+          "lines": 513,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -2761,7 +2840,7 @@
         },
         {
           "path": "lib/question-hook.ts",
-          "lines": 263,
+          "lines": 268,
           "kind": "lib",
           "exports": [
             "LOCAL_PHONE_WINDOW_MS",
@@ -2795,7 +2874,7 @@
         },
         {
           "path": "lib/questions.ts",
-          "lines": 428,
+          "lines": 440,
           "kind": "lib",
           "exports": [
             "QuestionOption",
@@ -5257,10 +5336,11 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 461,
+          "lines": 469,
           "kind": "route-host",
           "exports": [
-            "handleApiRoute"
+            "handleApiRoute",
+            "deliverInject"
           ],
           "state": [
             "HISTORY_KINDS: Set",
@@ -5532,6 +5612,26 @@
           "externals": []
         },
         {
+          "path": "routes/canvas.ts",
+          "lines": 120,
+          "kind": "lib",
+          "exports": [
+            "CanvasRouteDeps",
+            "createCanvasRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/canvas.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/capture.ts",
           "lines": 385,
           "kind": "lib",
@@ -5639,7 +5739,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 97,
+          "lines": 103,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -6453,6 +6553,44 @@
           "externals": []
         },
         {
+          "path": "wiring/canvas.ts",
+          "lines": 126,
+          "kind": "lib",
+          "exports": [
+            "canvasStore",
+            "setCanvasDeliver",
+            "canvasSend",
+            "canvasStatus",
+            "canvasSnapshot"
+          ],
+          "state": [
+            "let store",
+            "let deliver",
+            "let lastStatus"
+          ],
+          "emits": [
+            "canvas"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/db-path.ts",
+            "lib/canvas.ts",
+            "lib/activity.ts",
+            "lib/log.ts",
+            "lib/sessions.ts",
+            "lib/turso.ts",
+            "state.ts"
+          ],
+          "listeners": [
+            "onSessions",
+            "onActivity"
+          ],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/copy-jobs.ts",
           "lines": 20,
           "kind": "lib",
@@ -6477,9 +6615,10 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 199,
+          "lines": 210,
           "kind": "lib",
           "exports": [
+            "endQuestionsOnEscape",
             "dialogWatcher",
             "yieldPaneForInject",
             "openDialogFor",
@@ -7302,7 +7441,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 216,
+          "lines": 220,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -7335,7 +7474,8 @@
             "state.ts",
             "wiring/dialogs.ts",
             "wiring/waiting.ts",
-            "wiring/copy-jobs.ts"
+            "wiring/copy-jobs.ts",
+            "wiring/canvas.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7364,6 +7504,7 @@
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
@@ -7389,6 +7530,57 @@
           "callers": [
             "companion-server.ts",
             "wiring/front-door.ts"
+          ]
+        },
+        "deliverInject": {
+          "module": "routes/api.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "setCanvasDeliver": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "createCanvasRoute": {
+          "module": "routes/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "HOST_INFO": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/api.ts#* /api/status",
+            "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
+            "wiring/canvas.ts",
+            "wiring/live.ts",
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts",
+            "ws.ts"
+          ]
+        },
+        "canvasStore": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasSend": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasStatus": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
           ]
         },
         "disableAutoSelectFamily": {
@@ -7616,6 +7808,7 @@
           "callers": [
             "lib/activity.ts",
             "lib/agent-pid.ts",
+            "lib/canvas.ts",
             "lib/command-menu.ts",
             "lib/dialog-watch.ts",
             "lib/herdr-workspace.ts",
@@ -7632,6 +7825,7 @@
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/auto-compact.ts",
+            "wiring/dialogs.ts",
             "wiring/events.ts",
             "wiring/gauge.ts",
             "wiring/orchestrator.ts",
@@ -7805,6 +7999,7 @@
             "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/canvas.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -7831,7 +8026,8 @@
             "lib/receipt-qa-store.ts",
             "lib/session-titles.ts",
             "lib/voice-memo.ts",
-            "wiring/auto-compact.ts"
+            "wiring/auto-compact.ts",
+            "wiring/canvas.ts"
           ]
         },
         "redactSecrets": {
@@ -8364,6 +8560,8 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/body.ts",
+            "lib/dispatch-poller.ts",
+            "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/tasks-agent-row.ts",
@@ -8380,8 +8578,10 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/body.ts",
+            "lib/canvas.ts",
             "lib/dispatch-live.ts",
             "lib/dispatch-poller.ts",
+            "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
@@ -8408,6 +8608,7 @@
           "callers": [
             "lib/body-tokens.ts",
             "lib/dispatch-live.ts",
+            "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/tasks-agent-row.ts",
             "lib/tasks-agent-testdb.test-util.ts",
@@ -8433,6 +8634,14 @@
             "lib/branch-guard.ts"
           ]
         },
+        "Activity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/canvas.ts",
+            "lib/transcript.ts",
+            "wiring/events.ts"
+          ]
+        },
         "FeedEvent": {
           "module": "lib/feed.ts",
           "callers": [
@@ -8449,6 +8658,7 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/canvas.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
             "wiring/takeover.ts",
@@ -8894,7 +9104,8 @@
         "ledger": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-live.ts"
+            "lib/dispatch-live.ts",
+            "lib/dispatch-poller.ts"
           ]
         },
         "FileInput": {
@@ -8915,6 +9126,7 @@
           "callers": [
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
+            "lib/dispatch-stage.ts",
             "lib/status-answer.ts",
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
@@ -9029,6 +9241,56 @@
             "wiring/takeover-choose.ts",
             "wiring/takeover.ts",
             "wiring/triage-repos.ts"
+          ]
+        },
+        "stageFields": {
+          "module": "lib/dispatch-stage.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "listPrLedger": {
+          "module": "lib/dispatch-stage.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
+          ]
+        },
+        "NEEDS_HUMAN": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "APPROVAL_TTL_MS": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "approvalTime": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "parkPrefix": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "parsePrUrl": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "lib/dispatch-stage.ts"
+          ]
+        },
+        "parseTs": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-stage.ts",
+            "lib/triage-sources.ts"
           ]
         },
         "TaskStatus": {
@@ -9652,7 +9914,8 @@
           "module": "lib/questions.ts",
           "callers": [
             "lib/orphan-question.ts",
-            "routes/hooks.ts"
+            "routes/hooks.ts",
+            "wiring/dialogs.ts"
           ]
         },
         "isPaneClean": {
@@ -9981,6 +10244,7 @@
             "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/canvas.ts",
             "wiring/dispatch.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
@@ -11040,13 +11304,6 @@
             "lib/tasks-agent.ts"
           ]
         },
-        "Activity": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "lib/transcript.ts",
-            "wiring/events.ts"
-          ]
-        },
         "readAppended": {
           "module": "lib/transcript-cursor.ts",
           "callers": [
@@ -11215,12 +11472,6 @@
           "callers": [
             "lib/triage-engine.ts",
             "routes/orchestrator.ts"
-          ]
-        },
-        "parseTs": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/triage-sources.ts"
           ]
         },
         "TAKEOVER_OWNER": {
@@ -11762,19 +12013,6 @@
             "ws.ts"
           ]
         },
-        "HOST_INFO": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts#* /api/status",
-            "routes/orchestrator.ts",
-            "wiring/body-agent.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts",
-            "ws.ts"
-          ]
-        },
         "getActivity": {
           "module": "lib/activity.ts",
           "callers": [
@@ -11786,6 +12024,7 @@
           "module": "lib/activity.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/canvas.ts",
             "ws.ts"
           ]
         },
@@ -12100,6 +12339,52 @@
             "routes/body.ts#POST /api/body/investigate"
           ]
         },
+        "SendResult": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "CanvasStore": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "CanvasStatus": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "CanvasEdge": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "parseNodeInput": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
+        "parseNodePatch": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
+        "parseEdgeInput": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
         "createLimiter": {
           "module": "lib/vault-guard.ts",
           "callers": [
@@ -12339,6 +12624,12 @@
         },
         "opensChordWindow": {
           "module": "lib/key-gate.ts",
+          "callers": [
+            "routes/dialogs.ts#POST /api/dialog/key"
+          ]
+        },
+        "endQuestionsOnEscape": {
+          "module": "wiring/dialogs.ts",
           "callers": [
             "routes/dialogs.ts#POST /api/dialog/key"
           ]
@@ -13730,6 +14021,38 @@
             "wiring/body.ts"
           ]
         },
+        "createCanvasStore": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "contextPrompt": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "sessionStatuses": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "onSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/canvas.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "onActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "wiring/canvas.ts",
+            "wiring/events.ts"
+          ]
+        },
         "CopyJobStore": {
           "module": "lib/copy-jobs.ts",
           "callers": [
@@ -13749,6 +14072,13 @@
             "wiring/dialogs.ts"
           ]
         },
+        "getPendingQuestions": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "wiring/dialogs.ts",
+            "ws.ts"
+          ]
+        },
         "createDialogWatcher": {
           "module": "lib/dialog-watch.ts",
           "callers": [
@@ -13759,13 +14089,6 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/dialogs.ts"
-          ]
-        },
-        "getPendingQuestions": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "wiring/dialogs.ts",
-            "ws.ts"
           ]
         },
         "questionAnsweredRecently": {
@@ -13992,18 +14315,6 @@
         },
         "onFeedReset": {
           "module": "lib/feed.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "onActivity": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "onSessions": {
-          "module": "lib/sessions.ts",
           "callers": [
             "wiring/events.ts"
           ]
@@ -15054,12 +15365,6 @@
             "wiring/triage.ts"
           ]
         },
-        "NEEDS_HUMAN": {
-          "module": "lib/triage-sources.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
         "RepoRunnerDeps": {
           "module": "wiring/triage-repos.ts",
           "callers": [
@@ -15244,6 +15549,12 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/waiting.ts"
+          ]
+        },
+        "canvasSnapshot": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "ws.ts"
           ]
         }
       },

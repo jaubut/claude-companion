@@ -4,10 +4,17 @@ Last updated: 2026-10-04
 
 ## Active Decisions
 
+### Canvas graph store + tri-state status (PRJ-FL49 P5)
+**Date:** 2026-10-18
+**Choice:** companion.db `canvas_nodes` / `canvas_edges` (one board per host, positions last-write-wins), REST under `/api/canvas` (contract in the routes/canvas.ts header), `canvas` WS frame with `op` = snapshot | node | node_removed | edge | edge_removed | status. Status per Session.key: `needs-you` (approval/question/dialog reason) > `working` (live activity pill) > `resting`. Edges are only `context` and stored but not executed (that's P6).
+**Why:** `turn-end` counts as resting, not needs-you. Every session holds `turn-end` from its Stop hook until the next inject, so counting it as needs-you would leave almost no session resting. The snapshot is sent on WS open only when the board has nodes, the same rule as `copy_jobs`, which keeps the shipped init order. The Mac client should `GET /api/canvas` on connect.
+**Revisit if:** Jeremie wants a finished turn shown as needs-you, or P6 needs per-edge mode/hop state (add the columns then).
+
 ### Canvas Context edges: propose-first, server-built prompt, phone inject guards (PRJ-FL49 P6)
 **Date:** 2026-10-19 (stacked on P5, PR #177)
 **Choice:** A `context` edge runs note|task → agent only (`invalid_endpoints` otherwise). That rule is the hop limit (1): content never leaves an agent, so no chain or A→B→A loop can form. Edges are born `proposed`; `POST /api/canvas/edges/<id>/send` claims it (`sending`, CAS, so a double tap types once), reads the source at send time (Turso task + its note, Turso note by id/ref_code, or the sticky's `data.text`), flattens it to one control-free line (≤ 4000 chars), and delivers it through `deliverInject` (the `/api/inject` guards split out of `routes/api.ts`) to the agent node's `ref` session. Outcome → `sent` | `failed` + the refusal code (re-sendable); a restart turns `sending` into `failed server_restart`. Every state change is a `canvas` `edge` frame.
 **Why:** brief decision 1+2: v1 = Context only, executed by the server, through the existing inject guards.
+**Target identity:** an agent node stores `bound_sid` (the session's `sessionId` when its `ref` was last set). Session.key is tty-based and outlives the agent, so a send to a key now held by another agent is refused 409 `target_changed`; re-pointing the node (PATCH `ref`) rebinds it.
 **Not yet:** per-edge auto (Phase 7 trust ramp), cross-host delivery (an edge to the other host's session gets 410 `target_gone`; draw it on that host's board), re-proposing when the source changes.
 **Revisit if:** multi-line prompts arrive intact via the inject path (drop the flattening), or Handoff/Depends edges land (agent sources need a real hop counter + cycle check).
 

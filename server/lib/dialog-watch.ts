@@ -51,6 +51,12 @@ export interface DialogWatchDeps {
   isQuestionScreen?(pane: string): boolean
   // The question picker on this session went away.
   onQuestionPickerGone?(key: string): void
+  // Ids of the session's pending (carded) questions. Lets the watcher tell a
+  // picker that closed from a NEW question whose picker is not up yet.
+  pendingQuestionIds?(s: Session): string[]
+  // A carded question's picker was on screen and is gone (Esc at the
+  // terminal): Claude Code fires no hook for a rejected tool call.
+  onCardedPickerGone?(s: Session): void
   pollMs?: number
 }
 
@@ -69,11 +75,20 @@ const POLL_MS = 2_000
 // the phone just gave (that picker must not flash up as a stray card).
 export const QUESTION_ORPHAN_MS = 10_000
 
+// How long a carded question's picker must stay gone before its card ends —
+// a terminal answer's PostToolUse lands well inside this and ends it as
+// "answered" first.
+export const PICKER_GONE_MS = 1_500
+
 export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
   const open = new Map<string, { sig: string; dialog: Dialog }>()
   const lastStatus = new Map<string, string>()
   // key → when an un-carded question picker was first seen on screen
   const questionSince = new Map<string, number>()
+  // key → pending question ids while their picker was on screen / when it
+  // was first seen gone
+  const pickerSeen = new Map<string, string>()
+  const pickerGoneSince = new Map<string, number>()
   const now = deps.now ?? Date.now
   let timer: ReturnType<typeof setInterval> | null = null
   let ticking = false
@@ -102,6 +117,29 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     deps.onQuestionPickerGone?.(key)
   }
 
+  function isPicker(pane: string): boolean {
+    return parseDialog(pane)?.kind === "question" || !!deps.isQuestionScreen?.(pane)
+  }
+
+  function forgetPicker(key: string): void {
+    pickerSeen.delete(key)
+    pickerGoneSince.delete(key)
+  }
+
+  function cardedPicker(s: Session, onScreen: boolean): void {
+    const ids = (deps.pendingQuestionIds?.(s) ?? []).join(",")
+    if (onScreen) { pickerSeen.set(s.key, ids); pickerGoneSince.delete(s.key); return }
+    const seen = pickerSeen.get(s.key)
+    if (seen === undefined) return
+    // A different question is pending now; its picker has not shown yet.
+    if (seen !== ids) { forgetPicker(s.key); return }
+    const since = pickerGoneSince.get(s.key) ?? now()
+    pickerGoneSince.set(s.key, since)
+    if (now() - since < PICKER_GONE_MS) return
+    forgetPicker(s.key)
+    deps.onCardedPickerGone?.(s)
+  }
+
   function ours(key: string): boolean {
     if (!deps.isScraping(key)) return false
     close(key)
@@ -118,15 +156,28 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
     if (ours(s.key)) return
     const st = s.pid ? await deps.sessionStatus(s.pid) : null
     if (ours(s.key)) return
+    const carded = deps.hasPendingQuestion(s)
+    if (!carded) forgetPicker(s.key)
     if (st) {
       const sig = `${st.status}|${st.waitingFor}`
       if (lastStatus.get(s.key) !== sig) {
         lastStatus.set(s.key, sig)
         deps.onStatus(s.key, st)
       }
-      if (st.status !== "waiting") { questionGone(s.key); close(s.key); return }
+      if (st.status !== "waiting") { if (carded) cardedPicker(s, false); questionGone(s.key); close(s.key); return }
     }
-    if (deps.hasPendingQuestion(s) || deps.hasPendingApproval?.(s)) { questionSince.delete(s.key); close(s.key); return }
+    if (carded || deps.hasPendingApproval?.(s)) {
+      questionSince.delete(s.key)
+      close(s.key)
+      if (!carded) return
+      // Watch the carded picker: seen on screen, then gone. A capture without
+      // it counts even while the status file still says "waiting": nothing
+      // rewrites it after an Esc. Gone must hold PICKER_GONE_MS of ticks.
+      const pane = await deps.capture(s)
+      if (ours(s.key) || pane === null) return
+      cardedPicker(s, isPicker(pane))
+      return
+    }
     const pane = await deps.capture(s)
     if (ours(s.key)) return
     const dialog = pane === null ? null : parseDialog(pane)
@@ -165,6 +216,7 @@ export function createDialogWatcher(deps: DialogWatchDeps): DialogWatcher {
       for (const key of [...open.keys()]) if (!liveKeys.has(key)) close(key)
       for (const key of [...lastStatus.keys()]) if (!liveKeys.has(key)) lastStatus.delete(key)
       for (const key of [...questionSince.keys()]) if (!liveKeys.has(key)) questionSince.delete(key)
+      for (const key of [...pickerSeen.keys()]) if (!liveKeys.has(key)) forgetPicker(key)
       for (const s of live) {
         try { await check(s) } catch { /* one bad pane doesn't stop the sweep */ }
       }

@@ -34,6 +34,9 @@ export interface CanvasNode {
   h: number
   /** Kind-specific client payload (note text, host label, …), opaque to the server. */
   data: Record<string, unknown>
+  /** Server-set: the agent's Session.sessionId when `ref` was last set. A Session.key is tty-based
+   *  and outlives the agent on it, so a send checks this before typing (wiring/canvas.ts). */
+  boundSid?: string
   createdAt: number
   updatedAt: number
 }
@@ -51,9 +54,10 @@ export interface CanvasEdge {
   updatedAt: number
 }
 
-export type NodeInput = Pick<CanvasNode, "kind" | "ref" | "x" | "y" | "w" | "h" | "data"> & { id?: string }
-export type NodePatch = Partial<Pick<CanvasNode, "ref" | "x" | "y" | "w" | "h" | "data">>
+export type NodeInput = Pick<CanvasNode, "kind" | "ref" | "x" | "y" | "w" | "h" | "data"> & { id?: string; boundSid?: string }
+export type NodePatch = Partial<Pick<CanvasNode, "ref" | "x" | "y" | "w" | "h" | "data" | "boundSid">>
 export type EdgeInput = Pick<CanvasEdge, "kind" | "from" | "to">
+export type SendResult = { ok: true } | { ok: false; status: number; error: string; detail?: Record<string, unknown> }
 
 export type EdgeAddResult = { ok: true; edge: CanvasEdge } | { ok: false; error: "node_not_found" | "self_edge" | "edge_exists" | "invalid_endpoints" }
 
@@ -75,12 +79,12 @@ export interface CanvasStore {
   settleEdge(id: string, result: { ok: true } | { ok: false; error: string }, now: number): CanvasEdge | null
 }
 
-interface RawNode { id: string; kind: string; ref: string; x: number; y: number; w: number; h: number; data: string; created_at: number; updated_at: number }
+interface RawNode { id: string; kind: string; ref: string; x: number; y: number; w: number; h: number; data: string; bound_sid: string; created_at: number; updated_at: number }
 interface RawEdge { id: string; kind: string; from_id: string; to_id: string; state: string; error: string; sent_at: number | null; created_at: number; updated_at: number }
 
 const toNode = (r: RawNode): CanvasNode => ({
   id: r.id, kind: r.kind as NodeKind, ref: r.ref, x: r.x, y: r.y, w: r.w, h: r.h,
-  data: JSON.parse(r.data) as Record<string, unknown>, createdAt: r.created_at, updatedAt: r.updated_at,
+  data: JSON.parse(r.data) as Record<string, unknown>, boundSid: r.bound_sid, createdAt: r.created_at, updatedAt: r.updated_at,
 })
 const toEdge = (r: RawEdge): CanvasEdge => ({
   id: r.id, kind: r.kind as EdgeKind, from: r.from_id, to: r.to_id, state: r.state as EdgeState, error: r.error,
@@ -105,6 +109,8 @@ export function createCanvasStore(db: Database): CanvasStore {
   if (!cols.has("error")) db.exec("ALTER TABLE canvas_edges ADD COLUMN error TEXT NOT NULL DEFAULT ''")
   if (!cols.has("sent_at")) db.exec("ALTER TABLE canvas_edges ADD COLUMN sent_at INTEGER")
   if (!cols.has("updated_at")) db.exec("ALTER TABLE canvas_edges ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+  const nodeCols = new Set((db.query("PRAGMA table_info(canvas_nodes)").all() as { name: string }[]).map((c) => c.name))
+  if (!nodeCols.has("bound_sid")) db.exec("ALTER TABLE canvas_nodes ADD COLUMN bound_sid TEXT NOT NULL DEFAULT ''")
   // A send cut short by a restart never reported back: offer it again rather than leave it stuck.
   db.query("UPDATE canvas_edges SET state = 'failed', error = 'server_restart' WHERE state = 'sending'").run()
   const getNode = (id: string): CanvasNode | null => {
@@ -127,8 +133,8 @@ export function createCanvasStore(db: Database): CanvasStore {
     addNode(input, now) {
       const id = input.id ?? crypto.randomUUID()
       const r = db.query(
-        "INSERT OR IGNORE INTO canvas_nodes (id, kind, ref, x, y, w, h, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      ).run(id, input.kind, input.ref, input.x, input.y, input.w, input.h, JSON.stringify(input.data), now, now)
+        "INSERT OR IGNORE INTO canvas_nodes (id, kind, ref, x, y, w, h, data, bound_sid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(id, input.kind, input.ref, input.x, input.y, input.w, input.h, JSON.stringify(input.data), input.boundSid ?? "", now, now)
       return { node: getNode(id)!, created: r.changes > 0 }
     },
     patchNode(id, patch, now) {
@@ -138,6 +144,7 @@ export function createCanvasStore(db: Database): CanvasStore {
         if (patch[k] !== undefined) { sets.push(`${k} = ?`); args.push(patch[k]) }
       }
       if (patch.data !== undefined) { sets.push("data = ?"); args.push(JSON.stringify(patch.data)) }
+      if (patch.boundSid !== undefined) { sets.push("bound_sid = ?"); args.push(patch.boundSid) }
       sets.push("updated_at = ?")
       args.push(now)
       const r = db.query(`UPDATE canvas_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...args, id)

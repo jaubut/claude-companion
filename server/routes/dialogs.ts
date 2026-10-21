@@ -4,7 +4,7 @@ import { pickKeys } from "../lib/dialogs"
 import { keyGate, opensChordWindow, runTmux } from "../lib/key-gate"
 import { resolveSession } from "../lib/sessions"
 import { paneKey, sendKeysArgs } from "../lib/tmux-pane"
-import { dialogWatcher } from "../wiring/dialogs"
+import { dialogWatcher, endQuestionsOnEscape } from "../wiring/dialogs"
 import { herdrGateKey, herdrGatedKey, herdrPaneOf } from "../lib/herdr"
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -32,6 +32,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
       if (!sent) return Response.json({ ok: false, error: "herdr send-keys failed" }, { status: 500 })
       if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
       companionLog(`\x1b[36mdialog key\x1b[0m ${name} → ${gk}`)
+      if (name === "Escape") endQuestionsOnEscape(session, "escape")
       setTimeout(() => void dialogWatcher.refresh(session.key), 350)
       return Response.json({ ok: true })
     }
@@ -39,6 +40,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     const ref = { pane: session.tmuxPane, socket: session.tmuxSocket ?? "" }
     const gateKey = paneKey(ref.pane, ref.socket)
     const args = named ? sendKeysArgs(ref, name) : sendKeysArgs(ref, "-l", name)
+    let code = -1
     try {
       // Through the shared per-pane gate (lib/key-gate.ts). Escape is a
       // meta-chord PREFIX (ESC_SETTLE_MS, lib/command-list.ts): a key arriving
@@ -46,7 +48,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
       // response only serialised one client's taps; the gate spaces EVERY
       // sender on the pane — a second phone, /api/model/cancel, the /help
       // close path — behind the Escape's window.
-      await keyGate.send(gateKey, name, (signal) => runTmux(args, signal))
+      code = await keyGate.send(gateKey, name, (signal) => runTmux(args, signal))
     } catch {
       return Response.json({ ok: false, error: "tmux send-keys failed" }, { status: 500 })
     }
@@ -56,6 +58,10 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     if (opensChordWindow(name)) await sleep(ESC_SETTLE_MS)
     const reset = "\x1b[0m"; const cyan = "\x1b[36m"
     companionLog(`${cyan}dialog key${reset} ${name} → ${gateKey}`)
+    // Esc rejects a pending question's picker, and Claude Code fires no hook
+    // for that: end the card here (Canvas Cancel / phone Esc) — only once the
+    // key actually reached the pane.
+    if (name === "Escape" && code === 0) endQuestionsOnEscape(session, "escape")
     setTimeout(() => void dialogWatcher.refresh(session.key), 350)
     return Response.json({ ok: true })
   }

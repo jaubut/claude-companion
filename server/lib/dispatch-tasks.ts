@@ -26,6 +26,7 @@ export interface DispatchTask {
   done: boolean
   blocker: string | null
   owner: string | null
+  runId?: string | null
   prUrl: string | null
   resultRef: string | null
   projectTitle: string | null
@@ -36,8 +37,8 @@ export interface DispatchTask {
   updatedAtRaw: string
 }
 
-/** The one task shape on the wire: `orchestrator_task` frames and `/thread` tasks[]. */
-export interface TaskDto {
+/** The one task shape on the wire: `orchestrator_task` frames and `/thread` tasks[]; dispatch tasks add the stage fields (lib/dispatch-stage.ts). */
+export interface TaskDto extends Partial<import("./dispatch-stage").StageFields> {
   taskId: string
   threadId: string
   prompt: string
@@ -106,9 +107,9 @@ export function phaseOf(t: DispatchTask): string {
   return effectiveStatus(t) ?? "none"
 }
 
-/** Announce-cursor value: (dispatch_status, updated_at, done, pr_url). */
+/** Announce-cursor value: (dispatch_status, updated_at, done, pr_url, run_id, owner). */
 export function seenKey(t: DispatchTask): string {
-  return JSON.stringify([t.status, t.updatedAtRaw, t.done, t.prUrl])
+  return JSON.stringify([t.status, t.updatedAtRaw, t.done, t.prUrl, t.runId ?? null, t.owner])
 }
 
 /** Turso datetime('now') text ("YYYY-MM-DD HH:MM:SS", UTC) or ISO → epoch ms. */
@@ -135,6 +136,7 @@ export function fromRow(r: Row): DispatchTask {
     done: Number(r.done ?? 0) === 1,
     blocker: str(r.dispatch_blocker),
     owner: str(r.dispatch_owner),
+    runId: str(r.dispatch_run_id),
     prUrl: str(r.dispatch_pr_url),
     resultRef: str(r.dispatch_result_ref),
     projectTitle: str(r.note_title),
@@ -216,7 +218,7 @@ export async function detectColumns(query: QueryFn): Promise<DispatchColumns> {
 function selectCols(cols: DispatchColumns): string {
   return [
     "t.id, t.note_id, t.text, t.assignee, t.done, t.created_at, t.updated_at",
-    "t.dispatch_status, t.dispatch_blocker, t.dispatch_owner",
+    "t.dispatch_status, t.dispatch_blocker, t.dispatch_owner, t.dispatch_run_id",
     ...(cols.prUrl ? ["t.dispatch_pr_url"] : []),
     ...(cols.resultRef ? ["t.dispatch_result_ref"] : []),
     "n.title AS note_title, n.ref_code AS note_ref",
