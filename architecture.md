@@ -20,7 +20,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/resolver.ts` | 532 | lib | 47 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
-| `lib/activity.ts` | 527 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
+| `lib/activity.ts` | 534 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 513 | lib | 53 |  |
 | `wiring/orchestrator.ts` | 491 | lib | 23 | state: taskListeners: Set, let triageDigest, let liveWorkerDead, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/triage.ts` | 485 | lib | 47 | state: DESTRUCTIVE: Set |

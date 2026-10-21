@@ -389,3 +389,34 @@ test("idle: a status that already read idle BEFORE the prompt never clears the t
     t.done()
   }
 })
+
+// An interrupted turn (Esc, denied tool) fires PreToolUse with no PostToolUse:
+// the open tool_start must not keep the pill up once the session is idle.
+async function openToolThen(status: string): Promise<void> {
+  prompt(A)
+  toolStart(A, "Bash")
+  await sleep(5)
+  reconcileActivityLiveness(withStatus(A.key, status))
+}
+
+test("open tool_start: idle observed after the last event clears the pill and the tool", async () => {
+  await openToolThen("idle")
+  // Inside the grace window: the status poll may lag a fresh event.
+  expect(pill(A.key)?.tool).toBe("Bash")
+  expireStaleActivity(Date.now() + IDLE_GRACE_MS + 1_000)
+  expect(pill(A.key)).toBeUndefined()
+  expect(getState({ tty: A.tty, cwd: A.cwd }).toolStarts.size).toBe(0)
+})
+
+test("open tool_start: status busy keeps the pill", async () => {
+  await openToolThen("busy")
+  expireStaleActivity(Date.now() + 10 * BUSY_TTL_MS)
+  expect(pill(A.key)?.tool).toBe("Bash")
+})
+
+test("open tool_start: status shell (claude exited) clears the pill", async () => {
+  await openToolThen("shell")
+  expireStaleActivity(Date.now() + IDLE_GRACE_MS + 1_000)
+  expect(pill(A.key)).toBeUndefined()
+  expect(getState({ tty: A.tty, cwd: A.cwd }).toolStarts.size).toBe(0)
+})
