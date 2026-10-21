@@ -174,12 +174,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
 | `lib/tasks-agent-testdb.test-util.ts` | 82 | lib | 4 |  |
 | `lib/super-auto.ts` | 81 | lib | 4 | state: let cached |
+| `wiring/canvas.ts` | 81 | lib | 3 | state: let store, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
 | `wiring/proposals.ts` | 76 | lib | 5 |  |
 | `lib/resolver-fix-policy.ts` | 75 | lib | 4 |  |
-| `wiring/canvas.ts` | 74 | lib | 3 | state: let store, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `wiring/front-door.ts` | 74 | lib | 1 | emits: orchestrator |
 | `wiring/body.ts` | 71 | lib | 8 | emits: orchestrator_channel, orchestrator, body_alert |
 | `wiring/takeover-choose.ts` | 71 | lib | 2 |  |
