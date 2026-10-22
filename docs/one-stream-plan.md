@@ -36,7 +36,7 @@ K = kept as a pipeline stage. F = changed so it only files a tasks row (`pending
 | 5 | Auto-dispatch channels (trust ramp) | `server/wiring/orchestrator.ts:409-416` (`applyDecision` → `fileProposal`) | files without a tap | **F** for free: it goes through #1 and so lands in `pending`. The stamp is still required, so "auto" now only skips the tap in Companion. |
 | 6 | Triage `approve` option (`mode` live/headless) | `server/lib/triage.ts:257`, `server/wiring/triage.ts:268-276` | → `approveProposal` with `mode` | **F**: no `mode` (always #1). The `live`/`headless` option variants are deleted. |
 | 7 | Repo card "Yes" on a proposal member | `server/wiring/triage-repos.ts` (header :1-12) → `actOn(approve)` | → #6 | **F** (inherits #1). |
-| 8 | #Body Mac fix card approve (Zettlab → Mac forward) | `server/wiring/body-fix.ts:55-64` (intercept), `server/lib/body-fix.ts:142` (POST to the peer), `server/routes/body.ts:133` (`/api/body/fix`), `runBodyFix` `server/wiring/body-fix.ts:94-111` → `approveLive` | live run on the Mac, owner `companion:<mac>` | **D** for the forward and the live run. The card files a `pending` row like #1, keeping its `[repo:<name>]` title marker. The Mac's dispatch-run picks it up only when the repo's `requires` say so (see Open question Q1). |
+| 8 | #Body Mac fix card approve (Zettlab → Mac forward) | `server/wiring/body-fix.ts:55-64` (intercept), `server/lib/body-fix.ts:142` (POST to the peer), `server/routes/body.ts:133` (`/api/body/fix`), `runBodyFix` `server/wiring/body-fix.ts:94-111` → `approveLive` | live run on the Mac, owner `companion:<mac>` | **D** for the forward and the live run. The card files a `pending` row like #1, keeping its `[repo:<name>]` title marker. The row is tagged `requires_host='mac'`, so only the Mac's dispatch-run claims it (Q1, slice G). |
 | 9 | #Body "agent" tap | `server/wiring/body-agent.ts:23-25,119,182` → `approveLive` | live run in the component's cwd | **F**: files `pending` (the tap is no longer the approval; the stamp is). |
 | 10 | Blocked-task takeover (triage option `takeover`) | `server/lib/triage.ts:160,196,460-470` (`withTakeover`), `server/wiring/triage.ts:216-217,329-331,455`, `server/wiring/takeover-choose.ts:41,61`, `server/wiring/takeover.ts` (claim :219, stop :480, end :491, tick :552), `server/wiring/takeover-liveness.ts`, `server/lib/takeover.ts`, `server/lib/takeover-store.ts`, `server/lib/dispatch-live.ts:96-149` (`claimTakeover`/`finishTakeover`), peer route `server/routes/triage.ts:18,109-124`, hooks `server/routes/hooks.ts:442-443,539-542`, `server/wiring/dispatch.ts:49-51` (`takeoverIdentity`) | guarded blocked→running, owner `companion:takeover:<name>`, a herdr interactive session that builds outside dispatch-run | **D**. The option becomes the existing guarded **`unblock`** (`answer` = Jeremie's text, plus the how-to ref) or **`requeue`** (`server/lib/dispatch-tasks.ts` `unblockTask`/`requeueTask`, dispatch.sh vocabulary). `TAKEOVER_ENDED` hints (`server/lib/triage-sources.ts:3,42`, `server/lib/resolver.ts:2,83`, `server/lib/triage-repos.ts:94`) are removed. The `takeovers` table is left in companion.db (no migration; nothing writes it). |
 | 11 | Live run lifecycle | stop hook `server/routes/hooks.ts:434` (`finishLiveFromStop`), boot `cli.ts:200,224` (`reconcileLiveOnBoot`), cancel `server/routes/orchestrator.ts:164,214-217,264-279` (`cancelLiveRoute`), reject cleanup `server/wiring/proposals.ts:46-48`, dead worker `server/wiring/orchestrator.ts:84-89,146-151`, identity `server/wiring/dispatch.ts:49-51`, `isLiveLinked` `server/lib/dispatch-tasks.ts:193,204` | closes live rows | **D** with #2/#4. Rows still `running` with owner `companion:<host>` at deploy time: a one-off `dispatch.sh <id> failed` sweep (listed in the PR), not a boot shim. |
@@ -85,22 +85,24 @@ Tests run fixtures for each state through the mapper. The existing `orchestrator
 
 | Slice | Repo | Rows | Files (est.) |
 |---|---|---|---|
-| A: approve = file `pending` only; delete live mode + tmux runner | claude-companion | 1-9, 11, 12 | ~22 (incl. deleting `wiring/live.ts`, `routes/orchestrator-live.test.ts`, the live part of `lib/dispatch-live.ts`, `lib/orchestrator-queue.ts`) |
+| A: approve = file `pending` only; delete live mode (claimLive/finishLive, `wiring/live.ts`, the Mac live forward `/api/body/fix`); Mac fix rows tagged `requires_host='mac'` | claude-companion | 1-4, 6-9, 11 | ~24 |
+| A2: delete the tmux worker runner (dead once A lands: `executeDispatch`, `workerQueue`, worker tail, `lib/orchestrator-queue.ts`, worker identity) + the auto-dispatch toggle (Q3) | claude-companion | 5, 12 | ~15 |
 | B: takeover → unblock/requeue; delete takeover | claude-companion | 10 | ~18 (7 deleted modules + their tests, triage/resolver/hooks edits, docs) |
-| C: resolver fix → shepherd/task | claude-companion | 13 | ~8 |
+| C: resolver fix → shepherd `pr:unpark` (Q2) | claude-companion | 13 | ~8 |
 | D: unified pipeline list | claude-companion | new endpoint | ~5 |
 | E: relay claim guard + handoff doc | claude-config | 20-23 | ~4 |
 | F: iOS single list | claude-companion-ios (Mac) | 24 | Mac session |
+| G: host tag. Turso `ALTER TABLE tasks ADD COLUMN requires_host TEXT NOT NULL DEFAULT 'any' CHECK (requires_host IN ('any','mac','zettlab'))`, mirrored in three files (live DB, `tls-dashboard-v2/server/lib/data/schema.sql`, `tls-dashboard-v2/tests/_helpers/test-db.ts`; memory `feedback_schema_sync_three_files`). dispatch-run's claims (`tools/dispatch-run.ts:225`, `tools/client-origin.ts:140`) add `AND requires_host IN ('any', ?)`, where `?` is the runner's host label (mac on darwin, else zettlab). The selector skips rows meant for the other host. Tests in `tools/dispatch-select.test.ts` / `dispatch-runner.test.ts`. | tls-dashboard-v2 + claude-config | Q1 | ~6 |
 
 ## Scope gate
 
 The whole change touches about 60 files in two reachable repos: 47 existing claude-companion files reference live/takeover, plus the new endpoint, claude-config and docs. The iOS half can only be done on the Mac. That is more than 2× this plan's single-PR budget and more than the 25-file cap, so this PR ships the plan only. Each slice is dispatched as its own task.
 
-## Open questions (answers change slices A/C)
+## Decisions (Jeremie, 2026-10-22)
 
-- **Q1: Mac-host fixes.** Live-on-Mac (#8) exists because a Mac component fix (launchd plist, Mac hooks) must run on the Mac. dispatch-run on both hosts can claim a `claude-companion` row, so a Mac-only fix filed to the queue may be claimed by Zettlab. Options: (a) accept that for now; (b) add a `[host:mac]` marker that dispatch-run honours, which is the planned F2 "host field in repo-map" follow-up; (c) keep #8 as a forward that files on the Mac with Mac-only routing. The default in slice A is (a), with the race listed as a known risk.
-- **Q2: resolver PR fix.** Deleting #13 removes Opus's one-rescue-per-PR. The shepherd already runs fix passes, so the default is `pr:unpark`.
-- **Q3: auto-dispatch channels.** With the stamp required, "auto" only skips the Companion tap. Should the toggle be removed entirely (no-shims rule)? Default: remove it in slice A.
+- **Q1, Mac-host fixes: tag the machine.** A task can carry a host requirement in a new `tasks.requires_host` column, `'any' | 'mac' | 'zettlab'` (NOT NULL DEFAULT `'any'`). dispatch-run only claims a row whose requirement is `'any'` or its own host. That work is slice G. Slice A sets `requires_host='mac'` when Companion files a Mac-only task (a #Body fix card whose host is `mac`), and only when the column exists (`detectColumns`, the same way `dispatch_pr_url` is handled). Until G ships, such a row files untagged and the Zettlab race remains.
+- **Q2: accepted.** The shepherd's fix run (`pr:unpark`) replaces the resolver's PR fix run. That is slice C.
+- **Q3: accepted.** The auto-dispatch toggle is removed. That is slice A2.
 
 ## Verify (per slice)
 
