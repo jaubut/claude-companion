@@ -9,7 +9,8 @@ Last updated: 2026-10-21
 **Choice:** code work has one path: tasks row → `pending` → dashboard `/tasks` release stamp (task_stamps, C-020, MFA) → `queued` → dispatch-run → builder PR → shepherd → merged. Companion approve / dispatch / #Body taps file a `pending` row and nothing else. Deleted: live mode (claimLive, tmux worker runner), Mac live fix forward, blocked-task takeover (it becomes guarded unblock/requeue), the resolver's own PR fix run. Relay ACK no longer claims a row; the planner claims via dispatch.sh from `queued`.
 **Why:** Jeremie 2026-10-21: "ONE pipeline, no side channels". Turso `tasks_queue_guard_ins` already refuses Companion's `queued` insert (origin defaults to `unknown`), so headless approve is broken today, and `claimLive` inserts `running`, which skips the stamp.
 **Rejected:** keeping live mode behind the stamp (that is still a second runner); a Companion-side approve with an API key (MFA stays dashboard-only).
-**Revisit if:** Mac-only fixes get claimed by Zettlab (add host routing to repo-map / dispatch-run, plan Q1), or the dashboard stamp round-trip turns out too slow from the phone.
+**Amended 2026-10-22 (Jeremie: Q1 to Q3):** Mac-only work is routed by a machine tag, `tasks.requires_host` (`any|mac|zettlab`); dispatch-run claims only `any` or its own host (slice G: claude-config + the dashboard schema). Companion sets `mac` on Mac #Body fix rows when the column exists. The resolver's PR fix run gives way to the shepherd's `pr:unpark`. The auto-dispatch toggle is removed.
+**Revisit if:** the dashboard stamp round-trip turns out too slow from the phone, or a third host appears (widen the tag's CHECK).
 
 ### Canvas graph store + tri-state status (PRJ-FL49 P5)
 **Date:** 2026-10-18
