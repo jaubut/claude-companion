@@ -151,13 +151,6 @@ export function pathBlockedHere(path: string | null | undefined, entries: RepoEn
   return !!path && entriesAt(path, entries).some((e) => !hostCan(e, host))
 }
 
-/** A note mapped (on any host) to a repo this host may not run code for. */
-export function noteBlockedHere(hay: string, entries: RepoEntry[], host: HostProbe = realHost()): boolean {
-  return entries.some((e) => e.match.test(hay) && !hostCan(e, host))
-}
-
-export const XCODE_LIVE_REASON = "Xcode repo — run live from the Mac"
-
 /**
  * The resolver's fix-run checkout: `repo` when this host may run code in it,
  * else null — "no local checkout here", so seams.fix forwards to the Mac peer.
@@ -180,8 +173,8 @@ export function checkRepoMap(files: string[] = repoMapCandidates()): RepoMapChec
 
 /** The log line for checkRepoMap; `warn` = loud (0 entries). */
 export function repoMapCheckLine(c: RepoMapCheck, files: string[] = repoMapCandidates()): { warn: boolean; text: string } {
-  if (!c.file) return { warn: true, text: `[repo-map] WARNING: no REPO_MAP file readable (tried ${files.join(", ")}) — no project resolves to a local checkout (live cwd, resolver fix runs, catalog)` }
-  if (!c.entries) return { warn: true, text: `[repo-map] WARNING: 0 REPO_MAP entries parsed from ${c.file} — the format changed? Every local-checkout lookup will fail (live cwd, resolver fix runs, catalog)` }
+  if (!c.file) return { warn: true, text: `[repo-map] WARNING: no REPO_MAP file readable (tried ${files.join(", ")}) — no project resolves to a local checkout (resolver fix runs, catalog)` }
+  if (!c.entries) return { warn: true, text: `[repo-map] WARNING: 0 REPO_MAP entries parsed from ${c.file} — the format changed? Every local-checkout lookup will fail (resolver fix runs, catalog)` }
   return { warn: false, text: `[repo-map] ${c.entries} REPO_MAP entries from ${c.file} (${c.local} checked out here)` }
 }
 
@@ -201,34 +194,6 @@ export function repoForNote(noteId: string, title: string | null, file?: string)
   const hay = `${noteId} ${title ?? ""}`
   for (const { match, path } of parseRepoMap(source)) if (match.test(hay) && isDir(path)) return path
   return null
-}
-
-export interface LiveCwdInput {
-  explicit?: string | null; noteId?: string | null; noteTitle?: string | null; taskCwd?: string | null; channelCwd?: string | null
-}
-
-/**
- * Live cwd: the explicit one, else the note's mapped repo, else the proposal's
- * or the channel's cwd — the first that is a directory on this host. An Xcode
- * repo (note or path) on a host without Xcode → null with XCODE_LIVE_REASON.
- */
-export function resolveLiveCwdWhy(c: LiveCwdInput, host: HostProbe = realHost()): { cwd: string | null; reason: string | null } {
-  const source = readRepoMapSource()
-  const entries = source ? parseRepoMap(source) : []
-  const blocked = (p: string | null | undefined) => pathBlockedHere(p, entries, host)
-  if (c.explicit) {
-    if (blocked(c.explicit)) return { cwd: null, reason: XCODE_LIVE_REASON }
-    return { cwd: isDir(c.explicit) ? c.explicit : null, reason: null }
-  }
-  if (c.noteId && noteBlockedHere(`${c.noteId} ${c.noteTitle ?? ""}`, entries, host)) return { cwd: null, reason: XCODE_LIVE_REASON }
-  const mapped = c.noteId ? repoForNote(c.noteId, c.noteTitle ?? null) : null
-  const cands = [mapped, c.taskCwd, c.channelCwd].filter(isDir)
-  const cwd = cands.find((p) => !blocked(p)) ?? null
-  return { cwd, reason: !cwd && cands.length ? XCODE_LIVE_REASON : null }
-}
-
-export function resolveLiveCwd(c: LiveCwdInput, host: HostProbe = realHost()): string | null {
-  return resolveLiveCwdWhy(c, host).cwd
 }
 
 /**

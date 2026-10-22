@@ -41,7 +41,7 @@ type TriageAction =
   | { kind: "answer_custom" }                   // phone shows a text field → POST with text
   | { kind: "requeue" }
   | { kind: "cancel" }
-  | { kind: "approve"; mode?: "headless" | "live" }   // proposal
+  | { kind: "approve" }   // proposal: files one pending row (dashboard stamp queues it)
   | { kind: "reject" }                          // proposal
   | { kind: "merge" }                           // PR (sensitive PRs only reach Jeremie this way)
   | { kind: "close_pr" }

@@ -29,7 +29,7 @@ export const SWEEP_MS = 10 * 60_000
 export const BOOT_SWEEP_DELAY_MS = 60_000
 
 const store = createInvestigationStore(db)
-/** Mac fix cards (Zettlab) and forwarded fix runs (Mac) — wiring/body-fix.ts reads it. */
+/** Mac fix cards: approve tags their Turso row requires_host=mac (wiring/proposals.ts). */
 export const bodyFixStore = createBodyFixStore(db)
 
 async function listProblems() {

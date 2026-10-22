@@ -269,8 +269,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     if (src.ref.source !== "proposal") return { kind: "error", status: 400, error: "wrong_source" }
     const task = getTask(src.ref.taskId)
     if (!task || task.status !== "proposed") return { kind: "stale" }
-    const mode = option.action.kind === "approve" ? option.action.mode : undefined
-    const res = option.action.kind === "approve" ? await approveProposal(task, { mode }, dispatch) : rejectProposal(task, dispatch)
+    const res = option.action.kind === "approve" ? await approveProposal(task, {}, dispatch) : rejectProposal(task, dispatch)
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
     if (res.ok && json.ok !== false) return { kind: "done", detail: json }
     if (res.status === 409) return { kind: "stale", reason: String(json.error ?? "") }

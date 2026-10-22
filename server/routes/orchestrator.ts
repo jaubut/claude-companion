@@ -21,13 +21,11 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import {
   ANSWER_MAX, DEFAULT_AGENT, DISPATCH_ID, type DispatchTask, type WriteOutcome,
   cancelDispatchTask, fileTask, getDispatchTask, getNote, getTaskActivity, getTaskResult,
-  isLiveLinked, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
+  approveUrl, newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
 } from "../lib/dispatch-tasks"
-import { TAKEOVER_OWNER, liveOwner } from "../lib/dispatch-live"
-import { cancelLive, dispatchLive } from "../wiring/live"
-import { approveProposal, liveResponse, rejectProposal } from "../wiring/proposals"
+import { TAKEOVER_OWNER } from "../lib/dispatch-live"
+import { approveProposal, rejectProposal } from "../wiring/proposals"
 import { frontDoor } from "../wiring/front-door"
-import { HOST_INFO } from "../state"
 import { withIdempotency } from "../lib/idempotency"
 import { bodySnapshot } from "../wiring/body"
 import { TursoUnreachable } from "../lib/turso"
@@ -159,9 +157,7 @@ async function taskDetail(id: string, dispatch: DispatchWiring): Promise<Respons
 }
 
 // Cancel a local (tmux-era) task, Phase 7 behaviour: kill its worker if any.
-// A live run (P4) is cancelled through its Turso row.
-async function cancelLocal(task: OrchTask, dispatch: DispatchWiring): Promise<Response> {
-  if (isLiveLinked(task)) return cancelLiveRoute(task.dispatchTaskId!, dispatch)
+async function cancelLocal(task: OrchTask): Promise<Response> {
   if (task.status !== "queued" && task.status !== "dispatched" && task.status !== "running") {
     return Response.json({ ok: false, error: `not cancellable (status ${task.status})` }, { status: 409 })
   }
@@ -212,9 +208,6 @@ async function dispatchAction(req: Request, id: string, action: TaskAction, disp
     return unreachable(err)
   }
   if (!out.ok && out.error === "no_such_task") return Response.json({ ok: false, error: "no such task" }, { status: 404 })
-  if (!out.ok && action === "cancel" && out.error === "running" && out.task.owner === liveOwner(HOST_INFO.name)) {
-    return cancelLiveRoute(id, dispatch)
-  }
   if (!out.ok && out.error === "running" && out.task.owner?.startsWith(TAKEOVER_OWNER)) {
     const session = out.task.owner.slice(TAKEOVER_OWNER.length)
     return Response.json({ ok: false, error: "under_takeover", session, dispatchStatus: "running", owner: out.task.owner, task: dispatch.dto(out.task) }, { status: 409 })
@@ -240,17 +233,16 @@ async function taskActionRoute(req: Request, path: string, dispatch: DispatchWir
   if (!taskId || !TASK_ID.test(taskId)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
   const local = getTask(taskId)
   if (local) {
-    if (action === "cancel") return withIdempotency(req, `task-cancel:${taskId}`, () => cancelLocal(local, dispatch))
+    if (action === "cancel") return withIdempotency(req, `task-cancel:${taskId}`, () => cancelLocal(local))
     return Response.json({ ok: false, error: `${action} needs a dispatch task` }, { status: 409 })
   }
   if (!DISPATCH_ID.test(taskId)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
   return withIdempotency(req, `task-${action}:${taskId}`, () => dispatchAction(req, taskId, action, dispatch))
 }
 
-// POST .../proposal/<id>/{approve|reject}. Approve files the proposal to Turso
-// (P2; replay on `filed` → 200 with the same dispatchTaskId). {mode:"live"} (P4)
-// files it claimed by this host and runs the tmux worker. Both paths live in
-// wiring/proposals.ts (shared with triage).
+// POST .../proposal/<id>/{approve|reject}. Approve files ONE `pending` Turso
+// row (replay on `filed` → 200 with the same dispatchTaskId); the dashboard
+// release stamp queues it. Both paths live in wiring/proposals.ts (shared with triage).
 async function proposalRoute(req: Request, path: string, dispatch: DispatchWiring): Promise<Response> {
   const [taskId, action] = path.split("/")
   const task = taskId ? getTask(taskId) : null
@@ -259,38 +251,18 @@ async function proposalRoute(req: Request, path: string, dispatch: DispatchWirin
   if (action !== "approve") return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
   return withIdempotency(req, `approve:${task.taskId}`, async () => {
     const body = (await readJson(req)) ?? {}
-    return approveProposal(task, { mode: body.mode, agent: optStr(body.agent), noteId: optStr(body.noteId), cwd: optStr(body.cwd) }, dispatch)
+    return approveProposal(task, { agent: optStr(body.agent), noteId: optStr(body.noteId) }, dispatch)
   })
 }
 
-// Cancel a live run owned by this host: guarded running → cancelled, then the
-// local row is closed and its tmux worker killed.
-async function cancelLiveRoute(dispatchTaskId: string, dispatch: DispatchWiring): Promise<Response> {
-  const out = await cancelLive(dispatchTaskId, dispatch)
-  if (!out.ok) {
-    const task = out.task ? dispatch.dto(out.task) : undefined
-    return Response.json({ ok: false, error: out.error, ...(task ? { dispatchStatus: task.dispatchStatus, owner: task.owner, task } : {}) }, { status: out.status })
-  }
-  const channelId = dispatch.threadIdFor(out.task)
-  orchEmit(orchAppendTurn("orchestrator", `cancelled live [${out.local?.taskId ?? dispatchTaskId.slice(0, 8)}] ${out.task.agent ?? "agent"} — ${out.task.title}`, out.task.id, channelId))
-  vetoAuto(out.local?.threadId ?? channelId)
-  void workerQueue.drain()
-  return Response.json({ ok: true, taskId: out.local?.taskId ?? dispatchTaskId, dispatchTaskId, status: "cancelled", task: dispatch.dto(out.task) })
-}
-
-// POST .../dispatch {prompt, channel?, noteId?, agent?, title?, mode?, cwd?}:
-// files a Turso agent task straight away; mode "live" claims it and runs the tmux worker.
+// POST .../dispatch {prompt, channel?, noteId?, agent?, title?}: files ONE
+// `pending` Turso agent task; the dashboard release stamp queues it.
 async function dispatchRoute(req: Request, dispatch: DispatchWiring): Promise<Response> {
   const body = (await readJson(req)) ?? {}
   const prompt = optStr(body.prompt)
   if (!prompt) return Response.json({ ok: false, error: "prompt required" }, { status: 400 })
   const ch = resolveChannel(optStr(body.channel))
   if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
-  if (body.mode === "live") {
-    return liveResponse(await dispatchLive({
-      prompt, channelId: ch.id, noteId: optStr(body.noteId), agent: optStr(body.agent), title: optStr(body.title), cwd: optStr(body.cwd),
-    }, dispatch))
-  }
   const noteId = optStr(body.noteId) || ch.noteId
   if (!noteId) return Response.json({ ok: false, error: "no_project" }, { status: 422 })
   const agent = resolveAgent(optStr(body.agent) ?? DEFAULT_AGENT)
@@ -303,9 +275,9 @@ async function dispatchRoute(req: Request, dispatch: DispatchWiring): Promise<Re
   } catch (err) {
     return unreachable(err)
   }
-  orchEmit(orchAppendTurn("orchestrator", `filed ${id.slice(0, 8)} → ${agent}: ${title}`, id, ch.id))
+  orchEmit(orchAppendTurn("orchestrator", `filed ${id.slice(0, 8)} → ${agent}: ${title} — waits for your approval on the dashboard`, id, ch.id))
   void dispatch.poll()
-  return Response.json({ ok: true, taskId: id, dispatchTaskId: id, status: "queued" })
+  return Response.json({ ok: true, taskId: id, dispatchTaskId: id, status: "pending_approval", approveUrl: approveUrl(id) })
 }
 
 // #Body thread header (P3): vitals counts + blocked tasks. Never holds the

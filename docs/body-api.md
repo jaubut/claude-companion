@@ -318,9 +318,8 @@ text is passed through the secret redactor before it is stored or posted.
    `No fix proposed.` A failure posts `🔍 <component> — investigation failed: <error>`.
 2. A non-null fix → the existing proposal card in #Body (`orchestrator_task`
    frame). For `zettlab:*` / `cloud:*` components, approve files it like any
-   proposal (headless, or `mode:"live"`). For `mac:*` components the fix runs
-   **live on the Mac** — see "Mac fixes" below. The card's turn names the host
-   (`… · host mac` / `Approve to run it live on the mac (in <cwd>).`).
+   proposal (one `pending` Turso row, released on the dashboard). For `mac:*`
+   components the row is tagged `requires_host='mac'`. See "Mac fixes" below.
    Agent `builder` when a git repo is known for the component, else `claude`;
    cwd = that repo / unit working dir, else `~/.claude`; project note =
    `COMPANION_BODY_NOTE_ID` (default `projects/2026-06-22-companion-orchestrator`).
@@ -330,77 +329,38 @@ text is passed through the secret redactor before it is stored or posted.
 4. Push (same sender gate as alerts) only for severity `high`/`critical`, or a
    second consecutive failed investigation.
 
-## Mac fixes run live on the Mac (`POST /api/body/fix`)
+## Mac fixes (`requires_host='mac'`)
 
-A `mac:*` fix card is recorded (companion.db `body_fix_cards`: card id → host,
-component, cwd, note, agent). Approving it on Zettlab —
-`POST /api/orchestrator/proposal/<id>/approve`, with or without
-`mode:"live"` — never files a headless Turso task (Zettlab's dispatch-run
-could claim it). Zettlab forwards the approval to the Mac over the peer
-channel (`COMPANION_BODY_PEER`, bearer, `x-companion-body-hop: 1`, 30 s):
-
-```json
-POST /api/body/fix
-{ "fixId": "<Zettlab card id>", "host": "mac", "componentId": "mac:launchd:x", "prompt": "…", "title": "…",
-  "cwd": "/Users/…/repo or ~/.claude", "noteId": "projects/…", "agent": "builder|claude", "investigationId": "…" }
-→ { "ok": true, "taskId": "<Mac local id>", "dispatchTaskId": "<32 hex>", "status": "running", "mode": "live", "replay": false, "host": "mac" }
-```
-
-The Mac creates one local #Body proposal row per `fixId` (`body_fix_runs`), then
-runs its normal live path with the fix's cwd as the explicit cwd (never the
-note's mapped repo): `claimLive` (Turso row `running`, owner
-`companion:<mac hostname>`), the tmux worker, stop hook → completed. A component
-the receiving host does not own → 409 `not_owner` (never re-forwarded). Its
-errors are the live path's (`429 live_cap`, `422 no_cwd`, `503 turso_unreachable`, …).
-
-The Zettlab approve answers `{ok, taskId, dispatchTaskId, status:"running", mode:"live", host:"mac", replay}`;
-the card is stamped with the Mac's Turso id and leaves as `filed`; the
-dispatch poller shows the Mac's live row like any other. A repeat approve on
-a filed card replays (same id, no call to the Mac); a concurrent double
-approve reaches the Mac twice and the Mac's per-fix row + live replay keep it
-to one worker and one Turso row. Errors on the Zettlab approve:
-
-| status | error | card |
-|---|---|---|
-| 503 | `host_unreachable` (+`reason`: network, timeout, or no `COMPANION_BODY_PEER`) | stays `proposed`, retryable |
-| 502 | `host_refused` (the Mac answered 401/403: peer token wrong) | stays `proposed` |
-| the Mac's status | the Mac's `error` (`live_cap`, `no_cwd`, `turso_unreachable`, …) | stays `proposed` |
-
-A Mac card that was reported on the Mac itself (no peer) runs live there with
-the same explicit cwd.
-
-`cwd` is absolute, or `~` / `~/…` (the receiving host's home — a Mac card with
-no known repo defaults to `~/.claude`); anything else → 400.
+A `mac:*` fix card is recorded in companion.db `body_fix_cards` (card id → host, component, cwd,
+note, agent). Approving it (`POST /api/orchestrator/proposal/<id>/approve`, or the triage approve)
+files ONE `pending` Turso row like any proposal, tagged `requires_host='mac'` when the column exists.
+Only the Mac's dispatch-run claims it (plan slice G). There is no peer forward and no live run
+(`POST /api/body/fix` is gone). Response:
+`{ok, taskId, dispatchTaskId, status:"pending_approval", approveUrl, replay}`.
 
 ## "Get an agent on it" (`POST /api/body/component/:id/agent`)
 
 Server: `server/lib/body-agent.ts` (agent table, prompt, body, run store),
 `server/wiring/body-agent.ts`. For a component whose investigation found no code
 fix (the condition is real — e.g. `cloud:turso-table:inbox_entries` failing on
-`inbox backlog 47 > 40`), the phone starts an agent directly. **The tap is the
-approval**: no card, a LIVE run straight away.
+`inbox backlog 47 > 40`), the phone files an agent task directly: no card. The
+tap files ONE `pending` Turso row (released on the dashboard), tagged
+`requires_host=<owning host>`.
 
 ```json
 POST /api/body/component/cloud%3Aturso-table%3Ainbox_entries/agent
 { "instruction": "process the backlog" }          // optional; empty body is fine
 → { "ok": true, "taskId": "<local id on the owning host>", "dispatchTaskId": "<32 hex>",
-    "host": "zettlab", "agent": "inbox-processor", "status": "running", "mode": "live" }
+    "host": "zettlab", "agent": "inbox-processor", "status": "pending_approval", "approveUrl": "<dashboard>/tasks?task=<id>" }
 ```
 
 The id is percent-encoded like `GET /api/body/component/:id`. `instruction` is a
 string (≤ 2000 chars, trimmed; blank = none).
 
-**Where it runs** — the owning host, as for investigations: `mac:*` → the Mac;
-`zettlab:*` / `cloud:*` → Zettlab.
-- Owner = this host: a #Body proposal row (`createProposal`) run at once
-  through `approveLive` — Turso row claimed `running`, owner
-  `companion:<host>`, the tmux worker, visible in Sessions. cwd = the
-  component's git repo / unit working dir (`knownPaths`), else `~/.claude`.
-- Owner = the peer: forwarded to its `POST /api/body/fix` (above; `fixId`
-  `agent-<16 hex>`, bearer, `x-companion-body-hop: 1`), which runs the same live
-  path there. cwd = the cwd the latest investigation's fix card recorded, else
-  `~/.claude`. Peer errors map as for an approved Mac fix (503
-  `host_unreachable`, 502 `host_refused`, or the peer's own error).
+**Where it runs**: the owning host, as for investigations. `mac:*` → `requires_host='mac'`;
+`zettlab:*` / `cloud:*` → `requires_host='zettlab'`. That host's dispatch-run claims it once
+stamped. The brief names the cwd: the component's git repo / unit working dir (`knownPaths`) when
+this host owns it, else the cwd the latest investigation's fix card recorded, else `~/.claude`.
 
 **Agent** (first match wins, `AGENT_RULES` in `lib/body-agent.ts`):
 

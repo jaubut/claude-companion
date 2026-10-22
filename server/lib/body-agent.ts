@@ -141,4 +141,4 @@ export function createBodyAgentStore(db: Database): BodyAgentStore {
 }
 
 /** Turso dispatch states that still hold the component's agent slot. */
-export const OPEN_DISPATCH_STATES: readonly string[] = ["queued", "running", "blocked"]
+export const OPEN_DISPATCH_STATES: readonly string[] = ["pending", "queued", "running", "blocked"]

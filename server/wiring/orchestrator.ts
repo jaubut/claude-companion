@@ -40,7 +40,7 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { bodyDigestFor } from "./body"
 import { investigationDigestFor } from "./body-investigate"
 import {
-  DEFAULT_AGENT, type ProjectRef, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, isLiveLinked, newDispatchId, resolveAgent, toTaskDto,
+  DEFAULT_AGENT, type ProjectRef, type RequiresHost, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, newDispatchId, resolveAgent, toTaskDto,
 } from "../lib/dispatch-tasks"
 import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
@@ -59,15 +59,11 @@ export function orchEmit(turn: OrchTurn): void {
 
 // Broadcast a task's current state on every transition (proposed → dispatched →
 // running → done/error/rejected) so the phone's Tasks panel tracks live work.
-// A live run (P4) is shown as its Turso row: re-send that frame too, so the
-// worker's tmux identity (spawn, bind) reaches the phone.
 export function emitTask(taskId: string): void {
   const t = getTask(taskId)
   if (!t) return
   broadcast({ type: "orchestrator_task", task: toTaskDto(t) })
   for (const fn of taskListeners) fn(t)
-  // Not cached yet → the next poll carries it (identity included).
-  if (isLiveLinked(t)) dispatchWiring.reemit(t.dispatchTaskId!)
 }
 
 // Triage (wiring/triage.ts) recomputes when a local task (proposal) changes,
@@ -81,13 +77,6 @@ export function onTaskEmitted(fn: (task: OrchTask) => void): () => void {
 let triageDigest: (() => string | null) | null = null
 export function setTriageDigest(fn: (() => string | null) | null): void {
   triageDigest = fn
-}
-
-// Live mode (P4): wiring/live.ts closes the Turso row when a worker dies
-// without a stop hook. Registered there (it imports this module, not the reverse).
-let liveWorkerDead: ((task: OrchTask) => void) | null = null
-export function onLiveWorkerDead(fn: (task: OrchTask) => void): void {
-  liveWorkerDead = fn
 }
 
 // Broadcast a new/updated channel so every device's channel rail live-updates
@@ -145,8 +134,6 @@ export const workerTail = createWorkerTailManager({
   setTaskLogTail,
   setTaskDead(taskId) {
     setTaskStatus(taskId, "error")
-    const t = getTask(taskId)
-    if (t?.dispatchTaskId) liveWorkerDead?.(t)
     void workerQueue.drain() // the dead worker's slot is free
   },
   onLines(task, lines) {
@@ -328,13 +315,14 @@ function proposalDescription(t: OrchTask, channelName: string): string {
 }
 
 /**
- * Approve / auto-dispatch → one Turso agent task (status queued). The Turso id
+ * Approve / auto-dispatch → one Turso agent task (status pending: the dashboard
+ * release stamp queues it). The Turso id
  * is stamped on the local row first, so a replayed approve (iOS outbox) reuses
  * it and INSERT OR IGNORE keeps it to one row; only then proposed → filed.
  * A Turso failure leaves the proposal proposed (and retryable): 503.
  */
 export async function fileProposal(
-  taskId: string, opts: { agent?: string | null; noteId?: string | null } = {}, dispatch: DispatchWiring = dispatchWiring,
+  taskId: string, opts: { agent?: string | null; noteId?: string | null; requiresHost?: RequiresHost | null } = {}, dispatch: DispatchWiring = dispatchWiring,
 ): Promise<FileOutcome> {
   const task = getTask(taskId)
   if (!task) return { ok: false, status: 404, error: "no such proposal" }
@@ -351,6 +339,7 @@ export async function fileProposal(
     if (!(await getNote(dispatch.query, noteId))) return { ok: false, status: 404, error: "no such note" }
     await fileTask(await writeCtx(dispatch, task.threadId), {
       id, noteId, agent, title: proposalTitle(task), description: proposalDescription(task, channel?.name ?? task.threadId),
+      requiresHost: opts.requiresHost ?? null,
     })
   } catch (err) {
     const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`
@@ -359,7 +348,7 @@ export async function fileProposal(
   }
   if (!markFiled(task.taskId, { noteId, agent })) return fileProposalReplay(task.taskId)
   emitTask(task.taskId)
-  orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · queued as ${id.slice(0, 8)}`, task.taskId, task.threadId))
+  orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · ${id.slice(0, 8)} waits for your approval on the dashboard`, task.taskId, task.threadId))
   await showFiled(id, dispatch)
   return { ok: true, dispatchTaskId: id, replay: false, task: getTask(task.taskId)! }
 }
