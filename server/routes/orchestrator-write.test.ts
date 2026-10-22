@@ -154,7 +154,7 @@ beforeEach(() => {
 // ── approve → Turso ──────────────────────────────────────────────────────────
 
 describe("POST /api/orchestrator/proposal/<id>/approve", () => {
-  test("files one queued Turso task; a replay returns the same id and inserts nothing", async () => {
+  test("files one pending Turso task (the dashboard stamp queues it); a replay returns the same id and inserts nothing", async () => {
     const { handler, frames } = makeWiring()
     const ch = channels.createChannel("Approve A")
     channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
@@ -162,16 +162,17 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
 
     const first = await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/approve`)
     expect(first.status).toBe(200)
-    expect(first.json).toMatchObject({ ok: true, taskId: p.taskId, status: "queued", replay: false })
+    expect(first.json).toMatchObject({ ok: true, taskId: p.taskId, status: "pending_approval", replay: false })
     const id = first.json.dispatchTaskId as string
     expect(id).toMatch(/^[0-9a-f]{32}$/)
 
     const row = tursoTask(id)!
-    expect(row).toMatchObject({ note_id: "projects/dash", text: "Fix the payload", assignee: "agent:builder", dispatch_status: "queued", done: 0 })
+    expect(first.json.approveUrl).toEndWith(`/tasks?task=${id}`)
+    expect(row).toMatchObject({ note_id: "projects/dash", text: "Fix the payload", assignee: "agent:builder", dispatch_status: "pending", done: 0 })
     expect(row.description).toContain("Fix the payload\nfull detail")
     expect(row.description).toContain(`proposal ${p.taskId}`)
     expect(activity(id)).toHaveLength(1)
-    expect(activity(id)[0]).toMatchObject({ agent_slug: "builder", action: "dispatch:queued", target_kind: "task" })
+    expect(activity(id)[0]).toMatchObject({ agent_slug: "builder", action: "dispatch:pending", target_kind: "task" })
     expect(JSON.parse(activity(id)[0]!.meta)).toMatchObject({ source: "companion", channel: ch.id, op: "file" })
 
     expect(chat.getTask(p.taskId)).toMatchObject({ status: "filed", dispatchTaskId: id, noteId: "projects/dash", agent: "builder" })
@@ -183,6 +184,43 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
     expect(inserts).toBe(1) // the replay never reached Turso
     expect(activity(id)).toHaveLength(1)
+  })
+
+  // One work stream (docs/one-stream-plan.md): approve is a filer, never a runner.
+  test("approve → exactly 1 pending tasks row and 0 direct claims, {mode:\"live\"} included; passes the Turso queue guard", async () => {
+    turso.exec(`CREATE TABLE IF NOT EXISTS task_stamps (task_id TEXT, kind TEXT);
+      CREATE TRIGGER guard_ins BEFORE INSERT ON tasks WHEN lower(trim(NEW.dispatch_status)) = 'queued'
+        AND NOT EXISTS (SELECT 1 FROM task_stamps s WHERE s.task_id = NEW.id AND s.kind = 'release')
+      BEGIN SELECT RAISE(ABORT, 'tainted task needs a human stamp'); END`)
+    try {
+      const { handler } = makeWiring()
+      const ch = channels.createChannel("One stream")
+      channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
+      for (const body of [{}, { mode: "live", cwd: "/tmp" }]) {
+        const before = (turso.query("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n
+        const p = chat.createProposal("Do the thing", "", "why", ch.id, { title: "Do the thing" })
+        const res = await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/approve`, body)
+        expect(res).toMatchObject({ status: 200, json: { ok: true, status: "pending_approval" } })
+        expect((turso.query("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n).toBe(before + 1)
+        expect(tursoTask(res.json.dispatchTaskId)).toMatchObject({ dispatch_status: "pending", dispatch_owner: null, dispatch_started_at: null })
+        expect(chat.getTask(p.taskId)).toMatchObject({ status: "filed", tmuxSession: null })
+      }
+      expect(turso.query("SELECT COUNT(*) AS n FROM tasks WHERE dispatch_status IN ('queued', 'running')").get()).toEqual({ n: 0 })
+      expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action IN ('dispatch:queued', 'dispatch:running')").get()).toEqual({ n: 0 })
+    } finally {
+      turso.exec("DROP TRIGGER guard_ins")
+    }
+  })
+
+  test("reject withdraws the pending row an interrupted approve left behind", async () => {
+    const { handler } = makeWiring()
+    const p = chat.createProposal("Half filed", "", "why", "general", { noteId: "projects/dash" })
+    const id = tid()
+    seedTask(id, { dispatch_status: "pending" })
+    chat.stampDispatchId(p.taskId, id)
+    expect((await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/reject`)).status).toBe(200)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(tursoTask(id)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
   })
 
   test("fileProposal twice, concurrently and after a Turso failure: still one row, same id", async () => {
@@ -237,7 +275,7 @@ describe("auto-dispatch channel", () => {
     )
     const rows = turso.query("SELECT * FROM tasks").all() as Record<string, any>[]
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ text: "Bump rate limit", assignee: "agent:builder", dispatch_status: "queued", note_id: "projects/dash" })
+    expect(rows[0]).toMatchObject({ text: "Bump rate limit", assignee: "agent:builder", dispatch_status: "pending", note_id: "projects/dash" })
     const turns = chat.getThread(ch.id).map((t) => t.text)
     expect(turns.some((t) => t.startsWith("Auto-dispatch [") && t.includes("Why: user asked"))).toBe(true)
     expect(turns.some((t) => t.startsWith("filed ["))).toBe(true)
@@ -425,11 +463,13 @@ describe("POST /api/orchestrator/channels {noteId}", () => {
 })
 
 describe("POST /api/orchestrator/dispatch", () => {
-  test("files to Turso under the given note; no note → 422", async () => {
+  test("files one pending task under the given note ({mode:\"live\"} too: no claim); no note → 422", async () => {
     const { handler } = makeWiring()
     const res = await call(handler, "POST", "/api/orchestrator/dispatch", { prompt: "Add a test", noteId: "projects/dash" })
-    expect(res).toMatchObject({ status: 200, json: { ok: true, status: "queued" } })
-    expect(tursoTask(res.json.dispatchTaskId)).toMatchObject({ text: "Add a test", assignee: "agent:builder", dispatch_status: "queued" })
+    expect(res).toMatchObject({ status: 200, json: { ok: true, status: "pending_approval" } })
+    expect(tursoTask(res.json.dispatchTaskId)).toMatchObject({ text: "Add a test", assignee: "agent:builder", dispatch_status: "pending" })
+    const live = await call(handler, "POST", "/api/orchestrator/dispatch", { prompt: "Live one", noteId: "projects/dash", mode: "live" })
+    expect(tursoTask(live.json.dispatchTaskId)).toMatchObject({ dispatch_status: "pending", dispatch_owner: null })
     expect((await call(handler, "POST", "/api/orchestrator/dispatch", { prompt: "x" })).status).toBe(422)
   })
 })

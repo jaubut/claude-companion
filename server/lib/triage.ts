@@ -17,7 +17,7 @@ export type TriageAction =
   | { kind: "requeue" }
   | { kind: "cancel" }
   /** `task` = a mytask op (Done / Next week / Drop the date); iOS shows it as a plain approve. */
-  | { kind: "approve"; mode?: "headless" | "live"; task?: "done" | "next_week" | "undate" }
+  | { kind: "approve"; task?: "done" | "next_week" | "undate" }
   | { kind: "reject" }
   | { kind: "merge" }
   | { kind: "close_pr" }
@@ -254,7 +254,6 @@ function toAction(v: unknown, src: SourceItem, allowed: readonly ActionKind[]): 
       const h = typeof o.hours === "number" && Number.isFinite(o.hours) ? Math.round(o.hours) : 24
       return { kind, hours: Math.min(SNOOZE_MAX_HOURS, Math.max(1, h)) }
     }
-    case "approve": return o.mode === "live" || o.mode === "headless" ? { kind, mode: o.mode } : { kind }
     case "ask_opus": {
       const instruction = str(o.instruction)
       return instruction ? { kind, instruction: instruction.slice(0, INSTRUCTION_MAX) } : { kind }

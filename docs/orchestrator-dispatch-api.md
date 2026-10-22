@@ -2,7 +2,7 @@
 
 Change Plan: orchestrator-one-queue (STATE.md, 2026-10-03). Turso `tasks` is the one
 work queue; the Companion reads it (P1), files and steers it (P2), triages it
-from #Body (P3), and runs opt-in live tasks in a tmux worker (P4).
+from #Body (P3). Every filing is `pending` until the dashboard release stamp (see One work stream).
 All routes sit behind the `/api/*` bearer gate. The phone never sees the Turso token.
 Every field below is additive: decode permissively, absent = null.
 
@@ -25,7 +25,7 @@ and in `GET /api/orchestrator/task/<id>`.
   "createdAt": 1759485600000,
   "updatedAt": 1759492800000,
   "source": "dispatch|local|proposal",
-  "dispatchStatus": "queued|running|blocked|pr|completed|failed|cancelled|null",
+  "dispatchStatus": "pending|queued|running|blocked|pr|completed|failed|cancelled|null",
   "agent": "builder",
   "noteId": "projects/2026-01-01-dash",
   "projectTitle": "TLS Dashboard",
@@ -48,12 +48,12 @@ and in `GET /api/orchestrator/task/<id>`.
 on local tasks and from older servers) — see [Pipeline stage](#pipeline-stage).
 
 - `pr` = Turso `completed` with a PR URL.
-- Legacy `status` for `source:"dispatch"`: queued→queued, running→running,
+- Legacy `status` for `source:"dispatch"`: pending→queued, queued→queued, running→running,
   completed/pr→done, blocked/failed→error, cancelled→cancelled.
 - `prUrl` / `resultRef` need the P0 Turso columns; until then they are null
   (the detail route falls back to the result note whose banner names the task).
-- Live tasks (`owner` = `companion:<host>`, P4) are listed once, as their Turso row, with
-  `mode:"live"` plus the worker's `tmuxSession`, `tmuxSocket`, `sessionKey` and `localTaskId`
+- Takeover tasks (`owner` = `companion:takeover:<name>`; slice B removes them) are listed once, as their Turso row, with
+  `mode:"live"` plus the session's `tmuxSession`, `tmuxSocket`, `sessionKey` and `localTaskId`
   (null until the spawn is recorded). `orchestrator_worker_output` frames and the worker's reply
   turn are tagged with `localTaskId`. `logTail` falls back to the worker's final pane snapshot.
   The local worker row is never listed on its own, and on the wire it reads `status:"filed"`
@@ -149,13 +149,13 @@ There is no generic SQL route. Approve, cancel, requeue and unblock honour `Idem
 
 | route | body | 200 | errors |
 |---|---|---|---|
-| `POST /api/orchestrator/proposal/<id>/approve` | optional `{agent?, noteId?, mode?:"live", cwd?}` | `{ok, taskId, status:"queued", dispatchTaskId, replay}` (replay=true when it was already filed: same id, no new row). `mode:"live"` → `{ok, taskId, dispatchTaskId, status:"running", mode:"live", replay}` (see Live mode) | 404 `no such proposal` · 409 `not proposable (status X)` · 422 `no_project` (no brain pick, no `noteId`, unlinked channel) · 400 `unknown_agent` · 404 `no such note` · 503 `turso_unreachable` (the proposal stays `proposed` and can be retried) |
+| `POST /api/orchestrator/proposal/<id>/approve` | optional `{agent?, noteId?}` | `{ok, taskId, status:"queued"|"pending_approval", dispatchTaskId, approveUrl?, replay}` (`queued` for a tap on his own conversation's proposal) (replay=true when it was already filed: same id, no new row) | 404 `no such proposal` · 409 `not proposable (status X)` · 422 `no_project` (no brain pick, no `noteId`, unlinked channel) · 400 `unknown_agent` · 404 `no such note` · 503 `turso_unreachable` (the proposal stays `proposed` and can be retried) |
 | `POST /api/orchestrator/proposal/<id>/reject` | — | `{ok, taskId, status:"rejected"}` | 404 · 409. Never reaches Turso |
-| `POST /api/orchestrator/task/<id>/cancel` | — | local id: `{ok, taskId, status:"cancelled"}` (tmux kill, as before). Turso id: `{ok, taskId, status:"cancelled", task}`. Allowed from queued / blocked / failed; sets `done=1`. A live task owned by this host (by Turso id or its `localTaskId`) is cancelled while running: `{ok, taskId:<localTaskId>, dispatchTaskId, status:"cancelled", task}`, worker killed | 409 `{ok:false, error:"running_on_<owner>", owner, dispatchStatus:"running", task}` for a running task · 409 `{ok:false, error:"conflict", dispatchStatus, owner, task}` when not cancellable or another writer moved it first (`task` = the current, unchanged row) · 404 `no such task` · 503 |
+| `POST /api/orchestrator/task/<id>/cancel` | — | local id: `{ok, taskId, status:"cancelled"}` (tmux kill, as before). Turso id: `{ok, taskId, status:"cancelled", task}`. Allowed from pending / queued / blocked / failed; sets `done=1` | 409 `{ok:false, error:"running_on_<owner>", owner, dispatchStatus:"running", task}` for a running task · 409 `{ok:false, error:"conflict", dispatchStatus, owner, task}` when not cancellable or another writer moved it first (`task` = the current, unchanged row) · 404 `no such task` · 503 |
 | `POST /api/orchestrator/task/<id>/requeue` | — | `{ok, task}` (`dispatchStatus:"queued"`, `done:false`) | from blocked / failed / cancelled / completed-not-done only; same 409 / 404 / 503 shapes. Local ids → 409 |
 | `POST /api/orchestrator/task/<id>/unblock` | `{answer: string, 1..4000 chars after trim}` | `{ok, task}` | 400 `answer must be 1..4000 chars` · 409 `conflict` unless blocked · 404 · 503 |
 | `POST /api/orchestrator/channels` | `{name, cwd?, noteId?}` | `{ok, channel}` (with `noteId, noteTitle, noteRef, counts`) | 400 `name required` / bad `noteId` · 404 `no such note` · 409 `note_linked_elsewhere` (nothing created) · 503 |
-| `POST /api/orchestrator/dispatch` | `{prompt, channel?, noteId?, agent?, title?, mode?, cwd?}` | `{ok, taskId, dispatchTaskId, status:"queued"}` — files a Turso task directly. `mode:"live"` → `{ok, taskId, dispatchTaskId, status:"running", mode:"live", replay:false}` | 422 `no_project` · 400 `unknown_agent` · 404 · 503; live also 429 `live_cap` · 422 `no_cwd` · 500 |
+| `POST /api/orchestrator/dispatch` | `{prompt, channel?, noteId?, agent?, title?}` | `{ok, taskId, dispatchTaskId, status:"queued"}`: files one Turso task as origin `jeremie` (`pending_approval` + `approveUrl` on a schema without `origin`) | 422 `no_project` · 400 `unknown_agent` · 404 · 503 |
 
 - **Requeue** resets what `dispatch.sh <id> queued` resets: `done=0`, run id, started / completed
   times, blocker, owner, result ref, PR URL.
@@ -197,35 +197,16 @@ There is no generic SQL route. Approve, cancel, requeue and unblock honour `Idem
   the 5 longest-blocked tasks with their reasons. #Body's digest covers every project.
   #Body (and health questions anywhere) also get the Body digest.
 
-## Live mode (P4)
+## One work stream (filing)
 
-Opt-in: `approve {mode:"live"}` or `POST /dispatch {mode:"live"}`. Default mode stays headless.
-
-- **Filing.** The Turso row is filed already claimed: `dispatch_status='running'`,
-  `dispatch_owner='companion:<host>'`, `dispatch_started_at` now. Same pattern as headless filing: a
-  pre-generated id stamped on the local row, then `INSERT OR IGNORE`, so a replayed approve (iOS
-  outbox, double tap) reuses the row and never spawns a second worker (`replay:true`, same ids).
-  Ledger: one `dispatch:running` row, meta `{source:"companion", host, channel, mode:"live", op:"claim"}`.
-  Then the tmux worker runner starts. The local sqlite row keeps the tmux identity and links
-  `dispatch_task_id`. dispatch-run only picks `queued` rows and its stall reaper skips `companion:%`.
-- **cwd.** Body `cwd` (must be a directory on this host), else the note's repo from dispatch-run's
-  `REPO_MAP` (read as text from `~/.claude/tools/dispatch-run.ts`, first existing path), else the
-  proposal's cwd, else the channel's. None → 422 `no_cwd`, nothing filed. An Xcode repo (REPO_MAP
-  `requires: ["xcode"]`: the note's repo, the explicit cwd or a fallback cwd) on a host without Xcode →
-  422 `no_cwd` with `reason: "Xcode repo — run live from the Mac"`.
-- **Errors.** 429 `{ok:false, error:"live_cap", cap, live}` when this host already runs `cap` live
-  workers (`COMPANION_WIP_CAP`, default 3; headless filing is not capped) — nothing filed.
-  422 `no_cwd` · 422 `no_project` · 400 `unknown_agent` · 404 `no such note` · 409 `conflict` (the
-  claimed row was moved by another writer) · 503 `turso_unreachable` (the proposal stays `proposed`) ·
-  500 `{ok:false, error, taskId, dispatchTaskId}` when the spawn failed (the row goes `failed`,
-  blocker `spawn failed: …`).
-- **Finish.** The worker's stop hook → guarded `running → completed` (`WHERE dispatch_status='running'
-  AND dispatch_owner=<this host>`). A GitHub PR URL in the worker's final message → `dispatch_pr_url`
-  (DTO `pr`); a `RES-XXXX` ref → `dispatch_result_ref`. Ledger `dispatch:completed` (meta `pr` when
-  set) only when the row moved, so a second stop, or a stop after a cancel, is a no-op. A worker whose
-  pane vanished without a stop hook → `failed` ("worker exited without a stop hook").
-- **Cancel** from the phone: owned by this host → guarded `running → cancelled` (`done=1`), then the
-  tmux worker is killed. Owned by another host → 409 `running_on_<owner>` (unchanged).
-- **Restart.** On boot, this host's running live rows whose tmux worker is gone are closed: `failed`
-  with blocker "companion restarted; worker lost" (or `completed` / `cancelled` when the local row
-  already says so and only the Turso write was lost). Other hosts' rows are never touched.
+Every Companion write that starts work files ONE Turso row, never `running`. Jeremie's own work
+(typed `POST .../dispatch`, or an approve tap on a proposal from his own conversation) is filed
+`origin='jeremie'`, `dispatch_status='queued'`: dispatch-run claims it directly. Everything else
+(auto-dispatch, #Body proposals and agents, Opus rescopes) has no trusted origin, defaults to
+`unknown` and is filed `pending` (ledger `dispatch:pending`, meta `op:"file"`). Jeremie releases it
+on the dashboard `/tasks` (task_stamps `release` stamp, MFA), which moves it to `queued`.
+Responses carry `status:"queued"`, or `status:"pending_approval"` plus `approveUrl` =
+`<COMPANION_DASHBOARD_URL>/tasks?task=<id>`. On a schema without `origin`, everything is `pending`. A #Body fix card for a Mac component is
+filed with `requires_host='mac'` (when the column exists), so only the Mac's dispatch-run claims
+it (docs/one-stream-plan.md, Q1). Live mode (P4: `mode:"live"`, `claimLive`, the tmux worker) is
+gone. A `mode` field is ignored.

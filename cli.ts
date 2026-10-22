@@ -197,7 +197,6 @@ import { startMediaSweeper } from "./server/wiring/media"
 import { startRecordsExpiry } from "./server/lib/records-expiry"
 import { startReceiptQa } from "./server/wiring/receipt-qa"
 import { dispatchWiring } from "./server/wiring/dispatch"
-import { reconcileLiveOnBoot } from "./server/wiring/live"
 import { startBodyInvestigate } from "./server/wiring/body-investigate"
 import { startTriage } from "./server/wiring/triage"
 import { startTrips } from "./server/wiring/trips"
@@ -220,8 +219,6 @@ startRecordsExpiry()
 startReceiptQa()
 // Turso dispatch poller (orchestrator-one-queue): every 20 s + /hooks/dispatch-event nudges.
 dispatchWiring.start()
-// Live mode (P4): close this host's claimed Turso rows whose tmux worker did not survive the restart.
-void reconcileLiveOnBoot().catch(() => { /* logged inside; never blocks boot */ })
 // Body auto-investigation: close runs a restart interrupted, sweep in 60 s, then every 10 min.
 startBodyInvestigate()
 // Brain triage: recompute after every dispatch poll / proposal change; phrase new items in the background.

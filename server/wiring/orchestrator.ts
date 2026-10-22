@@ -40,7 +40,7 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { bodyDigestFor } from "./body"
 import { investigationDigestFor } from "./body-investigate"
 import {
-  DEFAULT_AGENT, type ProjectRef, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, isLiveLinked, newDispatchId, resolveAgent, toTaskDto,
+  DEFAULT_AGENT, type ProjectRef, type RequiresHost, type WriteCtx, agentAllowlist, fileTask, getDispatchTask, getNote, newDispatchId, resolveAgent, toTaskDto,
 } from "../lib/dispatch-tasks"
 import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
@@ -59,15 +59,11 @@ export function orchEmit(turn: OrchTurn): void {
 
 // Broadcast a task's current state on every transition (proposed → dispatched →
 // running → done/error/rejected) so the phone's Tasks panel tracks live work.
-// A live run (P4) is shown as its Turso row: re-send that frame too, so the
-// worker's tmux identity (spawn, bind) reaches the phone.
 export function emitTask(taskId: string): void {
   const t = getTask(taskId)
   if (!t) return
   broadcast({ type: "orchestrator_task", task: toTaskDto(t) })
   for (const fn of taskListeners) fn(t)
-  // Not cached yet → the next poll carries it (identity included).
-  if (isLiveLinked(t)) dispatchWiring.reemit(t.dispatchTaskId!)
 }
 
 // Triage (wiring/triage.ts) recomputes when a local task (proposal) changes,
@@ -81,13 +77,6 @@ export function onTaskEmitted(fn: (task: OrchTask) => void): () => void {
 let triageDigest: (() => string | null) | null = null
 export function setTriageDigest(fn: (() => string | null) | null): void {
   triageDigest = fn
-}
-
-// Live mode (P4): wiring/live.ts closes the Turso row when a worker dies
-// without a stop hook. Registered there (it imports this module, not the reverse).
-let liveWorkerDead: ((task: OrchTask) => void) | null = null
-export function onLiveWorkerDead(fn: (task: OrchTask) => void): void {
-  liveWorkerDead = fn
 }
 
 // Broadcast a new/updated channel so every device's channel rail live-updates
@@ -145,8 +134,6 @@ export const workerTail = createWorkerTailManager({
   setTaskLogTail,
   setTaskDead(taskId) {
     setTaskStatus(taskId, "error")
-    const t = getTask(taskId)
-    if (t?.dispatchTaskId) liveWorkerDead?.(t)
     void workerQueue.drain() // the dead worker's slot is free
   },
   onLines(task, lines) {
@@ -315,7 +302,8 @@ export async function writeCtx(dispatch: DispatchWiring, channel: string | null)
 }
 
 export type FileOutcome =
-  | { ok: true; dispatchTaskId: string; replay: boolean; task: OrchTask }
+  /** queued: filed as Jeremie's (origin jeremie) straight to the queue; false = pending, waits for the dashboard stamp. */
+  | { ok: true; dispatchTaskId: string; replay: boolean; queued: boolean; task: OrchTask }
   | { ok: false; status: number; error: string }
 
 function proposalTitle(t: OrchTask): string {
@@ -328,17 +316,21 @@ function proposalDescription(t: OrchTask, channelName: string): string {
 }
 
 /**
- * Approve / auto-dispatch → one Turso agent task (status queued). The Turso id
+ * Approve / auto-dispatch → one Turso agent task: `queued` when it is Jeremie's
+ * tap (byHand), else `pending` for the dashboard release stamp. The Turso id
  * is stamped on the local row first, so a replayed approve (iOS outbox) reuses
  * it and INSERT OR IGNORE keeps it to one row; only then proposed → filed.
  * A Turso failure leaves the proposal proposed (and retryable): 503.
  */
 export async function fileProposal(
-  taskId: string, opts: { agent?: string | null; noteId?: string | null; byHand?: boolean } = {}, dispatch: DispatchWiring = dispatchWiring,
+  taskId: string, opts: { agent?: string | null; noteId?: string | null; byHand?: boolean; requiresHost?: RequiresHost | null } = {},
+  dispatch: DispatchWiring = dispatchWiring,
 ): Promise<FileOutcome> {
   const task = getTask(taskId)
   if (!task) return { ok: false, status: 404, error: "no such proposal" }
-  if (task.status === "filed" && task.dispatchTaskId) return { ok: true, dispatchTaskId: task.dispatchTaskId, replay: true, task }
+  // A replay reports the queue state the first filing had (same tap, same columns).
+  const trusted = async (): Promise<boolean> => !!opts.byHand && !!(await dispatch.columns()).origin
+  if (task.status === "filed" && task.dispatchTaskId) return { ok: true, dispatchTaskId: task.dispatchTaskId, replay: true, queued: await trusted(), task }
   if (task.status !== "proposed") return { ok: false, status: 409, error: `not proposable (status ${task.status})` }
   const channel = getChannel(task.threadId)
   const noteId = opts.noteId?.trim() || task.noteId || channel?.noteId || null
@@ -346,24 +338,27 @@ export async function fileProposal(
   const agent = resolveAgent(opts.agent || task.agent || DEFAULT_AGENT)
   if (!agent) return { ok: false, status: 400, error: "unknown_agent" }
   const id = stampDispatchId(task.taskId, newDispatchId())
-  if (!id) return fileProposalReplay(task.taskId)
+  if (!id) return fileProposalReplay(task.taskId, await trusted())
+  let queued: boolean
   try {
     if (!(await getNote(dispatch.query, noteId))) return { ok: false, status: 404, error: "no such note" }
-    await fileTask(await writeCtx(dispatch, task.threadId), {
+    queued = (await fileTask(await writeCtx(dispatch, task.threadId), {
       id, noteId, agent, title: proposalTitle(task), description: proposalDescription(task, channel?.name ?? task.threadId),
       // Auto-dispatch is the brain's call, not a tap: no trusted origin, so the queue guard holds it for a human stamp.
       ...(opts.byHand ? { origin: "jeremie" as const } : {}),
-    })
+      requiresHost: opts.requiresHost ?? null,
+    })).status === "queued"
   } catch (err) {
     const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`
     companionLog(`[orchestrator] file [${task.taskId}] failed: ${what}`)
     return { ok: false, status: 503, error: "turso_unreachable" }
   }
-  if (!markFiled(task.taskId, { noteId, agent })) return fileProposalReplay(task.taskId)
+  if (!markFiled(task.taskId, { noteId, agent })) return fileProposalReplay(task.taskId, queued)
   emitTask(task.taskId)
-  orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · queued as ${id.slice(0, 8)}`, task.taskId, task.threadId))
+  const next = queued ? "queued for dispatch-run" : "waits for your approval on the dashboard"
+  orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · ${id.slice(0, 8)} ${next}`, task.taskId, task.threadId))
   await showFiled(id, dispatch)
-  return { ok: true, dispatchTaskId: id, replay: false, task: getTask(task.taskId)! }
+  return { ok: true, dispatchTaskId: id, replay: false, queued, task: getTask(task.taskId)! }
 }
 
 // The Turso row exists: push its frame now (the next poll would, ≤ 20 s later).
@@ -376,9 +371,9 @@ async function showFiled(id: string, dispatch: DispatchWiring): Promise<void> {
 }
 
 // A concurrent approve won the race: answer with its id (same Turso row).
-function fileProposalReplay(taskId: string): FileOutcome {
+function fileProposalReplay(taskId: string, queued: boolean): FileOutcome {
   const now = getTask(taskId)
-  if (now?.status === "filed" && now.dispatchTaskId) return { ok: true, dispatchTaskId: now.dispatchTaskId, replay: true, task: now }
+  if (now?.status === "filed" && now.dispatchTaskId) return { ok: true, dispatchTaskId: now.dispatchTaskId, replay: true, queued, task: now }
   return { ok: false, status: 409, error: `not proposable (status ${now?.status ?? "gone"})` }
 }
 

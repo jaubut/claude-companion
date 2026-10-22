@@ -392,12 +392,6 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     tasksFor, countsFor, decorate, queueSummary, threadIdFor, digestFor, applyLocal,
     cached: (id: string): DispatchTask | null => cache.find((t) => t.id === id) ?? null,
     relink,
-    /** Re-send a cached task's frame (its live worker identity changed); false when not cached. */
-    reemit(id: string): boolean {
-      const t = cache.find((c) => c.id === id)
-      if (t) emitTask(t, deps.linkedNotes())
-      return !!t
-    },
     /** The DTO the wire would carry for a task (live identity merged). */
     dto: (t: DispatchTask): TaskDto => toDto(t, deps.linkedNotes()),
   }

@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test"
-import { claimLive } from "./dispatch-live"
 import { type FileInput, type WriteCtx, fileTask } from "./dispatch-tasks"
 import type { SqlArg } from "./turso"
 
@@ -15,19 +14,18 @@ function ctx(origin: boolean) {
 }
 const input = (o?: "jeremie"): FileInput => ({ id: "a".repeat(32), noteId: "projects/x", agent: "builder", title: "T", description: "d", ...(o ? { origin: o } : {}) })
 
-test("fileTask and claimLive write origin jeremie when the column exists", async () => {
-  for (const file of [fileTask, claimLive]) {
-    const { c, inserts } = ctx(true)
-    await file(c, input("jeremie"))
-    expect(inserts[0]!.sql).toContain(", origin)")
-    expect(inserts[0]!.args.at(-1)).toBe("jeremie")
-  }
+test("fileTask writes origin jeremie and files queued when the column exists", async () => {
+  const { c, inserts } = ctx(true)
+  expect((await fileTask(c, input("jeremie"))).status).toBe("queued")
+  expect(inserts[0]!.sql).toContain("origin, ")
+  expect(inserts[0]!.args).toContain("jeremie")
+  expect(inserts[0]!.args).toContain("queued")
 })
 
 test("no trusted origin (auto-dispatch, #Body) or no column → origin not written", async () => {
   for (const [col, o] of [[true, undefined], [false, "jeremie"]] as const) {
     const { c, inserts } = ctx(col)
-    await fileTask(c, input(o))
+    expect((await fileTask(c, input(o))).status).toBe("pending")
     expect(inserts[0]!.sql).not.toContain("origin")
     expect(inserts[0]!.args).not.toContain("jeremie")
   }

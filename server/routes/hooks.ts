@@ -41,7 +41,6 @@ import {
   scrapeHookPassthrough,
 } from "../lib/hook-common"
 import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"
-import { finishLiveFromStop } from "../wiring/live"
 import { takeoverEnded, takeoverStop } from "../wiring/takeover"
 import { isTakeoverId } from "../lib/takeover"
 import { appendTurn as orchAppendTurn, setTaskStatus } from "../lib/orchestrator-chat"
@@ -430,8 +429,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       })
       if (task) {
         setTaskStatus(task.taskId, "done")
-        // Live run (P4): its claimed Turso row → completed / pr (guarded; a second stop is a no-op).
-        if (task.dispatchTaskId) void finishLiveFromStop(task, lastMessage)
         emitTask(task.taskId)
         orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId, task.threadId))
         void workerQueue.drain() // slot freed
