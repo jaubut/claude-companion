@@ -16,11 +16,36 @@ if [ -n "${COMPANION_SCRAPE:-}" ] || [ -n "${CLAUDE_CODE_SCRAPE_SESSION:-}" ]; t
   exit 0
 fi
 
+# Linux: read one ancestor from /proc/<pid>/stat with bash builtins only, setting
+# _P_PPID / _P_TTYNR (0 = no tty). Fails (→ ps fallback) on macOS or when the
+# pid is gone. comm sits in parens and may hold spaces, so split after the last
+# ") ". The ps walk forked 2–3 processes per level (~37 ms per hook on Zettlab);
+# this forks none.
+_companion_stat() {
+  local line rest
+  { read -r line < "/proc/$1/stat"; } 2>/dev/null || return 1
+  rest=${line##*) }
+  set -- $rest
+  _P_PPID=$2 _P_TTYNR=$5
+}
+
 # Find the controlling tty by walking up the parent process tree.
 companion_find_tty() {
   local pid=$$
   local seen=0
   while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ "$seen" -lt 16 ]; do
+    if _companion_stat "$pid"; then
+      if [ "$_P_TTYNR" -ne 0 ]; then
+        local major=$(( (_P_TTYNR >> 8) & 0xfff )) minor=$(( (_P_TTYNR & 0xff) | ((_P_TTYNR >> 12) & 0xfff00) ))
+        # Unix98 pty slaves are majors 136–143; anything else (vt, serial) is rare → ask ps
+        if [ "$major" -ge 136 ] && [ "$major" -le 143 ]; then
+          echo "/dev/pts/$(( (major - 136) * 256 + minor ))"
+          return
+        fi
+      else
+        pid=$_P_PPID; seen=$((seen + 1)); continue
+      fi
+    fi
     local t
     t=$(ps -p "$pid" -o tty= 2>/dev/null | tr -d ' ')
     if [ -n "$t" ] && [ "$t" != "??" ] && [ "$t" != "?" ]; then
@@ -44,14 +69,19 @@ companion_find_agent_pid() {
   local seen=0
   while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ "$seen" -lt 16 ]; do
     local comm
-    comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')
-    case "$comm" in
-      claude|codex)
-        echo "$pid"
-        return
-        ;;
-    esac
-    pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+    if _companion_stat "$pid" && { read -r comm < "/proc/$pid/comm"; } 2>/dev/null; then
+      case "$comm" in claude|codex) echo "$pid"; return ;; esac
+      pid=$_P_PPID
+    else
+      comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')
+      case "$comm" in
+        claude|codex)
+          echo "$pid"
+          return
+          ;;
+      esac
+      pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+    fi
     seen=$((seen + 1))
   done
 }
