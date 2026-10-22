@@ -1,5 +1,5 @@
 import {
-  type DispatchColumns, type FileInput, type WriteCtx, type WriteOutcome, TITLE_MAX, getDispatchTask, ledger, readVia,
+  type DispatchColumns, type FileInput, type WriteCtx, type WriteOutcome, TITLE_MAX, getDispatchTask, ledger, originInsert, readVia,
 } from "./dispatch-tasks"
 import type { QueryFn, SqlArg } from "./turso"
 
@@ -18,10 +18,11 @@ export const liveOwner = (host: string): string => `companion:${host}`
  */
 export async function claimLive(ctx: WriteCtx, input: FileInput): Promise<{ id: string; inserted: boolean }> {
   const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
+  const o = originInsert(ctx, input)
   const { affected } = await ctx.exec(
-    "INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, dispatch_owner, dispatch_started_at, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, 'running', ?, datetime('now'), datetime('now'), datetime('now'))",
-    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`, liveOwner(ctx.host)],
+    `INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, dispatch_owner, dispatch_started_at, created_at, updated_at${o.col}) ` +
+      `VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, 'running', ?, datetime('now'), datetime('now'), datetime('now')${o.val})`,
+    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`, liveOwner(ctx.host), ...o.args],
   )
   const inserted = affected > 0
   if (inserted) await ledger(ctx, { id: input.id, agent: input.agent }, "running", `→running (live): ${title}`, { mode: "live", op: "claim", note: input.noteId })

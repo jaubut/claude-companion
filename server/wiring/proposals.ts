@@ -1,3 +1,4 @@
+import { BODY_CHANNEL } from "../lib/body"
 import { appendTurn, createProposal, getTask, setTaskStatus, type Task } from "../lib/orchestrator-chat"
 import { cancelDispatchTask } from "../lib/dispatch-tasks"
 import { finishLive, liveOwner } from "../lib/dispatch-live"
@@ -20,14 +21,19 @@ export function liveResponse(out: LiveStart): Response {
   return Response.json(out)
 }
 
+// A tap makes it Jeremie's (origin "jeremie", past the queue guard) only when the prompt is his own
+// conversation's: #Body prompts carry log/investigation text and an Opus rescope carries PR text.
+const RESCOPED = "Opus rescoped"
+const byHand = (t: Task): boolean => t.threadId !== BODY_CHANNEL && !(t.reasoning ?? "").startsWith(RESCOPED)
+
 /** Approve files the proposal to Turso (replay on `filed` → 200, same id); mode "live" runs the tmux worker here. */
 export async function approveProposal(task: Task, opts: ApproveOpts = {}, dispatch: DispatchWiring = dispatchWiring): Promise<Response> {
   const macFix = await approveBodyFix(task, dispatch)
   if (macFix) return macFix
   if (opts.mode === "live") {
-    return liveResponse(await approveLive(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, cwd: opts.cwd ?? null }, dispatch))
+    return liveResponse(await approveLive(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, cwd: opts.cwd ?? null, byHand: byHand(task) }, dispatch))
   }
-  const out = await fileProposal(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null }, dispatch)
+  const out = await fileProposal(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, byHand: byHand(task) }, dispatch)
   if (!out.ok) return Response.json({ ok: false, error: out.error, taskId: task.taskId }, { status: out.status })
   return Response.json({ ok: true, taskId: task.taskId, status: "queued", dispatchTaskId: out.dispatchTaskId, replay: out.replay })
 }
@@ -65,7 +71,7 @@ export function reviseProposal(taskId: string, r: Revision, markCreated: (taskId
   // Keep the old title's `[repo:<name>]` routing marker (Body fixes): dispatch-run routes on it.
   const marker = /^\[repo:[A-Za-z0-9._-]+\] /.exec(old.title ?? "")?.[0] ?? ""
   const title = r.title && marker && !r.title.startsWith("[repo:") ? marker + r.title : r.title || old.title || null
-  const next = createProposal(r.prompt, old.cwd, `Opus rescoped [${old.taskId}]: ${r.why}`.slice(0, 500), old.threadId, {
+  const next = createProposal(r.prompt, old.cwd, `${RESCOPED} [${old.taskId}]: ${r.why}`.slice(0, 500), old.threadId, {
     noteId: old.noteId ?? null, agent: old.agent ?? null, title,
   })
   markCreated(next.taskId, Date.now())
