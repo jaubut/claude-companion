@@ -334,7 +334,7 @@ function proposalDescription(t: OrchTask, channelName: string): string {
  * A Turso failure leaves the proposal proposed (and retryable): 503.
  */
 export async function fileProposal(
-  taskId: string, opts: { agent?: string | null; noteId?: string | null } = {}, dispatch: DispatchWiring = dispatchWiring,
+  taskId: string, opts: { agent?: string | null; noteId?: string | null; byHand?: boolean } = {}, dispatch: DispatchWiring = dispatchWiring,
 ): Promise<FileOutcome> {
   const task = getTask(taskId)
   if (!task) return { ok: false, status: 404, error: "no such proposal" }
@@ -351,6 +351,8 @@ export async function fileProposal(
     if (!(await getNote(dispatch.query, noteId))) return { ok: false, status: 404, error: "no such note" }
     await fileTask(await writeCtx(dispatch, task.threadId), {
       id, noteId, agent, title: proposalTitle(task), description: proposalDescription(task, channel?.name ?? task.threadId),
+      // Auto-dispatch is the brain's call, not a tap: no trusted origin, so the queue guard holds it for a human stamp.
+      ...(opts.byHand ? { origin: "jeremie" as const } : {}),
     })
   } catch (err) {
     const what = err instanceof TursoUnreachable ? err.message : `unexpected error (${(err as Error)?.name ?? typeof err})`

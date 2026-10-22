@@ -73,6 +73,8 @@ export interface TaskDto extends Partial<import("./dispatch-stage").StageFields>
 export interface DispatchColumns {
   prUrl: boolean
   resultRef: boolean
+  /** tasks.origin (CaMeL): only a trusted origin may insert `queued` past the queue guard. */
+  origin?: boolean
 }
 
 const KNOWN: readonly string[] = ["queued", "running", "blocked", "completed", "failed", "cancelled"]
@@ -211,7 +213,7 @@ export function isLiveLinked(t: Pick<Task, "status" | "dispatchTaskId">): boolea
 export async function detectColumns(query: QueryFn): Promise<DispatchColumns> {
   const rows = await query("SELECT name FROM pragma_table_info('tasks')", [])
   const names = new Set(rows.map((r) => String(r.name)))
-  return { prUrl: names.has("dispatch_pr_url"), resultRef: names.has("dispatch_result_ref") }
+  return { prUrl: names.has("dispatch_pr_url"), resultRef: names.has("dispatch_result_ref"), ...(names.has("origin") ? { origin: true } : {}) }
 }
 
 // Column list built from a fixed vocabulary only — never from input.
@@ -391,7 +393,16 @@ export async function ledger(ctx: WriteCtx, t: Pick<DispatchTask, "id" | "agent"
   }
 }
 
-export interface FileInput { id: string; noteId: string; agent: string; title: string; description: string }
+export interface FileInput {
+  id: string; noteId: string; agent: string; title: string; description: string
+  /** "jeremie" only when he typed or tapped it; unset rows default to `unknown` and the queue guard refuses them. */
+  origin?: "jeremie"
+}
+
+/** The origin column + value for an INSERT, when both the column and a trusted origin exist. */
+export function originInsert(ctx: WriteCtx, input: FileInput): { col: string; val: string; args: string[] } {
+  return ctx.cols.origin && input.origin ? { col: ", origin", val: ", ?", args: [input.origin] } : { col: "", val: "", args: [] }
+}
 
 /**
  * Insert a queued agent task under a pre-generated id. INSERT OR IGNORE: a
@@ -399,10 +410,11 @@ export interface FileInput { id: string; noteId: string; agent: string; title: s
  */
 export async function fileTask(ctx: WriteCtx, input: FileInput): Promise<{ id: string; inserted: boolean }> {
   const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
+  const o = originInsert(ctx, input)
   const { affected } = await ctx.exec(
-    "INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, 'queued', datetime('now'), datetime('now'))",
-    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`],
+    `INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, created_at, updated_at${o.col}) ` +
+      `VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, 'queued', datetime('now'), datetime('now')${o.val})`,
+    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`, ...o.args],
   )
   const inserted = affected > 0
   if (inserted) await ledger(ctx, { id: input.id, agent: input.agent }, "queued", `→queued: ${title}`, { op: "file", note: input.noteId })

@@ -299,7 +299,7 @@ async function dispatchRoute(req: Request, dispatch: DispatchWiring): Promise<Re
   const title = optStr(body.title) ?? prompt.split("\n")[0]!
   try {
     if (!(await getNote(dispatch.query, noteId))) return Response.json({ ok: false, error: "no such note" }, { status: 404 })
-    await fileTask(await writeCtx(dispatch, ch.id), { id, noteId, agent, title, description: `${prompt}\n\n— Filed from Companion #${ch.name}` })
+    await fileTask(await writeCtx(dispatch, ch.id), { id, noteId, agent, title, description: `${prompt}\n\n— Filed from Companion #${ch.name}`, origin: "jeremie" })
   } catch (err) {
     return unreachable(err)
   }

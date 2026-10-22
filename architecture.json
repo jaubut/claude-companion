@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-21",
+  "generatedAt": "2026-10-22",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1461,7 +1461,7 @@
         },
         {
           "path": "lib/dispatch-live.ts",
-          "lines": 150,
+          "lines": 151,
           "kind": "lib",
           "exports": [
             "liveOwner",
@@ -1588,7 +1588,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 513,
+          "lines": 525,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -1636,6 +1636,7 @@
             "readVia",
             "ledger",
             "FileInput",
+            "originInsert",
             "fileTask",
             "cancelDispatchTask",
             "requeueTask",
@@ -6834,7 +6835,7 @@
         },
         {
           "path": "wiring/live.ts",
-          "lines": 331,
+          "lines": 335,
           "kind": "lib",
           "exports": [
             "LiveRunner",
@@ -6906,7 +6907,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 491,
+          "lines": 493,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -6976,7 +6977,7 @@
         },
         {
           "path": "wiring/proposals.ts",
-          "lines": 76,
+          "lines": 82,
           "kind": "lib",
           "exports": [
             "ApproveOpts",
@@ -6991,6 +6992,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/body.ts",
             "lib/orchestrator-chat.ts",
             "lib/dispatch-tasks.ts",
             "lib/dispatch-live.ts",
@@ -8505,6 +8507,7 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/orchestrator.ts",
+            "wiring/proposals.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -9133,6 +9136,12 @@
           ]
         },
         "FileInput": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-live.ts"
+          ]
+        },
+        "originInsert": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-live.ts"

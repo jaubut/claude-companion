@@ -115,7 +115,11 @@ function replayOf(task: Task | null): LiveStart | null {
   return null
 }
 
-export interface LiveOpts { agent?: string | null; noteId?: string | null; cwd?: string | null }
+export interface LiveOpts {
+  agent?: string | null; noteId?: string | null; cwd?: string | null
+  /** A direct tap on a proposal (not a Body alert run, whose prompt carries log text): files origin "jeremie". */
+  byHand?: boolean
+}
 
 /** approve {mode:"live"}: claim the Turso row, then run the tmux worker. */
 export async function approveLive(taskId: string, opts: LiveOpts = {}, dispatch: DispatchWiring = dispatchWiring): Promise<LiveStart> {
@@ -144,7 +148,7 @@ export async function approveLive(taskId: string, opts: LiveOpts = {}, dispatch:
     const id = stampDispatchId(task.taskId, newDispatchId())
     if (!id || !setLiveTarget(task.taskId, { cwd, noteId, agent })) return replayOf(getTask(task.taskId)) ?? fail(409, "not proposable")
     const claimed = await claim(dispatch, task.threadId, {
-      id, noteId, agent, title: liveTitle(task), description: `${task.prompt}\n\n— Live run from Companion #${channel?.name ?? task.threadId} (proposal ${task.taskId})`,
+      id, noteId, agent, title: liveTitle(task), description: `${task.prompt}\n\n— Live run from Companion #${channel?.name ?? task.threadId} (proposal ${task.taskId})`, ...(opts.byHand ? { origin: "jeremie" as const } : {}),
     })
     if (!claimed.ok) return claimed.out
     return await startWorker(task.taskId, id, dispatch)
@@ -178,7 +182,7 @@ export async function dispatchLive(
     const id = newDispatchId()
     const title = (input.title?.trim() || input.prompt.split("\n")[0]!).slice(0, 120)
     const claimed = await claim(dispatch, input.channelId, {
-      id, noteId, agent, title, description: `${input.prompt}\n\n— Live run from Companion #${channel?.name ?? input.channelId}`,
+      id, noteId, agent, title, description: `${input.prompt}\n\n— Live run from Companion #${channel?.name ?? input.channelId}`, origin: "jeremie",
     })
     if (!claimed.ok) return claimed.out
     // The local worker row: a proposal row (never shown: it is live-linked the
