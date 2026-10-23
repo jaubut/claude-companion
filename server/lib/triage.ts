@@ -1,5 +1,4 @@
 import { STALE_DAYS, mytaskOptions } from "./mytask-triage"
-import type { TakeoverCandidate, TakeoverHost, TakeoverTarget } from "./takeover"
 
 // Brain triage (docs/orchestrator-triage-api.md): what in the queue needs
 // Jeremie, phrased as problem / action / options. Pure: types, the allowed
@@ -25,8 +24,6 @@ export type TriageAction =
   | { kind: "snooze"; hours: number }
   /** Hand the item back to the Opus resolver (lib/resolver*.ts); instruction = a prefilled one, else the POST text. */
   | { kind: "ask_opus"; instruction?: string }
-  /** Take a blocked task over in an interactive session (lib/takeover.ts); no repo = ask (candidates, or free text). */
-  | { kind: "takeover"; repo?: string; host?: TakeoverHost; candidates?: TakeoverCandidate[] }
 
 export type ActionKind = TriageAction["kind"]
 
@@ -129,11 +126,8 @@ export interface SourceItem {
   url: string | null
   /** Heuristic hints (criticality, body severity) the severity rule reads. */
   /** `parked` = the shepherd's park reason without the cascade's " · Opus:" brief (PRs it parked; lib/triage-repos.ts heldReason). */
-  /** `takeoverEnded` = the task's blocker was written by a takeover (lib/takeover.ts TAKEOVER_ENDED): Jeremie's, not Opus's. */
-  hints?: { criticality?: string | null; bodySeverity?: string | null; safetyNet?: boolean; taskDone?: boolean; parked?: string; takeoverEnded?: boolean }
+  hints?: { criticality?: string | null; bodySeverity?: string | null; safetyNet?: boolean; taskDone?: boolean; parked?: string }
   ref: SourceRef
-  /** Blocked tasks: where a takeover session would run (wiring/triage.ts collect). Never part of `version`. */
-  takeover?: TakeoverTarget
 }
 
 export interface Phrase {
@@ -156,8 +150,6 @@ export const SNOOZE_MAX_HOURS = 168
 export const INSTRUCTION_MAX = 500
 /** The generic "Ask Opus" option every non-mytask card carries while the resolver is on. */
 export const ASK_OPUS_ID = "opus"
-/** The "Take over in a session" option blocked task cards carry, appended by code (never model-phrased). */
-export const TAKEOVER_ID = "takeover"
 const OPTION_IDS = ["a", "b", "c", "d"] as const
 const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(["cancel", "close_pr", "reject"])
 
@@ -193,7 +185,6 @@ export const KIND_HELP: Record<ActionKind, string> = {
   open_url: '{"kind":"open_url"} — open it to look first (the server fills the link)',
   snooze: '{"kind":"snooze","hours":24} — hide it for a while',
   ask_opus: '{"kind":"ask_opus","instruction":"<what Opus should do next, e.g. the specific changes to make>"} — hand it back to Opus',
-  takeover: '{"kind":"takeover"} — Jeremie takes it over in an interactive session',
 }
 
 /** The one sonnet prompt for an item: strict JSON in the contract shape. */
@@ -454,18 +445,6 @@ export function withAskOpus(item: TriageItem): TriageItem {
   if (item.source === "mytask" || item.options.some((o) => o.id === ASK_OPUS_ID)) return item
   const label = looksFrench(`${item.problem} ${item.action}`) ? "Demander à Opus…" : "Ask Opus…"
   return { ...item, options: [...item.options, { id: ASK_OPUS_ID, label, detail: "Hand it back with an instruction", action: { kind: "ask_opus" } }] }
-}
-
-/** A blocked task's card with "Take over in a session" after the phrased options (never the recommendation). */
-export function withTakeover(item: TriageItem, target: TakeoverTarget | undefined): TriageItem {
-  if (!target || item.source !== "task" || item.options.some((o) => o.id === TAKEOVER_ID)) return item
-  const fr = looksFrench(`${item.problem} ${item.action}`)
-  const where = target.host === "mac" ? (fr ? "sur le Mac" : "on the Mac") : (fr ? "sur Zettlab" : "on Zettlab")
-  const action: TriageAction = target.repo
-    ? { kind: "takeover", repo: target.repo, host: target.host }
-    : { kind: "takeover", candidates: target.candidates }
-  const detail = target.repo ? `${target.repo} · ${where}` : fr ? "Choisir le repo d'abord" : "Pick the repo first"
-  return { ...item, options: [...item.options, { id: TAKEOVER_ID, label: fr ? "Reprendre en session" : "Take over in a session", detail, action }] }
 }
 
 /** One line for the brain's #General / #Body context; null when nothing waits. */

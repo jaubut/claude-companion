@@ -319,11 +319,3 @@ describe("policy: delegated (Jeremie's Yes on a repo card, 2026-10-15)", () => {
     expect(decide(parkedPr(), close("superseded"), { ...delegated, sensitive: true }).kind).toBe("card")
   })
 })
-
-describe("takeover (blocked-task-takeover)", () => {
-  test("a task whose blocker a takeover wrote is Jeremie's, never Opus's", () => {
-    expect(routable(blockedTask("t9", "Takeover ended without a PR — No local repo mapped — how-to: RES-AB12"))).toBe(false)
-    expect(routable(blockedTask("t9", "Takeover failed to start (git fetch: denied) — Which repo?"))).toBe(false)
-    expect(routable(blockedTask("t9", "Which repo? A takeover would help"))).toBe(true)
-  })
-})

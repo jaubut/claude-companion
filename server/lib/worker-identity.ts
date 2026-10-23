@@ -1,5 +1,4 @@
 import type { Task } from "./orchestrator-chat"
-import { isTakeoverId } from "./takeover"
 
 // Worker → task correlation (PRJ-OR1T Phase 8).
 //
@@ -94,9 +93,6 @@ export function createWorkerIdentityResolver(deps: WorkerIdentityDeps): WorkerId
       // null instead of falling through: a session that already owns a task must
       // never pick up a sibling task in the same cwd, which is the exact
       // cross-bind this phase exists to stop.
-      // A takeover session (lib/takeover.ts) is never a worker: no cwd guess may
-      // close a live worker's task on its turn end.
-      if (isTakeoverId(taskId)) return null
       if (taskId) {
         const exact = byId(kind, taskId)
         if (exact) return exact
