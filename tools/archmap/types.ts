@@ -21,6 +21,10 @@ export interface ModuleInfo {
   listeners: string[]    // event registrations at top level (onSessions(...), setInterval, watcher.start)
   sheets: number         // SwiftUI presentation sites
   externals?: string[]   // bare external import specifiers ("hono/cors", "@libsql/client", "SwiftUI"); optional so older maps stay valid
+  props?: string[]       // astro: declared component props (Props interface or destructured param); optional so older maps stay valid
+  component?: string     // astro: the component's fanIn key ("Header", "components/Header.tsx"); optional so older maps stay valid
+  queryReads?: string[]  // page query params this page reads: "/partner-portal?tab"; set only when non-empty
+  querySets?: string[]   // page query params this module puts in a URL: "/partner-portal?tab=compte", "?tab=support" (page unknown); set only when non-empty
 }
 
 // Per-target view of the external packages its modules import, resolved
@@ -39,6 +43,16 @@ export interface Target {
   // export name → { module, callers: [module, ...] } across the target
   fanIn: Record<string, { module: string; callers: string[] }>
   packages?: Record<string, PackageUse>   // package name → use; optional so older maps stay valid
+  contracts?: HookContract[]              // shell-hooks only; optional so older maps stay valid
+}
+
+// A contract carried by something other than a path or a symbol. `hook header`:
+// a header a hook script sends (producers) and the modules that read it (consumers).
+export interface HookContract {
+  kind: "hook header"
+  name: string           // "X-Companion-Task-Id" as the sender writes it
+  producers: string[]    // target-relative scripts
+  consumers: string[]    // repo-relative reader modules ("server/lib/hook-common.ts")
 }
 
 // A sibling repo's committed map, joined by reference: its targets take part in
@@ -80,7 +94,7 @@ export interface FleetMap {
   packages: Record<string, FleetPackage>  // sorted by fanIn desc, then name
 }
 
-export type AdapterName = "bun-server" | "hono-server" | "react-client" | "swiftui" | "nuxt"
+export type AdapterName = "bun-server" | "hono-server" | "react-client" | "swiftui" | "nuxt" | "astro" | "shell-hooks" | "featuremap"
 
 export interface TargetConfig {
   name: string
@@ -89,6 +103,20 @@ export interface TargetConfig {
   cap?: number
   ignore?: string[]
   extraDirs?: string[]   // nuxt: extra top-level dirs to scan (trigger/, scripts/)
+  glob?: string          // shell-hooks: target-relative script glob (default **/*.sh)
+  readers?: string[]     // shell-hooks: repo-relative roots scanned for header reads ("server")
+  router?: string        // featuremap: target-relative router file (default: first file calling createBrowserRouter)
+  pages?: string         // featuremap: target-relative page dir checked for unrouted pages (default pages)
+}
+
+// The target's files are a vendored copy of a live directory elsewhere
+// (claude-companion hooks/ → ~/.claude/hooks, copied by its installer).
+// `--lint` fails when a file differs from its mirror; skipped when the mirror
+// directory does not exist on this host (CI).
+export interface MirrorRule {
+  target: string
+  mirror: string         // ~/…, absolute, or repo-relative
+  exclude?: string[]     // target-relative globs never compared
 }
 
 // Import boundary: modules matching `from` may not import modules matching any
@@ -110,6 +138,7 @@ export interface RepoConfig {
   targets: TargetConfig[]
   refs?: RefConfig[]
   rules?: ImportRule[]
+  mirrors?: MirrorRule[]
 }
 
 export function emptyModule(path: string, lines: number, kind: string): ModuleInfo {

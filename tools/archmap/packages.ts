@@ -3,29 +3,44 @@ import { dirname, join, resolve } from "node:path"
 import type { ModuleInfo, PackageUse } from "./types"
 import { packageOf } from "./adapters/shared"
 
-// External packages per target, pinned against the NEAREST lockfile: search
-// starts at the target root and walks up to the repo root (a client with its
-// own bun.lock — dashboard, companion — pins its own react, not the server's).
-// bun.lock is JSONC (trailing commas) and is scanned line-wise, never parsed.
+// External packages per target, pinned against the NEAREST lockfile first:
+// search starts at the target root and walks up to the repo root (a client
+// with its own bun.lock — dashboard, companion — pins its own react, not the
+// server's). Lockfiles further up fill what the nearer ones lack: a dep
+// declared in the root package.json and imported only from client/ resolves
+// from the root lock. bun.lock is JSONC (trailing commas) and is scanned
+// line-wise, never parsed.
 
-export type Lockfile = { kind: "bun" | "npm" | "swiftpm"; path: string }
+// `from` = the target root that found it: a yarn workspace's ranges live in
+// the workspace's own package.json, not the lockfile's
+export type Lockfile = { kind: "bun" | "npm" | "yarn" | "swiftpm"; path: string; from?: string }
 
-// `swift` = the target is a SwiftUI app: only then is Package.resolved searched
-// (a bounded walk under the target root, then the repo root).
-export function findLockfile(repoRoot: string, targetRoot: string, swift = false): Lockfile | null {
+const JS_LOCKS = [["bun", "bun.lock"], ["npm", "package-lock.json"], ["yarn", "yarn.lock"]] as const
+
+// Every lockfile from the target root up to the repo root, nearest first.
+// `swift` = the target is a SwiftUI app: only then, and only when no JS lock
+// exists, is Package.resolved searched (a bounded walk under the target root,
+// then the repo root).
+export function findLockfiles(repoRoot: string, targetRoot: string, swift = false): Lockfile[] {
   const top = resolve(repoRoot)
-  let dir = resolve(targetRoot)
+  const from = resolve(targetRoot)
+  let dir = from
+  const out: Lockfile[] = []
   for (let i = 0; i < 12; i++) {
-    for (const [kind, name] of [["bun", "bun.lock"], ["npm", "package-lock.json"]] as const) {
+    for (const [kind, name] of JS_LOCKS) {
       const p = join(dir, name)
-      if (existsSync(p)) return { kind, path: p }
+      if (existsSync(p)) out.push({ kind, path: p, from })
     }
     if (dir === top || dirname(dir) === dir) break
     dir = dirname(dir)
   }
-  if (!swift) return null
+  if (out.length || !swift) return out
   const resolved = findSwiftResolved(resolve(targetRoot), 0) ?? findSwiftResolved(top, 0)
-  return resolved ? { kind: "swiftpm", path: resolved } : null
+  return resolved ? [{ kind: "swiftpm", path: resolved }] : []
+}
+
+export function findLockfile(repoRoot: string, targetRoot: string, swift = false): Lockfile | null {
+  return findLockfiles(repoRoot, targetRoot, swift)[0] ?? null
 }
 
 function findSwiftResolved(dir: string, depth: number): string | null {
@@ -51,6 +66,7 @@ export function readLockfile(lock: Lockfile): Record<string, string | null> {
   // A 0-byte stub (kept to block npm/pnpm/yarn installs) pins nothing; a
   // truncated JSON lockfile leaves everything unpinned rather than crash the map.
   if (!text.trim()) return out
+  if (lock.kind === "yarn") return readYarnLock(text, declaredRanges(dirname(lock.path), lock.from))
   if (lock.kind !== "bun") { try { JSON.parse(text) } catch { return out } }
   if (lock.kind === "bun") {
     let inPackages = false
@@ -84,9 +100,60 @@ export function readLockfile(lock: Lockfile): Record<string, string | null> {
   return out
 }
 
-export function resolvePackages(modules: ModuleInfo[], lock: Lockfile | null): Record<string, PackageUse> {
-  const pins = lock ? readLockfile(lock) : {}
-  const swift = lock?.kind === "swiftpm"
+// yarn v1 (`"a@^1", a@^2:` + `  version "1.2.3"`) and berry (`"a@npm:^1":` +
+// `  version: 1.2.3`). A name locked at several versions resolves to the entry
+// matching the range declared in the nearest package.json (what the app
+// imports), else the first entry.
+function readYarnLock(text: string, declared: Record<string, string>): Record<string, string | null> {
+  const out: Record<string, string | null> = {}
+  let specs: string[] = []
+  for (const l of text.split("\n")) {
+    if (/^\S.*:\s*$/.test(l) && !l.startsWith("#") && !l.startsWith("__metadata")) {
+      specs = l.replace(/:\s*$/, "").split(",").map((x) => x.trim().replace(/^"|"$/g, ""))
+      continue
+    }
+    const m = specs.length ? l.match(/^\s+version:?\s+"?([^"\s]+)"?\s*$/) : null
+    if (!m) continue
+    // a grouped header can mix names (berry alias `x-cjs@npm:x@^4, x@npm:^4`): resolve each name alone
+    const byName = new Map<string, string[]>()
+    for (const s of specs) {
+      const at = s.indexOf("@", 1)
+      const name = at > 0 ? s.slice(0, at) : s
+      ;(byName.get(name) ?? byName.set(name, []).get(name)!).push(normRange(at > 0 ? s.slice(at + 1) : ""))
+    }
+    for (const [name, ranges] of byName) {
+      const ver = ranges.some((r) => /^(workspace|link|file|portal|patch):/.test(r)) || !/^\d/.test(m[1]!) ? null : m[1]!
+      const want = declared[name] === undefined ? undefined : normRange(declared[name]!)
+      if (!(name in out) || (want !== undefined && ranges.includes(want))) out[name] = ver
+    }
+    specs = []
+  }
+  return out
+}
+
+// lockfile and manifest both may say `npm:^1` (or `npm:x@^1` for an alias)
+const normRange = (r: string): string => r.trim().replace(/^npm:/, "")
+
+// Ranges from every package.json between the target root and the lockfile's
+// dir; the nearest manifest wins (a workspace's semver@^7 over the root's ^6).
+function declaredRanges(lockDir: string, from = lockDir): Record<string, string> {
+  let out: Record<string, string> = {}
+  for (let dir = resolve(from); ; dir = dirname(dir)) {
+    try {
+      const j = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as Record<string, Record<string, string> | undefined>
+      out = { ...j.devDependencies, ...j.optionalDependencies, ...j.dependencies, ...out }
+    } catch { /* no manifest at this level */ }
+    if (dir === resolve(lockDir) || dirname(dir) === dir) return out
+  }
+}
+
+// `locks` nearest first (findLockfiles); a single lockfile is accepted too.
+export function resolvePackages(modules: ModuleInfo[], locks: Lockfile[] | Lockfile | null): Record<string, PackageUse> {
+  const list = !locks ? [] : Array.isArray(locks) ? locks : [locks]
+  const pins: Record<string, string | null> = {}
+  // only absent keys fall back: a nearer workspace:/link: pin (null) stays null
+  for (const lock of list) for (const [k, v] of Object.entries(readLockfile(lock))) if (!(k in pins)) pins[k] = v
+  const swift = list[0]?.kind === "swiftpm"
   const acc = new Map<string, Set<string>>()
   for (const m of modules) for (const spec of m.externals ?? []) {
     const pkg = swift ? spec : packageOf(spec)

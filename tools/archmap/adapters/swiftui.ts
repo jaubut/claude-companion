@@ -13,15 +13,13 @@ import { walk, read, rel, isTest, resolveRoot, computeFanIn, sourcesOf, stripLit
 // declaring type (`Layer.activeEffects`) and matched as `.activeEffects`.
 
 const TYPE_RE = /^(?:(?:@\w+|public|internal|nonisolated|final|indirect)\s+)*(?:struct|class|enum|actor|protocol)\s+([A-Za-z_]\w*)/
-const FUNC_RE = /^\s*(?:(?:@\w+|public|internal|static|class|mutating|nonisolated|override)\s+)*func\s+([A-Za-z_]\w*)\s*\((.*)$/
 // The first argument label of a func declaration: `update(timeline id:` →
 // "timeline", `contains(_ frame:` → null (unlabeled), `snap()` → "" (no
 // parameters). A call is matched on it, so `h.update(data:` and a SwiftUI
 // `.frame(width:` stop counting as calls to `update(timeline:)` and
 // `frame(atX:)` — the false positives that put IngestEngine among the
 // callers of RecordingEngine.update() (Video Assist, 2026-09-09).
-function firstLabel(m: RegExpMatchArray): string | null {
-  const rest = m[2]!
+function firstLabel(rest: string): string | null {
   if (/^\s*\)/.test(rest)) return ""
   const head = rest.match(/^\s*(?:(_|[A-Za-z_]\w*)\s+)?([A-Za-z_]\w*)\s*:/)
   if (!head) return null                       // parameters on the next line: unknown, stay loose
@@ -38,12 +36,17 @@ function firstLabel(m: RegExpMatchArray): string | null {
   if (!/[,)]/.test(rest)) return null          // first parameter continues on the next line
   return head[1] ?? head[2]!
 }
-// `case "a", "b":` — every literal on a case line, not just the first.
-const FRAME_CASE_LINE_RE = /^\s*case\s+("[a-z_]+"(?:\s*,\s*"[a-z_]+")*)\s*:/gm
+// `case "a", "b":` — every literal on a case line, not just the first. A
+// literal may be camelCase, kebab or dotted (`"setIn"`, `"ripple-delete"`):
+// the lowercase-snake-only grammar read half of a control server's commands.
+// `where` guards are allowed; the renderer keeps only literals some module emits.
+const CASE_LIT = String.raw`"[A-Za-z][\w.\-]*"`
+const FRAME_CASE_LINE_RE = new RegExp(String.raw`^\s*case\s+(${CASE_LIT}(?:\s*,\s*${CASE_LIT})*)\s*(?:where\b[^:]*)?:`, "gm")
 const PATH_RE = /path:\s*"([^"?]+)/g
-// `/api/…` literals passed to a request helper (`req("/api/week/\\($0)")`); an
-// interpolation segment becomes `:p`, a query string is dropped.
-const API_LIT_RE = /"(\/api\/(?:[A-Za-z0-9_\-.\/]|\\\([^)]*\))+)/g
+// `/api/…` literals passed to a request helper (`req("/api/week/\\($0)")`) or
+// full-URL literals (`URL(string: "http://127.0.0.1:4245/api/status")`, host
+// dropped); an interpolation segment becomes `:p`, a query string is dropped.
+const API_LIT_RE = /"(?:https?:\/\/[^"\/\s]+)?(\/api\/(?:[A-Za-z0-9_\-.\/]|\\\([^)]*\))+)/g
 const PUBLISHED_RE = /@Published(?:\s+private\(set\))?\s+var\s+([A-Za-z_]\w*)/g
 // presentation SITES only — `.sheet(isPresented:` / `.sheet(item:` — not a
 // modifier's own declaration or a `.sheet` enum case.
@@ -68,9 +71,13 @@ const ROUTE_TUPLE_RE = /\(\s*"([A-Z]+)"\s*,\s*"(\/[^"]*)"\s*\)/g
 // characters and protocol/stdlib members are dropped: `.id` and `.body` say
 // nothing about who reaches whom and match half the repo.
 const MODIFIER = String.raw`(?:@[\w.]+(?:\([^()]*\))?|public|internal|open|package|private\(set\)|fileprivate\(set\)|private|fileprivate|static|class|final|lazy|weak|unowned(?:\([^()]*\))?|nonisolated(?:\([^()]*\))?|override|dynamic|mutating|distributed)`
-const PROP_RE = new RegExp(String.raw`^\s*((?:${MODIFIER}\s+)*)(?:var|let)\s+([A-Za-z_]\w*)`)
+const PROP_RE = new RegExp(String.raw`^\s*((?:${MODIFIER}\s+)*)(var|let)\s+([A-Za-z_]\w*)`)
+// funcs share the member-scope walk: a func of a NESTED type (`RowGeometry.tracks(inY:)`)
+// or a generic one (`snapped<T>(`) is as callable as a top-level one
+const FUNC_RE = new RegExp(String.raw`^\s*((?:${MODIFIER}\s+)*)func\s+([A-Za-z_]\w*)\s*(?:<[^(]*>)?\s*\((.*)$`)
 const PRIVATE_RE = /(?:^|\s)(?:private|fileprivate)\s/
-const SCOPE_TYPE_RE = new RegExp(String.raw`^\s*(?:${MODIFIER}\s+)*(?:struct|class|enum|actor|protocol|extension)\s+([A-Za-z_]\w*)`)
+// `class func` / `class var` are members, not a type named `func`
+const SCOPE_TYPE_RE = new RegExp(String.raw`^\s*((?:${MODIFIER}\s+)*)(?:struct|class|enum|actor|protocol|extension)\s+(?!(?:func|var|let|init|subscript)\b)([A-Za-z_]\w*)`)
 const PROP_MIN_LEN = 4
 const PROP_DENY = new Set([
   // protocol conformance — every View has a `body`, every RawRepresentable a `rawValue`
@@ -89,6 +96,9 @@ const PROP_DENY = new Set([
 // cap lint. Externals are left empty on purpose: their npm/pip deps are pinned
 // by their own lockfile, not the app's.
 const TOOL_EXTS = [".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".rb"]
+// a file under a directory whose name ends in `Tests` — Xcode's test-target layout
+const TEST_DIR_RE = /(?:^|\/)[^/]*Tests\//
+
 const TOOL_PATH_RE = /["'`](\/[A-Za-z0-9_\-./]*)["'`]/g
 
 // `(?:\\s*timeline\\s*:|\\s*\\))` for the labels a func is declared with; an
@@ -125,33 +135,67 @@ function typeMentions(text: string): Set<string> {
   return out
 }
 
-// Members of a type declared in this file, in declaration order. Returns
-// `["Layer.activeEffects", …]`; the brace depth is tracked on literal-stripped
-// lines so `{` inside a string or a `"""` block cannot shift the scope.
-function memberProperties(lines: string[]): string[] {
-  const out: string[] = []
-  const stack: { name: string; memberDepth: number }[] = []
+// One walk over a file's declarations at TYPE-MEMBER scope (or top level).
+// `props`: `["Layer.activeEffects", …]` in declaration order. `decls`: line →
+// funcs (`name()`) and nested types declared there, so they export in line
+// order; a local func inside a body never counts, a nested type's member does.
+// `state`: stored vars of an `@Observable` class (the Observation macro has no
+// `@Published`). Brace depth is tracked on literal-stripped lines so `{`
+// inside a string or a `"""` block cannot shift the scope.
+interface Members {
+  props: string[]
+  decls: Map<number, string[]>
+  labels: [string, string | null][]
+  state: string[]
+}
+
+function scanMembers(lines: string[]): Members {
+  const out: Members = { props: [], decls: new Map(), labels: [], state: [] }
+  const stack: { name: string; memberDepth: number; observable: boolean }[] = []
   let depth = 0
   let inMultiline = false
-  for (const raw of lines) {
+  let attrs = ""                               // attribute-only lines above (`@Observable`, `@MainActor`, …)
+  let pending: { name: string; observable: boolean } | null = null   // type decl awaiting its `{`
+  lines.forEach((raw, i) => {
     const quotes = (raw.match(/"""/g) ?? []).length
-    if (inMultiline) { if (quotes % 2 === 1) inMultiline = false; continue }
-    if (quotes % 2 === 1) { inMultiline = true; continue }
+    if (inMultiline) { if (quotes % 2 === 1) inMultiline = false; return }
+    if (quotes % 2 === 1) { inMultiline = true; return }
     const code = stripLiterals(raw)
     const opens = (code.match(/\{/g) ?? []).length
     const closes = (code.match(/\}/g) ?? []).length
-    const type = code.match(SCOPE_TYPE_RE)
-    if (type && opens > 0) {
-      stack.push({ name: type[1]!, memberDepth: depth + 1 })
-    } else if (stack.length && depth === stack[stack.length - 1]!.memberDepth) {
-      const p = code.match(PROP_RE)
-      if (p && !PRIVATE_RE.test(` ${p[1]!}`) && p[2]!.length >= PROP_MIN_LEN && !PROP_DENY.has(p[2]!)) {
-        out.push(`${stack[stack.length - 1]!.name}.${p[2]}`)
+    const top = stack[stack.length - 1]
+    const atMember = top ? depth === top.memberDepth : depth === 0
+    const decl = (s: string) => (out.decls.get(i) ?? out.decls.set(i, []).get(i)!).push(s)
+    const withAttrs = `${attrs} ${code}`
+    const type = !pending && code.match(SCOPE_TYPE_RE)
+    if (type) {
+      // a nested type is reachable as `Outer.Inner` / `Inner(`; top-level ones come from TYPE_RE
+      const nested = !!top && atMember && !/\bextension\s/.test(code) && !PRIVATE_RE.test(` ${type[1]!}`)
+      if (nested) decl(type[2]!)
+      pending = { name: type[2]!, observable: /@Observable\b/.test(withAttrs) }
+    }
+    if (pending) {
+      // the `{` may sit on a later line (multi-line conformances / `where` clauses)
+      if (opens > 0) { stack.push({ name: pending.name, memberDepth: depth + 1, observable: pending.observable }); pending = null }
+    } else if (atMember) {
+      const f = code.match(FUNC_RE)
+      if (f && !PRIVATE_RE.test(` ${f[1]!}`)) {
+        decl(`${f[2]}()`)
+        out.labels.push([f[2]!, firstLabel(f[3]!)])
+      }
+      const p = top && code.match(PROP_RE)
+      if (p) {
+        const [, mods, kw, name] = p
+        if (!PRIVATE_RE.test(` ${mods!}`) && name!.length >= PROP_MIN_LEN && !PROP_DENY.has(name!)) out.props.push(`${top.name}.${name}`)
+        // stored = not computed (`var x: T {` with no `=`), not static, not ignored
+        const stored = !(opens > 0 && !code.slice(0, code.indexOf("{")).includes("="))
+        if (top.observable && kw === "var" && stored && !/\b(?:static|class)\s/.test(mods!) && !/@ObservationIgnored\b/.test(withAttrs)) out.state.push(`@Observable ${name}`)
       }
     }
+    attrs = /^\s*(?:@[\w.]+(?:\([^()]*\))?\s*)+$/.test(code) ? withAttrs : ""
     depth += opens - closes
     while (stack.length && depth < stack[stack.length - 1]!.memberDepth) stack.pop()
-  }
+  })
   return out
 }
 
@@ -169,7 +213,11 @@ function routesOf(text: string): Endpoint[] {
 export function scanSwiftUI(cfg: TargetConfig, repoRoot: string): Target {
   const root = resolveRoot(repoRoot, cfg.root)
   const cap = cfg.cap ?? 600
-  const all = walk(root, [".swift", ...TOOL_EXTS], cfg.ignore).filter((f) => !isTest(f))
+  const walked = walk(root, [".swift", ...TOOL_EXTS], cfg.ignore)
+  const all = walked.filter((f) => !isTest(f))
+  // XCTest targets (`App Tests/`, `AppUITests/`): sized in the map, nothing else.
+  // Matched on the absolute path like isTest, so a target rooted AT `AppTests` counts too.
+  const tests = walked.filter((f) => f.endsWith(".swift") && TEST_DIR_RE.test(f))
   const files = all.filter((f) => f.endsWith(".swift"))
   // a module named like a directory under the root (or like the target) is the
   // app's own; everything else — Apple frameworks included — is external
@@ -187,32 +235,30 @@ export function scanSwiftUI(cfg: TargetConfig, repoRoot: string): Target {
   for (const file of files) {
     const { text, lines } = read(file)
     const isView = /:\s*View\b/.test(text)
-    const m = emptyModule(rel(root, file), lines.length, isView ? "view" : /ObservableObject|@Published/.test(text) ? "state" : "lib")
+    const m = emptyModule(rel(root, file), lines.length, isView ? "view" : /ObservableObject|@Published|@Observable\b/.test(text) ? "state" : "lib")
+    const members = scanMembers(lines)
+    for (const [name, label] of members.labels) (labels.get(name) ?? labels.set(name, new Set()).get(name)!).add(label)
     let inSocketEvent = false
-    for (const l of lines) {
+    lines.forEach((l, i) => {
       const t = l.match(TYPE_RE); if (t) { m.exports.push(t[1]!); inSocketEvent = t[1] === "SocketEvent" || t[1] === "WSFrame" }
-      const f = l.match(FUNC_RE); if (f && !/^\s{8,}/.test(l)) {
-        m.exports.push(`${f[1]}()`)
-        const set = labels.get(f[1]!) ?? labels.set(f[1]!, new Set()).get(f[1]!)!
-        set.add(firstLabel(f))
-      }
+      m.exports.push(...(members.decls.get(i) ?? []))
       if (inSocketEvent) { const ec = l.match(EVENT_CASE_RE); if (ec) m.emits.push(`.${ec[1]}`) }
       if (/^}/.test(l)) inSocketEvent = false
-    }
-    for (const key of memberProperties(lines)) {
+    })
+    for (const key of members.props) {
       const dot = key.indexOf(".")
       const type = key.slice(0, dot), name = key.slice(dot + 1)
       m.exports.push(key)
       propOwner.set(key, type)
       ;(propTypes.get(name) ?? propTypes.set(name, new Set()).get(name)!).add(type)
     }
-    m.consumes = uniq([...text.matchAll(FRAME_CASE_LINE_RE)].flatMap((x) => [...x[1]!.matchAll(/"([a-z_]+)"/g)].map((y) => y[1]!)))
+    m.consumes = uniq([...text.matchAll(FRAME_CASE_LINE_RE)].flatMap((x) => [...x[1]!.matchAll(/"([^"]+)"/g)].map((y) => y[1]!)))
     // events applied: `case .name` in switch bodies (AppState.apply, socket emit)
     const applied = uniq([...text.matchAll(APPLY_CASE_RE)].map((x) => `.${x[1]}`))
     if (applied.length && !m.path.endsWith("WSFrame.swift")) m.listeners = applied
     m.apiCalls = uniq([...[...text.matchAll(PATH_RE)].map((x) => x[1]!), ...[...text.matchAll(API_LIT_RE)].map((x) => x[1]!.replace(/\\\([^)]*\)/g, ":p"))]
       .filter((p) => p.startsWith("/") && !p.endsWith("/")))
-    m.state = uniq([...text.matchAll(PUBLISHED_RE)].map((x) => `@Published ${x[1]}`))
+    m.state = uniq([...[...text.matchAll(PUBLISHED_RE)].map((x) => `@Published ${x[1]}`), ...members.state])
     m.sheets = [...text.matchAll(SHEET_RE)].length
     m.endpoints = routesOf(text)
     if (m.endpoints.length && m.kind === "lib") m.kind = "route-host"
@@ -285,5 +331,9 @@ export function scanSwiftUI(cfg: TargetConfig, repoRoot: string): Target {
       modules.push(m)
     }
   }
+  // Test files join last, as `test` modules carrying only their size: never in
+  // fan-in (a test reaching every type would drown the table), no externals
+  // (XCTest is not an app dependency), and lint.ts skips them.
+  for (const file of tests) modules.push(emptyModule(rel(root, file), read(file).lines.length, "test"))
   return { name: cfg.name, adapter: cfg.adapter, root: cfg.root, cap, modules, fanIn }
 }

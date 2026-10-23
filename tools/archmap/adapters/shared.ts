@@ -54,8 +54,8 @@ const LISTENER_RE = /^(on[A-Z]\w*|setInterval|[a-zA-Z_]\w*\.start)\(/
 // `~/x` and `@/x` resolve against `alias`; relative specs against the file.
 export function resolveImport(fromFile: string, spec: string, root: string, alias: string = root): string {
   const base = /^[~@]\//.test(spec) ? join(alias, spec.slice(2)) : normalize(join(dirname(fromFile), spec))
-  for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}.vue`, `${base}.js`, join(base, "index.ts"), join(base, "index.vue")]) {
-    if (existsSync(cand)) return rel(root, cand)
+  for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}.vue`, `${base}.astro`, `${base}.js`, `${base}.jsx`, `${base}.mjs`, join(base, "index.ts"), join(base, "index.tsx"), join(base, "index.js"), join(base, "index.jsx"), join(base, "index.mjs"), join(base, "index.vue")]) {
+    if (existsSync(cand) && statSync(cand).isFile()) return rel(root, cand)
   }
   return rel(root, `${base}.ts`)
 }
@@ -136,9 +136,10 @@ export function stripLiterals(line: string): string {
   return line.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/\/\/.*$/, "")
 }
 
-// bare identifier: not part of a longer name, not a property (`x.name`), not an object key (`name:`)
+// bare identifier: not part of a longer name, not a property (`x.name`), not an object key (`name:`).
+// A spread (`...name()`, in an object, array or call argument) is a use, not a property.
 export function identRe(name: string): RegExp {
-  return new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])(?!\\s*:)`)
+  return new RegExp(`(?<![\\w$])(?<!(?<!\\.\\.)\\.)${name.replace(/\$/g, "\\$")}(?![\\w$])(?!\\s*:)`)
 }
 
 const IMPORT_LINE_RE = /^\s*(?:import\b|export\s+(?:\*|\{[^}]*\})\s+from\b)/
@@ -160,6 +161,26 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
   // the regex is the slow path; `includes` (or the kebab/lowercase forms a
   // template tag may use) gates it
   const needles = new Map([...owners.keys()].map((n) => [n, opts.needles ? opts.needles(n) : uniq([n, n[0]!.toLowerCase() + n.slice(1), n.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()])]))
+  // Scanning every name's needles on every line was lines × names `includes`
+  // calls (99% of archmap's time). Index needles by their first 3 chars: a line
+  // costs one lookup per position, then startsWith on the few candidates. Same
+  // hits as `l.includes(needle)`, returned in `res` order so output is unchanged.
+  const order = new Map([...res.keys()].map((n, i) => [n, i]))
+  const byGram = new Map<string, [string, string][]>()
+  const short: [string, string][] = []
+  for (const [name, ns] of needles) for (const n of ns) {
+    if (n.length < 3) short.push([n, name])
+    else (byGram.get(n.slice(0, 3)) ?? byGram.set(n.slice(0, 3), []).get(n.slice(0, 3))!).push([n, name])
+  }
+  const named = (l: string): string[] => {
+    const hit = new Set<string>()
+    for (const [n, name] of short) if (l.includes(n)) hit.add(name)
+    for (let i = 0; i + 3 <= l.length; i++) {
+      const cands = byGram.get(l.slice(i, i + 3))
+      if (cands) for (const [n, name] of cands) if (!hit.has(name) && l.startsWith(n, i)) hit.add(name)
+    }
+    return [...hit].sort((a, b) => order.get(a)! - order.get(b)!)
+  }
   const fanIn: Target["fanIn"] = {}
   for (const m of modules) {
     const lines = sources.get(m.path) ?? []
@@ -168,11 +189,11 @@ export function computeFanIn(modules: ModuleInfo[], sources: Map<string, string[
       if (IMPORT_LINE_RE.test(raw)) continue
       if (/^\s*(?:\/\/|\/\*|\*)/.test(raw)) continue   // `// usage: bun run x.ts` is prose, not a call of run()
       const l = opts.stripLiterals ? stripLiterals(raw) : raw
-      for (const [name, re] of res) {
+      for (const name of named(l)) {
         const owner = owners.get(name)!
         if (owner === m.path) continue
         if (opts.requireImport?.(byPath.get(owner)!) && !m.imports.includes(owner)) continue
-        if (!needles.get(name)!.some((n) => l.includes(n)) || !re.test(l)) continue
+        if (!res.get(name)!.test(l)) continue
         if (opts.accept && !opts.accept(name, m, l)) continue
         const entry = (fanIn[name] ??= { module: owner, callers: [] })
         if (!entry.callers.includes(caller)) entry.callers.push(caller)
