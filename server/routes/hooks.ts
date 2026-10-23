@@ -41,8 +41,6 @@ import {
   scrapeHookPassthrough,
 } from "../lib/hook-common"
 import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"
-import { takeoverEnded, takeoverStop } from "../wiring/takeover"
-import { isTakeoverId } from "../lib/takeover"
 import { appendTurn as orchAppendTurn, setTaskStatus } from "../lib/orchestrator-chat"
 import { dispatchWiring } from "../wiring/dispatch"
 import { isLoopback, peerOf } from "../lib/vault-guard"
@@ -436,8 +434,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
         companionLog(`${green}orchestrator reply${reset} [${task.taskId}] → thread`)
       }
     }
-    // A takeover session (wiring/takeover.ts): a PR or `TAKEOVER DONE:` closes its Turso task.
-    if (isTakeoverId(headerMeta.taskId)) void takeoverStop(headerMeta.taskId, lastMessage).catch((err) => companionLog(`[takeover] stop failed: ${(err as Error)?.message ?? err}`))
 
     // Fire-and-forget: recordTurnEnd may now poll the transcript for up
     // to ~4s waiting on a late-flushed closing block. Don't await it —
@@ -533,11 +529,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     for (const k of removedKeys) autoCompactor.forget(k)
     for (const v of victims) releaseHerdrWorkspace(v, listSessions)
     const removed = removedKeys.length > 0
-    // A takeover session ended (`/clear` keeps it going): the prune may already have
-    // dropped the session, so the header id counts too.
-    if (body.reason !== "clear") {
-      for (const id of new Set([...victims.map((v) => v.taskId), headerMeta.taskId])) if (isTakeoverId(id)) void takeoverEnded(id).catch((err) => companionLog(`[takeover] end failed: ${(err as Error)?.message ?? err}`))
-    }
     {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
       companionLog(removed

@@ -23,7 +23,6 @@ import {
   cancelDispatchTask, fileTask, getDispatchTask, getNote, getTaskActivity, getTaskResult,
   newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
 } from "../lib/dispatch-tasks"
-import { TAKEOVER_OWNER } from "../lib/dispatch-live"
 import { approveProposal, filedStatus, rejectProposal } from "../wiring/proposals"
 import { frontDoor } from "../wiring/front-door"
 import { withIdempotency } from "../lib/idempotency"
@@ -208,10 +207,6 @@ async function dispatchAction(req: Request, id: string, action: TaskAction, disp
     return unreachable(err)
   }
   if (!out.ok && out.error === "no_such_task") return Response.json({ ok: false, error: "no such task" }, { status: 404 })
-  if (!out.ok && out.error === "running" && out.task.owner?.startsWith(TAKEOVER_OWNER)) {
-    const session = out.task.owner.slice(TAKEOVER_OWNER.length)
-    return Response.json({ ok: false, error: "under_takeover", session, dispatchStatus: "running", owner: out.task.owner, task: dispatch.dto(out.task) }, { status: 409 })
-  }
   if (!out.ok) {
     const task = dispatch.dto(out.task)
     const error = out.error === "running" ? `running_on_${out.task.owner ?? "unknown"}` : "conflict"

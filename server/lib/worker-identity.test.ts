@@ -171,13 +171,3 @@ test("resolve is side-effect free — repeated calls return the same task and ch
   }
   expect(h.logs).toEqual([])
 })
-
-describe("takeover sessions (blocked-task-takeover)", () => {
-  test("a tko- id never resolves a worker, even when it is the only task in the cwd", async () => {
-    const h = harness({ unbound: [task("a")], running: [task("r", { status: "running" })] })
-    const r = createWorkerIdentityResolver(h.deps)
-    expect(await r.resolve("close", { taskId: "tko-zettlab-abcd1234", cwd: "/w" })).toBeNull()
-    expect(await r.resolve("bind", { taskId: "tko-zettlab-abcd1234", cwd: "/w" })).toBeNull()
-    expect(h.logs).toEqual([])
-  })
-})
