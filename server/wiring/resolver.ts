@@ -7,7 +7,7 @@ import { type InvestigationResult, localBodyHost, routeFor } from "../lib/body-i
 import { knownPaths, runInvestigatorCli } from "../lib/body-investigator"
 import { type DispatchWiring } from "../lib/dispatch-poller"
 import { NO_REPO_BLOCKER, getDispatchTask, getTaskActivity, routeTask } from "../lib/dispatch-tasks"
-import { type RepoMapCheck, checkRepoMap, fixRepoHere, isDir, localRepoFor, parseRepoMap, readRepoMapSource, repoForNote, repoMapCheckLine } from "../lib/live-repo"
+import { type RepoMapCheck, type ShFn, checkRepoMap, isDir, localRepoFor, parseRepoMap, readRepoMapSource, realSh, repoForNote, repoMapCheckLine } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
@@ -16,7 +16,6 @@ import { QUICK_LOOK_ALLOWED, QUICK_LOOK_DISALLOWED } from "../lib/quick-look"
 import { type ReadonlySpec, readonlyCwd, runReadonlyClaude } from "../lib/readonly-claude"
 import { RESOLVER_SLUG, type ResolverConfig, isSensitivePr, resolverConfig, routable, sensitivePaths } from "../lib/resolver"
 import { type ResolverEngine, createResolverEngine, maybeDigest } from "../lib/resolver-engine"
-import { type ShFn, realSh, runPrFix } from "../lib/resolver-fix"
 import type { EvidenceBlock, ResolverContext } from "../lib/resolver-prompt"
 import { buildBodyResolverPrompt } from "../lib/resolver-prompt"
 import { GUARD_WINDOW_MS, type ResolverStore, createResolverStore } from "../lib/resolver-store"
@@ -27,7 +26,6 @@ import type { GhFn } from "../lib/triage-pr"
 import { tursoQuery } from "../lib/turso"
 import type { QueryFn } from "../lib/turso"
 import { bodyReportApplier, investigationStore } from "./body-investigate"
-import { fixOnPeer } from "./resolver-peer"
 import { orchEmit } from "./orchestrator"
 import { HOST_INFO } from "../state"
 import { reviseProposal } from "./proposals"
@@ -35,8 +33,10 @@ import { reviseProposal } from "./proposals"
 // The Opus resolver, live (docs/orchestrator-triage-api.md#opus-resolver):
 // the engine (lib/resolver-engine.ts) + the work (lib/resolver-work.ts) wired
 // to Turso (evidence, read-only; agent_activity rows), `gh` (read-only review,
-// comments), the read-only Opus runner, the PR fix run, the triage executor
-// (every write through the existing guarded paths) and #General / #Body turns.
+// comments), the read-only Opus runner, the triage executor (every write
+// through the existing guarded paths) and #General / #Body turns. A PR that
+// needs changes goes back to the PR shepherd's fix run (`pr:unpark`); the
+// resolver runs no builder itself (docs/one-stream-plan.md, Q2).
 // Store host only (wiring/triage.ts decides).
 
 const SYSTEM =
@@ -69,7 +69,7 @@ const DIFF_MAX = 60_000
 
 export { localRepoFor }
 
-interface PrView { title?: string; body?: string; headRefName?: string; baseRefName?: string; files?: { path: string; additions: number; deletions: number }[] }
+interface PrView { files?: { path: string; additions: number; deletions: number }[] }
 
 async function noteBlock(q: QueryFn, noteId: string | null | undefined): Promise<{ block: EvidenceBlock | null; title: string | null }> {
   if (!noteId) return { block: null, title: null }
@@ -137,7 +137,6 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
       if (diff) blocks.push({ label: "gh pr diff", text: diff.length > DIFF_MAX ? `${diff.slice(0, DIFF_MAX)}\n…(diff truncated — use gh pr diff for the rest)` : diff })
       ctx.repo = t.repo && (await sh("git", ["-C", t.repo, "remote", "get-url", "origin"], { cwd: t.repo, timeoutMs: 10_000 })).out.toLowerCase().includes(ref.repo.toLowerCase())
         ? t.repo : await localRepoFor(ref.repo, `${t.noteId ?? ""} ${t.noteTitle ?? ""}`, sh)
-      ctx.pr = { head: view.headRefName ?? "", base: view.baseRefName ?? "main", number: ref.number, title: view.title ?? src.title, taskText: t.text }
     } else if (ref.source === "proposal") {
       const t = getTask(ref.taskId)
       if (t) {
@@ -212,23 +211,6 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
       if (src.ref.source !== "pr") return false
       const r = await o.gh(["pr", "comment", src.ref.prUrl, "--body", body]).catch(() => null)
       return r?.code === 0
-    },
-    async fix(src, ctx, instructions, model, timeoutMs, attempt) {
-      if (src.ref.source !== "pr" || !ctx.pr) return { kind: "failed", error: "not a PR" }
-      // An Xcode repo on a host without Xcode counts as "no checkout here" even with a clone (repo-map `requires`).
-      const repo = fixRepoHere(ctx.repo)
-      if (!repo) {
-        // Mac-only repos (tls-review, the iOS apps): the same fix run, on the peer (wiring/resolver-peer.ts).
-        const remote = await fixOnPeer({
-          itemId: itemRef(src), prUrl: src.ref.prUrl, slug: src.ref.repo, branch: ctx.pr.head, base: ctx.pr.base, title: ctx.pr.title,
-          taskText: ctx.pr.taskText, instructions, model, timeoutMs, attempt: attempt ?? 0,
-        })
-        return remote ?? { kind: "failed", error: `no local checkout of ${src.ref.repo} on this host or the peer` }
-      }
-      return runPrFix({
-        prUrl: src.ref.prUrl, number: ctx.pr.number, title: ctx.pr.title, repo, head: ctx.pr.head, base: ctx.pr.base,
-        instructions, taskText: ctx.pr.taskText, model, timeoutMs,
-      }, { sh })
     },
     async unpark(src, reason) {
       if (src.ref.source !== "pr") return

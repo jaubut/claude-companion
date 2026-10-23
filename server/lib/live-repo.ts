@@ -2,7 +2,27 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type { ShFn } from "./resolver-fix"
+
+export interface ShResult { ok: boolean; code: number; out: string; err: string }
+export type ShFn = (cmd: string, args: string[], opts: { cwd: string; timeoutMs: number; env?: Record<string, string> }) => Promise<ShResult>
+
+/** The real shell: Bun.spawn with a timeout; never throws. */
+export const realSh: ShFn = async (cmd, args, opts) => {
+  let proc: ReturnType<typeof Bun.spawn>
+  try {
+    proc = Bun.spawn([cmd, ...args], { cwd: opts.cwd, env: opts.env ?? (process.env as Record<string, string>), stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+  } catch (err) {
+    return { ok: false, code: -1, out: "", err: (err as Error)?.message ?? "spawn failed" }
+  }
+  const timer = setTimeout(() => { try { proc.kill() } catch { /* gone */ } }, opts.timeoutMs)
+  try {
+    const [out, err] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), new Response(proc.stderr as ReadableStream).text()])
+    const code = await proc.exited
+    return { ok: code === 0, code, out, err }
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 // The project → repo table (REPO_MAP), read as text, read-only, from
 // claude-config's tools: `repo-map.ts` (claude-config #21 moved it there:
@@ -10,14 +30,14 @@ import type { ShFn } from "./resolver-fix"
 // checkout, `dispatch-run.ts` (`{ match, path: `${HOME}/dir` }`). Neither is
 // imported (dispatch-run runs on import; repo-map.ts lives outside this repo).
 // First entry whose match hits AND whose directory exists on this host wins —
-// dispatch-run's own rule. Used by live-mode cwd, the resolver's checkout
-// lookup and the brain's project catalog.
+// dispatch-run's own rule. Used by the resolver's checkout lookup (read-only
+// evidence) and the brain's project catalog. Also home of the shell seam
+// (ShFn / realSh) those lookups run git through.
 //
 // `requires: ["xcode"]` (claude-config, 2026-10-05) marks the iOS/macOS apps:
 // code for them runs only on a host with macOS + xcodebuild (the Mac). Here,
-// an Xcode repo on a host without Xcode counts as "no local checkout" for the
-// resolver's fix run (→ forwarded to the Mac peer) and as `no_cwd` for live
-// mode, even when a clone exists on this host.
+// an Xcode repo on a host without Xcode counts as "no local checkout", even
+// when a clone exists on this host.
 
 export interface RepoEntry { match: RegExp; path: string; name?: string; project?: string; requires?: string[]; /** GitHub "owner/name" (claude-config `github`). */ github?: string }
 

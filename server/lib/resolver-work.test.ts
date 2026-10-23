@@ -3,7 +3,6 @@ import { Database } from "bun:sqlite"
 import type { InvestigationResult } from "./body-investigate"
 import type { Autonomy } from "./resolver"
 import type { Job } from "./resolver-engine"
-import type { FixOutcome } from "./resolver-fix"
 import type { ResolverContext } from "./resolver-prompt"
 import { createResolverStore } from "./resolver-store"
 import { type PlanReport, type WorkSeams, createResolverWork } from "./resolver-work"
@@ -22,7 +21,7 @@ let executed: { action: TriageAction; by: string }[]
 let records: { action: string; summary: string; meta: Record<string, unknown> }[]
 let comments: string[]
 let turns: string[]
-let fixOut: FixOutcome
+let unparkErr: string | null
 let execOut: ExecOutcome
 let bodyOut: { ok: true; result: InvestigationResult } | { ok: false; error: string }
 let reports: PlanReport[]
@@ -74,8 +73,7 @@ function seams(): WorkSeams {
     applyBody: async () => { calls.push("applyBody"); return bodyOut.ok && bodyOut.result.recommendedFix ? "prop-9" : null },
     execute: async (_src, action, by) => { executed.push({ action, by }); return execOut },
     comment: async (_src, b) => { comments.push(b); return true },
-    fix: async (_s, _c, instructions) => { calls.push(`fix:${instructions}`); return fixOut },
-    unpark: async (_s, reason) => { calls.push(`unpark:${reason}`) },
+    unpark: async (_s, reason) => { calls.push(`unpark:${reason}`); if (unparkErr) throw new Error(unparkErr) },
     revise: async (_s, title) => { calls.push(`revise:${title}`); return "p2" },
     route: async (_s, repo) => { calls.push(`route:${repo}`); return routeOut },
     record: async (_s, action, summary, meta) => { records.push({ action, summary, meta }) },
@@ -88,9 +86,9 @@ function seams(): WorkSeams {
 const work = () => createResolverWork(seams(), (r) => reports.push(r))
 
 beforeEach(() => {
-  ctx = { repo: "/repo", readableDirs: [], blocks: [], sensitivePaths: [], sensitive: false, rescuedBefore: false, pr: { head: "dispatch/ab12", base: "main", number: 9, title: "Fix uploads", taskText: "Fix uploads" } }
+  ctx = { repo: "/repo", readableDirs: [], blocks: [], sensitivePaths: [], sensitive: false, rescuedBefore: false }
   calls = []; executed = []; records = []; comments = []; turns = []; reports = []; routeOut = { ok: true }
-  fixOut = { kind: "pushed", sha: "abcdef1234567", summary: "Mocked the clock" }
+  unparkErr = null
   execOut = { kind: "done" }
   bodyOut = { ok: false, error: "x" }
   model = reply({})
@@ -149,15 +147,23 @@ describe("parked PR", () => {
     }
   })
 
-  test("sensitive + problems → fix run on the PR branch, comment, then still a card (not unparked)", async () => {
+  test("sensitive + problems → Jeremie's card with 'Ask for changes'; nothing handed back, no comment", async () => {
     ctx.sensitive = true
     model = reply({ action: { kind: "fix", instructions: "Add the expiry check to the session cookie" }, review: review("changes", ["no expiry check"]) })
     const out = await work()(job(pr("touches server/lib/auth.ts — needs your review")))
-    expect(calls).toContain("fix:Add the expiry check to the session cookie")
     expect(calls.some((c) => c.startsWith("unpark"))).toBe(false)
-    expect(comments[0]).toContain("Opus pushed a fix (abcdef12)")
-    expect(out).toMatchObject({ kind: "prepared", action: "fix" })
-    expect(records.map((r) => r.action)).toEqual(["resolver:fix"])
+    expect(comments).toEqual([])
+    expect(out.kind).toBe("prepared")
+    if (out.kind === "prepared") expect(out.phrase.options[0]!.label).toBe("Ask for changes")
+    expect(records.map((r) => r.action)).toEqual(["resolver:prepared"])
+  })
+
+  test("sensitive: Jeremie's 'Ask for changes' hands it back to the shepherd's fix run", async () => {
+    ctx.sensitive = true
+    model = reply({ action: { kind: "fix", instructions: "Add the expiry check" }, review: review("changes", ["no expiry check"]) })
+    const out = await work()(job(pr("touches server/lib/auth.ts"), "elevated", "Fix on the PR branch: no expiry check"))
+    expect(calls).toContain("unpark:Opus rescue: Add the expiry check")
+    expect(out).toMatchObject({ kind: "resolved", action: "fix" })
   })
 
   test("sensitive: 'do it' from Jeremie merges through the guarded merge", async () => {
@@ -180,27 +186,21 @@ describe("parked PR", () => {
     }
   })
 
-  test("CI failing after 2 fixes → one rescue: fix run + hand back to the shepherd", async () => {
+  test("CI failing after 2 fixes → one rescue: the instructions go on the PR, the PR goes back to the shepherd's fix run", async () => {
     model = reply({ action: { kind: "fix", instructions: "The upload test races the clock; inject it" }, category: "ci_failing" })
     const out = await work()(job(pr()))
-    expect(calls).toEqual(["gather", "analyze:true", "fix:The upload test races the clock; inject it", "unpark:Opus rescue: The upload test races the clock; inject it"])
-    expect(out).toMatchObject({ kind: "resolved", action: "fix" })
-    expect(turns[0]).toContain("Opus pushed a fix (abcdef12)")
+    expect(calls).toEqual(["gather", "analyze:true", "unpark:Opus rescue: The upload test races the clock; inject it"])
+    expect(comments[0]).toContain("handing this PR back to the shepherd's fix run")
+    expect(comments[0]).toContain("The upload test races the clock; inject it")
+    expect(out).toMatchObject({ kind: "resolved", action: "fix", summary: "Opus handed the PR back to the shepherd's fix run: The upload test races the clock; inject it" })
+    expect(turns[0]).toContain("handed the PR back")
+    expect(records[0]).toMatchObject({ action: "resolver:fix", meta: expect.objectContaining({ then: "unpark", outcome: "done" }) })
   })
 
-  test("already rescued once → card, no second fix", async () => {
+  test("already rescued once → card, no second hand-back", async () => {
     ctx.rescuedBefore = true
     model = reply({ action: { kind: "fix", instructions: "again" }, category: "ci_failing" })
     expect((await work()(job(pr()))).kind).toBe("prepared")
-    expect(calls.some((c) => c.startsWith("fix"))).toBe(false)
-  })
-
-  test("the fix agent blocked → card with its reason, nothing unparked", async () => {
-    fixOut = { kind: "blocked", reason: "needs a Stripe test key" }
-    model = reply({ action: { kind: "fix", instructions: "x" }, category: "ci_failing" })
-    const out = await work()(job(pr()))
-    expect(out.kind).toBe("prepared")
-    if (out.kind === "prepared") expect(out.phrase.context).toContain("The fix agent stopped: needs a Stripe test key")
     expect(calls.some((c) => c.startsWith("unpark"))).toBe(false)
   })
 })
@@ -277,50 +277,30 @@ describe("honest outcome + loop guard", () => {
     return { ...seams(), failures: (s, a) => store.failures(`${s.source}:${s.refId}`, a, 0), attempt: (s, a, e) => store.attempt(`${s.source}:${s.refId}`, a, e, NOW) }
   }
 
-  test("a failed fix says so first, offers a retry, never 'Ask for changes'; the 2nd identical failure gives up; no 3rd run", async () => {
+  test("a failed hand-back says so first, offers a retry, never 'Ask for changes'; the 2nd identical failure gives up; no 3rd try", async () => {
     ctx.sensitive = true
-    fixOut = { kind: "failed", error: "no local checkout of jaubut/tls-review on this host" }
-    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, review: problems, summary: "Fix run on the PR branch for your 7 points" })
+    unparkErr = "turso_unreachable"
+    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, review: problems, summary: "Hand back for your 7 points" })
     const w = createResolverWork(guarded())
     const one = await w(job(pr("touches server/lib/auth.ts"), "elevated", "Fix on the PR branch: status overwrite"))
-    expect(one).toMatchObject({ kind: "prepared", outcome: "failed", summary: "Fix failed: no local checkout of jaubut/tls-review on this host" })
+    expect(one).toMatchObject({ kind: "prepared", outcome: "failed", summary: "Fix failed: hand-back failed: turso_unreachable" })
     if (one.kind !== "prepared") throw new Error("not prepared")
-    expect(one.phrase.problem.startsWith("Fix failed: no local checkout")).toBe(true)
+    expect(one.phrase.problem.startsWith("Fix failed: hand-back failed")).toBe(true)
     expect(one.phrase.options[0]).toMatchObject({ label: "Ask Opus to retry", action: { kind: "ask_opus", instruction: "Try the fix again on the PR branch: Protect paid" } })
     expect(one.phrase.options.some((o) => o.label === "Ask for changes")).toBe(false)
     const two = await w(job(pr("touches server/lib/auth.ts"), "elevated", "Try the fix again on the PR branch: Protect paid"))
-    expect(two).toMatchObject({ kind: "prepared", outcome: "failed", summary: "Opus tried twice: no local checkout of jaubut/tls-review on this host" })
+    expect(two).toMatchObject({ kind: "prepared", outcome: "failed", summary: "Opus tried twice: hand-back failed: turso_unreachable" })
     if (two.kind === "prepared") {
       expect(two.phrase.options[0]!.action).toEqual({ kind: "open_url", url: "https://github.com/jaubut/tls-review/pull/9" })
       expect(two.phrase.options.some((o) => o.action.kind === "ask_opus")).toBe(false)
     }
     calls = []
     const three = await w(job(pr("touches server/lib/auth.ts"), "elevated", "Fix on the PR branch: status overwrite"))
-    expect(calls.some((c) => c.startsWith("fix:"))).toBe(false)
-    expect(three).toMatchObject({ outcome: "failed", summary: "Opus tried twice: no local checkout of jaubut/tls-review on this host" })
+    expect(calls.some((c) => c.startsWith("unpark:"))).toBe(false)
+    expect(three).toMatchObject({ outcome: "failed", summary: "Opus tried twice: hand-back failed: turso_unreachable" })
     // Jeremie's own "retry" lifts the guard.
     await w(job(pr("touches server/lib/auth.ts"), "elevated", "retry"))
-    expect(calls.some((c) => c.startsWith("fix:"))).toBe(true)
-  })
-
-  test("a pushed fix on a sensitive PR: 'Fix pushed <sha8>: …; CI re-running', Wait for CI first, Merge only once green", async () => {
-    ctx.sensitive = true
-    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, review: problems })
-    const out = await createResolverWork(guarded())(job(pr("touches server/lib/auth.ts")))
-    expect(out).toMatchObject({ kind: "prepared", outcome: "done", summary: "Fix pushed abcdef12: Mocked the clock; CI re-running" })
-    if (out.kind === "prepared") {
-      expect(out.phrase.options[0]!.action).toEqual({ kind: "snooze", hours: 1 })
-      expect(out.phrase.options.find((o) => o.action.kind === "merge")?.detail).toContain("CI is green")
-      expect(out.phrase.options.some((o) => o.label === "Ask for changes")).toBe(false)
-    }
-  })
-
-  test("no change made → 'No change needed: …', outcome no_change", async () => {
-    ctx.sensitive = true
-    fixOut = { kind: "no_changes", summary: "paid is already protected by the WHERE clause" }
-    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, review: problems })
-    const out = await createResolverWork(guarded())(job(pr("touches server/lib/auth.ts")))
-    expect(out).toMatchObject({ kind: "prepared", outcome: "no_change", summary: "No change needed: paid is already protected by the WHERE clause" })
+    expect(calls.some((c) => c.startsWith("unpark:"))).toBe(true)
   })
 
   test("'Fix it' on a task Opus finds already done: it cancels (closes) it, no card", async () => {
@@ -336,34 +316,6 @@ describe("honest outcome + loop guard", () => {
     const out = await createResolverWork(guarded())(job(task(), "elevated", "just look, don't answer"))
     expect(executed).toEqual([])
     expect(out).toMatchObject({ kind: "prepared", outcome: "planned" })
-  })
-})
-
-describe("transient fix failures (Mac unreachable)", () => {
-  test("a card that says so, a retry offered, the reason marked transient, and never a loop-guard count", async () => {
-    const store = createResolverStore(new Database(":memory:"))
-    const s: WorkSeams = { ...seams(), failures: (x, a) => store.failures(`${x.source}:${x.refId}`, a, 0), attempt: (x, a, e) => store.attempt(`${x.source}:${x.refId}`, a, e, NOW) }
-    fixOut = { kind: "failed", error: "Mac unreachable (TimeoutError)", transient: true }
-    model = reply({ action: { kind: "fix", instructions: "Protect paid" }, category: "ci_failing" })
-    const w = createResolverWork(s)
-    for (let i = 0; i < 3; i++) {
-      calls = []
-      const out = await w(job(pr(), "elevated", "Fix on the PR branch: protect paid"))
-      expect(calls.some((c) => c.startsWith("fix:"))).toBe(true)
-      expect(out).toMatchObject({ kind: "prepared", outcome: "failed", reason: "transient: fix: Mac unreachable (TimeoutError)" })
-      if (out.kind !== "prepared") throw new Error("not prepared")
-      expect(out.summary).toBe("Fix not run: Mac unreachable (TimeoutError); Opus retries later")
-      expect(out.phrase.options[0]).toMatchObject({ label: "Ask Opus to retry" })
-    }
-    expect(store.failures("pr:jaubut/tls-review#9", "fix", 0)).toBeNull()
-  })
-
-  test("the fix seam gets the run id as the peer's attempt key", async () => {
-    let seen: number | undefined
-    const s: WorkSeams = { ...seams(), fix: async (_s, _c, _i, _m, _t, attempt) => { seen = attempt; return fixOut } }
-    model = reply({ action: { kind: "fix", instructions: "x" }, category: "ci_failing" })
-    await createResolverWork(s)(job(pr()))
-    expect(seen).toBe(1)
   })
 })
 
@@ -427,8 +379,7 @@ describe("delegated (Jeremie's Yes on a repo card, 2026-10-15)", () => {
     ctx.rescuedBefore = true
     model = reply({ action: { kind: "fix", instructions: "Mock the clock" }, category: "ci_failing" })
     const out = await work()(job(pr(), "delegated", "Yes on the repo"))
-    expect(calls).toContain("fix:Mock the clock")
-    expect(calls.some((c) => c.startsWith("unpark:"))).toBe(true)
+    expect(calls).toContain("unpark:Opus rescue: Mock the clock")
     expect(out).toMatchObject({ kind: "resolved", action: "fix" })
   })
 })

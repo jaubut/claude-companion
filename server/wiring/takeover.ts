@@ -8,11 +8,10 @@ import { type TakeoverOutcome, claimTakeover, detectPrUrl, finishTakeover, takeo
 import { type DispatchTask, type LiveIdentity, type WriteOutcome, getDispatchTask } from "../lib/dispatch-tasks"
 import { type Herdr, closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, realHerdr } from "../lib/herdr"
 import { type HerdrDelivery, deliverViaHerdr } from "../lib/herdr-inject"
-import { type RepoEntry, hostCan, isDir, repoEntriesSafe } from "../lib/live-repo"
+import { type RepoEntry, type ShFn, hostCan, isDir, realSh, repoEntriesSafe } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { db } from "../lib/orchestrator-db"
-import { type ShFn, realSh } from "../lib/resolver-fix"
 import { listSessions } from "../lib/sessions"
 import { type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
 import {
