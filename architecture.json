@@ -611,29 +611,20 @@
         },
         {
           "path": "lib/body-fix.ts",
-          "lines": 155,
+          "lines": 67,
           "kind": "lib",
           "exports": [
-            "FIX_TIMEOUT_MS",
             "FixCard",
             "BodyFixStore",
             "createBodyFixStore",
-            "localizeCwd",
-            "fixRunsElsewhere",
-            "FixRequest",
-            "parseFixRequest",
-            "fixRequestFor",
-            "PeerFixResult",
-            "postFix"
+            "localizeCwd"
           ],
           "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [
-            "lib/body-investigate.ts"
-          ],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1461,16 +1452,10 @@
         },
         {
           "path": "lib/dispatch-live.ts",
-          "lines": 151,
+          "lines": 72,
           "kind": "lib",
           "exports": [
-            "liveOwner",
-            "claimLive",
-            "LiveOutcome",
             "detectPrUrl",
-            "detectResultRef",
-            "finishLive",
-            "listLiveOwned",
             "TAKEOVER_OWNER",
             "takeoverOwner",
             "TakeoverOutcome",
@@ -1516,7 +1501,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 407,
+          "lines": 401,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -1588,7 +1573,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 525,
+          "lines": 534,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -1607,7 +1592,6 @@
             "LiveIdentity",
             "dispatchToDto",
             "toTaskDto",
-            "isLiveLinked",
             "detectColumns",
             "POLL_WINDOW_DAYS",
             "POLL_LIMIT",
@@ -1635,8 +1619,9 @@
             "WriteOutcome",
             "readVia",
             "ledger",
+            "RequiresHost",
             "FileInput",
-            "originInsert",
+            "approveUrl",
             "fileTask",
             "cancelDispatchTask",
             "requeueTask",
@@ -1652,6 +1637,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/dashboard-client.ts",
             "lib/orchestrator-chat.ts",
             "lib/turso.ts"
           ],
@@ -2252,7 +2238,7 @@
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 304,
+          "lines": 269,
           "kind": "lib",
           "exports": [
             "RepoEntry",
@@ -2267,17 +2253,12 @@
             "hostHas",
             "hostCan",
             "pathBlockedHere",
-            "noteBlockedHere",
-            "XCODE_LIVE_REASON",
             "fixRepoHere",
             "RepoMapCheck",
             "checkRepoMap",
             "repoMapCheckLine",
             "isDir",
             "repoForNote",
-            "LiveCwdInput",
-            "resolveLiveCwdWhy",
-            "resolveLiveCwd",
             "localRepoFor",
             "githubName",
             "RepoNameInput",
@@ -4778,7 +4759,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 485,
+          "lines": 484,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -5572,7 +5553,7 @@
         },
         {
           "path": "routes/body.ts",
-          "lines": 166,
+          "lines": 149,
           "kind": "route-host",
           "exports": [
             "BodyRouteDeps",
@@ -5605,11 +5586,6 @@
             },
             {
               "method": "POST",
-              "path": "/api/body/fix",
-              "prefix": false
-            },
-            {
-              "method": "POST",
               "path": "/api/body/investigate",
               "prefix": false
             }
@@ -5624,8 +5600,6 @@
             "lib/turso.ts",
             "wiring/body.ts",
             "lib/body-investigator.ts",
-            "lib/body-fix.ts",
-            "wiring/body-fix.ts",
             "lib/auto-compact-stats.ts",
             "wiring/auto-compact.ts",
             "lib/body-agent.ts",
@@ -5870,7 +5844,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 568,
+          "lines": 565,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -5951,7 +5925,6 @@
             "state.ts",
             "lib/hook-common.ts",
             "wiring/orchestrator.ts",
-            "wiring/live.ts",
             "wiring/takeover.ts",
             "lib/takeover.ts",
             "lib/orchestrator-chat.ts",
@@ -6071,7 +6044,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 439,
+          "lines": 413,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6141,10 +6114,8 @@
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
             "lib/dispatch-live.ts",
-            "wiring/live.ts",
             "wiring/proposals.ts",
             "wiring/front-door.ts",
-            "state.ts",
             "lib/idempotency.ts",
             "wiring/body.ts",
             "lib/turso.ts",
@@ -6420,7 +6391,7 @@
         },
         {
           "path": "wiring/body-agent.ts",
-          "lines": 187,
+          "lines": 168,
           "kind": "lib",
           "exports": [
             "BodyAgentDeps",
@@ -6452,43 +6423,6 @@
             "state.ts",
             "wiring/body-investigate.ts",
             "wiring/dispatch.ts",
-            "wiring/live.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "wiring/body-fix.ts",
-          "lines": 113,
-          "kind": "lib",
-          "exports": [
-            "BodyFixDeps",
-            "setBodyFixDeps",
-            "approveBodyFix",
-            "runBodyFix"
-          ],
-          "state": [
-            "let deps"
-          ],
-          "emits": [
-            "orchestrator_channel"
-          ],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/body.ts",
-            "lib/body-fix.ts",
-            "lib/body-investigate.ts",
-            "lib/body-investigate-engine.ts",
-            "lib/log.ts",
-            "lib/orchestrator-chat.ts",
-            "lib/orchestrator-channels.ts",
-            "state.ts",
-            "wiring/body-investigate.ts",
-            "wiring/dispatch.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ],
           "listeners": [],
@@ -6834,56 +6768,6 @@
           "externals": []
         },
         {
-          "path": "wiring/live.ts",
-          "lines": 335,
-          "kind": "lib",
-          "exports": [
-            "LiveRunner",
-            "tmuxRunner",
-            "setLiveRunner",
-            "setLiveCap",
-            "WORKER_LOST",
-            "liveSlots",
-            "LiveStatus",
-            "LiveStart",
-            "LiveOpts",
-            "approveLive",
-            "dispatchLive",
-            "finishLiveFromStop",
-            "LiveCancel",
-            "cancelLive",
-            "reconcileLiveOnBoot"
-          ],
-          "state": [
-            "let runner",
-            "let capOverride",
-            "let reserved",
-            "spawning: Set"
-          ],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/log.ts",
-            "state.ts",
-            "lib/orchestrator-chat.ts",
-            "lib/orchestrator-channels.ts",
-            "lib/dispatch-tasks.ts",
-            "lib/dispatch-live.ts",
-            "lib/live-repo.ts",
-            "lib/turso.ts",
-            "lib/tmux-pane.ts",
-            "wiring/orchestrator.ts",
-            "wiring/dispatch.ts"
-          ],
-          "listeners": [
-            "onLiveWorkerDead"
-          ],
-          "sheets": 0,
-          "externals": []
-        },
-        {
           "path": "wiring/media.ts",
           "lines": 35,
           "kind": "lib",
@@ -6907,14 +6791,13 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 493,
+          "lines": 488,
           "kind": "lib",
           "exports": [
             "orchEmit",
             "emitTask",
             "onTaskEmitted",
             "setTriageDigest",
-            "onLiveWorkerDead",
             "emitChannel",
             "vetoAuto",
             "WIP_CAP",
@@ -6937,7 +6820,6 @@
           "state": [
             "taskListeners: Set",
             "let triageDigest",
-            "let liveWorkerDead",
             "let reconcileChain"
           ],
           "emits": [
@@ -6977,11 +6859,11 @@
         },
         {
           "path": "wiring/proposals.ts",
-          "lines": 82,
+          "lines": 75,
           "kind": "lib",
           "exports": [
             "ApproveOpts",
-            "liveResponse",
+            "filedStatus",
             "approveProposal",
             "rejectProposal",
             "reviseProposal"
@@ -6995,10 +6877,8 @@
             "lib/body.ts",
             "lib/orchestrator-chat.ts",
             "lib/dispatch-tasks.ts",
-            "lib/dispatch-live.ts",
-            "wiring/body-fix.ts",
             "wiring/dispatch.ts",
-            "wiring/live.ts",
+            "wiring/body-investigate.ts",
             "wiring/orchestrator.ts"
           ],
           "listeners": [],
@@ -7342,7 +7222,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 459,
+          "lines": 458,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -7527,7 +7407,6 @@
             "routes/my-tasks.ts",
             "wiring/auto-compact.ts",
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/canvas.ts",
@@ -7581,10 +7460,8 @@
           "callers": [
             "companion-server.ts",
             "routes/api.ts#* /api/status",
-            "routes/orchestrator.ts",
             "wiring/body-agent.ts",
             "wiring/canvas.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts",
@@ -8028,7 +7905,6 @@
             "routes/vault.ts",
             "wiring/auto-compact.ts",
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/canvas.ts",
@@ -8036,7 +7912,6 @@
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/front-door.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/resolver-peer.ts",
             "wiring/resolver.ts",
@@ -8304,23 +8179,12 @@
             "wiring/receipt-qa.ts"
           ]
         },
-        "BodyHost": {
-          "module": "lib/body-investigate.ts",
-          "callers": [
-            "lib/body-fix.ts",
-            "lib/body-investigate-engine.ts",
-            "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
-            "wiring/resolver-peer.ts"
-          ]
-        },
         "localBodyHost": {
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts",
             "routes/resolver.ts#GET /api/resolver/has-repo",
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/resolver-peer.ts",
             "wiring/resolver.ts",
@@ -8331,6 +8195,14 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts"
+          ]
+        },
+        "BodyHost": {
+          "module": "lib/body-investigate.ts",
+          "callers": [
+            "lib/body-investigate-engine.ts",
+            "wiring/body-agent.ts",
+            "wiring/resolver-peer.ts"
           ]
         },
         "InvestigationStore": {
@@ -8353,8 +8225,7 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts",
-            "wiring/body-agent.ts",
-            "wiring/body-fix.ts"
+            "wiring/body-agent.ts"
           ]
         },
         "routeFor": {
@@ -8434,8 +8305,6 @@
             "lib/worker-identity.ts",
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
-            "wiring/body-fix.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts"
@@ -8509,7 +8378,6 @@
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/orchestrator.ts",
@@ -8619,7 +8487,6 @@
             "lib/body-tokens.ts",
             "lib/body.ts",
             "lib/canvas.ts",
-            "lib/dispatch-live.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
@@ -9118,12 +8985,11 @@
             "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
-        "DispatchColumns": {
+        "WriteCtx": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-live.ts",
-            "lib/dispatch-poller.ts",
-            "lib/triage-sources.ts"
+            "wiring/orchestrator.ts"
           ]
         },
         "getDispatchTask": {
@@ -9131,18 +8997,10 @@
           "callers": [
             "lib/dispatch-live.ts",
             "routes/orchestrator.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/resolver.ts",
             "wiring/takeover.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "WriteCtx": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-live.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "readVia": {
@@ -9156,18 +9014,6 @@
           "callers": [
             "lib/dispatch-live.ts",
             "lib/dispatch-poller.ts"
-          ]
-        },
-        "FileInput": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-live.ts"
-          ]
-        },
-        "originInsert": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-live.ts"
           ]
         },
         "seenKey": {
@@ -9186,7 +9032,6 @@
             "lib/status-answer.ts",
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
-            "wiring/live.ts",
             "wiring/takeover.ts",
             "wiring/triage.ts"
           ]
@@ -9196,6 +9041,13 @@
           "callers": [
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts"
+          ]
+        },
+        "DispatchColumns": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "lib/triage-sources.ts"
           ]
         },
         "LiveIdentity": {
@@ -9292,7 +9144,6 @@
             "routes/my-tasks.ts",
             "routes/orchestrator.ts",
             "routes/tasks-agent.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/takeover-choose.ts",
             "wiring/takeover.ts",
@@ -9354,6 +9205,12 @@
           "callers": [
             "lib/dispatch-tasks.ts",
             "lib/orchestrator-channels.ts"
+          ]
+        },
+        "dashboardBase": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/dispatch-tasks.ts"
           ]
         },
         "Catalog": {
@@ -9617,7 +9474,6 @@
             "lib/submit-confirm.ts",
             "routes/command.ts",
             "wiring/dialogs.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -11934,8 +11790,6 @@
             "lib/worker-tail.ts",
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
@@ -11995,8 +11849,7 @@
         "LIVE_STATUSES": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "lib/worker-tail.ts",
-            "wiring/live.ts"
+            "lib/worker-tail.ts"
           ]
         },
         "setTaskLogTail": {
@@ -12354,12 +12207,6 @@
             "routes/body.ts"
           ]
         },
-        "runBodyFix": {
-          "module": "wiring/body-fix.ts",
-          "callers": [
-            "routes/body.ts"
-          ]
-        },
         "bodySnapshot": {
           "module": "wiring/body.ts",
           "callers": [
@@ -12438,12 +12285,6 @@
           "module": "lib/body-alert.ts",
           "callers": [
             "routes/body.ts#POST /api/body/alert"
-          ]
-        },
-        "parseFixRequest": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "routes/body.ts#POST /api/body/fix"
           ]
         },
         "parseInvestigateBody": {
@@ -12968,15 +12809,8 @@
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts"
-          ]
-        },
-        "finishLiveFromStop": {
-          "module": "wiring/live.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "emitTask": {
@@ -12984,8 +12818,6 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
             "routes/orchestrator.ts",
-            "wiring/body-fix.ts",
-            "wiring/live.ts",
             "wiring/proposals.ts"
           ]
         },
@@ -12996,9 +12828,7 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/body-fix.ts",
             "wiring/front-door.ts",
-            "wiring/live.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/takeover.ts",
@@ -13064,9 +12894,7 @@
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/front-door.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/takeover.ts",
@@ -13165,7 +12993,6 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts",
             "wiring/proposals.ts",
             "wiring/takeover.ts",
             "wiring/triage.ts"
@@ -13175,12 +13002,10 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
@@ -13226,7 +13051,6 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/dispatch.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
@@ -13255,7 +13079,6 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -13294,20 +13117,11 @@
             "wiring/triage.ts"
           ]
         },
-        "isLiveLinked": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
         "resolveAgent": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -13315,7 +13129,6 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -13337,16 +13150,7 @@
           "module": "lib/tmux-pane.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts"
-          ]
-        },
-        "liveOwner": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "wiring/live.ts",
-            "wiring/proposals.ts"
           ]
         },
         "rejectProposal": {
@@ -13363,19 +13167,7 @@
             "wiring/triage.ts"
           ]
         },
-        "cancelLive": {
-          "module": "wiring/live.ts",
-          "callers": [
-            "routes/orchestrator.ts"
-          ]
-        },
-        "dispatchLive": {
-          "module": "wiring/live.ts",
-          "callers": [
-            "routes/orchestrator.ts"
-          ]
-        },
-        "liveResponse": {
+        "filedStatus": {
           "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts"
@@ -13876,25 +13668,6 @@
             "wiring/body-agent.ts"
           ]
         },
-        "PeerConfig": {
-          "module": "lib/body-investigate-engine.ts",
-          "callers": [
-            "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
-            "wiring/resolver-peer.ts",
-            "wiring/takeover.ts"
-          ]
-        },
-        "bodyPeer": {
-          "module": "lib/body-investigate-engine.ts",
-          "callers": [
-            "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
-            "wiring/body-investigate.ts",
-            "wiring/resolver-peer.ts",
-            "wiring/takeover.ts"
-          ]
-        },
         "investigationStore": {
           "module": "wiring/body-investigate.ts",
           "callers": [
@@ -13908,7 +13681,7 @@
           "module": "wiring/body-investigate.ts",
           "callers": [
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
+            "wiring/proposals.ts",
             "wiring/triage.ts"
           ]
         },
@@ -13931,7 +13704,6 @@
           "module": "lib/body.ts",
           "callers": [
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts"
           ]
@@ -13940,7 +13712,6 @@
           "module": "lib/orchestrator-channels.ts",
           "callers": [
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts"
           ]
@@ -13948,87 +13719,36 @@
         "localizeCwd": {
           "module": "lib/body-fix.ts",
           "callers": [
-            "wiring/body-agent.ts",
-            "wiring/body-fix.ts"
+            "wiring/body-agent.ts"
           ]
         },
         "createProposal": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/body-investigate.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts"
           ]
         },
-        "approveLive": {
-          "module": "wiring/live.ts",
+        "fileProposal": {
+          "module": "wiring/orchestrator.ts",
           "callers": [
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts",
             "wiring/proposals.ts"
-          ]
-        },
-        "postFix": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "wiring/body-agent.ts",
-            "wiring/body-fix.ts"
           ]
         },
         "ownerHost": {
           "module": "lib/body-investigate.ts",
           "callers": [
+            "wiring/body-agent.ts"
+          ]
+        },
+        "approveUrl": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
             "wiring/body-agent.ts",
-            "wiring/body-fix.ts"
-          ]
-        },
-        "BodyFixStore": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "wiring/body-fix.ts"
-          ]
-        },
-        "LiveStart": {
-          "module": "wiring/live.ts",
-          "callers": [
-            "wiring/body-fix.ts",
             "wiring/proposals.ts"
-          ]
-        },
-        "fixRunsElsewhere": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "wiring/body-fix.ts"
-          ]
-        },
-        "fixRequestFor": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "wiring/body-fix.ts"
-          ]
-        },
-        "stampDispatchId": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/live.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "markFiled": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/body-fix.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "FixRequest": {
-          "module": "lib/body-fix.ts",
-          "callers": [
-            "wiring/body-fix.ts"
           ]
         },
         "BodyInvestigator": {
@@ -14047,6 +13767,14 @@
           "module": "lib/body-investigate-engine.ts",
           "callers": [
             "wiring/body-investigate.ts"
+          ]
+        },
+        "bodyPeer": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/body-investigate.ts",
+            "wiring/resolver-peer.ts",
+            "wiring/takeover.ts"
           ]
         },
         "repoNameFromRemote": {
@@ -14289,7 +14017,6 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/dispatch.ts",
-            "wiring/live.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -14303,8 +14030,7 @@
         "getTaskByDispatchId": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "wiring/dispatch.ts",
-            "wiring/live.ts"
+            "wiring/dispatch.ts"
           ]
         },
         "takeoverIdentity": {
@@ -14559,74 +14285,6 @@
             "wiring/gauge.ts"
           ]
         },
-        "setLiveTarget": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "claimLive": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "LiveOutcome": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "detectPrUrl": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/live.ts",
-            "wiring/takeover.ts"
-          ]
-        },
-        "detectResultRef": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "finishLive": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/live.ts",
-            "wiring/proposals.ts"
-          ]
-        },
-        "listLiveOwned": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "executeDispatch": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "WIP_CAP": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "resolveLiveCwdWhy": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
-        "onLiveWorkerDead": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "wiring/live.ts"
-          ]
-        },
         "sweepMedia": {
           "module": "lib/media.ts",
           "callers": [
@@ -14651,7 +14309,25 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "stampDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "markFiled": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
         "agentAllowlist": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "RequiresHost": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "wiring/orchestrator.ts"
@@ -14704,18 +14380,6 @@
           "module": "lib/project-catalog.ts",
           "callers": [
             "wiring/orchestrator.ts"
-          ]
-        },
-        "approveBodyFix": {
-          "module": "wiring/body-fix.ts",
-          "callers": [
-            "wiring/proposals.ts"
-          ]
-        },
-        "fileProposal": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "wiring/proposals.ts"
           ]
         },
         "QaItem": {
@@ -14867,6 +14531,13 @@
           "module": "lib/resolver-peer.ts",
           "callers": [
             "wiring/resolver-peer.ts"
+          ]
+        },
+        "PeerConfig": {
+          "module": "lib/body-investigate-engine.ts",
+          "callers": [
+            "wiring/resolver-peer.ts",
+            "wiring/takeover.ts"
           ]
         },
         "runPrFix": {
@@ -15202,6 +14873,12 @@
           ]
         },
         "finishTakeover": {
+          "module": "lib/dispatch-live.ts",
+          "callers": [
+            "wiring/takeover.ts"
+          ]
+        },
+        "detectPrUrl": {
           "module": "lib/dispatch-live.ts",
           "callers": [
             "wiring/takeover.ts"

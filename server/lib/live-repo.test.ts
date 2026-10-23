@@ -3,10 +3,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  type HostProbe, XCODE_LIVE_REASON, checkRepoMap, fixRepoHere, hostCan, localRepoFor, locateRepoMap, parseRepoMap, parseRequires, repoForNote,
-  githubName, repoEntriesSafe, repoMapCandidates, repoMapCheckLine, repoNameFor, resolveLiveCwd, resolveLiveCwdWhy,
+  type HostProbe, checkRepoMap, fixRepoHere, hostCan, localRepoFor, locateRepoMap, parseRepoMap, parseRequires, repoForNote,
+  githubName, repoEntriesSafe, repoMapCandidates, repoMapCheckLine, repoNameFor,
 } from "./live-repo"
-import { detectPrUrl, detectResultRef } from "./dispatch-live"
+import { detectPrUrl } from "./dispatch-live"
 
 // Live-mode cwd resolution (P4): dispatch-run.ts's REPO_MAP read as text.
 
@@ -42,14 +42,6 @@ describe("parseRepoMap", () => {
     } finally {
       process.env.HOME = saved
     }
-  })
-
-  test("resolveLiveCwd: explicit must exist; else task, then channel cwd", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cc-live-cwd-"))
-    expect(resolveLiveCwd({ explicit: dir })).toBe(dir)
-    expect(resolveLiveCwd({ explicit: join(dir, "nope"), taskCwd: dir })).toBeNull()
-    expect(resolveLiveCwd({ taskCwd: join(dir, "nope"), channelCwd: dir })).toBe(dir)
-    expect(resolveLiveCwd({ taskCwd: "", channelCwd: null })).toBeNull()
   })
 })
 
@@ -133,12 +125,10 @@ describe("repo-map.ts (claude-config #21 format)", () => {
 })
 
 describe("worker output detection", () => {
-  test("last PR URL and last RES ref", () => {
+  test("last PR URL", () => {
     const text = "see https://github.com/a/b/pull/1 then https://github.com/jaubut/claude-companion/pull/104. Note RES-AB12, RES-CD34"
     expect(detectPrUrl(text)).toBe("https://github.com/jaubut/claude-companion/pull/104")
-    expect(detectResultRef(text)).toBe("RES-CD34")
     expect(detectPrUrl("no pr")).toBeNull()
-    expect(detectResultRef("PRJ-WCLS only")).toBeNull()
   })
 })
 
@@ -242,23 +232,6 @@ describe("Xcode repo on a host without Xcode", () => {
       expect(fixRepoHere(clone, MAC)).toBe(clone)
       expect(fixRepoHere(join(f.home, "tls-dashboard-v2"), LINUX)).toBe(join(f.home, "tls-dashboard-v2"))
       expect(fixRepoHere(null, MAC)).toBeNull()
-    } finally {
-      f.restore()
-    }
-  })
-
-  test("live cwd: Xcode note / explicit path / fallback cwd on linux → no_cwd with the reason; darwin → the clone", () => {
-    const f = fixture()
-    try {
-      const clone = join(f.home, "lanes", "ndi-wireless")
-      const other = join(f.home, "claude-companion")
-      expect(resolveLiveCwdWhy({ noteId: "projects/ndi-wireless", noteTitle: "NDI", channelCwd: other }, LINUX)).toEqual({ cwd: null, reason: XCODE_LIVE_REASON })
-      expect(resolveLiveCwdWhy({ explicit: clone }, LINUX)).toEqual({ cwd: null, reason: XCODE_LIVE_REASON })
-      expect(resolveLiveCwdWhy({ noteId: "projects/misc", noteTitle: "Misc", taskCwd: clone }, LINUX)).toEqual({ cwd: null, reason: XCODE_LIVE_REASON })
-      expect(resolveLiveCwdWhy({ noteId: "projects/misc", noteTitle: "Misc", taskCwd: clone, channelCwd: other }, LINUX)).toEqual({ cwd: other, reason: null })
-      expect(resolveLiveCwd({ noteId: "projects/ndi-wireless", noteTitle: "NDI" }, MAC)).toBe(clone)
-      expect(resolveLiveCwdWhy({ noteId: "projects/d", noteTitle: "TLS Dashboard" }, LINUX)).toEqual({ cwd: join(f.home, "tls-dashboard-v2"), reason: null })
-      expect(resolveLiveCwdWhy({ noteId: "projects/misc", noteTitle: "Misc" }, LINUX)).toEqual({ cwd: null, reason: null })
     } finally {
       f.restore()
     }

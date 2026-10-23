@@ -4,8 +4,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
-import type { LiveRunner } from "../wiring/live"
-import type { Task } from "../lib/orchestrator-chat"
 import type { SourceItem } from "../lib/triage"
 import type { GhFn } from "../lib/triage-pr"
 import type { ConsiderInput } from "../lib/body-investigate-engine"
@@ -31,16 +29,12 @@ let poller: typeof import("../lib/dispatch-poller")
 let mirror: typeof import("../lib/dispatch-mirror")
 let chat: typeof import("../lib/orchestrator-chat")
 let channels: typeof import("../lib/orchestrator-channels")
-let live: typeof import("../wiring/live")
-let fix: typeof import("../wiring/body-fix")
 let fixLib: typeof import("../lib/body-fix")
 let triageWiring: typeof import("../wiring/triage")
 let triageRoute: typeof import("./triage")
 let invLib: typeof import("../lib/body-investigate")
-let host: string
 let sqlite: typeof import("../lib/orchestrator-db")["db"]
 let fixStore: import("../lib/body-fix").BodyFixStore
-let prevDeps: import("../wiring/body-fix").BodyFixDeps
 let channelId: string
 
 // ── fake Turso ───────────────────────────────────────────────────────────────
@@ -53,7 +47,8 @@ turso.exec(`
     done INTEGER DEFAULT 0, due_date TEXT DEFAULT '', position INTEGER DEFAULT 0, assignee TEXT,
     created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
     dispatch_status TEXT, dispatch_run_id TEXT, dispatch_started_at TEXT, dispatch_completed_at TEXT,
-    dispatch_blocker TEXT, dispatch_owner TEXT, dispatch_result_ref TEXT, dispatch_pr_url TEXT, last_pm_review TEXT
+    dispatch_blocker TEXT, dispatch_owner TEXT, dispatch_result_ref TEXT, dispatch_pr_url TEXT, last_pm_review TEXT,
+    requires_host TEXT NOT NULL DEFAULT 'any'
   );
   CREATE TABLE agent_activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT, agent_slug TEXT NOT NULL, action TEXT NOT NULL, target_kind TEXT,
@@ -79,26 +74,6 @@ function turTask(status: string, blocker: string | null, over: Record<string, un
 }
 
 // ── fakes ────────────────────────────────────────────────────────────────────
-
-const spawns: { taskId: string; cwd: string }[] = []
-const fakeRunner: LiveRunner = {
-  async spawn(t: Task) {
-    spawns.push({ taskId: t.taskId, cwd: t.cwd })
-    chat.setTaskSpawn(t.taskId, `cc-fake-${t.taskId}`, null)
-    return { ok: true }
-  },
-  async kill() {},
-  async alive() { return true },
-}
-
-const peerCalls: Record<string, unknown>[] = []
-const peerFetch = (async (_url: string, init: RequestInit) => {
-  const body = JSON.parse(String(init.body)) as Record<string, unknown>
-  peerCalls.push(body)
-  const req = fixLib.parseFixRequest(body)
-  if ("error" in req) return Response.json({ ok: false, error: req.error }, { status: 400 })
-  return fix.runBodyFix(req, harness.w, "mac")
-}) as unknown as typeof fetch
 
 let ghState = "OPEN"
 /** `gh pr view --json mergeable,…` (merge intent); {} = GitHub reports nothing. */
@@ -193,23 +168,15 @@ beforeAll(async () => {
   sqlite = (await import("../lib/orchestrator-db")).db
   mirror = await import("../lib/dispatch-mirror")
   poller = await import("../lib/dispatch-poller")
-  live = await import("../wiring/live")
-  fix = await import("../wiring/body-fix")
   fixLib = await import("../lib/body-fix")
   invLib = await import("../lib/body-investigate")
   triageWiring = await import("../wiring/triage")
   triageRoute = await import("./triage")
-  host = (await import("../state")).HOST_INFO.name
   fixStore = fixLib.createBodyFixStore(sqlite)
-  live.setLiveRunner(fakeRunner)
   channelId = channels.createChannel("triage-test").id
-  prevDeps = fix.setBodyFixDeps({ store: fixStore, localHost: () => "zettlab", peer: () => ({ base: "https://mac.test", token: "t" }), fetchFn: peerFetch })
 })
 
 afterAll(() => {
-  fix.setBodyFixDeps(prevDeps)
-  live.setLiveRunner(live.tmuxRunner)
-  live.setLiveCap(null)
   sqlite.query("UPDATE orchestrator_tasks SET status = 'rejected' WHERE thread_id = ? AND status = 'proposed'").run(channelId)
   sqlite.exec("UPDATE orchestrator_tasks SET status = 'done' WHERE dispatch_task_id IS NOT NULL AND status IN ('dispatched', 'running')")
   delete process.env.COMPANION_DISPATCH_RUN
@@ -222,8 +189,6 @@ beforeEach(() => {
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/dash', 'projects', 'Dashboard', 'PRJ-WCLS', 'active')").run()
   // Proposals left by an earlier case would show up again: close them.
   sqlite.query("UPDATE orchestrator_tasks SET status = 'rejected' WHERE thread_id = ? AND status = 'proposed'").run(channelId)
-  spawns.length = 0
-  peerCalls.length = 0
   ghCalls.length = 0
   considered.length = 0
   frames.length = 0
@@ -232,7 +197,6 @@ beforeEach(() => {
   ghDown = false
   modelFor = new Set()
   invStore = invLib.createInvestigationStore(new Database(":memory:"))
-  live.setLiveCap(chat.countLiveTasks() + 3)
   harness = makeHarness()
 })
 
@@ -313,32 +277,29 @@ describe("choose → the existing guarded paths", () => {
     expect((row(id).description as string).match(/\[unblock/g)).toHaveLength(1)
   })
 
-  test("approve a proposal files one queued Turso row; reject marks it rejected", async () => {
+  test("approve a proposal files one pending Turso row; reject marks it rejected", async () => {
     const p = chat.createProposal("Build the CSV export", "", "asked", channelId, { noteId: "projects/dash", agent: "builder" })
     const r2 = chat.createProposal("Something else", "", "maybe", channelId, { noteId: "projects/dash" })
     await sync()
     const a = await choose(`proposal:${p.taskId}`, { optionId: opt(await itemOf(`proposal:${p.taskId}`), "approve") })
-    expect(a).toMatchObject({ status: 200, json: { ok: true, detail: { status: "queued" } } })
+    expect(a).toMatchObject({ status: 200, json: { ok: true, detail: { status: "pending_approval" } } })
     expect(chat.getTask(p.taskId)!.status).toBe("filed")
     const rows = turso.query("SELECT dispatch_status, assignee FROM tasks").all()
-    expect(rows).toEqual([{ dispatch_status: "queued", assignee: "agent:builder" }])
+    expect(rows).toEqual([{ dispatch_status: "pending", assignee: "agent:builder" }])
     expect((await choose(`proposal:${r2.taskId}`, { optionId: opt(await itemOf(`proposal:${r2.taskId}`), "reject") })).status).toBe(200)
     expect(chat.getTask(r2.taskId)!.status).toBe("rejected")
   })
 
-  test("a Mac fix card keeps its host routing: approve forwards to the Mac, which claims it live in the fix's cwd", async () => {
+  test("a Mac fix card: approve files one pending row tagged requires_host=mac (no forward, no claim)", async () => {
     const p = chat.createProposal("Fix the launchd job", fixCwd, "Body investigation", channelId, { noteId: "projects/dash", agent: "claude", title: "Fix mac:launchd:x" })
     fixStore.recordCard({ taskId: p.taskId, host: "mac", componentId: "mac:launchd:x", cwd: fixCwd, noteId: "projects/dash", agent: "claude", title: "Fix mac:launchd:x", investigationId: "inv1" }, Date.now())
     await sync()
     const item = await itemOf(`proposal:${p.taskId}`)
     expect(item.options[0].label).toBe("Run the fix on the Mac")
     const r = await choose(item.id, { optionId: opt(item, "approve") })
-    expect(r).toMatchObject({ status: 200, json: { ok: true, detail: { host: "mac", mode: "live" } } })
-    expect(peerCalls).toHaveLength(1)
-    expect(peerCalls[0]).toMatchObject({ fixId: p.taskId, host: "mac", cwd: fixCwd })
-    const rows = turso.query("SELECT dispatch_status, dispatch_owner FROM tasks").all()
-    expect(rows).toEqual([{ dispatch_status: "running", dispatch_owner: `companion:${host}` }])
-    expect(spawns.map((s) => s.cwd)).toEqual([fixCwd])
+    expect(r).toMatchObject({ status: 200, json: { ok: true, detail: { status: "pending_approval" } } })
+    const rows = turso.query("SELECT dispatch_status, dispatch_owner, requires_host FROM tasks").all()
+    expect(rows).toEqual([{ dispatch_status: "pending", dispatch_owner: null, requires_host: "mac" }])
     expect(chat.getTask(p.taskId)!.status).toBe("filed")
   })
 

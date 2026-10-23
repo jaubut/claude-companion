@@ -1,41 +1,38 @@
 import { BODY_CHANNEL } from "../lib/body"
 import { appendTurn, createProposal, getTask, setTaskStatus, type Task } from "../lib/orchestrator-chat"
-import { cancelDispatchTask } from "../lib/dispatch-tasks"
-import { finishLive, liveOwner } from "../lib/dispatch-live"
-import { approveBodyFix } from "./body-fix"
+import { approveUrl, cancelDispatchTask } from "../lib/dispatch-tasks"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
-import { type LiveStart, approveLive } from "./live"
+import { bodyFixStore } from "./body-investigate"
 import { emitTask, fileProposal, orchEmit, writeCtx } from "./orchestrator"
 
 // Proposal approve / reject: the one path behind POST .../proposal/<id>/{approve|reject}
 // (routes/orchestrator.ts) and the triage `approve` / `reject` options
-// (wiring/triage.ts). A #Body fix for a Mac component keeps its host routing
-// (wiring/body-fix.ts) whatever the mode. Revise (Opus's rescope: the resolver
+// (wiring/triage.ts). Approve files ONE Turso row and nothing else
+// (docs/one-stream-plan.md): `queued` when the tap is Jeremie's own (byHand),
+// else `pending` until the dashboard release stamp queues it; dispatch-run runs it. A #Body fix card for a Mac component is tagged requires_host=mac so
+// only the Mac's dispatch-run claims it. Revise (Opus's rescope: the resolver
 // and a No on a repo card) rejects the old one and files the new one.
 
-export interface ApproveOpts { mode?: unknown; agent?: string | null; noteId?: string | null; cwd?: string | null }
-
-/** Live start (P4) → {ok, taskId, dispatchTaskId, status, mode, replay}; errors keep their extra fields. */
-export function liveResponse(out: LiveStart): Response {
-  if (!out.ok) return Response.json({ ok: false, error: out.error, ...out.extra }, { status: out.status })
-  return Response.json(out)
-}
+export interface ApproveOpts { agent?: string | null; noteId?: string | null }
 
 // A tap makes it Jeremie's (origin "jeremie", past the queue guard) only when the prompt is his own
 // conversation's: #Body prompts carry log/investigation text and an Opus rescope carries PR text.
 const RESCOPED = "Opus rescoped"
 const byHand = (t: Task): boolean => t.threadId !== BODY_CHANNEL && !(t.reasoning ?? "").startsWith(RESCOPED)
 
-/** Approve files the proposal to Turso (replay on `filed` → 200, same id); mode "live" runs the tmux worker here. */
+/** {status:"queued"} or {status:"pending_approval", approveUrl} — the one filed-row answer for every Companion entry point. */
+export function filedStatus(dispatchTaskId: string, queued: boolean): { status: "queued" } | { status: "pending_approval"; approveUrl: string } {
+  return queued ? { status: "queued" } : { status: "pending_approval", approveUrl: approveUrl(dispatchTaskId) }
+}
+
+/** Approve → {ok, taskId, dispatchTaskId, status, approveUrl?, replay}; replay on `filed` → 200, same id. */
 export async function approveProposal(task: Task, opts: ApproveOpts = {}, dispatch: DispatchWiring = dispatchWiring): Promise<Response> {
-  const macFix = await approveBodyFix(task, dispatch)
-  if (macFix) return macFix
-  if (opts.mode === "live") {
-    return liveResponse(await approveLive(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, cwd: opts.cwd ?? null, byHand: byHand(task) }, dispatch))
-  }
-  const out = await fileProposal(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, byHand: byHand(task) }, dispatch)
+  const requiresHost = bodyFixStore.card(task.taskId)?.host === "mac" ? "mac" as const : null
+  const out = await fileProposal(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, byHand: byHand(task), requiresHost }, dispatch)
   if (!out.ok) return Response.json({ ok: false, error: out.error, taskId: task.taskId }, { status: out.status })
-  return Response.json({ ok: true, taskId: task.taskId, status: "queued", dispatchTaskId: out.dispatchTaskId, replay: out.replay })
+  return Response.json({
+    ok: true, taskId: task.taskId, dispatchTaskId: out.dispatchTaskId, ...filedStatus(out.dispatchTaskId, out.queued), replay: out.replay,
+  })
 }
 
 /** proposed → rejected; a Turso row an interrupted approve left behind is withdrawn (best effort). */
@@ -45,13 +42,9 @@ export function rejectProposal(task: Task, dispatch: DispatchWiring = dispatchWi
   emitTask(task.taskId)
   orchEmit(appendTurn("orchestrator", `rejected [${task.taskId}] — not dispatched`, task.taskId, task.threadId))
   // An approve that died after the Turso insert but before markFiled left a
-  // queued row behind: withdraw it (guarded queued → cancelled). A live approve
-  // that died after its claim left a running row owned here: close that too.
+  // pending row behind: withdraw it (guarded pending → cancelled).
   if (task.dispatchTaskId) {
-    void writeCtx(dispatch, task.threadId).then(async (ctx) => {
-      const out = await cancelDispatchTask(ctx, task.dispatchTaskId!)
-      if (!out.ok && out.error === "running" && out.task.owner === liveOwner(ctx.host)) await finishLive(ctx, out.task.id, { status: "cancelled" })
-    }).catch(() => {})
+    void writeCtx(dispatch, task.threadId).then((ctx) => cancelDispatchTask(ctx, task.dispatchTaskId!)).catch(() => {})
   }
   return Response.json({ ok: true, taskId: task.taskId, status: "rejected" })
 }
