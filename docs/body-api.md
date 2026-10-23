@@ -195,8 +195,7 @@ Reply `{ "ok": true }`. Effects:
 1. **Turn** in the orchestrator channel `body` (name "Body", created on first
    alert — an `orchestrator_channel` frame goes out then), role `orchestrator`,
    text `title + "\n" + message`, followed by the usual `orchestrator` frame.
-   `#Body` never auto-dispatches (the toggle is refused with 400 and the brain
-   only ever proposes there).
+   The brain only ever proposes there; no channel auto-dispatches.
 2. **WS frame** on every alert:
    `{"type":"body_alert","alert":{"component_id","severity","title","message","state","from_state","at"}}`
    (`state`/`from_state` are `null` when not sent; `at` is ISO 8601 UTC).

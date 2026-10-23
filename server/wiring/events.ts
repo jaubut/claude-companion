@@ -11,7 +11,6 @@ import { onSessions, setSessionModel, setTitleResolver, type Session } from "../
 import { resolveTitle, transcriptPath } from "../lib/session-titles"
 import { modelForIdentity, modelFromTranscript } from "../lib/transcript"
 import { projectLabelFor, agentTitle, subtitleFor } from "../lib/hook-common"
-import { reconcileDispatch } from "./orchestrator"
 import { markWaiting, unmarkWaiting } from "./waiting"
 import {
   type HistoryItem,
@@ -27,9 +26,7 @@ import { createAutoFrameThrottle, onAutoHistoryFlush, startAutoHistoryRetention 
 import { companionLog } from "../lib/log"
 
 // Event wiring: every lib store's listener → WS frame (+ push where the phone
-// must be interrupted). One onSessions listener does the `sessions` frame and
-// then reconcileDispatch, so a worker's `orchestrator_task` never precedes the
-// `sessions` frame that introduced it. Registered at import time.
+// must be interrupted). Registered at import time.
 //
 // It also joins the approval/question lifecycles to the session's waiting state
 // (PRJ-OR1T Phase 11) — here and not in the routes, because the expiry timers
@@ -188,7 +185,6 @@ onSessions((sessions: Session[]) => {
     if (model) setSessionModel(s.key, model)
   }
   broadcast({ type: "sessions", sessions })
-  reconcileDispatch(sessions)
   // A SIGKILLed terminal fires no session-end hook — this is the only thing
   // that retires its pill. Emits only when it actually clears one.
   reconcileActivityLiveness(sessions)

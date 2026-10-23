@@ -9,7 +9,7 @@ const NOTES = [{ noteId: "projects/2026-03-26-chantal-masse-website", ref: "PRJ-
 const catalog = buildCatalog(NOTES, "{ match: /chantal-masse-website/i, path: `${HOME}/chantalmasse-website` },", { home: "/h", isDir: () => true })
 const site = catalog.candidates[0]!
 const CH: Channel = {
-  id: "general", name: "General", cwd: null, createdAt: 0, archived: false, autoDispatch: false,
+  id: "general", name: "General", cwd: null, createdAt: 0, archived: false,
   trust: { approved: 0, rejected: 0, streak: 0, eligible: false }, noteId: null, noteTitle: null, noteRef: null,
 }
 
