@@ -1,11 +1,10 @@
 import type { InvestigationResult } from "./body-investigate"
 import type { ReadonlyRun } from "./readonly-claude"
 import {
-  FIX_RUN_MS, type OutcomeNote, type Plan, type ResolverOutput, RESOLVER_CONTEXT_MAX, RETRY_PREFILL, RETRY_RE, TRANSIENT_REASON, cardSummary, decide,
+  type OutcomeNote, type Plan, type ResolverOutput, RESOLVER_CONTEXT_MAX, RETRY_PREFILL, RETRY_RE, cardSummary, decide,
   outcomePhrase, parseResolverOutput, preparedPhrase,
 } from "./resolver"
 import type { Job, WorkResult } from "./resolver-engine"
-import type { FixOutcome } from "./resolver-fix"
 import { type ResolverContext, buildResolverPrompt } from "./resolver-prompt"
 import { type Phrase, type SourceItem, type TriageAction, clip, fallbackPhrase } from "./triage"
 import type { ExecOutcome } from "./triage-engine"
@@ -27,9 +26,7 @@ export interface WorkSeams {
   /** The triage executor (the guarded paths), `by` names the actor in turns. */
   execute(src: SourceItem, action: TriageAction, by: string): Promise<ExecOutcome>
   comment(src: SourceItem, body: string): Promise<boolean>
-  /** `attempt` = the resolver run id: the peer's idempotency key with the item id (a Mac-only repo runs on the Mac). */
-  fix(src: SourceItem, ctx: ResolverContext, instructions: string, model: string, timeoutMs: number, attempt?: number): Promise<FixOutcome>
-  /** PR: hand it back to the shepherd (`pr:unpark`). */
+  /** PR: hand it back to the shepherd (`pr:unpark`); its fix run makes the changes. */
   unpark(src: SourceItem, reason: string): Promise<void>
   /** Proposal: reject it and file the rescoped one (never resolved again); returns the new proposal id. */
   revise(src: SourceItem, title: string, prompt: string, why: string): Promise<string | null>
@@ -64,7 +61,7 @@ const actor = (job: Job): string => (job.autonomy === "delegated" ? `${BY} (your
 
 const what = (p: Plan): string => (p.kind === "card" ? "prepare a card" : p.action.kind === "answer" ? `answer: "${clip(p.action.text, 120)}"`
   : p.action.kind === "close_pr" ? `close the PR (${p.action.reason})` : p.action.kind === "reject" ? `reject (${p.action.reason})`
-    : p.action.kind === "route" ? `route to ${p.action.repo}` : p.action.kind === "fix" ? `fix run on the PR branch${p.then === "unpark" ? " + hand back to the shepherd" : ", then a card"}`
+    : p.action.kind === "route" ? `route to ${p.action.repo}` : p.action.kind === "fix" ? "hand the PR back to the shepherd's fix run"
       : p.action.kind)
 
 export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) => void) {
@@ -127,13 +124,6 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
     return prepared(job, out, ctx.sensitive, `${a.kind} failed: ${error}`, extra ?? [`Opus tried to ${a.kind} but it did not go through: ${error}`], "prepared", note)
   }
 
-  /** A fix that never ran for a passing reason (the Mac unreachable): a card, no loop-guard count; the engine re-queues it later. */
-  async function transient(job: Job, out: ResolverOutput, ctx: ResolverContext, a: Extract<Plan, { kind: "act" }>["action"], error: string): Promise<WorkResult> {
-    const retry = a.kind === "fix" ? `${RETRY_PREFILL} ${a.instructions}` : `Do it again (${a.kind})`
-    const note: OutcomeNote = { outcome: "failed", headline: `${VERB[a.kind] ?? a.kind} not run: ${clip(error, 140)}; Opus retries later`, retry }
-    return prepared(job, out, ctx.sensitive, `${TRANSIENT_REASON} ${a.kind}: ${error}`, [`Opus could not ${a.kind} yet: ${error}. It will try again later.`], "prepared", note)
-  }
-
   async function act(job: Job, out: ResolverOutput, plan: Extract<Plan, { kind: "act" }>, ctx: ResolverContext): Promise<WorkResult> {
     const src = job.src
     const a = plan.action
@@ -145,31 +135,19 @@ export function createResolverWork(seams: WorkSeams, onPlan?: (r: PlanReport) =>
         { outcome: "failed", headline: `Opus tried twice: ${clip(prior.error, 160)}`, gaveUp: true })
     }
     if (a.kind === "fix") {
-      const fx = await seams.fix(src, ctx, a.instructions, job.model, FIX_RUN_MS, job.run.id)
-      if (fx.kind === "failed" && fx.transient) return transient(job, out, ctx, a, fx.error)
-      if (fx.kind === "failed") return tried(job, out, ctx, a, fx.error)
-      if (fx.kind === "blocked") return tried(job, out, ctx, a, `blocked: ${fx.reason}`, `Fix blocked: ${clip(fx.reason, 160)}`, [`The fix agent stopped: ${fx.reason}`])
-      if (fx.kind === "no_changes") {
-        seams.attempt?.(src, a.kind, "the fix run changed nothing")
-        const n = seams.failures?.(src, a.kind)
-        const note: OutcomeNote = n && n.count >= 2
-          ? { outcome: "failed", headline: "Opus tried twice: the fix run changed nothing", gaveUp: true }
-          : { outcome: "no_change", headline: `No change needed: ${clip(fx.summary || "the fix run found nothing to change", 160)}` }
-        return prepared(job, out, ctx.sensitive, "fix made no change", ["The fix run changed nothing."], "prepared", note)
+      // No builder here (one work stream, Q2): the PR goes back to the shepherd (`pr:unpark`),
+      // whose fix run makes the changes under its gates; Opus's instructions go on the PR.
+      try {
+        await seams.unpark(src, `Opus rescue: ${clip(a.instructions, 160)}`)
+      } catch (err) {
+        return tried(job, out, ctx, a, `hand-back failed: ${(err as Error)?.message ?? err}`)
       }
       seams.attempt?.(src, a.kind, null)
-      const sha = fx.sha.slice(0, 8)
-      const line = `Opus pushed a fix (${sha}): ${clip(fx.summary, 300)}`
-      await seams.comment(src, `🤖 **Opus resolver** — ${line}\n\nWhy: ${clip(out.analysis, 1200)}`)
-      seams.turn(src, `🤖 ${line}\n${src.url ?? ""}`.trim())
-      const headline = `Fix pushed ${sha}: ${clip(fx.summary, 110)}; CI re-running`
-      if (plan.then === "unpark") {
-        await seams.unpark(src, `Opus rescue: ${clip(a.instructions, 160)}`)
-        const summary = `${headline}, back with the shepherd`
-        await seams.record(src, "resolver:fix", summary, meta(job, out, { sha: fx.sha, then: "unpark", outcome: "done" }))
-        return { kind: "resolved", action: "fix", summary, outcome: "done" }
-      }
-      return prepared(job, out, ctx.sensitive, plan.reason, [`${line}. CI re-runs on the new head.`], "fix", { outcome: "done", headline })
+      await seams.comment(src, `🤖 **Opus resolver** — handing this PR back to the shepherd's fix run. Changes asked:\n\n${clip(a.instructions, 3000)}\n\nWhy: ${clip(out.analysis, 1200)}`)
+      const summary = `Opus handed the PR back to the shepherd's fix run: ${clip(a.instructions, 120)}`
+      seams.turn(src, `🤖 ${summary}\n${src.url ?? ""}`.trim())
+      await seams.record(src, "resolver:fix", summary, meta(job, out, { then: "unpark", reason: plan.reason, outcome: "done" }))
+      return { kind: "resolved", action: "fix", summary, outcome: "done" }
     }
     if (a.kind === "revise") {
       const id = await seams.revise(src, a.title, a.prompt, out.summary)

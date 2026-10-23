@@ -56,7 +56,7 @@ export async function resolverDryRun(opts: { limit: number; only?: string | null
   const live = liveSeams({ dispatch, gh: realGh, execute: refuse("execute"), store })
   const seams: WorkSeams = {
     ...live,
-    applyBody: refuse("applyBody"), execute: refuse("execute"), comment: refuse("comment"), fix: refuse("fix"),
+    applyBody: refuse("applyBody"), execute: refuse("execute"), comment: refuse("comment"),
     unpark: refuse("unpark"), revise: refuse("revise"), record: refuse("record"), turn: () => {},
     log,
   }
