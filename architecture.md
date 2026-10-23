@@ -15,14 +15,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/transcript.ts` | 599 | lib | 14 | state: states: Map, busyImages: WeakMap |
 | `lib/spawn-session.ts` | 576 | lib | 19 |  |
-| `routes/hooks.ts` | 565 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `wiring/takeover.ts` | 565 | lib | 17 | state: let liveStore, let deps, running: Map, seeding: Map, held: Set, let tickStartedAt, let skipLoggedAt, misses: Map, ghAt: Map |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
+| `routes/hooks.ts` | 538 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 534 | lib | 54 |  |
 | `lib/resolver.ts` | 532 | lib | 47 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
-| `wiring/orchestrator.ts` | 488 | lib | 22 | state: taskListeners: Set, let triageDigest, let reconcileChain · emits: orchestrator, orchestrator_task, orchestrator_channel, orchestrator_worker_output |
 | `lib/triage.ts` | 484 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
@@ -30,15 +29,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/api.ts` | 469 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 20 |
 | `lib/voice-memo.ts` | 466 | lib | 25 | state: let tdb |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `wiring/triage.ts` | 458 | lib | 10 | state: let liveResolver, let live, prCacheDrop: WeakMap |
+| `wiring/triage.ts` | 457 | lib | 10 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
-| `routes/orchestrator.ts` | 413 | route-host | 3 | routes: 10 |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/dispatch-poller.ts` | 401 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
-| `lib/orchestrator-chat.ts` | 394 | lib | 33 |  |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
+| `routes/orchestrator.ts` | 389 | route-host | 3 | routes: 10 |
 | `lib/triage-engine.ts` | 387 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `routes/capture.ts` | 385 | lib | 7 |  |
@@ -47,9 +45,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `wiring/resolver.ts` | 352 | lib | 13 |  |
-| `lib/tmux-pane.ts` | 346 | lib | 25 |  |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `lib/herdr.ts` | 324 | lib | 25 | state: let clientMod, spawnedAgents: Map |
+| `lib/tmux-pane.ts` | 316 | lib | 24 |  |
 | `lib/canvas.ts` | 315 | lib | 24 | state: BLOCKING: Set |
 | `lib/triage-sources.ts` | 308 | lib | 26 | state: HOLDS: Set |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
@@ -62,6 +60,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
+| `lib/orchestrator-chat.ts` | 271 | lib | 20 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `lib/live-repo.ts` | 269 | lib | 23 | state: let probe |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
@@ -73,6 +72,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
+| `wiring/orchestrator.ts` | 246 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `lib/resolver-work.ts` | 241 | lib | 5 |  |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
@@ -101,10 +101,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `routes/model.ts` | 201 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `wiring/events.ts` | 200 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `lib/resolver-fix.ts` | 197 | lib | 14 | state: PROTECTED: Set |
 | `routes/trips.ts` | 196 | lib | 5 |  |
+| `wiring/events.ts` | 196 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/inject-guard.ts` | 187 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
@@ -117,7 +117,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `wiring/body-agent.ts` | 168 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
-| `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
+| `lib/orchestrator-channels.ts` | 158 | lib | 13 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/resolver-prompt.ts` | 152 | lib | 7 |  |
@@ -137,12 +137,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 134 | lib | 6 |  |
-| `lib/worker-identity.ts` | 134 | lib | 6 |  |
 | `lib/hook-common.ts` | 133 | lib | 9 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `wiring/canvas.ts` | 126 | lib | 5 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
-| `lib/worker-tail.ts` | 121 | lib | 3 | state: LIVE_STATUSES: Set |
 | `routes/canvas.ts` | 120 | lib | 2 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/takeover-store.ts` | 119 | lib | 6 |  |
@@ -165,7 +163,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
 | `lib/trip-geocode.ts` | 87 | lib | 8 |  |
-| `lib/orchestrator-queue.ts` | 84 | lib | 6 |  |
 | `lib/herdr-inject.ts` | 83 | lib | 6 |  |
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
@@ -220,6 +217,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/copy-jobs.ts` | 20 | lib | 1 | emits: copy_jobs |
 | `lib/session-resolve.ts` | 15 | lib | 1 |  |
 | `lib/db-path.ts` | 14 | lib | 1 |  |
+| `lib/orchestrator-queue.ts` | 1 | lib | 0 |  |
+| `lib/worker-identity.ts` | 1 | lib | 0 |  |
+| `lib/worker-tail.ts` | 1 | lib | 0 |  |
 
 ## External packages
 
@@ -254,7 +254,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `orchestrator_queue` | server/lib/dispatch-poller.ts | ios:ios/WSFrame.swift |
 | `orchestrator_task` | server/lib/body-investigate-engine.ts, server/lib/dispatch-poller.ts, server/wiring/orchestrator.ts | ios:ios/WSFrame.swift |
 | `orchestrator_triage` | server/lib/triage-engine.ts | ios:ios/WSFrame.swift |
-| `orchestrator_worker_output` | server/wiring/orchestrator.ts | ios:ios/WSFrame.swift |
 | `pong` | server/ws.ts | ios:ios/WSFrame.swift |
 | `question` | server/wiring/events.ts, server/ws.ts | ios:ios/WSFrame.swift |
 | `receipt_qa` | server/wiring/receipt-qa.ts | ios:ios/WSFrame.swift |
@@ -352,27 +351,25 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 |---|---|---|
 | `companionLog()` | `lib/log.ts` | `lib/approval-history-auto.ts`, `lib/body-investigate-engine.ts`, `lib/command-offpane-cache.ts`, `lib/discover.ts`, `lib/herdr-workspace.ts`, `lib/inject-verified.ts`, `lib/key-gate.ts`, `lib/keyboard-inject.ts`, `lib/media.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/receipt-capture.ts`, `lib/receipt-qa-worker.ts`, `lib/records-expiry.ts`, `lib/session-removal-log.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `lib/suggest-cleanup.ts`, `lib/super-auto.ts`, `lib/vault-upstream.ts`, `lib/voice-memo.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#DELETE /api/learned`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#* /api/feed`, `routes/attach.ts`, `routes/auto-compact.ts#POST /api/auto-compact/test`, `routes/auto-compact.ts#POST /api/auto-compact/cancel`, `routes/body.ts#POST /api/body/alert`, `routes/capture.ts`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end`, `routes/model.ts`, `routes/my-tasks.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/records.ts`, `routes/tasks-agent.ts`, `routes/trips.ts`, `routes/vault.ts`, `wiring/auto-compact.ts`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/canvas.ts`, `wiring/dialogs.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/resolver-peer.ts`, `wiring/resolver.ts`, `wiring/takeover.ts`, `wiring/tasks-agent.ts`, `wiring/triage-repos.ts`, `wiring/triage.ts`, `wiring/trips.ts`, `ws.ts` |
 | `broadcast()` | `state.ts` | `companion-server.ts`, `lib/secret-requests.ts`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#* /api/feed`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/my-tasks.ts`, `wiring/auto-compact.ts`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/canvas.ts`, `wiring/copy-jobs.ts`, `wiring/dialogs.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/front-door.ts`, `wiring/gauge.ts`, `wiring/orchestrator.ts`, `wiring/receipt-qa.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/waiting.ts`, `ws.ts` |
-| `Session()` | `lib/sessions.ts` | `lib/activity.ts`, `lib/agent-pid.ts`, `lib/canvas.ts`, `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/herdr-workspace.ts`, `lib/hook-common.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/session-identity.ts`, `lib/session-removal-log.ts`, `routes/command.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/gauge.ts`, `wiring/orchestrator.ts`, `wiring/waiting.ts` |
+| `Session()` | `lib/sessions.ts` | `lib/activity.ts`, `lib/agent-pid.ts`, `lib/canvas.ts`, `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/herdr-workspace.ts`, `lib/hook-common.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/session-identity.ts`, `lib/session-removal-log.ts`, `routes/command.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/gauge.ts`, `wiring/waiting.ts` |
 | `QueryFn()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/canvas.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-autofile.ts`, `lib/trip-dashboard.ts`, `routes/body.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/resolver.ts` |
 | `tursoQuery()` | `lib/turso.ts` | `lib/receipt-qa-worker.ts`, `routes/body.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/canvas.ts`, `wiring/dispatch.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/trips.ts` |
 | `Row()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/my-tasks.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-dashboard.ts`, `routes/goals.ts`, `wiring/auto-compact.ts` |
 | `SourceItem()` | `lib/triage.ts` | `lib/mytask-triage.ts`, `lib/resolver-engine.ts`, `lib/resolver-prompt.ts`, `lib/resolver-work.ts`, `lib/resolver.ts`, `lib/triage-engine.ts`, `lib/triage-repos.ts`, `lib/triage-sources.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/takeover-choose.ts`, `wiring/triage-repos.ts`, `wiring/triage.ts` |
 | `ExecFn()` | `lib/turso.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-tasks.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-pr.ts`, `routes/my-tasks.ts`, `wiring/resolver-dry-run.ts` |
 | `TursoUnreachable()` | `lib/turso.ts` | `lib/dispatch-poller.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/triage-engine.ts`, `routes/body.ts`, `routes/goals.ts#GET /api/goals`, `routes/my-tasks.ts`, `routes/orchestrator.ts`, `routes/tasks-agent.ts`, `wiring/orchestrator.ts`, `wiring/takeover-choose.ts`, `wiring/takeover.ts`, `wiring/triage-repos.ts` |
-| `BODY_CHANNEL()` | `lib/body.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts` |
 | `listSessions()` | `lib/sessions.ts` | `lib/codex-feed.ts`, `lib/session-resolve.ts`, `routes/api.ts#* /api/status`, `routes/api.ts#* /api/feed`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end`, `wiring/canvas.ts`, `wiring/dialogs.ts`, `wiring/orchestrator.ts`, `wiring/takeover.ts`, `ws.ts` |
 | `herdrPaneOf()` | `lib/herdr.ts` | `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/herdr-workspace.ts`, `lib/keyboard-inject.ts`, `lib/pane-clean.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/auto-compact.ts`, `wiring/dialogs.ts` |
 | `pushToAll()` | `lib/push.ts` | `lib/records-expiry.ts`, `lib/secret-requests.ts`, `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/receipt-qa.ts` |
 | `appendTurn()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/dispatch.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/takeover.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts` |
-| `Task()` | `lib/orchestrator-chat.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-tasks.ts`, `lib/orchestrator-queue.ts`, `lib/triage-sources.ts`, `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/orchestrator.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts` |
-| `withIdempotency()` | `lib/idempotency.ts` | `routes/api.ts#POST /api/resolve`, `routes/api.ts#POST /api/answer`, `routes/api.ts#POST /api/inject`, `routes/capture.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/trips.ts` |
+| `BODY_CHANNEL()` | `lib/body.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts` |
 | `resolveSession()` | `lib/sessions.ts` | `routes/api.ts#* /api/feed`, `routes/attach.ts#POST /api/attach`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
-| `orchEmit()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/front-door.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/takeover.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts` |
 | `companionDbPath()` | `lib/db-path.ts` | `lib/approval-history.ts`, `lib/learned-allow.ts`, `lib/orchestrator-db.ts`, `lib/push-tokens.ts`, `lib/receipt-qa-store.ts`, `lib/session-titles.ts`, `lib/voice-memo.ts`, `wiring/auto-compact.ts`, `wiring/canvas.ts` |
 | `keyGate()` | `lib/key-gate.ts` | `lib/command-scrape.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts` |
 | `recordSession()` | `lib/sessions.ts` | `lib/discover.ts`, `lib/rehydrate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start` |
 | `apnsConfigured()` | `lib/apns.ts` | `lib/push.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#GET /api/push/tokens`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/dispatch.ts`, `wiring/events.ts` |
 | `vaultUpstream()` | `lib/vault-upstream.ts` | `lib/receipt-qa-worker.ts`, `lib/records-expiry.ts`, `lib/secret-requests.ts`, `lib/secret-store.ts`, `routes/capture.ts`, `routes/records.ts`, `routes/trips.ts`, `routes/vault.ts`, `wiring/trips.ts` |
+| `withIdempotency()` | `lib/idempotency.ts` | `routes/api.ts#POST /api/resolve`, `routes/api.ts#POST /api/answer`, `routes/api.ts#POST /api/inject`, `routes/capture.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/orchestrator.ts#POST /api/orchestrator/dispatch`, `routes/trips.ts` |
 | `dialogWatcher()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/status`, `routes/command.ts#POST /api/command/suggest`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
 | `HOST_INFO()` | `state.ts` | `companion-server.ts`, `routes/api.ts#* /api/status`, `wiring/body-agent.ts`, `wiring/canvas.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts`, `wiring/triage.ts`, `ws.ts` |
 | `summarize()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/approval-history-auto.ts`, `lib/approval-history.ts`, `lib/codex-feed.ts`, `lib/question-hook.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `wiring/events.ts` |
@@ -381,12 +378,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `Herdr()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/orphan-question.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `wiring/takeover-liveness.ts`, `wiring/takeover.ts` |
 | `realHerdr()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/pane-clean.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `wiring/dialogs.ts`, `wiring/takeover.ts` |
 | `paneKey()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts`, `wiring/dialogs.ts` |
-| `getTask()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `lib/worker-tail.ts`, `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `autoCompactor()` | `wiring/auto-compact.ts` | `routes/auto-compact.ts#GET /api/auto-compact`, `routes/auto-compact.ts#POST /api/auto-compact/test`, `routes/auto-compact.ts#POST /api/auto-compact/cancel`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end`, `wiring/gauge.ts` |
 | `cwdFromPayload()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `metaFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `dispatchWiring()` | `wiring/dispatch.ts` | `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/takeover.ts`, `wiring/triage.ts` |
+| `orchEmit()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/front-door.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/takeover.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts` |
 | `localBodyHost()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `routes/resolver.ts#GET /api/resolver/has-repo`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/resolver-peer.ts`, `wiring/resolver.ts`, `wiring/takeover.ts` |
+| `Task()` | `lib/orchestrator-chat.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-tasks.ts`, `lib/triage-sources.ts`, `routes/orchestrator.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts` |
 | `unstyle()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/herdr-inject.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `wiring/dialogs.ts`, `wiring/takeover-liveness.ts` |
 | `PaneRef()` | `lib/tmux-pane.ts` | `lib/discover.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/question-hook.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/model.ts` |
 | `herdrGateKey()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/dialogs.ts` |
@@ -399,16 +397,17 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `Dialog()` | `lib/dialogs.ts` | `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `routes/model.ts`, `wiring/dialogs.ts` |
 | `getDispatchTask()` | `lib/dispatch-tasks.ts` | `lib/dispatch-live.ts`, `routes/orchestrator.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts`, `wiring/takeover.ts`, `wiring/triage.ts` |
 | `sendKeysArgs()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts` |
-| `capturePane()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/pane-clean.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `wiring/dialogs.ts`, `wiring/orchestrator.ts` |
 | `GENERAL_CHANNEL()` | `lib/orchestrator-db.ts` | `lib/orchestrator-chat.ts`, `routes/orchestrator.ts`, `wiring/dispatch.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `clip()` | `lib/triage.ts` | `lib/repo-rework.ts`, `lib/resolver-work.ts`, `lib/resolver.ts`, `lib/triage-repos.ts`, `lib/triage-sources.ts`, `wiring/triage.ts` |
 | `forwardVault()` | `lib/vault-upstream.ts` | `lib/secret-requests.ts`, `lib/secret-store.ts`, `routes/capture.ts`, `routes/records.ts`, `routes/trips.ts`, `routes/vault.ts` |
+| `getTask()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `getChannel()` | `lib/orchestrator-channels.ts` | `routes/orchestrator.ts`, `wiring/dispatch.ts`, `wiring/orchestrator.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `BodyComponentDetail()` | `lib/body.ts` | `lib/body-agent.ts`, `lib/body-investigate-engine.ts`, `lib/body-investigator.ts`, `lib/resolver-prompt.ts`, `wiring/body-agent.ts` |
 | `addDays()` | `lib/my-tasks.ts` | `lib/body-tokens.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-load.ts`, `lib/tasks-agent-rules.ts`, `lib/tasks-agent.ts` |
 | `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `lib/suggest-cleanup.ts`, `routes/command.ts#POST /api/command/suggest` |
 | `tmuxArgv()` | `lib/tmux-pane.ts` | `lib/command-offpane-launch.ts`, `lib/key-gate.ts`, `lib/keyboard-inject.ts`, `lib/spawn-session.ts`, `lib/tmux-spawn-confirm.ts` |
 | `Turn()` | `lib/orchestrator-chat.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `lib/orchestrator-brain.ts`, `wiring/body.ts`, `wiring/orchestrator.ts` |
+| `capturePane()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/pane-clean.ts`, `lib/submit-confirm.ts`, `routes/command.ts`, `wiring/dialogs.ts` |
 | `TASKS_TZ()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `TriageOption()` | `lib/triage.ts` | `lib/mytask-triage.ts`, `lib/resolver.ts`, `lib/triage-engine.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `isQuestionTool()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/tool-format.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use` |
@@ -421,7 +420,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `bodySnapshot()` | `wiring/body.ts` | `routes/body.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/body-investigate.ts`, `wiring/front-door.ts`, `wiring/triage.ts` |
 | `paneRefOf()` | `lib/tmux-pane.ts` | `routes/command.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `wiring/auto-compact.ts` |
 | `peerOf()` | `lib/vault-guard.ts` | `routes/copy-jobs.ts#POST /hooks/copy-progress`, `routes/gauge.ts#POST /hooks/gauge`, `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/records.ts`, `routes/vault.ts` |
-| `setTaskStatus()` | `lib/orchestrator-chat.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts` |
 | `tursoExec()` | `lib/turso.ts` | `routes/my-tasks.ts`, `wiring/body-investigate.ts`, `wiring/dispatch.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts` |
 | `checkBearer()` | `lib/auth.ts` | `companion-server.ts#* /ws`, `routes/copy-jobs.ts#POST /hooks/copy-progress`, `routes/gauge.ts#POST /hooks/gauge`, `routes/hooks.ts#POST /hooks/dispatch-event` |
 | `redactSecrets()` | `lib/secret-redact.ts` | `lib/approval-history.ts`, `lib/body-investigator.ts`, `lib/jev-route-log.ts`, `lib/quick-look.ts` |
@@ -471,7 +469,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `deliverViaHerdr()` | `lib/herdr-inject.ts` | `lib/keyboard-inject.ts`, `lib/submit-confirm.ts`, `wiring/takeover.ts` |
 | `resolveTmuxRefFromTty()` | `lib/tmux-pane.ts` | `lib/keyboard-inject.ts`, `lib/question-hook.ts`, `lib/submit-confirm.ts` |
 | `listMine()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `routes/my-tasks.ts` |
-| `listQueued()` | `lib/orchestrator-chat.ts` | `lib/orchestrator-queue.ts`, `wiring/dispatch.ts`, `wiring/orchestrator.ts` |
 | `QuestionItem()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-driver.ts`, `lib/question-hook.ts` |
 | `InjectTarget()` | `lib/keyboard-inject.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/submit-confirm.ts` |
 | `transcriptPath()` | `lib/session-titles.ts` | `lib/orphan-question.ts`, `wiring/auto-compact.ts`, `wiring/events.ts` |
@@ -493,12 +490,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `TripRow()` | `lib/trip-dashboard.ts` | `lib/trip-classify.ts`, `lib/trip-service.ts`, `wiring/trips.ts` |
 | `TripUpload()` | `lib/trip-model.ts` | `lib/trip-service.ts`, `lib/trip-store.ts`, `routes/trips.ts` |
 | `checkBearerHeaderOnly()` | `lib/auth.ts` | `lib/vault-guard.ts`, `routes/records.ts`, `routes/vault.ts` |
-| `isTakeoverId()` | `lib/takeover.ts` | `lib/worker-identity.ts`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-end` |
 | `tokenCount()` | `lib/push-tokens.ts` | `routes/api.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#DELETE /api/register-token` |
 | `isSuperAuto()` | `lib/super-auto.ts` | `routes/api.ts#GET /api/super-auto`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `ws.ts` |
-| `SpawnResult()` | `lib/spawn-session.ts` | `routes/api.ts#POST /api/spawn-session`, `wiring/orchestrator.ts`, `wiring/takeover.ts` |
-| `spawnCompanionSession()` | `lib/spawn-session.ts` | `routes/api.ts#POST /api/spawn-session`, `wiring/orchestrator.ts`, `wiring/takeover.ts` |
-| `clients()` | `state.ts` | `routes/api.ts#* /api/status`, `wiring/orchestrator.ts`, `ws.ts` |
 | `listActivities()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `wiring/canvas.ts`, `ws.ts` |
 | `isKeyCommand()` | `lib/secret-store.ts` | `routes/api.ts#* /api/feed`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `ws.ts` |
 | `handleKeyCommand()` | `lib/secret-store.ts` | `routes/api.ts#* /api/feed`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `ws.ts` |
@@ -515,9 +508,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `gauge()` | `wiring/gauge.ts` | `routes/gauge.ts#POST /hooks/gauge`, `routes/gauge.ts#GET /api/gauge`, `routes/hooks.ts#POST /hooks/session-end` |
 | `projectLabelFor()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop`, `wiring/events.ts` |
 | `unmarkWaiting()` | `wiring/waiting.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `wiring/dialogs.ts`, `wiring/events.ts` |
-| `emitTask()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts`, `wiring/proposals.ts` |
 | `markWaiting()` | `wiring/waiting.ts` | `routes/hooks.ts#POST /hooks/stop`, `wiring/dialogs.ts`, `wiring/events.ts` |
-| `setChannelAuto()` | `lib/orchestrator-channels.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/`, `wiring/orchestrator.ts` |
+| `setTaskStatus()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/proposals.ts` |
 | `listChannels()` | `lib/orchestrator-channels.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/channels`, `routes/orchestrator.ts#GET /api/orchestrator/thread` |
 | `cancelDispatchTask()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/proposals.ts`, `wiring/triage.ts` |
 | `resolveAgent()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/orchestrator.ts` |
@@ -557,8 +549,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `ClaudeLaunch()` | `lib/command-offpane-launch.ts` | `lib/command-offpane-cache.ts`, `lib/command-offpane.ts` |
 | `CommandEntry()` | `lib/command-list.ts` | `lib/command-offpane-cache.ts`, `lib/command-offpane.ts` |
 | `helpOverlayVisible()` | `lib/command-list.ts` | `lib/command-offpane.ts`, `lib/inject-guard.ts` |
-| `paneHasDialog()` | `lib/tmux-pane.ts` | `lib/command-offpane.ts`, `wiring/orchestrator.ts` |
-| `paneInputReady()` | `lib/tmux-pane.ts` | `lib/command-offpane.ts`, `wiring/orchestrator.ts` |
 | `readSecretValue()` | `lib/secret-store.ts` | `lib/dashboard-client.ts`, `lib/receipt-jev.ts` |
 | `parseDialog()` | `lib/dialogs.ts` | `lib/dialog-watch.ts`, `wiring/takeover-liveness.ts` |
 | `isScrapeTarget()` | `lib/scrape-registry.ts` | `lib/discover.ts`, `lib/hook-common.ts` |
@@ -644,17 +634,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `Trip()` | `lib/trip-model.ts` | `lib/trip-dashboard.ts`, `routes/trips.ts` |
 | `TripStore()` | `lib/trip-store.ts` | `lib/trip-geocode.ts`, `lib/trip-service.ts` |
 | `UploadRow()` | `lib/trip-store.ts` | `lib/trip-service.ts`, `routes/trips.ts` |
-| `matchUnboundTaskById()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `findRunningTaskById()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `matchUnboundTaskByTmuxSession()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `findRunningTaskByTmuxSession()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `countUnboundTasksInCwd()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `countRunningTasksInCwd()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `matchUnboundTaskByCwd()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `findRunningTaskByCwd()` | `lib/orchestrator-chat.ts` | `lib/worker-identity.ts`, `wiring/orchestrator.ts` |
-| `setTaskLogTail()` | `lib/orchestrator-chat.ts` | `lib/worker-tail.ts`, `wiring/orchestrator.ts` |
 | `registerToken()` | `lib/push-tokens.ts` | `routes/api.ts`, `routes/api.ts#POST /api/register-token` |
+| `SpawnResult()` | `lib/spawn-session.ts` | `routes/api.ts#POST /api/spawn-session`, `wiring/takeover.ts` |
+| `spawnCompanionSession()` | `lib/spawn-session.ts` | `routes/api.ts#POST /api/spawn-session`, `wiring/takeover.ts` |
 | `getPending()` | `lib/pty-manager.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
+| `clients()` | `state.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `waitingSummary()` | `lib/sessions.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `getActivity()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
@@ -682,11 +666,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `questionFastPath()` | `lib/question-hook.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `addApprovalRequest()` | `lib/pty-manager.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `recordAllow()` | `lib/learned-allow.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
-| `workerQueue()` | `wiring/orchestrator.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/orchestrator.ts` |
+| `isTakeoverId()` | `lib/takeover.ts` | `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-end` |
 | `noteSessionBoundary()` | `lib/submit-confirm.ts` | `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `choicesFrom()` | `lib/model-control.ts` | `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set` |
-| `emitChannel()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/channels/` |
-| `vetoAuto()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `wiring/triage.ts` |
+| `emitTask()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `wiring/proposals.ts` |
 | `listTasks()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread` |
 | `DEFAULT_AGENT()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/orchestrator.ts` |
 | `DISPATCH_ID()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `routes/triage.ts` |
@@ -695,7 +678,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `newDispatchId()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/orchestrator.ts` |
 | `requeueTask()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/triage.ts` |
 | `unblockTask()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/triage.ts` |
-| `sessionCmdArgv()` | `lib/tmux-pane.ts` | `routes/orchestrator.ts`, `wiring/orchestrator.ts` |
 | `rejectProposal()` | `wiring/proposals.ts` | `routes/orchestrator.ts`, `wiring/triage.ts` |
 | `approveProposal()` | `wiring/proposals.ts` | `routes/orchestrator.ts`, `wiring/triage.ts` |
 | `Limiter()` | `lib/vault-guard.ts` | `routes/records.ts`, `routes/vault.ts` |
@@ -712,8 +694,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `onActivity()` | `lib/activity.ts` | `wiring/canvas.ts`, `wiring/events.ts` |
 | `resolveSessionKey()` | `lib/session-resolve.ts` | `wiring/copy-jobs.ts`, `wiring/gauge.ts` |
 | `getPendingQuestions()` | `lib/questions.ts` | `wiring/dialogs.ts`, `ws.ts` |
-| `countLiveTasks()` | `lib/orchestrator-chat.ts` | `wiring/dispatch.ts`, `wiring/orchestrator.ts` |
-| `wipCap()` | `lib/orchestrator-queue.ts` | `wiring/dispatch.ts`, `wiring/orchestrator.ts` |
 | `readRepoMapSource()` | `lib/live-repo.ts` | `wiring/orchestrator.ts`, `wiring/resolver.ts` |
 | `taskSources()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |
 | `queryPrRows()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |
