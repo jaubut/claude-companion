@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22",
+  "generatedAt": "2026-10-23",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -7884,6 +7884,12 @@
             "lib/transcript.ts"
           ]
         },
+        "identityFor": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/activity.ts"
+          ]
+        },
         "verbFor": {
           "module": "lib/tool-format.ts",
           "callers": [
@@ -8518,6 +8524,13 @@
             "wiring/body.ts"
           ]
         },
+        "BASE_DISALLOWED": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/body-investigator.ts",
+            "lib/quick-look.ts"
+          ]
+        },
         "readonlyArgs": {
           "module": "lib/readonly-claude.ts",
           "callers": [
@@ -8820,6 +8833,16 @@
           "module": "lib/command-offpane.ts",
           "callers": [
             "lib/command-offpane-cache.ts"
+          ]
+        },
+        "tmuxArgv": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/command-offpane-launch.ts",
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/spawn-session.ts",
+            "lib/tmux-spawn-confirm.ts"
           ]
         },
         "helpTab": {
@@ -10688,6 +10711,12 @@
             "lib/resolver-fix-guard.ts"
           ]
         },
+        "conflictPolicyLines": {
+          "module": "lib/resolver-fix-policy.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
         "GitFn": {
           "module": "lib/resolver-fix-guard.ts",
           "callers": [
@@ -10696,6 +10725,12 @@
         },
         "guardFixRange": {
           "module": "lib/resolver-fix-guard.ts",
+          "callers": [
+            "lib/resolver-fix.ts"
+          ]
+        },
+        "fixDisallowed": {
+          "module": "lib/resolver-fix-policy.ts",
           "callers": [
             "lib/resolver-fix.ts"
           ]
@@ -10719,6 +10754,12 @@
           "callers": [
             "lib/resolver-prompt.ts",
             "lib/resolver.ts"
+          ]
+        },
+        "allowedActions": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-prompt.ts"
           ]
         },
         "resolverActions": {
@@ -10830,6 +10871,14 @@
             "lib/resolver-work.ts"
           ]
         },
+        "fallbackPhrase": {
+          "module": "lib/triage.ts",
+          "callers": [
+            "lib/resolver-work.ts",
+            "lib/resolver.ts",
+            "lib/triage-engine.ts"
+          ]
+        },
         "buildResolverPrompt": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -10864,13 +10913,6 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
-          ]
-        },
-        "fallbackPhrase": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/resolver.ts",
-            "lib/triage-engine.ts"
           ]
         },
         "TAKEOVER_ENDED": {
@@ -11061,6 +11103,13 @@
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/spawn-session.ts"
+          ]
+        },
+        "spawnServerFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts",
+            "lib/tmux-spawn-confirm.ts"
           ]
         },
         "spawnSocketPath": {
@@ -12050,6 +12099,13 @@
             "ws.ts"
           ]
         },
+        "waitingSummary": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/status",
+            "ws.ts"
+          ]
+        },
         "dialogWatcher": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -12216,6 +12272,12 @@
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "HISTORY_STATES": {
+          "module": "lib/approval-history.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
           ]
         },
         "getHistoryItem": {
@@ -13139,7 +13201,8 @@
         "listTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
         "setChannelAuto": {
@@ -14828,6 +14891,18 @@
             "wiring/resolver.ts"
           ]
         },
+        "QUICK_LOOK_ALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "QUICK_LOOK_DISALLOWED": {
+          "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
         "EvidenceBlock": {
           "module": "lib/resolver-prompt.ts",
           "callers": [
@@ -15258,6 +15333,12 @@
           "callers": [
             "wiring/triage-repos.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "repoSeams": {
+          "module": "wiring/triage.ts",
+          "callers": [
+            "wiring/triage-repos.ts"
           ]
         },
         "RequestOutcome": {

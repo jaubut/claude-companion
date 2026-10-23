@@ -2,14 +2,17 @@
 // archmap — generate (or check / lint) a repo's architecture map.
 //   bun run ~/.claude/tools/archmap/cli.ts <repo> [--check] [--lint [--baseline <json>]] [--quiet]
 //   bun run ~/.claude/tools/archmap/cli.ts --fleet <out.json> [--fleet-from <roster.json>]
-// Reads <repo>/archmap.json, writes <repo>/architecture.md + architecture.json.
-// --check: exit 1 if the committed map is stale (JSON differs, timestamp aside).
-// --lint:  exit 1 on import-rule violations or cap growth vs the baseline map
-//          (see lint.ts). Both may be combined; neither writes files.
+// Reads <repo>/archmap.json, writes <repo>/architecture.md + architecture.json,
+// and FEATUREMAP.md + featuremap.json when a `featuremap` target is configured (nav map,
+// see adapters/featuremap.ts; feature → routes → API → files index, see features.ts).
+// --check: exit 1 if the committed map is stale (JSON differs, timestamp aside) or FEATUREMAP.md /
+//          featuremap.json is (or is a generated one whose target was removed — a regenerate deletes it).
+// --lint:  exit 1 on import-rule violations, cap growth vs the baseline map,
+//          or a vendored copy that differs from its `mirrors[]` dir (see lint.ts). Both may be combined; neither writes files.
 // --fleet: aggregate every roster repo's COMMITTED map by external package into
 //          <out.json> (see fleet.ts). Needs no repo argument; scans nothing.
 // Unknown flags exit 2 — a typo must not fall through to a full regenerate.
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs"
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
 import type { ArchMap, RepoConfig, Target } from "./types"
@@ -18,10 +21,14 @@ import { scanHonoServer } from "./adapters/hono-server"
 import { scanReactClient } from "./adapters/react-client"
 import { scanSwiftUI } from "./adapters/swiftui"
 import { scanNuxt } from "./adapters/nuxt"
+import { scanAstro } from "./adapters/astro"
 import { resolveRoot } from "./adapters/shared"
 import { refRegressions, renderMarkdown, type RefTarget } from "./render"
-import { lint, formatIssues } from "./lint"
-import { findLockfile, resolvePackages } from "./packages"
+import { lint, formatIssues, mirrorDrift } from "./lint"
+import { scanShellHooks } from "./adapters/shell-hooks"
+import { scanFeatureMap, renderFeatureMap, stripGenerated, isGeneratedFeatureMap } from "./adapters/featuremap"
+import { buildFeatureIndex, renderFeatureIndex, stripFeatureIndex, isGeneratedFeatureIndex } from "./features"
+import { findLockfiles, resolvePackages } from "./packages"
 import { aggregateFleet, loadRoster, writeFleet } from "./fleet"
 
 const FLAGS_WITH_VALUE = new Set(["--baseline", "--fleet", "--fleet-from"])
@@ -73,20 +80,33 @@ for (const name of ["architecture.md", "architecture.json"]) {
   }
 }
 const t0 = performance.now()
-const targets: Target[] = cfg.targets.map((t) => {
+// featuremap targets are nav maps, not code: they never enter architecture.json.
+const featureCfgs = cfg.targets.filter((t) => t.adapter === "featuremap")
+const targets: Target[] = cfg.targets.filter((t) => t.adapter !== "featuremap").map((t) => {
   switch (t.adapter) {
     case "bun-server": return scanBunServer(t, repo)
     case "hono-server": return scanHonoServer(t, repo)
     case "react-client": return scanReactClient(t, repo)
     case "swiftui": return scanSwiftUI(t, repo)
     case "nuxt": return scanNuxt(t, repo)
+    case "astro": return scanAstro(t, repo)
+    case "shell-hooks": return scanShellHooks(t, repo)
     default: throw new Error(`archmap: unknown adapter ${String(t.adapter)}`)
   }
-}).map((t) => ({ ...t, packages: resolvePackages(t.modules, findLockfile(repo, resolveRoot(repo, t.root), t.adapter === "swiftui")) }))
+}).map((t) => ({ ...t, packages: resolvePackages(t.modules, findLockfiles(repo, resolveRoot(repo, t.root), t.adapter === "swiftui")) }))
 const map: ArchMap = { generatedAt: new Date().toISOString().slice(0, 10), repo: cfg.repo, intent: cfg.intent ?? "", targets, refs: cfg.refs ?? [] }
 const jsonPath = join(repo, "architecture.json")
 const mdPath = join(repo, "architecture.md")
 const strip = (m: ArchMap) => JSON.stringify({ ...m, generatedAt: "" }, null, 2)
+const featureMaps = featureCfgs.map((t) => scanFeatureMap(t, repo))
+const featurePath = join(repo, "FEATUREMAP.md")
+const featureIdx = featureMaps.length ? buildFeatureIndex(map, featureCfgs.map((c, i) => ({ cfg: c, fm: featureMaps[i]! })), repo) : null
+const featureMd = featureIdx ? `${renderFeatureMap(cfg.repo, featureMaps, map.generatedAt)}\n\n${renderFeatureIndex(featureIdx)}\n` : ""
+const featureJsonPath = join(repo, "featuremap.json")
+const featureJson = featureIdx ? JSON.stringify(featureIdx, null, 2) + "\n" : ""
+// A generated FEATUREMAP.md / featuremap.json left behind after its target was removed would rot unchecked.
+const orphanFeatureMap = !featureMd && existsSync(featurePath) && isGeneratedFeatureMap(readFileSync(featurePath, "utf-8"))
+const orphanFeatureJson = !featureJson && existsSync(featureJsonPath) && isGeneratedFeatureIndex(readFileSync(featureJsonPath, "utf-8"))
 
 let failed = false
 if (check) {
@@ -97,6 +117,18 @@ if (check) {
     console.error("archmap: architecture.json is stale — regenerate and commit")
     failed = true
   } else if (!quiet) console.log("archmap: up to date")
+  if (featureMd && stripGenerated(existsSync(featurePath) ? readFileSync(featurePath, "utf-8") : "") !== stripGenerated(featureMd)) {
+    console.error("archmap: FEATUREMAP.md is stale — regenerate and commit")
+    failed = true
+  }
+  if (featureJson && stripFeatureIndex(existsSync(featureJsonPath) ? readFileSync(featureJsonPath, "utf-8") : "") !== stripFeatureIndex(featureJson)) {
+    console.error("archmap: featuremap.json is stale — regenerate and commit")
+    failed = true
+  }
+  if (orphanFeatureMap || orphanFeatureJson) {
+    console.error(`archmap: ${orphanFeatureMap ? "FEATUREMAP.md" : "featuremap.json"} exists but archmap.json has no featuremap target — regenerate (deletes it) or restore the target`)
+    failed = true
+  }
 }
 if (doLint) {
   // baseline = --baseline <path> (CI: the base branch's architecture.json),
@@ -123,7 +155,12 @@ if (doLint) {
   }
   let baseline: ArchMap | null = null
   try { baseline = baselineText ? (JSON.parse(baselineText) as ArchMap) : null } catch { /* no baseline → every over-cap module blocks */ }
-  const issues = lint(map, cfg, baseline)
+  // ponytail: missing selectors warn, never block; ratchet them like caps if they keep growing.
+  const noSelector = featureMaps.flatMap((fm) => {
+    const n = [...fm.shell, ...fm.pages].filter((f) => !f.selector).length
+    return n ? [{ target: fm.target, module: "FEATUREMAP.md", rule: "featuremap selector", detail: `${n} features without a data-testid/aria-label selector`, blocking: false }] : []
+  })
+  const issues = [...lint(map, cfg, baseline), ...mirrorDrift(cfg, repo), ...noSelector]
   const blocking = issues.filter((i) => i.blocking)
   if (issues.length) console[blocking.length ? "error" : "log"](`archmap: ${blocking.length} blocking, ${issues.length - blocking.length} legacy\n${formatIssues(issues)}`)
   else if (!quiet) console.log("archmap: lint clean")
@@ -149,11 +186,25 @@ if (regressions.length && !args.includes("--allow-unresolved")) {
   console.error(`archmap: refusing to write — ${regressions.join(", ")} joined the committed map but cannot be resolved on this host. Regenerate where the sibling repo is checked out, or pass --allow-unresolved.`)
   process.exit(2)
 }
+if (featureMd && existsSync(featurePath) && !isGeneratedFeatureMap(readFileSync(featurePath, "utf-8"))) {
+  console.error("archmap: refusing to write — FEATUREMAP.md exists and was not generated by archmap. Move it aside or drop the featuremap target.")
+  process.exit(2)
+}
+if (featureJson && existsSync(featureJsonPath) && !isGeneratedFeatureIndex(readFileSync(featureJsonPath, "utf-8"))) {
+  console.error("archmap: refusing to write — featuremap.json exists and was not generated by archmap. Move it aside or drop the featuremap target.")
+  process.exit(2)
+}
 writeFileSync(jsonPath, JSON.stringify(map, null, 2) + "\n")
 writeFileSync(mdPath, renderMarkdown(map, refs, unresolved) + "\n")
+if (featureMd) writeFileSync(featurePath, featureMd)
+else if (orphanFeatureMap) unlinkSync(featurePath)
+if (featureJson) writeFileSync(featureJsonPath, featureJson)
+else if (orphanFeatureJson) unlinkSync(featureJsonPath)
 const over = targets.flatMap((t) => t.modules.filter((m) => m.lines > t.cap).map((m) => `${t.name}/${m.path} (${m.lines} > ${t.cap})`))
 if (!quiet) {
   console.log(`archmap: ${targets.map((t) => `${t.name}=${t.modules.length}`).join(" ")} modules → architecture.md (${Math.round(performance.now() - t0)}ms)`)
+  for (const fm of featureMaps) console.log(`archmap: ${fm.target} ${fm.pages.length} routes, ${fm.shell.length} shell features, ${fm.unrouted.length} unrouted pages → FEATUREMAP.md`)
+  if (featureIdx) console.log(`archmap: ${featureIdx.features.length} features (${featureIdx.features.filter((f) => !f.ui.length).length} API-only) → featuremap.json`)
   if (over.length) console.log(`archmap: over cap → ${over.join(", ")}`)
   if (unresolved.length) console.log(`archmap: unresolved refs → ${unresolved.join(", ")}`)
 }
