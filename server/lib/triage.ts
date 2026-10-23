@@ -376,7 +376,7 @@ export function fallbackPhrase(src: SourceItem): Phrase {
     ])
   }
   if (ref.source === "proposal") {
-    const where = ref.macFix ? "Run the fix on the Mac" : "Approve and start it"
+    const where = ref.macFix ? "Run the fix on the Mac" : "Approve it"
     return make(why("reasoning", "The brain proposes this work and waits for your OK."), "Approve it if it still makes sense.", [
       { label: where, action: { kind: "approve" } },
       { label: "Reject it", action: { kind: "reject" } },
