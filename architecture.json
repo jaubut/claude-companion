@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-23",
+  "generatedAt": "2026-10-24",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 118,
+          "lines": 119,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -71,6 +71,7 @@
             "routes/copy-jobs.ts",
             "routes/my-tasks.ts",
             "routes/taste.ts",
+            "routes/notes.ts",
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
             "routes/canvas.ts",
@@ -1293,7 +1294,7 @@
         },
         {
           "path": "lib/dashboard-client.ts",
-          "lines": 177,
+          "lines": 192,
           "kind": "lib",
           "exports": [
             "DASHBOARD_KEY_NAME",
@@ -1324,7 +1325,10 @@
             "fetchInboxAudio",
             "createNote",
             "getNote",
-            "listNotesLite"
+            "listNotesLite",
+            "listNotes",
+            "updateNote",
+            "searchDashboard"
           ],
           "state": [],
           "emits": [],
@@ -6043,6 +6047,25 @@
           "externals": []
         },
         {
+          "path": "routes/notes.ts",
+          "lines": 212,
+          "kind": "lib",
+          "exports": [
+            "handleNotesRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dashboard-client.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/orchestrator.ts",
           "lines": 413,
           "kind": "route-host",
@@ -7636,6 +7659,12 @@
         },
         "handleMyTasksRoute": {
           "module": "routes/my-tasks.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleNotesRoute": {
+          "module": "routes/notes.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -10031,6 +10060,7 @@
             "lib/trip-dashboard.ts",
             "lib/voice-memo.ts",
             "routes/capture.ts",
+            "routes/notes.ts",
             "routes/taste.ts",
             "routes/trips.ts"
           ]
@@ -10055,6 +10085,7 @@
             "lib/trip-dashboard.ts",
             "lib/voice-memo.ts",
             "routes/capture.ts",
+            "routes/notes.ts",
             "routes/taste.ts",
             "routes/trips.ts"
           ]
@@ -11702,7 +11733,8 @@
         "createNote": {
           "module": "lib/dashboard-client.ts",
           "callers": [
-            "lib/voice-memo.ts"
+            "lib/voice-memo.ts",
+            "routes/notes.ts"
           ]
         },
         "startRecording": {
@@ -12973,6 +13005,24 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "routes/my-tasks.ts"
+          ]
+        },
+        "listNotes": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "routes/notes.ts"
+          ]
+        },
+        "searchDashboard": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "routes/notes.ts"
+          ]
+        },
+        "updateNote": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "routes/notes.ts"
           ]
         },
         "emitChannel": {
