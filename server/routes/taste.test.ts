@@ -96,6 +96,14 @@ describe("POST /api/taste/swipe", () => {
     await call("POST", "/api/taste/swipe", { item_id: 4, verdict: "like", reason_tag: null })
     expect(JSON.parse(hits[1]!.body)).toEqual({ item_id: 4, verdict: "like" })
   })
+  test("comment forwarded when a string, 400 otherwise", async () => {
+    await call("POST", "/api/taste/swipe", { item_id: 5, verdict: "like", comment: "serif, one hero object" })
+    expect(JSON.parse(hits[0]!.body)).toEqual({ item_id: 5, verdict: "like", comment: "serif, one hero object" })
+    const r = await call("POST", "/api/taste/swipe", { item_id: 5, verdict: "like", comment: 7 })
+    expect(r.status).toBe(400)
+    expect(((await r.json()) as { error: string }).error).toBe("invalid_comment")
+    expect(hits.length).toBe(1)
+  })
   test("enum + shape validation → 400, never forwarded", async () => {
     const bad: Array<[unknown, string]> = [
       [{ item_id: 1, verdict: "meh" }, "invalid_verdict"],
