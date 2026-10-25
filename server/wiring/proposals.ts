@@ -1,4 +1,3 @@
-import { BODY_CHANNEL } from "../lib/body"
 import { appendTurn, createProposal, getTask, setTaskStatus, type Task } from "../lib/orchestrator-chat"
 import { approveUrl, cancelDispatchTask } from "../lib/dispatch-tasks"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
@@ -8,17 +7,17 @@ import { emitTask, fileProposal, orchEmit, writeCtx } from "./orchestrator"
 // Proposal approve / reject: the one path behind POST .../proposal/<id>/{approve|reject}
 // (routes/orchestrator.ts) and the triage `approve` / `reject` options
 // (wiring/triage.ts). Approve files ONE Turso row and nothing else
-// (docs/one-stream-plan.md): `queued` when the tap is Jeremie's own (byHand),
-// else `pending` until the dashboard release stamp queues it; dispatch-run runs it. A #Body fix card for a Mac component is tagged requires_host=mac so
+// (docs/one-stream-plan.md). The tap is Jeremie's approval (2026-10-25: "the
+// approval on the app need to be valid, no back and forth"), so it files
+// origin `jeremie` → `queued`, #Body and Opus rescopes included; only a Turso
+// without the origin column leaves it `pending` for the dashboard stamp.
+// dispatch-run runs it. A #Body fix card for a Mac component is tagged requires_host=mac so
 // only the Mac's dispatch-run claims it. Revise (Opus's rescope: the resolver
 // and a No on a repo card) rejects the old one and files the new one.
 
 export interface ApproveOpts { agent?: string | null; noteId?: string | null }
 
-// A tap makes it Jeremie's (origin "jeremie", past the queue guard) only when the prompt is his own
-// conversation's: #Body prompts carry log/investigation text and an Opus rescope carries PR text.
 const RESCOPED = "Opus rescoped"
-const byHand = (t: Task): boolean => t.threadId !== BODY_CHANNEL && !(t.reasoning ?? "").startsWith(RESCOPED)
 
 /** {status:"queued"} or {status:"pending_approval", approveUrl} — the one filed-row answer for every Companion entry point. */
 export function filedStatus(dispatchTaskId: string, queued: boolean): { status: "queued" } | { status: "pending_approval"; approveUrl: string } {
@@ -28,7 +27,7 @@ export function filedStatus(dispatchTaskId: string, queued: boolean): { status: 
 /** Approve → {ok, taskId, dispatchTaskId, status, approveUrl?, replay}; replay on `filed` → 200, same id. */
 export async function approveProposal(task: Task, opts: ApproveOpts = {}, dispatch: DispatchWiring = dispatchWiring): Promise<Response> {
   const requiresHost = bodyFixStore.card(task.taskId)?.host === "mac" ? "mac" as const : null
-  const out = await fileProposal(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, byHand: byHand(task), requiresHost }, dispatch)
+  const out = await fileProposal(task.taskId, { agent: opts.agent ?? null, noteId: opts.noteId ?? null, byHand: true, requiresHost }, dispatch)
   if (!out.ok) return Response.json({ ok: false, error: out.error, taskId: task.taskId }, { status: out.status })
   return Response.json({
     ok: true, taskId: task.taskId, dispatchTaskId: out.dispatchTaskId, ...filedStatus(out.dispatchTaskId, out.queued), replay: out.replay,
