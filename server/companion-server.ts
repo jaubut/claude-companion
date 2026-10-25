@@ -21,6 +21,7 @@ import { handleGaugeRoute } from "./routes/gauge"
 import { handleCopyJobsRoute } from "./routes/copy-jobs"
 import { handleMyTasksRoute } from "./routes/my-tasks"
 import { handleTasteRoute } from "./routes/taste"
+import { handleNotesRoute } from "./routes/notes"
 import { createTasksAgentRoute } from "./routes/tasks-agent"
 import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
 import { createCanvasRoute } from "./routes/canvas"
@@ -94,7 +95,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleCanvasRoute]) {
+      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }
