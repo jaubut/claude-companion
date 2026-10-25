@@ -6083,7 +6083,7 @@
         },
         {
           "path": "wiring/body-agent.ts",
-          "lines": 168,
+          "lines": 170,
           "kind": "lib",
           "exports": [
             "BodyAgentDeps",
