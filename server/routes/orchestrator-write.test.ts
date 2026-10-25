@@ -148,7 +148,7 @@ beforeEach(() => {
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES (?, 'projects', 'TLS Dashboard', 'PRJ-WCLS', 'active')").run("projects/dash")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES (?, 'projects', 'Pelchat', 'PRJ-PELC', 'active')").run("projects/pel")
   sqlite.exec("DELETE FROM dispatch_seen")
-  sqlite.exec("UPDATE orchestrator_channels SET note_id = NULL, note_title = NULL, note_ref = NULL, auto_dispatch = 0")
+  sqlite.exec("UPDATE orchestrator_channels SET note_id = NULL, note_title = NULL, note_ref = NULL")
 })
 
 // ── approve → Turso ──────────────────────────────────────────────────────────
@@ -262,37 +262,40 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
   })
 })
 
-describe("auto-dispatch channel", () => {
-  test("a brain proposal files straight to Turso, reasoning turn visible, card filed", async () => {
+// One work stream Q3: no auto-dispatch toggle. A brain proposal always waits for a tap.
+describe("brain proposals (no auto-dispatch)", () => {
+  test("a brain proposal files nothing to Turso; the card waits for a tap", async () => {
     const { w } = makeWiring()
     const ch = channels.createChannel("Auto A")
     channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
-    const auto = channels.setChannelAuto(ch.id, true)!
-    const projects = await w.projects(true)
     await orch.applyDecision(
       { kind: "proposal", cwd: "", prompt: "Bump the rate limit", reasoning: "user asked", noteId: "projects/dash", agent: "build", title: "Bump rate limit" },
-      auto, projects, w,
+      channels.getChannel(ch.id)!, await w.projects(true),
     )
-    const rows = turso.query("SELECT * FROM tasks").all() as Record<string, any>[]
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ text: "Bump rate limit", assignee: "agent:builder", dispatch_status: "pending", note_id: "projects/dash" })
-    const turns = chat.getThread(ch.id).map((t) => t.text)
-    expect(turns.some((t) => t.startsWith("Auto-dispatch [") && t.includes("Why: user asked"))).toBe(true)
-    expect(turns.some((t) => t.startsWith("filed ["))).toBe(true)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
+    const p = chat.listTasks(ch.id).find((t) => t.prompt === "Bump the rate limit")!
+    expect(p).toMatchObject({ status: "proposed", noteId: "projects/dash" })
+    expect(chat.getThread(ch.id).some((t) => t.text.startsWith("Proposal [") && t.text.includes("Why: user asked"))).toBe(true)
   })
 
-  test("#Body never auto-files, and a hallucinated note is dropped", async () => {
+  test("a hallucinated note is dropped", async () => {
     const { w } = makeWiring()
-    const { ensureChannel } = channels
-    const bodyCh = channels.setChannelAuto(ensureChannel("body", "Body").channel.id, true)!
+    const bodyCh = channels.ensureChannel("body", "Body").channel
     await orch.applyDecision(
       { kind: "proposal", cwd: "", prompt: "Restart backup", reasoning: "dead", noteId: "projects/made-up", agent: "builder", title: null },
-      bodyCh, await w.projects(true), w,
+      bodyCh, await w.projects(true),
     )
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
     const p = chat.listTasks("body").find((t) => t.prompt === "Restart backup")!
     expect(p).toMatchObject({ status: "proposed", noteId: null })
-    channels.setChannelAuto("body", false)
+  })
+
+  test("the channel auto toggle route is gone", async () => {
+    const { handler } = makeWiring()
+    const ch = channels.createChannel("Auto gone")
+    expect(await call(handler, "POST", `/api/orchestrator/channels/${ch.id}/auto`, { enabled: true }))
+      .toMatchObject({ status: 400, json: { ok: false, error: "unknown action" } })
+    expect(channels.getChannel(ch.id)).not.toHaveProperty("autoDispatch")
   })
 })
 
@@ -355,17 +358,6 @@ describe("POST /api/orchestrator/task/<id>/cancel", () => {
     expect((await call(handler, "POST", `/api/orchestrator/task/${tid()}/cancel`)).status).toBe(404)
     down = true
     expect(await call(handler, "POST", `/api/orchestrator/task/${id}/cancel`)).toEqual({ status: 503, json: { ok: false, error: "turso_unreachable" } })
-  })
-
-  test("a cancel in an auto channel flips auto off (the veto)", async () => {
-    const { handler } = makeWiring()
-    const ch = channels.createChannel("Veto A")
-    channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: null })
-    channels.setChannelAuto(ch.id, true)
-    const id = tid()
-    seedTask(id)
-    expect((await call(handler, "POST", `/api/orchestrator/task/${id}/cancel`)).status).toBe(200)
-    expect(channels.getChannel(ch.id)!.autoDispatch).toBe(false)
   })
 })
 
