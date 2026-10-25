@@ -5,7 +5,6 @@ import { companionLog } from "../lib/log"
 import { appendTurn, countLiveTasks, getTaskByDispatchId, listQueued } from "../lib/orchestrator-chat"
 import { getChannel, linkedNotes } from "../lib/orchestrator-channels"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
-import { wipCap } from "../lib/orchestrator-queue"
 import { pushToAll } from "../lib/push"
 import { tursoExec, tursoQuery } from "../lib/turso"
 import { broadcast } from "../state"
@@ -43,7 +42,8 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   log: companionLog,
   onPolled: () => { for (const fn of polledListeners) fn() },
   getChannel,
-  localQueue: () => ({ cap: wipCap(), live: countLiveTasks(), queued: listQueued().length }),
+  // No local worker runner any more (one-stream A2): no slots; live/queued only count legacy rows.
+  localQueue: () => ({ cap: 0, live: countLiveTasks(), queued: listQueued().length }),
   liveIdentity: (id) => {
     const t = getTaskByDispatchId(id)
     return t ? { localTaskId: t.taskId, tmuxSession: t.tmuxSession, tmuxSocket: t.tmuxSocket ?? null, sessionKey: t.sessionKey, logTail: t.logTail } : null

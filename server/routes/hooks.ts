@@ -40,8 +40,6 @@ import {
   projectLabelFor,
   scrapeHookPassthrough,
 } from "../lib/hook-common"
-import { emitTask, orchEmit, resolveWorkerTask, workerQueue } from "../wiring/orchestrator"
-import { appendTurn as orchAppendTurn, setTaskStatus } from "../lib/orchestrator-chat"
 import { dispatchWiring } from "../wiring/dispatch"
 import { isLoopback, peerOf } from "../lib/vault-guard"
 import { checkBearer } from "../lib/auth"
@@ -411,29 +409,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const lastMessage = (body.last_assistant_message ?? "").trim()
       || await extractLastAssistantMessage(body.transcript_path)
 
-    // Orchestrator (PRJ-OR1T): if this turn-end belongs to a dispatched
-    // worker, capture its first reply back into the single thread tagged by
-    // task, and close the task so later turn-ends don't re-report. The worker
-    // names its own task (X-Companion-Task-Id, issued at dispatch); cwd is only
-    // the fallback, and when a cwd holds two running tasks the resolver refuses
-    // rather than closing the wrong one — a wrong close would post this reply
-    // under a sibling's task and free its WIP slot. It logs its own refusals.
-    if (cwd) {
-      const task = await resolveWorkerTask("close", {
-        taskId: headerMeta.taskId,
-        tmuxPane: headerMeta.tmuxPane,
-        tmuxSocket: headerMeta.tmuxSocket,
-        cwd,
-      })
-      if (task) {
-        setTaskStatus(task.taskId, "done")
-        emitTask(task.taskId)
-        orchEmit(orchAppendTurn("worker", lastMessage || "(no output)", task.taskId, task.threadId))
-        void workerQueue.drain() // slot freed
-        const reset = "\x1b[0m"; const green = "\x1b[32m"
-        companionLog(`${green}orchestrator reply${reset} [${task.taskId}] → thread`)
-      }
-    }
 
     // Fire-and-forget: recordTurnEnd may now poll the transcript for up
     // to ~4s waiting on a late-flushed closing block. Don't await it —
@@ -495,8 +470,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       noteSessionBoundary({ sessionId: body.session_id, tty: meta.tty, pane: meta.tmuxPane })
     }
     if (cwd) {
-      // recordSession fires onSessions → reconcileDispatch binds this worker
-      // to its dispatch task and sends the prompt. No inline binding needed.
       const started = recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
       if (started && body.source === "compact") void autoCompactor.onCompacted(started.key)
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"

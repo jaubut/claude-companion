@@ -2,8 +2,6 @@ import {
   emitChannel,
   emitTask,
   orchEmit,
-  vetoAuto,
-  workerQueue,
   writeCtx,
 } from "../wiring/orchestrator"
 import {
@@ -15,7 +13,7 @@ import {
   type Task as OrchTask,
 } from "../lib/orchestrator-chat"
 import {
-  type Channel as OrchChannel, createChannel, getChannel, getChannelByNote, listChannels, setChannelAuto, setChannelNote,
+  type Channel as OrchChannel, createChannel, getChannel, getChannelByNote, listChannels, setChannelNote,
 } from "../lib/orchestrator-channels"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import {
@@ -36,7 +34,7 @@ import { companionLog } from "../lib/log"
 import { sessionCmdArgv } from "../lib/tmux-pane"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
-// approve/reject, task cancel, auto-dispatch toggle; plus the Turso dispatch
+// approve/reject, task cancel; plus the Turso dispatch
 // queue (orchestrator-one-queue): channel ↔ note link, task detail, projects
 // (P1); approve files to Turso, cancel / requeue / unblock through the guarded
 // writes in lib/dispatch-tasks.ts, #Body vitals header (P2/P3). Contract:
@@ -170,8 +168,6 @@ async function cancelLocal(task: OrchTask): Promise<Response> {
   setTaskStatus(task.taskId, "cancelled")
   emitTask(task.taskId)
   orchEmit(orchAppendTurn("orchestrator", `cancelled [${task.taskId}]`, task.taskId, task.threadId))
-  vetoAuto(task.threadId)
-  void workerQueue.drain()
   return Response.json({ ok: true, taskId: task.taskId, status: "cancelled" })
 }
 
@@ -215,7 +211,6 @@ async function dispatchAction(req: Request, id: string, action: TaskAction, disp
   dispatch.applyLocal(out.task)
   const channelId = dispatch.threadIdFor(out.task)
   orchEmit(orchAppendTurn("orchestrator", actionTurn(action, out.task, answer), out.task.id, channelId))
-  if (action === "cancel") vetoAuto(channelId)
   const task = dispatch.dto(out.task)
   return Response.json(action === "cancel" ? { ok: true, taskId: id, status: "cancelled", task } : { ok: true, task })
 }
@@ -309,29 +304,10 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
   if (url.pathname === "/api/orchestrator/channels" && req.method === "POST") {
     return withIdempotency(req, "orch-channel-create", () => createChannelRoute(req, dispatch))
   }
-  // Trust ramp toggle (Phase 7). POST .../channels/<id>/auto { enabled }.
-  // The server reports eligibility (trust.eligible); only the user flips it.
   if (url.pathname.startsWith("/api/orchestrator/channels/") && req.method === "POST") {
     const [id, action] = url.pathname.slice("/api/orchestrator/channels/".length).split("/")
     if (action === "link" && id) return linkChannel(req, id, dispatch)
-    return withIdempotency(req, `orch-auto:${id}`, async () => {
-      if (action !== "auto" || !id) return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
-      const { enabled } = await req.json() as { enabled?: unknown }
-      if (typeof enabled !== "boolean") return Response.json({ ok: false, error: "enabled must be boolean" }, { status: 400 })
-      if (id === BODY_CHANNEL && enabled) return Response.json({ ok: false, error: "auto-dispatch is disabled for #Body" }, { status: 400 })
-      const ch = setChannelAuto(id, enabled)
-      if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
-      emitChannel(ch)
-      orchEmit(orchAppendTurn(
-        "orchestrator",
-        enabled
-          ? `auto-dispatch ON for #${ch.name} — proposals run without a tap; cancel any task to switch it back off`
-          : `auto-dispatch OFF for #${ch.name} — back to propose-confirm`,
-        null,
-        ch.id,
-      ))
-      return Response.json({ ok: true, channel: ch })
-    })
+    return Response.json({ ok: false, error: "unknown action" }, { status: 400 })
   }
   if (url.pathname === "/api/orchestrator/thread" && req.method === "GET") {
     const ch = resolveChannel(url.searchParams.get("channel"))

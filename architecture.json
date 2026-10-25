@@ -2486,14 +2486,13 @@
         },
         {
           "path": "lib/orchestrator-channels.ts",
-          "lines": 165,
+          "lines": 158,
           "kind": "lib",
           "exports": [
             "ChannelTrust",
             "AUTO_ELIGIBLE_STREAK",
             "Channel",
             "channelTrust",
-            "setChannelAuto",
             "listChannels",
             "getChannel",
             "createChannel",
@@ -2519,7 +2518,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 394,
+          "lines": 271,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -2533,26 +2532,13 @@
             "createTask",
             "createQueuedTask",
             "createProposal",
-            "setTaskSpawn",
             "stampDispatchId",
             "markFiled",
-            "setLiveTarget",
             "getTaskByDispatchId",
             "getTask",
-            "bindTaskSession",
             "setTaskStatus",
-            "setTaskLogTail",
-            "matchUnboundTaskByCwd",
-            "findRunningTaskByCwd",
-            "matchUnboundTaskById",
-            "findRunningTaskById",
-            "matchUnboundTaskByTmuxSession",
-            "findRunningTaskByTmuxSession",
-            "countUnboundTasksInCwd",
-            "countRunningTasksInCwd",
             "listTasks",
             "listProposals",
-            "listLiveTasks",
             "countLiveTasks",
             "listQueued"
           ],
@@ -2583,30 +2569,6 @@
           "apiCalls": [],
           "imports": [
             "lib/db-path.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/orchestrator-queue.ts",
-          "lines": 84,
-          "kind": "lib",
-          "exports": [
-            "DEFAULT_WIP_CAP",
-            "wipCap",
-            "QueueDeps",
-            "Admission",
-            "Queue",
-            "createQueue"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/orchestrator-chat.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4335,7 +4297,7 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 346,
+          "lines": 316,
           "kind": "lib",
           "exports": [
             "tmuxSocketFromEnv",
@@ -4358,7 +4320,6 @@
             "capturePane",
             "paneInputReady",
             "paneHasDialog",
-            "tmuxSessionForPane",
             "tmuxPaneAttached",
             "MIN_INJECT_PANE_WIDTH",
             "paneTooNarrow",
@@ -5214,53 +5175,6 @@
           "externals": []
         },
         {
-          "path": "lib/worker-identity.ts",
-          "lines": 130,
-          "kind": "lib",
-          "exports": [
-            "ResolveKind",
-            "WorkerIdentityDeps",
-            "WorkerIdentityInput",
-            "WorkerIdentityResolver",
-            "BIND_DEGRADE_AFTER_MS",
-            "createWorkerIdentityResolver"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/orchestrator-chat.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/worker-tail.ts",
-          "lines": 121,
-          "kind": "lib",
-          "exports": [
-            "WorkerTailDeps",
-            "WorkerTailManager",
-            "createWorkerTailManager"
-          ],
-          "state": [
-            "LIVE_STATUSES: Set"
-          ],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/orchestrator-chat.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
           "path": "routes/api.ts",
           "lines": 469,
           "kind": "route-host",
@@ -5764,7 +5678,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 556,
+          "lines": 529,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -5844,8 +5758,6 @@
             "lib/push.ts",
             "state.ts",
             "lib/hook-common.ts",
-            "wiring/orchestrator.ts",
-            "lib/orchestrator-chat.ts",
             "wiring/dispatch.ts",
             "lib/vault-guard.ts",
             "lib/auth.ts",
@@ -5981,7 +5893,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 408,
+          "lines": 384,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6572,7 +6484,6 @@
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-db.ts",
-            "lib/orchestrator-queue.ts",
             "lib/push.ts",
             "lib/turso.ts",
             "state.ts"
@@ -6583,7 +6494,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 200,
+          "lines": 196,
           "kind": "lib",
           "exports": [],
           "state": [
@@ -6615,7 +6526,6 @@
             "lib/session-titles.ts",
             "lib/transcript.ts",
             "lib/hook-common.ts",
-            "wiring/orchestrator.ts",
             "wiring/waiting.ts",
             "lib/approval-history.ts",
             "lib/approval-history-auto.ts",
@@ -6722,7 +6632,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 488,
+          "lines": 246,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -6730,13 +6640,6 @@
             "onTaskEmitted",
             "setTriageDigest",
             "emitChannel",
-            "vetoAuto",
-            "WIP_CAP",
-            "workerQueue",
-            "workerTail",
-            "resolveWorkerTask",
-            "reconcileDispatch",
-            "executeDispatch",
             "writeCtx",
             "FileOutcome",
             "fileProposal",
@@ -6750,14 +6653,12 @@
           ],
           "state": [
             "taskListeners: Set",
-            "let triageDigest",
-            "let reconcileChain"
+            "let triageDigest"
           ],
           "emits": [
             "orchestrator",
             "orchestrator_task",
-            "orchestrator_channel",
-            "orchestrator_worker_output"
+            "orchestrator_channel"
           ],
           "consumes": [],
           "endpoints": [],
@@ -6770,12 +6671,7 @@
             "lib/orchestrator-brain.ts",
             "lib/project-catalog.ts",
             "lib/live-repo.ts",
-            "lib/worker-tail.ts",
-            "lib/orchestrator-queue.ts",
-            "lib/tmux-pane.ts",
-            "lib/worker-identity.ts",
             "lib/sessions.ts",
-            "lib/spawn-session.ts",
             "lib/body.ts",
             "lib/orchestrator-db.ts",
             "wiring/body.ts",
@@ -7065,7 +6961,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 452,
+          "lines": 451,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -7578,7 +7474,6 @@
             "wiring/dialogs.ts",
             "wiring/events.ts",
             "wiring/gauge.ts",
-            "wiring/orchestrator.ts",
             "wiring/waiting.ts"
           ]
         },
@@ -8144,10 +8039,7 @@
           "callers": [
             "lib/body-investigate-engine.ts",
             "lib/dispatch-tasks.ts",
-            "lib/orchestrator-queue.ts",
             "lib/triage-sources.ts",
-            "lib/worker-identity.ts",
-            "lib/worker-tail.ts",
             "routes/orchestrator.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
@@ -8219,7 +8111,6 @@
             "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
@@ -8690,8 +8581,7 @@
         "paneHasDialog": {
           "module": "lib/tmux-pane.ts",
           "callers": [
-            "lib/command-offpane.ts",
-            "wiring/orchestrator.ts"
+            "lib/command-offpane.ts"
           ]
         },
         "tmuxNoServer": {
@@ -8709,8 +8599,7 @@
         "paneInputReady": {
           "module": "lib/tmux-pane.ts",
           "callers": [
-            "lib/command-offpane.ts",
-            "wiring/orchestrator.ts"
+            "lib/command-offpane.ts"
           ]
         },
         "ESC_SETTLE_MS": {
@@ -9282,8 +9171,7 @@
             "lib/pane-clean.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
-            "wiring/dialogs.ts",
-            "wiring/orchestrator.ts"
+            "wiring/dialogs.ts"
           ]
         },
         "tmuxPaneWidth": {
@@ -9530,14 +9418,6 @@
             "wiring/orchestrator.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "listQueued": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/orchestrator-queue.ts",
-            "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "QuestionItem": {
@@ -11532,88 +11412,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "matchUnboundTaskById": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "findRunningTaskById": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "getTask": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "lib/worker-tail.ts",
-            "routes/orchestrator.ts",
-            "wiring/body-agent.ts",
-            "wiring/orchestrator.ts",
-            "wiring/proposals.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "matchUnboundTaskByTmuxSession": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "findRunningTaskByTmuxSession": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "countUnboundTasksInCwd": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "countRunningTasksInCwd": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "matchUnboundTaskByCwd": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "findRunningTaskByCwd": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-identity.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "LIVE_STATUSES": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-tail.ts"
-          ]
-        },
-        "setTaskLogTail": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/worker-tail.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
         "registerToken": {
           "module": "lib/push-tokens.ts",
           "callers": [
@@ -11638,7 +11436,6 @@
             "routes/capture.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/channels",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/orchestrator.ts#POST /api/orchestrator/dispatch",
             "routes/trips.ts"
@@ -11679,15 +11476,13 @@
         "SpawnResult": {
           "module": "lib/spawn-session.ts",
           "callers": [
-            "routes/api.ts#POST /api/spawn-session",
-            "wiring/orchestrator.ts"
+            "routes/api.ts#POST /api/spawn-session"
           ]
         },
         "spawnCompanionSession": {
           "module": "lib/spawn-session.ts",
           "callers": [
-            "routes/api.ts#POST /api/spawn-session",
-            "wiring/orchestrator.ts"
+            "routes/api.ts#POST /api/spawn-session"
           ]
         },
         "getPending": {
@@ -11701,7 +11496,6 @@
           "module": "state.ts",
           "callers": [
             "routes/api.ts#* /api/status",
-            "wiring/orchestrator.ts",
             "ws.ts"
           ]
         },
@@ -12550,51 +12344,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "resolveWorkerTask": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
-          ]
-        },
-        "setTaskStatus": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/orchestrator.ts",
-            "wiring/body-agent.ts",
-            "wiring/orchestrator.ts",
-            "wiring/proposals.ts"
-          ]
-        },
-        "emitTask": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/orchestrator.ts",
-            "wiring/proposals.ts"
-          ]
-        },
-        "orchEmit": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/front-door.ts",
-            "wiring/proposals.ts",
-            "wiring/resolver.ts",
-            "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "workerQueue": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/orchestrator.ts"
-          ]
-        },
         "markWaiting": {
           "module": "wiring/waiting.ts",
           "callers": [
@@ -12735,14 +12484,25 @@
         "emitChannel": {
           "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/"
+            "routes/orchestrator.ts"
           ]
         },
-        "vetoAuto": {
+        "emitTask": {
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/proposals.ts"
+          ]
+        },
+        "orchEmit": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/front-door.ts",
+            "wiring/proposals.ts",
+            "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
             "wiring/triage.ts"
           ]
         },
@@ -12769,6 +12529,17 @@
             "wiring/triage.ts"
           ]
         },
+        "getTask": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "wiring/body-agent.ts",
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
         "getThread": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -12785,12 +12556,12 @@
             "routes/orchestrator.ts#GET /api/orchestrator/thread"
           ]
         },
-        "setChannelAuto": {
-          "module": "lib/orchestrator-channels.ts",
+        "setTaskStatus": {
+          "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/channels/",
-            "wiring/orchestrator.ts"
+            "wiring/body-agent.ts",
+            "wiring/proposals.ts"
           ]
         },
         "listChannels": {
@@ -12912,8 +12683,7 @@
         "sessionCmdArgv": {
           "module": "lib/tmux-pane.ts",
           "callers": [
-            "routes/orchestrator.ts",
-            "wiring/orchestrator.ts"
+            "routes/orchestrator.ts"
           ]
         },
         "rejectProposal": {
@@ -13759,15 +13529,13 @@
         "countLiveTasks": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
+            "wiring/dispatch.ts"
           ]
         },
-        "wipCap": {
-          "module": "lib/orchestrator-queue.ts",
+        "listQueued": {
+          "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
+            "wiring/dispatch.ts"
           ]
         },
         "getTaskByDispatchId": {
@@ -13914,12 +13682,6 @@
             "wiring/events.ts"
           ]
         },
-        "reconcileDispatch": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
         "reconcileActivityLiveness": {
           "module": "lib/activity.ts",
           "callers": [
@@ -14028,24 +13790,6 @@
             "wiring/media.ts"
           ]
         },
-        "setTaskSpawn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "bindTaskSession": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "listLiveTasks": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
         "stampDispatchId": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -14072,30 +13816,6 @@
         },
         "RequiresHost": {
           "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "createQueue": {
-          "module": "lib/orchestrator-queue.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "createWorkerTailManager": {
-          "module": "lib/worker-tail.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "createWorkerIdentityResolver": {
-          "module": "lib/worker-identity.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "tmuxSessionForPane": {
-          "module": "lib/tmux-pane.ts",
           "callers": [
             "wiring/orchestrator.ts"
           ]

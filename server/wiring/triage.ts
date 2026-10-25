@@ -21,7 +21,7 @@ import { HOST_INFO, broadcast as wsBroadcast } from "../state"
 import { bodySnapshot } from "./body"
 import { bodyFixStore, bodyInvestigator, investigationStore } from "./body-investigate"
 import { type DispatchWiring, dispatchWiring, onDispatchPolled } from "./dispatch"
-import { onTaskEmitted, orchEmit, setTriageDigest, vetoAuto, writeCtx } from "./orchestrator"
+import { onTaskEmitted, orchEmit, setTriageDigest, writeCtx } from "./orchestrator"
 import { approveProposal, rejectProposal, reviseProposal } from "./proposals"
 import { type LiveResolver, type ResolverLiveOpts, createLiveResolver, repoMapSelfCheck, startResolverDigest } from "./resolver"
 import { type RepoRunnerDeps, sweepInterruptedRuns } from "./triage-repos"
@@ -265,7 +265,6 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     dispatch.applyLocal(out.task)
     const channelId = dispatch.threadIdFor(out.task)
     orchEmit(appendTurn("orchestrator", actionTurn(kind, out.task, text, by), out.task.id, channelId))
-    if (kind === "cancel") vetoAuto(channelId)
     return { kind: "done", detail: { dispatchStatus: out.task.status } }
   }
 

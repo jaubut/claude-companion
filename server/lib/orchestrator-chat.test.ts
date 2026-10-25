@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach } from "bun:test"
+import { test, expect, describe } from "bun:test"
 import { Database } from "bun:sqlite"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -64,24 +64,11 @@ test("proposals carry their channel through createProposal", () => {
   expect(chat.listTasks(z.id).some((t) => t.taskId === p.taskId)).toBe(true)
 })
 
-test("log_tail migrates onto a legacy db and round-trips through setTaskLogTail", () => {
+test("log_tail migrates onto a legacy db", () => {
   // The legacy seed had no log_tail column — module init must have ALTERed it in.
   expect(chat.getTask("k1")?.logTail).toBeNull()
-  const t = chat.createTask("tail me", "/y", "cc-y", "general")
-  expect(t.logTail).toBeNull()
-  chat.setTaskLogTail(t.taskId, "last\nlines")
-  expect(chat.getTask(t.taskId)?.logTail).toBe("last\nlines")
-  // a proposal carries the column too
+  expect(chat.createTask("tail me", "/y", "cc-y", "general").logTail).toBeNull()
   expect(chat.createProposal("p", "/y", "why", "general").logTail).toBeNull()
-})
-
-test("auto_dispatch migrates onto a legacy channels table and round-trips with trust", () => {
-  const ch = chat.createChannel("Trust Lab", "/t")
-  expect(ch.autoDispatch).toBe(false)
-  expect(chat.setChannelAuto(ch.id, true)?.autoDispatch).toBe(true)
-  expect(chat.getChannel(ch.id)?.autoDispatch).toBe(true)
-  expect(chat.listChannels().find((c) => c.id === ch.id)?.autoDispatch).toBe(true)
-  expect(chat.setChannelAuto("nope", true)).toBeNull()
 })
 
 test("channelTrust counts judged proposals only and tracks the approval streak", () => {
@@ -114,230 +101,25 @@ test("createQueuedTask parks a task with no tmux session; listQueued is FIFO", (
   expect(ids.indexOf(a.taskId)).toBeLessThan(ids.indexOf(b.taskId))
 })
 
-// ---- backpressure (Phase 7) -------------------------------------------------
 // Same module instance / same sqlite file as above: Bun shares the module cache
 // across test files, so a second file setting COMPANION_DB_PATH would either be
 // ignored or steal the binding from this file's legacy seed. Keep every test
 // that touches orchestrator-chat in this one file.
 
-// COMPANION_TMUX_SOCKET: the spawn server's socket path rides on the task so
-// cancel/send/tail address the worker on the server it was spawned on.
 test("legacy rows (pre tmux_socket column) read as the default server", () => {
   expect(chat.getTask("k1")?.tmuxSocket).toBeNull()
 })
 
-test("setTaskSpawn records the socket; '' and omitted store NULL (default server)", async () => {
-  const { sessionCmdArgv } = await import("./tmux-pane")
-  const a = chat.createProposal("a", "/s", "why", "general")
-  chat.setTaskSpawn(a.taskId, "cc-a", "/tmp/tmux-1000/cc")
-  const ta = chat.getTask(a.taskId)
-  expect(ta?.tmuxSocket).toBe("/tmp/tmux-1000/cc")
-  expect(sessionCmdArgv(ta?.tmuxSocket, "kill-session", ta?.tmuxSession ?? ""))
-    .toEqual(["tmux", "-S", "/tmp/tmux-1000/cc", "kill-session", "-t", "cc-a"])
-  const b = chat.createProposal("b", "/s", "why", "general")
-  chat.setTaskSpawn(b.taskId, "cc-b", "")
-  expect(chat.getTask(b.taskId)?.tmuxSocket).toBeNull()
-  const c = chat.createProposal("c", "/s", "why", "general")
-  chat.setTaskSpawn(c.taskId, "cc-c")
-  const tc = chat.getTask(c.taskId)
-  expect(tc?.tmuxSocket).toBeNull()
-  expect(sessionCmdArgv(tc?.tmuxSocket, "kill-session", "cc-c")).toEqual(["tmux", "kill-session", "-t", "cc-c"])
-  for (const id of [a.taskId, b.taskId, c.taskId]) chat.setTaskStatus(id, "done")
-})
-
-const { createQueue } = await import("./orchestrator-queue")
-const CWD = "/q"
-
-describe("backpressure queue", () => {
-
-  function makeQueue(cap: number, spawned: string[], failIds = new Set<string>()) {
-    return createQueue({
-      cap,
-      countLive: chat.countLiveTasks,
-      listQueued: chat.listQueued,
-      markQueued: (t) => chat.setTaskStatus(t.taskId, "queued"),
-      dispatch: async (t) => {
-        if (failIds.has(t.taskId)) {
-          chat.setTaskStatus(t.taskId, "error")
-          return { ok: false }
-        }
-        spawned.push(t.taskId)
-        chat.setTaskSpawn(t.taskId, `cc-${t.taskId}`) // → dispatched, holds a slot
-        return { ok: true }
-      },
-    })
-  }
-
-  beforeEach(() => {
-    // Neutralize every task from prior tests so the live count starts at zero.
-    for (const t of chat.listTasks()) chat.setTaskStatus(t.taskId, "done")
-  })
-
-  test("admit dispatches while under the cap, queues at the cap", async () => {
-    const spawned: string[] = []
-    const q = makeQueue(2, spawned)
-    const a = chat.createProposal("a", CWD, "why", "general")
-    const b = chat.createProposal("b", CWD, "why", "general")
-    const c = chat.createProposal("c", CWD, "why", "general")
-    expect((await q.admit(a)).status).toBe("dispatched")
-    expect((await q.admit(b)).status).toBe("dispatched")
-    expect((await q.admit(c)).status).toBe("queued")
-    expect(spawned).toEqual([a.taskId, b.taskId])
-    expect(chat.getTask(c.taskId)?.status).toBe("queued")
-    expect(chat.countLiveTasks()).toBe(2)
-  })
-
-  test("a task already sitting in the queue admits itself when a slot is free", async () => {
-    const spawned: string[] = []
-    const q = makeQueue(2, spawned)
-    const a = chat.createQueuedTask("manual", CWD, "general")
-    expect((await q.admit(a)).status).toBe("dispatched")
-    expect(spawned).toEqual([a.taskId])
-  })
-
-  test("admit surfaces a failed spawn", async () => {
-    const spawned: string[] = []
-    const a = chat.createProposal("a", CWD, "why", "general")
-    const q = makeQueue(2, spawned, new Set([a.taskId]))
-    const r = await q.admit(a)
-    expect(r.status).toBe("dispatched")
-    expect(r.status === "dispatched" && r.ok).toBe(false)
-    expect(chat.getTask(a.taskId)?.status).toBe("error")
-  })
-
-  test("drain starts queued tasks FIFO as slots free, never past the cap", async () => {
-    const spawned: string[] = []
-    const q = makeQueue(1, spawned)
-    const a = chat.createProposal("a", CWD, "why", "general")
-    const b = chat.createProposal("b", CWD, "why", "general")
-    const c = chat.createProposal("c", CWD, "why", "general")
-    await q.admit(a)
-    await q.admit(b)
-    await q.admit(c)
-    expect(chat.listQueued().map((t) => t.taskId)).toEqual([b.taskId, c.taskId])
-    expect(await q.drain()).toBe(0) // a still holds the only slot
-    chat.setTaskStatus(a.taskId, "done")
-    expect(await q.drain()).toBe(1)
-    expect(spawned).toEqual([a.taskId, b.taskId])
-    expect(chat.getTask(c.taskId)?.status).toBe("queued")
-    chat.setTaskStatus(b.taskId, "error")
-    expect(await q.drain()).toBe(1)
-    expect(spawned).toEqual([a.taskId, b.taskId, c.taskId])
-    expect(chat.listQueued()).toHaveLength(0)
-  })
-
-  test("a newcomer parks behind an existing queue even when a slot is free (FIFO)", async () => {
-    const spawned: string[] = []
-    const q = makeQueue(1, spawned)
-    const a = chat.createProposal("a", CWD, "why", "general")
-    const b = chat.createProposal("b", CWD, "why", "general")
-    await q.admit(a)
-    await q.admit(b) // queued
-    chat.setTaskStatus(a.taskId, "done") // slot free, but b is ahead
-    const c = chat.createProposal("c", CWD, "why", "general")
-    expect((await q.admit(c)).status).toBe("queued")
-    await Bun.sleep(10) // admit kicked an async drain
-    expect(spawned).toEqual([a.taskId, b.taskId])
-    expect(chat.getTask(c.taskId)?.status).toBe("queued")
-  })
-
-  test("a failed spawn does not consume a slot; the next queued task still gets it", async () => {
-    const spawned: string[] = []
-    const a = chat.createProposal("a", CWD, "why", "general")
-    const b = chat.createProposal("b", CWD, "why", "general")
-    const q = makeQueue(1, spawned, new Set([a.taskId]))
-    chat.setTaskStatus(a.taskId, "queued")
-    chat.setTaskStatus(b.taskId, "queued")
-    expect(await q.drain()).toBe(1)
-    expect(chat.getTask(a.taskId)?.status).toBe("error")
-    expect(spawned).toEqual([b.taskId])
-  })
-
-  test("countLiveTasks counts only dispatched + running", () => {
-    const t1 = chat.createTask("x", CWD, "cc-x", "general") // dispatched
-    const t2 = chat.createTask("y", CWD, "cc-y", "general")
-    chat.bindTaskSession(t2.taskId, "k") // running
-    chat.createProposal("p", CWD, "why", "general") // proposed
-    chat.createQueuedTask("qd", CWD, "general") // queued
-    expect(chat.countLiveTasks()).toBe(2)
-    chat.setTaskStatus(t1.taskId, "cancelled")
-    expect(chat.countLiveTasks()).toBe(1)
-  })
-})
-
-// ---- worker identity matchers (Phase 8) -------------------------------------
-// Same file, same module instance, for the reason spelled out above.
-
-describe("worker identity matchers", () => {
-  const W = "/w"
-
-  beforeEach(() => {
-    for (const t of chat.listTasks()) chat.setTaskStatus(t.taskId, "done")
-  })
-
-  test("matchUnboundTaskById returns the exact dispatched task and nothing else", () => {
-    const a = chat.createTask("a", W, "cc-w", "general")
-    const b = chat.createTask("b", W, "cc-w-2", "general")
-    expect(chat.matchUnboundTaskById(a.taskId)?.taskId).toBe(a.taskId)
-    expect(chat.matchUnboundTaskById(b.taskId)?.taskId).toBe(b.taskId)
-    expect(chat.matchUnboundTaskById("nope")).toBeNull()
-  })
-
-  test("a bound task stops matching by id — the guard against re-firing a prompt", () => {
-    const a = chat.createTask("a", W, "cc-w", "general")
-    chat.bindTaskSession(a.taskId, "claude:tty:/dev/ttys1")
-    expect(chat.matchUnboundTaskById(a.taskId)).toBeNull()
-    // …and is now the one findRunningTaskById answers with
-    expect(chat.findRunningTaskById(a.taskId)?.taskId).toBe(a.taskId)
-    chat.setTaskStatus(a.taskId, "done")
-    expect(chat.findRunningTaskById(a.taskId)).toBeNull()
-  })
-
-  test("tmux session matchers pick the worker's own task out of a shared cwd", () => {
-    const a = chat.createTask("a", W, "cc-w", "general")
-    const b = chat.createTask("b", W, "cc-w-2", "general")
-    expect(chat.matchUnboundTaskByTmuxSession("cc-w-2")?.taskId).toBe(b.taskId)
-    expect(chat.matchUnboundTaskByTmuxSession("cc-nothing")).toBeNull()
-    chat.bindTaskSession(a.taskId, "k-a")
-    chat.bindTaskSession(b.taskId, "k-b")
-    expect(chat.findRunningTaskByTmuxSession("cc-w")?.taskId).toBe(a.taskId)
-    expect(chat.findRunningTaskByTmuxSession("cc-w-2")?.taskId).toBe(b.taskId)
-  })
-
-  test("the cwd counts are the ambiguity gate, per status", () => {
-    expect(chat.countUnboundTasksInCwd(W)).toBe(0)
-    const a = chat.createTask("a", W, "cc-w", "general")
-    expect(chat.countUnboundTasksInCwd(W)).toBe(1)
-    const b = chat.createTask("b", W, "cc-w-2", "general")
-    expect(chat.countUnboundTasksInCwd(W)).toBe(2)
-    expect(chat.countRunningTasksInCwd(W)).toBe(0)
-    chat.bindTaskSession(a.taskId, "k-a") // dispatched+unbound → running
-    expect(chat.countUnboundTasksInCwd(W)).toBe(1)
-    expect(chat.countRunningTasksInCwd(W)).toBe(1)
-    chat.bindTaskSession(b.taskId, "k-b")
-    expect(chat.countRunningTasksInCwd(W)).toBe(2)
-    chat.setTaskStatus(a.taskId, "done")
-    expect(chat.countRunningTasksInCwd(W)).toBe(1)
-    // a different cwd is never counted
-    expect(chat.countUnboundTasksInCwd("/elsewhere")).toBe(0)
-  })
-
-  test("queued and proposed tasks are invisible to every matcher — nothing spawned yet", () => {
-    const q = chat.createQueuedTask("queued", W, "general")
-    const p = chat.createProposal("proposed", W, "why", "general")
-    expect(chat.matchUnboundTaskById(q.taskId)).toBeNull()
-    expect(chat.matchUnboundTaskById(p.taskId)).toBeNull()
-    expect(chat.countUnboundTasksInCwd(W)).toBe(0)
-    expect(chat.countRunningTasksInCwd(W)).toBe(0)
-  })
-
-  test("the cwd matchers are untouched and still answer FIFO / most-recent", () => {
-    const a = chat.createTask("a", W, "cc-w", "general")
-    chat.createTask("b", W, "cc-w-2", "general")
-    expect(chat.matchUnboundTaskByCwd(W)?.taskId).toBe(a.taskId) // oldest first
-    chat.bindTaskSession(a.taskId, "k-a")
-    expect(chat.findRunningTaskByCwd(W)?.taskId).toBe(a.taskId)
-  })
+test("countLiveTasks counts only legacy dispatched + running rows", () => {
+  for (const t of chat.listTasks()) chat.setTaskStatus(t.taskId, "done")
+  const t1 = chat.createTask("x", "/q", "cc-x", "general") // dispatched
+  const t2 = chat.createTask("y", "/q", "cc-y", "general")
+  chat.setTaskStatus(t2.taskId, "running")
+  chat.createProposal("p", "/q", "why", "general") // proposed
+  chat.createQueuedTask("qd", "/q", "general") // queued
+  expect(chat.countLiveTasks()).toBe(2)
+  chat.setTaskStatus(t1.taskId, "cancelled")
+  expect(chat.countLiveTasks()).toBe(1)
 })
 
 describe("getThread returns the NEWEST turns, not the oldest", () => {
