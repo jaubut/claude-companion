@@ -22,7 +22,8 @@ import { fileProposal } from "./orchestrator"
 // The tap files ONE Turso agent task (a #Body proposal row filed at once),
 // tagged requires_host=<owning host> so only that host's dispatch-run claims
 // it. The tap is Jeremie's own approval (2026-10-25): origin `jeremie`, so it
-// goes straight to `queued`. Only a Turso without the origin column leaves it
+// goes straight to `queued`. It asks for dispatch-run's herdr runner, so
+// the run is a session Jeremie can watch in Companion, not a headless -p. Only a Turso without the origin column leaves it
 // `pending` for the dashboard stamp (docs/one-stream-plan.md).
 // One open run per component (409 already_running), a component in state ok
 // needs an instruction, every start logs agent_activity `body:agent`.
@@ -112,7 +113,7 @@ async function file(componentId: string, p: Plan, dispatch: DispatchWiring): Pro
   const t = createProposal(p.prompt, cwd, `Body agent run on ${componentId} (tapped "Get an agent on it")`, BODY_CHANNEL, {
     noteId: p.noteId, agent: p.agent, title: p.title,
   })
-  const out = await fileProposal(t.taskId, { noteId: p.noteId, agent: p.agent, requiresHost: p.owner, byHand: true }, dispatch)
+  const out = await fileProposal(t.taskId, { noteId: p.noteId, agent: p.agent, requiresHost: p.owner, byHand: true, runner: "herdr" }, dispatch)
   if (out.ok) return { ok: true, taskId: t.taskId, dispatchTaskId: out.dispatchTaskId, queued: out.queued }
   // The tap was the approval: never leave a stray card to approve a second time.
   if (getTask(t.taskId)?.status === "proposed") setTaskStatus(t.taskId, "cancelled")

@@ -86,9 +86,13 @@ function proposalTitle(t: OrchTask): string {
   return (t.title?.trim() || t.prompt.split("\n").find((l) => l.trim()) || t.prompt).trim().slice(0, 120)
 }
 
-function proposalDescription(t: OrchTask, channelName: string): string {
+// `runner: "herdr"` adds dispatch-run's per-task runner line: the agent runs
+// as an interactive claude in a herdr pane (listed in Companion, steerable)
+// instead of headless `claude -p`. herdr down → dispatch-run falls back.
+function proposalDescription(t: OrchTask, channelName: string, runner?: "herdr"): string {
   const why = t.reasoning?.trim() ? `\nWhy: ${t.reasoning.trim()}` : ""
-  return `${t.prompt}\n\n— Filed from Companion #${channelName} (proposal ${t.taskId})${why}`
+  const run = runner ? `\ndispatch-runner: ${runner}` : ""
+  return `${t.prompt}\n\n— Filed from Companion #${channelName} (proposal ${t.taskId})${why}${run}`
 }
 
 /**
@@ -99,7 +103,7 @@ function proposalDescription(t: OrchTask, channelName: string): string {
  * A Turso failure leaves the proposal proposed (and retryable): 503.
  */
 export async function fileProposal(
-  taskId: string, opts: { agent?: string | null; noteId?: string | null; byHand?: boolean; requiresHost?: RequiresHost | null } = {},
+  taskId: string, opts: { agent?: string | null; noteId?: string | null; byHand?: boolean; requiresHost?: RequiresHost | null; runner?: "herdr" } = {},
   dispatch: DispatchWiring = dispatchWiring,
 ): Promise<FileOutcome> {
   const task = getTask(taskId)
@@ -119,7 +123,7 @@ export async function fileProposal(
   try {
     if (!(await getNote(dispatch.query, noteId))) return { ok: false, status: 404, error: "no such note" }
     queued = (await fileTask(await writeCtx(dispatch, task.threadId), {
-      id, noteId, agent, title: proposalTitle(task), description: proposalDescription(task, channel?.name ?? task.threadId),
+      id, noteId, agent, title: proposalTitle(task), description: proposalDescription(task, channel?.name ?? task.threadId, opts.runner),
       // Not Jeremie's tap (#Body, Opus rescope): no trusted origin, so the queue guard holds it for a human stamp.
       ...(opts.byHand ? { origin: "jeremie" as const } : {}),
       requiresHost: opts.requiresHost ?? null,
