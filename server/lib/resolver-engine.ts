@@ -1,5 +1,5 @@
 import {
-  type Autonomy, FIX_RUN_MS, type ResolverConfig, TRANSIENT_MAX_PER_DAY, TRANSIENT_REASON, TRANSIENT_RETRY_MS, digestText, resolverInfo, resolverKey,
+  type Autonomy, type ResolverConfig, TRANSIENT_MAX_PER_DAY, TRANSIENT_REASON, TRANSIENT_RETRY_MS, digestText, resolverInfo, resolverKey,
 } from "./resolver"
 import type { ResolverStore, RunRow } from "./resolver-store"
 import { type Phrase, type ResolverInfo, type ResolverOutcome, type Severity, type SourceItem, heuristicSeverity, itemId } from "./triage"
@@ -199,8 +199,8 @@ export function createResolverEngine(deps: ResolverEngineDeps) {
     order = null
     const job: Job = { run, src, autonomy: r.autonomy, instruction: r.instruction, dryRun: cfg.dryRun, model: cfg.model, deadline: t + cfg.timeoutMs, repeat: repeats.has(r.id) }
     let timer: ReturnType<typeof setTimeout> | null = null
-    // The deadline gates the analysis and the start of any action; a fix run that started in time gets its own FIX_RUN_MS.
-    const hard = cfg.timeoutMs + (r.source === "pr" ? FIX_RUN_MS : 0)
+    // The deadline gates the analysis and the start of any action.
+    const hard = cfg.timeoutMs
     const timeout = new Promise<WorkResult>((resolve) => {
       timer = setTimeout(() => resolve({ kind: "failed", summary: `timed out after ${Math.round(hard / 60_000)} min` }), hard)
       ;(timer as unknown as { unref?: () => void }).unref?.()

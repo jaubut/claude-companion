@@ -22,8 +22,6 @@ export interface ResolverContext {
   rescuedBefore: boolean
   /** No-repo task only: the REPO_MAP names a `route` may name. */
   repos?: string[]
-  /** PR only: what a fix run needs. */
-  pr?: { head: string; base: string; number: number; title: string; taskText: string }
 }
 
 export interface ResolverJob { autonomy: Autonomy; instruction: string | null }
@@ -37,7 +35,7 @@ const ACTION_HELP: Record<ResolverActionKind, string> = {
   cancel: '{"kind":"cancel"} — drop the task',
   merge: '{"kind":"merge"} — squash-merge the PR',
   close_pr: '{"kind":"close_pr","reason":"<why, posted as a PR comment>"} — close the PR without merging',
-  fix: '{"kind":"fix","instructions":"<precise, self-contained instructions for a builder working on the PR branch>"} — a fix run on the PR branch (never main)',
+  fix: '{"kind":"fix","instructions":"<precise, self-contained instructions for a builder working on the PR branch>"} — hand the PR back to the PR shepherd, whose fix run makes these changes on the PR branch (posted as a PR comment)',
   approve: '{"kind":"approve"} — start the proposed work',
   reject: '{"kind":"reject","reason":"<why>"} — drop the proposal',
   route: '{"kind":"route","repo":"<one exact name from Known repos>"} — the task could not be routed to a repo; name the repo it clearly targets and it restarts there',
@@ -64,7 +62,7 @@ const SOURCE_RULES: Record<string, string[]> = {
     "Fill review: whatChanged, risk, prodFailure (what could go wrong in production), testsCover (do tests cover the risky part?), problems (concrete defects only), verdict safe | changes | unsafe.",
     "category: stale (no activity, no longer relevant) | superseded (another PR replaces it) | task_done (the task is done/cancelled elsewhere) | safe | needs_changes | ci_failing | ambiguous.",
     "Sensitive PRs (auth, payment, schema, secrets, migrations, CI config) are NEVER merged without Jeremie: if your review finds problems, action fix with precise instructions; otherwise none and recommend Merge on the card with the reason it is safe.",
-    "Non-sensitive: close_pr for stale / superseded / task_done (say why); fix for one deeper rescue attempt when CI keeps failing and you can see the cause; none when it is truly ambiguous.",
+    "Non-sensitive: close_pr for stale / superseded / task_done (say why); fix (one hand-back to the shepherd's fix run, with your instructions) when CI keeps failing and you can see the cause; none when it is truly ambiguous.",
   ],
   proposal: [
     "The brain (or the Body investigator) proposes this work and waits for Jeremie's OK. Sanity-check it: is it still needed (check the repo / recent tasks), is the scope right, is it a duplicate of another pending proposal or an open task?",
@@ -117,7 +115,7 @@ export function buildResolverPrompt(src: SourceItem, ctx: ResolverContext, job: 
     ...facts,
     ...(actions.includes("route") && ctx.repos?.length ? [`Known repos (route must name one exactly; none when unclear): ${ctx.repos.join(", ")}`] : []),
     ...(ctx.sensitive ? [`SENSITIVE: touches ${ctx.sensitivePaths.join(", ") || "a sensitive area (shepherd)"} — write the threat-model review.`] : []),
-    ...(ctx.rescuedBefore ? ["Opus already ran one rescue on this PR; do not propose another fix unless Jeremie asked."] : []),
+    ...(ctx.rescuedBefore ? ["Opus already handed this PR back to the shepherd once; do not propose another fix unless Jeremie asked."] : []),
     "",
     "## Rules",
     ...(SOURCE_RULES[sourceKey(src)] ?? []),

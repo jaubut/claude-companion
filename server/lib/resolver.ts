@@ -20,8 +20,6 @@ export const DEFAULT_MAX_PER_DAY = 60
 export const DEFAULT_TIMEOUT_MS = 20 * 60_000
 /** A normal run still queued after this long (the backlog did not drain) falls through to the normal card. */
 export const QUEUE_MAX_MS = 3 * 60 * 60_000
-/** A fix run on a PR branch (the shepherd's budget); it may start up to the analysis deadline. */
-export const FIX_RUN_MS = 30 * 60_000
 /** A run's reason prefix when its action never ran for a passing reason (the Mac unreachable): re-queued later. */
 export const TRANSIENT_REASON = "transient:"
 /** A transient run is re-queued this long after it finished … */
@@ -292,7 +290,7 @@ export interface PolicyCtx {
   instruction: string | null
   /** PR: touches a sensitive path (or parked for it). */
   sensitive: boolean
-  /** PR: Opus already ran a rescue on this PR URL once. */
+  /** PR: Opus already handed this PR URL back once (its own rescue). */
   rescuedBefore: boolean
   /** The item came back after Opus resolved it: a card, never a second autonomous action. */
   repeat?: boolean
@@ -300,10 +298,10 @@ export interface PolicyCtx {
 
 /**
  * What happens next. `act` runs `action` (then: "resolved" hides the item,
- * "card" still shows Jeremie a card, "unpark" hands the PR back to the shepherd).
+ * "unpark" hands the PR back to the shepherd, whose fix run makes the changes).
  */
 export type Plan =
-  | { kind: "act"; action: Exclude<ResolverAction, { kind: "none" }>; then: "resolved" | "card" | "unpark"; reason: string }
+  | { kind: "act"; action: Exclude<ResolverAction, { kind: "none" }>; then: "resolved" | "unpark"; reason: string }
   | { kind: "card"; reason: string }
 
 const card = (reason: string): Plan => ({ kind: "card", reason })
@@ -321,7 +319,7 @@ export function decide(src: Pick<SourceItem, "ref">, out: ResolverOutput, ctx: P
     if ((a.kind === "merge" || a.kind === "cancel") && !consents(ctx.instruction, out.consent)) {
       return card(c === "imperative" ? `${a.kind}: Opus did not read "${clip(ctx.instruction ?? "", 60)}" as consent` : `${a.kind} needs Jeremie's explicit words`)
     }
-    if (a.kind === "fix") return { kind: "act", action: a, then: ctx.sensitive ? "card" : "unpark", reason: "Jeremie asked Opus" }
+    if (a.kind === "fix") return { kind: "act", action: a, then: "unpark", reason: "Jeremie asked Opus" }
     return { kind: "act", action: a, then: "resolved", reason: "Jeremie asked Opus" }
   }
   // Before the repeat check: a Yes on an item that came back is still Jeremie's go.
@@ -338,9 +336,7 @@ export function decide(src: Pick<SourceItem, "ref">, out: ResolverOutput, ctx: P
       return sure && CLOSABLE.has(out.category) ? { kind: "act", action: a, then: "resolved", reason: out.category } : card("not clearly stale, superseded or done")
     case "fix":
       if (!isPr) return card("fix is a PR action")
-      if (ctx.sensitive) {
-        return out.review?.problems.length ? { kind: "act", action: a, then: "card", reason: "review found problems" } : card("no problem to fix")
-      }
+      if (ctx.sensitive) return card(out.review?.problems.length ? "sensitive PR: Jeremie decides on the changes" : "no problem to fix")
       return ctx.rescuedBefore ? card("already rescued once") : { kind: "act", action: a, then: "unpark", reason: "one rescue attempt" }
     case "reject":
       return sure && REJECTABLE.has(out.category) ? { kind: "act", action: a, then: "resolved", reason: out.category } : card("not clearly a duplicate or stale")
@@ -522,7 +518,7 @@ export function digestText(counts: Record<string, number>): string | null {
   const total = answered + closed + prepared + fixed + other
   if (!total) return null
   const parts = [`answered ${answered}`, `closed ${closed}`, `prepared ${prepared} for you`]
-  if (fixed) parts.push(`fixed ${fixed} PR${fixed === 1 ? "" : "s"}`)
+  if (fixed) parts.push(`handed ${fixed} PR${fixed === 1 ? "" : "s"} back for a fix`)
   if (other) parts.push(`${other} other`)
   const failed = n("failed")
   return `🤖 Opus handled ${total} item${total === 1 ? "" : "s"} today: ${parts.join(", ")}${failed ? ` (${failed} fell through to you)` : ""}.`

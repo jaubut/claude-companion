@@ -392,13 +392,12 @@ offers "Ask for changes" right after changes were made.
   card whose first option is `ask_opus` with "vas-y, route it to <name>" (one tap = consent). Activity `resolver:route`.
 - **Parked PR** (shepherd `pr:needs-human`). Opus reviews the diff, the checks and the task.
   Sensitive (auth / payment / schema / secrets / migrations / CI config — the shepherd's SENSITIVE list): a
-  threat-model review in `context` (What changed / Risk / Could fail in prod / Tests / Problems); problems → one fix
-  run on the PR branch (never main, never forced, then a PR comment); the card says "Opus reviewed: …" with
-  [Merge] (recommended when the review reads safe) · [Ask for changes] · [Close]. **A sensitive PR is never
-  merged without Jeremie** — the card's Merge, or `ask_opus` with explicit words ("do it", "merge", "vas-y"…).
+  threat-model review in `context` (What changed / Risk / Could fail in prod / Tests / Problems); the card says
+  "Opus reviewed: …" with [Merge] (recommended when the review reads safe) · [Ask for changes] · [Close]; Opus
+  never hands a sensitive PR back on its own. **A sensitive PR is never merged without Jeremie** — the card's
+  Merge, or `ask_opus` with explicit words ("do it", "merge", "vas-y"…).
   Not sensitive: stale / superseded / task done → Opus comments why and closes it; CI failing after the
-  shepherd's 2 fixes → ONE rescue per PR (fix run + `pr:unpark` back to the shepherd, whose CI gate merges);
-  anything else → card.
+  shepherd's 2 fixes → ONE rescue per PR (a hand-back, below); anything else → card.
 - **Proposal.** Duplicate / stale / already done → rejected with the reason; otherwise a card with Opus's
   recommendation. A proposal Opus created itself is never resolved again.
 - **Body failed twice** (components on this host): a deeper read-only investigation (the investigator's tools,
@@ -420,12 +419,12 @@ waits for Jeremie's tap. If Opus finds the work already done, "fix it" closes th
 ### Budget, kill switch, fall-through
 
 ≤ 2 runs at once, ≤ 60 normal runs started per local day (`COMPANION_RESOLVER_DAILY`; `ask_opus` runs never
-count), 20 min per analysis (a PR fix run gets its own 30 min), model `COMPANION_RESOLVER_MODEL` (default
+count), 20 min per run, model `COMPANION_RESOLVER_MODEL` (default
 `claude-opus-5-5`). The backlog drains `ask_opus` first, then urgent → normal → low, oldest first; a normal run
 still queued after 3 h falls through to the normal card. A queued run a restart dropped is queued again.
 Loop guard: the same action failing the same way twice on an item (24 h) is not run a third time unless
 Jeremie's instruction says "retry" / "réessaie".
-Fix runs need a checkout on this host or the peer (#peer-fix-runs): the server reads claude-config's REPO_MAP from `~/.claude/tools/repo-map.ts`
+The analysis reads the project's checkout when this host has one: the server reads claude-config's REPO_MAP from `~/.claude/tools/repo-map.ts`
 (override `COMPANION_REPO_MAP`; older checkouts: `dispatch-run.ts`) and logs the entry count at boot — 0 entries
 is a loud warning (log + a #Body turn on the store host).
 Kill switch: `COMPANION_RESOLVER=0` or `~/.claude-companion/.resolver-disabled` (waiting items show as normal
@@ -436,66 +435,18 @@ merge · close_pr · fix · approve · reject · revise · propose · explain ·
 turn after 21:00 (`COMPANION_RESOLVER_DIGEST_HOUR`): "🤖 Opus handled N items today: answered X, closed Y,
 prepared Z for you."
 
-### Fix runs: pushes, conflicts, guards (2026-10-04)
+### PR fixes: hand back to the shepherd (one work stream, 2026-10-23)
 
-A fix run (`lib/resolver-fix.ts`) works in a disposable worktree on the PR head; the `builder` agent edits, the
-server commits. Before EVERY push: `git fetch origin <branch>`; if the remote head moved, ONLY the fix commits are
-rebased onto it (`git rebase --onto origin/<branch> <pre-fix head>`); a rebase conflict aborts the rebase →
-outcome `blocked` "branch moved and conflicts with Opus's fix (<files>)". The push is never forced; a
-non-fast-forward rejection gets ONE more fetch + rebase + push. No git argv on the fix path carries `--force`,
-`--force-with-lease` or `-f` (the worktree is deleted from disk, then `git worktree prune`; asserted in
-`lib/resolver-fix-git.test.ts`).
-
-The agent's `--disallowedTools` (`lib/resolver-fix-policy.ts`, same words in its prompt): `git merge / rebase /
-pull / cherry-pick / revert` with `-X …`, `--strategy-option`, `-s ours`, `--strategy=ours`; `git checkout /
-restore --theirs|--ours` on `.`, `:/`, a `dir/` or a glob; `git reset --hard` to anything but `origin/<branch>`;
-`git commit` and `git push` (the server does both). Conflicts are resolved hunk by hunk; a non-trivial one →
-`RESOLVER_STATUS: blocked: conflicts in <files>`.
-
-Post-run guard, before any push (`lib/resolver-fix-guard.ts`): the pre-fix PR head must still be an ancestor of
-the fix head (else `blocked` "the fix rewrote the PR's history"), and no file the PR changed (merge-base → PR
-head) may come out of the fix byte-identical to the base branch's or the merge-base's version → `blocked` "fix
-would drop the PR's changes in <files>". Blocked outcomes are the honest outcome-first card ("Fix blocked: …").
-
-<a id="peer-fix-runs"></a>
-### Peer fix runs (Mac-only repos, 2026-10-04)
-
-The resolver runs on Zettlab; some repos (tls-review, the iOS apps, TLS Video Assist) are checked out only on
-the Mac. When `localRepoFor` finds no checkout here, the fix job goes to the body peer (`COMPANION_BODY_PEER`,
-bearer `COMPANION_BODY_PEER_TOKEN`, else this server's own token). Every call carries the HOP header
-`x-companion-body-hop: 1`; the peer runs the job on itself and never forwards it again. All three endpoints sit
-behind the `/api/*` bearer gate.
-
-**Xcode repos (2026-10-05).** A REPO_MAP entry with `requires: ["xcode"]` (claude-config: companion-ios,
-tls-video-assist, tls-viewer-ios) is buildable only on a host with macOS + `xcodebuild` on PATH. On any other
-host its clone does not count: `localRepoFor` skips it and the fix seam treats a gathered `ctx.repo` pointing at it
-as "no local checkout" (`fixRepoHere`), so the job is forwarded to the Mac even though Zettlab has a clone. The
-parser reads `requires` (and `platform: "darwin"` as xcode), ignores unknown extra fields, and still reads both
-the repo-map.ts and the legacy dispatch-run.ts formats.
-
-| Endpoint | Body / query | Answer |
-|---|---|---|
-| `GET /api/resolver/has-repo?slug=owner/repo` | | `{ ok, slug, hasRepo, host }` — this host's REPO_MAP checkout whose `origin` is that repo |
-| `POST /api/resolver/fix` | `{ itemId, prUrl, branch, instructions, model, timeoutMs, attempt, base?, title?, taskText? }` | `202 { ok, jobId, status: "running" \| "done", outcome?, replay? }` |
-| `GET /api/resolver/fix/<jobId>` | | `{ ok, jobId, status, outcome? }`; `404` unknown job |
-
-`outcome` = `{ kind: "pushed", sha, summary } | { kind: "no_changes", summary } | { kind: "blocked", reason } |
-{ kind: "failed", error, transient? }` — the same `runPrFix` as a local fix (fetch / rebase / guards above).
-
-**Async job + poll, not a held request:** a fix run takes up to 30 min, longer than an HTTP hop should stay
-open. The POST answers at once; Zettlab polls every 15 s until `done` or the fix timeout + 5 min. A dropped
-connection costs nothing: the job keeps running on the Mac and the next poll finds it. **Idempotent on
-(`itemId`, `attempt`)**: `attempt` is the resolver run id, so a replayed POST returns the same job (running or
-done, `replay: true`) and never starts a second run; Jeremie's retry is a new run, so a new attempt. Jobs live
-in the Mac's companion.db (`resolver_peer_fixes`); a Mac restart turns running jobs into
-`failed` + `transient` "the Mac Companion restarted during the fix run".
-
-Zettlab records the outcome exactly like a local fix (outcome-first card, PR comment, loop guard). **Peer down**
-(has-repo or POST unreachable, contact lost for the whole tail of the run, job unknown) → `failed` +
-`transient`: the card says "Fix not run: Mac unreachable (…); Opus retries later" with "Ask Opus to retry", the
-attempt is NOT counted by the loop guard, and the run's reason starts `transient:` so the engine queues the item
-again 30 min after it finished (at most 3 transient runs per item a day, inside the daily budget). Neither host
-has a checkout → the plain `failed` "no local checkout of <repo> on this host or the peer" (loop-guarded).
+The resolver runs no builder of its own (docs/one-stream-plan.md, Q2). Opus's `fix` action on a PR = a
+`pr:unpark` row (agent `opus-resolver`, `target_kind 'task'`, meta `{url, by: "opus-resolver", reason}`, reason
+`Opus rescue: <instructions>`) that hands the PR back to the PR shepherd, whose fix run (a pipeline stage, with
+its own gates) makes the changes; then a PR comment with Opus's instructions and why, a 🤖 turn, and activity
+`resolver:fix` (meta `then: "unpark"`). The item resolves (no card). A failed `pr:unpark` write is the honest
+outcome-first card ("Fix failed: hand-back failed: …", "Ask Opus to retry"; loop-guarded). Policy: normal → one
+hand-back per PR (non-sensitive only); `ask_opus` / [Ask for changes] → a hand-back, sensitive included;
+delegated → non-sensitive only. A parked PR always carries its tasks row, so there is no PR without one here.
+The peer fix endpoints (`/api/resolver/has-repo`, `/api/resolver/fix`) are gone; the Mac's
+`resolver_peer_fixes` table is left in companion.db (nothing writes it).
 
 Dry run (nothing executed): `bun cli.ts resolver-dry-run [--limit N] [--source task|pr|proposal|body]`
 (point `COMPANION_DB_PATH` at a copy of companion.db).

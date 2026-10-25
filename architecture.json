@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 119,
+          "lines": 118,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -61,7 +61,6 @@
             "routes/media.ts",
             "routes/goals.ts",
             "routes/body.ts",
-            "routes/resolver.ts",
             "routes/vault.ts",
             "routes/records.ts",
             "routes/capture.ts",
@@ -2234,9 +2233,12 @@
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 269,
+          "lines": 289,
           "kind": "lib",
           "exports": [
+            "ShResult",
+            "ShFn",
+            "realSh",
             "RepoEntry",
             "repoMapCandidates",
             "locateRepoMap",
@@ -2268,9 +2270,7 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [
-            "lib/resolver-fix.ts"
-          ],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -3319,124 +3319,8 @@
           "externals": []
         },
         {
-          "path": "lib/resolver-fix-guard.ts",
-          "lines": 69,
-          "kind": "lib",
-          "exports": [
-            "GitFn",
-            "GuardVerdict",
-            "droppedPrChanges",
-            "guardFixRange"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/resolver-fix.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/resolver-fix-policy.ts",
-          "lines": 75,
-          "kind": "lib",
-          "exports": [
-            "fixDisallowed",
-            "ruleMatches",
-            "deniedBy",
-            "conflictPolicyLines"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/resolver-fix.ts",
-          "lines": 197,
-          "kind": "lib",
-          "exports": [
-            "ShResult",
-            "ShFn",
-            "FixInput",
-            "FixOutcome",
-            "FixDeps",
-            "GIT_TIMEOUT_MS",
-            "pushableBranch",
-            "fixPrompt",
-            "fixEnv",
-            "nonFastForward",
-            "publishFix",
-            "runPrFix",
-            "fixArgs",
-            "realSh"
-          ],
-          "state": [
-            "PROTECTED: Set"
-          ],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/cli-json.ts",
-            "lib/receipt-sonnet.ts",
-            "lib/resolver-fix-guard.ts",
-            "lib/resolver-fix-policy.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/resolver-peer.ts",
-          "lines": 211,
-          "kind": "lib",
-          "exports": [
-            "PEER_HTTP_TIMEOUT_MS",
-            "POLL_MS",
-            "POLL_GRACE_MS",
-            "PeerFixRequest",
-            "PeerJobStatus",
-            "PeerJob",
-            "SLUG_RE",
-            "prRef",
-            "parsePeerFixRequest",
-            "PeerJobStore",
-            "INTERRUPTED",
-            "createPeerJobStore",
-            "jobDto",
-            "PeerCfg",
-            "PeerClientDeps",
-            "HasRepo",
-            "peerHasRepo",
-            "outcomeOf",
-            "runFixOnPeer"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/resolver-fix.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
           "path": "lib/resolver-prompt.ts",
-          "lines": 152,
+          "lines": 150,
           "kind": "lib",
           "exports": [
             "EvidenceBlock",
@@ -3491,7 +3375,7 @@
         },
         {
           "path": "lib/resolver-work.ts",
-          "lines": 241,
+          "lines": 219,
           "kind": "lib",
           "exports": [
             "BodyOutcome",
@@ -3510,7 +3394,6 @@
             "lib/readonly-claude.ts",
             "lib/resolver.ts",
             "lib/resolver-engine.ts",
-            "lib/resolver-fix.ts",
             "lib/resolver-prompt.ts",
             "lib/triage.ts",
             "lib/triage-engine.ts"
@@ -3521,7 +3404,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 530,
+          "lines": 526,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -3529,7 +3412,6 @@
             "DEFAULT_MAX_PER_DAY",
             "DEFAULT_TIMEOUT_MS",
             "QUEUE_MAX_MS",
-            "FIX_RUN_MS",
             "TRANSIENT_REASON",
             "TRANSIENT_RETRY_MS",
             "TRANSIENT_MAX_PER_DAY",
@@ -6006,40 +5888,6 @@
           "externals": []
         },
         {
-          "path": "routes/resolver.ts",
-          "lines": 55,
-          "kind": "route-host",
-          "exports": [
-            "ResolverRouteDeps",
-            "createResolverHandler",
-            "handleResolverRoute"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [
-            {
-              "method": "GET",
-              "path": "/api/resolver/has-repo",
-              "prefix": false
-            },
-            {
-              "method": "POST",
-              "path": "/api/resolver/fix",
-              "prefix": false
-            }
-          ],
-          "apiCalls": [],
-          "imports": [
-            "lib/body-investigate.ts",
-            "lib/resolver-peer.ts",
-            "wiring/resolver-peer.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
           "path": "routes/tasks-agent.ts",
           "lines": 100,
           "kind": "lib",
@@ -6777,42 +6625,8 @@
           "externals": []
         },
         {
-          "path": "wiring/resolver-peer.ts",
-          "lines": 117,
-          "kind": "lib",
-          "exports": [
-            "ResolverPeerDeps",
-            "setResolverPeerDeps",
-            "hasRepoHere",
-            "startPeerFix",
-            "peerJob",
-            "PeerFixInput",
-            "fixOnPeer"
-          ],
-          "state": [
-            "let store",
-            "let deps"
-          ],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/body-investigate.ts",
-            "lib/body-investigate-engine.ts",
-            "lib/live-repo.ts",
-            "lib/log.ts",
-            "lib/orchestrator-db.ts",
-            "lib/resolver-fix.ts",
-            "lib/resolver-peer.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
           "path": "wiring/resolver.ts",
-          "lines": 352,
+          "lines": 334,
           "kind": "lib",
           "exports": [
             "RESOLVER_ALLOWED",
@@ -6849,7 +6663,6 @@
             "lib/readonly-claude.ts",
             "lib/resolver.ts",
             "lib/resolver-engine.ts",
-            "lib/resolver-fix.ts",
             "lib/resolver-prompt.ts",
             "lib/resolver-store.ts",
             "lib/resolver-work.ts",
@@ -6858,7 +6671,6 @@
             "lib/triage-pr.ts",
             "lib/turso.ts",
             "wiring/body-investigate.ts",
-            "wiring/resolver-peer.ts",
             "wiring/orchestrator.ts",
             "state.ts",
             "wiring/proposals.ts"
@@ -7395,12 +7207,6 @@
             "companion-server.ts#* /ws"
           ]
         },
-        "handleResolverRoute": {
-          "module": "routes/resolver.ts",
-          "callers": [
-            "companion-server.ts#* /ws"
-          ]
-        },
         "handleTasteRoute": {
           "module": "routes/taste.ts",
           "callers": [
@@ -7655,7 +7461,6 @@
             "wiring/events.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
-            "wiring/resolver-peer.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage-repos.ts",
@@ -7924,10 +7729,8 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts",
-            "routes/resolver.ts#GET /api/resolver/has-repo",
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
-            "wiring/resolver-peer.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -7941,8 +7744,7 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "lib/body-investigate-engine.ts",
-            "wiring/body-agent.ts",
-            "wiring/resolver-peer.ts"
+            "wiring/body-agent.ts"
           ]
         },
         "InvestigationStore": {
@@ -9309,14 +9111,6 @@
             "lib/keyboard-inject.ts"
           ]
         },
-        "ShFn": {
-          "module": "lib/resolver-fix.ts",
-          "callers": [
-            "lib/live-repo.ts",
-            "wiring/resolver-peer.ts",
-            "wiring/resolver.ts"
-          ]
-        },
         "DialogItem": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -9405,8 +9199,7 @@
           "callers": [
             "lib/orchestrator-brain.ts",
             "lib/readonly-claude.ts",
-            "lib/receipt-sonnet.ts",
-            "lib/resolver-fix.ts"
+            "lib/receipt-sonnet.ts"
           ]
         },
         "GENERAL_CHANNEL": {
@@ -9677,8 +9470,7 @@
         "resolveClaudeBin": {
           "module": "lib/receipt-sonnet.ts",
           "callers": [
-            "lib/readonly-claude.ts",
-            "lib/resolver-fix.ts"
+            "lib/readonly-claude.ts"
           ]
         },
         "ExpenseFields": {
@@ -10128,18 +9920,10 @@
             "lib/repo-rework.ts"
           ]
         },
-        "FIX_RUN_MS": {
-          "module": "lib/resolver.ts",
-          "callers": [
-            "lib/resolver-engine.ts",
-            "lib/resolver-work.ts"
-          ]
-        },
         "TRANSIENT_REASON": {
           "module": "lib/resolver.ts",
           "callers": [
-            "lib/resolver-engine.ts",
-            "lib/resolver-work.ts"
+            "lib/resolver-engine.ts"
           ]
         },
         "TRANSIENT_RETRY_MS": {
@@ -10243,44 +10027,6 @@
           "callers": [
             "lib/resolver-engine.ts",
             "lib/triage-engine.ts"
-          ]
-        },
-        "ShResult": {
-          "module": "lib/resolver-fix.ts",
-          "callers": [
-            "lib/resolver-fix-guard.ts"
-          ]
-        },
-        "conflictPolicyLines": {
-          "module": "lib/resolver-fix-policy.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
-        "GitFn": {
-          "module": "lib/resolver-fix-guard.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
-        "guardFixRange": {
-          "module": "lib/resolver-fix-guard.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
-        "fixDisallowed": {
-          "module": "lib/resolver-fix-policy.ts",
-          "callers": [
-            "lib/resolver-fix.ts"
-          ]
-        },
-        "FixOutcome": {
-          "module": "lib/resolver-fix.ts",
-          "callers": [
-            "lib/resolver-peer.ts",
-            "lib/resolver-work.ts",
-            "wiring/resolver-peer.ts"
           ]
         },
         "ResolverActionKind": {
@@ -12799,42 +12545,6 @@
             "routes/records.ts"
           ]
         },
-        "hasRepoHere": {
-          "module": "wiring/resolver-peer.ts",
-          "callers": [
-            "routes/resolver.ts"
-          ]
-        },
-        "startPeerFix": {
-          "module": "wiring/resolver-peer.ts",
-          "callers": [
-            "routes/resolver.ts"
-          ]
-        },
-        "peerJob": {
-          "module": "wiring/resolver-peer.ts",
-          "callers": [
-            "routes/resolver.ts"
-          ]
-        },
-        "SLUG_RE": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "routes/resolver.ts#GET /api/resolver/has-repo"
-          ]
-        },
-        "parsePeerFixRequest": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "routes/resolver.ts#POST /api/resolver/fix"
-          ]
-        },
-        "jobDto": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "routes/resolver.ts#POST /api/resolver/fix"
-          ]
-        },
         "TasksAgent": {
           "module": "lib/tasks-agent.ts",
           "callers": [
@@ -13286,8 +12996,7 @@
         "bodyPeer": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
-            "wiring/body-investigate.ts",
-            "wiring/resolver-peer.ts"
+            "wiring/body-investigate.ts"
           ]
         },
         "repoNameFromRemote": {
@@ -13954,75 +13663,6 @@
             "wiring/resolver.ts"
           ]
         },
-        "PeerFixRequest": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "PeerJob": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "prRef": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "PeerJobStore": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "createPeerJobStore": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "peerHasRepo": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "runFixOnPeer": {
-          "module": "lib/resolver-peer.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "PeerConfig": {
-          "module": "lib/body-investigate-engine.ts",
-          "callers": [
-            "wiring/resolver-peer.ts"
-          ]
-        },
-        "runPrFix": {
-          "module": "lib/resolver-fix.ts",
-          "callers": [
-            "wiring/resolver-peer.ts",
-            "wiring/resolver.ts"
-          ]
-        },
-        "realSh": {
-          "module": "lib/resolver-fix.ts",
-          "callers": [
-            "wiring/resolver-peer.ts",
-            "wiring/resolver.ts"
-          ]
-        },
-        "localRepoFor": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/resolver-peer.ts",
-            "wiring/resolver.ts"
-          ]
-        },
         "QUICK_LOOK_ALLOWED": {
           "module": "lib/quick-look.ts",
           "callers": [
@@ -14031,6 +13671,12 @@
         },
         "QUICK_LOOK_DISALLOWED": {
           "module": "lib/quick-look.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "localRepoFor": {
+          "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver.ts"
           ]
@@ -14046,6 +13692,18 @@
           "callers": [
             "wiring/resolver.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "ShFn": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "realSh": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/resolver.ts"
           ]
         },
         "repoForNote": {
@@ -14074,18 +13732,6 @@
         },
         "bodyReportApplier": {
           "module": "wiring/body-investigate.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "fixRepoHere": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "fixOnPeer": {
-          "module": "wiring/resolver-peer.ts",
           "callers": [
             "wiring/resolver.ts"
           ]
