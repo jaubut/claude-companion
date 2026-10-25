@@ -4,17 +4,21 @@ import type { TriageEngine } from "../lib/triage-engine"
 import { MEMBERS_MAX } from "../lib/triage-repos"
 import { triageEngine } from "../wiring/triage"
 import { type RepoRunner, repoRunner } from "../wiring/triage-repos"
+import { type OutboundStore, produceOutbound } from "../lib/outbound"
+import { outboundStore } from "../wiring/outbound"
 
 // Brain triage endpoints (docs/orchestrator-triage-api.md), bearer-gated like
 // every /api/orchestrator/* route:
 //   GET  /api/orchestrator/triage                    → {items, resolving, repos, generatedAt}
-//   POST /api/orchestrator/triage/<id>/choose        {optionId, text?} + Idempotency-Key
+//   POST /api/orchestrator/triage/<id>/choose        {optionId, text?, version?} + Idempotency-Key
+//   POST /api/orchestrator/outbound                  {kind:"email", account, to[], cc[], subject, body, …} → {id, payloadHash}
 //   POST /api/orchestrator/repos/<repo>/yes          {version, members[{id, version}]} + Idempotency-Key
 //   POST /api/orchestrator/repos/<repo>/no           {version, note} + Idempotency-Key
 // <id> / <repo> are percent-encoded (a PR id carries "/" and "#"). Returns null for any other path.
 
 const PREFIX = "/api/orchestrator/triage"
 const REPOS = "/api/orchestrator/repos"
+const OUTBOUND = "/api/orchestrator/outbound"
 const ID_MAX = 300
 const REPO_RE = /^[\w.-]{1,200}$/
 
@@ -48,9 +52,11 @@ async function choose(req: Request, id: string, engine: TriageEngine): Promise<R
   if (body.text !== undefined && body.text !== null && typeof body.text !== "string") {
     return Response.json({ ok: false, error: "text must be a string" }, { status: 400 })
   }
+  if (body.version !== undefined && body.version !== null && typeof body.version !== "string") return bad("version must be a string")
   const idemKey = req.headers.get("idempotency-key")?.trim() || null
   if (idemKey && idemKey.length > MAX_KEY_LENGTH) return Response.json({ ok: false, error: "idempotency-key-too-long" }, { status: 400 })
-  const out = await engine.choose({ id, optionId, text: (body.text as string | undefined) ?? null, idemKey })
+  const version = typeof body.version === "string" ? body.version : null
+  const out = await engine.choose({ id, optionId, text: (body.text as string | undefined) ?? null, idemKey, version })
   return Response.json(out.body, { status: out.status, headers: out.body.result === "replay" ? { "Idempotent-Replayed": "true" } : undefined })
 }
 
@@ -99,8 +105,17 @@ async function repoDecision(req: Request, repo: string, decision: "yes" | "no", 
   return Response.json(out.body, { status: out.status, headers: out.body.result === "replay" ? { "Idempotent-Replayed": "true" } : undefined })
 }
 
-export function createTriageHandler(engine: () => TriageEngine = triageEngine, runner: () => RepoRunner = repoRunner) {
+async function propose(req: Request, store: OutboundStore, engine: TriageEngine): Promise<Response> {
+  const body = await jsonBody(req)
+  if (!body) return bad("invalid JSON")
+  const out = produceOutbound(store, body, Date.now())
+  if (out.status === 201) void engine.refresh()
+  return Response.json(out.body, { status: out.status })
+}
+
+export function createTriageHandler(engine: () => TriageEngine = triageEngine, runner: () => RepoRunner = repoRunner, outbound: () => OutboundStore = outboundStore) {
   return async (req: Request, url: URL): Promise<Response | null> => {
+    if (url.pathname === OUTBOUND) return req.method === "POST" ? propose(req, outbound(), engine()) : bad("method_not_allowed", 405)
     if (url.pathname.startsWith(`${REPOS}/`) && req.method === "POST") {
       const action = repoAction(url.pathname)
       if (!action) return bad("no_such_repo", 404)

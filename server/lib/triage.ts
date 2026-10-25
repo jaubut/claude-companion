@@ -1,4 +1,5 @@
 import { STALE_DAYS, mytaskOptions } from "./mytask-triage"
+import type { OutboundView } from "./outbound"
 
 // Brain triage (docs/orchestrator-triage-api.md): what in the queue needs
 // Jeremie, phrased as problem / action / options. Pure: types, the allowed
@@ -7,7 +8,7 @@ import { STALE_DAYS, mytaskOptions } from "./mytask-triage"
 // lib/triage-sources.ts, the cache lib/triage-store.ts, the loop
 // lib/triage-engine.ts, the live instance wiring/triage.ts.
 
-export type TriageSource = "task" | "proposal" | "pr" | "body" | "mytask"
+export type TriageSource = "task" | "proposal" | "pr" | "body" | "mytask" | "outbound"
 export type Severity = "urgent" | "normal" | "low"
 
 export type TriageAction =
@@ -96,6 +97,10 @@ export interface TriageItem {
   options: TriageOption[]
   context?: string
   resolver?: ResolverInfo
+  /** Source `outbound` only: the exact payload that will leave (never clipped). */
+  payload?: OutboundView
+  /** Source `outbound` only: the card version (= payload.payloadHash) a choose must echo. */
+  version?: string
   createdAt: number
   updatedAt: number
 }
@@ -107,6 +112,7 @@ export type SourceRef =
   | { source: "pr"; taskId: string; prUrl: string; repo: string; number: number }
   | { source: "body"; componentId: string; investigationId: string }
   | { source: "mytask"; taskIds: string[]; noteId: string; oldestDue: string; lateDays: number }
+  | { source: "outbound"; outboundId: string }
 
 /** One thing that needs Jeremie, before phrasing. */
 export interface SourceItem {
@@ -127,6 +133,8 @@ export interface SourceItem {
   /** Heuristic hints (criticality, body severity) the severity rule reads. */
   /** `parked` = the shepherd's park reason without the cascade's " · Opus:" brief (PRs it parked; lib/triage-repos.ts heldReason). */
   hints?: { criticality?: string | null; bodySeverity?: string | null; safetyNet?: boolean; taskDone?: boolean; parked?: string }
+  /** Source `outbound`: the exact payload (its hash is `version`). */
+  payload?: OutboundView
   ref: SourceRef
 }
 
@@ -163,6 +171,7 @@ export function allowedActions(src: Pick<SourceItem, "source" | "ref" | "url">):
     case "pr": return ["merge", "close_pr", "open_url", "snooze"]
     case "body": return src.url ? ["requeue", "open_url", "snooze"] : ["requeue", "snooze"]
     case "mytask": return ["approve", "snooze"]
+    case "outbound": return ["approve", "answer_custom", "reject", "snooze"]
   }
 }
 
@@ -341,6 +350,39 @@ function mytaskPhrase(src: SourceItem, ref: Extract<SourceRef, { source: "mytask
   }
 }
 
+/** An outbound payload as plain text: the card's `context`, never clipped (what you read is what leaves). */
+export function payloadText(p: Pick<OutboundView, "account" | "to" | "cc" | "subject" | "body" | "inReplyTo">): string {
+  return [
+    `From: ${p.account === "hello" ? "hello@" : "personal"}`,
+    `To: ${p.to.join(", ")}`,
+    ...(p.cc.length ? [`Cc: ${p.cc.join(", ")}`] : []),
+    `Subject: ${p.subject}`,
+    ...(p.inReplyTo ? [`In-Reply-To: ${p.inReplyTo}`] : []),
+    "",
+    p.body,
+  ].join("\n")
+}
+
+/** Outbound card (deterministic, no model): Send (recommended) · Edit · Don't send (not destructive) · Snooze. */
+export function outboundPhrase(src: SourceItem): Phrase {
+  const p = src.payload
+  const failed = src.facts.lastError ? ` The last send failed: ${clip(src.facts.lastError, 100)}` : ""
+  const { options, recommended } = finishOptions([
+    { label: "Send", detail: `Send exactly this to ${p ? p.to.join(", ") : "?"}`, action: { kind: "approve" } },
+    { label: "Edit", detail: "Your text replaces the body", action: { kind: "answer_custom" } },
+    { label: "Don't send", action: { kind: "reject" } },
+    { label: "Snooze for a day", action: { kind: "snooze", hours: 24 } },
+  ])
+  for (const o of options) delete o.destructive
+  return {
+    title: clip(src.title || src.refId, TITLE_MAX),
+    problem: clip(`${src.facts.requestedBy || "An agent"} wants to send this email: ${src.facts.why || "no reason given"}.${failed}`, PROBLEM_MAX),
+    action: "Read the exact email below, then send, edit or drop it.",
+    options, recommended,
+    ...(p ? { context: payloadText(p) } : {}),
+  }
+}
+
 /** Deterministic phrasing when the model is unavailable or its output is invalid. */
 export function fallbackPhrase(src: SourceItem): Phrase {
   const f = src.facts
@@ -352,6 +394,7 @@ export function fallbackPhrase(src: SourceItem): Phrase {
   }
   const ref = src.ref
   if (ref.source === "mytask") return mytaskPhrase(src, ref)
+  if (ref.source === "outbound") return outboundPhrase(src)
   if (ref.source === "task" && ref.status === "blocked") {
     return make(why("blocker", "The task is blocked without a reason."), "Answer it so the task restarts, or retry or cancel it.", [
       { label: "Answer it", action: { kind: "answer_custom" } },
@@ -394,6 +437,7 @@ const URGENT_WORDS = /\b(prod(uction)?|outage|down|client|invoice|facture|paymen
 /** Heuristic severity when Jev gives none. */
 export function heuristicSeverity(src: SourceItem): Severity {
   const h = src.hints ?? {}
+  if (src.ref.source === "outbound") return "normal"
   if (src.ref.source === "mytask") return URGENT_WORDS.test(`${src.title} ${src.facts.evidence ?? ""}`) ? "urgent" : src.ref.lateDays > STALE_DAYS ? "low" : "normal"
   if (src.ref.source === "body") return /^(critical|high)$/i.test(h.criticality ?? "") ? "urgent" : "normal"
   if (src.ref.source === "proposal" && /^(critical|high)$/i.test(h.bodySeverity ?? "")) return "urgent"
@@ -436,13 +480,14 @@ export function buildItem(src: SourceItem, given: Phrase, severity: Severity, re
     severity, problem: phrase.problem, action: phrase.action, recommended: phrase.recommended, options: phrase.options,
     ...(phrase.context ? { context: phrase.context } : {}),
     ...(resolver ? { resolver } : {}),
+    ...(src.source === "outbound" && src.payload ? { payload: src.payload, version: src.version } : {}),
     createdAt: src.createdAt, updatedAt: src.updatedAt,
   }
 }
 
-/** The card with the generic "Ask Opus" option last (never the recommendation; mytasks never get one). */
+/** The card with the generic "Ask Opus" option last (never the recommendation; mytasks and outbound never get one). */
 export function withAskOpus(item: TriageItem): TriageItem {
-  if (item.source === "mytask" || item.options.some((o) => o.id === ASK_OPUS_ID)) return item
+  if (item.source === "mytask" || item.source === "outbound" ||item.options.some((o) => o.id === ASK_OPUS_ID)) return item
   const label = looksFrench(`${item.problem} ${item.action}`) ? "Demander à Opus…" : "Ask Opus…"
   return { ...item, options: [...item.options, { id: ASK_OPUS_ID, label, detail: "Hand it back with an instruction", action: { kind: "ask_opus" } }] }
 }

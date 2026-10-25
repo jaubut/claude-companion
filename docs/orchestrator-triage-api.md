@@ -11,8 +11,8 @@ Owner: Companion server (Zettlab owns the orchestrator). Bearer-gated like every
 ```ts
 type TriageItem = {
   id: string                 // stable: `${source}:${refId}` — same item keeps its id across refreshes
-  source: "task" | "proposal" | "pr" | "body" | "mytask"
-  refId: string              // dispatch task id / proposal taskId / "<repo>#<pr>" / component id / task id or "p:<noteId>" (mytask)
+  source: "task" | "proposal" | "pr" | "body" | "mytask" | "outbound"   // outbound added 2026-10-25
+  refId: string              // dispatch task id / proposal taskId / "<repo>#<pr>" / component id / task id or "p:<noteId>" (mytask) / outbound id
   title: string              // ≤ 80 chars, plain words
   project: string | null     // project title or repo name (human label)
   repo: string | null        // added 2026-10-15: GitHub repo name the work lands in — see "Repo" below
@@ -24,6 +24,8 @@ type TriageItem = {
   context?: string           // optional: 1–3 lines of evidence (blocker text, CI failure, investigation root cause);
                              // on an Opus card: Opus's analysis, up to 1500 chars, line breaks kept
   resolver?: ResolverInfo    // added 2026-10-04 (Opus resolver) — see "Opus resolver" below
+  payload?: OutboundPayload  // added 2026-10-25, source outbound only: the exact email — see "Source outbound"
+  version?: string           // added 2026-10-25, source outbound only: = payload.payloadHash; echo it in choose
   createdAt: number          // ms
   updatedAt: number          // ms
 }
@@ -75,6 +77,7 @@ type TriageAction =
 - `body`: investigations that failed twice (no proposal) — options: requeue investigation / open component / snooze.
 - trips: auto-filed, approved per quarter on the dashboard (no triage source since 2026-10-15, trips-auto-quarterly).
 - `mytask` (added 2026-10-06, PRJ-CT4M WP3): Jeremie's own overdue tasks — see "Source mytask" below.
+- `outbound` (added 2026-10-25): an email an agent wants to send, shown with its exact payload — see "Source outbound" below.
 
 ## Repo (added 2026-10-15, needs-you-by-repo)
 
@@ -327,6 +330,59 @@ no Jev severity, never routed to Opus, no "Ask Opus…" option.
   (`urgent` on the urgent words).
 - **choose** writes every task of the card through the assignee-guarded paths (one `status_changed` /
   `due_changed` activity row per task), then pushes `tasks_changed`. `409 stale` when none of its tasks moved.
+
+## Source `outbound` (exact-payload approval before an email leaves, 2026-10-25 — additive)
+
+The Duet rule: before anything leaves the house, show exactly what will leave and wait for an OK on that exact
+thing. v1 is email only (no payments, no calendar). Deterministic card, no model call, no Jev severity, never
+routed to Opus, no "Ask Opus…" option; only a tap from Jeremie (`by` "triage") can act on it.
+
+**Producer** (bearer-gated, like every /api/* route):
+
+```
+POST /api/orchestrator/outbound
+{ kind: "email", account: "personal" | "hello", to: string[], cc?: string[], subject: string, body: string,
+  inReplyTo?: string, threadId?: string, why: string, requestedBy: string }
+→ 201 { ok: true, id, payloadHash, status: "proposed" }
+  400 malformed (bad address, multi-line subject, missing why/requestedBy…) · 422 { error: "refused", reason }
+```
+
+Stored in companion.db `outbound_actions` (status `proposed` → `sending` → `sent` | `rejected`; a send that fails
+goes back to `proposed` with `last_error`, the card stays and says so).
+
+**payloadHash** = sha256 (hex) of the canonical JSON of the sendable fields, in this key order, no whitespace:
+`{"account","to","cc","subject","body","inReplyTo"}` (`cc` `[]` and `inReplyTo` `null` when absent). It is the card
+`version`. `threadId`, `why` and `requestedBy` are shown but not hashed.
+
+**Item.** `refId` = outbound id, `title` = subject, `problem` = who asks and why, `context` = the FULL payload as
+text (From / To / Cc / Subject / In-Reply-To, blank line, body; never clipped), plus:
+
+```ts
+type OutboundPayload = {
+  id: string; kind: "email"; account: "personal" | "hello"; to: string[]; cc: string[]; subject: string; body: string
+  inReplyTo: string | null; threadId: string | null; why: string; requestedBy: string; payloadHash: string
+}
+```
+
+Severity `normal`. `item.version` = `payload.payloadHash`.
+
+**Options** (fixed): `a` Send (`approve`, recommended) · `b` Edit (`answer_custom`: the text becomes the new body →
+new hash → a new card version) · `c` Don't send (`reject`, NOT destructive) · `d` Snooze 24 h.
+
+**choose** adds `version` to the body: `{ optionId, text?, version }`.
+- Send requires `version` equal to the stored hash, re-checked at the moment of sending (an atomic
+  `proposed → sending` claim at that hash). Missing or different → `409 { error: "stale_approval", next }`,
+  nothing sent, the card re-renders with the current version. Same for an Edit / Don't send that echoes an old version.
+- Idempotent: a replayed Idempotency-Key returns the stored result (`result: "replay"`), never a second send; the
+  claim also stops a concurrent second tap. Success → `{ result: "done", detail: { status: "sent", messageId } }`,
+  the Gmail message id stored on the row.
+- Server policy, whatever was approved (checked at propose, at edit and again at send): body over 50 KB (UTF-8
+  bytes) or more than 10 recipients (to + cc) → `422 { error: "refused", reason }`. There is no recipient allowlist.
+- Send failure → `502 { error: "send_failed", reason }`, the row is back to `proposed`.
+- Sender: `~/.claude/tools/gmail.py` (raw-MIME send for personal + hello@; never the claude.ai connector, which wraps
+  links), override with `COMPANION_GMAIL_PY`. The executor is injected (tests use a fake).
+
+Older iOS builds ignore the new source and fields.
 
 ## Opus resolver (2026-10-04 — additive)
 
