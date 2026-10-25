@@ -110,7 +110,7 @@ from the Turso row and the PR shepherd's `agent_activity` ledger:
 | frame | shape | when |
 |---|---|---|
 | `orchestrator_task` | `{task: TaskDto}` | local transition, or a Turso task whose `(dispatch_status, updated_at, done, pr_url, dispatch_run_id, owner)` changed since last seen; re-sent for a note's tasks when its channel link changes |
-| `orchestrator_channel` | `{channel: Channel}`; Channel gains `noteId, noteTitle, noteRef, counts{queued,running,blocked,pr,failed,mergedToday}` | channel create/auto/link, or its dispatch counts changed |
+| `orchestrator_channel` | `{channel: Channel}`; Channel gains `noteId, noteTitle, noteRef, counts{queued,running,blocked,pr,failed,mergedToday}` | channel create/link, or its dispatch counts changed |
 | `orchestrator_queue` (new) | `{queue: {cap, live, queued, dispatch:{queued,running,blocked,pr,failed,mergedToday}}}` | after a poll that changed any of it |
 | `orchestrator` | `{turn}` | a Turso task moved into blocked / pr / completed / done: one turn in the owning channel, `turn.taskId` = the Turso id |
 
@@ -170,10 +170,9 @@ There is no generic SQL route. Approve, cancel, requeue and unblock honour `Idem
 - After every Companion write the task's `orchestrator_task` frame and the counts
   (`orchestrator_channel` / `orchestrator_queue`) go out at once, plus one turn in the owning
   channel: `cancelled …`, `requeued …`, `unblocked … Answer: …`, `filed [id] → agent …`.
-  A cancel in an auto channel turns auto-dispatch off, as before.
-- **Auto-dispatch** files the proposal itself, with no tap. The `Auto-dispatch [id] — agent · project / Why / Task`
-  turn always comes first. If filing fails, a turn says so and the card stays `proposed`.
-  #Body never auto-dispatches.
+- **No auto-dispatch** (one work stream Q3): every brain proposal waits for a tap. The
+  `POST .../channels/<id>/auto` toggle is gone (400 `unknown action`), and `Channel` no longer
+  carries `autoDispatch`. Companion runs no local workers, so `queue.cap` is `0`.
 
 ## #Body triage (P3)
 
@@ -202,7 +201,7 @@ There is no generic SQL route. Approve, cancel, requeue and unblock honour `Idem
 Every Companion write that starts work files ONE Turso row, never `running`. Jeremie's own work
 (typed `POST .../dispatch`, or an approve tap on a proposal from his own conversation) is filed
 `origin='jeremie'`, `dispatch_status='queued'`: dispatch-run claims it directly. Everything else
-(auto-dispatch, #Body proposals and agents, Opus rescopes) has no trusted origin, defaults to
+(#Body proposals and agents, Opus rescopes) has no trusted origin, defaults to
 `unknown` and is filed `pending` (ledger `dispatch:pending`, meta `op:"file"`). Jeremie releases it
 on the dashboard `/tasks` (task_stamps `release` stamp, MFA), which moves it to `queued`.
 Responses carry `status:"queued"`, or `status:"pending_approval"` plus `approveUrl` =

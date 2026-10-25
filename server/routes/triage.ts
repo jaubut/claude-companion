@@ -1,13 +1,9 @@
-import { DISPATCH_ID } from "../lib/dispatch-tasks"
 import { MAX_KEY_LENGTH } from "../lib/idempotency"
-import { LOG_MAX } from "../lib/takeover"
 import { NOTE_MAX } from "../lib/repo-rework"
 import type { TriageEngine } from "../lib/triage-engine"
 import { MEMBERS_MAX } from "../lib/triage-repos"
 import { triageEngine } from "../wiring/triage"
 import { type RepoRunner, repoRunner } from "../wiring/triage-repos"
-import { TAKEOVER_HOP } from "../wiring/takeover"
-import { runPeerTakeover } from "../wiring/takeover-choose"
 
 // Brain triage endpoints (docs/orchestrator-triage-api.md), bearer-gated like
 // every /api/orchestrator/* route:
@@ -15,14 +11,12 @@ import { runPeerTakeover } from "../wiring/takeover-choose"
 //   POST /api/orchestrator/triage/<id>/choose        {optionId, text?} + Idempotency-Key
 //   POST /api/orchestrator/repos/<repo>/yes          {version, members[{id, version}]} + Idempotency-Key
 //   POST /api/orchestrator/repos/<repo>/no           {version, note} + Idempotency-Key
-//   POST /api/orchestrator/takeover                  peer only (x-companion-takeover-hop): {taskId, version, repo, host, logTail?, by}
 // <id> / <repo> are percent-encoded (a PR id carries "/" and "#"). Returns null for any other path.
 
 const PREFIX = "/api/orchestrator/triage"
 const REPOS = "/api/orchestrator/repos"
 const ID_MAX = 300
 const REPO_RE = /^[\w.-]{1,200}$/
-const TAKEOVER = "/api/orchestrator/takeover"
 
 function chosenId(pathname: string): string | null {
   if (!pathname.startsWith(`${PREFIX}/`) || !pathname.endsWith("/choose")) return null
@@ -105,25 +99,8 @@ async function repoDecision(req: Request, repo: string, decision: "yes" | "no", 
   return Response.json(out.body, { status: out.status, headers: out.body.result === "replay" ? { "Idempotent-Replayed": "true" } : undefined })
 }
 
-/** The forwarded half of a takeover choose (wiring/takeover.ts forward): validated, started here, never re-forwarded. */
-async function peerTakeover(req: Request, run: typeof runPeerTakeover): Promise<Response> {
-  if (req.headers.get(TAKEOVER_HOP) !== "1") return bad("hop_header_required", 403)
-  const body = await jsonBody(req)
-  if (!body) return bad("invalid JSON")
-  const { taskId, version, repo, host, logTail, by } = body
-  if (typeof taskId !== "string" || !DISPATCH_ID.test(taskId)) return bad("taskId_invalid")
-  if (typeof version !== "string" || !version || version.length > 200) return bad("version_required")
-  if (typeof repo !== "string" || !REPO_RE.test(repo)) return bad("repo_invalid")
-  if (host !== "mac" && host !== "zettlab") return bad("host_invalid")
-  if (logTail !== undefined && logTail !== null && (typeof logTail !== "string" || logTail.length > LOG_MAX)) return bad("logTail_invalid")
-  if (by !== undefined && (typeof by !== "string" || by.length > 80)) return bad("by_invalid")
-  const out = await run({ taskId, version, repo, host, logTail: (logTail as string | null | undefined) ?? null, by: (by as string | undefined) || "triage" })
-  return Response.json(out.body, { status: out.status })
-}
-
-export function createTriageHandler(engine: () => TriageEngine = triageEngine, runner: () => RepoRunner = repoRunner, takeover: typeof runPeerTakeover = runPeerTakeover) {
+export function createTriageHandler(engine: () => TriageEngine = triageEngine, runner: () => RepoRunner = repoRunner) {
   return async (req: Request, url: URL): Promise<Response | null> => {
-    if (url.pathname === TAKEOVER && req.method === "POST") return peerTakeover(req, takeover)
     if (url.pathname.startsWith(`${REPOS}/`) && req.method === "POST") {
       const action = repoAction(url.pathname)
       if (!action) return bad("no_such_repo", 404)

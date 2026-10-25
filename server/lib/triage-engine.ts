@@ -3,7 +3,7 @@ import type { Autonomy } from "./resolver"
 import type { AskResult, ResolverView } from "./resolver-engine"
 import {
   type Phrase, type ResolvingItem, type Severity, type SourceItem, type TriageItem, type TriageOption,
-  buildItem, fallbackPhrase, heuristicSeverity, itemId, orderItems, triageDigest, validatePhrase, withAskOpus, withTakeover,
+  buildItem, fallbackPhrase, heuristicSeverity, itemId, orderItems, triageDigest, validatePhrase, withAskOpus,
 } from "./triage"
 import { type RepoCard, buildRepoCards } from "./triage-repos"
 import type { TriageStore } from "./triage-store"
@@ -136,10 +136,8 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     const busy: ResolvingItem[] = []
     const r = deps.resolver ?? null
     r?.pump()
-    const ask = r?.enabled() ? withAskOpus : (i: TriageItem) => i
+    const card = r?.enabled() ? withAskOpus : (i: TriageItem) => i
     for (const [id, src] of sources) {
-      // Takeover sits outside the resolver toggle and before "Ask Opus" (which stays last).
-      const card = (i: TriageItem) => ask(withTakeover(i, src.takeover))
       if (deps.store.snoozedUntil(id, t) || deps.store.expired(id, src.version)) continue
       r?.consider(id, src)
       const v = r?.view(id, src) ?? null

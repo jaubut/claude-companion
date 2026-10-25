@@ -21,15 +21,12 @@ import { HOST_INFO, broadcast as wsBroadcast } from "../state"
 import { bodySnapshot } from "./body"
 import { bodyFixStore, bodyInvestigator, investigationStore } from "./body-investigate"
 import { type DispatchWiring, dispatchWiring, onDispatchPolled } from "./dispatch"
-import { onTaskEmitted, orchEmit, setTriageDigest, vetoAuto, writeCtx } from "./orchestrator"
+import { onTaskEmitted, orchEmit, setTriageDigest, writeCtx } from "./orchestrator"
 import { approveProposal, rejectProposal, reviseProposal } from "./proposals"
 import { type LiveResolver, type ResolverLiveOpts, createLiveResolver, repoMapSelfCheck, startResolverDigest } from "./resolver"
 import { type RepoRunnerDeps, sweepInterruptedRuns } from "./triage-repos"
 import { resolverConfig } from "../lib/resolver"
 import { ownsTrips } from "./trips"
-import { takeoverTarget } from "../lib/takeover"
-import { startTakeoverTick } from "./takeover"
-import { takeoverAction } from "./takeover-choose"
 
 // Brain triage, live instance (docs/orchestrator-triage-api.md): collectors
 // over the poller snapshot, local proposals, Turso PR rows and the Body
@@ -109,6 +106,15 @@ export function actionTurn(kind: string, t: DispatchTask, answer: string | null,
   if (kind === "cancel") return `cancelled ${who} (${by})`
   if (kind === "requeue") return `requeued ${who} (${by})`
   return `unblocked ${who} (${by})\nAnswer: ${(answer ?? "").slice(0, 500)}`
+}
+
+/**
+ * The unblock answer keeps the blocker's `how-to: RES-…` ref: the requeue clears
+ * dispatch_blocker, so the next run finds the how-to note only through the description.
+ */
+export function withHowTo(answer: string, blocker: string | null | undefined): string {
+  const ref = /how-to:\s*(RES-[A-Z0-9]{4,8})\b/.exec(blocker ?? "")?.[1]
+  return ref && !answer.includes(ref) ? `${answer.trim()} (how-to: ${ref})` : answer
 }
 
 export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
@@ -212,9 +218,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     const tasks = taskSources(snapshot, (t) => dispatch.threadIdFor(t)).map((s) => {
       const t = s.ref.source === "task" ? byId.get(s.ref.taskId) : undefined
       if (!t) return s
-      const repo = repoOf({ text: t.title, noteId: t.noteId, noteTitle: t.projectTitle }, entries)
-      const takeover = t.status === "blocked" ? takeoverTarget({ title: t.title, blocker: t.blocker ?? "", noteHay: `${t.noteId} ${t.projectTitle ?? ""}` }, entries) : undefined
-      return { ...s, repo, ...(takeover ? { takeover } : {}) }
+      return { ...s, repo: repoOf({ text: t.title, noteId: t.noteId, noteTitle: t.projectTitle }, entries) }
     })
     const proposals = latestProposals(listProposals(), (id) => bodyFixStore.card(id)?.componentId ?? null)
       .map((t) => proposalItem(t.taskId, entries)).filter((s): s is SourceItem => !!s)
@@ -253,7 +257,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     const ctx = await writeCtx(dispatch, src.ref.channel)
     const out: WriteOutcome = kind === "cancel" ? await cancelDispatchTask(ctx, src.ref.taskId)
       : kind === "requeue" ? await requeueTask(ctx, src.ref.taskId)
-      : await unblockTask(ctx, src.ref.taskId, text ?? "")
+      : await unblockTask(ctx, src.ref.taskId, withHowTo(text ?? "", src.facts.blocker))
     if (!out.ok) {
       if (out.error !== "no_such_task") dispatch.applyLocal(out.task)
       return { kind: "stale", reason: out.error }
@@ -261,7 +265,6 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     dispatch.applyLocal(out.task)
     const channelId = dispatch.threadIdFor(out.task)
     orchEmit(appendTurn("orchestrator", actionTurn(kind, out.task, text, by), out.task.id, channelId))
-    if (kind === "cancel") vetoAuto(channelId)
     return { kind: "done", detail: { dispatchStatus: out.task.status } }
   }
 
@@ -325,15 +328,6 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
       case "open_url": return { kind: "done", detail: { url: a.url } }
       case "snooze": return { kind: "done" }
       case "ask_opus": return { kind: "error", status: 409, error: "resolver_disabled" } // the engine handles it before execute
-      case "takeover": {
-        // The COLLECTED src (its takeover target), never current(src): that rebuild drops it.
-        const out = await takeoverAction(src, a, text, by)
-        if (out.kind === "done" && src.ref.source === "task") {
-          const found = await getDispatchTask(dispatch.query, await dispatch.columns(), src.ref.taskId).catch(() => null)
-          if (found) dispatch.applyLocal(found.task)
-        }
-        return out
-      }
     }
   }
 
@@ -451,7 +445,6 @@ export function startTriage(): () => void {
   const offDigest = liveResolver ? startResolverDigest(liveResolver.store, (now) => expiredDigest(engine.expiredSince(now - 86_400_000))) : () => {}
   const tick = setInterval(() => void engine.refresh(), TRIAGE_TICK_MS)
   ;(tick as unknown as { unref?: () => void }).unref?.()
-  const offTakeover = startTakeoverTick()
   void engine.refresh()
-  return () => { offPoll(); offTask(); offDigest(); offTakeover(); setTriageDigest(null); clearInterval(tick) }
+  return () => { offPoll(); offTask(); offDigest(); setTriageDigest(null); clearInterval(tick) }
 }

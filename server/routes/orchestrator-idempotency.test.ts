@@ -194,7 +194,7 @@ test("task cancel: replayed on retry; the same key on another task's cancel is n
   expect(chat.getTask(b.taskId)?.status).toBe("cancelled")
 })
 
-// ── channel create, auto toggle ──
+// ── channel create ──
 
 test("channel create: same key creates one channel", async () => {
   const before = channels.listChannels().length
@@ -203,14 +203,4 @@ test("channel create: same key creates one channel", async () => {
   expect(replayed(second)).toBe("true")
   expect(await second.text()).toBe(await first.text())
   expect(channels.listChannels().length).toBe(before + 1)
-})
-
-test("auto toggle: same key appends the ON note once", async () => {
-  const ch = channels.createChannel("idem auto")
-  const path = `/api/orchestrator/channels/${ch.id}/auto`
-  await post(path, { enabled: true }, "a-k1")
-  const second = await post(path, { enabled: true }, "a-k1")
-  expect(replayed(second)).toBe("true")
-  expect(channels.getChannel(ch.id)?.autoDispatch).toBe(true)
-  expect(chat.getThread(ch.id).filter((t) => t.text.startsWith("auto-dispatch ON")).length).toBe(1)
 })
