@@ -6534,7 +6534,7 @@
         },
         {
           "path": "wiring/proposals.ts",
-          "lines": 75,
+          "lines": 74,
           "kind": "lib",
           "exports": [
             "ApproveOpts",
@@ -6549,7 +6549,6 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/body.ts",
             "lib/orchestrator-chat.ts",
             "lib/dispatch-tasks.ts",
             "wiring/dispatch.ts",
@@ -7918,7 +7917,6 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/orchestrator.ts",
-            "wiring/proposals.ts",
             "wiring/resolver.ts"
           ]
         },
