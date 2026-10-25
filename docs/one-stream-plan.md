@@ -103,7 +103,7 @@ The whole change touches about 60 files in two reachable repos: 47 existing clau
 - **Q1, Mac-host fixes: tag the machine.** A task can carry a host requirement in a new `tasks.requires_host` column, `'any' | 'mac' | 'zettlab'` (NOT NULL DEFAULT `'any'`). dispatch-run only claims a row whose requirement is `'any'` or its own host. That work is slice G. Slice A sets `requires_host='mac'` when Companion files a Mac-only task (a #Body fix card whose host is `mac`), and only when the column exists (`detectColumns`, the same way `dispatch_pr_url` is handled). Until G ships, such a row files untagged and the Zettlab race remains.
 - **Q2: accepted.** The shepherd's fix run (`pr:unpark`) replaces the resolver's PR fix run. That is slice C.
 - **Q3: accepted.** The auto-dispatch toggle is removed. That is slice A2.
-- **Trust (2026-10-23, rebase on #189):** Jeremie's own filings (typed dispatch, a tap on a proposal from his own conversation) are origin `jeremie` and go straight to `queued`. Auto-dispatch, #Body and Opus rescopes stay `pending` for the dashboard stamp. Supersedes "every entry point files pending" in the table above.
+- **Trust (2026-10-23, rebase on #189):** Jeremie's own filings (typed dispatch, a tap on a proposal from his own conversation) are origin `jeremie` and go straight to `queued`. Auto-dispatch and Opus rescopes stay `pending` for the dashboard stamp. **#Body (Jeremie, 2026-10-25):** the "Get an agent on it" tap is his approval, so it files origin `jeremie` → `queued`; opening the dashboard to stamp it was an extra step. Supersedes "every entry point files pending" in the table above.
 
 ## Verify (per slice)
 

@@ -44,7 +44,7 @@ turso.exec(`
     created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
     dispatch_status TEXT, dispatch_run_id TEXT, dispatch_started_at TEXT, dispatch_completed_at TEXT,
     dispatch_blocker TEXT, dispatch_owner TEXT, dispatch_result_ref TEXT, dispatch_pr_url TEXT, last_pm_review TEXT,
-    requires_host TEXT NOT NULL DEFAULT 'any'
+    requires_host TEXT NOT NULL DEFAULT 'any', origin TEXT
   );
   CREATE TABLE agent_activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT, agent_slug TEXT NOT NULL, action TEXT NOT NULL, target_kind TEXT,
@@ -216,20 +216,20 @@ describe("POST /api/body/component/:id/agent", () => {
     expect((await post("/api/body/component//agent"))!.status).toBe(400)
   })
 
-  test("zettlab-owned (cloud:*) → ONE pending row tagged zettlab: inbox-processor, no claim, logged", async () => {
+  test("zettlab-owned (cloud:*) → ONE queued row (origin jeremie) tagged zettlab: inbox-processor, no claim, logged", async () => {
     const id = "cloud:turso-table:inbox_entries"
     component(id, "turso-table", "failing")
     investigated(id)
     const r = await json(await start(id))
     expect(r.status).toBe(200)
-    expect(r.body).toMatchObject({ ok: true, host: "zettlab", agent: "inbox-processor", status: "pending_approval" })
+    expect(r.body).toMatchObject({ ok: true, host: "zettlab", agent: "inbox-processor", status: "queued" })
     const { taskId, dispatchTaskId } = r.body
-    expect(r.body.approveUrl).toEndWith(`/tasks?task=${dispatchTaskId}`)
+    expect(r.body.approveUrl).toBeUndefined()
 
     const rows = tursoRows()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
-      id: dispatchTaskId, dispatch_status: "pending", dispatch_owner: null, requires_host: "zettlab", assignee: "agent:inbox-processor", note_id: "projects/dash",
+      id: dispatchTaskId, dispatch_status: "queued", origin: "jeremie", dispatch_owner: null, requires_host: "zettlab", assignee: "agent:inbox-processor", note_id: "projects/dash",
     })
     expect(rows[0]!.description).toContain("inbox backlog 47 > 40")
     expect(chat.getTask(taskId)).toMatchObject({ threadId: "body", dispatchTaskId, status: "filed", cwd: join(tempHome, ".claude"), tmuxSession: null })
@@ -239,7 +239,7 @@ describe("POST /api/body/component/:id/agent", () => {
     expect(log[0]).toMatchObject({ agent_slug: "inbox-processor", target_kind: "body_component", target_id: id })
     expect(JSON.parse(log[0]!.meta)).toMatchObject({ taskId, dispatchTaskId, owner: "zettlab" })
 
-    // One open run per component: a second tap names the pending one.
+    // One open run per component: a second tap names the open one.
     const again = await json(await start(id))
     expect(again).toMatchObject({ status: 409, body: { ok: false, error: "already_running", taskId, dispatchTaskId } })
     expect(tursoRows()).toHaveLength(1)
@@ -270,15 +270,15 @@ describe("POST /api/body/component/:id/agent", () => {
     expect(JSON.parse(activity()[0]!.meta).instruction).toBe("rotate the logs")
   })
 
-  test("mac:* → ONE pending row tagged requires_host=mac, the fix card's cwd in the brief; no forward", async () => {
+  test("mac:* → ONE queued row tagged requires_host=mac, the fix card's cwd in the brief; no forward", async () => {
     const id = uid("mac:launchd:com.job")
     component(id, "launchd", "crash_loop")
     investigated(id, "card-mac")
     const r = await json(await start(id))
     expect(r.status).toBe(200)
-    expect(r.body).toMatchObject({ ok: true, host: "mac", agent: "claude", status: "pending_approval" })
+    expect(r.body).toMatchObject({ ok: true, host: "mac", agent: "claude", status: "queued" })
     const rows = tursoRows()
-    expect(rows).toEqual([expect.objectContaining({ id: r.body.dispatchTaskId, dispatch_status: "pending", requires_host: "mac", dispatch_owner: null })])
+    expect(rows).toEqual([expect.objectContaining({ id: r.body.dispatchTaskId, dispatch_status: "queued", origin: "jeremie", requires_host: "mac", dispatch_owner: null })])
     expect(rows[0]!.description).toContain(fixCwd)
     expect(activity()).toHaveLength(1)
 

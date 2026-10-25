@@ -111,9 +111,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/triage-store.ts` | 171 | lib | 9 |  |
+| `wiring/body-agent.ts` | 170 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
-| `wiring/body-agent.ts` | 168 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/orchestrator-channels.ts` | 158 | lib | 13 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
