@@ -8,7 +8,6 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { pushToAll } from "../lib/push"
 import { tursoExec, tursoQuery } from "../lib/turso"
 import { broadcast } from "../state"
-import { takeoverIdentity } from "./takeover"
 
 // The live Turso dispatch poller (orchestrator-one-queue P1): real Turso, the
 // sqlite announce cursor, WS broadcast, APNs. Started by cli.ts; nudged by
@@ -47,7 +46,6 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   localQueue: () => ({ cap: 0, live: countLiveTasks(), queued: listQueued().length }),
   liveIdentity: (id) => {
     const t = getTaskByDispatchId(id)
-    // A takeover (owner companion:takeover:<name>) has no local row: its session on this host.
-    return t ? { localTaskId: t.taskId, tmuxSession: t.tmuxSession, tmuxSocket: t.tmuxSocket ?? null, sessionKey: t.sessionKey, logTail: t.logTail } : takeoverIdentity(id)
+    return t ? { localTaskId: t.taskId, tmuxSession: t.tmuxSession, tmuxSocket: t.tmuxSocket ?? null, sessionKey: t.sessionKey, logTail: t.logTail } : null
   },
 })

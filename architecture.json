@@ -1456,25 +1456,17 @@
         },
         {
           "path": "lib/dispatch-live.ts",
-          "lines": 72,
+          "lines": 10,
           "kind": "lib",
           "exports": [
-            "detectPrUrl",
-            "TAKEOVER_OWNER",
-            "takeoverOwner",
-            "TakeoverOutcome",
-            "claimTakeover",
-            "finishTakeover"
+            "detectPrUrl"
           ],
           "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [
-            "lib/dispatch-tasks.ts",
-            "lib/turso.ts"
-          ],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -3529,7 +3521,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 532,
+          "lines": 530,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -3591,7 +3583,6 @@
           "apiCalls": [],
           "imports": [
             "lib/dispatch-tasks.ts",
-            "lib/takeover.ts",
             "lib/triage.ts"
           ],
           "listeners": [],
@@ -4049,75 +4040,6 @@
           "externals": []
         },
         {
-          "path": "lib/takeover-store.ts",
-          "lines": 119,
-          "kind": "lib",
-          "exports": [
-            "TakeoverStatus",
-            "OPEN_STATUSES",
-            "TakeoverRow",
-            "NewTakeover",
-            "TakeoverStore",
-            "createTakeoverStore"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/takeover.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/takeover.ts",
-          "lines": 216,
-          "kind": "lib",
-          "exports": [
-            "TakeoverHost",
-            "TakeoverCandidate",
-            "TakeoverTarget",
-            "TargetInput",
-            "CANDIDATES_MAX",
-            "entryByName",
-            "takeoverHostFor",
-            "takeoverTarget",
-            "taskId8",
-            "takeoverName",
-            "takeoverBranch",
-            "isTakeoverId",
-            "TAKEOVER_ENDED",
-            "howToRef",
-            "endedBlocker",
-            "failedBlocker",
-            "DONE_MARKER",
-            "doneLine",
-            "SEED_MAX",
-            "DESCRIPTION_MAX",
-            "HOW_TO_MAX",
-            "LOG_MAX",
-            "NO_CHANGES_BLOCKER",
-            "logSection",
-            "SeedInput",
-            "DATA_NOTE",
-            "seedPrompt"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/live-repo.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
           "path": "lib/tasks-agent-chat.ts",
           "lines": 272,
           "kind": "lib",
@@ -4531,7 +4453,7 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 387,
+          "lines": 385,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
@@ -4607,7 +4529,7 @@
         },
         {
           "path": "lib/triage-repos.ts",
-          "lines": 228,
+          "lines": 227,
           "kind": "lib",
           "exports": [
             "REPO_OTHER",
@@ -4644,7 +4566,7 @@
         },
         {
           "path": "lib/triage-sources.ts",
-          "lines": 308,
+          "lines": 304,
           "kind": "lib",
           "exports": [
             "PR_SAFETY_NET_MS",
@@ -4683,8 +4605,6 @@
           "apiCalls": [],
           "imports": [
             "lib/dispatch-tasks.ts",
-            "lib/dispatch-live.ts",
-            "lib/takeover.ts",
             "lib/body-investigate.ts",
             "lib/orchestrator-chat.ts",
             "lib/triage.ts",
@@ -4724,7 +4644,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 484,
+          "lines": 463,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -4752,7 +4672,6 @@
             "SNOOZE_MAX_HOURS",
             "INSTRUCTION_MAX",
             "ASK_OPUS_ID",
-            "TAKEOVER_ID",
             "itemId",
             "allowedActions",
             "clip",
@@ -4771,7 +4690,6 @@
             "prConflicting",
             "buildItem",
             "withAskOpus",
-            "withTakeover",
             "triageDigest",
             "expiredDigest"
           ],
@@ -4783,8 +4701,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/mytask-triage.ts",
-            "lib/takeover.ts"
+            "lib/mytask-triage.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5761,7 +5678,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 538,
+          "lines": 529,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -5841,8 +5758,6 @@
             "lib/push.ts",
             "state.ts",
             "lib/hook-common.ts",
-            "wiring/takeover.ts",
-            "lib/takeover.ts",
             "wiring/dispatch.ts",
             "lib/vault-guard.ts",
             "lib/auth.ts",
@@ -5978,7 +5893,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 389,
+          "lines": 384,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6047,7 +5962,6 @@
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
-            "lib/dispatch-live.ts",
             "wiring/proposals.ts",
             "wiring/front-door.ts",
             "lib/idempotency.ts",
@@ -6170,7 +6084,7 @@
         },
         {
           "path": "routes/triage.ts",
-          "lines": 146,
+          "lines": 123,
           "kind": "lib",
           "exports": [
             "createTriageHandler",
@@ -6182,16 +6096,12 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/dispatch-tasks.ts",
             "lib/idempotency.ts",
-            "lib/takeover.ts",
             "lib/repo-rework.ts",
             "lib/triage-engine.ts",
             "lib/triage-repos.ts",
             "wiring/triage.ts",
-            "wiring/triage-repos.ts",
-            "wiring/takeover.ts",
-            "wiring/takeover-choose.ts"
+            "wiring/triage-repos.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6552,7 +6462,7 @@
         },
         {
           "path": "wiring/dispatch.ts",
-          "lines": 54,
+          "lines": 52,
           "kind": "lib",
           "exports": [
             "dispatchPushEnabled",
@@ -6576,8 +6486,7 @@
             "lib/orchestrator-db.ts",
             "lib/push.ts",
             "lib/turso.ts",
-            "state.ts",
-            "wiring/takeover.ts"
+            "state.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6959,30 +6868,6 @@
           "externals": []
         },
         {
-          "path": "wiring/takeover-choose.ts",
-          "lines": 71,
-          "kind": "lib",
-          "exports": [
-            "takeoverAction",
-            "runPeerTakeover"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/triage.ts",
-            "lib/triage-engine.ts",
-            "lib/takeover.ts",
-            "lib/turso.ts",
-            "wiring/takeover.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
           "path": "wiring/takeover-liveness.ts",
           "lines": 110,
           "kind": "lib",
@@ -7004,70 +6889,6 @@
             "lib/command-menu.ts",
             "lib/dialogs.ts",
             "lib/herdr.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "wiring/takeover.ts",
-          "lines": 565,
-          "kind": "lib",
-          "exports": [
-            "TAKEOVER_HOP",
-            "TICK_MS",
-            "SEED_WAIT_MS",
-            "TakeoverDeps",
-            "takeoverDeps",
-            "setTakeoverDeps",
-            "takeoverIdle",
-            "TakeoverDetail",
-            "StartResult",
-            "StartInput",
-            "startTakeover",
-            "localLog",
-            "takeoverStop",
-            "takeoverEnded",
-            "takeoverTick",
-            "startTakeoverTick",
-            "takeoverIdentity"
-          ],
-          "state": [
-            "let liveStore",
-            "let deps",
-            "running: Map",
-            "seeding: Map",
-            "held: Set",
-            "let tickStartedAt",
-            "let skipLoggedAt",
-            "misses: Map",
-            "ghAt: Map"
-          ],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/body-investigate.ts",
-            "lib/body-investigate-engine.ts",
-            "lib/dispatch-live.ts",
-            "lib/dispatch-tasks.ts",
-            "lib/herdr.ts",
-            "lib/herdr-inject.ts",
-            "lib/live-repo.ts",
-            "lib/log.ts",
-            "lib/orchestrator-chat.ts",
-            "lib/orchestrator-db.ts",
-            "lib/resolver-fix.ts",
-            "lib/sessions.ts",
-            "lib/spawn-session.ts",
-            "lib/takeover.ts",
-            "lib/takeover-store.ts",
-            "lib/triage-sources.ts",
-            "lib/turso.ts",
-            "wiring/dispatch.ts",
-            "wiring/takeover-liveness.ts",
-            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7140,7 +6961,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 457,
+          "lines": 451,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -7148,6 +6969,7 @@
             "JEV_MIN_CONF",
             "LiveTriageOpts",
             "actionTurn",
+            "withHowTo",
             "createLiveTriage",
             "triageEngine",
             "TRIAGE_TICK_MS",
@@ -7191,10 +7013,7 @@
             "wiring/resolver.ts",
             "wiring/triage-repos.ts",
             "lib/resolver.ts",
-            "wiring/trips.ts",
-            "lib/takeover.ts",
-            "wiring/takeover.ts",
-            "wiring/takeover-choose.ts"
+            "wiring/trips.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7838,7 +7657,6 @@
             "wiring/orchestrator.ts",
             "wiring/resolver-peer.ts",
             "wiring/resolver.ts",
-            "wiring/takeover.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage-repos.ts",
             "wiring/triage.ts",
@@ -8110,8 +7928,7 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/resolver-peer.ts",
-            "wiring/resolver.ts",
-            "wiring/takeover.ts"
+            "wiring/resolver.ts"
           ]
         },
         "FORWARD_STALE_MS": {
@@ -8169,8 +7986,7 @@
         "gate": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigate-engine.ts",
-            "wiring/takeover.ts"
+            "lib/body-investigate-engine.ts"
           ]
         },
         "investigationDigest": {
@@ -8433,7 +8249,6 @@
           "module": "lib/turso.ts",
           "callers": [
             "lib/body-tokens.ts",
-            "lib/dispatch-live.ts",
             "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/tasks-agent-row.ts",
@@ -8487,7 +8302,6 @@
             "wiring/canvas.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
-            "wiring/takeover.ts",
             "ws.ts"
           ]
         },
@@ -8902,37 +8716,6 @@
             "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
-        "WriteCtx": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-live.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "getDispatchTask": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-live.ts",
-            "routes/orchestrator.ts",
-            "wiring/orchestrator.ts",
-            "wiring/resolver.ts",
-            "wiring/takeover.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "readVia": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-live.ts"
-          ]
-        },
-        "ledger": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-live.ts",
-            "lib/dispatch-poller.ts"
-          ]
-        },
         "seenKey": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -8949,7 +8732,6 @@
             "lib/status-answer.ts",
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
-            "wiring/takeover.ts",
             "wiring/triage.ts"
           ]
         },
@@ -8970,8 +8752,7 @@
         "LiveIdentity": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts",
-            "wiring/takeover.ts"
+            "lib/dispatch-poller.ts"
           ]
         },
         "AnyProjectRef": {
@@ -9062,9 +8843,13 @@
             "routes/orchestrator.ts",
             "routes/tasks-agent.ts",
             "wiring/orchestrator.ts",
-            "wiring/takeover-choose.ts",
-            "wiring/takeover.ts",
             "wiring/triage-repos.ts"
+          ]
+        },
+        "ledger": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/dispatch-poller.ts"
           ]
         },
         "stageFields": {
@@ -9232,8 +9017,7 @@
             "lib/orphan-question.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
-            "wiring/takeover-liveness.ts",
-            "wiring/takeover.ts"
+            "wiring/takeover-liveness.ts"
           ]
         },
         "realHerdr": {
@@ -9245,8 +9029,7 @@
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
             "routes/command.ts",
-            "wiring/dialogs.ts",
-            "wiring/takeover.ts"
+            "wiring/dialogs.ts"
           ]
         },
         "herdrGateKey": {
@@ -9294,8 +9077,7 @@
         "closeHerdrWorkspaceWhenIdle": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/herdr-workspace.ts",
-            "wiring/takeover.ts"
+            "lib/herdr-workspace.ts"
           ]
         },
         "HerdrOwner": {
@@ -9314,8 +9096,7 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-workspace.ts",
-            "lib/spawn-session.ts",
-            "wiring/takeover.ts"
+            "lib/spawn-session.ts"
           ]
         },
         "SpawnAgent": {
@@ -9499,8 +9280,7 @@
           "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/keyboard-inject.ts",
-            "lib/submit-confirm.ts",
-            "wiring/takeover.ts"
+            "lib/submit-confirm.ts"
           ]
         },
         "tmuxSocketFlags": {
@@ -9534,8 +9314,7 @@
           "callers": [
             "lib/live-repo.ts",
             "wiring/resolver-peer.ts",
-            "wiring/resolver.ts",
-            "wiring/takeover.ts"
+            "wiring/resolver.ts"
           ]
         },
         "DialogItem": {
@@ -9564,7 +9343,6 @@
             "lib/triage-sources.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
-            "wiring/takeover-choose.ts",
             "wiring/triage-repos.ts",
             "wiring/triage.ts"
           ]
@@ -9594,7 +9372,6 @@
             "lib/resolver-work.ts",
             "lib/triage-pr.ts",
             "wiring/resolver.ts",
-            "wiring/takeover-choose.ts",
             "wiring/triage-repos.ts",
             "wiring/triage.ts"
           ]
@@ -9748,8 +9525,6 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "lib/project-catalog.ts",
-            "lib/takeover.ts",
-            "wiring/takeover.ts",
             "wiring/triage.ts"
           ]
         },
@@ -9757,8 +9532,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "lib/project-catalog.ts",
-            "wiring/resolver.ts",
-            "wiring/takeover.ts"
+            "wiring/resolver.ts"
           ]
         },
         "parseRepoMap": {
@@ -10620,7 +10394,6 @@
             "lib/resolver-work.ts",
             "lib/resolver.ts",
             "wiring/resolver.ts",
-            "wiring/takeover-choose.ts",
             "wiring/triage-repos.ts"
           ]
         },
@@ -10679,13 +10452,6 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/resolver.ts"
-          ]
-        },
-        "TAKEOVER_ENDED": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "lib/resolver.ts",
-            "lib/triage-sources.ts"
           ]
         },
         "NO_REPO_BLOCKER": {
@@ -10963,15 +10729,6 @@
           "callers": [
             "lib/suggest-cleanup.ts",
             "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "TakeoverHost": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "lib/takeover-store.ts",
-            "lib/triage.ts",
-            "wiring/takeover-choose.ts",
-            "wiring/takeover.ts"
           ]
         },
         "normDate": {
@@ -11288,12 +11045,6 @@
             "lib/triage-engine.ts"
           ]
         },
-        "withTakeover": {
-          "module": "lib/triage.ts",
-          "callers": [
-            "lib/triage-engine.ts"
-          ]
-        },
         "triageDigest": {
           "module": "lib/triage.ts",
           "callers": [
@@ -11340,13 +11091,6 @@
             "routes/orchestrator.ts"
           ]
         },
-        "TAKEOVER_OWNER": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "lib/triage-sources.ts",
-            "routes/orchestrator.ts"
-          ]
-        },
         "MergeHold": {
           "module": "lib/triage.ts",
           "callers": [
@@ -11371,18 +11115,6 @@
           "callers": [
             "lib/triage-store.ts",
             "wiring/triage-repos.ts"
-          ]
-        },
-        "TakeoverCandidate": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "lib/triage.ts"
-          ]
-        },
-        "TakeoverTarget": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "lib/triage.ts"
           ]
         },
         "mytaskOptions": {
@@ -11744,15 +11476,13 @@
         "SpawnResult": {
           "module": "lib/spawn-session.ts",
           "callers": [
-            "routes/api.ts#POST /api/spawn-session",
-            "wiring/takeover.ts"
+            "routes/api.ts#POST /api/spawn-session"
           ]
         },
         "spawnCompanionSession": {
           "module": "lib/spawn-session.ts",
           "callers": [
-            "routes/api.ts#POST /api/spawn-session",
-            "wiring/takeover.ts"
+            "routes/api.ts#POST /api/spawn-session"
           ]
         },
         "getPending": {
@@ -12614,19 +12344,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "isTakeoverId": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
-        "takeoverStop": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
-          ]
-        },
         "markWaiting": {
           "module": "wiring/waiting.ts",
           "callers": [
@@ -12660,12 +12377,6 @@
             "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
-        "takeoverEnded": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
         "dispatchWiring": {
           "module": "wiring/dispatch.ts",
           "callers": [
@@ -12675,7 +12386,6 @@
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
-            "wiring/takeover.ts",
             "wiring/triage.ts"
           ]
         },
@@ -12792,7 +12502,6 @@
             "wiring/front-door.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
-            "wiring/takeover.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage.ts"
           ]
@@ -12802,7 +12511,6 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/proposals.ts",
-            "wiring/takeover.ts",
             "wiring/triage.ts"
           ]
         },
@@ -12817,7 +12525,6 @@
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
-            "wiring/takeover.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage.ts"
           ]
@@ -12904,8 +12611,16 @@
         "DISPATCH_ID": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
+        "getDispatchTask": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
             "routes/orchestrator.ts",
-            "routes/triage.ts"
+            "wiring/orchestrator.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
           ]
         },
         "getTaskActivity": {
@@ -13166,25 +12881,6 @@
         },
         "NOTE_MAX": {
           "module": "lib/repo-rework.ts",
-          "callers": [
-            "routes/triage.ts"
-          ]
-        },
-        "runPeerTakeover": {
-          "module": "wiring/takeover-choose.ts",
-          "callers": [
-            "routes/triage.ts"
-          ]
-        },
-        "TAKEOVER_HOP": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "routes/triage.ts",
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "LOG_MAX": {
-          "module": "lib/takeover.ts",
           "callers": [
             "routes/triage.ts"
           ]
@@ -13591,8 +13287,7 @@
           "module": "lib/body-investigate-engine.ts",
           "callers": [
             "wiring/body-investigate.ts",
-            "wiring/resolver-peer.ts",
-            "wiring/takeover.ts"
+            "wiring/resolver-peer.ts"
           ]
         },
         "repoNameFromRemote": {
@@ -13845,12 +13540,6 @@
         },
         "getTaskByDispatchId": {
           "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/dispatch.ts"
-          ]
-        },
-        "takeoverIdentity": {
-          "module": "wiring/takeover.ts",
           "callers": [
             "wiring/dispatch.ts"
           ]
@@ -14119,6 +13808,12 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "WriteCtx": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/orchestrator.ts"
+          ]
+        },
         "RequiresHost": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -14304,8 +13999,7 @@
         "PeerConfig": {
           "module": "lib/body-investigate-engine.ts",
           "callers": [
-            "wiring/resolver-peer.ts",
-            "wiring/takeover.ts"
+            "wiring/resolver-peer.ts"
           ]
         },
         "runPrFix": {
@@ -14319,8 +14013,7 @@
           "module": "lib/resolver-fix.ts",
           "callers": [
             "wiring/resolver-peer.ts",
-            "wiring/resolver.ts",
-            "wiring/takeover.ts"
+            "wiring/resolver.ts"
           ]
         },
         "localRepoFor": {
@@ -14456,200 +14149,6 @@
           "module": "lib/resolver-engine.ts",
           "callers": [
             "wiring/resolver.ts"
-          ]
-        },
-        "takeoverDeps": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "StartResult": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "StartInput": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "TakeoverDetail": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "entryByName": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts",
-            "wiring/takeover.ts"
-          ]
-        },
-        "takeoverHostFor": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "localLog": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "startTakeover": {
-          "module": "wiring/takeover.ts",
-          "callers": [
-            "wiring/takeover-choose.ts"
-          ]
-        },
-        "howToRef": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "endedBlocker": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "failedBlocker": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "doneLine": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "NO_CHANGES_BLOCKER": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "logSection": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "seedPrompt": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "taskId8": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "takeoverName": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "takeoverBranch": {
-          "module": "lib/takeover.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "TakeoverStore": {
-          "module": "lib/takeover-store.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "HerdrDelivery": {
-          "module": "lib/herdr-inject.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "claimTakeover": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "createTakeoverStore": {
-          "module": "lib/takeover-store.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "repoEntriesSafe": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/takeover.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "hostCan": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "TakeoverStatus": {
-          "module": "lib/takeover-store.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "TakeoverRow": {
-          "module": "lib/takeover-store.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "createLiveness": {
-          "module": "wiring/takeover-liveness.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "taskVersion": {
-          "module": "lib/triage-sources.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "takeoverOwner": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "TakeoverOutcome": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "finishTakeover": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/takeover.ts"
-          ]
-        },
-        "detectPrUrl": {
-          "module": "lib/dispatch-live.ts",
-          "callers": [
-            "wiring/takeover.ts"
           ]
         },
         "createCalendarBusy": {
@@ -14882,8 +14381,8 @@
             "wiring/triage.ts"
           ]
         },
-        "takeoverTarget": {
-          "module": "lib/takeover.ts",
+        "repoEntriesSafe": {
+          "module": "lib/live-repo.ts",
           "callers": [
             "wiring/triage.ts"
           ]
@@ -14914,12 +14413,6 @@
         },
         "closePr": {
           "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "takeoverAction": {
-          "module": "wiring/takeover-choose.ts",
           "callers": [
             "wiring/triage.ts"
           ]
@@ -14986,12 +14479,6 @@
         },
         "startResolverDigest": {
           "module": "wiring/resolver.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "startTakeoverTick": {
-          "module": "wiring/takeover.ts",
           "callers": [
             "wiring/triage.ts"
           ]
