@@ -6083,7 +6083,7 @@
         },
         {
           "path": "wiring/body-agent.ts",
-          "lines": 170,
+          "lines": 171,
           "kind": "lib",
           "exports": [
             "BodyAgentDeps",
@@ -6480,7 +6480,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 246,
+          "lines": 250,
           "kind": "lib",
           "exports": [
             "orchEmit",

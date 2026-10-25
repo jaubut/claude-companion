@@ -251,6 +251,13 @@ describe("POST /api/body/component/:id/agent", () => {
     expect(third.body.dispatchTaskId).not.toBe(dispatchTaskId)
   })
 
+  test("the run asks for the herdr runner, on a line of its own", async () => {
+    const id = uid("zettlab:systemd-service:runner")
+    component(id, "systemd-service", "dead")
+    expect((await start(id)).status).toBe(200)
+    expect(tursoRows()[0]!.description).toMatch(/^dispatch-runner: herdr$/m)
+  })
+
   test("a concurrent double tap files one row", async () => {
     const id = uid("zettlab:systemd-service:kb")
     component(id, "systemd-service", "dead")

@@ -70,8 +70,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-menu.ts` | 255 | lib | 11 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
+| `wiring/orchestrator.ts` | 250 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
-| `wiring/orchestrator.ts` | 246 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
@@ -111,7 +111,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript-cursor.ts` | 173 | lib | 12 | state: cursors: WeakMap |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/triage-store.ts` | 171 | lib | 9 |  |
-| `wiring/body-agent.ts` | 170 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
+| `wiring/body-agent.ts` | 171 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `lib/orchestrator-channels.ts` | 158 | lib | 13 |  |
