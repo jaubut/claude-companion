@@ -30,7 +30,7 @@ test("listRecentSessions: interactive only, newest first, junk names skipped", a
   const dir = mkdtempSync(join(tmpdir(), "projects-"))
   const proj = join(dir, "-Users-j-repo")
   mkdirSync(proj)
-  const ids = ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"]
+  const ids = ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"] as const
   writeFileSync(join(proj, `${ids[0]}.jsonl`), user("older chat about invoices", { cwd: "/Users/j/repo", entrypoint: "cli" }) + "\n")
   writeFileSync(join(proj, `${ids[1]}.jsonl`), user("newer chat about the terminal", { cwd: "/Users/j/repo", entrypoint: "cli" }) + "\n")
   writeFileSync(join(proj, `${ids[2]}.jsonl`), user("a headless dispatch run", { cwd: "/Users/j/repo", entrypoint: "sdk-cli" }) + "\n")
