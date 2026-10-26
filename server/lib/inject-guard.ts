@@ -132,10 +132,11 @@ export interface InjectAttempt {
   // still holding that pane after being asked to let go. Undefined means "not
   // applicable / free". See `busy_flow` below.
   paneFree?: boolean
-  // `tmux capture-pane -e` of the target's pane, taken just before the inject.
-  // Undefined when the target has no tmux pane (nothing to check — the
-  // AppleScript path types into a focused tty). Null when the capture failed,
-  // which refuses: a pane tmux cannot read is not one to type into blind.
+  // `tmux capture-pane -e` of the target's pane (or herdr `pane read` of a
+  // herdr-only session), taken just before the inject. Undefined when the
+  // target has neither (nothing to check — the AppleScript path types into a
+  // focused tty). Null when the read failed, which refuses: a pane that cannot
+  // be read is not one to type into blind.
   pane?: string | null
   // `#{pane_width}` of the target's pane. Undefined/null when unknown (no
   // pane, or tmux could not say) — not refused on that alone.

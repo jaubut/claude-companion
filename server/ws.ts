@@ -10,7 +10,7 @@ import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } f
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, describeClient, HOST_INFO, type WsData } from "./state"
-import { dialogWatcher, openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "./wiring/dialogs"
+import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 import { copyJobs } from "./wiring/copy-jobs"
 import { canvasSnapshot } from "./wiring/canvas"
@@ -156,7 +156,7 @@ export const websocket: WebSocketHandler<WsData> = {
           const refusal = injectRefusal({
             lookup, target, paneFree,
             dialog: paneFree ? await openDialogFor(target) : null,
-            pane: paneFree ? await paneSnapshotFor(target) : undefined,
+            pane: paneFree ? await screenSnapshotFor(target) : undefined,
             paneWidth: paneFree ? await paneWidthFor(target) : undefined,
           })
           if (refusal) {
