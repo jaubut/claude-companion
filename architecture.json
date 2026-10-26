@@ -2706,7 +2706,7 @@
         },
         {
           "path": "lib/pane-mirror.ts",
-          "lines": 302,
+          "lines": 358,
           "kind": "lib",
           "exports": [
             "PANE_MIRROR_PATH",
@@ -2728,11 +2728,14 @@
             "focusRows",
             "repaintFrame",
             "mirrorInput",
+            "mirrorControl",
+            "smallestSize",
             "Clock",
             "realClock",
             "FrameCoalescer",
             "MirrorViewer",
             "MirrorSource",
+            "PaneSizer",
             "PaneMirror"
           ],
           "state": [],
@@ -2742,7 +2745,8 @@
           "apiCalls": [],
           "imports": [
             "lib/vault-guard.ts",
-            "lib/herdr.ts"
+            "lib/herdr.ts",
+            "lib/terminal-bridge.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6899,10 +6903,11 @@
         },
         {
           "path": "wiring/pane-mirror.ts",
-          "lines": 59,
+          "lines": 113,
           "kind": "lib",
           "exports": [
             "herdrSocketSource",
+            "HerdrPaneSizer",
             "mirrorViewerCount",
             "mirrorOpen",
             "mirrorMessage",
@@ -9960,6 +9965,12 @@
             "lib/terminal-bridge.ts",
             "routes/records.ts",
             "routes/vault.ts"
+          ]
+        },
+        "parseControl": {
+          "module": "lib/terminal-bridge.ts",
+          "callers": [
+            "lib/pane-mirror.ts"
           ]
         },
         "clock": {
@@ -14395,6 +14406,18 @@
             "wiring/pane-mirror.ts"
           ]
         },
+        "PaneSizer": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "MirrorSize": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
         "PaneMirror": {
           "module": "lib/pane-mirror.ts",
           "callers": [
@@ -14402,6 +14425,12 @@
           ]
         },
         "MirrorViewer": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "mirrorControl": {
           "module": "lib/pane-mirror.ts",
           "callers": [
             "wiring/pane-mirror.ts"

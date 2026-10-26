@@ -42,6 +42,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
+| `lib/pane-mirror.ts` | 358 | lib | 28 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/resolver.ts` | 334 | lib | 13 |  |
@@ -51,7 +52,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
-| `lib/pane-mirror.ts` | 302 | lib | 25 |  |
 | `lib/shell-sessions.ts` | 293 | lib | 24 |  |
 | `lib/live-repo.ts` | 290 | lib | 26 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
@@ -150,6 +150,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/model-control.ts` | 116 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
+| `wiring/pane-mirror.ts` | 113 | lib | 6 | state: mirrors: Map, viewers: WeakMap |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
@@ -189,7 +190,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-store.ts` | 61 | lib | 4 |  |
 | `lib/herdr-socket.ts` | 60 | lib | 3 | state: let seq |
 | `lib/herdr-workspace.ts` | 59 | lib | 3 | state: releasing: Set |
-| `wiring/pane-mirror.ts` | 59 | lib | 5 | state: mirrors: Map, viewers: WeakMap |
 | `wiring/shell-sessions.ts` | 59 | lib | 4 | state: bridges: WeakMap, attaches: Map · emits: sessions · listens: onShellSessions |
 | `lib/session-identity.ts` | 58 | lib | 6 |  |
 | `lib/auto-compact-stats.ts` | 55 | lib | 6 |  |

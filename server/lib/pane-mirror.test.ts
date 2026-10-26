@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import {
-  FrameCoalescer, MAX_MIRROR_VIEWERS, MIRROR_ECHO_MS, MIRROR_ENDED, MIRROR_GONE_AFTER, PaneMirror, frameSize, mirrorInput, paneMirrorUpgrade,
-  focusRows, repaintFrame, screenRows, type Clock, type MirrorSource, type MirrorUpgradeDeps,
+  FrameCoalescer, MAX_MIRROR_VIEWERS, MIRROR_ECHO_MS, MIRROR_ENDED, MIRROR_GONE_AFTER, PaneMirror, frameSize, mirrorControl, mirrorInput, paneMirrorUpgrade,
+  focusRows, repaintFrame, screenRows, smallestSize, type Clock, type MirrorSize, type MirrorSource, type MirrorUpgradeDeps,
 } from "./pane-mirror"
 import { recordPeer } from "./vault-guard"
 import { readFileSync } from "node:fs"
@@ -264,4 +264,61 @@ test("mirror: focus goes out with the first frame, again only when it moves, and
   const b = viewer()
   m.add(b.v)
   expect(b.controls).toEqual([{ type: "size", cols: 152, rows: 54 }, { type: "focus", top: 45, bottom: 53 }])
+})
+
+test("control: a phone resize frame → its clamped size; keystrokes, junk and other types → null", () => {
+  expect(mirrorControl('{"type":"resize","cols":48,"rows":30}')).toEqual({ cols: 48, rows: 30 })
+  expect(mirrorControl('{"type":"resize","cols":3,"rows":9999}')).toEqual({ cols: 20, rows: 200 })
+  expect(mirrorControl('{"type":"hello"}')).toBeNull()
+  expect(mirrorControl("not json")).toBeNull()
+  expect(mirrorControl(new TextEncoder().encode('{"type":"resize","cols":48,"rows":30}'))).toBeNull()
+})
+
+test("size: the smallest asked-for cols and rows across viewers, each on its own; none asked → null", () => {
+  expect(smallestSize([null, null])).toBeNull()
+  expect(smallestSize([{ cols: 60, rows: 30 }, null, { cols: 48, rows: 40 }])).toEqual({ cols: 48, rows: 30 })
+})
+
+function fakeSizer() {
+  const calls: Array<MirrorSize | null> = []
+  return { calls, sizer: { set: (s: MirrorSize | null) => { calls.push(s) } } }
+}
+
+test("hold: no viewer sized → no hold; sizes follow the smallest viewer; a viewer leaving widens; the last one releases", async () => {
+  const { clock } = fakeClock()
+  const { src } = fakeSource(["x\r\n"])
+  const { calls, sizer } = fakeSizer()
+  const m = new PaneMirror("w3:p1", src, clock, {}, sizer)
+  const phone = viewer(), ipad = viewer(), mac = viewer()
+  m.add(phone.v); m.add(ipad.v); m.add(mac.v)
+  expect(calls).toEqual([])
+  m.resize(ipad.v, { cols: 90, rows: 40 })
+  m.resize(phone.v, { cols: 48, rows: 50 })
+  m.resize(phone.v, { cols: 48, rows: 50 }) // unchanged → no call
+  expect(calls).toEqual([{ cols: 90, rows: 40 }, { cols: 48, rows: 40 }])
+  expect(m.remove(phone.v)).toBe(false)
+  expect(calls.at(-1)).toEqual({ cols: 90, rows: 40 })
+  expect(m.remove(ipad.v)).toBe(false) // only an unsized viewer left
+  expect(calls.at(-1)).toBeNull()
+  m.resize(mac.v, { cols: 100, rows: 30 })
+  expect(m.remove(mac.v)).toBe(true)
+  expect(calls.slice(-2)).toEqual([{ cols: 100, rows: 30 }, null])
+  m.resize(mac.v, { cols: 50, rows: 20 }) // gone viewer, stopped mirror
+  expect(calls.length).toBe(6)
+})
+
+test("hold: frames report the held width, not herdr's (Mac) layout width; a lost hold goes back to the layout", async () => {
+  const { clock, advance } = fakeClock()
+  const { src } = fakeSource(["abc\r\n", "abd\r\n", "abe\r\n"])
+  const m = new PaneMirror("w3:p1", src, clock, { pollMs: 50, minFrameMs: 0 }, fakeSizer().sizer)
+  const a = viewer()
+  m.add(a.v)
+  m.resize(a.v, { cols: 48, rows: 30 })
+  await advance(0)
+  const sizes = () => a.controls.filter((c) => (c as { type: string }).type === "size")
+  expect(sizes()).toEqual([{ type: "size", cols: 48, rows: 1 }])
+  m.sizeLost()
+  await advance(60)
+  expect(sizes().at(-1)).toEqual({ type: "size", cols: 10, rows: 1 })
+  m.stop()
 })
