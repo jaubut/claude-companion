@@ -9,7 +9,7 @@ import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
 import { SESSION_ID_RE, listRecentSessions } from "../lib/recent-sessions"
 import { shellNetworkRefusal } from "../lib/terminal-bridge"
-import { endedStore, resumeInPane } from "../lib/ended-sessions"
+import { deleteEnded, endedStore, resumeInPane } from "../lib/ended-sessions"
 import { herdrGatedKey, herdrGatedText } from "../lib/herdr"
 import { keyGate } from "../lib/key-gate"
 import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
@@ -230,6 +230,21 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     if (r.error === "pane_gone" && ended) return shellNetworkRefusal(req) ?? spawnShell(ended.cwd, ended.sessionId)
     const status = { target_gone: 410, bad_resume: 400, pane_gone: 410, pane_busy: 409, send_failed: 502 }[r.error]
     return Response.json({ ok: false, error: r.error }, { status })
+  }
+
+  // ── Delete an ended session: close its herdr pane, drop the row ──
+  // 200 {ok, closed} | 409 pane_busy (something runs in it) | 410 | 502 close_failed.
+  if (url.pathname === "/api/sessions/ended/delete" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: unknown }
+    const key = typeof body.key === "string" ? body.key : ""
+    const pane = endedStore.get(key)?.herdrPane
+    const r = await deleteEnded(endedStore, key)
+    if (r.ok) {
+      companionLog(`\x1b[35mended session deleted\x1b[0m ${key}${r.closed ? ` (herdr pane ${pane} closed)` : " (pane already gone)"}`)
+      return Response.json(r)
+    }
+    const status = { target_gone: 410, pane_busy: 409, close_failed: 502 }[r.error]
+    return Response.json(r, { status })
   }
 
   // ── Recent interactive Claude sessions (terminal: Recent sessions, Resume chip) ──

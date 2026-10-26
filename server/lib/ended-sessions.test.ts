@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import type { Herdr } from "./herdr"
-import { createEndedStore, endedWire, resumable, resumeCommand, resumeInPane, type EndedSource } from "./ended-sessions"
+import { createEndedStore, deleteEnded, endStatus, endedWire, resumable, resumeCommand, resumeInPane, type EndedSource } from "./ended-sessions"
 
 // "Ended · Resume": an ended claude whose herdr pane is still open.
 
@@ -15,8 +15,11 @@ function fakeHerdr(panes: Record<string, string>, opts: { shellFront?: boolean }
       const pane = args[2] ?? args[3] ?? ""
       if (args[0] === "pane" && args[1] === "get") {
         if (!(pane in panes)) throw Object.assign(new Error("pane_not_found"), { code: "pane_not_found" })
-        return { pane: { pane_id: pane, terminal_id: panes[pane] } }
+        return { pane: { pane_id: pane, terminal_id: panes[pane], workspace_id: "w3", tab_id: "w3:t1" } }
       }
+      if (args[0] === "workspace" && args[1] === "get") return { workspace: { workspace_id: "w3", label: "cc-repo" } }
+      if (args[0] === "tab" && args[1] === "get") return { tab: { tab_id: "w3:t1", label: "1" } }
+      if (args[0] === "pane" && args[1] === "close") { delete panes[pane]; return {} }
       if (args[0] === "pane" && args[1] === "process-info") {
         const front = opts.shellFront ?? true
         return { process_info: { shell_pid: 600, foreground_process_group_id: front ? 600 : 700 } }
@@ -138,4 +141,48 @@ test("resume: unknown key → target_gone; a bad id is refused before any text i
   expect(() => resumeCommand("x; rm -rf ~")).toThrow()
   expect(() => resumeCommand("--help")).toThrow()
   expect(resumeCommand(SID)).toBe(`claude --resume ${SID}`)
+})
+
+test("sheet fields: reason → status, model, herdr workspace and tab with labels", async () => {
+  const f = fakeHerdr({ "w3:p1": "t-9" })
+  const store = createEndedStore({ herdr: f.h })
+  await store.note({ ...ended(), model: "claude-opus-5-5" } as EndedSource, () => [], "prompt_input_exit")
+  expect(endedWire(store.list()[0]!)).toMatchObject({
+    endReason: "prompt_input_exit", endStatus: "completed", model: "claude-opus-5-5",
+    herdrWorkspace: { id: "w3", label: "cc-repo" }, herdrTab: { id: "w3:t1", label: "1" },
+  })
+  expect(endStatus("killed")).toBe("error")
+  expect(endStatus("clear")).toBe("completed")
+  expect(endStatus("")).toBe("completed")
+})
+
+const noWait = { sleep: async () => {} }
+
+test("delete: our pane with its shell in front → the pane is closed and the row dropped", async () => {
+  const f = fakeHerdr({ "w3:p1": "t-9" })
+  const store = createEndedStore({ herdr: f.h })
+  await store.note(ended(), () => [])
+  expect(await deleteEnded(store, `ended:${SID}`, { herdr: f.h, ...noWait })).toEqual({ ok: true, closed: true })
+  expect(f.calls.some((c) => c.join(" ") === "pane close w3:p1")).toBe(true)
+  expect(store.list()).toEqual([])
+})
+
+test("delete: something running in the pane → refused, nothing closed, row kept", async () => {
+  const f = fakeHerdr({ "w3:p1": "t-9" }, { shellFront: false })
+  const store = createEndedStore({ herdr: f.h })
+  await store.note(ended(), () => [])
+  expect(await deleteEnded(store, `ended:${SID}`, { herdr: f.h, ...noWait })).toEqual({ ok: false, error: "pane_busy" })
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+  expect(store.list().length).toBe(1)
+})
+
+test("delete: the pane is now someone else's (terminal id changed) or gone → only the row goes", async () => {
+  const f = fakeHerdr({ "w3:p1": "t-9" })
+  const store = createEndedStore({ herdr: f.h })
+  await store.note(ended(), () => [])
+  f.panes["w3:p1"] = "t-other"
+  expect(await deleteEnded(store, `ended:${SID}`, { herdr: f.h, ...noWait })).toEqual({ ok: true, closed: false })
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+  expect(store.list()).toEqual([])
+  expect(await deleteEnded(store, `ended:${SID}`, { herdr: f.h, ...noWait })).toEqual({ ok: false, error: "target_gone" })
 })

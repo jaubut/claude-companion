@@ -17,7 +17,7 @@
 // in the pane (the resume landed, or someone started claude there) also ends
 // the record.
 
-import { type Herdr, herdrPaneAtShell, herdrPaneOf, realHerdr } from "./herdr"
+import { type Herdr, herdrPaneAtShell, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
 import { SESSION_ID_RE } from "./recent-sessions"
 
 export const ENDED_KEY_PREFIX = "ended:"
@@ -32,6 +32,17 @@ export interface EndedSession {
   herdrPane: string
   terminalId: string
   endedAt: number
+  // For the phone's "Session ended" sheet.
+  reason: string // SessionEnd reason ("prompt_input_exit", "clear", …), "killed" for the pid-dead prune
+  model: string
+  workspace: { id: string; label: string }
+  tab: { id: string; label: string }
+}
+
+// COMPLETED unless claude never said goodbye (killed / crashed: the prune
+// found its pid dead with no SessionEnd).
+export function endStatus(reason: string): "completed" | "error" {
+  return reason === "killed" ? "error" : "completed"
 }
 
 // The fields the ended session needs from the sessions registry.
@@ -44,6 +55,7 @@ export interface EndedSource {
   cwd: string
   herdrPane?: string
   tmuxPane?: string
+  model?: string
 }
 
 export function endedWire(e: EndedSession): Record<string, unknown> {
@@ -57,12 +69,16 @@ export function endedWire(e: EndedSession): Record<string, unknown> {
     sessionId: e.sessionId,
     tty: "",
     herdrPane: e.herdrPane,
+    endReason: e.reason,
+    endStatus: endStatus(e.reason),
+    model: e.model,
+    herdrWorkspace: e.workspace,
+    herdrTab: e.tab,
     firstSeenAt: e.endedAt,
     lastSeenAt: e.endedAt,
     endedAt: e.endedAt,
     agentStatus: "",
     waitingFor: "",
-    model: "",
   }
 }
 
@@ -73,14 +89,33 @@ export function resumable(s: EndedSource): boolean {
   return !!herdrPaneOf(s) && s.sidConfirmed && SESSION_ID_RE.test(s.sessionId) && s.agent !== "codex"
 }
 
-// The pane's terminal id, or null when herdr says the pane is gone.
-async function paneTerminal(pane: string, h: Herdr): Promise<string | null> {
+interface PaneInfo { terminalId: string; workspaceId: string; tabId: string }
+
+// What herdr says about the pane, or null when the pane is gone.
+async function paneInfo(pane: string, h: Herdr): Promise<PaneInfo | null> {
   try {
     const r = await h.call(["pane", "get", pane], 2_000)
-    const t = (r.pane as { terminal_id?: unknown } | undefined)?.terminal_id
-    return typeof t === "string" ? t : ""
+    const p = (r.pane ?? {}) as { terminal_id?: unknown; workspace_id?: unknown; tab_id?: unknown }
+    const str = (v: unknown) => (typeof v === "string" ? v : "")
+    return { terminalId: str(p.terminal_id), workspaceId: str(p.workspace_id), tabId: str(p.tab_id) }
   } catch {
     return null
+  }
+}
+
+async function paneTerminal(pane: string, h: Herdr): Promise<string | null> {
+  return (await paneInfo(pane, h))?.terminalId ?? null
+}
+
+// A workspace's or tab's label; "" when herdr can't say (display only).
+async function label(kind: "workspace" | "tab", id: string, h: Herdr): Promise<string> {
+  if (!id) return ""
+  try {
+    const r = await h.call([kind, "get", id], 2_000)
+    const l = (r[kind] as { label?: unknown } | undefined)?.label
+    return typeof l === "string" ? l : ""
+  } catch {
+    return ""
   }
 }
 
@@ -108,18 +143,22 @@ export function createEndedStore(opts: { herdr?: Herdr; now?: () => number } = {
 
     // A session left the registry (SessionEnd, pid-dead prune). Kept only
     // when resumable and its pane still exists; `live` = the registry now.
-    async note(s: EndedSource, live: () => Array<{ herdrPane?: string; tmuxPane?: string }>): Promise<boolean> {
+    async note(s: EndedSource, live: () => Array<{ herdrPane?: string; tmuxPane?: string }>, reason = ""): Promise<boolean> {
       if (!resumable(s)) return false
       const pane = herdrPaneOf(s)
       if (live().some((o) => herdrPaneOf(o) === pane)) return false
-      const terminalId = await paneTerminal(pane, h)
-      if (terminalId === null) return false
+      const info = await paneInfo(pane, h)
+      if (info === null) return false
+      const [wsLabel, tabLabel] = await Promise.all([label("workspace", info.workspaceId, h), label("tab", info.tabId, h)])
       const key = `${ENDED_KEY_PREFIX}${s.sessionId}`
       // One row per pane: a second end in the same pane replaces the first.
       for (const [k, e] of byKey) if (e.herdrPane === pane) byKey.delete(k)
       byKey.set(key, {
         key, sessionId: s.sessionId, agent: s.agent, title: s.title, label: s.label, cwd: s.cwd,
-        herdrPane: pane, terminalId, endedAt: now(),
+        herdrPane: pane, terminalId: info.terminalId, endedAt: now(),
+        reason, model: s.model ?? "",
+        workspace: { id: info.workspaceId, label: wsLabel },
+        tab: { id: info.tabId, label: tabLabel },
       })
       emit()
       return true
@@ -200,4 +239,43 @@ export function startEndedSweep(live: () => Array<{ herdrPane?: string; tmuxPane
     void store.sweep(live).finally(() => { busy = false })
   }, ENDED_SWEEP_MS)
   return () => clearInterval(timer)
+}
+
+// ── Delete ("Delete session" in the sheet) ───────────────────────────────
+
+export type DeleteOutcome =
+  | { ok: true; closed: boolean }
+  | { ok: false; error: "target_gone" | "pane_busy" | "close_failed" }
+
+// Closes the ended session's herdr pane and drops the row — only while the
+// pane is still the one captured at the end (terminal id) and its shell is
+// in front on two checks in a row, the same ownership rule as
+// closeHerdrWorkspaceWhenIdle (herdr.ts). A pane already gone (or now
+// someone else's) just drops the row: `closed: false`, nothing touched.
+export async function deleteEnded(
+  store: EndedStore,
+  key: string,
+  deps: { herdr?: Herdr; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<DeleteOutcome> {
+  const h = deps.herdr ?? realHerdr
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const e = store.get(key)
+  if (!e) return { ok: false, error: "target_gone" }
+  const t = await paneTerminal(e.herdrPane, h)
+  if (t === null || (e.terminalId && t !== e.terminalId)) {
+    store.drop(key)
+    return { ok: true, closed: false }
+  }
+  const first = await herdrPaneShellPid(e.herdrPane, h)
+  await sleep(300)
+  const second = await herdrPaneShellPid(e.herdrPane, h)
+  if (!first || first !== second) return { ok: false, error: "pane_busy" }
+  if ((await paneTerminal(e.herdrPane, h)) !== t) return { ok: false, error: "pane_busy" }
+  try {
+    await h.call(["pane", "close", e.herdrPane], 5_000)
+  } catch {
+    return { ok: false, error: "close_failed" }
+  }
+  store.drop(key)
+  return { ok: true, closed: true }
 }

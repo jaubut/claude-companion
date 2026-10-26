@@ -104,7 +104,7 @@ function prune(now: number): boolean {
       if (!isAgentPidAlive(s.pid, s.agent)) {
         sessions.delete(key)
         logRemoval(s, "prune:pid-dead")
-        herdrSessionGone(s, listSessions)
+        herdrSessionGone(s, listSessions, "killed")
         changed = true
       }
       continue
