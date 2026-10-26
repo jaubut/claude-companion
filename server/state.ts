@@ -21,6 +21,9 @@ export interface WsData {
   // Set on a /api/terminal socket (lib/terminal-bridge.ts): the shell session
   // it attaches and the phone's size. Such a socket is never in `clients`.
   terminal?: { key: string; cols: number; rows: number }
+  // Set on a /api/pane-mirror socket (lib/pane-mirror.ts, spike): the herdr
+  // session's key and pane. Never in `clients` either.
+  mirror?: { key: string; pane: string }
 }
 
 // Where a phone-side request came from, for the resolve/answer audit log.

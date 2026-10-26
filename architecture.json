@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 146,
+          "lines": 161,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -82,7 +82,9 @@
             "lib/shell-sessions.ts",
             "lib/sessions.ts",
             "lib/terminal-bridge.ts",
-            "wiring/shell-sessions.ts"
+            "wiring/shell-sessions.ts",
+            "lib/pane-mirror.ts",
+            "wiring/pane-mirror.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1813,6 +1815,27 @@
           "externals": []
         },
         {
+          "path": "lib/herdr-socket.ts",
+          "lines": 60,
+          "kind": "lib",
+          "exports": [
+            "HERDR_SOCKET_PATH",
+            "HerdrSocketError",
+            "herdrSocketCall"
+          ],
+          "state": [
+            "let seq"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/herdr-workspace.ts",
           "lines": 50,
           "kind": "lib",
@@ -2636,6 +2659,48 @@
             "lib/command-list.ts",
             "lib/herdr.ts",
             "lib/tmux-pane.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/pane-mirror.ts",
+          "lines": 271,
+          "kind": "lib",
+          "exports": [
+            "PANE_MIRROR_PATH",
+            "MAX_MIRROR_VIEWERS",
+            "MIRROR_POLL_MS",
+            "MIRROR_MIN_FRAME_MS",
+            "MIRROR_ECHO_MS",
+            "MIRROR_MAX_INPUT",
+            "MIRROR_ENDED",
+            "MIRROR_GONE_AFTER",
+            "MirrorTarget",
+            "MirrorUpgradeDeps",
+            "paneMirrorUpgrade",
+            "screenRows",
+            "visibleWidth",
+            "MirrorSize",
+            "frameSize",
+            "repaintFrame",
+            "mirrorInput",
+            "Clock",
+            "realClock",
+            "FrameCoalescer",
+            "MirrorViewer",
+            "MirrorSource",
+            "PaneMirror"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/vault-guard.ts",
+            "lib/herdr.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6225,7 +6290,7 @@
         },
         {
           "path": "state.ts",
-          "lines": 68,
+          "lines": 71,
           "kind": "lib",
           "exports": [
             "WsData",
@@ -6745,6 +6810,35 @@
           "externals": []
         },
         {
+          "path": "wiring/pane-mirror.ts",
+          "lines": 59,
+          "kind": "lib",
+          "exports": [
+            "herdrSocketSource",
+            "mirrorViewerCount",
+            "mirrorOpen",
+            "mirrorMessage",
+            "mirrorClose"
+          ],
+          "state": [
+            "mirrors: Map",
+            "viewers: WeakMap"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/herdr-socket.ts",
+            "lib/pane-mirror.ts",
+            "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/proposals.ts",
           "lines": 74,
           "kind": "lib",
@@ -7179,7 +7273,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 225,
+          "lines": 229,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -7215,7 +7309,8 @@
             "wiring/copy-jobs.ts",
             "wiring/canvas.ts",
             "lib/shell-sessions.ts",
-            "wiring/shell-sessions.ts"
+            "wiring/shell-sessions.ts",
+            "wiring/pane-mirror.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7355,6 +7450,7 @@
           "module": "state.ts",
           "callers": [
             "companion-server.ts",
+            "wiring/pane-mirror.ts",
             "wiring/shell-sessions.ts",
             "ws.ts"
           ]
@@ -7460,6 +7556,40 @@
         },
         "attachCount": {
           "module": "wiring/shell-sessions.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "PANE_MIRROR_PATH": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "paneMirrorUpgrade": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "resolveSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts#* /ws",
+            "routes/api.ts#* /api/feed",
+            "routes/attach.ts#POST /api/attach",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel",
+            "ws.ts"
+          ]
+        },
+        "mirrorViewerCount": {
+          "module": "wiring/pane-mirror.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -7821,6 +7951,7 @@
             "wiring/events.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
+            "wiring/pane-mirror.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/shell-sessions.ts",
@@ -8512,6 +8643,7 @@
             "lib/keyboard-inject.ts",
             "lib/model-control.ts",
             "lib/pane-clean.ts",
+            "lib/pane-mirror.ts",
             "lib/session-pane.ts",
             "lib/submit-confirm.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
@@ -9671,6 +9803,34 @@
             "lib/pane-clean.ts"
           ]
         },
+        "peerOf": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/pane-mirror.ts",
+            "lib/terminal-bridge.ts",
+            "routes/copy-jobs.ts#POST /hooks/copy-progress",
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/hooks.ts#POST /hooks/dispatch-event",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "clientOrigin": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/pane-mirror.ts",
+            "lib/terminal-bridge.ts",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "clock": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/pane-mirror.ts",
+            "lib/secret-requests.ts"
+          ]
+        },
         "ShepherdState": {
           "module": "lib/dispatch-stage.ts",
           "callers": [
@@ -10631,12 +10791,6 @@
             "lib/secret-redact.ts"
           ]
         },
-        "clock": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "lib/secret-requests.ts"
-          ]
-        },
         "listSecrets": {
           "module": "lib/secret-store.ts",
           "callers": [
@@ -11142,25 +11296,6 @@
           "module": "lib/tasks-agent-rules.ts",
           "callers": [
             "lib/tasks-agent.ts"
-          ]
-        },
-        "peerOf": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "lib/terminal-bridge.ts",
-            "routes/copy-jobs.ts#POST /hooks/copy-progress",
-            "routes/gauge.ts#POST /hooks/gauge",
-            "routes/hooks.ts#POST /hooks/dispatch-event",
-            "routes/records.ts",
-            "routes/vault.ts"
-          ]
-        },
-        "clientOrigin": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "lib/terminal-bridge.ts",
-            "routes/records.ts",
-            "routes/vault.ts"
           ]
         },
         "ShellSession": {
@@ -11828,6 +11963,7 @@
           "module": "state.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/pane-mirror.ts",
             "wiring/shell-sessions.ts",
             "ws.ts"
           ]
@@ -11852,21 +11988,6 @@
           "callers": [
             "routes/api.ts#* /api/feed",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "ws.ts"
-          ]
-        },
-        "resolveSession": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "routes/attach.ts#POST /api/attach",
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/command.ts#POST /api/command/list",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick",
-            "routes/model.ts#POST /api/model/open",
-            "routes/model.ts#POST /api/model/set",
-            "routes/model.ts#POST /api/model/cancel",
             "ws.ts"
           ]
         },
@@ -14068,6 +14189,30 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "MirrorSource": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "herdrSocketCall": {
+          "module": "lib/herdr-socket.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "PaneMirror": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "MirrorViewer": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
         "QaItem": {
           "module": "lib/receipt-qa-store.ts",
           "callers": [
@@ -14875,6 +15020,12 @@
             "ws.ts"
           ]
         },
+        "mirrorOpen": {
+          "module": "wiring/pane-mirror.ts",
+          "callers": [
+            "ws.ts"
+          ]
+        },
         "canvasSnapshot": {
           "module": "wiring/canvas.ts",
           "callers": [
@@ -14887,8 +15038,20 @@
             "ws.ts"
           ]
         },
+        "mirrorMessage": {
+          "module": "wiring/pane-mirror.ts",
+          "callers": [
+            "ws.ts"
+          ]
+        },
         "terminalClose": {
           "module": "wiring/shell-sessions.ts",
+          "callers": [
+            "ws.ts"
+          ]
+        },
+        "mirrorClose": {
+          "module": "wiring/pane-mirror.ts",
           "callers": [
             "ws.ts"
           ]

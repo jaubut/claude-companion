@@ -31,9 +31,11 @@ import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
 import { getShellSession, startShellPoll } from "./lib/shell-sessions"
-import { listSessions } from "./lib/sessions"
+import { listSessions, resolveSession } from "./lib/sessions"
 import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize, shellNetworkRefusal } from "./lib/terminal-bridge"
 import { attachCount } from "./wiring/shell-sessions"
+import { PANE_MIRROR_PATH, paneMirrorUpgrade } from "./lib/pane-mirror"
+import { mirrorViewerCount } from "./wiring/pane-mirror"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -116,6 +118,19 @@ export function createCompanionServer(port: number) {
         if (attachCount(key) >= MAX_ATTACHES_PER_KEY) return Response.json({ ok: false, error: "too_many_attaches" }, { status: 429 })
         const upgraded = server.upgrade(req, {
           data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), terminal: { key, ...size } },
+        })
+        if (upgraded) return undefined
+        return new Response("WebSocket upgrade failed", { status: 500 })
+      }
+
+      // ── Herdr pane mirror (lib/pane-mirror.ts, spike) ──
+      // Same gates as /api/terminal: header-only Bearer, the vault network
+      // rule, a session key this server knows, and it must be a herdr pane.
+      if (url.pathname === PANE_MIRROR_PATH) {
+        const t = paneMirrorUpgrade(req, url, { authorized: checkBearerHeaderOnly, lookup: resolveSession, viewers: mirrorViewerCount })
+        if (t instanceof Response) return t
+        const upgraded = server.upgrade(req, {
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), mirror: t },
         })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })
