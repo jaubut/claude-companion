@@ -4029,6 +4029,35 @@
           "externals": []
         },
         {
+          "path": "lib/spawn-seed.ts",
+          "lines": 71,
+          "kind": "lib",
+          "exports": [
+            "SEED_MAX",
+            "SEED_LABEL",
+            "SeedParse",
+            "parseSeed",
+            "checkoutForRepo",
+            "SeedDeps",
+            "SEED_WAIT_MS",
+            "deliverSeed"
+          ],
+          "state": [
+            "RETRY: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/canvas.ts",
+            "lib/live-repo.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/spawn-session.ts",
           "lines": 580,
           "kind": "lib",
@@ -5365,7 +5394,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 540,
+          "lines": 566,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -5510,6 +5539,8 @@
             "lib/spawn-session.ts",
             "lib/recent-sessions.ts",
             "lib/terminal-bridge.ts",
+            "lib/spawn-seed.ts",
+            "lib/live-repo.ts",
             "lib/ended-sessions.ts",
             "lib/herdr.ts",
             "lib/key-gate.ts",
@@ -7493,6 +7524,7 @@
             "companion-server.ts",
             "lib/codex-feed.ts",
             "lib/session-resolve.ts",
+            "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
             "routes/hooks.ts",
@@ -9962,6 +9994,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "lib/project-catalog.ts",
+            "lib/spawn-seed.ts",
             "wiring/repo-view.ts",
             "wiring/triage.ts"
           ]
@@ -9970,6 +10003,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "lib/project-catalog.ts",
+            "lib/spawn-seed.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts"
           ]
@@ -11147,6 +11181,25 @@
             "lib/shell-sessions.ts"
           ]
         },
+        "oneLine": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "lib/spawn-seed.ts"
+          ]
+        },
+        "hostCan": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/spawn-seed.ts"
+          ]
+        },
+        "githubName": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/spawn-seed.ts",
+            "wiring/repo-view.ts"
+          ]
+        },
         "applyMcpChoices": {
           "module": "lib/claude-mcp-trust.ts",
           "callers": [
@@ -11957,6 +12010,26 @@
             "routes/api.ts#POST /api/super-auto"
           ]
         },
+        "parseSeed": {
+          "module": "lib/spawn-seed.ts",
+          "callers": [
+            "routes/api.ts#POST /api/spawn-session"
+          ]
+        },
+        "repoEntriesSafe": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "routes/api.ts#POST /api/spawn-session",
+            "wiring/repo-view.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "checkoutForRepo": {
+          "module": "lib/spawn-seed.ts",
+          "callers": [
+            "routes/api.ts#POST /api/spawn-session"
+          ]
+        },
         "SpawnResult": {
           "module": "lib/spawn-session.ts",
           "callers": [
@@ -11965,6 +12038,12 @@
         },
         "spawnCompanionSession": {
           "module": "lib/spawn-session.ts",
+          "callers": [
+            "routes/api.ts#POST /api/spawn-session"
+          ]
+        },
+        "deliverSeed": {
+          "module": "lib/spawn-seed.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session"
           ]
@@ -14360,12 +14439,6 @@
             "wiring/triage.ts"
           ]
         },
-        "githubName": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/repo-view.ts"
-          ]
-        },
         "queryPrRows": {
           "module": "lib/triage-sources.ts",
           "callers": [
@@ -14428,13 +14501,6 @@
           "module": "lib/repo-view.ts",
           "callers": [
             "wiring/repo-view.ts"
-          ]
-        },
-        "repoEntriesSafe": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/repo-view.ts",
-            "wiring/triage.ts"
           ]
         },
         "taskSources": {
