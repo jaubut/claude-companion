@@ -260,18 +260,32 @@ describe("repo-map github field", () => {
     expect(map[2]!.project).toBe("PRJ-IOS1")
   })
 
+  test("a bare constant or number value (verify: JS_VERIFY) keeps the entry and its github", () => {
+    const src = [
+      'const JS_VERIFY = ["Bash(bun test:*)"]',
+      "    { name: \"chantalmasse-website\", match: /chantalmasse-website/i, path: `${home}/chantalmasse-website`, project: \"PRJ-UC3L\", github: \"jaubut/chantalmasse-website\", release: \"watch\", verify: JS_VERIFY },",
+      "    { name: \"tlstudio\", match: /tlstudio/i, path: `${home}/lanes/TLSTUDIO`, project: \"PRJ-Y4KC\", github: \"jaubut/TLSTUDIO\", depVerify: \"build-ok\", verify: JS_VERIFY, retries: 2 },",
+    ].join("\n")
+    const map = parseRepoMap(src, "/h")
+    expect(map.map((e) => [e.name, e.github, e.project])).toEqual([
+      ["chantalmasse-website", "jaubut/chantalmasse-website", "PRJ-UC3L"],
+      ["tlstudio", "jaubut/TLSTUDIO", "PRJ-Y4KC"],
+    ])
+  })
+
   test("githubName: basename of github, else the map name, else null", () => {
     expect(githubName({ name: "tlstudio", github: "jaubut/TLSTUDIO" })).toBe("TLSTUDIO")
     expect(githubName({ name: "claude-config" })).toBe("claude-config")
     expect(githubName({})).toBeNull()
   })
 
-  test("the live claude-config repo-map (when present): 20 entries, every one with github", () => {
+  test("the live claude-config repo-map (when present): every entry parses, every one with github", () => {
     const file = join(process.env.HOME ?? "", ".claude", "tools", "repo-map.ts")
     const source = locateRepoMap([file])?.source
     if (!source || !/github:/.test(source)) return // not on this host / Step 0 not landed
     const map = parseRepoMap(source)
-    expect(map.length).toBe(20)
+    // One `{ name: … }` literal per entry; the count grows as repos are added.
+    expect(map.length).toBe(source.match(/^\s*\{ name:/gm)?.length ?? -1)
     expect(map.every((e) => /^jaubut\/[\w.-]+$/.test(e.github ?? ""))).toBe(true)
   })
 })

@@ -2233,7 +2233,7 @@
         },
         {
           "path": "lib/live-repo.ts",
-          "lines": 289,
+          "lines": 290,
           "kind": "lib",
           "exports": [
             "ShResult",
