@@ -3176,6 +3176,28 @@
           "externals": []
         },
         {
+          "path": "lib/recent-sessions.ts",
+          "lines": 93,
+          "kind": "lib",
+          "exports": [
+            "RecentSession",
+            "SESSION_ID_RE",
+            "parseHead",
+            "listRecentSessions"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/session-titles.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/records-expiry.ts",
           "lines": 128,
           "kind": "lib",
@@ -3730,6 +3752,8 @@
             "rememberTitle",
             "storedTitle",
             "transcriptPath",
+            "TranscriptEntry",
+            "userText",
             "titleFromTranscript",
             "resolveTitle"
           ],
@@ -3799,7 +3823,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 204,
+          "lines": 211,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -5165,7 +5189,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 486,
+          "lines": 499,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -5254,6 +5278,11 @@
             },
             {
               "method": "GET",
+              "path": "/api/sessions/recent",
+              "prefix": false
+            },
+            {
+              "method": "GET",
               "path": "/api/approvals/history",
               "prefix": false
             },
@@ -5293,6 +5322,7 @@
             "lib/secret-store.ts",
             "lib/vault-guard.ts",
             "lib/spawn-session.ts",
+            "lib/recent-sessions.ts",
             "lib/shell-sessions.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
@@ -5490,7 +5520,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 228,
+          "lines": 234,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -5513,6 +5543,7 @@
           "apiCalls": [],
           "imports": [
             "lib/command-menu.ts",
+            "lib/shell-sessions.ts",
             "lib/log.ts",
             "lib/command-offpane-cache.ts",
             "lib/command-scrape.ts",
@@ -7305,6 +7336,7 @@
           "module": "lib/shell-sessions.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/command.ts#POST /api/command/list",
             "wiring/shell-sessions.ts"
           ]
         },
@@ -10067,6 +10099,31 @@
             "lib/receipt-sonnet.ts"
           ]
         },
+        "TranscriptEntry": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/recent-sessions.ts"
+          ]
+        },
+        "userText": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/recent-sessions.ts"
+          ]
+        },
+        "titleFromPrompt": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/recent-sessions.ts",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "storedTitle": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/recent-sessions.ts"
+          ]
+        },
         "RecordType": {
           "module": "lib/records-store.ts",
           "callers": [
@@ -11492,6 +11549,12 @@
             "routes/api.ts#POST /api/spawn-session"
           ]
         },
+        "listRecentSessions": {
+          "module": "lib/recent-sessions.ts",
+          "callers": [
+            "routes/api.ts#GET /api/sessions/recent"
+          ]
+        },
         "getPending": {
           "module": "lib/pty-manager.ts",
           "callers": [
@@ -11559,7 +11622,19 @@
             "ws.ts"
           ]
         },
+        "SESSION_ID_RE": {
+          "module": "lib/recent-sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
         "resolveSpawnCwd": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "ensureFolderTrusted": {
           "module": "lib/spawn-session.ts",
           "callers": [
             "routes/api.ts#* /api/feed"
@@ -12352,12 +12427,6 @@
         },
         "noteUserPromptSubmit": {
           "module": "lib/submit-confirm.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "titleFromPrompt": {
-          "module": "lib/session-titles.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]

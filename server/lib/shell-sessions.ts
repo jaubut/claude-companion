@@ -90,7 +90,10 @@ export type SpawnShellResult =
   | { ok: false; error: string }
 
 // `cwd` must already be resolved (spawn-session.ts resolveSpawnCwd).
-export async function spawnShellSession(cwd: string, deps: DetachedDeps = realDetachedDeps): Promise<SpawnShellResult> {
+// `resume`: a Claude session id (recent-sessions.ts SESSION_ID_RE, checked by
+// the caller) typed into the new shell as `claude --resume <id>` — typed, so
+// the shell stays when claude exits, exactly as if Jeremie had typed it.
+export async function spawnShellSession(cwd: string, deps: DetachedDeps = realDetachedDeps, resume?: string): Promise<SpawnShellResult> {
   if (!deps.which("tmux")) return { ok: false, error: "tmux_not_found: a terminal session needs tmux on this host" }
   const has = async (n: string) => (await deps.run([...tmuxArgv(), ...spawnServerFlags(), "has-session", "-t", `=${n}`])).code === 0
   const name = await uniqueTmuxSessionName(cwd, "shell", has)
@@ -108,6 +111,10 @@ export async function spawnShellSession(cwd: string, deps: DetachedDeps = realDe
   const session = sessions.find((s) => s.name === name)
   if (!session) return { ok: false, error: "session_exited" }
   store.replace(sessions)
+  if (resume) {
+    await tmux("send-keys", "-t", session.tmuxPane, "-l", `claude --resume ${resume}`)
+    await tmux("send-keys", "-t", session.tmuxPane, "Enter")
+  }
   return { ok: true, session }
 }
 

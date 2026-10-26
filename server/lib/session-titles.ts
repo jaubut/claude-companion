@@ -62,12 +62,12 @@ export function transcriptPath(cwd: string, sessionId: string, projectsDir = DEF
   return join(projectsDir, cwd.replace(/\//g, "-"), `${sessionId}.jsonl`)
 }
 
-interface TranscriptEntry {
+export interface TranscriptEntry {
   type?: string
   message?: { role?: string; content?: unknown }
 }
 
-function userText(entry: TranscriptEntry): string | null {
+export function userText(entry: TranscriptEntry): string | null {
   if (entry.type !== "user" || entry.message?.role !== "user") return null
   const c = entry.message.content
   if (typeof c === "string") return c

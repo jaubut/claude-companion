@@ -121,6 +121,20 @@ test("spawn shell: happy path → tagged sh-<dir> session, listed, in the store"
   store.replace([])
 })
 
+test("spawn shell with resume: types `claude --resume <id>` into its pane, then Enter", async () => {
+  store.replace([])
+  const f = fakeTmux()
+  const id = "51794d7b-cf0f-4f63-9eaf-7b06cab5047e"
+  const r = await spawnShellSession("/x/repo", f.deps, id)
+  expect(r.ok).toBe(true)
+  const keys = f.calls.filter((c) => c.includes("send-keys")).map((c) => c.slice(c.indexOf("send-keys")))
+  expect(keys).toEqual([
+    ["send-keys", "-t", "%42", "-l", `claude --resume ${id}`],
+    ["send-keys", "-t", "%42", "Enter"],
+  ])
+  store.replace([])
+})
+
 test("spawn shell: the shell died at once → session_exited, no record", async () => {
   store.replace([])
   const f = fakeTmux({ alive: false })

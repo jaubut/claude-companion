@@ -6,7 +6,8 @@ import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/
 import { injectRefusal } from "../lib/inject-guard"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { keyCommandGate, originLabel } from "../lib/vault-guard"
-import { type SpawnAgent, type SpawnResult, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
+import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
+import { SESSION_ID_RE, listRecentSessions } from "../lib/recent-sessions"
 import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -180,10 +181,10 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Spawn a fresh Claude/Codex session (or a plain shell) from the phone ──
   if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell" }
+    const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell"; resume?: string }
     const cwd = (body.cwd ?? "").trim()
     if (!cwd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
-    if (body.agent === "shell") return spawnShell(cwd)
+    if (body.agent === "shell") return spawnShell(cwd, body.resume)
     const agent: SpawnAgent =
       body.agent === "codex" || body.agent === "kimi" ? body.agent : "claude"
 
@@ -203,6 +204,12 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       return Response.json({ ok: false, error: result.error }, { status: 400 })
     }
     return Response.json({ ok: true, app: result.app, cwd, agent })
+  }
+
+  // ── Recent interactive Claude sessions (terminal: Recent sessions, Resume chip) ──
+  // {ok, sessions: [{sessionId, cwd, title, updatedAt}]}, newest first.
+  if (url.pathname === "/api/sessions/recent" && req.method === "GET") {
+    return Response.json({ ok: true, sessions: await listRecentSessions() })
   }
 
   // ── Approval history (the phone's Approvals tab) ──
@@ -239,11 +246,17 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 // A login shell in a detached tmux session (lib/shell-sessions.ts). Always
 // tmux, whatever `app` says: the phone attaches it through /api/terminal.
 // Replies with the session's wire record so the phone can open it at once.
-async function spawnShell(rawCwd: string): Promise<Response> {
+// `resume` (a Claude session id) types `claude --resume <id>` into it.
+async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
+  if (resume !== undefined && (typeof resume !== "string" || !SESSION_ID_RE.test(resume))) {
+    return Response.json({ ok: false, error: "bad_resume" }, { status: 400 })
+  }
   const cwd = resolveSpawnCwd(rawCwd)
   if ("error" in cwd) return Response.json({ ok: false, error: cwd.error }, { status: 400 })
-  companionLog(`\x1b[36mspawn\x1b[0m shell in ${cwd.dir}`)
-  const r = await spawnShellSession(cwd.dir)
+  companionLog(`\x1b[36mspawn\x1b[0m shell in ${cwd.dir}${resume ? ` resuming ${resume}` : ""}`)
+  // The resumed claude must not stop at the folder-trust dialog.
+  if (resume) ensureFolderTrusted(cwd.dir)
+  const r = await spawnShellSession(cwd.dir, undefined, resume as string | undefined)
   if (!r.ok) {
     companionLog(`\x1b[31mspawn failed\x1b[0m — ${r.error}`)
     return Response.json({ ok: false, error: r.error }, { status: 400 })

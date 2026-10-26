@@ -42,3 +42,8 @@ test("shell spawn: an injection-shaped cwd is just a path that does not exist", 
   expect(r.status).toBe(400)
   expect(String(r.json.error)).toStartWith("cwd does not exist:")
 })
+
+test("shell spawn: resume must be a session id, checked before the cwd", async () => {
+  expect(await spawn({ agent: "shell", cwd: "/tmp", resume: "x; rm -rf ~" })).toEqual({ status: 400, json: { ok: false, error: "bad_resume" } })
+  expect(await spawn({ agent: "shell", cwd: "/tmp", resume: 42 })).toEqual({ status: 400, json: { ok: false, error: "bad_resume" } })
+})
