@@ -4030,10 +4030,11 @@
         },
         {
           "path": "lib/spawn-seed.ts",
-          "lines": 66,
+          "lines": 71,
           "kind": "lib",
           "exports": [
             "SEED_MAX",
+            "SEED_LABEL",
             "SeedParse",
             "parseSeed",
             "checkoutForRepo",

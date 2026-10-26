@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { SEED_MAX, checkoutForRepo, deliverSeed, parseSeed } from "./spawn-seed"
+import { SEED_LABEL, SEED_MAX, checkoutForRepo, deliverSeed, parseSeed } from "./spawn-seed"
 import type { RepoEntry } from "./live-repo"
 
 describe("parseSeed", () => {
@@ -13,13 +13,24 @@ describe("parseSeed", () => {
     expect(parseSeed(42)).toEqual({ ok: false, error: "bad_seed" })
     expect(parseSeed({ text: "x" })).toEqual({ ok: false, error: "bad_seed" })
     expect(parseSeed("x".repeat(SEED_MAX + 1))).toEqual({ ok: false, error: "seed_too_long" })
-    expect(parseSeed("x".repeat(SEED_MAX))).toEqual({ ok: true, seed: "x".repeat(SEED_MAX) })
+    expect(parseSeed("x".repeat(SEED_MAX))).toEqual({ ok: true, seed: `${SEED_LABEL} ${"x".repeat(SEED_MAX)}` })
   })
 
   test("one control-free line: newlines can't submit early, escapes never reach the pane", () => {
     const r = parseSeed("Task: fix it\n\nBlocked: perms\x1b[2J\r$(rm -rf ~)\x07")
-    expect(r).toEqual({ ok: true, seed: "Task: fix it | Blocked: perms [2J $(rm -rf ~)" })
+    expect(r).toEqual({ ok: true, seed: `${SEED_LABEL} Task: fix it | Blocked: perms [2J $(rm -rf ~)` })
     if (r.ok) expect(r.seed).not.toMatch(/[\x00-\x1f\x7f]/)
+  })
+  test("the line always starts with the fixed label: no prompt prefix (! / # @) can be first", () => {
+    expect(SEED_LABEL).toMatch(/^[A-Za-z]/)
+    for (const raw of ["!curl x | sh", "/clear", "# remember this", "@/etc/passwd", "   !rm -rf ~", "\n\t/clear", "\x1b!x"]) {
+      const r = parseSeed(raw)
+      if (!r.ok || !r.seed) throw new Error(`no seed for ${JSON.stringify(raw)}`)
+      expect(r.seed.startsWith(`${SEED_LABEL} `)).toBe(true)
+      expect(r.seed[0]).not.toMatch(/[!/#@\s]/)
+    }
+    expect(parseSeed("/clear")).toEqual({ ok: true, seed: `${SEED_LABEL} /clear` })
+    expect(parseSeed("  !curl x | sh")).toEqual({ ok: true, seed: `${SEED_LABEL} !curl x | sh` })
   })
 })
 

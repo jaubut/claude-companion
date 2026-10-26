@@ -175,12 +175,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
 | `wiring/front-door.ts` | 74 | lib | 1 | emits: orchestrator |
 | `wiring/proposals.ts` | 74 | lib | 5 |  |
+| `lib/spawn-seed.ts` | 71 | lib | 8 | state: RETRY: Set |
 | `state.ts` | 71 | lib | 7 |  |
 | `wiring/body.ts` | 71 | lib | 8 | emits: orchestrator_channel, orchestrator, body_alert |
 | `lib/body-fix.ts` | 67 | lib | 4 |  |
 | `lib/pipeline.ts` | 67 | lib | 5 |  |
 | `routes/attach.ts` | 67 | route-host | 1 | route: POST /api/attach |
-| `lib/spawn-seed.ts` | 66 | lib | 7 | state: RETRY: Set |
 | `lib/tmux-spawn-confirm.ts` | 66 | lib | 4 |  |
 | `lib/trip-report.ts` | 66 | lib | 5 |  |
 | `lib/waiting.ts` | 66 | lib | 6 |  |

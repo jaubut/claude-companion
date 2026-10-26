@@ -31,7 +31,8 @@ task: the row stays blocked) — `server/lib/spawn-seed.ts`:
   → this host's checkout (a dir, `requires` met), else **409 `no_checkout`** (the phone tries its
   other host).
 - `seed`: untrusted text, ≤ 4000 chars (400 `bad_seed` / `seed_too_long`, never truncated),
-  flattened to one control-free line, typed through the `/api/inject` guards once the session in
+  flattened to one control-free line behind a fixed label (`SEED_LABEL`, so no `!` / `/` / `#` / `@` from
+  the task is ever the first character Claude Code reads), typed through the `/api/inject` guards once the session in
   the spawned herdr pane registers (≤ 2 min; start dialogs / a not-ready pane are waited out, a
   typed-but-unsubmitted seed is never retyped). Reply `seed: "pending"`, or `"unsupported"` when
   the spawn fell back to tmux (no pane to match). Both refused on `agent: "shell"` (400 `agent_only`).
