@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 137,
+          "lines": 143,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -80,7 +80,8 @@
             "lib/apns.ts",
             "lib/discover.ts",
             "lib/shell-sessions.ts",
-            "lib/terminal-bridge.ts"
+            "lib/terminal-bridge.ts",
+            "wiring/shell-sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3823,7 +3824,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 211,
+          "lines": 214,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -4279,12 +4280,16 @@
         },
         {
           "path": "lib/terminal-bridge.ts",
-          "lines": 128,
+          "lines": 142,
           "kind": "lib",
           "exports": [
             "TERMINAL_PATH",
             "TERMINAL_ENDED",
             "TerminalSize",
+            "MAX_ATTACHES_PER_KEY",
+            "COLS_RANGE",
+            "ROWS_RANGE",
+            "parseTerminalSize",
             "terminalSize",
             "terminalAttachArgv",
             "terminalEnv",
@@ -6860,15 +6865,17 @@
         },
         {
           "path": "wiring/shell-sessions.ts",
-          "lines": 44,
+          "lines": 55,
           "kind": "lib",
           "exports": [
+            "attachCount",
             "terminalOpen",
             "terminalMessage",
             "terminalClose"
           ],
           "state": [
-            "bridges: WeakMap"
+            "bridges: WeakMap",
+            "attaches: Map"
           ],
           "emits": [
             "sessions"
@@ -7332,6 +7339,15 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "checkBearerHeaderOnly": {
+          "module": "lib/auth.ts",
+          "callers": [
+            "companion-server.ts#* /ws",
+            "lib/vault-guard.ts",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
         "getShellSession": {
           "module": "lib/shell-sessions.ts",
           "callers": [
@@ -7340,8 +7356,20 @@
             "wiring/shell-sessions.ts"
           ]
         },
-        "terminalSize": {
+        "parseTerminalSize": {
           "module": "lib/terminal-bridge.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "MAX_ATTACHES_PER_KEY": {
+          "module": "lib/terminal-bridge.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "attachCount": {
+          "module": "wiring/shell-sessions.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -11383,14 +11411,6 @@
           "module": "lib/trip-store.ts",
           "callers": [
             "lib/trip-service.ts"
-          ]
-        },
-        "checkBearerHeaderOnly": {
-          "module": "lib/auth.ts",
-          "callers": [
-            "lib/vault-guard.ts",
-            "routes/records.ts",
-            "routes/vault.ts"
           ]
         },
         "finalizeRecording": {

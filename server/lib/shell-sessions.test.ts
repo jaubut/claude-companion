@@ -46,6 +46,11 @@ test("parseShellList keeps only tagged sessions, oldest first, times in ms", () 
   expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000 })
 })
 
+test("parseShellList: tmux's own socket_path wins over the fallback", () => {
+  const out = parseShellList("sh-a\t1\t%7\t/x\t1\t/private/tmp/tmux-501/default\nsh-b\t1\t%8\t/y\t2\t\n", "/fallback")
+  expect(out.map((s) => s.tmuxSocket)).toEqual(["/private/tmp/tmux-501/default", "/fallback"])
+})
+
 const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", createdAt: 1 }
 
 test("store emits on a real change only: added, cd'd, removed", () => {

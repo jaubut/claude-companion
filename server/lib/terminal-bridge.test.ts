@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { TERMINAL_ENDED, openTerminal, parseControl, terminalAttachArgv, terminalEnv, terminalSize, type PtySpawner } from "./terminal-bridge"
+import { TERMINAL_ENDED, openTerminal, parseTerminalSize, parseControl, terminalAttachArgv, terminalEnv, terminalSize, type PtySpawner } from "./terminal-bridge"
 import type { ShellSession } from "./shell-sessions"
 
 // The /api/terminal bridge: phone socket ↔ `tmux attach-session` under a PTY.
@@ -94,4 +94,12 @@ test("bridge: phone closes → PTY closed once (detach only), nothing written af
   expect(p.writes).toEqual([])
   expect(s.sent).toEqual([])
   expect(s.ends).toEqual([])
+})
+
+test("upgrade size: integers in range only, else refused", () => {
+  expect(parseTerminalSize("50", "30")).toEqual({ cols: 50, rows: 30 })
+  expect(parseTerminalSize("500", "200")).toEqual({ cols: 500, rows: 200 })
+  for (const [c, r] of [["19", "30"], ["501", "30"], ["50", "4"], ["50", "201"], ["5e1", "30"], ["-50", "30"], ["50.0", "30"], [null, "30"], ["50", ""], ["99999", "30"]] as const) {
+    expect(parseTerminalSize(c, r)).toBeNull()
+  }
 })

@@ -1,4 +1,4 @@
-import { checkBearer, unauthorized } from "./lib/auth"
+import { checkBearer, checkBearerHeaderOnly, unauthorized } from "./lib/auth"
 import { type WsData, HOST_INFO, broadcast, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
@@ -31,7 +31,8 @@ import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
 import { getShellSession, startShellPoll } from "./lib/shell-sessions"
-import { TERMINAL_PATH, terminalSize } from "./lib/terminal-bridge"
+import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize } from "./lib/terminal-bridge"
+import { attachCount } from "./wiring/shell-sessions"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -101,10 +102,15 @@ export function createCompanionServer(port: number) {
       // ── Live terminal (lib/terminal-bridge.ts) ──
       // Behind the Bearer gate above like every /api/* path. Unknown key → 410
       // before any upgrade, so nothing is spawned for a stale row.
+      // Header token only: a remote shell must not authenticate with a token
+      // in the URL (URLs land in proxy and access logs).
       if (url.pathname === TERMINAL_PATH) {
+        if (!checkBearerHeaderOnly(req)) return unauthorized()
         const key = url.searchParams.get("key") ?? ""
         if (!getShellSession(key)) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
-        const size = terminalSize(url.searchParams.get("cols"), url.searchParams.get("rows"))
+        const size = parseTerminalSize(url.searchParams.get("cols"), url.searchParams.get("rows"))
+        if (!size) return Response.json({ ok: false, error: "bad_size" }, { status: 400 })
+        if (attachCount(key) >= MAX_ATTACHES_PER_KEY) return Response.json({ ok: false, error: "too_many_attaches" }, { status: 429 })
         const upgraded = server.upgrade(req, {
           data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), terminal: { key, ...size } },
         })

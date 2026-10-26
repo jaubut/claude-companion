@@ -9,10 +9,11 @@
 // (shell `exit`, session killed) with code 4000 + reason "ended"; closing the
 // socket only detaches — the shell keeps running in tmux.
 //
-// Auth is the server's /api/* Bearer gate (companion-server.ts, before the
-// upgrade). Only shell sessions this server tracks can be attached: the key
-// is looked up, never parsed into a target, and the argv carries nothing the
-// phone typed.
+// Auth is the Bearer token in the Authorization header only, never `?token=`
+// (companion-server.ts, before the upgrade). Only shell sessions this server
+// tracks can be attached: the key is looked up, never parsed into a target,
+// and the argv carries nothing the phone typed. At most MAX_ATTACHES_PER_KEY
+// sockets per shell (a phone and an iPad, plus one reconnect in flight).
 
 import { tmuxArgv } from "./tmux-pane"
 import type { ShellSession } from "./shell-sessions"
@@ -21,6 +22,19 @@ export const TERMINAL_PATH = "/api/terminal"
 export const TERMINAL_ENDED = 4000
 
 export interface TerminalSize { cols: number; rows: number }
+
+export const MAX_ATTACHES_PER_KEY = 3
+export const COLS_RANGE = [20, 500] as const
+export const ROWS_RANGE = [5, 200] as const
+
+// The upgrade's size: both integers in range, else null (400 bad_size).
+export function parseTerminalSize(cols: string | null, rows: string | null): TerminalSize | null {
+  const int = (v: string | null, [lo, hi]: readonly [number, number]) =>
+    v !== null && /^\d{1,4}$/.test(v) && Number(v) >= lo && Number(v) <= hi ? Number(v) : null
+  const c = int(cols, COLS_RANGE)
+  const r = int(rows, ROWS_RANGE)
+  return c !== null && r !== null ? { cols: c, rows: r } : null
+}
 
 // Phone-reported size, clamped to something tmux and a phone screen can both
 // use. Anything unreadable → the iPhone portrait default.

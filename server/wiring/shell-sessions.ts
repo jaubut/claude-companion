@@ -16,11 +16,15 @@ onShellSessions(() => {
 
 type Bridge = ReturnType<typeof openTerminal>
 const bridges = new WeakMap<ServerWebSocket<WsData>, Bridge>()
+// Open terminal sockets per shell key (MAX_ATTACHES_PER_KEY at the upgrade).
+const attaches = new Map<string, number>()
+export const attachCount = (key: string): number => attaches.get(key) ?? 0
 
 export function terminalOpen(ws: ServerWebSocket<WsData>): void {
   const t = ws.data.terminal!
   const shell = getShellSession(t.key)
   if (!shell) { ws.close(TERMINAL_ENDED, "gone"); return }
+  attaches.set(t.key, attachCount(t.key) + 1)
   companionLog(`\x1b[36mterminal\x1b[0m attach ${shell.name} ${t.cols}x${t.rows} ${describeClient("ws", ws.data.client)}`)
   const bridge = openTerminal(shell, t, {
     send: (d) => { ws.sendBinary(d) },
@@ -37,7 +41,14 @@ export function terminalMessage(ws: ServerWebSocket<WsData>, raw: string | Buffe
 }
 
 export function terminalClose(ws: ServerWebSocket<WsData>): void {
-  bridges.get(ws)?.close()
-  bridges.delete(ws)
+  const bridge = bridges.get(ws)
+  if (bridge) {
+    bridge.close()
+    bridges.delete(ws)
+    const key = ws.data.terminal!.key
+    const n = attachCount(key) - 1
+    if (n > 0) attaches.set(key, n)
+    else attaches.delete(key)
+  }
   companionLog(`\x1b[2mterminal detach ${ws.data.terminal?.key ?? "?"}\x1b[0m`)
 }

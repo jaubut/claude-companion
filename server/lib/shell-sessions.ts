@@ -118,20 +118,23 @@ export async function spawnShellSession(cwd: string, deps: DetachedDeps = realDe
   return { ok: true, session }
 }
 
-const LIST_FORMAT = ["#{session_name}", `#{${SHELL_OPTION}}`, "#{pane_id}", "#{pane_current_path}", "#{session_created}"].join("\t")
+// socket_path: the server's real socket, the same string a hook reports from
+// $TMUX — so the phone can tell a Claude session running in this shell.
+const LIST_FORMAT = ["#{session_name}", `#{${SHELL_OPTION}}`, "#{pane_id}", "#{pane_current_path}", "#{session_created}", "#{socket_path}"].join("\t")
 
 // Every tagged shell on the spawn server. No server running → [].
 export async function readShellSessions(deps: Pick<DetachedDeps, "run"> = realDetachedDeps): Promise<ShellSession[]> {
   const r = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "list-sessions", "-F", LIST_FORMAT])
   if (r.code !== 0) return []
-  const socket = spawnSocketPath()
-  return parseShellList(r.stdout, socket)
+  return parseShellList(r.stdout, spawnSocketPath())
 }
 
-export function parseShellList(stdout: string, socket: string): ShellSession[] {
+// `fallbackSocket` only when tmux printed no socket_path.
+export function parseShellList(stdout: string, fallbackSocket: string): ShellSession[] {
   const out: ShellSession[] = []
   for (const line of stdout.split("\n")) {
-    const [name, tag, pane, cwd, created] = line.split("\t")
+    const [name, tag, pane, cwd, created, socketPath] = line.split("\t")
+    const socket = socketPath?.startsWith("/") ? socketPath : fallbackSocket
     if (tag !== "1" || !name || !pane) continue
     out.push({
       key: `${SHELL_KEY_PREFIX}${name}`,
