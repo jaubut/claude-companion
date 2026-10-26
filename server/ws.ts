@@ -16,6 +16,7 @@ import { copyJobs } from "./wiring/copy-jobs"
 import { canvasSnapshot } from "./wiring/canvas"
 import { wireSessions } from "./lib/shell-sessions"
 import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-sessions"
+import { mirrorClose, mirrorMessage, mirrorOpen } from "./wiring/pane-mirror"
 
 // WebSocket handlers: on open, send the init frame, the host's copy jobs,
 // then replay pending approvals/questions; on message, approve/deny/answer/input/ping; on close,
@@ -23,6 +24,7 @@ import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-ses
 export const websocket: WebSocketHandler<WsData> = {
   open(ws) {
     if (ws.data.terminal) return terminalOpen(ws)
+    if (ws.data.mirror) return mirrorOpen(ws)
     clients.add(ws)
     companionLog(`\x1b[2mws open ${describeClient("ws", ws.data.client)} (${clients.size} client${clients.size === 1 ? "" : "s"})\x1b[0m`)
 
@@ -79,6 +81,7 @@ export const websocket: WebSocketHandler<WsData> = {
   },
   async message(ws, raw) {
     if (ws.data.terminal) return terminalMessage(ws, raw)
+    if (ws.data.mirror) return mirrorMessage(ws, raw)
     let msg: {
       type: string
       id?: string
@@ -207,6 +210,7 @@ export const websocket: WebSocketHandler<WsData> = {
   },
   close(ws, code) {
     if (ws.data.terminal) return terminalClose(ws)
+    if (ws.data.mirror) return mirrorClose(ws)
     clients.delete(ws)
     companionLog(`\x1b[2mws close ${describeClient("ws", ws.data.client)} code=${code} (${clients.size} left)\x1b[0m`)
   },
