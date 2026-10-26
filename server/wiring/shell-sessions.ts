@@ -3,6 +3,7 @@ import { companionLog } from "../lib/log"
 import { listSessions } from "../lib/sessions"
 import { getShellSession, onShellSessions, readShellSessions, store, wireSessions } from "../lib/shell-sessions"
 import { TERMINAL_ENDED, openTerminal } from "../lib/terminal-bridge"
+import { endedStore } from "../lib/ended-sessions"
 import { broadcast, describeClient, type WsData } from "../state"
 
 // Shell sessions on the wire (lib/shell-sessions.ts) and the /api/terminal
@@ -11,6 +12,9 @@ import { broadcast, describeClient, type WsData } from "../state"
 // shells after.
 
 onShellSessions(() => {
+  broadcast({ type: "sessions", sessions: wireSessions(listSessions()) })
+})
+endedStore.on(() => {
   broadcast({ type: "sessions", sessions: wireSessions(listSessions()) })
 })
 
