@@ -2018,7 +2018,7 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 187,
+          "lines": 188,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
@@ -6603,7 +6603,7 @@
         },
         {
           "path": "wiring/dialogs.ts",
-          "lines": 210,
+          "lines": 213,
           "kind": "lib",
           "exports": [
             "endQuestionsOnEscape",
@@ -12146,10 +12146,11 @@
             "ws.ts"
           ]
         },
-        "paneSnapshotFor": {
+        "screenSnapshotFor": {
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
             "ws.ts"
           ]
         },
@@ -13548,12 +13549,6 @@
         },
         "AutoCompactor": {
           "module": "lib/auto-compact.ts",
-          "callers": [
-            "wiring/auto-compact.ts"
-          ]
-        },
-        "screenSnapshotFor": {
-          "module": "wiring/dialogs.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]

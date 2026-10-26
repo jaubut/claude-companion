@@ -90,11 +90,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/dialogs.ts` | 216 | lib | 7 |  |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
+| `wiring/dialogs.ts` | 213 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `routes/notes.ts` | 212 | lib | 1 |  |
 | `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `routes/command.ts` | 211 | route-host | 1 | routes: 2 |
-| `wiring/dialogs.ts` | 210 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
 | `routes/model.ts` | 206 | route-host | 1 | state: inFlight: Set · routes: 3 |
@@ -108,7 +108,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
-| `lib/inject-guard.ts` | 187 | lib | 7 |  |
+| `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
@@ -508,6 +508,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `yieldPaneForInject()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `wiring/auto-compact.ts`, `ws.ts` |
 | `injectRefusal()` | `lib/inject-guard.ts` | `routes/api.ts#* /api/feed`, `wiring/auto-compact.ts`, `ws.ts` |
 | `openDialogFor()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `wiring/auto-compact.ts`, `ws.ts` |
+| `screenSnapshotFor()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `wiring/auto-compact.ts`, `ws.ts` |
 | `recordUserPrompt()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/user-prompt-submit` |
 | `CompactionStats()` | `lib/auto-compact-stats.ts` | `routes/body.ts`, `routes/body.ts#GET /api/body/tokens`, `wiring/auto-compact.ts` |
 | `createLimiter()` | `lib/vault-guard.ts` | `routes/capture.ts`, `routes/records.ts`, `routes/trips.ts` |
@@ -656,7 +657,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getFeed()` | `lib/feed.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `resolveApproval()` | `lib/pty-manager.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `resolveQuestion()` | `lib/questions.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
-| `paneSnapshotFor()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `paneWidthFor()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `clearWaitingForTarget()` | `lib/sessions.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `announceWaiting()` | `wiring/waiting.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |

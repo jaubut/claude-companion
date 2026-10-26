@@ -28,7 +28,7 @@ import {
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
-import { dialogWatcher, openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "../wiring/dialogs"
+import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 import { withIdempotency } from "../lib/idempotency"
 import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
@@ -418,7 +418,7 @@ export async function deliverInject(text: string, key?: string, cwd?: string): P
   const refusal = injectRefusal({
     lookup, target, paneFree,
     dialog: paneFree ? await openDialogFor(target) : null,
-    pane: paneFree ? await paneSnapshotFor(target) : undefined,
+    pane: paneFree ? await screenSnapshotFor(target) : undefined,
     paneWidth: paneFree ? await paneWidthFor(target) : undefined,
   })
   if (refusal) {
