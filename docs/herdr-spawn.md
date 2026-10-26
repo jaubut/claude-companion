@@ -25,6 +25,17 @@ A takeover session (`spawnCompanionSession({…, herdr: {name, args}})`, docs/or
 suffix), `agent start <name> … -- --remote-control <name>` (args held to `[A-Za-z0-9_.=-]`), and a
 gate failure is an error, never a tmux fallback.
 
+Optional body fields (Brain ▸ Queue "Open in a new session" on a blocked card, no claim on the
+task: the row stays blocked) — `server/lib/spawn-seed.ts`:
+- `repo` instead of `cwd`: a GitHub / REPO_MAP name (`[A-Za-z0-9._-]{1,100}`, else 400 `bad_repo`)
+  → this host's checkout (a dir, `requires` met), else **409 `no_checkout`** (the phone tries its
+  other host).
+- `seed`: untrusted text, ≤ 4000 chars (400 `bad_seed` / `seed_too_long`, never truncated),
+  flattened to one control-free line, typed through the `/api/inject` guards once the session in
+  the spawned herdr pane registers (≤ 2 min; start dialogs / a not-ready pane are waited out, a
+  typed-but-unsubmitted seed is never retyped). Reply `seed: "pending"`, or `"unsupported"` when
+  the spawn fell back to tmux (no pane to match). Both refused on `agent: "shell"` (400 `agent_only`).
+
 Not changed: the Zettlab `~/.bashrc` `claude()` tmux wrapper (manual SSH launches) and
 dispatch workers (`DISPATCH_WORKER=1`, hidden from the picker). Both share the one herdr
 server per host.

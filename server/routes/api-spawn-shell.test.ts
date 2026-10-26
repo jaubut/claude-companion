@@ -55,3 +55,21 @@ test("shell spawn: resume must be a session id, checked before the cwd", async (
 test("shell spawn: refused from the LAN before anything else is looked at", async () => {
   expect(await spawn({ agent: "shell", cwd: "/tmp" }, "192.168.2.40")).toEqual({ status: 403, json: { ok: false, error: "network_refused" } })
 })
+
+// repo + seed (Brain ▸ Queue "Open in a new session"): validated before any spawn.
+test("agent spawn: seed and repo are refused on a shell spawn", async () => {
+  expect(await spawn({ agent: "shell", cwd: "/tmp", seed: "hi" })).toEqual({ status: 400, json: { ok: false, error: "agent_only" } })
+  expect(await spawn({ agent: "shell", repo: "x" })).toEqual({ status: 400, json: { ok: false, error: "agent_only" } })
+})
+
+test("agent spawn: a bad or over-cap seed is a 400 before anything starts", async () => {
+  expect(await spawn({ cwd: "/tmp", seed: 7 })).toEqual({ status: 400, json: { ok: false, error: "bad_seed" } })
+  expect(await spawn({ cwd: "/tmp", seed: "x".repeat(4001) })).toEqual({ status: 400, json: { ok: false, error: "seed_too_long" } })
+})
+
+test("agent spawn: a repo must be a plain name, and one with no checkout here is a 409", async () => {
+  expect(await spawn({ repo: "../etc" + "/x" })).toEqual({ status: 400, json: { ok: false, error: "bad_repo" } })
+  expect(await spawn({ repo: "a b" })).toEqual({ status: 400, json: { ok: false, error: "bad_repo" } })
+  expect(await spawn({ repo: 3 })).toEqual({ status: 400, json: { ok: false, error: "bad_repo" } })
+  expect(await spawn({ repo: "no-such-repo-anywhere-zz" })).toEqual({ status: 409, json: { ok: false, error: "no_checkout", repo: "no-such-repo-anywhere-zz" } })
+})
