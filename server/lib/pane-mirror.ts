@@ -14,15 +14,22 @@
 // one full repaint (cursor-addressed rows, each cleared first). Phone → server binary = keystrokes as bytes,
 // passed to `pane.send_text`, which writes them to the PTY verbatim (measured:
 // ESC[B moves Claude's "/" menu, a lone ESC closes it, \x03 is Ctrl-C).
-// Text frames from the phone (resize) are ignored: herdr has no API to size a
-// pane, and attaching a client to force one reflows the Mac's view (the last
-// attached client sets every pane's PTY size and detaching doesn't restore).
-//
-// The phone can't choose the width: it gets the Mac's (e.g. 153x54) and
-// scales or pans it.
+// Phone → server text = {"type":"resize",cols,rows}: the pane is sized to the
+// smallest viewer through a `herdr terminal session control` process held
+// for as long as any viewer has sent a size (wiring/pane-mirror.ts). herdr
+// resizes only that pane's PTY and locks it against the Mac's layout; the
+// Mac keeps typing into it and sees it drawn at phone width in the corner of
+// its rect. When the controller goes (released, killed, or this server dies
+// and its stdin hits EOF) herdr gives the pane back the Mac's layout size
+// (measured on 0.9.5 against an isolated server). One controller per pane:
+// someone else's (a `herdr terminal attach`) refuses ours, and the phone
+// then keeps the Mac's width (e.g. 153x54) to scale or pan, as with no
+// resize at all. A full `herdr` attach is not used: the last attached client
+// sets every pane's size and detaching doesn't restore it.
 
 import { clientOrigin, peerOf } from "./vault-guard"
 import { herdrPaneOf } from "./herdr"
+import { parseControl } from "./terminal-bridge"
 
 export const PANE_MIRROR_PATH = "/api/pane-mirror"
 export const MAX_MIRROR_VIEWERS = 3
@@ -128,12 +135,28 @@ export function repaintFrame(ansi: string): string {
 const decoder = new TextDecoder("utf-8", { fatal: false })
 
 // Phone keystrokes → the text for `pane.send_text`, or null (nothing to
-// send). Binary only: text frames are control, and resize is not possible.
+// send). Binary only: text frames are control (mirrorControl).
 export function mirrorInput(data: string | Uint8Array): string | null {
   if (typeof data === "string") return null
   if (data.length === 0 || data.length > MIRROR_MAX_INPUT) return null
   const text = decoder.decode(data)
   return text.length ? text : null
+}
+
+// A phone text frame → the size it asks for, or null (ignored).
+export function mirrorControl(data: string | Uint8Array): MirrorSize | null {
+  return typeof data === "string" ? parseControl(data) : null
+}
+
+// The smallest asked-for size across viewers (each dimension on its own), or
+// null when none asked: the pane must fit every phone watching it.
+export function smallestSize(sizes: Iterable<MirrorSize | null>): MirrorSize | null {
+  let out: MirrorSize | null = null
+  for (const s of sizes) {
+    if (!s) continue
+    out = out ? { cols: Math.min(out.cols, s.cols), rows: Math.min(out.rows, s.rows) } : { ...s }
+  }
+  return out
 }
 
 // ── Coalescing ────────────────────────────────────────────────────────────
@@ -200,8 +223,15 @@ export interface MirrorSource {
   send(pane: string, text: string): Promise<void>
 }
 
+// Holds the pane at a size (null = give it back to the Mac's layout). When
+// a hold ends on its own, its owner calls PaneMirror.sizeLost().
+export interface PaneSizer {
+  set(size: MirrorSize | null): void
+}
+
 export class PaneMirror {
-  private viewers = new Set<MirrorViewer>()
+  private viewers = new Map<MirrorViewer, MirrorSize | null>()
+  private held: MirrorSize | null = null
   private coalescer: FrameCoalescer
   private size: MirrorSize | null = null
   private focus: MirrorFocus | null = null
@@ -218,6 +248,7 @@ export class PaneMirror {
     private source: MirrorSource,
     private clock: Clock = realClock,
     private opts: { pollMs?: number; minFrameMs?: number } = {},
+    private sizer: PaneSizer | null = null,
   ) {
     this.coalescer = new FrameCoalescer(opts.minFrameMs ?? MIRROR_MIN_FRAME_MS, (ansi) => this.broadcast(ansi), clock)
   }
@@ -225,7 +256,7 @@ export class PaneMirror {
   get viewerCount(): number { return this.viewers.size }
 
   add(v: MirrorViewer): void {
-    this.viewers.add(v)
+    this.viewers.set(v, null)
     const cur = this.coalescer.current()
     if (cur !== null && this.size) {
       v.control(JSON.stringify({ type: "size", ...this.size }))
@@ -239,7 +270,30 @@ export class PaneMirror {
   remove(v: MirrorViewer): boolean {
     this.viewers.delete(v)
     if (this.viewers.size === 0) this.stop()
+    else this.applySize()
     return this.viewers.size === 0
+  }
+
+  // A viewer's own size (its view in cells); the pane follows the smallest.
+  resize(v: MirrorViewer, size: MirrorSize): void {
+    if (!this.viewers.has(v) || this.stopped) return
+    this.viewers.set(v, size)
+    this.applySize()
+  }
+
+  // The hold ended without us (refused by another controller, or the
+  // process died): frames go back to the Mac's width.
+  sizeLost(): void {
+    this.held = null
+    this.polls = 0
+  }
+
+  private applySize(): void {
+    const want = smallestSize(this.viewers.values())
+    if (want?.cols === this.held?.cols && want?.rows === this.held?.rows) return
+    this.held = want
+    this.polls = 0
+    this.sizer?.set(want)
   }
 
   input(data: string | Uint8Array): void {
@@ -258,6 +312,8 @@ export class PaneMirror {
   }
 
   stop(): void {
+    if (!this.stopped && this.held) this.sizer?.set(null)
+    this.held = null
     this.stopped = true
     if (this.timer !== null) this.clock.clearTimeout(this.timer)
     this.timer = null
@@ -272,7 +328,7 @@ export class PaneMirror {
     if (this.stopped) return
     if (ansi === null) {
       if (++this.misses >= MIRROR_GONE_AFTER) {
-        for (const v of [...this.viewers]) v.end(MIRROR_ENDED, "gone")
+        for (const v of [...this.viewers.keys()]) v.end(MIRROR_ENDED, "gone")
         this.viewers.clear()
         this.stop()
         return
@@ -285,14 +341,14 @@ export class PaneMirror {
   }
 
   private broadcast(ansi: string): void {
-    const size = frameSize(ansi, this.layoutCols)
+    const size = frameSize(ansi, this.held ? this.held.cols : this.layoutCols)
     const sizeChanged = !this.size || size.cols !== this.size.cols || size.rows !== this.size.rows
     this.size = size
     const focus = focusRows(ansi)
     const focusChanged = !this.focus || focus.top !== this.focus.top || focus.bottom !== this.focus.bottom
     this.focus = focus
     const frame = repaintFrame(ansi)
-    for (const v of this.viewers) {
+    for (const v of this.viewers.keys()) {
       if (sizeChanged) v.control(JSON.stringify({ type: "size", ...size }))
       if (focusChanged) v.control(JSON.stringify({ type: "focus", ...focus }))
       v.frame(frame)

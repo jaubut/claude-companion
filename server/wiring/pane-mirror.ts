@@ -1,12 +1,12 @@
-import type { ServerWebSocket } from "bun"
+import type { ServerWebSocket, Subprocess } from "bun"
 import { companionLog } from "../lib/log"
 import { herdrSocketCall } from "../lib/herdr-socket"
-import { PaneMirror, type MirrorSource, type MirrorViewer } from "../lib/pane-mirror"
+import { PaneMirror, mirrorControl, type MirrorSize, type MirrorSource, type MirrorViewer, type PaneSizer } from "../lib/pane-mirror"
 import { describeClient, type WsData } from "../state"
 
 // /api/pane-mirror sockets (lib/pane-mirror.ts). One PaneMirror per
 // herdr pane, shared by up to MAX_MIRROR_VIEWERS sockets; the last one to
-// close stops its poll.
+// close stops its poll and releases its size hold.
 
 export const herdrSocketSource: MirrorSource = {
   async read(pane) {
@@ -25,6 +25,50 @@ export const herdrSocketSource: MirrorSource = {
   },
 }
 
+// Sizes one pane with `herdr terminal session control <pane> --cols --rows`
+// (lib/pane-mirror.ts header): spawned on the first size, resized over its
+// stdin, released by closing stdin. Its frames go to /dev/null (the mirror
+// still polls pane.read). If this server dies, the controller's stdin hits
+// EOF, it exits, and herdr restores the pane.
+export class HerdrPaneSizer implements PaneSizer {
+  private proc: Subprocess<"pipe", "ignore", "ignore"> | null = null
+
+  constructor(
+    private pane: string,
+    private lost: () => void,
+    private argv0: string = process.env.HERDR_BIN || "herdr",
+  ) {}
+
+  set(size: MirrorSize | null): void {
+    const p = this.proc
+    if (!size) {
+      if (!p) return
+      this.proc = null
+      try { void p.stdin.end() } catch { /* already gone */ }
+      setTimeout(() => { if (p.exitCode === null) p.kill() }, 2_000)
+      return
+    }
+    if (p) {
+      try {
+        p.stdin.write(JSON.stringify({ type: "terminal.resize", cols: size.cols, rows: size.rows }) + "\n")
+        void p.stdin.flush()
+      } catch { /* its exit handler reports the loss */ }
+      return
+    }
+    const next = Bun.spawn(
+      [this.argv0, "terminal", "session", "control", this.pane, "--cols", String(size.cols), "--rows", String(size.rows)],
+      { stdin: "pipe", stdout: "ignore", stderr: "ignore" },
+    )
+    this.proc = next
+    void next.exited.then((code) => {
+      if (this.proc !== next) return
+      this.proc = null
+      companionLog(`\x1b[33mpane-mirror\x1b[0m size hold on ${this.pane} ended (exit ${code})`)
+      this.lost()
+    })
+  }
+}
+
 const mirrors = new Map<string, PaneMirror>()
 const viewers = new WeakMap<ServerWebSocket<WsData>, MirrorViewer>()
 
@@ -33,7 +77,12 @@ export const mirrorViewerCount = (pane: string): number => mirrors.get(pane)?.vi
 export function mirrorOpen(ws: ServerWebSocket<WsData>, source: MirrorSource = herdrSocketSource): void {
   const { pane, key } = ws.data.mirror!
   let m = mirrors.get(pane)
-  if (!m) { m = new PaneMirror(pane, source); mirrors.set(pane, m) }
+  if (!m) {
+    const sizer = new HerdrPaneSizer(pane, () => created.sizeLost())
+    const created: PaneMirror = new PaneMirror(pane, source, undefined, {}, sizer)
+    m = created
+    mirrors.set(pane, m)
+  }
   const v: MirrorViewer = {
     frame: (bytes) => { ws.sendBinary(new TextEncoder().encode(bytes)) },
     control: (json) => { ws.sendText(json) },
@@ -45,7 +94,12 @@ export function mirrorOpen(ws: ServerWebSocket<WsData>, source: MirrorSource = h
 }
 
 export function mirrorMessage(ws: ServerWebSocket<WsData>, raw: string | Buffer): void {
-  mirrors.get(ws.data.mirror!.pane)?.input(typeof raw === "string" ? raw : new Uint8Array(raw))
+  const m = mirrors.get(ws.data.mirror!.pane)
+  const v = viewers.get(ws)
+  if (!m) return
+  const data = typeof raw === "string" ? raw : new Uint8Array(raw)
+  const size = mirrorControl(data)
+  if (size) { if (v) m.resize(v, size) } else m.input(data)
 }
 
 export function mirrorClose(ws: ServerWebSocket<WsData>): void {
