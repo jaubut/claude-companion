@@ -1,4 +1,4 @@
-// SPIKE: the phone's "Terminal" view of a herdr Claude session — the real
+// The phone's "Terminal" view of a herdr Claude session — the real
 // Claude TUI, mirrored off herdr's pane instead of a PTY this server owns
 // (lib/terminal-bridge.ts is the tmux-shell twin).
 //
@@ -9,9 +9,9 @@
 // --format ansi` over the socket (lib/herdr-socket.ts, ~0.7 ms while Claude
 // streams) and sends a frame only when the screen changed.
 //
-// Frames: server → phone text = JSON control ({"type":"size",cols,rows} before
-// the first frame and on change); binary = one full repaint (cursor-addressed
-// rows, each cleared first). Phone → server binary = keystrokes as bytes,
+// Frames: server → phone text = JSON control ({"type":"size",cols,rows} and
+// {"type":"focus",top,bottom} before the first frame and on change); binary =
+// one full repaint (cursor-addressed rows, each cleared first). Phone → server binary = keystrokes as bytes,
 // passed to `pane.send_text`, which writes them to the PTY verbatim (measured:
 // ESC[B moves Claude's "/" menu, a lone ESC closes it, \x03 is Ctrl-C).
 // Text frames from the phone (resize) are ignored: herdr has no API to size a
@@ -85,6 +85,31 @@ export function frameSize(ansi: string, layoutCols: number | null): MirrorSize {
   const rows = screenRows(ansi)
   const widest = rows.reduce((m, r) => Math.max(m, visibleWidth(r)), 0)
   return { cols: Math.max(layoutCols ?? 0, widest, 1), rows: Math.max(rows.length, 1) }
+}
+
+// Where the phone should look first: Claude's input box (between the last two
+// full rules) plus an open slash menu right above it, through the last drawn
+// row. A screen with no input box (a dialog, a shell) → its last 15 drawn
+// rows. Rows are 0-based; the phone top-aligns `top` when it zooms in.
+export interface MirrorFocus { top: number; bottom: number }
+
+const RULE_RE = /^─{10,}$/
+const MENU_ROW_RE = /^ {2,4}(?:❯ )?\/\S/
+
+export function focusRows(ansi: string): MirrorFocus {
+  const rows = screenRows(ansi).map((r) => r.replace(ANSI_RE, ""))
+  let bottom = rows.length - 1
+  while (bottom > 0 && !rows[bottom]!.trim()) bottom--
+  const rules = rows.flatMap((r, i) => (RULE_RE.test(r.trim()) ? [i] : []))
+  if (rules.length < 2) return { top: Math.max(0, bottom - 14), bottom }
+  const box = rules[rules.length - 2]!
+  // Up through the non-blank block above the box (menu rows, their wrapped
+  // descriptions, the ctx line); the topmost menu row starts the focus.
+  let top = box
+  for (let i = box - 1; i >= 0 && rows[i]!.trim(); i--) {
+    if (MENU_ROW_RE.test(rows[i]!)) top = i
+  }
+  return { top, bottom }
 }
 
 // One full repaint: cursor hidden, then each row addressed, cleared, drawn and
@@ -179,6 +204,7 @@ export class PaneMirror {
   private viewers = new Set<MirrorViewer>()
   private coalescer: FrameCoalescer
   private size: MirrorSize | null = null
+  private focus: MirrorFocus | null = null
   private layoutCols: number | null = null
   private misses = 0
   private polls = 0
@@ -203,6 +229,7 @@ export class PaneMirror {
     const cur = this.coalescer.current()
     if (cur !== null && this.size) {
       v.control(JSON.stringify({ type: "size", ...this.size }))
+      if (this.focus) v.control(JSON.stringify({ type: "focus", ...this.focus }))
       v.frame(repaintFrame(cur))
     }
     if (!this.running && !this.stopped) { this.running = true; void this.poll() }
@@ -261,9 +288,13 @@ export class PaneMirror {
     const size = frameSize(ansi, this.layoutCols)
     const sizeChanged = !this.size || size.cols !== this.size.cols || size.rows !== this.size.rows
     this.size = size
+    const focus = focusRows(ansi)
+    const focusChanged = !this.focus || focus.top !== this.focus.top || focus.bottom !== this.focus.bottom
+    this.focus = focus
     const frame = repaintFrame(ansi)
     for (const v of this.viewers) {
       if (sizeChanged) v.control(JSON.stringify({ type: "size", ...size }))
+      if (focusChanged) v.control(JSON.stringify({ type: "focus", ...focus }))
       v.frame(frame)
     }
   }

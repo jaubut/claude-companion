@@ -51,6 +51,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
+| `lib/pane-mirror.ts` | 302 | lib | 25 |  |
 | `lib/live-repo.ts` | 290 | lib | 26 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
@@ -63,7 +64,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/orchestrator-chat.ts` | 271 | lib | 20 |  |
-| `lib/pane-mirror.ts` | 271 | lib | 23 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/question-hook.ts` | 268 | lib | 7 |  |

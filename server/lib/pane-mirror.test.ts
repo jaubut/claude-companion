@@ -1,9 +1,14 @@
 import { test, expect } from "bun:test"
 import {
   FrameCoalescer, MAX_MIRROR_VIEWERS, MIRROR_ECHO_MS, MIRROR_ENDED, MIRROR_GONE_AFTER, PaneMirror, frameSize, mirrorInput, paneMirrorUpgrade,
-  repaintFrame, screenRows, type Clock, type MirrorSource, type MirrorUpgradeDeps,
+  focusRows, repaintFrame, screenRows, type Clock, type MirrorSource, type MirrorUpgradeDeps,
 } from "./pane-mirror"
 import { recordPeer } from "./vault-guard"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+
+// Real Claude Code 2.1.310 screens read off a herdr pane (153x54).
+const fixture = (name: string) => readFileSync(join(import.meta.dir, "../../docs/fixtures/pane-mirror", `${name}.ansi`), "utf8")
 
 // A clock the test advances by hand.
 function fakeClock() {
@@ -181,14 +186,15 @@ test("mirror: size then frame; unchanged polls send nothing; a change sends one 
   const a = viewer()
   m.add(a.v)
   await advance(0)
-  expect(a.controls).toEqual([{ type: "size", cols: 10, rows: 1 }])
+  const sizes = (v: { controls: unknown[] }) => v.controls.filter((c) => (c as { type: string }).type === "size")
+  expect(sizes(a)).toEqual([{ type: "size", cols: 10, rows: 1 }])
   expect(a.frames).toEqual([repaintFrame("a\r\n")])
   await advance(160)
   expect(a.frames.length).toBe(2)
-  expect(a.controls).toEqual([{ type: "size", cols: 10, rows: 1 }, { type: "size", cols: 10, rows: 2 }])
+  expect(sizes(a)).toEqual([{ type: "size", cols: 10, rows: 1 }, { type: "size", cols: 10, rows: 2 }])
   const b = viewer()
   m.add(b.v)
-  expect(b.controls).toEqual([{ type: "size", cols: 10, rows: 2 }])
+  expect(sizes(b)).toEqual([{ type: "size", cols: 10, rows: 2 }])
   expect(b.frames).toEqual([repaintFrame("b\r\nc\r\n")])
   expect(m.remove(a.v)).toBe(false)
   expect(m.remove(b.v)).toBe(true)
@@ -226,4 +232,36 @@ test("mirror: a keystroke pulls the next poll forward to MIRROR_ECHO_MS instead 
   m.input(new TextEncoder().encode("x"))
   await advance(MIRROR_ECHO_MS)
   expect(reads()).toBe(2)
+})
+
+// ── focus ──
+
+test("focus: idle Claude → its input box (upper rule) through the status lines", () => {
+  expect(focusRows(fixture("claude-idle"))).toEqual({ top: 49, bottom: 53 })
+})
+
+test("focus: an open slash menu (with wrapped descriptions) starts the focus, filtered or not", () => {
+  expect(focusRows(fixture("claude-slash-menu"))).toEqual({ top: 45, bottom: 53 })
+  expect(focusRows(fixture("claude-slash-filtered"))).toEqual({ top: 45, bottom: 53 })
+})
+
+test("focus: no input box (a dialog, a shell) → the last 15 drawn rows; a blank screen → row 0", () => {
+  const shell = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\r\n") + "\r\n\r\n\r\n"
+  expect(focusRows(shell)).toEqual({ top: 15, bottom: 29 })
+  expect(focusRows("\r\n\r\n")).toEqual({ top: 0, bottom: 0 })
+})
+
+test("mirror: focus goes out with the first frame, again only when it moves, and to a late viewer", async () => {
+  const { clock, advance } = fakeClock()
+  const { src } = fakeSource([fixture("claude-idle"), fixture("claude-idle"), fixture("claude-slash-menu"), fixture("claude-slash-filtered")])
+  const m = new PaneMirror("w3:p1", src, clock, { pollMs: 50, minFrameMs: 33 })
+  const a = viewer()
+  m.add(a.v)
+  await advance(200)
+  const focus = a.controls.filter((c) => (c as { type: string }).type === "focus")
+  expect(focus).toEqual([{ type: "focus", top: 49, bottom: 53 }, { type: "focus", top: 45, bottom: 53 }])
+  expect(a.frames.length).toBe(3)
+  const b = viewer()
+  m.add(b.v)
+  expect(b.controls).toEqual([{ type: "size", cols: 152, rows: 54 }, { type: "focus", top: 45, bottom: 53 }])
 })

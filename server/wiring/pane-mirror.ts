@@ -4,7 +4,7 @@ import { herdrSocketCall } from "../lib/herdr-socket"
 import { PaneMirror, type MirrorSource, type MirrorViewer } from "../lib/pane-mirror"
 import { describeClient, type WsData } from "../state"
 
-// SPIKE: /api/pane-mirror sockets (lib/pane-mirror.ts). One PaneMirror per
+// /api/pane-mirror sockets (lib/pane-mirror.ts). One PaneMirror per
 // herdr pane, shared by up to MAX_MIRROR_VIEWERS sockets; the last one to
 // close stops its poll.
 

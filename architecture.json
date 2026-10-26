@@ -2666,7 +2666,7 @@
         },
         {
           "path": "lib/pane-mirror.ts",
-          "lines": 271,
+          "lines": 302,
           "kind": "lib",
           "exports": [
             "PANE_MIRROR_PATH",
@@ -2684,6 +2684,8 @@
             "visibleWidth",
             "MirrorSize",
             "frameSize",
+            "MirrorFocus",
+            "focusRows",
             "repaintFrame",
             "mirrorInput",
             "Clock",

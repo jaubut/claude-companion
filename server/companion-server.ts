@@ -123,7 +123,7 @@ export function createCompanionServer(port: number) {
         return new Response("WebSocket upgrade failed", { status: 500 })
       }
 
-      // ── Herdr pane mirror (lib/pane-mirror.ts, spike) ──
+      // ── Herdr pane mirror (lib/pane-mirror.ts) ──
       // Same gates as /api/terminal: header-only Bearer, the vault network
       // rule, a session key this server knows, and it must be a herdr pane.
       if (url.pathname === PANE_MIRROR_PATH) {
