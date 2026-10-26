@@ -17,7 +17,8 @@ import { keyGate } from "../lib/key-gate"
 import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
-import { clearWaitingForTarget, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
+import { clearWaitingForTarget, getSessionByKey, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
+import { historyFor } from "../lib/transcript-backfill"
 import { getActivity, listActivities, recordUserPrompt } from "../lib/activity"
 import { getFeed } from "../lib/feed"
 import {
@@ -277,6 +278,14 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // {ok, sessions: [{sessionId, cwd, title, updatedAt}]}, newest first.
   if (url.pathname === "/api/sessions/recent" && req.method === "GET") {
     return Response.json({ ok: true, sessions: await listRecentSessions() })
+  }
+
+  // ── A listed session's older chat rows, from its transcript (lib/transcript-backfill.ts) ──
+  // {ok, key, events: FeedEvent[]} oldest first; 404 for a key not listed.
+  if (url.pathname === "/api/sessions/history" && req.method === "GET") {
+    const session = getSessionByKey(url.searchParams.get("key") ?? "")
+    if (!session) return Response.json({ ok: false, error: "unknown_session" }, { status: 404 })
+    return Response.json({ ok: true, key: session.key, events: await historyFor(session) })
   }
 
   // ── Approval history (the phone's Approvals tab) ──
