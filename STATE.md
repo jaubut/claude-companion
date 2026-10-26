@@ -1,8 +1,14 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-21
+Last updated: 2026-10-25
 
 ## Active Decisions
+
+### Terminal sessions from the phone: tagged tmux shells + a PTY WebSocket (2026-10-25)
+**Choice:** `POST /api/spawn-session {agent:"shell", cwd}` starts `$SHELL -l` in a detached tmux session `sh-<dir>` (argv, `-c <cwd>`, never a command line), tagged `@companion_shell 1`. tmux is the record (`lib/shell-sessions.ts`): a 3 s `list-sessions` poll feeds the list, so a restart loses nothing and `exit` ends it. Shells are appended to the wire session list (`wireSessions`: init, `sessions` frame, `/api/status`, `/api/feed`) as `agent:"shell"`, never into the lib/sessions.ts Map. `GET /api/terminal?key=&cols=&rows=` (Bearer gate, 410 for an unknown key) upgrades to a WS bridged to `tmux attach-session -t =<name>` under a Bun PTY (`lib/terminal-bridge.ts`): binary both ways, JSON `resize`, close 4000 "ended" when the attach exits.
+**Why:** the iPhone has no way to run tmux/ssh (Canvas does, TerminalAttach.swift), so the server is the terminal client. Jeremie wants Moshi-style terminals without paying for Moshi Pro.
+**Rejected:** herdr for shells (no PTY attach client to bridge); shell rows in the sessions Map (inject/triage/canvas/waiting would all have to learn to skip them).
+**Revisit if:** the phone needs to attach agent panes too (same bridge, `-t <pane>`), or the poll shows up in load.
 
 ### One work stream: Companion files `pending` rows, never claims (task d2487443, 2026-10-21)
 **Date:** 2026-10-21 (plan: `docs/one-stream-plan.md`)

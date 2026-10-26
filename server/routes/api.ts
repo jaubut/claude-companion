@@ -6,7 +6,8 @@ import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/
 import { injectRefusal } from "../lib/inject-guard"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { keyCommandGate, originLabel } from "../lib/vault-guard"
-import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
+import { type SpawnAgent, type SpawnResult, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
+import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
 import { clearWaitingForTarget, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
@@ -177,11 +178,12 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ ok: true, enabled: next })
   }
 
-  // ── Spawn a fresh Claude/Codex session from the phone ──
+  // ── Spawn a fresh Claude/Codex session (or a plain shell) from the phone ──
   if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent }
+    const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell" }
     const cwd = (body.cwd ?? "").trim()
     if (!cwd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
+    if (body.agent === "shell") return spawnShell(cwd)
     const agent: SpawnAgent =
       body.agent === "codex" || body.agent === "kimi" ? body.agent : "claude"
 
@@ -215,7 +217,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       pending: getPending().length,
       clients: clients.size,
       ...waitingSummary(),
-      sessions: listSessions(),
+      sessions: wireSessions(listSessions()),
       dialogs: dialogWatcher.current(),
       host: HOST_INFO,
     })
@@ -228,10 +230,25 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       activity: getActivity(),
       activities: listActivities(),
       feed: getFeed(),
-      sessions: listSessions(),
+      sessions: wireSessions(listSessions()),
     })
   }
   return null
+}
+
+// A login shell in a detached tmux session (lib/shell-sessions.ts). Always
+// tmux, whatever `app` says: the phone attaches it through /api/terminal.
+// Replies with the session's wire record so the phone can open it at once.
+async function spawnShell(rawCwd: string): Promise<Response> {
+  const cwd = resolveSpawnCwd(rawCwd)
+  if ("error" in cwd) return Response.json({ ok: false, error: cwd.error }, { status: 400 })
+  companionLog(`\x1b[36mspawn\x1b[0m shell in ${cwd.dir}`)
+  const r = await spawnShellSession(cwd.dir)
+  if (!r.ok) {
+    companionLog(`\x1b[31mspawn failed\x1b[0m — ${r.error}`)
+    return Response.json({ ok: false, error: r.error }, { status: 400 })
+  }
+  return Response.json({ ok: true, app: "tmux", cwd: cwd.dir, agent: "shell", key: r.session.key, sessionName: r.session.name })
 }
 
 async function handleResolve(req: Request): Promise<Response> {

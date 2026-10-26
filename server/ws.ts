@@ -14,12 +14,15 @@ import { dialogWatcher, openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneF
 import { announceWaiting } from "./wiring/waiting"
 import { copyJobs } from "./wiring/copy-jobs"
 import { canvasSnapshot } from "./wiring/canvas"
+import { wireSessions } from "./lib/shell-sessions"
+import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-sessions"
 
 // WebSocket handlers: on open, send the init frame, the host's copy jobs,
 // then replay pending approvals/questions; on message, approve/deny/answer/input/ping; on close,
 // drop the client. Same frames and log lines as before the split.
 export const websocket: WebSocketHandler<WsData> = {
   open(ws) {
+    if (ws.data.terminal) return terminalOpen(ws)
     clients.add(ws)
     companionLog(`\x1b[2mws open ${describeClient("ws", ws.data.client)} (${clients.size} client${clients.size === 1 ? "" : "s"})\x1b[0m`)
 
@@ -36,7 +39,7 @@ export const websocket: WebSocketHandler<WsData> = {
       activity: getActivity(),
       activities: listActivities(),
       feed: getFeed(),
-      sessions: listSessions(),
+      sessions: wireSessions(listSessions()),
       superAuto: isSuperAuto(),
       dialogs: dialogWatcher.current(),
       host: HOST_INFO,
@@ -75,6 +78,7 @@ export const websocket: WebSocketHandler<WsData> = {
     }
   },
   async message(ws, raw) {
+    if (ws.data.terminal) return terminalMessage(ws, raw)
     let msg: {
       type: string
       id?: string
@@ -202,6 +206,7 @@ export const websocket: WebSocketHandler<WsData> = {
     }
   },
   close(ws, code) {
+    if (ws.data.terminal) return terminalClose(ws)
     clients.delete(ws)
     companionLog(`\x1b[2mws close ${describeClient("ws", ws.data.client)} code=${code} (${clients.size} left)\x1b[0m`)
   },

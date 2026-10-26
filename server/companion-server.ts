@@ -30,6 +30,8 @@ import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
+import { getShellSession, startShellPoll } from "./lib/shell-sessions"
+import { TERMINAL_PATH, terminalSize } from "./lib/terminal-bridge"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -46,6 +48,9 @@ export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
   // happy-eyeballs path is a known process crash — see lib/apns.ts.
   disableAutoSelectFamily()
+  // Shell sessions are read from tmux (lib/shell-sessions.ts): first read now,
+  // then every few seconds so an `exit` reaches the phone.
+  startShellPoll()
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
@@ -88,6 +93,20 @@ export function createCompanionServer(port: number) {
         await waitForFirstDiscovery(WS_FIRST_DISCOVERY_WAIT_MS)
         const upgraded = server.upgrade(req, {
           data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req) },
+        })
+        if (upgraded) return undefined
+        return new Response("WebSocket upgrade failed", { status: 500 })
+      }
+
+      // ── Live terminal (lib/terminal-bridge.ts) ──
+      // Behind the Bearer gate above like every /api/* path. Unknown key → 410
+      // before any upgrade, so nothing is spawned for a stale row.
+      if (url.pathname === TERMINAL_PATH) {
+        const key = url.searchParams.get("key") ?? ""
+        if (!getShellSession(key)) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
+        const size = terminalSize(url.searchParams.get("cols"), url.searchParams.get("rows"))
+        const upgraded = server.upgrade(req, {
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), terminal: { key, ...size } },
         })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })

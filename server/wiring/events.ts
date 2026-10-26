@@ -7,6 +7,7 @@ import { onFeed, onFeedReset, type FeedEvent } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
+import { wireSessions } from "../lib/shell-sessions"
 import { onSessions, setSessionModel, setTitleResolver, type Session } from "../lib/sessions"
 import { resolveTitle, transcriptPath } from "../lib/session-titles"
 import { modelForIdentity, modelFromTranscript } from "../lib/transcript"
@@ -184,7 +185,7 @@ onSessions((sessions: Session[]) => {
     }
     if (model) setSessionModel(s.key, model)
   }
-  broadcast({ type: "sessions", sessions })
+  broadcast({ type: "sessions", sessions: wireSessions(sessions) })
   // A SIGKILLed terminal fires no session-end hook — this is the only thing
   // that retires its pill. Emits only when it actually clears one.
   reconcileActivityLiveness(sessions)
