@@ -19,6 +19,7 @@
 // in one, its hooks register a normal Claude session on the same pane.
 
 import { userInfo } from "node:os"
+import { endedStore, endedWire } from "./ended-sessions"
 import { DETACHED_COLS, DETACHED_ROWS, uniqueTmuxSessionName } from "./spawn-session"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 import { type DetachedDeps, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
@@ -198,10 +199,12 @@ export const getShellSession = (key: string): ShellSession | undefined => store.
 export const onShellSessions = (fn: Listener): (() => void) => store.on(fn)
 
 // The session list as every client reads it: agents first (lib/sessions.ts
-// order), then shells. No shells → the agent list itself, unchanged.
+// order), then shells, then ended sessions still in their herdr pane
+// (lib/ended-sessions.ts). Neither → the agent list itself, unchanged.
 export function wireSessions<T>(agents: T[]): (T | Record<string, unknown>)[] {
   const shells = store.list()
-  return shells.length ? [...agents, ...shells.map(shellWire)] : agents
+  const ended = endedStore.list()
+  return shells.length || ended.length ? [...agents, ...shells.map(shellWire), ...ended.map(endedWire)] : agents
 }
 
 // ── Which Claude runs inside a shell ─────────────────────────────────────

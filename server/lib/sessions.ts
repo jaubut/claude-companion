@@ -20,7 +20,7 @@
 import { isAgentPidAlive, processStartMs } from "./agent-pid"
 import { deriveKey, hasStrongIdentity, hasTtyIdentity, makeLabel, mergeTmuxSocket } from "./session-identity"
 import { logRemoval } from "./session-removal-log"
-import { releaseHerdrWorkspace } from "./herdr-workspace"
+import { herdrSessionGone } from "./herdr-workspace"
 import {
   type WaitingKind,
   type WaitingReason,
@@ -104,7 +104,7 @@ function prune(now: number): boolean {
       if (!isAgentPidAlive(s.pid, s.agent)) {
         sessions.delete(key)
         logRemoval(s, "prune:pid-dead")
-        releaseHerdrWorkspace(s, listSessions)
+        herdrSessionGone(s, listSessions)
         changed = true
       }
       continue

@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 146,
+          "lines": 148,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -80,6 +80,7 @@
             "lib/apns.ts",
             "lib/discover.ts",
             "lib/shell-sessions.ts",
+            "lib/ended-sessions.ts",
             "lib/sessions.ts",
             "lib/terminal-bridge.ts",
             "wiring/shell-sessions.ts"
@@ -1686,6 +1687,39 @@
           "externals": []
         },
         {
+          "path": "lib/ended-sessions.ts",
+          "lines": 204,
+          "kind": "lib",
+          "exports": [
+            "ENDED_KEY_PREFIX",
+            "EndedSession",
+            "EndedSource",
+            "endedWire",
+            "resumable",
+            "createEndedStore",
+            "EndedStore",
+            "endedStore",
+            "resumeCommand",
+            "ResumeOutcome",
+            "ResumeDeps",
+            "resumeInPane",
+            "ENDED_SWEEP_MS",
+            "startEndedSweep"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/herdr.ts",
+            "lib/recent-sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/feed.ts",
           "lines": 149,
           "kind": "lib",
@@ -1812,9 +1846,10 @@
         },
         {
           "path": "lib/herdr-workspace.ts",
-          "lines": 50,
+          "lines": 59,
           "kind": "lib",
           "exports": [
+            "herdrSessionGone",
             "herdrAutocloseEnabled",
             "releaseHerdrWorkspace"
           ],
@@ -1828,7 +1863,8 @@
           "imports": [
             "lib/sessions.ts",
             "lib/herdr.ts",
-            "lib/log.ts"
+            "lib/log.ts",
+            "lib/ended-sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3850,7 +3886,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 287,
+          "lines": 290,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -3884,6 +3920,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/ended-sessions.ts",
             "lib/spawn-session.ts",
             "lib/tmux-pane.ts",
             "lib/tmux-spawn-confirm.ts"
@@ -5228,7 +5265,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 500,
+          "lines": 525,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -5316,6 +5353,11 @@
               "prefix": false
             },
             {
+              "method": "POST",
+              "path": "/api/sessions/resume",
+              "prefix": false
+            },
+            {
               "method": "GET",
               "path": "/api/sessions/recent",
               "prefix": false
@@ -5363,6 +5405,9 @@
             "lib/spawn-session.ts",
             "lib/recent-sessions.ts",
             "lib/terminal-bridge.ts",
+            "lib/ended-sessions.ts",
+            "lib/herdr.ts",
+            "lib/key-gate.ts",
             "lib/shell-sessions.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
@@ -6906,7 +6951,7 @@
         },
         {
           "path": "wiring/shell-sessions.ts",
-          "lines": 55,
+          "lines": 59,
           "kind": "lib",
           "exports": [
             "attachCount",
@@ -6929,6 +6974,7 @@
             "lib/sessions.ts",
             "lib/shell-sessions.ts",
             "lib/terminal-bridge.ts",
+            "lib/ended-sessions.ts",
             "state.ts"
           ],
           "listeners": [
@@ -7326,6 +7372,12 @@
             "companion-server.ts"
           ]
         },
+        "startEndedSweep": {
+          "module": "lib/ended-sessions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "WsData": {
           "module": "state.ts",
           "callers": [
@@ -7410,7 +7462,8 @@
           "module": "lib/terminal-bridge.ts",
           "callers": [
             "companion-server.ts#* /ws",
-            "routes/api.ts#POST /api/spawn-session"
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#POST /api/sessions/resume"
           ]
         },
         "getShellSession": {
@@ -7761,6 +7814,7 @@
             "routes/api.ts#DELETE /api/learned",
             "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#POST /api/sessions/resume",
             "routes/api.ts#* /api/feed",
             "routes/attach.ts",
             "routes/auto-compact.ts#POST /api/auto-compact/test",
@@ -8474,6 +8528,7 @@
           "callers": [
             "lib/command-menu.ts",
             "lib/dialog-watch.ts",
+            "lib/ended-sessions.ts",
             "lib/herdr-workspace.ts",
             "lib/keyboard-inject.ts",
             "lib/pane-clean.ts",
@@ -8746,6 +8801,7 @@
             "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
             "lib/submit-confirm.ts",
+            "routes/api.ts#POST /api/sessions/resume",
             "routes/command.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
@@ -9048,6 +9104,45 @@
             "lib/dispatch-tasks.ts"
           ]
         },
+        "SESSION_ID_RE": {
+          "module": "lib/recent-sessions.ts",
+          "callers": [
+            "lib/ended-sessions.ts",
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "Herdr": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/ended-sessions.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
+            "lib/keyboard-inject.ts",
+            "lib/orphan-question.ts",
+            "lib/spawn-session.ts",
+            "lib/submit-confirm.ts",
+            "wiring/takeover-liveness.ts"
+          ]
+        },
+        "realHerdr": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/ended-sessions.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
+            "lib/pane-clean.ts",
+            "lib/spawn-session.ts",
+            "lib/submit-confirm.ts",
+            "routes/command.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "herdrPaneAtShell": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/ended-sessions.ts"
+          ]
+        },
         "Catalog": {
           "module": "lib/project-catalog.ts",
           "callers": [
@@ -9141,30 +9236,6 @@
             "lib/front-door.ts"
           ]
         },
-        "Herdr": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/herdr-inject.ts",
-            "lib/inject-verified.ts",
-            "lib/keyboard-inject.ts",
-            "lib/orphan-question.ts",
-            "lib/spawn-session.ts",
-            "lib/submit-confirm.ts",
-            "wiring/takeover-liveness.ts"
-          ]
-        },
-        "realHerdr": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/herdr-inject.ts",
-            "lib/inject-verified.ts",
-            "lib/pane-clean.ts",
-            "lib/spawn-session.ts",
-            "lib/submit-confirm.ts",
-            "routes/command.ts",
-            "wiring/dialogs.ts"
-          ]
-        },
         "herdrGateKey": {
           "module": "lib/herdr.ts",
           "callers": [
@@ -9205,6 +9276,15 @@
           "callers": [
             "lib/herdr-inject.ts",
             "lib/inject-verified.ts"
+          ]
+        },
+        "endedStore": {
+          "module": "lib/ended-sessions.ts",
+          "callers": [
+            "lib/herdr-workspace.ts",
+            "lib/shell-sessions.ts",
+            "routes/api.ts#POST /api/sessions/resume",
+            "wiring/shell-sessions.ts"
           ]
         },
         "closeHerdrWorkspaceWhenIdle": {
@@ -10721,7 +10801,7 @@
             "lib/sessions.ts"
           ]
         },
-        "releaseHerdrWorkspace": {
+        "herdrSessionGone": {
           "module": "lib/herdr-workspace.ts",
           "callers": [
             "lib/sessions.ts",
@@ -10823,6 +10903,12 @@
           "callers": [
             "lib/shell-sessions.ts",
             "lib/spawn-session.ts"
+          ]
+        },
+        "endedWire": {
+          "module": "lib/ended-sessions.ts",
+          "callers": [
+            "lib/shell-sessions.ts"
           ]
         },
         "applyMcpChoices": {
@@ -11666,6 +11752,28 @@
             "routes/api.ts#POST /api/spawn-session"
           ]
         },
+        "resumeInPane": {
+          "module": "lib/ended-sessions.ts",
+          "callers": [
+            "routes/api.ts#POST /api/sessions/resume"
+          ]
+        },
+        "herdrGatedText": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "routes/api.ts#POST /api/sessions/resume",
+            "routes/command.ts"
+          ]
+        },
+        "herdrGatedKey": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "routes/api.ts#POST /api/sessions/resume",
+            "routes/command.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick"
+          ]
+        },
         "listRecentSessions": {
           "module": "lib/recent-sessions.ts",
           "callers": [
@@ -11737,12 +11845,6 @@
           "callers": [
             "routes/api.ts#* /api/feed",
             "ws.ts"
-          ]
-        },
-        "SESSION_ID_RE": {
-          "module": "lib/recent-sessions.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
           ]
         },
         "resolveSpawnCwd": {
@@ -12251,20 +12353,6 @@
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts"
-          ]
-        },
-        "herdrGatedKey": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "routes/command.ts",
-            "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick"
-          ]
-        },
-        "herdrGatedText": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "routes/command.ts"
           ]
         },
         "paneRefOf": {
