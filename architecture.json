@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-25",
+  "generatedAt": "2026-10-26",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -3290,6 +3290,40 @@
           "externals": []
         },
         {
+          "path": "lib/repo-view.ts",
+          "lines": 118,
+          "kind": "lib",
+          "exports": [
+            "RepoPrStatus",
+            "PR_STATUS_LABEL",
+            "isBlocked",
+            "GhPr",
+            "RepoPr",
+            "PR_LIST_FIELDS",
+            "PR_LIST_LIMIT",
+            "parsePrList",
+            "prStatus",
+            "repoPrs",
+            "agentTaskTitle",
+            "agentPrompt"
+          ],
+          "state": [
+            "BLOCKED: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-tasks.ts",
+            "lib/triage-pr.ts",
+            "lib/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/resolver-engine.ts",
           "lines": 270,
           "kind": "lib",
@@ -5932,7 +5966,7 @@
         },
         {
           "path": "routes/triage.ts",
-          "lines": 123,
+          "lines": 150,
           "kind": "lib",
           "exports": [
             "createTriageHandler",
@@ -5949,7 +5983,8 @@
             "lib/triage-engine.ts",
             "lib/triage-repos.ts",
             "wiring/triage.ts",
-            "wiring/triage-repos.ts"
+            "wiring/triage-repos.ts",
+            "wiring/repo-view.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6589,6 +6624,45 @@
           "externals": []
         },
         {
+          "path": "wiring/repo-view.ts",
+          "lines": 203,
+          "kind": "lib",
+          "exports": [
+            "RepoAgent",
+            "RepoViewBody",
+            "RepoViewOutcome",
+            "RepoViewDeps",
+            "RepoView",
+            "createRepoView",
+            "repoView"
+          ],
+          "state": [
+            "let live"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-tasks.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-db.ts",
+            "lib/repo-view.ts",
+            "lib/triage.ts",
+            "lib/triage-pr.ts",
+            "lib/triage-sources.ts",
+            "lib/live-repo.ts",
+            "state.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts",
+            "wiring/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/resolver-dry-run.ts",
           "lines": 104,
           "kind": "lib",
@@ -7011,6 +7085,7 @@
             "wiring/body-agent.ts",
             "wiring/canvas.ts",
             "wiring/orchestrator.ts",
+            "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts",
             "ws.ts"
@@ -7460,6 +7535,7 @@
             "wiring/events.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
+            "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage-repos.ts",
@@ -7863,7 +7939,8 @@
         "repoMarker": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "lib/repo-view.ts"
           ]
         },
         "toTaskDto": {
@@ -9207,6 +9284,7 @@
             "routes/orchestrator.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts",
+            "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
@@ -9316,6 +9394,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "lib/project-catalog.ts",
+            "wiring/repo-view.ts",
             "wiring/triage.ts"
           ]
         },
@@ -9323,6 +9402,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "lib/project-catalog.ts",
+            "wiring/repo-view.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -9905,6 +9985,7 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/repo-rework.ts",
+            "lib/repo-view.ts",
             "lib/resolver-work.ts",
             "lib/resolver.ts",
             "lib/triage-repos.ts",
@@ -9916,6 +9997,18 @@
           "module": "lib/resolver.ts",
           "callers": [
             "lib/repo-rework.ts"
+          ]
+        },
+        "ChecksState": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "lib/repo-view.ts"
+          ]
+        },
+        "rollupState": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "lib/repo-view.ts"
           ]
         },
         "TRANSIENT_REASON": {
@@ -10762,6 +10855,7 @@
           "callers": [
             "lib/triage-engine.ts",
             "lib/triage-repos.ts",
+            "wiring/repo-view.ts",
             "wiring/triage-repos.ts"
           ]
         },
@@ -12130,6 +12224,7 @@
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
+            "wiring/repo-view.ts",
             "wiring/triage.ts"
           ]
         },
@@ -12280,6 +12375,7 @@
             "wiring/body-agent.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
+            "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
@@ -12305,7 +12401,8 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/proposals.ts"
+            "wiring/proposals.ts",
+            "wiring/repo-view.ts"
           ]
         },
         "listChannels": {
@@ -12593,6 +12690,18 @@
             "routes/triage.ts"
           ]
         },
+        "RepoView": {
+          "module": "wiring/repo-view.ts",
+          "callers": [
+            "routes/triage.ts"
+          ]
+        },
+        "repoView": {
+          "module": "wiring/repo-view.ts",
+          "callers": [
+            "routes/triage.ts"
+          ]
+        },
         "repoRunner": {
           "module": "wiring/triage-repos.ts",
           "callers": [
@@ -12603,6 +12712,7 @@
           "module": "wiring/triage.ts",
           "callers": [
             "routes/triage.ts",
+            "wiring/repo-view.ts",
             "wiring/triage-repos.ts"
           ]
         },
@@ -12826,6 +12936,7 @@
           "module": "lib/triage-pr.ts",
           "callers": [
             "wiring/auto-compact.ts",
+            "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
           ]
@@ -12950,14 +13061,16 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/orchestrator.ts",
-            "wiring/proposals.ts"
+            "wiring/proposals.ts",
+            "wiring/repo-view.ts"
           ]
         },
         "fileProposal": {
           "module": "wiring/orchestrator.ts",
           "callers": [
             "wiring/body-agent.ts",
-            "wiring/proposals.ts"
+            "wiring/proposals.ts",
+            "wiring/repo-view.ts"
           ]
         },
         "ownerHost": {
@@ -12970,7 +13083,8 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "wiring/body-agent.ts",
-            "wiring/proposals.ts"
+            "wiring/proposals.ts",
+            "wiring/repo-view.ts"
           ]
         },
         "BodyInvestigator": {
@@ -13570,21 +13684,98 @@
             "wiring/receipt-qa.ts"
           ]
         },
-        "taskSources": {
-          "module": "lib/triage-sources.ts",
+        "RepoPr": {
+          "module": "lib/repo-view.ts",
           "callers": [
-            "wiring/resolver-dry-run.ts",
+            "wiring/repo-view.ts"
+          ]
+        },
+        "GhFn": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/repo-view.ts",
+            "wiring/resolver.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "githubName": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/repo-view.ts"
           ]
         },
         "queryPrRows": {
           "module": "lib/triage-sources.ts",
           "callers": [
+            "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
           ]
         },
         "prSources": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/repo-view.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "PR_ROWS_TTL_MS": {
+          "module": "wiring/triage.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "parsePrList": {
+          "module": "lib/repo-view.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "PR_LIST_FIELDS": {
+          "module": "lib/repo-view.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "PR_LIST_LIMIT": {
+          "module": "lib/repo-view.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "repoPrs": {
+          "module": "lib/repo-view.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "agentTaskTitle": {
+          "module": "lib/repo-view.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "isBlocked": {
+          "module": "lib/repo-view.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "agentPrompt": {
+          "module": "lib/repo-view.ts",
+          "callers": [
+            "wiring/repo-view.ts"
+          ]
+        },
+        "repoEntriesSafe": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/repo-view.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "taskSources": {
           "module": "lib/triage-sources.ts",
           "callers": [
             "wiring/resolver-dry-run.ts",
@@ -13683,13 +13874,6 @@
           "module": "lib/resolver-prompt.ts",
           "callers": [
             "wiring/resolver.ts"
-          ]
-        },
-        "GhFn": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
           ]
         },
         "ShFn": {
@@ -14020,12 +14204,6 @@
           ]
         },
         "repoNameFor": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "repoEntriesSafe": {
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/triage.ts"

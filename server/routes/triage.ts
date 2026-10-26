@@ -4,6 +4,7 @@ import type { TriageEngine } from "../lib/triage-engine"
 import { MEMBERS_MAX } from "../lib/triage-repos"
 import { triageEngine } from "../wiring/triage"
 import { type RepoRunner, repoRunner } from "../wiring/triage-repos"
+import { type RepoView, repoView } from "../wiring/repo-view"
 
 // Brain triage endpoints (docs/orchestrator-triage-api.md), bearer-gated like
 // every /api/orchestrator/* route:
@@ -11,6 +12,8 @@ import { type RepoRunner, repoRunner } from "../wiring/triage-repos"
 //   POST /api/orchestrator/triage/<id>/choose        {optionId, text?} + Idempotency-Key
 //   POST /api/orchestrator/repos/<repo>/yes          {version, members[{id, version}]} + Idempotency-Key
 //   POST /api/orchestrator/repos/<repo>/no           {version, note} + Idempotency-Key
+//   GET  /api/orchestrator/repos/<repo>              → the repo view {repo, prs[], blocked, needsYou, agent}
+//   POST /api/orchestrator/repos/<repo>/agent        "Get an agent on it" (files or returns the one task)
 // <id> / <repo> are percent-encoded (a PR id carries "/" and "#"). Returns null for any other path.
 
 const PREFIX = "/api/orchestrator/triage"
@@ -52,6 +55,18 @@ async function choose(req: Request, id: string, engine: TriageEngine): Promise<R
   if (idemKey && idemKey.length > MAX_KEY_LENGTH) return Response.json({ ok: false, error: "idempotency-key-too-long" }, { status: 400 })
   const out = await engine.choose({ id, optionId, text: (body.text as string | undefined) ?? null, idemKey })
   return Response.json(out.body, { status: out.status, headers: out.body.result === "replay" ? { "Idempotent-Replayed": "true" } : undefined })
+}
+
+/** `/api/orchestrator/repos/<repo>` (+ `/agent`) → the decoded repo name; null = not a repo-view route. */
+function repoViewPath(pathname: string, agent: boolean): string | null {
+  const m = (agent ? /^\/api\/orchestrator\/repos\/([^/]+)\/agent$/ : /^\/api\/orchestrator\/repos\/([^/]+)$/).exec(pathname)
+  if (!m) return null
+  try {
+    const repo = decodeURIComponent(m[1]!)
+    return REPO_RE.test(repo) ? repo : null
+  } catch {
+    return null
+  }
 }
 
 /** `/api/orchestrator/repos/<repo>/(yes|no)` → the decoded repo key + verb; null = not a repo route. */
@@ -99,8 +114,20 @@ async function repoDecision(req: Request, repo: string, decision: "yes" | "no", 
   return Response.json(out.body, { status: out.status, headers: out.body.result === "replay" ? { "Idempotent-Replayed": "true" } : undefined })
 }
 
-export function createTriageHandler(engine: () => TriageEngine = triageEngine, runner: () => RepoRunner = repoRunner) {
+export function createTriageHandler(engine: () => TriageEngine = triageEngine, runner: () => RepoRunner = repoRunner, view: () => RepoView = repoView) {
   return async (req: Request, url: URL): Promise<Response | null> => {
+    if (url.pathname.startsWith(`${REPOS}/`) && req.method === "GET") {
+      const repo = repoViewPath(url.pathname, false)
+      if (!repo) return bad("no_such_repo", 404)
+      const out = await view().view(repo)
+      return Response.json(out.body, { status: out.status })
+    }
+    if (url.pathname.startsWith(`${REPOS}/`) && url.pathname.endsWith("/agent") && req.method === "POST") {
+      const repo = repoViewPath(url.pathname, true)
+      if (!repo) return bad("no_such_repo", 404)
+      const out = await view().agent(repo)
+      return Response.json(out.body, { status: out.status })
+    }
     if (url.pathname.startsWith(`${REPOS}/`) && req.method === "POST") {
       const action = repoAction(url.pathname)
       if (!action) return bad("no_such_repo", 404)
