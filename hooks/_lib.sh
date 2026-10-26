@@ -121,3 +121,30 @@ companion_headers() {
     -H "X-Companion-Herdr-Pane: ${HERDR_PANE_ID:-}"
   )
 }
+
+# Long-poll POST for the approval hooks: `companion_long_poll <path>` sends
+# $INPUT to $COMPANION_URL<path>, sets RESPONSE, returns curl's exit code.
+#
+# Claude Code ends a waiting hook when the prompt is answered in the terminal.
+# curl must end with it: inside $(...) a SIGTERM to bash left curl orphaned,
+# holding the request open, so the server never saw the hook go (hook_gone)
+# and the phone card stayed up until the 290 s expiry. So curl runs in the
+# background, and TERM/HUP/INT kill it, then exit 0 with no output (Claude
+# Code's normal flow).
+companion_long_poll() {
+  local out rc
+  out=$(mktemp "${TMPDIR:-/tmp}/companion-hook.XXXXXX") || return 1
+  trap 'kill "$_COMPANION_CURL" 2>/dev/null; rm -f "'"$out"'"; exit 0' TERM HUP INT
+  curl -s --max-time 295 \
+    -X POST "$COMPANION_URL$1" \
+    -H "Content-Type: application/json" \
+    "${COMPANION_HDRS[@]}" \
+    -d "$INPUT" > "$out" 2>/dev/null &
+  _COMPANION_CURL=$!
+  wait "$_COMPANION_CURL"
+  rc=$?
+  trap - TERM HUP INT
+  RESPONSE=$(cat "$out")
+  rm -f "$out"
+  return $rc
+}
