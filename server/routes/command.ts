@@ -1,12 +1,10 @@
-import { inputLine, parseCommandMenu, suggestRefusal, unstyle } from "../lib/command-menu"
+import { inputLine, parseCommandMenu, suggestFromList, suggestRefusal } from "../lib/command-menu"
 import { getShellSession } from "../lib/shell-sessions"
 import { companionLog } from "../lib/log"
 import { commandLister } from "../lib/command-offpane-cache"
 import { beginFlow, endFlow } from "../lib/command-scrape"
-import { keyGate, runTmux } from "../lib/key-gate"
 import { type Session, resolveSession } from "../lib/sessions"
-import { herdrGatedKey, herdrGatedText, herdrPaneOf, realHerdr } from "../lib/herdr"
-import { type PaneRef, capturePane, paneKey, paneRefOf, sendKeysArgs } from "../lib/tmux-pane"
+import { sessionPaneOf } from "../lib/session-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 import { clearIfOurs, finishSuggestProbe } from "../lib/suggest-cleanup"
 
@@ -25,54 +23,18 @@ const SETTLE_TIMEOUT_MS = 1_500
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-// Every key and every literal goes through the shared per-pane gate
-// (lib/key-gate.ts): the /help close path's Escape and C-u included, so a
-// phone's /api/dialog/key cannot land inside their chord window, and nothing
-// here can land inside one of the phone's. A send that wedges is killed at the
-// gate's deadline and reads as a failed send (false), never a stuck scrape.
-async function gated(gateKey: string, key: string, send: (signal: AbortSignal) => Promise<unknown>): Promise<boolean> {
-  try {
-    await keyGate.send(gateKey, key, send)
-    return true
-  } catch {
-    return false
-  }
-}
-
-// The session's pane as this flow drives it: tmux, else herdr. `capture`
-// with escapes = the `capture-pane -e` shape (herdr's read is always styled).
-interface SuggestPane {
-  capture(escapes?: boolean): Promise<string | null>
-  key(key: string): Promise<boolean>
-  literal(text: string): Promise<boolean>
-}
-
-function tmuxSuggestPane(ref: PaneRef): SuggestPane {
-  const gk = paneKey(ref.pane, ref.socket)
-  return {
-    capture: (escapes = false) => capturePane(ref.pane, undefined, { escapes, socket: ref.socket }),
-    key: (key) => gated(gk, key, (signal) => runTmux(sendKeysArgs(ref, key), signal)),
-    literal: (text) => gated(gk, text, (signal) => runTmux(sendKeysArgs(ref, "-l", text), signal)),
-  }
-}
-
-// Sends ride the pane's key-gate turn with its abort (herdrGatedKey/Text).
-function herdrSuggestPane(pane: string): SuggestPane {
-  return {
-    capture: async (escapes = false) => {
-      const text = await realHerdr.read(pane)
-      return text === null || escapes ? text : unstyle(text)
-    },
-    key: (key) => herdrGatedKey(keyGate, pane, key),
-    literal: (text) => herdrGatedText(keyGate, pane, text),
-  }
-}
-
-function suggestPaneOf(session: Session | null): SuggestPane | null {
-  const ref = paneRefOf(session)
-  if (ref) return tmuxSuggestPane(ref)
-  const herdrPane = herdrPaneOf(session)
-  return herdrPane ? herdrSuggestPane(herdrPane) : null
+// The `/` suggest's fallback: the session's cached whole list (the same data
+// /api/command/list serves) filtered by prefix, marked `source: "list"` so the
+// phone can tell it from a live menu read. Only ever from the cache: an
+// uncached enumeration takes ~40 s, far past a keystroke's budget, so with
+// nothing cached this answers null and the caller keeps its own answer.
+function suggestFromCachedList(session: Session | null, prefix: string, why: string): Response | null {
+  if (!session || session.agent === "codex") return null
+  const all = commandLister.peek(session.cwd)
+  if (!all) return null
+  const commands = suggestFromList(all, prefix)
+  companionLog(`\x1b[36mcommands\x1b[0m "/${prefix}" → ${commands.length} from the cached list (${why}) on ${session.label || session.key}`)
+  return Response.json({ ok: true, key: session.key, prefix, commands, source: "list" })
 }
 
 export async function handleCommandRoute(req: Request, url: URL): Promise<Response | null> {
@@ -92,7 +54,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
-    const io = suggestPaneOf(session)
+    const io = sessionPaneOf(session)
     const typedNow = io ? inputLine(await io.capture(true) ?? "") : null
     const refusal = suggestRefusal(
       session,
@@ -100,7 +62,16 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
       typedNow,
       `/${prefix}`,
     )
-    if (refusal) return Response.json({ ok: false, ...refusal }, { status: 409 })
+    if (refusal) {
+      // No pane to type into (a plain terminal): the cached list still knows
+      // the session's commands. Every other refusal is about the pane's state
+      // right now and stands.
+      if (refusal.error === "no_pane") {
+        const fallback = suggestFromCachedList(session, prefix, "no pane")
+        if (fallback) return fallback
+      }
+      return Response.json({ ok: false, ...refusal }, { status: 409 })
+    }
 
     const pane = io!
     if (!beginFlow(session!.key, "suggest")) {
@@ -152,6 +123,12 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
 
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       companionLog(`${cyan}commands${reset} "/${prefix}" → ${commands.length} on ${session!.label || session!.key}`)
+      // The pane showed no menu (a layout the parser doesn't know, a slow
+      // redraw): answer from the cached list rather than an empty one.
+      if (!commands.length) {
+        const fallback = suggestFromCachedList(session, prefix, "no menu on the pane")
+        if (fallback) return fallback
+      }
       return Response.json({ ok: true, key: session!.key, prefix, commands })
     } finally {
       // A no-op when finishSuggestProbe already ended the flow.
