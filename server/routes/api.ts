@@ -9,6 +9,9 @@ import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
 import { SESSION_ID_RE, listRecentSessions } from "../lib/recent-sessions"
 import { shellNetworkRefusal } from "../lib/terminal-bridge"
+import { deleteEnded, endedStore, resumeInPane } from "../lib/ended-sessions"
+import { herdrGatedKey, herdrGatedText } from "../lib/herdr"
+import { keyGate } from "../lib/key-gate"
 import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -205,6 +208,43 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       return Response.json({ ok: false, error: result.error }, { status: 400 })
     }
     return Response.json({ ok: true, app: result.app, cwd, agent })
+  }
+
+  // ── Resume an ended session in its own herdr pane (lib/ended-sessions.ts) ──
+  // {key: "ended:<sessionId>"} → 200 {ok, via:"pane"} once `claude --resume`
+  // is typed; the row leaves when the resumed session shows up in the pane.
+  // Pane closed meanwhile → a new terminal resuming it (the spawn reply, as
+  // for agent "shell", key "shell:…"), under the shell spawn's network rule.
+  if (url.pathname === "/api/sessions/resume" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: unknown }
+    const key = typeof body.key === "string" ? body.key : ""
+    const ended = endedStore.get(key)
+    const r = await resumeInPane(endedStore, key, {
+      sendText: (p, t) => herdrGatedText(keyGate, p, t),
+      sendKey: (p, k) => herdrGatedKey(keyGate, p, k),
+    })
+    if (r.ok) {
+      companionLog(`\x1b[36mresume\x1b[0m ${ended?.sessionId} typed in herdr pane ${ended?.herdrPane}`)
+      return Response.json({ ok: true, via: "pane" })
+    }
+    if (r.error === "pane_gone" && ended) return shellNetworkRefusal(req) ?? spawnShell(ended.cwd, ended.sessionId)
+    const status = { target_gone: 410, bad_resume: 400, pane_gone: 410, pane_busy: 409, send_failed: 502 }[r.error]
+    return Response.json({ ok: false, error: r.error }, { status })
+  }
+
+  // ── Delete an ended session: close its herdr pane, drop the row ──
+  // 200 {ok, closed} | 409 pane_busy (something runs in it) | 410 | 502 close_failed.
+  if (url.pathname === "/api/sessions/ended/delete" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: unknown }
+    const key = typeof body.key === "string" ? body.key : ""
+    const pane = endedStore.get(key)?.herdrPane
+    const r = await deleteEnded(endedStore, key)
+    if (r.ok) {
+      companionLog(`\x1b[35mended session deleted\x1b[0m ${key}${r.closed ? ` (herdr pane ${pane} closed)` : " (pane already gone)"}`)
+      return Response.json(r)
+    }
+    const status = { target_gone: 410, pane_busy: 409, close_failed: 502 }[r.error]
+    return Response.json(r, { status })
   }
 
   // ── Recent interactive Claude sessions (terminal: Recent sessions, Resume chip) ──

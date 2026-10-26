@@ -31,6 +31,7 @@ import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
 import { getShellSession, startShellPoll } from "./lib/shell-sessions"
+import { startEndedSweep } from "./lib/ended-sessions"
 import { listSessions } from "./lib/sessions"
 import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize, shellNetworkRefusal } from "./lib/terminal-bridge"
 import { attachCount } from "./wiring/shell-sessions"
@@ -53,6 +54,7 @@ export function createCompanionServer(port: number) {
   // Shell sessions are read from tmux (lib/shell-sessions.ts): first read now,
   // then every few seconds so an `exit` reaches the phone.
   startShellPoll(listSessions)
+  startEndedSweep(listSessions)
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
