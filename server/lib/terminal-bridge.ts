@@ -17,8 +17,19 @@
 
 import { tmuxArgv } from "./tmux-pane"
 import type { ShellSession } from "./shell-sessions"
+import { clientOrigin, peerOf } from "./vault-guard"
 
 export const TERMINAL_PATH = "/api/terminal"
+
+// A shell is reachable only the way the vault is (lib/vault-guard.ts):
+// tailscale serve, loopback, or a direct tailnet peer. The server listens on
+// 0.0.0.0 and the Mac's firewall is off, so without this anyone on the LAN
+// holding the token — or Funnel traffic — would get a shell. Applies to the
+// terminal upgrade and to a shell spawn. Null = allowed.
+export function shellNetworkRefusal(req: Request): Response | null {
+  if (clientOrigin(req, peerOf(req)).transport !== "untrusted") return null
+  return Response.json({ ok: false, error: "network_refused" }, { status: 403 })
+}
 export const TERMINAL_ENDED = 4000
 
 export interface TerminalSize { cols: number; rows: number }

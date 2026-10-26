@@ -8,6 +8,7 @@ import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
 import { SESSION_ID_RE, listRecentSessions } from "../lib/recent-sessions"
+import { shellNetworkRefusal } from "../lib/terminal-bridge"
 import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
@@ -184,7 +185,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell"; resume?: string }
     const cwd = (body.cwd ?? "").trim()
     if (!cwd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
-    if (body.agent === "shell") return spawnShell(cwd, body.resume)
+    if (body.agent === "shell") return shellNetworkRefusal(req) ?? spawnShell(cwd, body.resume)
     const agent: SpawnAgent =
       body.agent === "codex" || body.agent === "kimi" ? body.agent : "claude"
 

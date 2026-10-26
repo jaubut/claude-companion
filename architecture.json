@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 143,
+          "lines": 146,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -80,6 +80,7 @@
             "lib/apns.ts",
             "lib/discover.ts",
             "lib/shell-sessions.ts",
+            "lib/sessions.ts",
             "lib/terminal-bridge.ts",
             "wiring/shell-sessions.ts"
           ],
@@ -3849,7 +3850,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 214,
+          "lines": 287,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -3868,6 +3869,12 @@
             "getShellSession",
             "onShellSessions",
             "wireSessions",
+            "ProcTable",
+            "AgentRef",
+            "parseProcTable",
+            "readProcTable",
+            "descends",
+            "linkClaude",
             "SHELL_POLL_MS",
             "startShellPoll"
           ],
@@ -4305,10 +4312,11 @@
         },
         {
           "path": "lib/terminal-bridge.ts",
-          "lines": 142,
+          "lines": 153,
           "kind": "lib",
           "exports": [
             "TERMINAL_PATH",
+            "shellNetworkRefusal",
             "TERMINAL_ENDED",
             "TerminalSize",
             "MAX_ATTACHES_PER_KEY",
@@ -4332,7 +4340,8 @@
           "apiCalls": [],
           "imports": [
             "lib/tmux-pane.ts",
-            "lib/shell-sessions.ts"
+            "lib/shell-sessions.ts",
+            "lib/vault-guard.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5219,7 +5228,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 499,
+          "lines": 500,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -5353,6 +5362,7 @@
             "lib/vault-guard.ts",
             "lib/spawn-session.ts",
             "lib/recent-sessions.ts",
+            "lib/terminal-bridge.ts",
             "lib/shell-sessions.ts",
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
@@ -7293,6 +7303,23 @@
             "companion-server.ts"
           ]
         },
+        "listSessions": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "companion-server.ts",
+            "lib/codex-feed.ts",
+            "lib/session-resolve.ts",
+            "routes/api.ts#* /api/status",
+            "routes/api.ts#* /api/feed",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/canvas.ts",
+            "wiring/dialogs.ts",
+            "wiring/orchestrator.ts",
+            "wiring/shell-sessions.ts",
+            "ws.ts"
+          ]
+        },
         "startShellPoll": {
           "module": "lib/shell-sessions.ts",
           "callers": [
@@ -7377,6 +7404,13 @@
             "lib/vault-guard.ts",
             "routes/records.ts",
             "routes/vault.ts"
+          ]
+        },
+        "shellNetworkRefusal": {
+          "module": "lib/terminal-bridge.ts",
+          "callers": [
+            "companion-server.ts#* /ws",
+            "routes/api.ts#POST /api/spawn-session"
           ]
         },
         "getShellSession": {
@@ -8394,22 +8428,6 @@
           "callers": [
             "lib/codex-feed.ts",
             "wiring/events.ts"
-          ]
-        },
-        "listSessions": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "lib/codex-feed.ts",
-            "lib/session-resolve.ts",
-            "routes/api.ts#* /api/status",
-            "routes/api.ts#* /api/feed",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/session-end",
-            "wiring/canvas.ts",
-            "wiring/dialogs.ts",
-            "wiring/orchestrator.ts",
-            "wiring/shell-sessions.ts",
-            "ws.ts"
           ]
         },
         "ANSI_PATTERN": {
@@ -11072,6 +11090,25 @@
             "lib/tasks-agent.ts"
           ]
         },
+        "peerOf": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/terminal-bridge.ts",
+            "routes/copy-jobs.ts#POST /hooks/copy-progress",
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/hooks.ts#POST /hooks/dispatch-event",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
+        "clientOrigin": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/terminal-bridge.ts",
+            "routes/records.ts",
+            "routes/vault.ts"
+          ]
+        },
         "ShellSession": {
           "module": "lib/shell-sessions.ts",
           "callers": [
@@ -12276,16 +12313,6 @@
             "routes/command.ts#POST /api/command/list"
           ]
         },
-        "peerOf": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/copy-jobs.ts#POST /hooks/copy-progress",
-            "routes/gauge.ts#POST /hooks/gauge",
-            "routes/hooks.ts#POST /hooks/dispatch-event",
-            "routes/records.ts",
-            "routes/vault.ts"
-          ]
-        },
         "isLoopback": {
           "module": "lib/vault-guard.ts",
           "callers": [
@@ -12972,13 +12999,6 @@
           "module": "lib/records-store.ts",
           "callers": [
             "routes/records.ts"
-          ]
-        },
-        "clientOrigin": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/records.ts",
-            "routes/vault.ts"
           ]
         },
         "listRecords": {

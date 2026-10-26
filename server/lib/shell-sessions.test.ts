@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  SHELL_OPTION, createShellStore, getShellSession, listShellSessions, loginShell, parseShellList,
+  SHELL_OPTION, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, loginShell, parseShellList,
   shellNewSessionArgv, shellWire, spawnShellSession, store, wireSessions, type ShellSession,
 } from "./shell-sessions"
 import { resolveSpawnCwd } from "./spawn-session"
@@ -43,7 +43,7 @@ test("parseShellList keeps only tagged sessions, oldest first, times in ms", () 
     "",
   ].join("\n"), "/tmp/tmux-501/cc")
   expect(out.map((s) => s.key)).toEqual(["shell:sh-a", "shell:sh-b"])
-  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000 })
+  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000, panePid: 0, claudeKey: "" })
 })
 
 test("parseShellList: tmux's own socket_path wins over the fallback", () => {
@@ -51,7 +51,7 @@ test("parseShellList: tmux's own socket_path wins over the fallback", () => {
   expect(out.map((s) => s.tmuxSocket)).toEqual(["/private/tmp/tmux-501/default", "/fallback"])
 })
 
-const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", createdAt: 1 }
+const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", createdAt: 1, panePid: 0, claudeKey: "" }
 
 test("store emits on a real change only: added, cd'd, removed", () => {
   const s = createShellStore()
@@ -95,7 +95,7 @@ function fakeTmux(opts: { which?: string | null; alive?: boolean; tagFails?: boo
       if (has("has-session")) return { code: created && (opts.alive ?? true) && argv.includes(`=${created}`) ? 0 : 1, stdout: "", stderr: "" }
       if (has("display-message")) return { code: 0, stdout: "0\n", stderr: "" }
       if (has("set-option") && has(SHELL_OPTION)) { tagged = !opts.tagFails; return { code: opts.tagFails ? 1 : 0, stdout: "", stderr: opts.tagFails ? "no such session" : "" } }
-      if (has("list-sessions")) return { code: 0, stdout: tagged ? `${created}\t1\t%42\t/x/repo\t1700000000\n` : "", stderr: "" }
+      if (has("list-sessions")) return { code: 0, stdout: tagged ? `${created}\t1\t%42\t/x/repo\t1700000000\t/tmp/tmux-501/default\t4242\n` : "", stderr: "" }
       return { code: 0, stdout: "", stderr: "" }
     },
   }
@@ -164,4 +164,52 @@ test("resolveSpawnCwd: required, absolute, existing, a directory", () => {
   expect(resolveSpawnCwd(join(dir, "nope"))).toEqual({ error: `cwd does not exist: ${join(dir, "nope")}` })
   expect(resolveSpawnCwd(file)).toEqual({ error: `cwd is not a directory: ${file}` })
   expect(resolveSpawnCwd(dir)).toEqual({ dir })
+})
+
+// ── Which Claude runs inside a shell (process ancestry, Moshi-style) ──
+
+// launchd(1) → tmux server(500) → zsh pane(600) → claude(700) → node child(701);
+// an unrelated claude(900) under another shell(800).
+const TABLE = parseProcTable(["  1     0", "500 1", "600 500", "700 600", "701 700", "800 500", "900 800", "junk"].join("\n"))
+const SHELL: ShellSession = { ...A, tmuxPane: "%4", tmuxSocket: "/tmp/tmux-501/default", panePid: 600 }
+
+test("parseProcTable / descends: walks parents, bounded, self counts", () => {
+  expect(TABLE.get(700)).toBe(600)
+  expect(descends(701, 600, TABLE)).toBe(true)
+  expect(descends(600, 600, TABLE)).toBe(true)
+  expect(descends(900, 600, TABLE)).toBe(false)
+  expect(descends(12345, 600, TABLE)).toBe(false)
+  const loop = parseProcTable("10 11\n11 10")
+  expect(descends(10, 600, loop)).toBe(false)
+})
+
+test("linkClaude: same pane AND a pid under the shell → linked", () => {
+  const [s] = linkClaude([SHELL], [{ key: "claude:x", pid: "700", tmuxPane: "%4", tmuxSocket: "/tmp/tmux-501/default" }], TABLE)
+  expect(s!.claudeKey).toBe("claude:x")
+})
+
+test("linkClaude: same pane but the pid is not under the shell (stale record, reused pane id) → not linked", () => {
+  const [s] = linkClaude([SHELL], [{ key: "claude:y", pid: "900", tmuxPane: "%4", tmuxSocket: "/tmp/tmux-501/default" }], TABLE)
+  expect(s!.claudeKey).toBe("")
+})
+
+test("linkClaude: a pid under the shell on another tmux server or pane → not linked (pane is the fast path)", () => {
+  const agents = [
+    { key: "claude:a", pid: "700", tmuxPane: "%4", tmuxSocket: "/tmp/tmux-501/cc" },
+    { key: "claude:b", pid: "700", tmuxPane: "%5", tmuxSocket: "/tmp/tmux-501/default" },
+  ]
+  expect(linkClaude([SHELL], agents, TABLE)[0]!.claudeKey).toBe("")
+})
+
+test("linkClaude: no pid, or no process table → the pane match decides", () => {
+  const agent = { key: "claude:x", pid: "", tmuxPane: "%4", tmuxSocket: "/tmp/tmux-501/default" }
+  expect(linkClaude([SHELL], [agent], TABLE)[0]!.claudeKey).toBe("claude:x")
+  expect(linkClaude([SHELL], [{ ...agent, pid: "900" }], null)[0]!.claudeKey).toBe("claude:x")
+})
+
+test("store: a link appearing or going is a change (re-sent to phones)", () => {
+  const s = createShellStore()
+  s.replace([SHELL])
+  expect(s.replace([{ ...SHELL, claudeKey: "claude:x" }])).toBe(true)
+  expect(s.replace([{ ...SHELL, claudeKey: "claude:x" }])).toBe(false)
 })

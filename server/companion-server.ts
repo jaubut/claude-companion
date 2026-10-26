@@ -31,7 +31,8 @@ import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
 import { getShellSession, startShellPoll } from "./lib/shell-sessions"
-import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize } from "./lib/terminal-bridge"
+import { listSessions } from "./lib/sessions"
+import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize, shellNetworkRefusal } from "./lib/terminal-bridge"
 import { attachCount } from "./wiring/shell-sessions"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
@@ -51,7 +52,7 @@ export function createCompanionServer(port: number) {
   disableAutoSelectFamily()
   // Shell sessions are read from tmux (lib/shell-sessions.ts): first read now,
   // then every few seconds so an `exit` reaches the phone.
-  startShellPoll()
+  startShellPoll(listSessions)
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
@@ -106,6 +107,8 @@ export function createCompanionServer(port: number) {
       // in the URL (URLs land in proxy and access logs).
       if (url.pathname === TERMINAL_PATH) {
         if (!checkBearerHeaderOnly(req)) return unauthorized()
+        const refused = shellNetworkRefusal(req)
+        if (refused) return refused
         const key = url.searchParams.get("key") ?? ""
         if (!getShellSession(key)) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
         const size = parseTerminalSize(url.searchParams.get("cols"), url.searchParams.get("rows"))

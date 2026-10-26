@@ -1,10 +1,11 @@
 import { test, expect } from "bun:test"
-import { TERMINAL_ENDED, openTerminal, parseTerminalSize, parseControl, terminalAttachArgv, terminalEnv, terminalSize, type PtySpawner } from "./terminal-bridge"
+import { TERMINAL_ENDED, openTerminal, parseTerminalSize, shellNetworkRefusal, parseControl, terminalAttachArgv, terminalEnv, terminalSize, type PtySpawner } from "./terminal-bridge"
 import type { ShellSession } from "./shell-sessions"
+import { recordPeer } from "./vault-guard"
 
 // The /api/terminal bridge: phone socket ↔ `tmux attach-session` under a PTY.
 
-const SHELL: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1 }
+const SHELL: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1, panePid: 0, claudeKey: "" }
 
 test("attach argv: exact-match session on the shell's own tmux server", () => {
   expect(terminalAttachArgv(SHELL)).toEqual(["tmux", "-S", "/tmp/tmux-501/cc", "attach-session", "-t", "=sh-a"])
@@ -102,4 +103,33 @@ test("upgrade size: integers in range only, else refused", () => {
   for (const [c, r] of [["19", "30"], ["501", "30"], ["50", "4"], ["50", "201"], ["5e1", "30"], ["-50", "30"], ["50.0", "30"], [null, "30"], ["50", ""], ["99999", "30"]] as const) {
     expect(parseTerminalSize(c, r)).toBeNull()
   }
+})
+
+// The vault's network rule (lib/vault-guard.ts clientOrigin) for shells.
+function from(peer: string, headers: Record<string, string> = {}): Request {
+  const req = new Request("http://host:4245/api/terminal", { headers })
+  recordPeer(req, peer)
+  return req
+}
+
+test("network gate: a LAN peer is refused 403 network_refused, even with a forged XFF", async () => {
+  for (const req of [from("192.168.2.40"), from("192.168.2.40", { "x-forwarded-for": "100.101.102.103" })]) {
+    const r = shellNetworkRefusal(req)
+    expect(r?.status).toBe(403)
+    expect(await r?.json()).toEqual({ ok: false, error: "network_refused" })
+  }
+})
+
+test("network gate: Funnel traffic through tailscale serve is refused", () => {
+  expect(shellNetworkRefusal(from("127.0.0.1", { "x-forwarded-for": "100.101.102.103", "tailscale-funnel-request": "?1" }))?.status).toBe(403)
+})
+
+test("network gate: tailscale serve (loopback + tailnet XFF), plain loopback and a direct 100.x peer pass", () => {
+  expect(shellNetworkRefusal(from("127.0.0.1", { "x-forwarded-for": "100.101.102.103" }))).toBeNull()
+  expect(shellNetworkRefusal(from("127.0.0.1"))).toBeNull()
+  expect(shellNetworkRefusal(from("100.88.1.2"))).toBeNull()
+})
+
+test("network gate: no recorded peer is refused", () => {
+  expect(shellNetworkRefusal(new Request("http://host/api/terminal"))?.status).toBe(403)
 })
