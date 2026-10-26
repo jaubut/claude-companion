@@ -37,10 +37,13 @@ import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize, shellNetworkRef
 import { attachCount } from "./wiring/shell-sessions"
 import { PANE_MIRROR_PATH, paneMirrorUpgrade } from "./lib/pane-mirror"
 import { mirrorViewerCount } from "./wiring/pane-mirror"
+import { ensureUtf8Locale } from "./lib/tmux-pane"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
 // finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
+ensureUtf8Locale()
+
 const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 // Above the 150 s upstream timeout the forwarding host waits on.
 const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200

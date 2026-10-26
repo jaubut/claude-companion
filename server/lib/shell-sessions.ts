@@ -115,7 +115,10 @@ export async function spawnShellSession(cwd: string, deps: DetachedDeps = realDe
   }
   const sessions = await readShellSessions(deps)
   const session = sessions.find((s) => s.name === name)
-  if (!session) return { ok: false, error: "session_exited" }
+  if (!session) {
+    await tmux("kill-session", "-t", `=${name}`)
+    return { ok: false, error: "session_exited" }
+  }
   // Links stand until the next poll re-checks them.
   const linked = new Map(store.list().map((s) => [s.key, s.claudeKey]))
   store.replace(sessions.map((s) => ({ ...s, claudeKey: linked.get(s.key) ?? "" })))
