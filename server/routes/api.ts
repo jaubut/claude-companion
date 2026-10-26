@@ -9,6 +9,8 @@ import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
 import { SESSION_ID_RE, listRecentSessions } from "../lib/recent-sessions"
 import { shellNetworkRefusal } from "../lib/terminal-bridge"
+import { checkoutForRepo, deliverSeed, parseSeed } from "../lib/spawn-seed"
+import { repoEntriesSafe } from "../lib/live-repo"
 import { deleteEnded, endedStore, resumeInPane } from "../lib/ended-sessions"
 import { herdrGatedKey, herdrGatedText } from "../lib/herdr"
 import { keyGate } from "../lib/key-gate"
@@ -185,8 +187,17 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Spawn a fresh Claude/Codex session (or a plain shell) from the phone ──
   if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell"; resume?: string }
-    const cwd = (body.cwd ?? "").trim()
+    const body = await req.json() as { cwd?: string; repo?: unknown; seed?: unknown; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell"; resume?: string }
+    // `repo` (a GitHub / map name) instead of a cwd: this host's checkout, or
+    // 409 no_checkout so the phone tries its other host. `seed`: lib/spawn-seed.ts.
+    if (body.agent === "shell" && (body.seed !== undefined || body.repo !== undefined)) return Response.json({ ok: false, error: "agent_only" }, { status: 400 })
+    const seed = parseSeed(body.seed)
+    if (!seed.ok) return Response.json({ ok: false, error: seed.error }, { status: 400 })
+    const repo = typeof body.repo === "string" ? body.repo.trim() : ""
+    if (body.repo !== undefined && !/^[A-Za-z0-9._-]{1,100}$/.test(repo)) return Response.json({ ok: false, error: "bad_repo" }, { status: 400 })
+    const fromRepo = repo ? checkoutForRepo(repo, repoEntriesSafe()) : null
+    if (repo && !fromRepo) return Response.json({ ok: false, error: "no_checkout", repo }, { status: 409 })
+    const cwd = fromRepo ?? (body.cwd ?? "").trim()
     if (!cwd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
     if (body.agent === "shell") return shellNetworkRefusal(req) ?? spawnShell(cwd, body.resume)
     const agent: SpawnAgent =
@@ -207,7 +218,22 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       companionLog(`${red}spawn failed${reset} — ${result.error}`)
       return Response.json({ ok: false, error: result.error }, { status: 400 })
     }
-    return Response.json({ ok: true, app: result.app, cwd, agent })
+    // Typed in the background once the session registers; only a herdr pane can be matched.
+    const seeded = !seed.seed ? undefined : !result.herdrPane ? "unsupported" : "pending"
+    if (seed.seed && result.herdrPane) {
+      const pane = result.herdrPane, text = seed.seed
+      void deliverSeed(pane, text, {
+        find: (p) => listSessions().find((s) => s.herdrPane === p),
+        inject: async (t, key) => {
+          const r = await deliverInject(t, key)
+          const j = await r.json().catch(() => ({})) as { error?: string }
+          return { ok: r.ok, error: j.error }
+        },
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        now: Date.now,
+      }).then((out) => companionLog(`${cyan}spawn seed${reset} ${pane}: ${out}`))
+    }
+    return Response.json({ ok: true, app: result.app, cwd, agent, ...(seeded ? { seed: seeded } : {}) })
   }
 
   // ── Resume an ended session in its own herdr pane (lib/ended-sessions.ts) ──
