@@ -1,4 +1,5 @@
 import { inputLine, parseCommandMenu, suggestRefusal, unstyle } from "../lib/command-menu"
+import { getShellSession } from "../lib/shell-sessions"
 import { companionLog } from "../lib/log"
 import { commandLister } from "../lib/command-offpane-cache"
 import { beginFlow, endFlow } from "../lib/command-scrape"
@@ -185,7 +186,12 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
   if (url.pathname === "/api/command/list" && req.method === "POST") {
     const body = await req.json().catch(() => ({})) as { key?: string; force?: boolean }
     const key = (body.key ?? "").trim()
-    const session = key ? resolveSession(key) : null
+    // A terminal (lib/shell-sessions.ts) has no claude yet; its list is the
+    // one claude would have in the shell's folder (the terminal's palette).
+    const shell = key ? getShellSession(key) : undefined
+    const session = shell
+      ? { key: shell.key, cwd: shell.cwd, label: shell.name, agent: "claude" as const }
+      : key ? resolveSession(key) : null
     if (!session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
     const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"

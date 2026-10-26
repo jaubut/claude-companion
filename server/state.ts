@@ -18,6 +18,9 @@ export interface WsData {
     origin: { transport: string; peer: string; device_claimed: string }
     refusal?: { status: number; error: string; message: string }
   }
+  // Set on a /api/terminal socket (lib/terminal-bridge.ts): the shell session
+  // it attaches and the phone's size. Such a socket is never in `clients`.
+  terminal?: { key: string; cols: number; rows: number }
 }
 
 // Where a phone-side request came from, for the resolve/answer audit log.
