@@ -135,9 +135,27 @@ never re-announces. Blocked / PR transitions push (category `dispatch_task`,
 | `GET /api/orchestrator/task/<id>` | `{ok, task, description, result?:{ref,title,excerpt(≤4000)}, activity:[{action,summary,ts}](≤20)}`; 404 `no such task` |
 | `POST /api/orchestrator/channels/<id>/link` `{noteId: string\|null}` | `{ok, channel}`; 409 `note_linked_elsewhere`; 404 unknown channel/note; 400 bad body or system channel |
 | `GET /api/orchestrator/projects[?fresh=1]` | `{projects:[{noteId, ref, title, openAgentTasks}]}`, active `projects/` notes, 5-min cache |
+| `GET /api/orchestrator/pipeline` | `{items:[PipelineItem], generatedAt}` (epoch ms), see [Pipeline list](#pipeline-list) |
 | `POST /hooks/dispatch-event` `{taskId?}` | 202 `{ok:true, polled:bool}`; a nudge inside 2 s arms one trailing poll. Loopback peer (dispatch.sh → 127.0.0.1) needs no header; any other peer needs the bearer, else 403 |
 
 Errors: any Turso failure → 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
+
+## Pipeline list
+
+`GET /api/orchestrator/pipeline` (one work stream, slice D; `server/lib/pipeline.ts`) is one list of agent tasks with ONE state each. It reads Turso on every call, not the poller cache. It returns the same rows as the poller: `assignee LIKE 'agent:%'`, open, or touched in the last 7 days, newest first, at most 300. The PR shepherd verdict comes from the `pr:*` / `outcome:merged` ledger, the same one the [pipeline stage](#pipeline-stage) uses.
+
+`PipelineItem = {id, title, agent, noteId, state, prUrl, shepherd, updatedAt, approveUrl?}`
+
+| tasks row | `state` |
+|---|---|
+| `pending` | `pending_approval` + `approveUrl` (dashboard `/tasks?task=<id>`, the release stamp) |
+| `queued` | `queued` |
+| `running` | `running` |
+| `completed` + PR not merged (stage `shepherd`) | `pr_open` + `shepherd` `{ci, review, parked, parkedReason?}` |
+| `completed` + PR merged (`outcome:merged`, or done=1 and never parked), or `completed` without a PR | `merged` |
+| `blocked` / `failed` / `cancelled` | the same name |
+
+`shepherd` is null except on `pr_open`. A row with an unknown `dispatch_status` is left out. The endpoint is read-only. The dashboard stamp stays the only way to approve.
 
 ## Write path (P2)
 

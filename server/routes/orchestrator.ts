@@ -21,6 +21,7 @@ import {
   cancelDispatchTask, fileTask, getDispatchTask, getNote, getTaskActivity, getTaskResult,
   newDispatchId, requeueTask, resolveAgent, toTaskDto, unblockTask,
 } from "../lib/dispatch-tasks"
+import { listPipeline } from "../lib/pipeline"
 import { approveProposal, filedStatus, rejectProposal } from "../wiring/proposals"
 import { frontDoor } from "../wiring/front-door"
 import { withIdempotency } from "../lib/idempotency"
@@ -327,6 +328,15 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
   if (url.pathname === "/api/orchestrator/projects" && req.method === "GET") {
     try {
       return Response.json({ projects: await dispatch.projects(url.searchParams.get("fresh") === "1") })
+    } catch (err) {
+      return unreachable(err)
+    }
+  }
+  if (url.pathname === "/api/orchestrator/pipeline" && req.method === "GET") {
+    // One pipeline list (one-stream slice D): read from Turso on every call, never the poller cache.
+    try {
+      const now = Date.now()
+      return Response.json({ items: await listPipeline(dispatch.query, await dispatch.columns(), now), generatedAt: now })
     } catch (err) {
       return unreachable(err)
     }
