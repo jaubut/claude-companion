@@ -1,17 +1,16 @@
 import { companionLog } from "../lib/log"
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
-import { keyGate, runTmux } from "../lib/key-gate"
 import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
 import { resolveSession } from "../lib/sessions"
-import { type PaneRef, paneKey, paneRefOf, sendKeysArgs } from "../lib/tmux-pane"
+import { type SessionPane, sessionPaneOf } from "../lib/session-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 
 // Model control routes (PRJ-OR1T Phase 14, gap-table A1·A2·A3).
 //
 // Two calls: `open` puts the picker up and hands back the real list, `set`
-// drives it. Both go through the tmux pane the same way lib/dialogs.ts already
-// does; see lib/model-control.ts for why the picker is driven rather than
+// drives it. Both go through the session's pane (tmux, else herdr:
+// lib/session-pane.ts) the same way lib/dialogs.ts already does; see lib/model-control.ts for why the picker is driven rather than
 // `/model <id>` sent as text.
 
 // How long to wait for the pane to reach the state we asked for, and how often
@@ -33,20 +32,14 @@ const KEY_GAP_MS = 40        // same gap /api/dialog/pick uses between keys
 // are relative to wherever the cursor currently sits.
 const inFlight = new Set<string>()
 
-async function sendKey(ref: PaneRef, key: string): Promise<boolean> {
+function sendKey(pane: SessionPane, key: string): Promise<boolean> {
   // A named key goes as-is; a single character goes literal, so "s" is typed
-  // rather than interpreted. Same split as /api/dialog/key.
+  // rather than interpreted. Same split as /api/dialog/key. Both ride the
+  // shared per-pane gate (lib/key-gate.ts): /api/model/cancel's Escape holds
+  // off every other sender for its chord window, and a cancel arriving just
+  // after a phone's Escape waits its turn too.
   const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(key)
-  const args = named ? sendKeysArgs(ref, key) : sendKeysArgs(ref, "-l", key)
-  try {
-    // Through the shared per-pane gate (lib/key-gate.ts): /api/model/cancel's
-    // Escape holds off every other sender for its chord window, and a cancel
-    // arriving just after a phone's Escape waits its turn too.
-    await keyGate.send(paneKey(ref.pane, ref.socket), key, (signal) => runTmux(args, signal))
-    return true
-  } catch {
-    return false
-  }
+  return named ? pane.key(key) : pane.literal(key)
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -85,7 +78,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
       log(`open refused — ${refusal.error} (${session?.label || session?.key || key})`)
       return Response.json({ ok: false, ...refusal }, { status: 409 })
     }
-    const pane = paneRefOf(session)!
+    const pane = sessionPaneOf(session)!
 
     if (inFlight.has(session!.key)) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
@@ -93,8 +86,16 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     inFlight.add(session!.key)
     try {
       // Already open (the user opened it, or a previous call left it up):
-      // don't send /model again, that would type into the picker.
+      // don't send /model again, that would type into the picker. Read the
+      // pane now rather than trust the watcher's last tick (up to 2 s old):
+      // "/model" + Enter typed into a picker that IS open confirms its
+      // cursor row and saves it as the default for new sessions.
+      await dialogWatcher.refresh(session!.key)
       let dialog = dialogWatcher.current()[session!.key]
+      if (dialog && !isModelPicker(dialog)) {
+        log(`open refused — other_dialog (${session!.label || session!.key})`)
+        return Response.json({ ok: false, error: "other_dialog" }, { status: 409 })
+      }
       if (!isModelPicker(dialog)) {
         await sendKey(pane, "/model")  // literal, then Enter
         await sendKey(pane, "Enter")
@@ -125,7 +126,8 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     if (typeof index !== "number") return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
 
     const session = key ? resolveSession(key) : null
-    if (!session?.tmuxPane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
+    const pane = sessionPaneOf(session)
+    if (!session || !pane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
 
     if (inFlight.has(session.key)) {
       return Response.json({ ok: false, error: "busy_flow" }, { status: 409 })
@@ -148,7 +150,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
       }
       const chosen = choicesFrom(dialog!)[index]
       for (const k of keys) {
-        if (!await sendKey(paneRefOf(session)!, k)) {
+        if (!await sendKey(pane, k)) {
           return Response.json({ ok: false, error: "send_failed" }, { status: 500 })
         }
         await sleep(KEY_GAP_MS)
@@ -181,10 +183,13 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const body = await req.json().catch(() => ({})) as { key?: string }
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
-    if (!session?.tmuxPane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
+    const pane = sessionPaneOf(session)
+    if (!session || !pane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
+    // Fresh read, same reason as open: a stale "no picker" would leave one up.
+    await dialogWatcher.refresh(session.key)
     const dialog = dialogWatcher.current()[session.key]
     if (!isModelPicker(dialog)) return Response.json({ ok: true, closed: false })
-    await sendKey(paneRefOf(session)!, "Escape")
+    await sendKey(pane, "Escape")
     // Escape is a meta-chord prefix (ESC_SETTLE_MS, lib/command-list.ts): the
     // next byte inside this window is read as opt+<byte>, the Escape never
     // fires, and the picker the caller thinks it just closed is still up. The

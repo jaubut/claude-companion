@@ -38,7 +38,11 @@ export interface Dialog {
 const CURSOR_RE = /^\s*(?:❯|›|>)\s+(.*)$/
 const HINT_FOOTER_RE = /\b(?:Enter|Esc|Tab|Space)\b[^·\n]*\bto\b|↑\/↓|←\/→|Arrow keys/
 const MORE_RE = /^\s*(?:↓\s*\d+\s+more\s+below|…\s*\+\d+\s+\w+|↓ .*more.*)\s*$/
-const DIVIDER_RE = /^[\s▔─━═]{8,}$/
+// A rule, plain or with a label set into it: Claude Code 2.1.310 draws the
+// effort badge inside the picker's top rule for a few seconds after a /model
+// pick ("▔▔▔…▔ ◐ medium · /effort ▔"). Missing it opened the dialog at the top
+// of the screen, old "❯ /model" prompts and all.
+const DIVIDER_RE = /^[\s▔─━═]{8,}$|^\s*[▔─━═]{8,}.*[▔─━═]\s*$/
 const INPUT_PROMPT_RE = /^\s*❯\s*(?:Try\s+".*")?\s*$/
 
 const KEY_NAMES: Record<string, string> = {

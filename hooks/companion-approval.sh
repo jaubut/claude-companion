@@ -14,7 +14,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Headless claude -p (dispatch worker, shepherd fix/cascade, PR review, nightly crons): no one can answer, so fall through now (same as server down).
 [ "${DISPATCH_HEADLESS:-}" = 1 ] && exit 0
 
-COMPANION_URL="http://localhost:4245"
+COMPANION_URL="${COMPANION_URL:-http://localhost:4245}"
 
 if ! curl -s --max-time 1 "$COMPANION_URL/health" > /dev/null 2>&1; then
   exit 0
@@ -25,15 +25,7 @@ TTY=$(companion_find_tty)
 AGENT_PID=$(companion_find_agent_pid)
 companion_headers
 
-call_server() {
-  curl -s --max-time 295 \
-    -X POST "$COMPANION_URL/hooks/pre-tool-use" \
-    -H "Content-Type: application/json" \
-    "${COMPANION_HDRS[@]}" \
-    -d "$INPUT" 2>/dev/null
-}
-
-RESPONSE=$(call_server)
+companion_long_poll /hooks/pre-tool-use
 curl_exit=$?
 
 # Transport-level failure (server restart killed the connection) → wait up
@@ -46,7 +38,7 @@ curl_exit=$?
 if [ $curl_exit -ne 0 ] && [ $curl_exit -ne 28 ]; then
   for i in 1 2 3 4 5 6 7 8 9 10; do
     if curl -s --max-time 1 "$COMPANION_URL/health" > /dev/null 2>&1; then
-      RESPONSE=$(call_server)
+      companion_long_poll /hooks/pre-tool-use
       break
     fi
     sleep 1

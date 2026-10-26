@@ -1,5 +1,6 @@
 import type { Dialog, DialogItem } from "./dialogs"
 import type { Session } from "./sessions"
+import { herdrPaneOf } from "./herdr"
 
 // Model control (PRJ-OR1T Phase 14, gap-table rows A1·A2·A3).
 //
@@ -47,7 +48,7 @@ export interface ModelChoice {
 export type ModelScope = "session" | "default"
 
 export type ModelRefusalCode =
-  | "no_pane"        // the session isn't in tmux, so nothing can be driven
+  | "no_pane"        // neither a tmux nor a herdr pane, so nothing can be driven
   | "busy"           // mid-turn: opening a picker would interrupt the user
   | "other_dialog"   // some other dialog is up; don't stack on it
   | "not_a_picker"   // the pane has something open that isn't the model picker
@@ -91,7 +92,7 @@ export function confirmKeyFor(dialog: Dialog, scope: ModelScope): string | null 
 // a model picker that is ALREADY open is not a refusal — it is the thing we
 // were about to open.
 export function openRefusal(session: Session | null, dialog: Dialog | null | undefined): ModelRefusal | null {
-  if (!session?.tmuxPane) return { error: "no_pane" }
+  if (!session || (!session.tmuxPane && !herdrPaneOf(session))) return { error: "no_pane" }
   if (dialog && !isModelPicker(dialog)) return { error: "other_dialog" }
   // Claude Code's own status: "busy" while a turn runs. A session with no
   // status file (older CLI) reports "" — treat that as free rather than
