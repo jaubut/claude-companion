@@ -6,6 +6,17 @@ import { realpathSync } from "node:fs"
 import { readdir, realpath } from "node:fs/promises"
 import { join } from "node:path"
 
+// tmux prints a format's tab separators as "_" unless the client's locale
+// (LC_ALL, else LC_CTYPE, else LANG) names UTF-8. launchd starts the Mac
+// server with none of them, so every `-F` list split on "\t" came back as
+// one field. Set once at startup; an existing UTF-8 locale is left alone.
+export function ensureUtf8Locale(env: Record<string, string | undefined> = process.env): void {
+  const current = env.LC_ALL || env.LC_CTYPE || env.LANG || ""
+  if (/utf-?8/i.test(current)) return
+  env.LC_CTYPE = "UTF-8"
+  delete env.LC_ALL
+}
+
 // ── Which tmux server ────────────────────────────────────────────────────
 //
 // A pane id (%N) is only unique WITHIN one tmux server. Sessions launched on

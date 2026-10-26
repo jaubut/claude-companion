@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 163,
+          "lines": 166,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -85,7 +85,8 @@
             "lib/terminal-bridge.ts",
             "wiring/shell-sessions.ts",
             "lib/pane-mirror.ts",
-            "wiring/pane-mirror.ts"
+            "wiring/pane-mirror.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4484,9 +4485,10 @@
         },
         {
           "path": "lib/tmux-pane.ts",
-          "lines": 316,
+          "lines": 327,
           "kind": "lib",
           "exports": [
+            "ensureUtf8Locale",
             "tmuxSocketFromEnv",
             "tmuxSocketFlags",
             "tmuxArgv",
@@ -7374,6 +7376,12 @@
         }
       ],
       "fanIn": {
+        "ensureUtf8Locale": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "createTasksAgentRoute": {
           "module": "routes/tasks-agent.ts",
           "callers": [

@@ -45,8 +45,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/resolver.ts` | 334 | lib | 13 |  |
+| `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `lib/herdr.ts` | 324 | lib | 25 | state: let clientMod, spawnedAgents: Map |
-| `lib/tmux-pane.ts` | 316 | lib | 24 |  |
 | `lib/canvas.ts` | 315 | lib | 24 | state: BLOCKING: Set |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
@@ -118,7 +118,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/body-agent.ts` | 171 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
-| `companion-server.ts` | 163 | route-host | 1 | routes: 5 |
+| `companion-server.ts` | 166 | route-host | 1 | routes: 5 |
 | `lib/orchestrator-channels.ts` | 158 | lib | 13 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
