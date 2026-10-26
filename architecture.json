@@ -2638,6 +2638,31 @@
           "externals": []
         },
         {
+          "path": "lib/pipeline.ts",
+          "lines": 67,
+          "kind": "lib",
+          "exports": [
+            "PipelineState",
+            "PipelineItem",
+            "pipelineState",
+            "pipelineItem",
+            "listPipeline"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/dispatch-stage.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/project-catalog.ts",
           "lines": 156,
           "kind": "lib",
@@ -5919,7 +5944,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 384,
+          "lines": 394,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -5957,6 +5982,11 @@
             },
             {
               "method": "GET",
+              "path": "/api/orchestrator/pipeline",
+              "prefix": false
+            },
+            {
+              "method": "GET",
               "path": "/api/orchestrator/task/",
               "prefix": true
             },
@@ -5988,6 +6018,7 @@
             "lib/orchestrator-channels.ts",
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
+            "lib/pipeline.ts",
             "wiring/proposals.ts",
             "wiring/front-door.ts",
             "lib/idempotency.ts",
@@ -8280,6 +8311,7 @@
             "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
+            "lib/pipeline.ts",
             "lib/tasks-agent-row.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
@@ -8300,6 +8332,7 @@
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
+            "lib/pipeline.ts",
             "lib/tasks-agent-chat.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
@@ -8805,6 +8838,7 @@
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-stage.ts",
+            "lib/pipeline.ts",
             "lib/status-answer.ts",
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
@@ -8822,6 +8856,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/pipeline.ts",
             "lib/triage-sources.ts"
           ]
         },
@@ -8867,6 +8902,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/pipeline.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -8925,19 +8961,22 @@
         "ledger": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "lib/pipeline.ts"
           ]
         },
         "stageFields": {
           "module": "lib/dispatch-stage.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "lib/pipeline.ts"
           ]
         },
         "listPrLedger": {
           "module": "lib/dispatch-stage.ts",
           "callers": [
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "lib/pipeline.ts"
           ]
         },
         "NEEDS_HUMAN": {
@@ -9587,6 +9626,27 @@
           "module": "lib/command-list.ts",
           "callers": [
             "lib/pane-clean.ts"
+          ]
+        },
+        "ShepherdState": {
+          "module": "lib/dispatch-stage.ts",
+          "callers": [
+            "lib/pipeline.ts"
+          ]
+        },
+        "approveUrl": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/pipeline.ts",
+            "wiring/body-agent.ts",
+            "wiring/proposals.ts",
+            "wiring/repo-view.ts"
+          ]
+        },
+        "TaskStage": {
+          "module": "lib/dispatch-stage.ts",
+          "callers": [
+            "lib/pipeline.ts"
           ]
         },
         "RepoEntry": {
@@ -12840,6 +12900,12 @@
             "routes/orchestrator.ts"
           ]
         },
+        "listPipeline": {
+          "module": "lib/pipeline.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/pipeline"
+          ]
+        },
         "frontDoor": {
           "module": "wiring/front-door.ts",
           "callers": [
@@ -13358,14 +13424,6 @@
           "module": "lib/body-investigate.ts",
           "callers": [
             "wiring/body-agent.ts"
-          ]
-        },
-        "approveUrl": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "wiring/body-agent.ts",
-            "wiring/proposals.ts",
-            "wiring/repo-view.ts"
           ]
         },
         "BodyInvestigator": {
