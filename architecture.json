@@ -3923,6 +3923,7 @@
             "transcriptPath",
             "TranscriptEntry",
             "userText",
+            "findTranscript",
             "titleFromTranscript",
             "resolveTitle"
           ],
@@ -4607,8 +4608,36 @@
           "externals": []
         },
         {
+          "path": "lib/transcript-backfill.ts",
+          "lines": 119,
+          "kind": "lib",
+          "exports": [
+            "HISTORY_MAX",
+            "HistorySession",
+            "eventsFromTranscript",
+            "historyRows",
+            "historyFor"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feed.ts",
+            "lib/recent-sessions.ts",
+            "lib/session-titles.ts",
+            "lib/tool-format.ts",
+            "lib/transcript.ts",
+            "lib/transcript-cursor.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/transcript-cursor.ts",
-          "lines": 173,
+          "lines": 189,
           "kind": "lib",
           "exports": [
             "ToolUses",
@@ -4622,7 +4651,8 @@
             "LineAt",
             "lineExpectation",
             "lineMatches",
-            "lastPastedUserIdx"
+            "lastPastedUserIdx",
+            "readTailLines"
           ],
           "state": [
             "cursors: WeakMap"
@@ -4638,7 +4668,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 599,
+          "lines": 590,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -4652,6 +4682,7 @@
             "forgetStates",
             "ReadOpts",
             "readTranscriptDelta",
+            "THINKING_MAX",
             "reloadToolResultImage",
             "queueImage",
             "hashText"
@@ -5401,7 +5432,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 566,
+          "lines": 575,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -5505,6 +5536,11 @@
             },
             {
               "method": "GET",
+              "path": "/api/sessions/history",
+              "prefix": false
+            },
+            {
+              "method": "GET",
               "path": "/api/approvals/history",
               "prefix": false
             },
@@ -5555,6 +5591,7 @@
             "lib/super-auto.ts",
             "lib/learned-allow.ts",
             "lib/sessions.ts",
+            "lib/transcript-backfill.ts",
             "lib/activity.ts",
             "lib/feed.ts",
             "lib/push-tokens.ts",
@@ -7935,6 +7972,7 @@
             "lib/approval-history.ts",
             "lib/codex-feed.ts",
             "lib/question-hook.ts",
+            "lib/transcript-backfill.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "wiring/events.ts"
@@ -7945,6 +7983,7 @@
           "callers": [
             "lib/activity.ts",
             "lib/codex-feed.ts",
+            "lib/transcript-backfill.ts",
             "lib/transcript.ts"
           ]
         },
@@ -8697,6 +8736,7 @@
           "module": "lib/feed.ts",
           "callers": [
             "lib/codex-feed.ts",
+            "lib/transcript-backfill.ts",
             "wiring/events.ts"
           ]
         },
@@ -9325,6 +9365,7 @@
           "module": "lib/recent-sessions.ts",
           "callers": [
             "lib/ended-sessions.ts",
+            "lib/transcript-backfill.ts",
             "routes/api.ts#* /api/feed"
           ]
         },
@@ -9917,6 +9958,7 @@
           "module": "lib/session-titles.ts",
           "callers": [
             "lib/orphan-question.ts",
+            "lib/transcript-backfill.ts",
             "wiring/auto-compact.ts",
             "wiring/events.ts"
           ]
@@ -11038,6 +11080,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/session-resolve.ts",
+            "routes/api.ts#GET /api/sessions/history",
             "wiring/auto-compact.ts",
             "wiring/waiting.ts"
           ]
@@ -11483,6 +11526,40 @@
           "module": "lib/shell-sessions.ts",
           "callers": [
             "lib/terminal-bridge.ts"
+          ]
+        },
+        "readTailLines": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript-backfill.ts",
+            "lib/transcript.ts"
+          ]
+        },
+        "THINKING_MAX": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/transcript-backfill.ts"
+          ]
+        },
+        "getFeed": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/transcript-backfill.ts",
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "sessionRetention": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/transcript-backfill.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "findTranscript": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/transcript-backfill.ts"
           ]
         },
         "readAppended": {
@@ -12080,6 +12157,12 @@
             "routes/api.ts#GET /api/sessions/recent"
           ]
         },
+        "historyFor": {
+          "module": "lib/transcript-backfill.ts",
+          "callers": [
+            "routes/api.ts#GET /api/sessions/history"
+          ]
+        },
         "getPending": {
           "module": "lib/pty-manager.ts",
           "callers": [
@@ -12137,13 +12220,6 @@
           "callers": [
             "routes/api.ts#* /api/feed",
             "wiring/canvas.ts",
-            "ws.ts"
-          ]
-        },
-        "getFeed": {
-          "module": "lib/feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
             "ws.ts"
           ]
         },
@@ -14235,12 +14311,6 @@
           ]
         },
         "setFeedRetention": {
-          "module": "lib/feed.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "sessionRetention": {
           "module": "lib/feed.ts",
           "callers": [
             "wiring/events.ts"

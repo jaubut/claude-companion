@@ -85,7 +85,7 @@ export function userText(entry: TranscriptEntry): string | null {
 // The transcript for a session id: at the cwd-derived path, else wherever it
 // lives under the projects dir (a session that was started elsewhere, or
 // resumed into a different folder, keeps its file under the original dir).
-async function findTranscript(cwd: string, sessionId: string, projectsDir: string): Promise<string | null> {
+export async function findTranscript(cwd: string, sessionId: string, projectsDir = DEFAULT_PROJECTS_DIR): Promise<string | null> {
   const direct = transcriptPath(cwd, sessionId, projectsDir)
   try {
     await readFile(direct, { encoding: "utf-8", flag: "r" })
