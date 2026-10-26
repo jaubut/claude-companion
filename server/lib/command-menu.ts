@@ -1,3 +1,4 @@
+import type { CommandEntry } from "./command-list"
 import type { Session } from "./sessions"
 import type { Dialog } from "./dialogs"
 import { herdrPaneOf } from "./herdr"
@@ -48,7 +49,12 @@ const PROMPT_RE = /^❯[\s ]*(.*)$/
 // the same shape for the same reason.
 const PLACEHOLDER_RE = /^Try\s+".*"$/
 // "  /model                    Set the AI model for Claude Code (…)"
-const ROW_RE = /^ {1,3}(\/[A-Za-z0-9:_.-]+)( {2,})(.*)$/
+// Claude Code 2.1.310+ marks the highlighted row with a pointer and indents
+// the others to match:
+// "  ❯ /model                  Set the AI model …"
+// "    /mobile                 Show QR code …"
+// The pointer is never at column 0, so the prompt line ("❯ /mo") can't match.
+const ROW_RE = /^ {1,3}(?:❯[\s\u00a0]| {2})?(\/[A-Za-z0-9:_.-]+)( {2,})(.*)$/
 
 // ── Styled captures (`tmux capture-pane -e`) ────────────────────────────────
 //
@@ -195,7 +201,8 @@ export function parseCommandMenu(pane: string): CommandSuggestion[] {
     const line = lines[i] ?? ""
     const m = line.match(ROW_RE)
     if (m) {
-      descCol = (m[1]!.length + m[2]!.length + 1)
+      // One column left of where the description starts, row indent included.
+      descCol = line.length - m[3]!.length - 1
       out.push({ name: m[1]!, description: (m[3] ?? "").trim() })
       continue
     }
@@ -214,6 +221,17 @@ export function parseCommandMenu(pane: string): CommandSuggestion[] {
     if (line.trim()) descCol = -1
   }
   return out
+}
+
+// The fallback answer when the pane gives no menu: the session's whole
+// command list (the off-pane /help enumeration, /api/command/list) cut down
+// to the commands whose name starts with the prefix. Claude Code's own menu
+// also matches inside names and descriptions; this is the plain prefix half.
+export function suggestFromList(all: readonly CommandEntry[], prefix: string): CommandSuggestion[] {
+  const want = `/${prefix}`.toLowerCase()
+  return all
+    .filter((c) => c.name.toLowerCase().startsWith(want))
+    .map((c) => ({ name: c.name, description: c.description }))
 }
 
 // Whether the pane can be driven for a suggestion right now.
