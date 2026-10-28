@@ -4,7 +4,7 @@ import { createInvestigationStore } from "./body-investigate"
 import type { DispatchTask } from "./dispatch-tasks"
 import type { Task } from "./orchestrator-chat"
 import {
-  type SourceItem, type TriageItem, CONFLICT_MERGE_LABEL, PROBLEM_MAX, allowedActions, approvalSummary, buildItem, conflictPhrase, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
+  type SourceItem, type TriageItem, ANSWER_TEXT_MAX, CONFLICT_MERGE_LABEL, PROBLEM_MAX, allowedActions, approvalSummary, buildItem, conflictPhrase, fallbackPhrase, heuristicSeverity, orderItems, phrasePrompt, triageDigest, validatePhrase,
 } from "./triage"
 import { withAskOpus } from "./triage"
 import { APPROVAL_TTL_MS, APPROVED_MERGE, NEEDS_HUMAN, PR_SAFETY_NET_MS, bodyComponentUrl, bodySources, latestProposals, parsePrUrl, prApprovals, prGone, prSources, proposalSource, taskSources } from "./triage-sources"
@@ -161,6 +161,16 @@ describe("phrasing", () => {
     // A failed task cannot be unblocked.
     const failed = taskSources([dtask({ status: "failed", blocker: "crashed" })], () => null)[0]!
     expect(validatePhrase(good([{ label: "a", action: { kind: "answer", text: "x" } }, { label: "b", action: { kind: "cancel" } }]), failed)).toBeNull()
+  })
+
+  test("an answer option keeps its full text up to ANSWER_MAX; above it the card is refused (fallback), never sliced", () => {
+    const long = `${"x".repeat(1996)} END`
+    const ph = validatePhrase(good([{ label: "Confirm", action: { kind: "answer", text: long } }, { label: "x", action: { kind: "cancel" } }]), blockedSrc())!
+    expect(ph.options[0]!.action).toEqual({ kind: "answer", text: long })
+    expect(validatePhrase(good([
+      { label: "Too long", action: { kind: "answer", text: "y".repeat(ANSWER_TEXT_MAX + 1) } },
+      { label: "Cancel", action: { kind: "cancel" } },
+    ]), blockedSrc())).toBeNull()
   })
 
   test("open_url always carries the source's own URL, never the model's", () => {

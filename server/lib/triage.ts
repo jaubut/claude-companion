@@ -145,7 +145,12 @@ export const DETAIL_MAX = 90
 export const PROBLEM_MAX = 280
 export const ACTION_MAX = 200
 export const CONTEXT_MAX = 300
-export const ANSWER_TEXT_MAX = 500
+/**
+ * Cap on a model-proposed unblock answer. Matches ANSWER_MAX (lib/dispatch-tasks.ts) so a card
+ * option can always be applied as is; longer text is refused, never sliced (a cut answer reads as
+ * a half approval to the worker — the 2026-10-15 3ffb5e70 incident was a 500-char slice here).
+ */
+export const ANSWER_TEXT_MAX = 4000
 export const SNOOZE_MAX_HOURS = 168
 export const INSTRUCTION_MAX = 500
 /** The generic "Ask Opus" option every non-mytask card carries while the resolver is on. */
@@ -238,7 +243,8 @@ function toAction(v: unknown, src: SourceItem, allowed: readonly ActionKind[]): 
   switch (kind) {
     case "answer": {
       const text = str(o.text)
-      return text ? { kind, text: text.slice(0, ANSWER_TEXT_MAX) } : null
+      // Over the cap → no option (answer_custom stays), never a shortened answer.
+      return text && text.length <= ANSWER_TEXT_MAX ? { kind, text } : null
     }
     case "open_url": return src.url ? { kind, url: src.url } : null
     case "snooze": {
