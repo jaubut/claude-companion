@@ -4065,7 +4065,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 610,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "Session",
@@ -4074,7 +4074,6 @@
             "setTitleResolver",
             "setSessionStatus",
             "setSessionModel",
-            "setSessionTaskId",
             "setSessionTitle",
             "WaitingSession",
             "setSessionWaiting",
@@ -9452,7 +9451,8 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-start"
+            "routes/hooks.ts#POST /hooks/session-start",
+            "wiring/brain.ts"
           ]
         },
         "seenKey": {
@@ -14562,12 +14562,6 @@
         },
         "spawnInHerdr": {
           "module": "lib/spawn-session.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "setSessionTaskId": {
-          "module": "lib/sessions.ts",
           "callers": [
             "wiring/brain.ts"
           ]

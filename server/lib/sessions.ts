@@ -330,16 +330,6 @@ export function setSessionModel(key: string, model: string): boolean {
   return true
 }
 
-// Tags a session the server itself spawned (the brain, found by its herdr pane)
-// when its SessionStart hook never arrived. Sticky like a header-borne taskId.
-export function setSessionTaskId(key: string, taskId: string): boolean {
-  const s = sessions.get(key)
-  if (!s || !taskId || s.taskId === taskId) return false
-  s.taskId = taskId
-  emit()
-  return true
-}
-
 export function setSessionTitle(key: string, title: string): void {
   const s = sessions.get(key)
   const t = title.trim()

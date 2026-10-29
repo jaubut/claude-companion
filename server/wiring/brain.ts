@@ -16,7 +16,7 @@ import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
 import { type Turn, appendTurn, createProposal, getTurn, setTurnCard } from "../lib/orchestrator-chat"
 import { ensureChannel } from "../lib/orchestrator-channels"
 import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
-import { type Session, getSessionByKey, listSessions, setSessionTaskId } from "../lib/sessions"
+import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
 import { type SpawnResult, spawnInHerdr } from "../lib/spawn-session"
 import { realHerdr } from "../lib/herdr"
 import { pushToAll } from "../lib/push"
@@ -466,7 +466,7 @@ export const brainWiring = createBrainWiring({
   stopAgent: stopBrainAgent,
   sessions: listSessions,
   sessionByKey: getSessionByKey,
-  tagBrain: (key) => setSessionTaskId(key, BRAIN_AGENT),
+  tagBrain: (key) => { const s = getSessionByKey(key); return !!s && recordSession({ ...s, taskId: BRAIN_AGENT })?.key === key },
   deliver: (text, key) => deliverFn ? deliverFn(text, key) : Promise.resolve(Response.json({ ok: false, error: "deliver_unavailable" }, { status: 503 })),
   broadcast,
   push: (payload) => { if (apnsConfigured()) void pushToAll(payload).catch(() => { /* best effort */ }) },
