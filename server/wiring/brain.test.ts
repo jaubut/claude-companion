@@ -51,6 +51,7 @@ interface Harness {
     resumes: Array<string | null>
     interrupts: number
     ctx?: number
+    query?: (args: unknown[]) => Array<Record<string, unknown>>
     /** Runs inside alive() / stopAgent(): lets a test flip the flag mid-tick. */
     duringAlive?: () => void
     duringStop?: () => void
@@ -80,7 +81,7 @@ function harness(): Harness {
     paused: { read: () => h.set.paused, write: (on) => { h.set.paused = on } },
     contextPct: () => h.set.ctx ?? null,
     compact: async () => true,
-    dispatch: {} as never,
+    dispatch: { query: async (_sql: string, args: unknown[]) => h.set.query?.(args) ?? [] } as never,
     host: "test",
     log: () => {},
   })
@@ -398,7 +399,10 @@ describe("phase 1.1", () => {
     await upBrain(h)
     h.set.ctx = 80
     h.set.now += 20 * 60_000
-    await h.w.tick() // idle 20 min at 80 % → /compact
+    await h.w.tick() // idle 20 min at 80 % → [flush] first
+    expect(h.delivered.at(-1)?.text.startsWith("[flush]")).toBe(true)
+    await h.w.onStop("sid-brain", "flushed") // memory written → /compact
+    expect(chat.getThread("brain").some((x) => x.text === "flushed")).toBe(false)
     h.w.enqueue(userTurn("p11 during compact"))
     await Bun.sleep(5)
     expect(h.set.interrupts).toBe(1)
@@ -413,9 +417,38 @@ describe("phase 1.1", () => {
     h.set.ctx = 80
     h.set.now += 20 * 60_000
     await h.w.tick()
+    await h.w.onStop("sid-brain", "flushed")
+    h.delivered.length = 0
     store.enqueueDelivery("p11-queued", h.set.now)
     await h.w.tick()
     expect(h.delivered.length).toBe(0)
     expect(h.set.interrupts).toBe(0)
+  })
+
+  test("Jeremie speaks during the flush: no compact, his turn goes in after it", async () => {
+    const h = harness()
+    h.set.now = Date.parse("2026-10-29T12:00:00")
+    store.setKv("last_rollover", "2026-10-29")
+    await upBrain(h)
+    h.set.ctx = 80
+    h.set.now += 20 * 60_000
+    await h.w.tick()
+    h.w.enqueue(userTurn("p11 during flush"))
+    await Bun.sleep(1)
+    expect(h.delivered.length).toBe(1) // held: the brain is busy flushing
+    await h.w.onStop("sid-brain", "flushed")
+    expect(h.delivered.at(-1)?.text).toContain("p11 during flush")
+    expect(h.set.interrupts).toBe(0)
+  })
+
+  test("the boot seed names the memory note found by its tag when none is remembered", async () => {
+    const h = harness()
+    h.set.query = (args) => (String(args[0]).includes("brain-memory") ? [{ ref_code: "RES-MEMO" }] : [])
+    await h.w.tick() // spawn → boot seed pending
+    h.set.alive = true
+    h.set.sessions = [session()]
+    await h.w.tick() // adopt → seed
+    expect(h.delivered[0]?.text).toContain("Read your memory note RES-MEMO")
+    expect(store.getKv("memory_ref")).toBe("RES-MEMO")
   })
 })

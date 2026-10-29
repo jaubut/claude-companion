@@ -15,9 +15,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/transcript.ts` | 590 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/spawn-session.ts` | 580 | lib | 21 |  |
+| `wiring/brain.ts` | 579 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `routes/api.ts` | 575 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 24 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
-| `wiring/brain.ts` | 547 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `routes/hooks.ts` | 546 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
@@ -123,6 +123,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
+| `lib/brain.ts` | 163 | lib | 34 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/terminal-bridge.ts` | 153 | lib | 17 |  |
@@ -132,7 +133,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/triage.ts` | 150 | lib | 2 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `routes/body.ts` | 149 | route-host | 3 | routes: 5 |
-| `lib/brain.ts` | 148 | lib | 31 |  |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
 | `lib/jev.ts` | 143 | lib | 16 |  |

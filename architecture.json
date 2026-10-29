@@ -940,7 +940,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 148,
+          "lines": 163,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -971,6 +971,9 @@
             "ROLLOVER_HOUR",
             "rolloverDue",
             "rolloverPrompt",
+            "MEMORY_MAX_CHARS",
+            "MEMORY_TAG",
+            "flushPrompt",
             "VOICE_CONSENT_MS",
             "ConsentTurn",
             "voiceConsent"
@@ -6773,7 +6776,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 547,
+          "lines": 579,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -14451,6 +14454,18 @@
           ]
         },
         "rolloverPrompt": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "MEMORY_TAG": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "flushPrompt": {
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain.ts"

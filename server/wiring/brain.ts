@@ -6,7 +6,7 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
+  BUSY_MAX_MS, MEMORY_TAG, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
 } from "../lib/brain"
 import {
   claimConsent, clearTyped, consentClaimed, enqueueDelivery, getKv, markDelivered, markMaybe,
@@ -94,10 +94,11 @@ export function createBrainWiring(deps: BrainDeps) {
   let busySince = 0
   let lastHookAt = 0
   let pendingSeed = false
-  let rolloverPending = false
   let lastActivity = deps.now()
   let compactedAt = 0
   let compacting = false
+  /** A control turn ([flush], [rollover]) is in flight: its reply is not a thread turn. */
+  let control: "flush" | "rollover" | null = null
   let lastReplyText = ""
   let timer: ReturnType<typeof setInterval> | null = null
   let ticking = false
@@ -179,6 +180,24 @@ export function createBrainWiring(deps: BrainDeps) {
     return "refused"
   }
 
+  /** The memory note's ref: remembered, else the newest note tagged brain-memory (then remembered). */
+  async function memoryRef(): Promise<string | null> {
+    const known = getKv("memory_ref")
+    if (known) return known
+    try {
+      const rows = await deps.dispatch.query(
+        "SELECT ref_code FROM notes WHERE folder = 'resources' AND tags LIKE ? ORDER BY updated_at DESC LIMIT 1",
+        [`%"${MEMORY_TAG}"%`],
+      )
+      const ref = rows[0]?.ref_code
+      if (typeof ref === "string" && ref) {
+        setKv("memory_ref", ref)
+        return ref
+      }
+    } catch { /* Turso unreachable: the brain looks it up itself */ }
+    return null
+  }
+
   /** Deliver what is queued (with the boot seed first after a spawn). One typed prompt per brain turn. */
   async function flush(): Promise<void> {
     // A lost post-compact SessionStart must not hold delivery forever.
@@ -188,7 +207,8 @@ export function createBrainWiring(deps: BrainDeps) {
     const ids = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
     if (!seed && ids.length === 0) return
     const turns = turnsOf(ids)
-    const text = seed ? bootSeed({ memoryRef: getKv("memory_ref"), open: turns }) : deliveryText(turns)
+    const text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
+    if (busy || !target()) return
     setBusy(true)
     const out = await type(text)
     if (out === "refused") {
@@ -234,12 +254,22 @@ export function createBrainWiring(deps: BrainDeps) {
     setBusy(false)
     lastActivity = deps.now()
     const text = reply.trim()
+    const was = control
+    control = null
     // A late Stop after the transcript fallback carries the same reply: once only.
-    if (text && text !== lastReplyText) orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD))
+    if (!was && text && text !== lastReplyText) orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD))
     if (text) lastReplyText = text
-    trace(clearTyped().map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
-    if (rolloverPending) {
-      rolloverPending = false
+    if (!was) trace(clearTyped().map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
+    if (was === "flush") {
+      // Memory is on disk: compact now, unless Jeremie spoke meanwhile.
+      if (sessionKey && openDeliveries().length === 0 && !deps.paused.read()) {
+        const ok = await deps.compact(sessionKey, compactText(await memoryRef(), 0))
+        compacting = ok
+        deps.log(`[brain] idle compact ${ok ? "sent" : "refused"}`)
+        if (ok) return
+      }
+    }
+    if (was === "rollover") {
       deps.log("[brain] rollover: restarting with a fresh session")
       await deps.stopAgent()
       setState("starting")
@@ -319,16 +349,18 @@ export function createBrainWiring(deps: BrainDeps) {
     if (rolloverDue(new Date(now), getKv("last_rollover"))) {
       setKv("last_rollover", new Date(now).toISOString().slice(0, 10))
       setBusy(true)
-      const out = await type(rolloverPrompt(getKv("memory_ref")))
-      if (out === "ok") rolloverPending = true
+      const out = await type(rolloverPrompt(await memoryRef()))
+      if (out === "ok") control = "rollover"
       else setBusy(false)
       return
     }
     if (compactedAt < lastActivity && idleCompactDue({ lastTurnAt: lastActivity, contextPct: deps.contextPct(sessionKey), now, busy })) {
       compactedAt = now
-      const ok = await deps.compact(sessionKey, compactText(getKv("memory_ref"), openDeliveries().length))
-      compacting = ok
-      deps.log(`[brain] idle compact ${ok ? "sent" : "refused"}`)
+      setBusy(true)
+      const out = await type(flushPrompt(await memoryRef()))
+      if (out === "ok") control = "flush"
+      else setBusy(false)
+      deps.log(`[brain] pre-compact flush ${out}`)
     }
   }
 

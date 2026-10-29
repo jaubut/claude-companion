@@ -1,8 +1,8 @@
 // brain-v2 (RES-QDHU) policy, pure: the one `brain` agent that plans,
 // dispatches and follows up but never builds. The brain is a normal Claude
 // Code session: its tool limits are its instructions (brain/CLAUDE.md), its
-// .claude/settings.json and the normal permission flow (auto-judge → phone;
-// SUPER never applies to it). What lives here is what the server decides:
+// .claude/settings.json and the normal permission flow (SUPER, auto-judge →
+// phone, like any session). What lives here is what the server decides:
 // when the supervisor respawns it, when a voice turn counts as consent.
 // wiring/brain.ts runs it.
 
@@ -49,7 +49,7 @@ export function deliveryText(turns: DeliveryTurn[]): string {
 
 /** First prompt of a fresh brain: memory first, then every turn still open. */
 export function bootSeed(input: { memoryRef: string | null; open: DeliveryTurn[] }): string {
-  const memory = input.memoryRef ? `Read your memory note ${input.memoryRef} first.` : "No memory note yet: create one (note_create, resources/) and keep its ref."
+  const memory = input.memoryRef ? `Read your memory note ${input.memoryRef} first.` : `No memory note yet: create one (note_create, resources/, tag ${MEMORY_TAG}).`
   const open = input.open.length
     ? `Open turns (answer each, cite its id):\n${deliveryText(input.open)}`
     : "No open turns."
@@ -118,7 +118,22 @@ export function rolloverDue(now: Date, lastDay: string | null): boolean {
 }
 
 export function rolloverPrompt(memoryRef: string | null): string {
-  return `[rollover] Nightly restart. Update your memory note${memoryRef ? ` ${memoryRef}` : ""} with note_update (open threads, pending proposals, dispatched task ids, what Jeremie is waiting on), then reply "rollover ready". A fresh session boots from that note.`
+  return `[rollover] Nightly restart. ${MEMORY_DUTY(memoryRef)} Then reply "rollover ready". A fresh session boots from that note.`
+}
+
+// ── Memory flush (before an idle compact) ──
+
+/** The memory note stays small (it is read at every boot); detail goes to the daily log. */
+export const MEMORY_MAX_CHARS = 3_000
+/** Tag that names the brain's memory note in Turso (the server finds it by this tag). */
+export const MEMORY_TAG = "brain-memory"
+
+const MEMORY_DUTY = (memoryRef: string | null): string =>
+  `Append today's decisions, dispatches and outcomes to your daily log note "Brain log <YYYY-MM-DD>" (resources/, tag brain-log; note_create once a day, then note_update). Then rewrite your memory note${memoryRef ? ` ${memoryRef}` : ` (tag ${MEMORY_TAG})`} to under ${MEMORY_MAX_CHARS} chars: open threads, pending proposals, dispatched task ids, what Jeremie is waiting on.`
+
+/** Typed before an idle /compact so nothing lives only in the context that compaction drops. */
+export function flushPrompt(memoryRef: string | null): string {
+  return `[flush] A context compaction follows. ${MEMORY_DUTY(memoryRef)} Then reply "flushed", nothing else.`
 }
 
 // ── Voice consent ──
