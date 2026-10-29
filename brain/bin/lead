@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# brain-v2 Phase 2: ensure the persistent `lead-<repo>` session (POST /hooks/brain/lead).
+# Not built yet — P1 ships the brain alone. Say so and exit 2 so the brain
+# falls back to bin/propose.
+echo "lead: Phase 2 (repo leads) is not built yet — use bin/propose" >&2
+exit 2

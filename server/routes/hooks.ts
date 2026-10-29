@@ -47,6 +47,8 @@ import { autoCompactor, compactTargetFor } from "../wiring/auto-compact"
 import { gauge, gaugeFromTranscript } from "../wiring/gauge"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { workerHookGate } from "../lib/worker-hook-gate"
+import { brainToolVerdict, isBrainHook } from "../lib/brain"
+import { BRAIN_DIR, brainWiring } from "../wiring/brain"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -124,6 +126,14 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
     // ── AskUserQuestion / request_user_input fast path ─────────────
     if (worker.is && isQuestionTool(tool)) return hookPassthroughResponse(agent)
+    // brain-v2: the brain's whole answer — before the question path, SUPER,
+    // learned allows and the auto-judge, none of which may widen it. Header
+    // first: a payload with no cwd has no session, and must still be the brain.
+    if (isBrainHook(headerMeta.taskId || session?.taskId)) {
+      const v = brainToolVerdict(tool, input, BRAIN_DIR)
+      companionLog(`${v.decision === "allow" ? green : red}brain-${v.decision}${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
+      return hookDecisionResponse(agent, "PreToolUse", v.decision, v.reason)
+    }
     {
       const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, toolUseId: body.tool_use_id, session, headerMeta })
       if (handled) return handled
@@ -340,6 +350,13 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const yellow = "\x1b[33m"
     const cyan = "\x1b[36m"
 
+    // brain-v2: same verdict as PreToolUse — a dialog never reaches the phone.
+    if (isBrainHook(headerMeta.taskId || session?.taskId)) {
+      const v = brainToolVerdict(tool, input, BRAIN_DIR)
+      companionLog(`brain-${v.decision} ${cyan}permission${reset} ${tool} ${dim}${summarize(tool, input)}${reset}`)
+      return hookDecisionResponse(agent, "PermissionRequest", v.decision, v.reason)
+    }
+
     // ── AskUserQuestion / request_user_input fast path ─────────────
     // eventName MUST be PermissionRequest: Claude Code ignores a reply whose
     // hookEventName doesn't match the hook (this passed "PreToolUse" until
@@ -423,6 +440,14 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       sessionKey: session?.key ?? "",
     })
 
+    // brain-v2: the brain's reply goes to its thread. No waiting badge, no
+    // global auto-compact (the supervisor compacts it when idle), no push.
+    if (isBrainHook(headerMeta.taskId || session?.taskId)) {
+      if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
+      void brainWiring.onStop(body.session_id ?? "", lastMessage).catch(() => { /* logged inside */ })
+      return Response.json({})
+    }
+
     // Waiting now lives on the Session record as one reason among four; the
     // scalars are its projection and wiring/waiting.ts owns the frame. `session`
     // is only assigned when cwd is truthy (see above), and a stop hook with no
@@ -472,6 +497,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (cwd) {
       const started = recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
       if (started && body.source === "compact") void autoCompactor.onCompacted(started.key)
+      if (started && isBrainHook(started.taskId)) brainWiring.onSessionStart(started)
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       companionLog(`${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}`)
     }

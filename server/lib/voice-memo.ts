@@ -2,6 +2,7 @@ import {
   DashboardKeyMissing, DashboardUnreachable, type DashReply, createNote, fetchInboxAudio, finalizeRecording,
   getInboxEntry, getNote, listInbox, listNotesLite, patchInbox, postRecordingChunk, startRecording, transcribeInbox,
 } from "./dashboard-client"
+import { BRAIN_TAKE_PREFIX } from "./brain"
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
@@ -393,6 +394,7 @@ export function voiceValidate(id: number, body: Record<string, unknown>): Promis
     if ("error" in got) return got.error
     const e = got.entry
     if (e.processed) {
+      if (e.result_id.startsWith(BRAIN_TAKE_PREFIX)) return fail(409, "brain_take")
       if (e.result_id === "discarded") return fail(409, "already_discarded")
       // A retry only re-stores a write lost after the first commit — never overwrites what was validated.
       let stored: string | null = null
@@ -440,6 +442,7 @@ export function voiceDiscard(id: number): Promise<Outcome> {
   return guarded(async () => {
     const got = await memoEntry(id)
     if ("error" in got) return got.error
+    if (got.entry.processed && got.entry.result_id.startsWith(BRAIN_TAKE_PREFIX)) return fail(409, "brain_take")
     if (got.entry.processed) return got.entry.result_id === "discarded" ? done({}) : fail(409, "already_validated")
     const r = await patchInbox(id, "discarded")
     if (!okReply(r)) return fail(502, "dashboard_error")
