@@ -16,7 +16,7 @@ import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
 import { type Turn, appendTurn, createProposal, getTurn, setTurnCard } from "../lib/orchestrator-chat"
 import { ensureChannel } from "../lib/orchestrator-channels"
 import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
-import { type Session, getSessionByKey, listSessions } from "../lib/sessions"
+import { type Session, getSessionByKey, listSessions, setSessionTaskId } from "../lib/sessions"
 import { type SpawnResult, spawnInHerdr } from "../lib/spawn-session"
 import { realHerdr } from "../lib/herdr"
 import { pushToAll } from "../lib/push"
@@ -56,6 +56,8 @@ export interface BrainDeps {
   stopAgent(): Promise<void>
   sessions(): Session[]
   sessionByKey(key: string): Session | null
+  /** Set taskId "brain" on a session found in the spawned pane. */
+  tagBrain(key: string): boolean
   deliver(text: string, key: string): Promise<Response>
   broadcast(frame: Record<string, unknown>): void
   push(payload: ApnsPayload): void
@@ -234,7 +236,14 @@ export function createBrainWiring(deps: BrainDeps) {
       }
       if (!pane) pane = await deps.agentPane()
       if (!target()) {
-        const found = deps.sessions().find((s) => s.taskId === BRAIN_AGENT && !!pane && s.herdrPane === pane)
+        let found = deps.sessions().find((s) => s.taskId === BRAIN_AGENT && !!pane && s.herdrPane === pane)
+        // The SessionStart hook can be lost (it posts in the background as the
+        // hook exits), leaving the brain registered by discovery with no taskId.
+        // The pane we spawned is proof enough: tag it.
+        if (!found && pane) {
+          const untagged = deps.sessions().find((s) => !s.taskId && !!s.sessionId && s.herdrPane === pane)
+          if (untagged && deps.tagBrain(untagged.key)) found = deps.sessionByKey(untagged.key) ?? undefined
+        }
         if (!found || !adopt(found)) {
           setState("starting")
           return
@@ -457,6 +466,7 @@ export const brainWiring = createBrainWiring({
   stopAgent: stopBrainAgent,
   sessions: listSessions,
   sessionByKey: getSessionByKey,
+  tagBrain: (key) => setSessionTaskId(key, BRAIN_AGENT),
   deliver: (text, key) => deliverFn ? deliverFn(text, key) : Promise.resolve(Response.json({ ok: false, error: "deliver_unavailable" }, { status: 503 })),
   broadcast,
   push: (payload) => { if (apnsConfigured()) void pushToAll(payload).catch(() => { /* best effort */ }) },

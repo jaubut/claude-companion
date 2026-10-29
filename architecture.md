@@ -8,10 +8,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 217 modules, cap 600)
 
+⚠ over cap: `lib/sessions.ts` (610)
+
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
+| `lib/sessions.ts` | 610 ⚠ 610 > cap 600 | lib | 23 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/keyboard-inject.ts` | 600 | lib | 7 | state: let injectQueue |
-| `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/transcript.ts` | 590 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/spawn-session.ts` | 580 | lib | 21 |  |
@@ -22,8 +24,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 534 | lib | 54 |  |
 | `lib/resolver.ts` | 526 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
+| `wiring/brain.ts` | 488 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
-| `wiring/brain.ts` | 478 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/voice-memo.ts` | 469 | lib | 25 | state: let tdb |

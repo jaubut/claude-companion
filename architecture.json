@@ -4065,7 +4065,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 600,
+          "lines": 610,
           "kind": "lib",
           "exports": [
             "Session",
@@ -4074,6 +4074,7 @@
             "setTitleResolver",
             "setSessionStatus",
             "setSessionModel",
+            "setSessionTaskId",
             "setSessionTitle",
             "WaitingSession",
             "setSessionWaiting",
@@ -6772,7 +6773,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 478,
+          "lines": 488,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -14561,6 +14562,12 @@
         },
         "spawnInHerdr": {
           "module": "lib/spawn-session.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "setSessionTaskId": {
+          "module": "lib/sessions.ts",
           "callers": [
             "wiring/brain.ts"
           ]

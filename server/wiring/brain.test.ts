@@ -65,6 +65,7 @@ function harness(): Harness {
     stopAgent: async () => { h.stops++; h.set.duringStop?.() },
     sessions: () => h.set.sessions,
     sessionByKey: (k) => h.set.sessions.find((s) => s.key === k) ?? null,
+    tagBrain: (k) => { const s = h.set.sessions.find((x) => x.key === k); if (!s || s.taskId) return false; s.taskId = "brain"; return true },
     deliver: async (text, key) => { h.delivered.push({ text, key }); return Response.json(h.set.reply.body, { status: h.set.reply.status }) },
     broadcast: (f) => { h.frames.push(f) },
     push: () => { h.pushes++ },
@@ -92,6 +93,28 @@ async function upBrain(h: Harness): Promise<void> {
 const userTurn = (text: string) => chat.appendTurn("user", text, null, "brain")
 
 describe("supervisor", () => {
+  test("a lost SessionStart: the untagged session in the spawned pane is tagged and adopted", async () => {
+    const h = harness()
+    await h.w.tick() // spawns into p_brain
+    expect(h.spawns).toBe(1)
+    h.set.alive = true
+    h.set.sessions = [session({ taskId: "" }), session({ key: "herdr:p_other", herdrPane: "p_other", sessionId: "sid-other", taskId: "" })]
+    await h.w.tick()
+    expect(h.w.status().state).toBe("up")
+    expect(h.w.status().sessionKey).toBe("herdr:p_brain")
+    expect(h.set.sessions[1]?.taskId).toBe("")
+  })
+
+  test("an untagged session in another pane is never adopted", async () => {
+    const h = harness()
+    await h.w.tick()
+    h.set.alive = true
+    h.set.sessions = [session({ key: "herdr:p_other", herdrPane: "p_other", sessionId: "sid-other", taskId: "" })]
+    await h.w.tick()
+    expect(h.w.status().state).toBe("starting")
+    expect(h.set.sessions[0]?.taskId).toBe("")
+  })
+
   test("a dead brain is respawned; 3 respawns in 5 min → down + one push; down lasts until a manual resume", async () => {
     const h = harness()
     for (let i = 0; i < 3; i++) {
