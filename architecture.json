@@ -889,7 +889,7 @@
             "claimConsent",
             "proposeSeen",
             "rememberPropose",
-            "proposalSource"
+            "proposalTurnOf"
           ],
           "state": [],
           "emits": [],
@@ -940,7 +940,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 191,
+          "lines": 146,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -951,9 +951,6 @@
             "brainEnabled",
             "isBrainHook",
             "isSupervisedTask",
-            "BrainVerdict",
-            "brainCommandAllowed",
-            "brainToolVerdict",
             "DeliveryTurn",
             "DELIVERY_MAX",
             "deliveryText",
@@ -962,6 +959,7 @@
             "RESTART_WINDOW_MS",
             "RESTARTS_MAX",
             "START_GRACE_MS",
+            "BUSY_MAX_MS",
             "SuperviseInput",
             "SuperviseAction",
             "superviseStep",
@@ -976,11 +974,7 @@
             "ConsentTurn",
             "voiceConsent"
           ],
-          "state": [
-            "EDIT_TOOLS: Set",
-            "READ_TOOLS: Set",
-            "MCP_ALLOW: Set"
-          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -6120,7 +6114,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 555,
+          "lines": 546,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -6778,7 +6772,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 444,
+          "lines": 478,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -7848,6 +7842,8 @@
             "companion-server.ts",
             "routes/brain.ts",
             "routes/capture.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
@@ -13266,23 +13262,9 @@
           "module": "lib/brain.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start"
-          ]
-        },
-        "brainToolVerdict": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request"
-          ]
-        },
-        "BRAIN_DIR": {
-          "module": "wiring/brain.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/pre-tool-use",
-            "routes/hooks.ts#POST /hooks/permission-request"
           ]
         },
         "questionFastPath": {
@@ -14426,6 +14408,12 @@
             "wiring/brain.ts"
           ]
         },
+        "BUSY_MAX_MS": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "superviseStep": {
           "module": "lib/brain.ts",
           "callers": [
@@ -15245,6 +15233,13 @@
           "callers": [
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "proposalSource": {
+          "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
           ]
         },

@@ -6,7 +6,7 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, type BrainState, type DeliveryTurn,
-  bootSeed, compactText, deliveryText, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
+  BUSY_MAX_MS, bootSeed, compactText, deliveryText, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
 } from "../lib/brain"
 import {
   claimConsent, clearTyped, consentClaimed, enqueueDelivery, getKv, markDelivered, markMaybe,
@@ -35,10 +35,13 @@ import { type DispatchWiring, dispatchWiring } from "./dispatch"
 // server only supervises, relays and records; the thread (sqlite) is the
 // store, not the transcript. Started by companion-server.ts iff COMPANION_BRAIN=1.
 //
-// Delivery is strict: a non-empty session key whose registered session has
-// taskId "brain" AND the session id this supervisor adopted — never a cwd,
-// never the "most recent session" fallback. not_submitted → `maybe`, never
-// retyped into that session.
+// Adoption: only the session in the pane this supervisor spawned (herdr's
+// `brain` agent pane after a Companion restart), never a second one while the
+// adopted session is still the delivery target. Delivery is strict: a
+// non-empty session key whose registered session has taskId "brain" AND the
+// adopted session id — never a cwd, never the "most recent session" fallback.
+// not_submitted → `maybe`, never retyped into that session. The paused flag is
+// re-read before every spawn, every adoption and every delivery.
 
 export interface BrainStatus { state: BrainState; sessionKey: string | null; since: number; restarts: number; host: string }
 
@@ -47,6 +50,8 @@ export interface ProposeInput { title: string; prompt: string; noteId: string; a
 export interface BrainDeps {
   now(): number
   alive(): Promise<boolean>
+  /** herdr's `brain` agent pane ("" when absent): what to adopt after a Companion restart. */
+  agentPane(): Promise<string>
   spawn(): Promise<SpawnResult>
   stopAgent(): Promise<void>
   sessions(): Session[]
@@ -75,6 +80,8 @@ export function createBrainWiring(deps: BrainDeps) {
   let sessionKey: string | null = null
   let sessionId: string | null = null
   let busy = false
+  let busySince = 0
+  let lastHookAt = 0
   let pendingSeed = false
   let rolloverPending = false
   let lastActivity = deps.now()
@@ -103,24 +110,15 @@ export function createBrainWiring(deps: BrainDeps) {
     }
   }
 
+  function setBusy(on: boolean): void {
+    busy = on
+    busySince = on ? deps.now() : 0
+  }
+
   function forgetSession(): void {
     sessionKey = null
     sessionId = null
-    busy = false
-  }
-
-  /** Adopt the registered brain session (its pane when we know it). */
-  function adopt(s: Session): boolean {
-    if (s.taskId !== BRAIN_AGENT || !s.sessionId) return false
-    if (pane && s.herdrPane && s.herdrPane !== pane) return false
-    if (s.key !== sessionKey || s.sessionId !== sessionId) {
-      if (sessionId && s.sessionId !== sessionId) busy = false
-      sessionKey = s.key
-      sessionId = s.sessionId
-      if (s.herdrPane) pane = s.herdrPane
-      deps.log(`[brain] adopted ${s.key} sid=${s.sessionId.slice(0, 8)}`)
-    }
-    return true
+    setBusy(false)
   }
 
   /** The delivery target, or null: key set, session registered as the brain, same session id. */
@@ -130,6 +128,19 @@ export function createBrainWiring(deps: BrainDeps) {
     if (!s || s.taskId !== BRAIN_AGENT) return null
     if (!sessionId || s.sessionId !== sessionId) return null
     return s
+  }
+
+  /** Adopt a brain session: only in the spawned pane (both non-empty), never replacing a live adopted one. */
+  function adopt(s: Session): boolean {
+    if (s.taskId !== BRAIN_AGENT || !s.sessionId) return false
+    if (!pane || !s.herdrPane || s.herdrPane !== pane) return false
+    if (s.key === sessionKey && s.sessionId === sessionId) return true
+    if (target()) return false
+    sessionKey = s.key
+    sessionId = s.sessionId
+    setBusy(false)
+    deps.log(`[brain] adopted ${s.key} sid=${s.sessionId.slice(0, 8)} pane=${pane}`)
+    return true
   }
 
   function turnsOf(ids: string[]): DeliveryTurn[] {
@@ -155,23 +166,23 @@ export function createBrainWiring(deps: BrainDeps) {
 
   /** Deliver what is queued (with the boot seed first after a spawn). One typed prompt per brain turn. */
   async function flush(): Promise<void> {
-    if (busy || state !== "up" || !target()) return
+    if (deps.paused.read() || busy || state !== "up" || !target()) return
     const seed = pendingSeed
     const ids = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
     if (!seed && ids.length === 0) return
     const turns = turnsOf(ids)
     const text = seed ? bootSeed({ memoryRef: getKv("memory_ref"), open: turns }) : deliveryText(turns)
-    busy = true
+    setBusy(true)
     const out = await type(text)
     if (out === "refused") {
-      busy = false
+      setBusy(false)
       return
     }
     if (seed) pendingSeed = false
     lastActivity = deps.now()
     if (out === "maybe") {
       markMaybe(ids)
-      busy = false
+      setBusy(false)
       orchEmit(appendTurn("orchestrator", "⚠︎ Typed into the brain but not confirmed as submitted — not retyped. Check the brain pane, or resend.", null, BRAIN_THREAD))
       return
     }
@@ -179,7 +190,12 @@ export function createBrainWiring(deps: BrainDeps) {
     trace(ids.map((id) => upsertRow({ id: rowId.turn(id), turnId: id, kind: "turn", status: "running", title: getTurn(id)?.text ?? id, detail: "with the brain" })))
   }
 
+  /** Spawn now, unless the kill switch is set (re-read here: callers may have awaited since). */
   async function spawnNow(): Promise<void> {
+    if (deps.paused.read()) {
+      setState("paused")
+      return
+    }
     forgetSession()
     pane = ""
     const r = await deps.spawn()
@@ -216,8 +232,9 @@ export function createBrainWiring(deps: BrainDeps) {
         setState(step.state)
         return
       }
+      if (!pane) pane = await deps.agentPane()
       if (!target()) {
-        const found = deps.sessions().find((s) => s.taskId === BRAIN_AGENT && (!pane || !s.herdrPane || s.herdrPane === pane))
+        const found = deps.sessions().find((s) => s.taskId === BRAIN_AGENT && !!pane && s.herdrPane === pane)
         if (!found || !adopt(found)) {
           setState("starting")
           return
@@ -225,6 +242,10 @@ export function createBrainWiring(deps: BrainDeps) {
       }
       spawnedAt = 0
       setState("up")
+      if (busy && deps.now() - Math.max(busySince, lastHookAt) > BUSY_MAX_MS) {
+        deps.log("[brain] no hook from the brain while busy — the turn is considered lost, delivery resumes")
+        setBusy(false)
+      }
       await flush()
       await maintain()
     } catch (err) {
@@ -236,14 +257,14 @@ export function createBrainWiring(deps: BrainDeps) {
 
   /** Idle compaction and the 04:00 rollover — only between turns. */
   async function maintain(): Promise<void> {
-    if (busy || !sessionKey) return
+    if (busy || !sessionKey || deps.paused.read()) return
     const now = deps.now()
     if (rolloverDue(new Date(now), getKv("last_rollover"))) {
       setKv("last_rollover", new Date(now).toISOString().slice(0, 10))
-      busy = true
+      setBusy(true)
       const out = await type(rolloverPrompt(getKv("memory_ref")))
       if (out === "ok") rolloverPending = true
-      else busy = false
+      else setBusy(false)
       return
     }
     if (compactedAt < lastActivity && idleCompactDue({ lastTurnAt: lastActivity, contextPct: deps.contextPct(sessionKey), now, busy })) {
@@ -285,12 +306,9 @@ export function createBrainWiring(deps: BrainDeps) {
 
     /** The brain's Stop hook (routes/hooks.ts). Its reply becomes a thread turn; the next queued turns go in. */
     async onStop(sid: string, lastMessage: string): Promise<void> {
-      if (!sid || (sessionId && sid !== sessionId)) return
-      if (!sessionId) {
-        const s = deps.sessions().find((x) => x.sessionId === sid)
-        if (!s || !adopt(s)) return
-      }
-      busy = false
+      if (!sid || !sessionId || sid !== sessionId) return
+      setBusy(false)
+      lastHookAt = deps.now()
       lastActivity = deps.now()
       const text = lastMessage.trim()
       if (text) orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD))
@@ -306,8 +324,14 @@ export function createBrainWiring(deps: BrainDeps) {
       await flush()
     },
 
+    /** Any hook from the adopted brain session: it is alive and working (busy deadline). */
+    noteActivity(sid: string): void {
+      if (sid && sid === sessionId) lastHookAt = deps.now()
+    },
+
     /** SessionStart from the brain: adopt it (a fresh spawn gets its boot seed on the next tick). */
     onSessionStart(s: Session): void {
+      if (deps.paused.read()) return
       if (adopt(s)) {
         spawnedAt = 0
         setState("up")
@@ -381,10 +405,16 @@ export function createBrainWiring(deps: BrainDeps) {
       return status()
     },
 
+    /** Test seam: the pane a spawn would have returned (adoption requires it). */
+    setSpawnedPaneForTests(p: string): void {
+      pane = p
+    },
+
     async restart(): Promise<BrainStatus | null> {
       if (deps.paused.read()) return null
       restarts = []
       await deps.stopAgent()
+      if (deps.paused.read()) return null
       setState("starting")
       await spawnNow()
       return status()
@@ -419,6 +449,10 @@ async function stopBrainAgent(): Promise<void> {
 export const brainWiring = createBrainWiring({
   now: Date.now,
   alive: () => liveness.alive(BRAIN_AGENT),
+  agentPane: async () => {
+    const a = await liveness.agentOf(BRAIN_AGENT)
+    return a.kind === "present" ? a.ref.pane : ""
+  },
   spawn: () => spawnInHerdr(BRAIN_DIR, "claude", { COMPANION_TASK_ID: BRAIN_AGENT }, realHerdr, { name: BRAIN_AGENT, args: ["--remote-control", BRAIN_AGENT] }),
   stopAgent: stopBrainAgent,
   sessions: listSessions,

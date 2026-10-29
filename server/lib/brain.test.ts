@@ -1,44 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { homedir } from "node:os"
 import {
   RESTART_WINDOW_MS, START_GRACE_MS, VOICE_CONSENT_MS,
-  bootSeed, brainCommandAllowed, brainEnabled, brainToolVerdict, deliveryText, idleCompactDue, isBrainHook, isSupervisedTask,
+  bootSeed, brainEnabled, deliveryText, idleCompactDue, isBrainHook, isSupervisedTask,
   rolloverDue, superviseStep, voiceConsent,
 } from "./brain"
 
-// brain-v2 policy (lib/brain.ts): pure, so every rule is pinned here.
-
-describe("brainToolVerdict", () => {
-  test("edit tools and question tools are denied, whatever the input", () => {
-    for (const t of ["Edit", "Write", "MultiEdit", "NotebookEdit", "AskUserQuestion"]) {
-      expect(brainToolVerdict(t, { file_path: "/x" }).decision).toBe("deny")
-    }
-  })
-  test("read tools, Turso reads + note writes, Gmail drafts are allowed; sending mail is not", () => {
-    for (const t of ["Read", "Grep", "Glob", "WebSearch", "mcp__turso__query", "mcp__turso__note_update", "mcp__claude_ai_Gmail__create_draft"]) {
-      expect(brainToolVerdict(t, {}).decision).toBe("allow")
-    }
-    for (const t of ["mcp__claude_ai_Gmail__send_message", "mcp__turso__exec", "Agent", "Task", "SomethingNew"]) {
-      expect(brainToolVerdict(t, {}).decision).toBe("deny")
-    }
-  })
-  test("Bash: bin/*, dispatch.sh, read-only git/gh — one command, no chaining", () => {
-    const ok = [
-      "bin/propose --turn t1 --note projects/x --prompt hi", "./bin/lead tls", "/srv/brain/bin/propose --turn a",
-      "~/.claude/tools/dispatch.sh abc queued", "$HOME/.claude/tools/dispatch.sh abc", `${homedir()}/.claude/tools/dispatch.sh x`,
-      "git status", "git log --oneline -5", "gh pr view 12 --json state", "gh run list",
-    ]
-    for (const c of ok) expect(brainCommandAllowed(c, homedir(), "/srv/brain")).toBe(true)
-    const bad = [
-      "rm -rf /", "git push origin main", "git commit -m x", "gh pr merge 12", "gh api -X POST /x",
-      "git status; rm -rf ~", "git log | head", "bin/propose && rm x", "echo $(id)", "git diff > /tmp/x",
-      "bin/../../etc/x", "curl http://x", "~/.claude/tools/dispatch.sh.evil", "",
-    ]
-    for (const c of bad) expect(brainCommandAllowed(c, homedir(), "/srv/brain")).toBe(false)
-    expect(brainToolVerdict("Bash", { command: "git push" }).decision).toBe("deny")
-    expect(brainToolVerdict("Bash", { command: "bin/propose --turn x" }).decision).toBe("allow")
-  })
-})
+// brain-v2 policy (lib/brain.ts): pure, so every rule is pinned here. The
+// brain's tool limits are not here: it is a normal session (brain/CLAUDE.md,
+// brain/.claude/settings.json, auto-judge → phone; SUPER skipped — hooks-brain.test.ts).
 
 test("isBrainHook / isSupervisedTask", () => {
   expect(isBrainHook("brain")).toBe(true)
@@ -69,6 +38,11 @@ describe("superviseStep", () => {
   test("paused wins: stop a live agent, never spawn a dead one", () => {
     expect(superviseStep({ ...base, paused: true, alive: true })).toMatchObject({ state: "paused", action: "stop" })
     expect(superviseStep({ ...base, paused: true })).toMatchObject({ state: "paused", action: "none" })
+  })
+  test("down is sticky: no respawn even after the window clears (a manual resume / restart resets state)", () => {
+    expect(superviseStep({ ...base, state: "down" })).toMatchObject({ state: "down", action: "none" })
+    expect(superviseStep({ ...base, state: "down", restarts: [base.now - 2 * RESTART_WINDOW_MS] })).toMatchObject({ state: "down", action: "none" })
+    expect(superviseStep({ ...base, state: "starting" }).action).toBe("spawn")
   })
   test("alive → up", () => {
     expect(superviseStep({ ...base, alive: true, state: "up" })).toMatchObject({ state: "up", action: "none" })

@@ -72,12 +72,13 @@ beforeAll(async () => {
   channels.ensureChannel("brain", "Brain")
   flags = { paused: false, spawns: 0 }
   const w = wiringMod.createBrainWiring({
-    now: Date.now, alive: async () => false, spawn: async () => { flags.spawns++; return { ok: true, herdrPane: "p_brain" } },
+    now: Date.now, alive: async () => false, agentPane: async () => "", spawn: async () => { flags.spawns++; return { ok: true, herdrPane: "p_brain" } },
     stopAgent: async () => {}, sessions: () => sessions, sessionByKey: (k) => sessions.find((s) => s.key === k) ?? null,
     deliver: async () => Response.json({ ok: true }), broadcast: () => {}, push: () => {},
     paused: { read: () => flags.paused, write: (on) => { flags.paused = on } },
     contextPct: () => null, compact: async () => true, dispatch, host: "test", log: () => {},
   })
+  w.setSpawnedPaneForTests("p_brain")
   w.onSessionStart(BRAIN_SESSION)
   harnessWiring = w
   handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true })

@@ -17,19 +17,19 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 580 | lib | 21 |  |
 | `routes/api.ts` | 575 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 24 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
-| `routes/hooks.ts` | 555 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
+| `routes/hooks.ts` | 546 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 534 | lib | 54 |  |
 | `lib/resolver.ts` | 526 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
+| `wiring/brain.ts` | 478 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/voice-memo.ts` | 469 | lib | 25 | state: let tdb |
 | `lib/triage.ts` | 463 | lib | 45 | state: DESTRUCTIVE: Set |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
 | `wiring/triage.ts` | 451 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
-| `wiring/brain.ts` | 444 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 416 | route-host | 3 | routes: 11 |
@@ -111,7 +111,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
-| `lib/brain.ts` | 191 | lib | 32 | state: EDIT_TOOLS: Set, READ_TOOLS: Set, MCP_ALLOW: Set |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
@@ -133,6 +132,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/triage.ts` | 150 | lib | 2 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `routes/body.ts` | 149 | route-host | 3 | routes: 5 |
+| `lib/brain.ts` | 146 | lib | 30 |  |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
 | `lib/jev.ts` | 143 | lib | 16 |  |
@@ -377,6 +377,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `HOST_INFO()` | `state.ts` | `companion-server.ts`, `routes/api.ts#* /api/status`, `wiring/body-agent.ts`, `wiring/brain.ts`, `wiring/canvas.ts`, `wiring/orchestrator.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts`, `wiring/triage.ts`, `ws.ts` |
 | `TursoUnreachable()` | `lib/turso.ts` | `lib/dispatch-poller.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/triage-engine.ts`, `routes/body.ts`, `routes/goals.ts#GET /api/goals`, `routes/my-tasks.ts`, `routes/orchestrator.ts`, `routes/tasks-agent.ts`, `wiring/orchestrator.ts`, `wiring/triage-repos.ts` |
 | `apnsConfigured()` | `lib/apns.ts` | `lib/push.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#GET /api/push/tokens`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/events.ts` |
+| `brainWiring()` | `wiring/brain.ts` | `companion-server.ts`, `routes/brain.ts`, `routes/capture.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `ws.ts` |
 | `summarize()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/approval-history-auto.ts`, `lib/approval-history.ts`, `lib/codex-feed.ts`, `lib/question-hook.ts`, `lib/transcript-backfill.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `wiring/events.ts` |
 | `companionDbPath()` | `lib/db-path.ts` | `lib/approval-history.ts`, `lib/learned-allow.ts`, `lib/orchestrator-db.ts`, `lib/push-tokens.ts`, `lib/receipt-qa-store.ts`, `lib/session-titles.ts`, `lib/voice-memo.ts`, `wiring/auto-compact.ts`, `wiring/canvas.ts` |
 | `BODY_CHANNEL()` | `lib/body.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts` |
@@ -396,7 +397,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `cwdFromPayload()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `metaFromHeaders()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `orchEmit()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts` |
-| `brainWiring()` | `wiring/brain.ts` | `companion-server.ts`, `routes/brain.ts`, `routes/capture.ts`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `ws.ts` |
 | `ApnsPayload()` | `lib/apns.ts` | `lib/body-alert.ts`, `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `lib/push.ts`, `wiring/body.ts`, `wiring/brain.ts`, `wiring/receipt-qa.ts` |
 | `Task()` | `lib/orchestrator-chat.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-tasks.ts`, `lib/triage-sources.ts`, `routes/orchestrator.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts` |
 | `SqlArg()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts` |
@@ -464,7 +464,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `buildComponentDetail()` | `lib/body.ts` | `routes/body.ts#GET /api/body/component/`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/resolver.ts` |
 | `sessionPaneOf()` | `lib/session-pane.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel` |
 | `gauge()` | `wiring/gauge.ts` | `routes/gauge.ts#POST /hooks/gauge`, `routes/gauge.ts#GET /api/gauge`, `routes/hooks.ts#POST /hooks/session-end`, `wiring/brain.ts` |
-| `isBrainHook()` | `lib/brain.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start` |
+| `isBrainHook()` | `lib/brain.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start` |
 | `isModelPicker()` | `lib/model-control.ts` | `routes/model.ts`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel` |
 | `getThread()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/front-door.ts`, `wiring/orchestrator.ts` |
 | `setTaskStatus()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/body-agent.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts` |
@@ -702,8 +702,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `recordToolEnd()` | `lib/activity.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/post-tool-use` |
 | `recordTurnEnd()` | `lib/activity.ts` | `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/stop` |
 | `scrapeHookPassthrough()` | `lib/hook-common.ts` | `routes/hooks.ts`, `routes/hooks.ts#* /hooks/` |
-| `brainToolVerdict()` | `lib/brain.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
-| `BRAIN_DIR()` | `wiring/brain.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `questionFastPath()` | `lib/question-hook.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `addApprovalRequest()` | `lib/pty-manager.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `recordAllow()` | `lib/learned-allow.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
@@ -730,6 +728,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getTaskByDispatchId()` | `lib/orchestrator-chat.ts` | `wiring/dispatch.ts`, `wiring/events.ts` |
 | `readRepoMapSource()` | `lib/live-repo.ts` | `wiring/orchestrator.ts`, `wiring/resolver.ts` |
 | `taskSources()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |
+| `proposalSource()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |
 | `bodySources()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |
 | `createResolverStore()` | `lib/resolver-store.ts` | `wiring/resolver-dry-run.ts`, `wiring/resolver.ts` |
 | `WorkSeams()` | `lib/resolver-work.ts` | `wiring/resolver-dry-run.ts`, `wiring/resolver.ts` |

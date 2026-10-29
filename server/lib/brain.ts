@@ -1,10 +1,10 @@
-import { homedir } from "node:os"
-
 // brain-v2 (RES-QDHU) policy, pure: the one `brain` agent that plans,
-// dispatches and follows up but never builds. Everything that decides — which
-// tools it may run, when the supervisor respawns it, when a voice turn counts
-// as consent — lives here in server code, never in the agent's prompt.
-// wiring/brain.ts runs it; routes/hooks.ts asks `brainToolVerdict`.
+// dispatches and follows up but never builds. The brain is a normal Claude
+// Code session: its tool limits are its instructions (brain/CLAUDE.md), its
+// .claude/settings.json and the normal permission flow (auto-judge → phone;
+// SUPER never applies to it). What lives here is what the server decides:
+// when the supervisor respawns it, when a voice turn counts as consent.
+// wiring/brain.ts runs it.
 
 /** The brain's thread id (orchestrator_turns.thread_id) and channel id. */
 export const BRAIN_THREAD = "brain"
@@ -31,55 +31,6 @@ export function isBrainHook(taskId: string | null | undefined): boolean {
 /** Brain or a repo lead (P2: `lead-<repo>`): sessions the supervisor owns, never the global auto-compact's. */
 export function isSupervisedTask(taskId: string | null | undefined): boolean {
   return taskId === BRAIN_AGENT || !!taskId?.startsWith("lead-")
-}
-
-// ── Tool verdict ──
-
-export interface BrainVerdict { decision: "allow" | "deny"; reason: string }
-
-const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"])
-const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "WebSearch", "WebFetch", "TodoWrite", "ToolSearch"])
-const MCP_ALLOW = new Set([
-  "mcp__turso__query", "mcp__turso__note", "mcp__turso__note_create", "mcp__turso__note_update",
-  "mcp__claude_ai_Gmail__create_draft", "mcp__claude_ai_Gmail__update_draft", "mcp__claude_ai_Gmail__list_drafts",
-  "mcp__claude_ai_Gmail__get_draft", "mcp__claude_ai_Gmail__search_threads", "mcp__claude_ai_Gmail__get_thread",
-  "mcp__claude_ai_Gmail__get_message",
-])
-// One plain command: no chaining, pipes, redirects, substitution or newlines.
-const SHELL_META = /[;&|<>`\n\r]|\$\(/
-const GIT_READ = /^git (status|log|diff|show|branch|rev-parse|ls-files|remote -v)(\s|$)/
-const GH_READ = /^gh (pr (view|list|status|checks|diff)|issue (view|list)|run (view|list)|repo view)(\s|$)/
-
-/** Commands the brain may run: its own bin/, dispatch.sh, read-only git/gh. `$HOME/` is the only expansion allowed. */
-export function brainCommandAllowed(command: string, home = homedir(), brainDir = ""): boolean {
-  const cmd = command.trim().replace(/^\$HOME\//, "~/")
-  if (!cmd || SHELL_META.test(cmd) || cmd.includes("$")) return false
-  const bins = ["bin/", "./bin/", ...(brainDir ? [`${brainDir.replace(/\/$/, "")}/bin/`] : [])]
-  for (const b of bins) {
-    if (cmd.startsWith(b) && /^[a-z][a-z0-9-]*(\s|$)/.test(cmd.slice(b.length))) return true
-  }
-  for (const d of ["~/.claude/tools/dispatch.sh", `${home}/.claude/tools/dispatch.sh`]) {
-    if (cmd === d || cmd.startsWith(`${d} `)) return true
-  }
-  return GIT_READ.test(cmd) || GH_READ.test(cmd)
-}
-
-/**
- * The brain's whole permission answer — never "ask": nothing after it (SUPER,
- * learned allows, the auto-judge, the phone) may widen it. Edits are denied,
- * questions go to the thread, anything off the allowlist is denied.
- */
-export function brainToolVerdict(tool: string, input: Record<string, unknown>, brainDir = ""): BrainVerdict {
-  if (EDIT_TOOLS.has(tool)) return { decision: "deny", reason: "The brain never edits files: propose the work (bin/propose) and a builder does it." }
-  if (tool === "AskUserQuestion" || tool === "request_user_input") return { decision: "deny", reason: "Ask Jeremie in your reply; the brain thread is the only channel." }
-  if (READ_TOOLS.has(tool) || MCP_ALLOW.has(tool)) return { decision: "allow", reason: "brain allowlist" }
-  if (tool === "Bash") {
-    const command = typeof input.command === "string" ? input.command : ""
-    return brainCommandAllowed(command, homedir(), brainDir)
-      ? { decision: "allow", reason: "brain allowlist" }
-      : { decision: "deny", reason: "Not on the brain's command allowlist (bin/*, dispatch.sh, read-only git/gh, one command, no pipes)." }
-  }
-  return { decision: "deny", reason: `${tool} is not on the brain's tool allowlist.` }
 }
 
 // ── Delivery text ──
@@ -112,6 +63,8 @@ export const RESTART_WINDOW_MS = 5 * 60_000
 export const RESTARTS_MAX = 3
 /** How long a spawn may take to register its session before it counts as failed. */
 export const START_GRACE_MS = 60_000
+/** No hook from the brain for this long while a delivery is in flight → the turn is considered lost. */
+export const BUSY_MAX_MS = 10 * 60_000
 
 export interface SuperviseInput {
   paused: boolean
@@ -126,11 +79,13 @@ export interface SuperviseInput {
 
 export type SuperviseAction = "none" | "stop" | "spawn"
 
-/** One supervisor tick: paused wins, a live agent is up, else respawn within RESTARTS_MAX per window, else down. */
+/** One supervisor tick: paused wins, a live agent is up, else respawn within RESTARTS_MAX per window, else down until a manual restart. */
 export function superviseStep(i: SuperviseInput): { state: BrainState; action: SuperviseAction; restarts: number[] } {
   const restarts = i.restarts.filter((t) => i.now - t < RESTART_WINDOW_MS)
   if (i.paused) return { state: "paused", action: i.alive ? "stop" : "none", restarts }
   if (i.alive) return { state: i.state === "starting" ? "starting" : "up", action: "none", restarts }
+  // Down is sticky: only a manual resume / restart brings it back (they reset `state`).
+  if (i.state === "down") return { state: "down", action: "none", restarts }
   if (i.spawnedAt && i.now - i.spawnedAt < START_GRACE_MS) return { state: "starting", action: "none", restarts }
   if (restarts.length >= RESTARTS_MAX) return { state: "down", action: "none", restarts }
   return { state: "starting", action: "spawn", restarts: [...restarts, i.now] }

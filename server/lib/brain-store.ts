@@ -104,6 +104,6 @@ export function rememberPropose(sourceTurnId: string, promptHash: string, propos
 }
 
 /** The brain proposal behind a local proposal id → the turn it answered (trace parent). */
-export function proposalSource(proposalId: string): string | null {
+export function proposalTurnOf(proposalId: string): string | null {
   return (db.query("SELECT source_turn_id FROM brain_proposals WHERE proposal_id = ?").get(proposalId) as { source_turn_id: string } | null)?.source_turn_id ?? null
 }

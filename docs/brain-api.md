@@ -84,11 +84,17 @@ Auth — all of: TCP peer loopback with no forwarded hop (`clientOrigin(...).tra
 
 ## Hooks (no hook-script change)
 
-The brain is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/*`) and the normal permission flow (auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
-- PreToolUse / PermissionRequest: `brainToolVerdict` decides before the question path, SUPER, learned allows and the auto-judge. Edit/Write/MultiEdit/NotebookEdit and question tools → deny; read tools, Turso read + note_create/note_update, Gmail drafts → allow; Bash only for `bin/*`, `~/.claude/tools/dispatch.sh` and read-only git/gh, one command with no pipes or chaining.
-- Stop: the reply becomes an `orchestrator` turn in the brain thread; no waiting badge, no push, no global auto-compact.
-- SessionStart: the supervisor adopts the session (pane + session id).
+- PreToolUse: **SUPER never auto-allows for the brain** — its calls fall to the auto-judge or the phone. Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
+- Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).
+- SessionStart: the supervisor adopts the session only when it sits in the pane it spawned (herdr's `brain` agent pane after a Companion restart), never replacing a live adopted session, and never while paused.
+
+## Supervisor rules
+
+- Paused flag re-read before every spawn, in SessionStart adoption and before every delivery.
+- `busy` (a typed turn waiting for its Stop) clears after 10 min with no hook from the brain.
+- `down` (3 respawns in 5 min) lasts until a manual resume or restart.
 
 ## Delivery rules
 
