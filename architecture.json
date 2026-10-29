@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-26",
+  "generatedAt": "2026-10-29",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 166,
+          "lines": 172,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -86,7 +86,10 @@
             "wiring/shell-sessions.ts",
             "lib/pane-mirror.ts",
             "wiring/pane-mirror.ts",
-            "lib/tmux-pane.ts"
+            "lib/tmux-pane.ts",
+            "routes/brain.ts",
+            "wiring/brain.ts",
+            "lib/brain.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -868,6 +871,120 @@
           "externals": []
         },
         {
+          "path": "lib/brain-store.ts",
+          "lines": 110,
+          "kind": "lib",
+          "exports": [
+            "OutboxState",
+            "OutboxRow",
+            "enqueueDelivery",
+            "takeDeliveries",
+            "openDeliveries",
+            "markDelivered",
+            "markMaybe",
+            "clearTyped",
+            "getKv",
+            "setKv",
+            "consentClaimed",
+            "claimConsent",
+            "proposeSeen",
+            "rememberPropose",
+            "proposalTurnOf"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/brain-trace.ts",
+          "lines": 204,
+          "kind": "lib",
+          "exports": [
+            "TraceKind",
+            "TraceStatus",
+            "TraceRef",
+            "TraceRow",
+            "RowInput",
+            "NEEDS_YOU",
+            "rowId",
+            "getRow",
+            "upsertRow",
+            "rowsSince",
+            "latestRows",
+            "traceForDispatch",
+            "ApprovalTrace",
+            "traceForApproval"
+          ],
+          "state": [
+            "TERMINAL: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts",
+            "lib/dispatch-tasks.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/brain.ts",
+          "lines": 146,
+          "kind": "lib",
+          "exports": [
+            "BRAIN_THREAD",
+            "BRAIN_AGENT",
+            "RESERVED_CHANNELS",
+            "BRAIN_TAKE_PREFIX",
+            "BrainState",
+            "brainEnabled",
+            "isBrainHook",
+            "isSupervisedTask",
+            "DeliveryTurn",
+            "DELIVERY_MAX",
+            "deliveryText",
+            "bootSeed",
+            "TICK_MS",
+            "RESTART_WINDOW_MS",
+            "RESTARTS_MAX",
+            "START_GRACE_MS",
+            "BUSY_MAX_MS",
+            "SuperviseInput",
+            "SuperviseAction",
+            "superviseStep",
+            "IDLE_COMPACT_MS",
+            "IDLE_COMPACT_PCT",
+            "idleCompactDue",
+            "compactText",
+            "ROLLOVER_HOUR",
+            "rolloverDue",
+            "rolloverPrompt",
+            "VOICE_CONSENT_MS",
+            "ConsentTurn",
+            "voiceConsent"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/branch-guard.ts",
           "lines": 89,
           "kind": "lib",
@@ -1506,7 +1623,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 401,
+          "lines": 412,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -2559,7 +2676,7 @@
         },
         {
           "path": "lib/orchestrator-channels.ts",
-          "lines": 158,
+          "lines": 165,
           "kind": "lib",
           "exports": [
             "ChannelTrust",
@@ -2568,6 +2685,7 @@
             "channelTrust",
             "listChannels",
             "getChannel",
+            "isReservedName",
             "createChannel",
             "ensureChannel",
             "getChannelByNote",
@@ -2583,7 +2701,8 @@
           "apiCalls": [],
           "imports": [
             "lib/orchestrator-db.ts",
-            "lib/orchestrator-chat.ts"
+            "lib/orchestrator-chat.ts",
+            "lib/brain.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2591,16 +2710,19 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 271,
+          "lines": 311,
           "kind": "lib",
           "exports": [
             "TurnRole",
             "TaskStatus",
             "LIVE_STATUSES",
             "Turn",
+            "TurnCard",
             "Task",
             "ProposalTarget",
             "appendTurn",
+            "getTurn",
+            "setTurnCard",
             "getThread",
             "createTask",
             "createQueuedTask",
@@ -2629,7 +2751,7 @@
         },
         {
           "path": "lib/orchestrator-db.ts",
-          "lines": 99,
+          "lines": 101,
           "kind": "lib",
           "exports": [
             "db",
@@ -5339,7 +5461,7 @@
         },
         {
           "path": "lib/voice-memo.ts",
-          "lines": 466,
+          "lines": 469,
           "kind": "lib",
           "exports": [
             "VOICE_HINT",
@@ -5377,6 +5499,7 @@
           "apiCalls": [],
           "imports": [
             "lib/dashboard-client.ts",
+            "lib/brain.ts",
             "lib/db-path.ts",
             "lib/log.ts"
           ],
@@ -5730,6 +5853,33 @@
           "externals": []
         },
         {
+          "path": "routes/brain.ts",
+          "lines": 107,
+          "kind": "lib",
+          "exports": [
+            "BrainRouteDeps",
+            "createBrainRoute",
+            "brainRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/brain.ts",
+            "lib/brain-trace.ts",
+            "lib/log.ts",
+            "lib/sessions.ts",
+            "lib/vault-guard.ts",
+            "wiring/brain.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/canvas.ts",
           "lines": 120,
           "kind": "lib",
@@ -5751,7 +5901,7 @@
         },
         {
           "path": "routes/capture.ts",
-          "lines": 385,
+          "lines": 411,
           "kind": "lib",
           "exports": [
             "VOICE_UPLOAD_PATH",
@@ -5770,6 +5920,8 @@
           "imports": [
             "lib/auth.ts",
             "lib/dashboard-client.ts",
+            "lib/brain.ts",
+            "wiring/brain.ts",
             "lib/idempotency.ts",
             "lib/log.ts",
             "lib/receipt-capture.ts",
@@ -5962,7 +6114,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 529,
+          "lines": 546,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -6048,7 +6200,9 @@
             "wiring/auto-compact.ts",
             "wiring/gauge.ts",
             "lib/last-assistant.ts",
-            "lib/worker-hook-gate.ts"
+            "lib/worker-hook-gate.ts",
+            "lib/brain.ts",
+            "wiring/brain.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6176,7 +6330,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 394,
+          "lines": 416,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6248,6 +6402,8 @@
             "wiring/orchestrator.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
+            "lib/brain.ts",
+            "wiring/brain.ts",
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts",
             "lib/pipeline.ts",
@@ -6422,7 +6578,7 @@
         },
         {
           "path": "state.ts",
-          "lines": 71,
+          "lines": 88,
           "kind": "lib",
           "exports": [
             "WsData",
@@ -6431,6 +6587,8 @@
             "describeClient",
             "clients",
             "broadcast",
+            "broadcastWhere",
+            "clientBuild",
             "HOST_INFO"
           ],
           "state": [],
@@ -6445,7 +6603,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 282,
+          "lines": 285,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -6465,6 +6623,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/brain.ts",
             "lib/auto-compact.ts",
             "lib/auto-compact-keep.ts",
             "lib/auto-compact-stats.ts",
@@ -6612,6 +6771,56 @@
           "externals": []
         },
         {
+          "path": "wiring/brain.ts",
+          "lines": 478,
+          "kind": "lib",
+          "exports": [
+            "BrainStatus",
+            "ProposeInput",
+            "BrainDeps",
+            "emitTrace",
+            "createBrainWiring",
+            "BrainWiring",
+            "BRAIN_DIR",
+            "setBrainDeliver",
+            "brainWiring"
+          ],
+          "state": [
+            "let deliverFn"
+          ],
+          "emits": [
+            "brain_trace",
+            "brain"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "state.ts",
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/brain-trace.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-channels.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/sessions.ts",
+            "lib/spawn-session.ts",
+            "lib/herdr.ts",
+            "lib/push.ts",
+            "lib/apns.ts",
+            "wiring/gauge.ts",
+            "wiring/auto-compact.ts",
+            "wiring/takeover-liveness.ts",
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts",
+            "wiring/dispatch.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/canvas.ts",
           "lines": 126,
           "kind": "lib",
@@ -6718,7 +6927,7 @@
         },
         {
           "path": "wiring/dispatch.ts",
-          "lines": 52,
+          "lines": 60,
           "kind": "lib",
           "exports": [
             "dispatchPushEnabled",
@@ -6728,7 +6937,9 @@
           "state": [
             "polledListeners: Set"
           ],
-          "emits": [],
+          "emits": [
+            "brain_trace"
+          ],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
@@ -6742,7 +6953,9 @@
             "lib/orchestrator-db.ts",
             "lib/push.ts",
             "lib/turso.ts",
-            "state.ts"
+            "state.ts",
+            "lib/brain.ts",
+            "lib/brain-trace.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6750,7 +6963,7 @@
         },
         {
           "path": "wiring/events.ts",
-          "lines": 199,
+          "lines": 224,
           "kind": "lib",
           "exports": [],
           "state": [
@@ -6786,7 +6999,11 @@
             "wiring/waiting.ts",
             "lib/approval-history.ts",
             "lib/approval-history-auto.ts",
-            "lib/log.ts"
+            "lib/log.ts",
+            "lib/brain.ts",
+            "lib/brain-trace.ts",
+            "lib/orchestrator-chat.ts",
+            "wiring/brain.ts"
           ],
           "listeners": [
             "onApprovalRequest",
@@ -7407,7 +7624,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 229,
+          "lines": 240,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -7415,6 +7632,8 @@
           "state": [],
           "emits": [
             "init",
+            "brain",
+            "brain_trace",
             "approval",
             "question",
             "resolved",
@@ -7444,7 +7663,10 @@
             "wiring/canvas.ts",
             "lib/shell-sessions.ts",
             "wiring/shell-sessions.ts",
-            "wiring/pane-mirror.ts"
+            "wiring/pane-mirror.ts",
+            "lib/brain.ts",
+            "lib/brain-trace.ts",
+            "wiring/brain.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7478,6 +7700,7 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
             "wiring/dialogs.ts",
@@ -7519,6 +7742,12 @@
             "companion-server.ts"
           ]
         },
+        "setBrainDeliver": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "createCanvasRoute": {
           "module": "routes/canvas.ts",
           "callers": [
@@ -7531,6 +7760,7 @@
             "companion-server.ts",
             "routes/api.ts#* /api/status",
             "wiring/body-agent.ts",
+            "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/orchestrator.ts",
             "wiring/repo-view.ts",
@@ -7572,8 +7802,10 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
+            "routes/brain.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
@@ -7591,6 +7823,31 @@
           "module": "lib/ended-sessions.ts",
           "callers": [
             "companion-server.ts"
+          ]
+        },
+        "brainEnabled": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/brain.ts",
+            "routes/capture.ts",
+            "wiring/dispatch.ts",
+            "wiring/events.ts",
+            "ws.ts"
+          ]
+        },
+        "brainWiring": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/brain.ts",
+            "routes/capture.ts",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "ws.ts"
           ]
         },
         "WsData": {
@@ -7612,6 +7869,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/brain.ts",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
@@ -7621,6 +7879,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/brain.ts",
             "routes/records.ts",
             "routes/vault.ts"
           ]
@@ -7657,6 +7916,12 @@
           "callers": [
             "companion-server.ts#* /ws",
             "routes/api.ts#* /api/feed"
+          ]
+        },
+        "clientBuild": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
           ]
         },
         "TERMINAL_PATH": {
@@ -7762,6 +8027,12 @@
         },
         "handleBodyRoute": {
           "module": "routes/body.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "brainRoute": {
+          "module": "routes/brain.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -7908,12 +8179,14 @@
             "lib/question-hook.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
+            "routes/brain.ts",
             "routes/command.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/auto-compact.ts",
+            "wiring/brain.ts",
             "wiring/dialogs.ts",
             "wiring/events.ts",
             "wiring/gauge.ts",
@@ -8073,6 +8346,7 @@
             "routes/auto-compact.ts#POST /api/auto-compact/test",
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/body.ts#POST /api/body/alert",
+            "routes/brain.ts",
             "routes/capture.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
@@ -8097,6 +8371,7 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
@@ -8367,6 +8642,7 @@
             "lib/dispatch-poller.ts",
             "lib/push.ts",
             "wiring/body.ts",
+            "wiring/brain.ts",
             "wiring/receipt-qa.ts"
           ]
         },
@@ -8710,6 +8986,28 @@
           "module": "lib/body.ts",
           "callers": [
             "lib/body-tokens.ts"
+          ]
+        },
+        "DispatchTask": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/brain-trace.ts",
+            "lib/dispatch-mirror.ts",
+            "lib/dispatch-poller.ts",
+            "lib/dispatch-stage.ts",
+            "lib/pipeline.ts",
+            "lib/status-answer.ts",
+            "lib/triage-sources.ts",
+            "routes/orchestrator.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "phaseOf": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "lib/brain-trace.ts",
+            "lib/dispatch-mirror.ts",
+            "lib/dispatch-poller.ts"
           ]
         },
         "Judgement": {
@@ -9163,26 +9461,6 @@
             "lib/dispatch-poller.ts"
           ]
         },
-        "DispatchTask": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-mirror.ts",
-            "lib/dispatch-poller.ts",
-            "lib/dispatch-stage.ts",
-            "lib/pipeline.ts",
-            "lib/status-answer.ts",
-            "lib/triage-sources.ts",
-            "routes/orchestrator.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "phaseOf": {
-          "module": "lib/dispatch-tasks.ts",
-          "callers": [
-            "lib/dispatch-mirror.ts",
-            "lib/dispatch-poller.ts"
-          ]
-        },
         "DispatchColumns": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -9265,7 +9543,15 @@
             "lib/front-door.ts",
             "lib/orchestrator-brain.ts",
             "wiring/body.ts",
+            "wiring/brain.ts",
             "wiring/orchestrator.ts"
+          ]
+        },
+        "TurnCard": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/dispatch-poller.ts",
+            "routes/orchestrator.ts"
           ]
         },
         "DIGEST_MAX": {
@@ -9393,6 +9679,7 @@
             "lib/session-pane.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain.ts",
             "wiring/dialogs.ts"
           ]
         },
@@ -9877,6 +10164,12 @@
             "lib/receipt-sonnet.ts"
           ]
         },
+        "RESERVED_CHANNELS": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/orchestrator-channels.ts"
+          ]
+        },
         "GENERAL_CHANNEL": {
           "module": "lib/orchestrator-db.ts",
           "callers": [
@@ -9996,6 +10289,7 @@
           "callers": [
             "lib/pane-mirror.ts",
             "lib/terminal-bridge.ts",
+            "routes/brain.ts",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event",
@@ -10008,6 +10302,7 @@
           "callers": [
             "lib/pane-mirror.ts",
             "lib/terminal-bridge.ts",
+            "routes/brain.ts",
             "routes/records.ts",
             "routes/vault.ts"
           ]
@@ -10081,6 +10376,7 @@
             "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts"
           ]
@@ -10628,6 +10924,7 @@
             "wiring/auto-compact.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/receipt-qa.ts"
@@ -11082,6 +11379,8 @@
             "lib/session-resolve.ts",
             "routes/api.ts#GET /api/sessions/history",
             "wiring/auto-compact.ts",
+            "wiring/brain.ts",
+            "wiring/events.ts",
             "wiring/waiting.ts"
           ]
         },
@@ -12009,13 +12308,21 @@
         "patchInbox": {
           "module": "lib/dashboard-client.ts",
           "callers": [
-            "lib/voice-memo.ts"
+            "lib/voice-memo.ts",
+            "routes/capture.ts"
           ]
         },
         "listNotesLite": {
           "module": "lib/dashboard-client.ts",
           "callers": [
             "lib/voice-memo.ts"
+          ]
+        },
+        "BRAIN_TAKE_PREFIX": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/voice-memo.ts",
+            "routes/capture.ts"
           ]
         },
         "processEnvEntries": {
@@ -12124,7 +12431,8 @@
         "SpawnResult": {
           "module": "lib/spawn-session.ts",
           "callers": [
-            "routes/api.ts#POST /api/spawn-session"
+            "routes/api.ts#POST /api/spawn-session",
+            "wiring/brain.ts"
           ]
         },
         "spawnCompanionSession": {
@@ -12527,6 +12835,32 @@
             "routes/body.ts#POST /api/body/investigate"
           ]
         },
+        "BrainWiring": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "BRAIN_AGENT": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "rowsSince": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "latestRows": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "routes/brain.ts",
+            "ws.ts"
+          ]
+        },
         "SendResult": {
           "module": "lib/canvas.ts",
           "callers": [
@@ -12806,7 +13140,8 @@
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/gauge.ts#GET /api/gauge",
-            "routes/hooks.ts#POST /hooks/session-end"
+            "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/brain.ts"
           ]
         },
         "parseModReport": {
@@ -12923,6 +13258,15 @@
             "wiring/events.ts"
           ]
         },
+        "isBrainHook": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start"
+          ]
+        },
         "questionFastPath": {
           "module": "lib/question-hook.ts",
           "callers": [
@@ -12998,6 +13342,12 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
+        "gaugeFromTranscript": {
+          "module": "wiring/gauge.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
+          ]
+        },
         "markWaiting": {
           "module": "wiring/waiting.ts",
           "callers": [
@@ -13018,12 +13368,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "gaugeFromTranscript": {
-          "module": "wiring/gauge.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
-          ]
-        },
         "noteSessionBoundary": {
           "module": "lib/submit-confirm.ts",
           "callers": [
@@ -13037,6 +13381,7 @@
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
+            "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
@@ -13145,13 +13490,15 @@
         "emitChannel": {
           "module": "wiring/orchestrator.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/brain.ts"
           ]
         },
         "emitTask": {
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/brain.ts",
             "wiring/proposals.ts"
           ]
         },
@@ -13160,6 +13507,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
@@ -13181,6 +13529,7 @@
             "routes/orchestrator.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
@@ -13246,6 +13595,12 @@
             "wiring/triage.ts"
           ]
         },
+        "isReservedName": {
+          "module": "lib/orchestrator-channels.ts",
+          "callers": [
+            "routes/orchestrator.ts"
+          ]
+        },
         "createChannel": {
           "module": "lib/orchestrator-channels.ts",
           "callers": [
@@ -13268,6 +13623,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -13319,6 +13675,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
+            "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -13343,6 +13700,14 @@
             "wiring/triage.ts"
           ]
         },
+        "BRAIN_THREAD": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/brain.ts"
+          ]
+        },
         "sessionCmdArgv": {
           "module": "lib/tmux-pane.ts",
           "callers": [
@@ -13360,6 +13725,7 @@
           "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/brain.ts",
             "wiring/triage.ts"
           ]
         },
@@ -13786,6 +14152,12 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "isSupervisedTask": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/auto-compact.ts"
+          ]
+        },
         "DEFAULT_BODY_AGENT": {
           "module": "lib/body-agent.ts",
           "callers": [
@@ -13861,7 +14233,8 @@
           "callers": [
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
-            "wiring/body.ts"
+            "wiring/body.ts",
+            "wiring/brain.ts"
           ]
         },
         "localizeCwd": {
@@ -13875,6 +14248,7 @@
           "callers": [
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
+            "wiring/brain.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts"
@@ -14002,6 +14376,199 @@
           "module": "lib/body.ts",
           "callers": [
             "wiring/body.ts"
+          ]
+        },
+        "BrainState": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "DeliveryTurn": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "deliveryText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "bootSeed": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "TICK_MS": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "BUSY_MAX_MS": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "superviseStep": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "idleCompactDue": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "compactText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "rolloverDue": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "rolloverPrompt": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "voiceConsent": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "enqueueDelivery": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "markDelivered": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "markMaybe": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "clearTyped": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "getKv": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "consentClaimed": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "claimConsent": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "takeDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "openDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "setKv": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "proposeSeen": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "rememberPropose": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "TraceRow": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "getTurn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "rowId": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "upsertRow": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "setTurnCard": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "createLiveness": {
+          "module": "wiring/takeover-liveness.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "spawnInHerdr": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "realAutoCompactDeps": {
+          "module": "wiring/auto-compact.ts",
+          "callers": [
+            "wiring/brain.ts"
           ]
         },
         "createCanvasStore": {
@@ -14148,6 +14715,19 @@
             "wiring/dispatch.ts"
           ]
         },
+        "getTaskByDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/dispatch.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "traceForDispatch": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/dispatch.ts"
+          ]
+        },
         "linkedNotes": {
           "module": "lib/orchestrator-channels.ts",
           "callers": [
@@ -14161,12 +14741,6 @@
           ]
         },
         "listQueued": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/dispatch.ts"
-          ]
-        },
-        "getTaskByDispatchId": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/dispatch.ts"
@@ -14216,6 +14790,36 @@
         },
         "recordPending": {
           "module": "lib/approval-history.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "ApprovalTrace": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "NEEDS_YOU": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "getRow": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "traceForApproval": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/events.ts"
+          ]
+        },
+        "emitTrace": {
+          "module": "wiring/brain.ts",
           "callers": [
             "wiring/events.ts"
           ]

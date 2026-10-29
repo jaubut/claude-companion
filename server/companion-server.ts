@@ -1,5 +1,5 @@
 import { checkBearer, checkBearerHeaderOnly, unauthorized } from "./lib/auth"
-import { type WsData, HOST_INFO, broadcast, clientInfo } from "./state"
+import { type WsData, HOST_INFO, broadcast, clientBuild, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { deliverInject, handleApiRoute } from "./routes/api"
@@ -38,6 +38,9 @@ import { attachCount } from "./wiring/shell-sessions"
 import { PANE_MIRROR_PATH, paneMirrorUpgrade } from "./lib/pane-mirror"
 import { mirrorViewerCount } from "./wiring/pane-mirror"
 import { ensureUtf8Locale } from "./lib/tmux-pane"
+import { brainRoute } from "./routes/brain"
+import { brainWiring, setBrainDeliver } from "./wiring/brain"
+import { brainEnabled } from "./lib/brain"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -50,6 +53,7 @@ const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 setCanvasDeliver(deliverInject)
+setBrainDeliver(deliverInject)
 const handleCanvasRoute = createCanvasRoute({ store: canvasStore, status: canvasStatus, host: HOST_INFO.name, notify: broadcast, send: canvasSend })
 
 export function createCompanionServer(port: number) {
@@ -60,6 +64,8 @@ export function createCompanionServer(port: number) {
   // then every few seconds so an `exit` reaches the phone.
   startShellPoll(listSessions)
   startEndedSweep(listSessions)
+  // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
+  if (brainEnabled()) brainWiring.start()
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
@@ -101,7 +107,7 @@ export function createCompanionServer(port: number) {
         // Immediate except in the first seconds after boot (lib/discover.ts).
         await waitForFirstDiscovery(WS_FIRST_DISCOVERY_WAIT_MS)
         const upgraded = server.upgrade(req, {
-          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req) },
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req), build: clientBuild(req) },
         })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })
@@ -143,7 +149,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
+      for (const route of [handleHookRoute, brainRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }

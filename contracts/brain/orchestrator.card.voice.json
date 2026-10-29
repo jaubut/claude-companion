@@ -1,0 +1,18 @@
+{
+  "type": "orchestrator",
+  "turn": {
+    "id": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+    "threadId": "brain",
+    "role": "user",
+    "text": "Dispatch the tax rounding fix to builder",
+    "taskId": null,
+    "createdAt": 1793145600000,
+    "card": {
+      "kind": "voice",
+      "source": "app",
+      "durationMs": 31000,
+      "locale": "en-US",
+      "audioId": "812"
+    }
+  }
+}

@@ -17,6 +17,9 @@ import { canvasSnapshot } from "./wiring/canvas"
 import { wireSessions } from "./lib/shell-sessions"
 import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-sessions"
 import { mirrorClose, mirrorMessage, mirrorOpen } from "./wiring/pane-mirror"
+import { brainEnabled } from "./lib/brain"
+import { latestRows } from "./lib/brain-trace"
+import { brainWiring } from "./wiring/brain"
 
 // WebSocket handlers: on open, send the init frame, the host's copy jobs,
 // then replay pending approvals/questions; on message, approve/deny/answer/input/ping; on close,
@@ -29,6 +32,8 @@ export const websocket: WebSocketHandler<WsData> = {
     companionLog(`\x1b[2mws open ${describeClient("ws", ws.data.client)} (${clients.size} client${clients.size === 1 ? "" : "s"})\x1b[0m`)
 
     const pendingList = getPending()
+    // brain-v2: only on the brain host; absent everywhere else (shipped init unchanged).
+    const brain = brainEnabled() ? brainWiring.status() : null
 
     // init FIRST, replays after: iOS treats init as "this host resynced" and
     // drops every approval/question it holds from the host (resetHostState).
@@ -45,7 +50,13 @@ export const websocket: WebSocketHandler<WsData> = {
       superAuto: isSuperAuto(),
       dialogs: dialogWatcher.current(),
       host: HOST_INFO,
+      ...(brain ? { brain } : {}),
     }))
+    // brain-v2 right after init (same reset trap): the brain's status, then the trace snapshot.
+    if (brain) {
+      ws.send(JSON.stringify({ type: "brain", ...brain }))
+      ws.send(JSON.stringify({ type: "brain_trace", op: "snapshot", rows: latestRows() }))
+    }
     // The host's copy jobs right after init (same reset trap), only when any.
     const copies = copyJobs.frame()
     if (copies.jobs.length > 0) ws.send(JSON.stringify(copies))

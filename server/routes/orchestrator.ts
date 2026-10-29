@@ -13,8 +13,11 @@ import {
   type Task as OrchTask,
 } from "../lib/orchestrator-chat"
 import {
-  type Channel as OrchChannel, createChannel, getChannel, getChannelByNote, listChannels, setChannelNote,
+  type Channel as OrchChannel, createChannel, getChannel, getChannelByNote, isReservedName, listChannels, setChannelNote,
 } from "../lib/orchestrator-channels"
+import type { TurnCard } from "../lib/orchestrator-chat"
+import { BRAIN_THREAD } from "../lib/brain"
+import { brainWiring } from "../wiring/brain"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import {
   ANSWER_MAX, DEFAULT_AGENT, DISPATCH_ID, type DispatchTask, type WriteOutcome,
@@ -70,12 +73,25 @@ async function readJson(req: Request): Promise<Record<string, unknown> | null> {
 
 const optStr = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
 
+const LOCALE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$/
+
+/** brain-v2 send `voice: {durationMs, locale}` → the turn's voice card. Brain thread only; anything malformed → no card. */
+function voiceCard(raw: unknown, channelId: string): TurnCard | undefined {
+  if (channelId !== BRAIN_THREAD || !raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+  const v = raw as { durationMs?: unknown; locale?: unknown }
+  const card: TurnCard = { kind: "voice", source: "app" }
+  if (typeof v.durationMs === "number" && Number.isFinite(v.durationMs) && v.durationMs >= 0 && v.durationMs <= 3_600_000) card.durationMs = Math.round(v.durationMs)
+  if (typeof v.locale === "string" && LOCALE.test(v.locale)) card.locale = v.locale
+  return card
+}
+
 // POST .../channels {name, cwd?, noteId?}: a noteId links the new channel to
 // that project (404 unknown note, 409 note_linked_elsewhere — nothing created).
 async function createChannelRoute(req: Request, dispatch: DispatchWiring): Promise<Response> {
   const body = await readJson(req)
   const name = optStr(body?.name)
   if (!name) return Response.json({ ok: false, error: "name required" }, { status: 400 })
+  if (isReservedName(name)) return Response.json({ ok: false, error: "reserved_channel" }, { status: 409 })
   const noteId = optStr(body?.noteId)
   if (body?.noteId !== undefined && body.noteId !== null && (!noteId || noteId.length > NOTE_ID_MAX)) {
     return Response.json({ ok: false, error: "noteId must be a note id" }, { status: 400 })
@@ -106,7 +122,7 @@ async function createChannelRoute(req: Request, dispatch: DispatchWiring): Promi
 async function linkChannel(req: Request, id: string, dispatch: DispatchWiring): Promise<Response> {
   const ch = getChannel(id)
   if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
-  if (id === GENERAL_CHANNEL || id === BODY_CHANNEL) {
+  if (id === GENERAL_CHANNEL || id === BODY_CHANNEL || id === BRAIN_THREAD) {
     return Response.json({ ok: false, error: "system channels cannot be linked" }, { status: 400 })
   }
   let raw: { noteId?: unknown }
@@ -347,7 +363,7 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
   }
   if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
     return withIdempotency(req, "orch-send", async () => {
-      const { text, channel } = await req.json() as { text?: string; channel?: string }
+      const { text, channel, voice } = await req.json() as { text?: string; channel?: string; voice?: unknown }
       if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
       const ch = resolveChannel(channel)
       if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
@@ -371,8 +387,14 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
         orchEmit(turn)
         return Response.json({ ...keyed, turn }, { status: keyed.status })
       }
-      const turn = orchAppendTurn("user", text.trim(), null, ch.id)
+      const turn = orchAppendTurn("user", text.trim(), null, ch.id, voiceCard(voice, ch.id))
       orchEmit(turn)
+      // brain-v2: the brain thread goes to the supervised brain (persisted
+      // outbox; 200 even while it is down), never to the front door.
+      if (ch.id === BRAIN_THREAD) {
+        brainWiring.enqueue(turn)
+        return Response.json({ ok: true, turn })
+      }
       // The front door (Jev route → status / quick look / old brain) answers
       // async; the user message is already recorded, so /send returns instantly
       // and the reply/proposal streams in.

@@ -1,0 +1,16 @@
+{
+  "type": "orchestrator",
+  "turn": {
+    "id": "9b8e7c6d-0000-4000-8000-000000000001",
+    "threadId": "brain",
+    "role": "orchestrator",
+    "text": "PR ready [01234567] builder — Fix tax rounding\nhttps://github.com/jaubut/tls-dashboard-v2/pull/412",
+    "taskId": null,
+    "createdAt": 1793146500000,
+    "card": {
+      "kind": "dispatch",
+      "source": "app",
+      "taskId": "0123456789abcdef0123456789abcdef"
+    }
+  }
+}
