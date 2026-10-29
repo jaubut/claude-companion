@@ -80,6 +80,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | GET | `/api/brain/workers` | | `{ok, mode, sessions, foreign}`: the reaper's dry run (below). `foreign` counts every other workspace and never names one. |
 | POST | `/hooks/brain/sessions` | `{op:"list"}` · `{op:"close", workspaceId}` | see below. Same auth as propose (brain/bin/sessions). |
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
+| POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
 All `/api/brain*` are Bearer-gated; every one answers 404 `brain_disabled` off the brain host.
@@ -117,9 +118,23 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 | 409 `kept` (+`reason`) | any other keep (split, settling, unreadable) |
 | 409 `changed` / `in_flight` | the workspace changed before the close / another close is running |
 
+### Dead agent PRs (`/hooks/brain/pr-close`)
+
+`wiring/brain-pr-close.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word. Closed only when it is open, its head is `dispatch/*` (never `deps/*`, `agent/chores*` or a human branch) and at least one holds: `mergeable` CONFLICTING · superseded (its task's `dispatch_pr_url` is another PR) · its task done or cancelled · its newest shepherd park (`pr:needs-human`, not lifted by a later `pr:unpark`) says the fix budget is spent (`CI still failing after N fixes`, `merge conflict unresolved after N attempts`, `review verdict CHANGES after N fix runs`). Then `gh pr close --comment "Closed by the brain: <reason>"` (secrets redacted, branch kept), state read back CLOSED, an `agent_activity` row `brain:pr-close` (meta: repo, pr, url, branch, reason, evidence) and an event turn in the brain thread.
+
+| answer | when |
+|---|---|
+| 200 `{ok, closed, url, evidence}` | closed |
+| 400 | bad repo / pr / reason |
+| 403 `not_agent_branch` (+`branch`) | head is not `dispatch/*` |
+| 404 `pr_not_found` | gh cannot read it |
+| 409 `not_open` (+`state`) | already closed or merged |
+| 409 `not_dead` | none of the four signals |
+| 502 `close_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
+
 ## Hooks (no hook-script change)
 
-The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
 - PreToolUse: the brain takes the normal path like any session (SUPER, then auto-judge → phone; Jeremie, 2026-10-29). Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
 - Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).

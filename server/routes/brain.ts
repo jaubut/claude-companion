@@ -7,6 +7,7 @@ import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
+import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
 // brain-v2 routes (docs/brain-api.md):
@@ -17,6 +18,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
 //   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
+//   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
@@ -41,6 +43,8 @@ export interface BrainRouteDeps {
   enabled: () => boolean
   /** The brain-workers reaper (default: the real one). */
   workers?: BrainWorkers
+  /** The dead-PR close (default: the real one, gh + Turso). */
+  prClose?: typeof closeDeadPr
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -146,6 +150,25 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return fail(400, "unknown_op")
 }
 
+const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
+
+/** A dead agent PR only: wiring/brain-pr-close.ts re-checks it all on GitHub and Turso. */
+async function prClose(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const repo = typeof body.repo === "string" && REPO.test(body.repo) ? body.repo : null
+  if (!repo) return fail(400, "repo must be owner/name")
+  const pr = typeof body.pr === "number" && Number.isInteger(body.pr) && body.pr > 0 ? body.pr : null
+  if (!pr) return fail(400, "pr must be a PR number")
+  const reason = str(body.reason, REASON_MAX)
+  if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
+  const out = await (deps.prClose ?? closeDeadPr)({ repo, pr, reason })
+  companionLog(`[brain] pr-close ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
+  return Response.json(out.body, { status: out.status })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -168,6 +191,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return sessions(req, deps)
+    }
+    if (p === "/hooks/brain/pr-close") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return prClose(req, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()

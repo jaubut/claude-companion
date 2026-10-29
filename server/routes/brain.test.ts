@@ -251,3 +251,31 @@ describe("POST /hooks/brain/todo", () => {
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
   })
 })
+
+describe("POST /hooks/brain/pr-close", () => {
+  test("brain auth, then input checks; only a valid call reaches the gate", async () => {
+    const seen: unknown[] = []
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      prClose: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "not_dead" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1") => {
+      const req = new Request("http://localhost:4245/hooks/brain/pr-close", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { repo: "o/r", pr: 7, reason: "conflicting since #12" }
+    expect((await post(ok, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post({ ...ok, repo: "o/r; rm -rf" })).status).toBe(400)
+    expect((await post({ ...ok, pr: "7" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "x".repeat(301) })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await post(ok)
+    expect(r.status).toBe(409)
+    expect(r.json.error).toBe("not_dead")
+    expect(seen).toEqual([ok])
+  })
+})
