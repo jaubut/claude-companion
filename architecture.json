@@ -6772,7 +6772,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 478,
+          "lines": 488,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -9451,7 +9451,8 @@
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
-            "routes/hooks.ts#POST /hooks/session-start"
+            "routes/hooks.ts#POST /hooks/session-start",
+            "wiring/brain.ts"
           ]
         },
         "seenKey": {
