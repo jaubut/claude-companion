@@ -130,7 +130,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // hook from it refreshes the supervisor's busy deadline. Header first: a
     // payload with no cwd has no session.
     const brainCall = isBrainHook(headerMeta.taskId || session?.taskId)
-    if (brainCall) brainWiring.noteActivity(sessionId)
+    if (brainCall) brainWiring.noteActivity(sessionId, { phase: "pre", tool, input, toolUseId: body.tool_use_id ?? "" })
     {
       const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, toolUseId: body.tool_use_id, session, headerMeta })
       if (handled) return handled
@@ -233,6 +233,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const session = cwd
       ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
       : null
+    if (isBrainHook(headerMeta.taskId || session?.taskId)) brainWiring.noteActivity(body.session_id ?? "", { phase: "post", tool, input, toolUseId: body.tool_use_id ?? "" })
 
     if (isQuestionTool(tool)) {
       closeQuestionsFor(body.session_id, session?.key, "answered", "answered at the terminal", "post_tool_use")

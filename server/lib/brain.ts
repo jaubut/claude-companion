@@ -167,3 +167,42 @@ export function voiceConsent(turn: ConsentTurn | null, now: number, alreadyClaim
   const age = now - turn.createdAt
   return age >= 0 && age <= VOICE_CONSENT_MS
 }
+
+// ── Activity (the steps the phone shows while the brain works) ──
+
+export type BrainActivityKind = "thinking" | "reading" | "searching" | "writing" | "dispatching" | "working" | "compacting"
+export interface BrainActivity { kind: BrainActivityKind; label: string; since: number }
+export interface BrainStep { kind: BrainActivityKind; running: string; done: string; detail: string | null }
+
+const step = (kind: BrainActivityKind, running: string, done: string, detail: string | null = null): BrainStep => ({ kind, running, done, detail })
+
+/** A short hint for the step's line: the note, query or pattern it works on. */
+function stepDetail(input: Record<string, unknown>): string | null {
+  for (const k of ["ref_code", "ref", "query", "q", "pattern", "title", "url"]) {
+    const v = input[k]
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 80)
+  }
+  return null
+}
+
+/** The brain's step for one tool call (its PreToolUse / PostToolUse hook). */
+export function brainToolStep(tool: string, input: Record<string, unknown>): BrainStep {
+  const d = stepDetail(input)
+  if (tool === "Bash") {
+    const cmd = typeof input.command === "string" ? input.command.trim().replace(/^\.\//, "") : ""
+    if (cmd.startsWith("bin/propose")) return step("dispatching", "Dispatching", "Dispatched")
+    if (cmd.startsWith("bin/lead")) return step("dispatching", "Filing a lead", "Filed a lead")
+    if (cmd.startsWith("bin/thread")) return step("searching", "Searching the thread", "Searched the thread")
+    return step("working", "Running a command", "Ran a command")
+  }
+  if (tool === "mcp__turso__note_create" || tool === "mcp__turso__note_update") return step("writing", "Writing a note", "Wrote a note", d)
+  if (tool.startsWith("mcp__turso__")) return step("reading", "Reading notes", "Read notes", d)
+  if (tool.includes("Gmail__send_message") || tool.includes("Gmail__reply")) return step("writing", "Sending an email", "Sent an email")
+  if (/Gmail__(create|update)_draft/.test(tool)) return step("writing", "Drafting an email", "Drafted an email")
+  if (tool.includes("Gmail__")) return step("reading", "Reading mail", "Read mail", d)
+  if (tool === "Read" || tool === "Grep" || tool === "Glob") return step("reading", "Reading files", "Read files", d)
+  if (tool === "WebSearch" || tool === "WebFetch") return step("searching", "Searching the web", "Searched the web", d)
+  if (tool === "Agent" || tool === "Task") return step("dispatching", "Delegating", "Delegated", d)
+  const name = tool.replace(/^mcp__.+?__/, "").replace(/_/g, " ")
+  return step("working", `Using ${name}`, `Used ${name}`, d)
+}

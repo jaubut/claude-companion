@@ -5,7 +5,7 @@ import { dirname, join } from "node:path"
 import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
-  BRAIN_AGENT, BRAIN_THREAD, type BrainState, type DeliveryTurn,
+  BRAIN_AGENT, BRAIN_THREAD, type BrainActivity, type BrainState, type DeliveryTurn,
   BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
 } from "../lib/brain"
 import {
@@ -13,6 +13,7 @@ import {
   openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
+import { createBrainActivity } from "./brain-activity"
 import { type Turn, appendTurn, createProposal, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
 import { ensureChannel } from "../lib/orchestrator-channels"
 import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
@@ -31,21 +32,17 @@ import { emitChannel, emitTask, orchEmit } from "./orchestrator"
 import { approveProposal } from "./proposals"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
 
-// brain-v2 (RES-QDHU) runtime: supervises the one `brain` agent (a herdr pane
-// running interactive claude under Remote Control `brain`), relays Jeremie's
-// brain-thread turns into it, records its replies, and keeps the trace. The
-// server only supervises, relays and records; the thread (sqlite) is the
-// store, not the transcript. Started by companion-server.ts iff COMPANION_BRAIN=1.
-//
-// Adoption: only the session in the pane this supervisor spawned (herdr's
-// `brain` agent pane after a Companion restart), never a second one while the
-// adopted session is still the delivery target. Delivery is strict: a
-// non-empty session key whose registered session has taskId "brain" AND the
-// adopted session id — never a cwd, never the "most recent session" fallback.
-// not_submitted → `maybe`, never retyped into that session. The paused flag is
-// re-read before every spawn, every adoption and every delivery.
+// brain-v2 (RES-QDHU) runtime: supervises the one `brain` agent (herdr pane,
+// interactive claude under Remote Control `brain`), relays Jeremie's brain-thread
+// turns into it, records its replies and keeps the trace (sqlite is the store,
+// not the transcript). Started by companion-server.ts iff COMPANION_BRAIN=1.
+// Adoption: only the session in the pane this supervisor spawned, never a second
+// one while the adopted one is the delivery target. Delivery is strict: a
+// non-empty key whose session has taskId "brain" AND the adopted session id —
+// never a cwd or the most-recent fallback. not_submitted → `maybe`, never
+// retyped. The paused flag is re-read before every spawn, adoption and delivery.
 
-export interface BrainStatus { state: BrainState; sessionKey: string | null; since: number; restarts: number; host: string }
+export interface BrainStatus { state: BrainState; sessionKey: string | null; since: number; restarts: number; host: string; activity: BrainActivity | null }
 
 export interface ProposeInput { title: string; prompt: string; noteId: string; agent: string | null; reasoning: string; sourceTurnId: string }
 
@@ -105,13 +102,14 @@ export function createBrainWiring(deps: BrainDeps) {
   let selfWrite = 0
   let ticking = false
 
-  const trace = (rows: Array<TraceRow | null>): void => {
-    const out = rows.filter((r): r is TraceRow => !!r)
+  const trace = (rows: Array<TraceRow | null>, out = rows.filter((r): r is TraceRow => !!r)): void => {
     if (out.length) deps.broadcast({ type: "brain_trace", op: "row", rows: out })
   }
 
+  const activity = createBrainActivity({ now: deps.now, changed: () => deps.broadcast({ type: "brain", ...status() }), trace })
+
   function status(): BrainStatus {
-    return { state, sessionKey, since, restarts: restarts.length, host: deps.host }
+    return { state, sessionKey, since, restarts: restarts.length, host: deps.host, activity: activity.get() }
   }
 
   function setState(next: BrainState): void {
@@ -129,11 +127,12 @@ export function createBrainWiring(deps: BrainDeps) {
   function setBusy(on: boolean): void {
     busy = on
     busySince = on ? deps.now() : 0
+    syncActivity()
   }
+  const syncActivity = (): void => activity.sync({ busy, compacting, flushing: control === "flush" })
 
   function forgetSession(): void {
-    sessionKey = null
-    sessionId = null
+    sessionKey = sessionId = null
     setBusy(false)
   }
 
@@ -246,11 +245,11 @@ export function createBrainWiring(deps: BrainDeps) {
       return
     }
     markDelivered(ids)
+    activity.turn(seed ? null : userIds(ids).at(-1) ?? null)
     trace(userIds(ids).map((id) => upsertRow({ id: rowId.turn(id), turnId: id, kind: "turn", status: "running", title: getTurn(id)?.text ?? id, detail: "with the brain" })))
   }
 
-  /** Spawn now, unless the kill switch is set (re-read here: callers may have awaited since). */
-  /** fresh: a new conversation (the rollover, a manual resume from down); else resume the last one. */
+  /** Spawn now unless paused (re-read: callers may have awaited). fresh = a new conversation (rollover, resume from down), else resume. */
   async function spawnNow(fresh = false): Promise<void> {
     if (deps.paused.read()) {
       setState("paused")
@@ -287,6 +286,7 @@ export function createBrainWiring(deps: BrainDeps) {
       if (sessionKey && openDeliveries().length === 0 && !deps.paused.read()) {
         const ok = await deps.compact(sessionKey, compactText(await memoryRef(), 0))
         compacting = ok
+        syncActivity()
         deps.log(`[brain] idle compact ${ok ? "sent" : "refused"}`)
         if (ok) return
       }
@@ -361,6 +361,7 @@ export function createBrainWiring(deps: BrainDeps) {
       deps.log(`[brain] tick failed: ${(err as Error)?.message ?? String(err)}`)
     } finally {
       ticking = false
+      syncActivity()
     }
   }
 
@@ -401,8 +402,7 @@ export function createBrainWiring(deps: BrainDeps) {
     },
 
     stop(): void {
-      if (timer) clearInterval(timer)
-      timer = null
+      if (timer) clearInterval(timer); timer = null
     },
 
     /** A user turn in the brain thread (POST /api/orchestrator/send). Never throws: the turn is already persisted. */
@@ -413,6 +413,7 @@ export function createBrainWiring(deps: BrainDeps) {
         if (compacting && sessionKey) {
           // Jeremie comes first: Esc cancels the idle /compact, delivery follows.
           compacting = false
+          syncActivity()
           deps.log("[brain] message during idle compact — compact cancelled")
           void deps.interrupt(sessionKey).then(() => flush())
         }
@@ -430,9 +431,11 @@ export function createBrainWiring(deps: BrainDeps) {
       await finishTurn(lastMessage)
     },
 
-    /** Any hook from the adopted brain session: it is alive and working (busy deadline). */
-    noteActivity(sid: string): void {
-      if (sid && sid === sessionId) lastHookAt = deps.now()
+    /** Any hook from the adopted brain session: it is alive (busy deadline). A tool hook also names its step. */
+    noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void {
+      if (!sid || sid !== sessionId) return
+      lastHookAt = deps.now()
+      if (call && busy) activity.tool(call.phase, call.tool, call.input, call.toolUseId)
     },
 
     /** SessionStart from the brain: adopt it (a fresh spawn gets its boot seed on the next tick). */
@@ -440,6 +443,7 @@ export function createBrainWiring(deps: BrainDeps) {
       if (deps.paused.read()) return
       if (adopt(s)) {
         compacting = false
+        syncActivity()
         spawnedAt = 0
         setState("up")
         void flush()
@@ -582,10 +586,9 @@ export const brainWiring = createBrainWiring({
   paused: {
     read: () => existsSync(PAUSED_FLAG),
     write: (on) => {
-      if (on) {
-        mkdirSync(dirname(PAUSED_FLAG), { recursive: true })
-        writeFileSync(PAUSED_FLAG, `${new Date().toISOString()}\n`)
-      } else rmSync(PAUSED_FLAG, { force: true })
+      if (!on) return rmSync(PAUSED_FLAG, { force: true })
+      mkdirSync(dirname(PAUSED_FLAG), { recursive: true })
+      writeFileSync(PAUSED_FLAG, `${new Date().toISOString()}\n`)
     },
   },
   contextPct: (key) => gauge.snapshot().sessions.find((s) => s.sessionKey === key)?.ctxPercent ?? null,

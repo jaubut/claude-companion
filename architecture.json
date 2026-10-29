@@ -905,7 +905,7 @@
         },
         {
           "path": "lib/brain-trace.ts",
-          "lines": 204,
+          "lines": 207,
           "kind": "lib",
           "exports": [
             "TraceKind",
@@ -940,7 +940,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 170,
+          "lines": 209,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -977,7 +977,11 @@
             "flushPrompt",
             "VOICE_CONSENT_MS",
             "ConsentTurn",
-            "voiceConsent"
+            "voiceConsent",
+            "BrainActivityKind",
+            "BrainActivity",
+            "BrainStep",
+            "brainToolStep"
           ],
           "state": [],
           "emits": [],
@@ -6124,7 +6128,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 546,
+          "lines": 547,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -6781,8 +6785,29 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-activity.ts",
+          "lines": 56,
+          "kind": "lib",
+          "exports": [
+            "ActivityInput",
+            "createBrainActivity"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-trace.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain.ts",
-          "lines": 597,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -6811,6 +6836,7 @@
             "lib/brain.ts",
             "lib/brain-store.ts",
             "lib/brain-trace.ts",
+            "wiring/brain-activity.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
             "lib/dispatch-tasks.ts",
@@ -7855,6 +7881,7 @@
             "routes/brain.ts",
             "routes/capture.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start",
@@ -13291,6 +13318,7 @@
           "module": "lib/brain.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
             "routes/hooks.ts#POST /hooks/user-prompt-submit",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start"
@@ -14400,6 +14428,53 @@
             "wiring/body.ts"
           ]
         },
+        "TraceRow": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain-activity.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "BrainActivity": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain-activity.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "BrainActivityKind": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain-activity.ts"
+          ]
+        },
+        "RowInput": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain-activity.ts"
+          ]
+        },
+        "upsertRow": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain-activity.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "brainToolStep": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain-activity.ts"
+          ]
+        },
+        "rowId": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain-activity.ts",
+            "wiring/brain.ts",
+            "wiring/events.ts"
+          ]
+        },
         "BrainState": {
           "module": "lib/brain.ts",
           "callers": [
@@ -14568,27 +14643,14 @@
             "wiring/brain.ts"
           ]
         },
-        "TraceRow": {
-          "module": "lib/brain-trace.ts",
+        "createBrainActivity": {
+          "module": "wiring/brain-activity.ts",
           "callers": [
             "wiring/brain.ts"
           ]
         },
         "getTurn": {
           "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "rowId": {
-          "module": "lib/brain-trace.ts",
-          "callers": [
-            "wiring/brain.ts",
-            "wiring/events.ts"
-          ]
-        },
-        "upsertRow": {
-          "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain.ts"
           ]

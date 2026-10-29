@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  brainToolStep,
   RESTART_WINDOW_MS, START_GRACE_MS, VOICE_CONSENT_MS,
   bootSeed, brainEnabled, deliveryText, idleCompactDue, isBrainHook, isSupervisedTask,
   rolloverDue, superviseStep, voiceConsent,
@@ -84,4 +85,19 @@ test("deliveryText / bootSeed / rolloverDue", () => {
   expect(rolloverDue(four, null)).toBe(true)
   expect(rolloverDue(four, four.toISOString().slice(0, 10))).toBe(false)
   expect(rolloverDue(new Date(2026, 9, 28, 5, 0), null)).toBe(false)
+})
+
+describe("brainToolStep", () => {
+  test("names the brain's tools in present and past tense", () => {
+    expect(brainToolStep("Bash", { command: "./bin/thread 'shepherd'" })).toMatchObject({ kind: "searching", running: "Searching the thread", done: "Searched the thread" })
+    expect(brainToolStep("Bash", { command: "bin/lead tls" })).toMatchObject({ kind: "dispatching", running: "Filing a lead" })
+    expect(brainToolStep("Bash", { command: "ls" })).toMatchObject({ kind: "working", done: "Ran a command", detail: null })
+    expect(brainToolStep("mcp__turso__note_update", { ref_code: "RES-1" })).toMatchObject({ kind: "writing", running: "Writing a note", detail: "RES-1" })
+    expect(brainToolStep("mcp__turso__query", { sql: "SELECT 1" })).toMatchObject({ kind: "reading", running: "Reading notes" })
+    expect(brainToolStep("mcp__claude_ai_Gmail__create_draft", {})).toMatchObject({ kind: "writing", running: "Drafting an email" })
+    expect(brainToolStep("mcp__claude_ai_Gmail__get_draft", {})).toMatchObject({ kind: "reading", running: "Reading mail" })
+    expect(brainToolStep("mcp__claude_ai_Gmail__send_message", {})).toMatchObject({ running: "Sending an email" })
+    expect(brainToolStep("WebSearch", { query: "herdr states" })).toMatchObject({ kind: "searching", detail: "herdr states" })
+    expect(brainToolStep("mcp__claude_ai_Google_Calendar__list_events", {})).toMatchObject({ kind: "working", running: "Using list events", done: "Used list events" })
+  })
 })
