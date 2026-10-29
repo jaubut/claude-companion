@@ -71,6 +71,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/api/capture/voice/start` | `{mime, brainTurnId?}` (`^[\w:-]{1,64}$`) | unchanged. A valid id archives the take: inbox row `result_id = brain:<turnId>`, turn card `audioId`. Best effort — never fails the start. Omit the key when there is no turn. |
 | POST | `/api/capture/voice/:id/validate`, `/discard` | | 409 `brain_take` on a `brain:*` row |
 | POST | `/hooks/brain/propose` | `{title, prompt, noteId, agent?, reasoning, sourceTurnId}` | see below |
+| POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 
 All `/api/brain*` are Bearer-gated; every one answers 404 `brain_disabled` off the brain host.
 

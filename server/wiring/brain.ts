@@ -6,14 +6,14 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, MEMORY_TAG, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
+  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
 } from "../lib/brain"
 import {
   claimConsent, clearTyped, consentClaimed, enqueueDelivery, getKv, markDelivered, markMaybe,
   openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
-import { type Turn, appendTurn, createProposal, getTurn, setTurnCard } from "../lib/orchestrator-chat"
+import { type Turn, appendTurn, createProposal, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
 import { ensureChannel } from "../lib/orchestrator-channels"
 import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
 import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
@@ -101,6 +101,8 @@ export function createBrainWiring(deps: BrainDeps) {
   let control: "flush" | "rollover" | null = null
   let lastReplyText = ""
   let timer: ReturnType<typeof setInterval> | null = null
+  /** >0 while the supervisor writes its own thread turns: those never wake the brain. */
+  let selfWrite = 0
   let ticking = false
 
   const trace = (rows: Array<TraceRow | null>): void => {
@@ -160,7 +162,27 @@ export function createBrainWiring(deps: BrainDeps) {
   }
 
   function turnsOf(ids: string[]): DeliveryTurn[] {
-    return ids.map((id) => getTurn(id)).filter((t): t is Turn => !!t).map((t) => ({ id: t.id, text: t.text, createdAt: t.createdAt, card: t.card ?? null }))
+    return ids.map((id) => getTurn(id)).filter((t): t is Turn => !!t).map((t) => ({ id: t.id, text: t.text, createdAt: t.createdAt, card: t.card ?? null, role: t.role }))
+  }
+
+  /** Jeremie's turns only: events get no trace rows. */
+  const userIds = (ids: string[]): string[] => ids.filter((id) => getTurn(id)?.role === "user")
+
+  /** A brain-thread turn the supervisor writes (reply, warning, proposal card). */
+  function say(text: string, taskId: string | null = null): void {
+    selfWrite++
+    try { orchEmit(appendTurn("orchestrator", text, taskId, BRAIN_THREAD)) } finally { selfWrite-- }
+  }
+
+  /** A system turn landed in the brain thread (receipt, approval, merge…): the brain hears it on its next turn. */
+  function wake(turn: Turn): void {
+    if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator" || selfWrite > 0) return
+    try {
+      enqueueDelivery(turn.id, turn.createdAt)
+      void flush()
+    } catch (err) {
+      deps.log(`[brain] wake failed: ${(err as Error)?.message ?? String(err)}`)
+    }
   }
 
   /** Type one prompt into the brain. ok / not_submitted / refused (left for the next try). */
@@ -220,11 +242,11 @@ export function createBrainWiring(deps: BrainDeps) {
     if (out === "maybe") {
       markMaybe(ids)
       setBusy(false)
-      orchEmit(appendTurn("orchestrator", "⚠︎ Typed into the brain but not confirmed as submitted — not retyped. Check the brain pane, or resend.", null, BRAIN_THREAD))
+      say("⚠︎ Typed into the brain but not confirmed as submitted — not retyped. Check the brain pane, or resend.")
       return
     }
     markDelivered(ids)
-    trace(ids.map((id) => upsertRow({ id: rowId.turn(id), turnId: id, kind: "turn", status: "running", title: getTurn(id)?.text ?? id, detail: "with the brain" })))
+    trace(userIds(ids).map((id) => upsertRow({ id: rowId.turn(id), turnId: id, kind: "turn", status: "running", title: getTurn(id)?.text ?? id, detail: "with the brain" })))
   }
 
   /** Spawn now, unless the kill switch is set (re-read here: callers may have awaited since). */
@@ -257,9 +279,9 @@ export function createBrainWiring(deps: BrainDeps) {
     const was = control
     control = null
     // A late Stop after the transcript fallback carries the same reply: once only.
-    if (!was && text && text !== lastReplyText) orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD))
+    if (!was && text && text !== lastReplyText && text.toLowerCase() !== QUIET_REPLY) say(text)
     if (text) lastReplyText = text
-    if (!was) trace(clearTyped().map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
+    if (!was) trace(userIds(clearTyped()).map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
     if (was === "flush") {
       // Memory is on disk: compact now, unless Jeremie spoke meanwhile.
       if (sessionKey && openDeliveries().length === 0 && !deps.paused.read()) {
@@ -372,6 +394,7 @@ export function createBrainWiring(deps: BrainDeps) {
       if (timer) return
       const { channel, created } = ensureChannel(BRAIN_THREAD, "Brain")
       if (created) emitChannel(channel)
+      onTurnAppended(wake)
       timer = setInterval(() => void tick(), TICK_MS)
       timer.unref?.()
       void tick()
@@ -457,11 +480,7 @@ export function createBrainWiring(deps: BrainDeps) {
         }
         deps.log(`[brain] voice auto-file failed (${String(body.error)}): the proposal waits for a tap`)
       }
-      orchEmit(appendTurn(
-        "orchestrator",
-        `Proposal [${task.taskId}] — ${agent} · ${note.title ?? project}\nWhy: ${p.reasoning}\nTask: ${p.prompt}\nApprove to file it.`,
-        task.taskId, BRAIN_THREAD,
-      ))
+      say(`Proposal [${task.taskId}] — ${agent} · ${note.title ?? project}\nWhy: ${p.reasoning}\nTask: ${p.prompt}\nApprove to file it.`, task.taskId)
       return { status: 200, body: { ok: true, proposalId: task.taskId, status: "proposed" } }
     },
 
@@ -490,6 +509,9 @@ export function createBrainWiring(deps: BrainDeps) {
       void tick()
       return status()
     },
+
+    /** Every appended turn (registered by start()): brain-thread system turns wake the brain. */
+    onTurn: wake,
 
     /** Test seam: the pane a spawn would have returned (adoption requires it). */
     setSpawnedPaneForTests(p: string): void {
@@ -522,11 +544,6 @@ export function setBrainDeliver(fn: (text: string, key?: string) => Promise<Resp
   deliverFn = fn
 }
 
-/** --resume of a missing transcript makes claude exit: that would read as a crash loop. */
-function transcriptExists(cwd: string, sid: string): boolean {
-  return existsSync(transcriptPath(cwd, sid))
-}
-
 const liveness = createLiveness(() => ({ herdr: realHerdr, sessions: listSessions, now: Date.now }))
 
 async function stopBrainAgent(): Promise<void> {
@@ -546,7 +563,8 @@ export const brainWiring = createBrainWiring({
   },
   spawn: (resume) => spawnInHerdr(BRAIN_DIR, "claude", { COMPANION_TASK_ID: BRAIN_AGENT }, realHerdr, {
     name: BRAIN_AGENT,
-    args: ["--remote-control", BRAIN_AGENT, ...(resume && transcriptExists(BRAIN_DIR, resume) ? ["--resume", resume] : [])],
+    // --resume of a missing transcript makes claude exit: that would read as a crash loop.
+    args: ["--remote-control", BRAIN_AGENT, ...(resume && existsSync(transcriptPath(BRAIN_DIR, resume)) ? ["--resume", resume] : [])],
   }),
   stopAgent: stopBrainAgent,
   sessions: listSessions,

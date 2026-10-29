@@ -191,3 +191,33 @@ describe("/api/brain controls", () => {
     expect(Array.isArray(r.json.rows)).toBe(true)
   })
 })
+
+describe("POST /hooks/brain/thread", () => {
+  beforeEach(() => {
+    // /api/brain controls above pause and resume: adopt the brain session again.
+    flags.paused = false
+    harnessWiring.setSpawnedPaneForTests("p_brain")
+    harnessWiring.onSessionStart(BRAIN_SESSION)
+  })
+
+  test("the brain finds its own thread turns, newest first; LIKE wildcards are literal", async () => {
+    chat.appendTurn("user", "post the Instagram reel for Bistro Mavia", null, "brain")
+    chat.appendTurn("orchestrator", "Proposed: Instagram reel — waits for your tap", null, "brain")
+    chat.appendTurn("user", "instagram elsewhere", null, "general")
+    chat.appendTurn("user", "100% done", null, "brain")
+    const r = await call("POST", "/hooks/brain/thread", { q: "instagram" }, { headers: AUTH })
+    expect(r.status).toBe(200)
+    const turns = r.json.turns as Array<{ role: string; text: string }>
+    expect(turns.map((t) => t.text)).toEqual(["Proposed: Instagram reel — waits for your tap", "post the Instagram reel for Bistro Mavia"])
+    const pct = await call("POST", "/hooks/brain/thread", { q: "0%" }, { headers: AUTH })
+    expect((pct.json.turns as unknown[]).length).toBe(1)
+    const none = await call("POST", "/hooks/brain/thread", { q: "_" }, { headers: AUTH })
+    expect((none.json.turns as unknown[]).length).toBe(0)
+  })
+
+  test("same auth as propose: a tailnet peer or a foreign pid → 403; no q → 400", async () => {
+    expect((await call("POST", "/hooks/brain/thread", { q: "x" }, { headers: AUTH, peer: "100.64.0.9" })).status).toBe(403)
+    expect((await call("POST", "/hooks/brain/thread", { q: "x" }, { headers: { ...AUTH, "x-companion-pid": "9999" } })).status).toBe(403)
+    expect((await call("POST", "/hooks/brain/thread", {}, { headers: AUTH })).status).toBe(400)
+  })
+})

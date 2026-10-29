@@ -451,4 +451,26 @@ describe("phase 1.1", () => {
     expect(h.delivered[0]?.text).toContain("Read your memory note RES-MEMO")
     expect(store.getKv("memory_ref")).toBe("RES-MEMO")
   })
+
+  test("a system turn in the brain thread wakes the brain as an [event]; its own writes and other threads don't", async () => {
+    const h = harness()
+    await upBrain(h)
+    const off = chat.onTurnAppended(h.w.onTurn)
+    try {
+      const receipt = chat.appendTurn("orchestrator", "PR ready: tls#12", null, "brain", { kind: "dispatch", source: "app", taskId: "t-12" })
+      chat.appendTurn("orchestrator", "elsewhere", null, "general")
+      await Bun.sleep(1)
+      expect(h.delivered.length).toBe(1)
+      expect(h.delivered[0]?.text).toBe(`[event ${receipt.id}] PR ready: tls#12`)
+      // "noted" = nothing for Jeremie: not a thread turn.
+      await h.w.onStop("sid-brain", "noted")
+      expect(chat.getThread("brain").some((x) => x.text === "noted")).toBe(false)
+      // The supervisor's own reply turn never wakes it (onTurn sees it while say() runs).
+      await h.w.onStop("sid-brain", "a real reply")
+      expect(chat.getThread("brain").some((x) => x.text === "a real reply")).toBe(true)
+      expect(h.delivered.length).toBe(1)
+    } finally {
+      off()
+    }
+  })
 })

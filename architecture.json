@@ -940,7 +940,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 163,
+          "lines": 170,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -973,6 +973,7 @@
             "rolloverPrompt",
             "MEMORY_MAX_CHARS",
             "MEMORY_TAG",
+            "QUIET_REPLY",
             "flushPrompt",
             "VOICE_CONSENT_MS",
             "ConsentTurn",
@@ -2714,7 +2715,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 311,
+          "lines": 331,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -2724,10 +2725,12 @@
             "TurnCard",
             "Task",
             "ProposalTarget",
+            "onTurnAppended",
             "appendTurn",
             "getTurn",
             "setTurnCard",
             "getThread",
+            "searchThread",
             "createTask",
             "createQueuedTask",
             "createProposal",
@@ -2741,7 +2744,9 @@
             "countLiveTasks",
             "listQueued"
           ],
-          "state": [],
+          "state": [
+            "appendedListeners: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -5858,7 +5863,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 107,
+          "lines": 133,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -5875,6 +5880,7 @@
             "lib/brain.ts",
             "lib/brain-trace.ts",
             "lib/log.ts",
+            "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
             "lib/vault-guard.ts",
             "wiring/brain.ts"
@@ -6776,7 +6782,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 579,
+          "lines": 597,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -12856,6 +12862,21 @@
             "wiring/brain.ts"
           ]
         },
+        "BRAIN_THREAD": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/brain.ts"
+          ]
+        },
+        "searchThread": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "rowsSince": {
           "module": "lib/brain-trace.ts",
           "callers": [
@@ -13709,14 +13730,6 @@
             "wiring/triage.ts"
           ]
         },
-        "BRAIN_THREAD": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/brain.ts"
-          ]
-        },
         "sessionCmdArgv": {
           "module": "lib/tmux-pane.ts",
           "callers": [
@@ -14465,6 +14478,12 @@
             "wiring/brain.ts"
           ]
         },
+        "QUIET_REPLY": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "flushPrompt": {
           "module": "lib/brain.ts",
           "callers": [
@@ -14570,6 +14589,12 @@
         },
         "upsertRow": {
           "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "onTurnAppended": {
+          "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/brain.ts"
           ]
