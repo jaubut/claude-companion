@@ -17,12 +17,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 580 | lib | 21 |  |
 | `routes/api.ts` | 575 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 24 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
+| `wiring/brain.ts` | 547 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `routes/hooks.ts` | 546 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 534 | lib | 54 |  |
 | `lib/resolver.ts` | 526 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
-| `wiring/brain.ts` | 488 | lib | 9 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
@@ -132,7 +132,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/triage.ts` | 150 | lib | 2 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `routes/body.ts` | 149 | route-host | 3 | routes: 5 |
-| `lib/brain.ts` | 146 | lib | 30 |  |
+| `lib/brain.ts` | 148 | lib | 31 |  |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
 | `lib/jev.ts` | 143 | lib | 16 |  |
@@ -428,6 +428,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `TASKS_TZ()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `TriageOption()` | `lib/triage.ts` | `lib/mytask-triage.ts`, `lib/resolver.ts`, `lib/triage-engine.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `isQuestionTool()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/tool-format.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use` |
+| `transcriptPath()` | `lib/session-titles.ts` | `lib/orphan-question.ts`, `lib/transcript-backfill.ts`, `wiring/auto-compact.ts`, `wiring/brain.ts`, `wiring/events.ts` |
 | `clientOrigin()` | `lib/vault-guard.ts` | `lib/pane-mirror.ts`, `lib/terminal-bridge.ts`, `routes/brain.ts`, `routes/records.ts`, `routes/vault.ts` |
 | `hookPassthroughResponse()` | `lib/hook-common.ts` | `lib/question-hook.ts`, `lib/worker-hook-gate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `ExpenseFields()` | `lib/receipt-qa-store.ts` | `lib/receipt-capture.ts`, `lib/receipt-checks.ts`, `lib/receipt-jev.ts`, `lib/receipt-qa-worker.ts`, `lib/receipt-sonnet.ts` |
@@ -448,7 +449,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `toTaskDto()` | `lib/dispatch-tasks.ts` | `lib/body-investigate-engine.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/orchestrator.ts` |
 | `ESC_SETTLE_MS()` | `lib/command-list.ts` | `lib/command-scrape.ts`, `lib/key-gate.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/model.ts#POST /api/model/cancel` |
 | `Channel()` | `lib/orchestrator-channels.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `routes/orchestrator.ts`, `wiring/body.ts` |
-| `transcriptPath()` | `lib/session-titles.ts` | `lib/orphan-question.ts`, `lib/transcript-backfill.ts`, `wiring/auto-compact.ts`, `wiring/events.ts` |
 | `approveUrl()` | `lib/dispatch-tasks.ts` | `lib/pipeline.ts`, `wiring/body-agent.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts` |
 | `RepoEntry()` | `lib/live-repo.ts` | `lib/project-catalog.ts`, `lib/spawn-seed.ts`, `wiring/repo-view.ts`, `wiring/triage.ts` |
 | `isDir()` | `lib/live-repo.ts` | `lib/project-catalog.ts`, `lib/spawn-seed.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts` |
@@ -705,6 +705,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `questionFastPath()` | `lib/question-hook.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `addApprovalRequest()` | `lib/pty-manager.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
 | `recordAllow()` | `lib/learned-allow.ts` | `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request` |
+| `extractLastAssistantMessage()` | `lib/last-assistant.ts` | `routes/hooks.ts#POST /hooks/stop`, `wiring/brain.ts` |
 | `noteSessionBoundary()` | `lib/submit-confirm.ts` | `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end` |
 | `choicesFrom()` | `lib/model-control.ts` | `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set` |
 | `emitChannel()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `wiring/brain.ts` |

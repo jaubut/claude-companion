@@ -46,6 +46,11 @@ interface Harness {
   set: {
     alive: boolean; paused: boolean; sessions: Session[]; reply: { status: number; body: Record<string, unknown> }; now: number; spawn: SpawnResult
     agentPane: string
+    agentStatus: string
+    transcriptReply: string
+    resumes: Array<string | null>
+    interrupts: number
+    ctx?: number
     /** Runs inside alive() / stopAgent(): lets a test flip the flag mid-tick. */
     duringAlive?: () => void
     duringStop?: () => void
@@ -55,22 +60,25 @@ interface Harness {
 function harness(): Harness {
   const h: Harness = {
     delivered: [], frames: [], pushes: 0, spawns: 0, stops: 0,
-    set: { alive: false, paused: false, sessions: [], reply: { status: 200, body: { ok: true } }, now: 1_000_000, spawn: { ok: true, app: "herdr", herdrPane: "p_brain", sessionName: "brain" }, agentPane: "" },
+    set: { alive: false, paused: false, sessions: [], reply: { status: 200, body: { ok: true } }, now: 1_000_000, spawn: { ok: true, app: "herdr", herdrPane: "p_brain", sessionName: "brain" }, agentPane: "", agentStatus: "", transcriptReply: "", resumes: [], interrupts: 0 },
   } as unknown as Harness
   h.w = mod.createBrainWiring({
     now: () => h.set.now,
     alive: async () => { h.set.duringAlive?.(); return h.set.alive },
     agentPane: async () => h.set.agentPane,
-    spawn: async () => { h.spawns++; return h.set.spawn },
+    spawn: async (resume) => { h.spawns++; h.set.resumes.push(resume); return h.set.spawn },
     stopAgent: async () => { h.stops++; h.set.duringStop?.() },
     sessions: () => h.set.sessions,
     sessionByKey: (k) => h.set.sessions.find((s) => s.key === k) ?? null,
     tagBrain: (k) => { const s = h.set.sessions.find((x) => x.key === k); if (!s || s.taskId) return false; s.taskId = "brain"; return true },
+    agentStatus: async () => h.set.agentStatus,
+    lastReply: async () => h.set.transcriptReply,
+    interrupt: async () => { h.set.interrupts++ },
     deliver: async (text, key) => { h.delivered.push({ text, key }); return Response.json(h.set.reply.body, { status: h.set.reply.status }) },
     broadcast: (f) => { h.frames.push(f) },
     push: () => { h.pushes++ },
     paused: { read: () => h.set.paused, write: (on) => { h.set.paused = on } },
-    contextPct: () => null,
+    contextPct: () => h.set.ctx ?? null,
     compact: async () => true,
     dispatch: {} as never,
     host: "test",
@@ -331,5 +339,83 @@ describe("delivery is strict", () => {
     expect(() => h.w.enqueue(t)).not.toThrow()
     expect(store.takeDeliveries()).toContain(t.id)
     expect(h.delivered).toEqual([])
+  })
+})
+
+describe("phase 1.1", () => {
+  test("a lost Stop: idle past the grace with no hook → the reply is read from the transcript, delivery resumes", async () => {
+    const h = harness()
+    await upBrain(h)
+    const t = userTurn("p11 lost stop")
+    h.w.enqueue(t)
+    await Bun.sleep(1)
+    expect(h.delivered.length).toBe(1)
+    h.set.agentStatus = "idle"
+    h.set.now += 10_000
+    await h.w.tick() // inside the grace: still busy
+    expect(chat.getThread("brain").some((x) => x.text === "reply from transcript")).toBe(false)
+    h.set.transcriptReply = "reply from transcript"
+    h.set.now += 25_000
+    await h.w.tick()
+    expect(chat.getThread("brain").filter((x) => x.role === "orchestrator" && x.text === "reply from transcript").length).toBe(1)
+    // The late Stop carries the same reply: no second turn.
+    await h.w.onStop("sid-brain", "reply from transcript")
+    expect(chat.getThread("brain").filter((x) => x.text === "reply from transcript").length).toBe(1)
+    h.w.enqueue(userTurn("p11 next"))
+    await Bun.sleep(1)
+    expect(h.delivered.length).toBe(2)
+  })
+
+  test("busy but Claude Code says busy: no transcript read before the deadline", async () => {
+    const h = harness()
+    await upBrain(h)
+    h.w.enqueue(userTurn("p11 working"))
+    await Bun.sleep(1)
+    h.set.agentStatus = "busy"
+    h.set.transcriptReply = "should not land"
+    h.set.now += 60_000
+    await h.w.tick()
+    expect(chat.getThread("brain").some((x) => x.text === "should not land")).toBe(false)
+  })
+
+  test("a crash respawn resumes the adopted conversation; a resume from down starts fresh", async () => {
+    const h = harness()
+    await upBrain(h)
+    h.set.alive = false
+    h.set.now += 1_000
+    await h.w.tick()
+    expect(h.set.resumes.at(-1)).toBe("sid-brain")
+    h.set.now += 61_000 // past the start grace: the next spawn is due
+    h.w.resume()
+    await Bun.sleep(1)
+    expect(h.set.resumes.at(-1)).toBeNull()
+  })
+
+  test("a message during an idle compact cancels it (Esc) and is delivered", async () => {
+    const h = harness()
+    h.set.now = Date.parse("2026-10-29T12:00:00")
+    store.setKv("last_rollover", "2026-10-29")
+    await upBrain(h)
+    h.set.ctx = 80
+    h.set.now += 20 * 60_000
+    await h.w.tick() // idle 20 min at 80 % → /compact
+    h.w.enqueue(userTurn("p11 during compact"))
+    await Bun.sleep(5)
+    expect(h.set.interrupts).toBe(1)
+    expect(h.delivered.some((d) => d.text.includes("p11 during compact"))).toBe(true)
+  })
+
+  test("no message: delivery waits while the compact runs", async () => {
+    const h = harness()
+    h.set.now = Date.parse("2026-10-29T12:00:00")
+    store.setKv("last_rollover", "2026-10-29")
+    await upBrain(h)
+    h.set.ctx = 80
+    h.set.now += 20 * 60_000
+    await h.w.tick()
+    store.enqueueDelivery("p11-queued", h.set.now)
+    await h.w.tick()
+    expect(h.delivered.length).toBe(0)
+    expect(h.set.interrupts).toBe(0)
   })
 })

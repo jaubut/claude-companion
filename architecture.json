@@ -940,7 +940,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 146,
+          "lines": 148,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -960,6 +960,7 @@
             "RESTARTS_MAX",
             "START_GRACE_MS",
             "BUSY_MAX_MS",
+            "TURN_END_GRACE_MS",
             "SuperviseInput",
             "SuperviseAction",
             "superviseStep",
@@ -6772,7 +6773,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 488,
+          "lines": 547,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -6807,6 +6808,8 @@
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/herdr.ts",
+            "lib/last-assistant.ts",
+            "lib/session-titles.ts",
             "lib/push.ts",
             "lib/apns.ts",
             "wiring/gauge.ts",
@@ -10254,6 +10257,7 @@
             "lib/orphan-question.ts",
             "lib/transcript-backfill.ts",
             "wiring/auto-compact.ts",
+            "wiring/brain.ts",
             "wiring/events.ts"
           ]
         },
@@ -13340,7 +13344,8 @@
         "extractLastAssistantMessage": {
           "module": "lib/last-assistant.ts",
           "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/brain.ts"
           ]
         },
         "gaugeFromTranscript": {
@@ -14410,6 +14415,12 @@
           ]
         },
         "BUSY_MAX_MS": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "TURN_END_GRACE_MS": {
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain.ts"

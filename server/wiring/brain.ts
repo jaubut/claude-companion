@@ -6,7 +6,7 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, bootSeed, compactText, deliveryText, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
+  BUSY_MAX_MS, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
 } from "../lib/brain"
 import {
   claimConsent, clearTyped, consentClaimed, enqueueDelivery, getKv, markDelivered, markMaybe,
@@ -19,6 +19,8 @@ import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
 import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
 import { type SpawnResult, spawnInHerdr } from "../lib/spawn-session"
 import { realHerdr } from "../lib/herdr"
+import { extractLastAssistantMessage } from "../lib/last-assistant"
+import { transcriptPath } from "../lib/session-titles"
 import { pushToAll } from "../lib/push"
 import { apnsConfigured } from "../lib/apns"
 import type { ApnsPayload } from "../lib/apns"
@@ -52,13 +54,20 @@ export interface BrainDeps {
   alive(): Promise<boolean>
   /** herdr's `brain` agent pane ("" when absent): what to adopt after a Companion restart. */
   agentPane(): Promise<string>
-  spawn(): Promise<SpawnResult>
+  /** Start the brain: resume that conversation (claude --resume), or a fresh one when null. */
+  spawn(resume: string | null): Promise<SpawnResult>
   stopAgent(): Promise<void>
   sessions(): Session[]
   sessionByKey(key: string): Session | null
   /** Set taskId "brain" on a session found in the spawned pane. */
   tagBrain(key: string): boolean
   deliver(text: string, key: string): Promise<Response>
+  /** Claude Code's own status for the session ("busy" | "waiting" | "idle" | ""). */
+  agentStatus(key: string): Promise<string>
+  /** The text the brain wrote after its last prompt, read from its transcript ("" when none). */
+  lastReply(s: Session): Promise<string>
+  /** Esc into the brain's pane: cancels a running /compact. */
+  interrupt(key: string): Promise<void>
   broadcast(frame: Record<string, unknown>): void
   push(payload: ApnsPayload): void
   paused: { read(): boolean; write(on: boolean): void }
@@ -88,6 +97,8 @@ export function createBrainWiring(deps: BrainDeps) {
   let rolloverPending = false
   let lastActivity = deps.now()
   let compactedAt = 0
+  let compacting = false
+  let lastReplyText = ""
   let timer: ReturnType<typeof setInterval> | null = null
   let ticking = false
 
@@ -141,6 +152,8 @@ export function createBrainWiring(deps: BrainDeps) {
     sessionKey = s.key
     sessionId = s.sessionId
     setBusy(false)
+    compacting = false
+    setKv("session_id", s.sessionId)
     deps.log(`[brain] adopted ${s.key} sid=${s.sessionId.slice(0, 8)} pane=${pane}`)
     return true
   }
@@ -168,7 +181,9 @@ export function createBrainWiring(deps: BrainDeps) {
 
   /** Deliver what is queued (with the boot seed first after a spawn). One typed prompt per brain turn. */
   async function flush(): Promise<void> {
-    if (deps.paused.read() || busy || state !== "up" || !target()) return
+    // A lost post-compact SessionStart must not hold delivery forever.
+    if (compacting && deps.now() - compactedAt > BUSY_MAX_MS) compacting = false
+    if (deps.paused.read() || busy || compacting || state !== "up" || !target()) return
     const seed = pendingSeed
     const ids = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
     if (!seed && ids.length === 0) return
@@ -193,14 +208,16 @@ export function createBrainWiring(deps: BrainDeps) {
   }
 
   /** Spawn now, unless the kill switch is set (re-read here: callers may have awaited since). */
-  async function spawnNow(): Promise<void> {
+  /** fresh: a new conversation (the rollover, a manual resume from down); else resume the last one. */
+  async function spawnNow(fresh = false): Promise<void> {
     if (deps.paused.read()) {
       setState("paused")
       return
     }
     forgetSession()
     pane = ""
-    const r = await deps.spawn()
+    if (fresh) setKv("session_id", "")
+    const r = await deps.spawn(getKv("session_id") || null)
     spawnedAt = deps.now()
     if (!r.ok) {
       deps.log(`[brain] spawn failed: ${r.error ?? "unknown"}`)
@@ -210,6 +227,26 @@ export function createBrainWiring(deps: BrainDeps) {
     pane = r.herdrPane ?? ""
     pendingSeed = true
     deps.log(`[brain] spawned (pane ${pane || "?"})`)
+  }
+
+  /** A brain turn ended (its Stop hook, or the transcript when that hook was lost). */
+  async function finishTurn(reply: string): Promise<void> {
+    setBusy(false)
+    lastActivity = deps.now()
+    const text = reply.trim()
+    // A late Stop after the transcript fallback carries the same reply: once only.
+    if (text && text !== lastReplyText) orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD))
+    if (text) lastReplyText = text
+    trace(clearTyped().map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
+    if (rolloverPending) {
+      rolloverPending = false
+      deps.log("[brain] rollover: restarting with a fresh session")
+      await deps.stopAgent()
+      setState("starting")
+      await spawnNow(true)
+      return
+    }
+    await flush()
   }
 
   async function tick(): Promise<void> {
@@ -251,7 +288,18 @@ export function createBrainWiring(deps: BrainDeps) {
       }
       spawnedAt = 0
       setState("up")
-      if (busy && deps.now() - Math.max(busySince, lastHookAt) > BUSY_MAX_MS) {
+      const quietFor = deps.now() - Math.max(busySince, lastHookAt)
+      if (busy && quietFor > TURN_END_GRACE_MS && sessionKey && await deps.agentStatus(sessionKey) === "idle") {
+        // The Stop hook posts in the background as the hook exits and can be
+        // lost: Claude Code says the turn is over, so read the reply ourselves.
+        const s = target()
+        if (s) {
+          deps.log("[brain] idle with no Stop hook — the reply is read from the transcript")
+          await finishTurn(await deps.lastReply(s))
+          return
+        }
+      }
+      if (busy && quietFor > BUSY_MAX_MS) {
         deps.log("[brain] no hook from the brain while busy — the turn is considered lost, delivery resumes")
         setBusy(false)
       }
@@ -279,6 +327,7 @@ export function createBrainWiring(deps: BrainDeps) {
     if (compactedAt < lastActivity && idleCompactDue({ lastTurnAt: lastActivity, contextPct: deps.contextPct(sessionKey), now, busy })) {
       compactedAt = now
       const ok = await deps.compact(sessionKey, compactText(getKv("memory_ref"), openDeliveries().length))
+      compacting = ok
       deps.log(`[brain] idle compact ${ok ? "sent" : "refused"}`)
     }
   }
@@ -306,6 +355,12 @@ export function createBrainWiring(deps: BrainDeps) {
       try {
         enqueueDelivery(turn.id, turn.createdAt)
         lastActivity = deps.now()
+        if (compacting && sessionKey) {
+          // Jeremie comes first: Esc cancels the idle /compact, delivery follows.
+          compacting = false
+          deps.log("[brain] message during idle compact — compact cancelled")
+          void deps.interrupt(sessionKey).then(() => flush())
+        }
         trace([upsertRow({ id: rowId.turn(turn.id), turnId: turn.id, kind: "turn", status: "pending", title: turn.text, detail: state === "up" ? null : `brain ${state}` })])
         void flush()
       } catch (err) {
@@ -316,21 +371,8 @@ export function createBrainWiring(deps: BrainDeps) {
     /** The brain's Stop hook (routes/hooks.ts). Its reply becomes a thread turn; the next queued turns go in. */
     async onStop(sid: string, lastMessage: string): Promise<void> {
       if (!sid || !sessionId || sid !== sessionId) return
-      setBusy(false)
       lastHookAt = deps.now()
-      lastActivity = deps.now()
-      const text = lastMessage.trim()
-      if (text) orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD))
-      trace(clearTyped().map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
-      if (rolloverPending) {
-        rolloverPending = false
-        deps.log("[brain] rollover: restarting with a fresh session")
-        await deps.stopAgent()
-        setState("starting")
-        await spawnNow()
-        return
-      }
-      await flush()
+      await finishTurn(lastMessage)
     },
 
     /** Any hook from the adopted brain session: it is alive and working (busy deadline). */
@@ -342,6 +384,7 @@ export function createBrainWiring(deps: BrainDeps) {
     onSessionStart(s: Session): void {
       if (deps.paused.read()) return
       if (adopt(s)) {
+        compacting = false
         spawnedAt = 0
         setState("up")
         void flush()
@@ -408,6 +451,8 @@ export function createBrainWiring(deps: BrainDeps) {
 
     resume(): BrainStatus {
       deps.paused.write(false)
+      // Out of down (or a pause): a resumed conversation may be what kept crashing.
+      setKv("session_id", "")
       restarts = []
       setState("starting")
       void tick()
@@ -445,6 +490,11 @@ export function setBrainDeliver(fn: (text: string, key?: string) => Promise<Resp
   deliverFn = fn
 }
 
+/** --resume of a missing transcript makes claude exit: that would read as a crash loop. */
+function transcriptExists(cwd: string, sid: string): boolean {
+  return existsSync(transcriptPath(cwd, sid))
+}
+
 const liveness = createLiveness(() => ({ herdr: realHerdr, sessions: listSessions, now: Date.now }))
 
 async function stopBrainAgent(): Promise<void> {
@@ -462,11 +512,20 @@ export const brainWiring = createBrainWiring({
     const a = await liveness.agentOf(BRAIN_AGENT)
     return a.kind === "present" ? a.ref.pane : ""
   },
-  spawn: () => spawnInHerdr(BRAIN_DIR, "claude", { COMPANION_TASK_ID: BRAIN_AGENT }, realHerdr, { name: BRAIN_AGENT, args: ["--remote-control", BRAIN_AGENT] }),
+  spawn: (resume) => spawnInHerdr(BRAIN_DIR, "claude", { COMPANION_TASK_ID: BRAIN_AGENT }, realHerdr, {
+    name: BRAIN_AGENT,
+    args: ["--remote-control", BRAIN_AGENT, ...(resume && transcriptExists(BRAIN_DIR, resume) ? ["--resume", resume] : [])],
+  }),
   stopAgent: stopBrainAgent,
   sessions: listSessions,
   sessionByKey: getSessionByKey,
   tagBrain: (key) => { const s = getSessionByKey(key); return !!s && recordSession({ ...s, taskId: BRAIN_AGENT })?.key === key },
+  agentStatus: (key) => realAutoCompactDeps.agentStatus(key),
+  lastReply: (s) => extractLastAssistantMessage(transcriptPath(s.cwd, s.sessionId)),
+  interrupt: async (key) => {
+    const p = getSessionByKey(key)?.herdrPane
+    if (p) await realHerdr.call(["pane", "send-keys", p, "esc"]).catch(() => undefined)
+  },
   deliver: (text, key) => deliverFn ? deliverFn(text, key) : Promise.resolve(Response.json({ ok: false, error: "deliver_unavailable" }, { status: 503 })),
   broadcast,
   push: (payload) => { if (apnsConfigured()) void pushToAll(payload).catch(() => { /* best effort */ }) },

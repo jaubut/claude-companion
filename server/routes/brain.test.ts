@@ -74,6 +74,9 @@ beforeAll(async () => {
   const w = wiringMod.createBrainWiring({
     now: Date.now, alive: async () => false, agentPane: async () => "", spawn: async () => { flags.spawns++; return { ok: true, herdrPane: "p_brain" } },
     stopAgent: async () => {}, sessions: () => sessions, sessionByKey: (k) => sessions.find((s) => s.key === k) ?? null, tagBrain: () => false,
+    agentStatus: async () => "",
+    lastReply: async () => "",
+    interrupt: async () => {},
     deliver: async () => Response.json({ ok: true }), broadcast: () => {}, push: () => {},
     paused: { read: () => flags.paused, write: (on) => { flags.paused = on } },
     contextPct: () => null, compact: async () => true, dispatch, host: "test", log: () => {},
