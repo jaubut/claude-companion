@@ -84,9 +84,9 @@ Auth — all of: TCP peer loopback with no forwarded hop (`clientOrigin(...).tra
 
 ## Hooks (no hook-script change)
 
-The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/*`) and the normal permission flow (auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/*`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
-- PreToolUse: **SUPER never auto-allows for the brain** — its calls fall to the auto-judge or the phone. Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
+- PreToolUse: the brain takes the normal path like any session (SUPER, then auto-judge → phone; Jeremie, 2026-10-29). Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
 - Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).
 - SessionStart: the supervisor adopts the session only when it sits in the pane it spawned (herdr's `brain` agent pane after a Companion restart), never replacing a live adopted session, and never while paused.
 

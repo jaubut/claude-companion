@@ -126,9 +126,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
     // ── AskUserQuestion / request_user_input fast path ─────────────
     if (worker.is && isQuestionTool(tool)) return hookPassthroughResponse(agent)
-    // brain-v2: the brain is a normal session (auto-judge → phone) except that
-    // SUPER never auto-allows for it. Header first: a payload with no cwd has
-    // no session. A hook from it also refreshes the supervisor's busy deadline.
+    // brain-v2: the brain is a normal session (SUPER, auto-judge → phone). A
+    // hook from it refreshes the supervisor's busy deadline. Header first: a
+    // payload with no cwd has no session.
     const brainCall = isBrainHook(headerMeta.taskId || session?.taskId)
     if (brainCall) brainWiring.noteActivity(sessionId)
     {
