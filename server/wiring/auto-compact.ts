@@ -1,4 +1,5 @@
 import { type FileHandle, open, readFile, stat } from "node:fs/promises"
+import { isSupervisedTask } from "../lib/brain"
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -244,6 +245,8 @@ export const autoCompactor = new AutoCompactor(realAutoCompactDeps)
 
 export function compactTargetFor(session: Session, transcriptPath: string | undefined, sessionId: string | undefined): CompactTarget | null {
   if (session.agent !== "claude" || !transcriptPath) return null
+  // brain-v2: the brain and repo leads are compacted by their supervisor (wiring/brain.ts), only when idle.
+  if (isSupervisedTask(session.taskId)) return null
   return {
     key: session.key,
     name: session.title || session.label || session.key,

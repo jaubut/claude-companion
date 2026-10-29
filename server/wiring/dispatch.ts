@@ -8,6 +8,8 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { pushToAll } from "../lib/push"
 import { tursoExec, tursoQuery } from "../lib/turso"
 import { broadcast } from "../state"
+import { BRAIN_THREAD, brainEnabled } from "../lib/brain"
+import { traceForDispatch } from "../lib/brain-trace"
 
 // The live Turso dispatch poller (orchestrator-one-queue P1): real Turso, the
 // sqlite announce cursor, WS broadcast, APNs. Started by cli.ts; nudged by
@@ -33,7 +35,13 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   query: tursoQuery,
   exec: tursoExec,
   broadcast,
-  appendTurn: (text, taskId, channelId) => appendTurn("orchestrator", text, taskId, channelId),
+  appendTurn: (text, taskId, channelId, card) => appendTurn("orchestrator", text, taskId, channelId, card),
+  brainThread: () => (brainEnabled() ? BRAIN_THREAD : null),
+  traceTask: (t) => {
+    const local = brainEnabled() ? getTaskByDispatchId(t.id) : null
+    const rows = local ? traceForDispatch(t, local.taskId) : []
+    if (rows.length) broadcast({ type: "brain_trace", op: "row", rows })
+  },
   push: (payload) => void pushToAll(payload).catch(() => { /* a failed push never breaks the poll */ }),
   pushEnabled: () => dispatchPushEnabled(apnsConfigured()),
   linkedNotes,

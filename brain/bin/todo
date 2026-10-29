@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# brain-v2: add a to-do for Jeremie on a project note (POST /hooks/brain/todo).
+#
+#   bin/todo --turn <turn id> --note <PRJ-XXXX | projects/... note id> --text "<to-do>" [--due YYYY-MM-DD]
+#
+# His task (assignee human:jeremie), never an agent's: nothing is queued. It
+# shows in his task list and as a trace line under the turn.
+# Same auth as bin/propose: loopback, X-Companion-Task-Id: brain and the pid of
+# the brain's claude process (found by walking up the parent chain).
+set -euo pipefail
+
+TURN="" NOTE="" TEXT="" DUE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --turn) TURN="$2"; shift 2 ;;
+    --note) NOTE="$2"; shift 2 ;;
+    --text) TEXT="$2"; shift 2 ;;
+    --due) DUE="$2"; shift 2 ;;
+    *) echo "todo: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+if [ -z "$TURN" ] || [ -z "$NOTE" ] || [ -z "$TEXT" ]; then
+  echo "todo: --turn, --note and --text are required" >&2
+  exit 2
+fi
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(TURN="$TURN" NOTE="$NOTE" TEXT="$TEXT" DUE="$DUE" python3 -c '
+import json, os
+b = {"sourceTurnId": os.environ["TURN"], "noteId": os.environ["NOTE"], "text": os.environ["TEXT"]}
+if os.environ["DUE"]: b["due"] = os.environ["DUE"]
+print(json.dumps(b))')
+
+curl -sS --max-time 20 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/todo" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

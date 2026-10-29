@@ -24,6 +24,9 @@ export interface WsData {
   // Set on a /api/pane-mirror socket (lib/pane-mirror.ts): the herdr
   // session's key and pane. Never in `clients` either.
   mirror?: { key: string; pane: string }
+  // The iOS build that opened this socket (X-Companion-Build at upgrade,
+  // brain-v2): P3 gates archived-channel frames on it. Absent = a shipped build.
+  build?: string
 }
 
 // Where a phone-side request came from, for the resolve/answer audit log.
@@ -62,6 +65,20 @@ export function broadcast(data: Record<string, unknown>): void {
   for (const ws of clients) {
     try { ws.send(msg) } catch { /* dead client */ }
   }
+}
+
+// Same frame to the clients `pred` accepts (P3: archived-channel frames only to build-N sockets).
+export function broadcastWhere(pred: (data: WsData) => boolean, data: Record<string, unknown>): void {
+  const msg = JSON.stringify(data)
+  for (const ws of clients) {
+    if (!pred(ws.data)) continue
+    try { ws.send(msg) } catch { /* dead client */ }
+  }
+}
+
+/** X-Companion-Build, cleaned (client-controlled header). Empty → undefined. */
+export function clientBuild(req: Request): string | undefined {
+  return clean(req.headers.get("x-companion-build"), 32) || undefined
 }
 
 // Who this companion is — the phone shows it as a per-session host badge

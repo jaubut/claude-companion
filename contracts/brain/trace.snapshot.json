@@ -1,0 +1,109 @@
+{
+  "type": "brain_trace",
+  "op": "snapshot",
+  "rows": [
+    {
+      "id": "turn:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "parentId": null,
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "turn",
+      "status": "done",
+      "title": "Dispatch the tax rounding fix to builder",
+      "detail": null,
+      "ref": {},
+      "startedAt": 1793145600000,
+      "endedAt": 1793145642000,
+      "seq": 1
+    },
+    {
+      "id": "repo:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31:PRJ-WCLS",
+      "parentId": "turn:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "repo",
+      "status": "running",
+      "title": "TLS Dashboard",
+      "detail": "PRJ-WCLS",
+      "ref": {},
+      "startedAt": 1793145630000,
+      "endedAt": null,
+      "seq": 2
+    },
+    {
+      "id": "agent:a1b2c3d4",
+      "parentId": "repo:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31:PRJ-WCLS",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "agent",
+      "status": "running",
+      "title": "builder — Fix tax rounding",
+      "detail": "running on zettlab",
+      "ref": {
+        "taskId": "0123456789abcdef0123456789abcdef"
+      },
+      "startedAt": 1793145631000,
+      "endedAt": null,
+      "seq": 3
+    },
+    {
+      "id": "pr:a1b2c3d4",
+      "parentId": "agent:a1b2c3d4",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "pr",
+      "status": "done",
+      "title": "Fix tax rounding",
+      "detail": "https://github.com/jaubut/tls-dashboard-v2/pull/412",
+      "ref": {
+        "taskId": "0123456789abcdef0123456789abcdef",
+        "prUrl": "https://github.com/jaubut/tls-dashboard-v2/pull/412"
+      },
+      "startedAt": 1793146500000,
+      "endedAt": 1793146500000,
+      "seq": 4
+    },
+    {
+      "id": "appr:7e1f",
+      "parentId": "needs-you",
+      "turnId": null,
+      "kind": "approval",
+      "status": "pending",
+      "title": "Bash: git push origin fix/tax",
+      "detail": null,
+      "ref": {
+        "approvalId": "7e1f",
+        "sessionKey": "herdr:p_12"
+      },
+      "startedAt": 1793145660000,
+      "endedAt": null,
+      "seq": 5
+    },
+    {
+      "id": "q:9c2a",
+      "parentId": "agent:a1b2c3d4",
+      "turnId": null,
+      "kind": "question",
+      "status": "done",
+      "title": "Which rounding mode?",
+      "detail": "answered",
+      "ref": {
+        "questionId": "9c2a"
+      },
+      "startedAt": 1793145670000,
+      "endedAt": 1793145680000,
+      "seq": 6
+    },
+    {
+      "id": "voice:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "parentId": "turn:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "voice",
+      "status": "done",
+      "title": "Voice take archived",
+      "detail": null,
+      "ref": {
+        "audioId": "812"
+      },
+      "startedAt": 1793145602000,
+      "endedAt": 1793145602000,
+      "seq": 7
+    }
+  ]
+}

@@ -25,6 +25,20 @@ export interface Turn {
   text: string
   taskId: string | null
   createdAt: number
+  // brain-v2 card (docs/brain-api.md). Absent on every turn without one, so
+  // those rows serialize byte-identical to before. card.taskId is never copied
+  // into taskId: shipped builds group taskId turns as worker output.
+  card?: TurnCard
+}
+
+/** A brain-thread card: a dispatch receipt or a voice turn from the app. */
+export interface TurnCard {
+  kind: "dispatch" | "voice"
+  source: "app"
+  taskId?: string
+  audioId?: string
+  durationMs?: number
+  locale?: string
 }
 
 export interface Task {
@@ -60,6 +74,7 @@ interface TurnRow {
   text: string
   task_id: string | null
   created_at: number
+  card?: string | null
 }
 
 interface TaskRow {
@@ -81,8 +96,19 @@ interface TaskRow {
   dispatch_task_id: string | null
 }
 
+function parseCard(raw: string | null | undefined): TurnCard | null {
+  if (!raw) return null
+  try {
+    const c = JSON.parse(raw) as unknown
+    return c && typeof c === "object" && !Array.isArray(c) ? c as TurnCard : null
+  } catch {
+    return null
+  }
+}
+
 function toTurn(r: TurnRow): Turn {
-  return { id: r.id, threadId: r.thread_id, role: r.role, text: r.text, taskId: r.task_id, createdAt: r.created_at }
+  const card = parseCard(r.card)
+  return { id: r.id, threadId: r.thread_id, role: r.role, text: r.text, taskId: r.task_id, createdAt: r.created_at, ...(card ? { card } : {}) }
 }
 
 function toTask(r: TaskRow): Task {
@@ -108,12 +134,37 @@ function toTask(r: TaskRow): Task {
 
 // ---- turns ----------------------------------------------------------------
 
-export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = GENERAL_CHANNEL): Turn {
-  const turn: Turn = { id: randomUUID(), threadId, role, text, taskId, createdAt: Date.now() }
+const appendedListeners = new Set<(turn: Turn) => void>()
+
+/** Run `fn` after every appended turn (wiring/brain.ts wakes the brain on its thread's events). */
+export function onTurnAppended(fn: (turn: Turn) => void): () => void {
+  appendedListeners.add(fn)
+  return () => appendedListeners.delete(fn)
+}
+
+export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = GENERAL_CHANNEL, card?: TurnCard): Turn {
+  const turn: Turn = { id: randomUUID(), threadId, role, text, taskId, createdAt: Date.now(), ...(card ? { card } : {}) }
   db.query(
-    "INSERT INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(turn.id, turn.threadId, turn.role, turn.text, turn.taskId, turn.createdAt)
+    "INSERT INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at, card) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(turn.id, turn.threadId, turn.role, turn.text, turn.taskId, turn.createdAt, card ? JSON.stringify(card) : null)
+  for (const fn of appendedListeners) {
+    try { fn(turn) } catch { /* a listener never fails the write */ }
+  }
   return turn
+}
+
+export function getTurn(id: string): Turn | null {
+  const row = db.query("SELECT * FROM orchestrator_turns WHERE id = ?").get(id) as TurnRow | null
+  return row ? toTurn(row) : null
+}
+
+/** Merge fields into a turn's card (brain voice take → audioId). Null when the turn has no card. */
+export function setTurnCard(id: string, patch: Partial<TurnCard>): Turn | null {
+  const turn = getTurn(id)
+  if (!turn?.card) return null
+  const card: TurnCard = { ...turn.card, ...patch }
+  db.query("UPDATE orchestrator_turns SET card = ? WHERE id = ?").run(JSON.stringify(card), id)
+  return { ...turn, card }
 }
 
 // The most recent `limit` turns, oldest-first.
@@ -140,6 +191,15 @@ export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn
     .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
     .all(threadId, limit) as TurnRow[]
   return rows.reverse().map(toTurn)
+}
+
+/** Turns of one thread whose text contains `q` (case-insensitive), newest first (the brain's bin/thread). */
+export function searchThread(threadId: string, q: string, limit = 20): Turn[] {
+  const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+  const rows = db
+    .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? AND text LIKE ? ESCAPE '\\' ORDER BY created_at DESC, rowid DESC LIMIT ?")
+    .all(threadId, like, limit) as TurnRow[]
+  return rows.map(toTurn)
 }
 
 // ---- dispatch tasks -------------------------------------------------------

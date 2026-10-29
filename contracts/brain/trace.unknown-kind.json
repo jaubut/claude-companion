@@ -1,0 +1,34 @@
+{
+  "type": "brain_trace",
+  "op": "row",
+  "rows": [
+    {
+      "id": "lead:lead-tls-dashboard-v2:x",
+      "parentId": "repo:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31:PRJ-WCLS",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "hologram",
+      "status": "running",
+      "title": "builder — Fix tax rounding",
+      "detail": "running on zettlab",
+      "ref": {
+        "taskId": "0123456789abcdef0123456789abcdef"
+      },
+      "startedAt": 1793145631000,
+      "endedAt": null,
+      "seq": 3
+    },
+    {
+      "id": "repo:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31:PRJ-WCLS",
+      "parentId": "turn:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "repo",
+      "status": "running",
+      "title": "TLS Dashboard",
+      "detail": "PRJ-WCLS",
+      "ref": {},
+      "startedAt": 1793145630000,
+      "endedAt": null,
+      "seq": 2
+    }
+  ]
+}

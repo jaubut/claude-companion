@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# brain-workers: the herdr workspaces the brain owns (POST /hooks/brain/sessions).
+#
+#   bin/sessions list                  → {ok, sessions:[{workspaceId, kind, taskId?, proposalId?, phase?, agentStatus, verdict, reason}], mode}
+#   bin/sessions close <workspaceId>   → close one of YOUR finished workers (the server re-checks: 404 not_owned, 409 running / observe_only / self)
+#
+# Same auth as bin/propose: loopback, X-Companion-Task-Id: brain, and the pid
+# of the brain's claude process (found by walking up the parent chain).
+set -euo pipefail
+
+OP="${1:-}" WS="${2:-}"
+case "$OP" in
+  list) BODY='{"op":"list"}' ;;
+  close)
+    case "$WS" in ''|-*|*[!A-Za-z0-9_.-]*) echo "sessions: usage: bin/sessions close <workspaceId>" >&2; exit 2 ;; esac
+    BODY="{\"op\":\"close\",\"workspaceId\":\"$WS\"}" ;;
+  *) echo "sessions: usage: bin/sessions list | close <workspaceId>" >&2; exit 2 ;;
+esac
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+curl -sS --max-time 30 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/sessions" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

@@ -1,0 +1,21 @@
+{
+  "type": "brain_trace",
+  "op": "row",
+  "rows": [
+    {
+      "id": "agent:a1b2c3d4",
+      "parentId": "repo:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31:PRJ-WCLS",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "agent",
+      "status": "running",
+      "title": "builder — Fix tax rounding",
+      "detail": "running on zettlab",
+      "ref": {
+        "taskId": "0123456789abcdef0123456789abcdef"
+      },
+      "startedAt": 1793145631000,
+      "endedAt": null,
+      "seq": 3
+    }
+  ]
+}
