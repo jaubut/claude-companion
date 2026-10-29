@@ -6,6 +6,7 @@ import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { type BrainWiring, brainWiring } from "../wiring/brain"
+import { addBrainTodo } from "../wiring/brain-todo"
 
 // brain-v2 routes (docs/brain-api.md):
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
@@ -13,6 +14,7 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 //   POST /api/brain/pause|resume|restart  → {ok, brain}; restart while paused → 409 paused
 //   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId}
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
+//   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
 // brain session's pid with X-Companion-Task-Id: brain.
@@ -26,9 +28,12 @@ const QUERY_MAX = 200
 const SEARCH_LIMIT_MAX = 50
 /** Per turn in a search answer: enough to recall, short enough for a tool result. */
 const SEARCH_TEXT_MAX = 1_000
+const TODO_MAX = 300
+const DAY = /^\d{4}-\d{2}-\d{2}$/
 
 export interface BrainRouteDeps {
   wiring: BrainWiring
+  todo?: typeof addBrainTodo
   sessions: () => Session[]
   enabled: () => boolean
 }
@@ -96,6 +101,23 @@ async function thread(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json({ ok: true, turns })
 }
 
+async function todo(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const text = str(body.text, TODO_MAX)
+  if (!text) return fail(400, "text required")
+  const noteId = str(body.noteId, NOTE_ID_MAX)
+  if (!noteId) return fail(422, "no_project")
+  const sourceTurnId = typeof body.sourceTurnId === "string" && TURN_ID.test(body.sourceTurnId) ? body.sourceTurnId : null
+  if (!sourceTurnId) return fail(400, "sourceTurnId required")
+  const due = body.due === undefined || body.due === null || body.due === "" ? null : typeof body.due === "string" && DAY.test(body.due) ? body.due : undefined
+  if (due === undefined) return fail(400, "due must be YYYY-MM-DD")
+  const out = await (deps.todo ?? addBrainTodo)({ text, noteId, due, sourceTurnId })
+  return Response.json(out.body, { status: out.status })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -108,6 +130,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return thread(req, deps)
+    }
+    if (p === "/hooks/brain/todo") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return todo(req, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()

@@ -872,7 +872,7 @@
         },
         {
           "path": "lib/brain-store.ts",
-          "lines": 110,
+          "lines": 100,
           "kind": "lib",
           "exports": [
             "OutboxState",
@@ -885,8 +885,6 @@
             "clearTyped",
             "getKv",
             "setKv",
-            "consentClaimed",
-            "claimConsent",
             "proposeSeen",
             "rememberPropose",
             "proposalTurnOf"
@@ -2584,7 +2582,7 @@
         },
         {
           "path": "lib/my-tasks.ts",
-          "lines": 260,
+          "lines": 275,
           "kind": "lib",
           "exports": [
             "MINE",
@@ -2611,7 +2609,8 @@
             "WriteResult",
             "readBack",
             "setDone",
-            "setDue"
+            "setDue",
+            "addTodo"
           ],
           "state": [],
           "emits": [],
@@ -5867,7 +5866,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 133,
+          "lines": 160,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -5887,7 +5886,8 @@
             "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
             "lib/vault-guard.ts",
-            "wiring/brain.ts"
+            "wiring/brain.ts",
+            "wiring/brain-todo.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6806,8 +6806,34 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-todo.ts",
+          "lines": 40,
+          "kind": "lib",
+          "exports": [
+            "TodoInput",
+            "addBrainTodo"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts",
+            "lib/brain-trace.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/my-tasks.ts",
+            "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/brain.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain.ts",
-          "lines": 600,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -7144,7 +7170,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 250,
+          "lines": 252,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -7176,6 +7202,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/brain.ts",
             "lib/log.ts",
             "state.ts",
             "lib/orchestrator-chat.ts",
@@ -8410,6 +8437,7 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain-todo.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/dialogs.ts",
@@ -9611,6 +9639,7 @@
             "routes/my-tasks.ts",
             "routes/orchestrator.ts",
             "routes/tasks-agent.ts",
+            "wiring/brain-todo.ts",
             "wiring/orchestrator.ts",
             "wiring/triage-repos.ts"
           ]
@@ -12882,6 +12911,12 @@
             "routes/brain.ts"
           ]
         },
+        "addBrainTodo": {
+          "module": "wiring/brain-todo.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "BRAIN_AGENT": {
           "module": "lib/brain.ts",
           "callers": [
@@ -12895,7 +12930,8 @@
             "routes/brain.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/brain.ts"
+            "wiring/brain.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "searchThread": {
@@ -13439,6 +13475,7 @@
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
+            "wiring/brain-todo.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
@@ -14458,6 +14495,7 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-activity.ts",
+            "wiring/brain-todo.ts",
             "wiring/brain.ts"
           ]
         },
@@ -14471,7 +14509,21 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-activity.ts",
+            "wiring/brain-todo.ts",
             "wiring/brain.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "addTodo": {
+          "module": "lib/my-tasks.ts",
+          "callers": [
+            "wiring/brain-todo.ts"
+          ]
+        },
+        "emitTrace": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "wiring/brain-todo.ts",
             "wiring/events.ts"
           ]
         },
@@ -14565,12 +14617,6 @@
             "wiring/brain.ts"
           ]
         },
-        "voiceConsent": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "enqueueDelivery": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -14596,18 +14642,6 @@
           ]
         },
         "getKv": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "consentClaimed": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "claimConsent": {
           "module": "lib/brain-store.ts",
           "callers": [
             "wiring/brain.ts"
@@ -14928,12 +14962,6 @@
         },
         "traceForApproval": {
           "module": "lib/brain-trace.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "emitTrace": {
-          "module": "wiring/brain.ts",
           "callers": [
             "wiring/events.ts"
           ]

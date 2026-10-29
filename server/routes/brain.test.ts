@@ -9,7 +9,7 @@ import type { Session } from "../lib/sessions"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
 
 // brain-v2 routes (routes/brain.ts): the propose hook's auth, dedupe and
-// voice consent end to end (real sqlite proposals, a fake Turso with the
+// hand-off end to end (real sqlite proposals, a fake Turso with the
 // production tasks/notes columns incl. origin), and the Bearer-gated controls.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-route-")), "test.db")
@@ -84,7 +84,8 @@ beforeAll(async () => {
   w.setSpawnedPaneForTests("p_brain")
   w.onSessionStart(BRAIN_SESSION)
   harnessWiring = w
-  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true })
+  const todoMod = await import("../wiring/brain-todo")
+  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true, todo: (p) => todoMod.addBrainTodo(p, dispatch) })
 })
 afterAll(() => {
   if (savedHome === undefined) delete process.env.HOME
@@ -137,13 +138,17 @@ describe("POST /hooks/brain/propose — auth", () => {
   })
 })
 
-describe("POST /hooks/brain/propose — dedupe and voice consent", () => {
-  test("a fresh app voice turn files queued (origin jeremie) with no tap", async () => {
-    const r = await propose(body(voiceTurn(60_000).id))
+describe("POST /hooks/brain/propose — the brain hands off, no Approve card", () => {
+  test("typed or voice, any age: filed queued (origin jeremie) at once, no proposal text in the thread", async () => {
+    const typed = chat.appendTurn("user", "typed ask", null, "brain")
+    const r = await propose(body(typed.id))
     expect(r.status).toBe(200)
-    expect(r.json).toMatchObject({ ok: true, status: "queued", consent: "voice" })
-    const row = turso.query("SELECT dispatch_status, origin FROM tasks").get() as Record<string, unknown>
-    expect(row).toEqual({ dispatch_status: "queued", origin: "jeremie" })
+    expect(r.json).toMatchObject({ ok: true, status: "queued" })
+    expect(chat.getTask(String(r.json.proposalId))!.status).not.toBe("proposed")
+    expect((await propose(body(voiceTurn(11 * 60_000).id))).json).toMatchObject({ status: "queued" })
+    const rows = turso.query("SELECT dispatch_status, origin FROM tasks").all() as Array<Record<string, unknown>>
+    expect(rows).toEqual([{ dispatch_status: "queued", origin: "jeremie" }, { dispatch_status: "queued", origin: "jeremie" }])
+    expect(chat.getThread("brain").some((t) => t.text.startsWith("Proposal [") || t.text.startsWith("filed ["))).toBe(false)
   })
   test("same (sourceTurnId, prompt) twice → one proposal, one Turso row", async () => {
     const t = voiceTurn().id
@@ -152,16 +157,11 @@ describe("POST /hooks/brain/propose — dedupe and voice consent", () => {
     expect(b.json).toMatchObject({ ok: true, proposalId: a.json.proposalId, replay: true })
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
   })
-  test("typed turn / > 10 min / second proposal from the same voice turn → a card that waits for the tap", async () => {
-    const typed = chat.appendTurn("user", "typed ask", null, "brain")
-    expect((await propose(body(typed.id))).json).toMatchObject({ status: "proposed" })
-    expect((await propose(body(voiceTurn(11 * 60_000).id))).json).toMatchObject({ status: "proposed" })
+  test("two prompts from one turn → two dispatches", async () => {
     const v = voiceTurn().id
     expect((await propose(body(v, "first prompt"))).json).toMatchObject({ status: "queued" })
-    const second = await propose(body(v, "a different second prompt"))
-    expect(second.json).toMatchObject({ status: "proposed" })
-    expect(chat.getTask(String(second.json.proposalId))!.status).toBe("proposed")
-    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
+    expect((await propose(body(v, "a different second prompt"))).json).toMatchObject({ status: "queued" })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 2 })
   })
 })
 
@@ -219,5 +219,35 @@ describe("POST /hooks/brain/thread", () => {
     expect((await call("POST", "/hooks/brain/thread", { q: "x" }, { headers: AUTH, peer: "100.64.0.9" })).status).toBe(403)
     expect((await call("POST", "/hooks/brain/thread", { q: "x" }, { headers: { ...AUTH, "x-companion-pid": "9999" } })).status).toBe(403)
     expect((await call("POST", "/hooks/brain/thread", {}, { headers: AUTH })).status).toBe(400)
+  })
+})
+
+describe("POST /hooks/brain/todo", () => {
+  beforeEach(() => {
+    flags.paused = false
+    harnessWiring.setSpawnedPaneForTests("p_brain")
+    harnessWiring.onSessionStart(BRAIN_SESSION)
+  })
+
+  test("adds Jeremie's to-do on the note (by ref code), never queued; a retry adds it once", async () => {
+    const t = chat.appendTurn("user", "remind me to call the cousin", null, "brain")
+    const req = { text: "Call the cousin about Le Brouemont", noteId: "PRJ-WCLS", due: "2026-11-02", sourceTurnId: t.id }
+    const a = await call("POST", "/hooks/brain/todo", req, { headers: AUTH })
+    expect(a.status).toBe(200)
+    expect(a.json).toMatchObject({ ok: true, replay: false })
+    const b = await call("POST", "/hooks/brain/todo", req, { headers: AUTH })
+    expect(b.json).toMatchObject({ ok: true, taskId: a.json.taskId, replay: true })
+    const rows = turso.query("SELECT note_id, text, due_date, assignee, dispatch_status, done FROM tasks").all()
+    expect(rows).toEqual([{ note_id: "projects/dash", text: "Call the cousin about Le Brouemont", due_date: "2026-11-02", assignee: "human:jeremie", dispatch_status: null, done: 0 }])
+  })
+
+  test("auth like propose; bad due / no note / no text refused", async () => {
+    const t = chat.appendTurn("user", "x", null, "brain")
+    const ok = { text: "x", noteId: "projects/dash", sourceTurnId: t.id }
+    expect((await call("POST", "/hooks/brain/todo", ok, { headers: { ...AUTH, "x-companion-pid": "9999" } })).status).toBe(403)
+    expect((await call("POST", "/hooks/brain/todo", { ...ok, due: "tomorrow" }, { headers: AUTH })).status).toBe(400)
+    expect((await call("POST", "/hooks/brain/todo", { ...ok, noteId: "projects/nope" }, { headers: AUTH })).status).toBe(404)
+    expect((await call("POST", "/hooks/brain/todo", { ...ok, text: "" }, { headers: AUTH })).status).toBe(400)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
   })
 })

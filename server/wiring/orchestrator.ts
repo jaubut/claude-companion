@@ -1,3 +1,4 @@
+import { BRAIN_THREAD } from "../lib/brain"
 import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
@@ -136,7 +137,8 @@ export async function fileProposal(
   if (!markFiled(task.taskId, { noteId, agent })) return fileProposalReplay(task.taskId, queued)
   emitTask(task.taskId)
   const next = queued ? "queued for dispatch-run" : "waits for your approval on the dashboard"
-  orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · ${id.slice(0, 8)} ${next}`, task.taskId, task.threadId))
+  // The brain thread shows the filing as its trace row, not as a turn.
+  if (task.threadId !== BRAIN_THREAD) orchEmit(orchAppendTurn("orchestrator", `filed [${task.taskId}] → ${agent} · ${id.slice(0, 8)} ${next}`, task.taskId, task.threadId))
   await showFiled(id, dispatch)
   return { ok: true, dispatchTaskId: id, replay: false, queued, task: getTask(task.taskId)! }
 }

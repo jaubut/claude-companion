@@ -22,7 +22,9 @@
       "Bash(./bin/propose:*)",
       "Bash(./bin/lead:*)",
       "Bash(bin/thread:*)",
-      "Bash(./bin/thread:*)"
+      "Bash(./bin/thread:*)",
+      "Bash(bin/todo:*)",
+      "Bash(./bin/todo:*)"
     ]
   }
 }

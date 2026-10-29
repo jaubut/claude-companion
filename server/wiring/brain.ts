@@ -6,10 +6,10 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, type BrainActivity, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS, voiceConsent,
+  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import {
-  claimConsent, clearTyped, consentClaimed, enqueueDelivery, getKv, markDelivered, markMaybe,
+  clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe,
   openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
@@ -474,18 +474,17 @@ export function createBrainWiring(deps: BrainDeps) {
         upsertRow({ id: rowId.agent(task.taskId), parentId: repoId, turnId: p.sourceTurnId, kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: "waits for your tap" }),
       ])
       emitTask(task.taskId)
-      const turn = getTurn(p.sourceTurnId)
-      if (voiceConsent(turn, deps.now(), consentClaimed(p.sourceTurnId)) && claimConsent(p.sourceTurnId, task.taskId)) {
-        const res = await approveProposal(task, {}, deps.dispatch)
-        const body = await res.json() as Record<string, unknown>
-        if (res.ok) {
-          trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: "filed by voice", ref: { taskId: String(body.dispatchTaskId ?? "") } })])
-          return { status: 200, body: { ...body, proposalId: task.taskId, consent: "voice" } }
-        }
-        deps.log(`[brain] voice auto-file failed (${String(body.error)}): the proposal waits for a tap`)
+      // The brain hands off: filed and queued at once, no Approve card (Jeremie, 2026-10-29).
+      // The trace row is what he sees; a failed file stays a proposal he can tap.
+      const res = await approveProposal(task, {}, deps.dispatch)
+      const body = await res.json() as Record<string, unknown>
+      if (res.ok) {
+        trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: body.status === "queued" ? "dispatched" : "waits for the dashboard stamp", ref: { taskId: String(body.dispatchTaskId ?? "") } })])
+        return { status: 200, body: { ...body, proposalId: task.taskId } }
       }
-      say(`Proposal [${task.taskId}] — ${agent} · ${note.title ?? project}\nWhy: ${p.reasoning}\nTask: ${p.prompt}\nApprove to file it.`, task.taskId)
-      return { status: 200, body: { ok: true, proposalId: task.taskId, status: "proposed" } }
+      deps.log(`[brain] auto-file failed (${String(body.error)}): left as a proposal`)
+      trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: "couldn't dispatch — tap to file it" })])
+      return { status: 200, body: { ok: true, proposalId: task.taskId, status: "proposed", error: body.error ?? null } }
     },
 
     /** A brain voice take was archived (POST /api/capture/voice/start brainTurnId): the turn card gets its audio id. */

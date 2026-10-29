@@ -76,6 +76,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/api/capture/voice/:id/validate`, `/discard` | | 409 `brain_take` on a `brain:*` row |
 | POST | `/hooks/brain/propose` | `{title, prompt, noteId, agent?, reasoning, sourceTurnId}` | see below |
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
+| POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
 All `/api/brain*` are Bearer-gated; every one answers 404 `brain_disabled` off the brain host.
 
@@ -85,7 +86,7 @@ Auth — all of: TCP peer loopback with no forwarded hop (`clientOrigin(...).tra
 
 - `noteId` missing → 422 `no_project`; unknown → 404; Turso down → 503; unknown agent → 400 `unknown_agent`.
 - Dedupe on (`sourceTurnId`, sha256(prompt)): a repeat answers `{ok, proposalId, replay:true}` and creates nothing.
-- **Voice = consent:** when `sourceTurnId` names a user turn in the brain thread with a `voice` card from the app, ≤ 10 min old, that has not auto-filed anything yet, the proposal is approved at once (files `queued`, origin jeremie): `{ok, proposalId, dispatchTaskId, status:"queued", consent:"voice"}`. Otherwise a proposal card turn waits for the Approve tap: `{ok, proposalId, status:"proposed"}`.
+- **The brain hands off** (Jeremie, 2026-10-29; replaced voice = consent): every proposal is approved at once (files `queued`, origin jeremie): `{ok, proposalId, dispatchTaskId, status:"queued"}`. No proposal turn, no Approve card, no `filed […]` turn in the brain thread: the agent row ("dispatched") is the receipt. If filing fails the proposal stays `proposed` (a card he can tap): `{ok, proposalId, status:"proposed", error}`.
 
 ## Hooks (no hook-script change)
 

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import {
   brainToolStep,
-  RESTART_WINDOW_MS, START_GRACE_MS, VOICE_CONSENT_MS,
+  RESTART_WINDOW_MS, START_GRACE_MS,
   bootSeed, brainEnabled, deliveryText, idleCompactDue, isBrainHook, isSupervisedTask,
-  rolloverDue, superviseStep, voiceConsent,
+  rolloverDue, superviseStep,
 } from "./brain"
 
 // brain-v2 policy (lib/brain.ts): pure, so every rule is pinned here. The
@@ -47,23 +47,6 @@ describe("superviseStep", () => {
   })
   test("alive → up", () => {
     expect(superviseStep({ ...base, alive: true, state: "up" })).toMatchObject({ state: "up", action: "none" })
-  })
-})
-
-describe("voiceConsent", () => {
-  const now = 50_000_000
-  const voice = { threadId: "brain", role: "user", createdAt: now - 60_000, card: { kind: "voice", source: "app" } }
-  test("a fresh app voice turn in the brain thread → consent", () => {
-    expect(voiceConsent(voice, now, false)).toBe(true)
-  })
-  test("typed turn, > 10 min, already used, other thread, missing turn → the tap", () => {
-    expect(voiceConsent({ ...voice, card: null }, now, false)).toBe(false)
-    expect(voiceConsent({ ...voice, createdAt: now - VOICE_CONSENT_MS - 1 }, now, false)).toBe(false)
-    expect(voiceConsent(voice, now, true)).toBe(false)
-    expect(voiceConsent({ ...voice, threadId: "general" }, now, false)).toBe(false)
-    expect(voiceConsent({ ...voice, role: "orchestrator" }, now, false)).toBe(false)
-    expect(voiceConsent({ ...voice, card: { kind: "voice", source: "telegram" } }, now, false)).toBe(false)
-    expect(voiceConsent(null, now, false)).toBe(false)
   })
 })
 
