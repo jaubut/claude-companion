@@ -26,7 +26,9 @@
       "Bash(bin/todo:*)",
       "Bash(./bin/todo:*)",
       "Bash(bin/sessions:*)",
-      "Bash(./bin/sessions:*)"
+      "Bash(./bin/sessions:*)",
+      "Bash(bin/pr-close:*)",
+      "Bash(./bin/pr-close:*)"
     ]
   }
 }
