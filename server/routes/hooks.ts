@@ -146,7 +146,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // roundtrip, EXCEPT for the catastrophe denylist (rm -rf /, force-push
     // to main, DROP TABLE, etc). Those still go through the normal flow
     // so the phone stays in the loop on truly destructive ops.
-    if (isSuperAuto() && !brainCall && !isCatastrophic(tool, input)) {
+    if (isSuperAuto() && !isCatastrophic(tool, input)) {
       decision = "allow"
       verdict = "auto-allow"
       companionLog(`\x1b[35msuper-allow\x1b[0m ${tool} ${dim}${summarize(tool, input)}${reset}`)

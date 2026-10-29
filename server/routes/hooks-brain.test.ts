@@ -8,15 +8,15 @@ import { getSessionByKey, listSessions } from "../lib/sessions"
 import { isSuperAuto, setSuperAutoInMemoryForTests } from "../lib/super-auto"
 
 // brain-v2 hooks (routes/hooks.ts). The brain is a normal session — its tool
-// calls take the normal path (auto-judge → phone) — except that SUPER never
-// auto-allows for it. Its Stop goes to the brain thread: no waiting badge, no
-// global auto-compact, no push.
+// calls take the normal path (SUPER, auto-judge → phone) like any session.
+// Its Stop goes to the brain thread: no waiting badge, no global auto-compact,
+// no push.
 
 let handleHookRoute: (req: Request, url: URL) => Promise<Response | null>
 let compactTargetFor: typeof import("../wiring/auto-compact").compactTargetFor
 const superWas = isSuperAuto()
 const BRAIN = { "x-companion-task-id": "brain" }
-// Unlisted for the auto-judge: SUPER would allow it, the auto-judge asks the phone.
+// Unlisted for the auto-judge: SUPER allows it, without SUPER the auto-judge asks the phone.
 const CMD = "zz-brain-super-probe --go"
 
 beforeAll(async () => {
@@ -43,23 +43,10 @@ async function waitPending(sessionId: string) {
   return null
 }
 
-test("SUPER on: a brain call is NOT auto-allowed — it falls to the auto-judge and reaches the phone", async () => {
-  setSuperAutoInMemoryForTests(true)
-  const ctrl = new AbortController()
-  try {
-    const res = handleHookRoute(...post("/hooks/pre-tool-use", { session_id: "sb-super", tool_name: "Bash", tool_input: { command: CMD }, cwd: "/tmp/brain-sb" }, BRAIN, ctrl.signal))
-    expect(await waitPending("sb-super")).not.toBeNull()
-    ctrl.abort()
-    expect(await (await res)!.json()).toEqual({})
-  } finally {
-    setSuperAutoInMemoryForTests(false)
-  }
-})
-
-test("SUPER on: the same call from a non-brain session is auto-allowed (unchanged)", async () => {
+test("SUPER on: a brain call is auto-allowed like any session", async () => {
   setSuperAutoInMemoryForTests(true)
   try {
-    const res = await handleHookRoute(...post("/hooks/pre-tool-use", { session_id: "sb-human", tool_name: "Bash", tool_input: { command: CMD }, cwd: "/tmp/not-brain" }, {}))
+    const res = await handleHookRoute(...post("/hooks/pre-tool-use", { session_id: "sb-super", tool_name: "Bash", tool_input: { command: CMD }, cwd: "/tmp/brain-sb" }))
     const j = await res!.json() as { hookSpecificOutput?: { permissionDecision?: string } }
     expect(j.hookSpecificOutput?.permissionDecision).toBe("allow")
   } finally {
@@ -67,17 +54,13 @@ test("SUPER on: the same call from a non-brain session is auto-allowed (unchange
   }
 })
 
-test("SUPER on, no cwd in the payload: still the brain by header → not auto-allowed", async () => {
-  setSuperAutoInMemoryForTests(true)
+test("SUPER off: a brain call takes the normal path — the auto-judge asks the phone", async () => {
+  setSuperAutoInMemoryForTests(false)
   const ctrl = new AbortController()
-  try {
-    const res = handleHookRoute(...post("/hooks/pre-tool-use", { session_id: "sb-nocwd", tool_name: "Bash", tool_input: { command: CMD } }, BRAIN, ctrl.signal))
-    expect(await waitPending("sb-nocwd")).not.toBeNull()
-    ctrl.abort()
-    expect(await (await res)!.json()).toEqual({})
-  } finally {
-    setSuperAutoInMemoryForTests(false)
-  }
+  const res = handleHookRoute(...post("/hooks/pre-tool-use", { session_id: "sb-nosuper", tool_name: "Bash", tool_input: { command: CMD }, cwd: "/tmp/brain-sb" }, BRAIN, ctrl.signal))
+  expect(await waitPending("sb-nosuper")).not.toBeNull()
+  ctrl.abort()
+  expect(await (await res)!.json()).toEqual({})
 })
 
 test("brain Stop: no waiting badge, no global auto-compact target, the adopted brain's reply lands in the brain thread", async () => {

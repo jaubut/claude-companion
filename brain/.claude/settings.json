@@ -4,10 +4,7 @@
       "Edit",
       "Write",
       "MultiEdit",
-      "NotebookEdit",
-      "mcp__claude_ai_Gmail__send_message",
-      "mcp__claude_ai_Gmail__reply",
-      "mcp__claude_ai_Gmail__forward"
+      "NotebookEdit"
     ],
     "allow": [
       "mcp__turso__query",
@@ -18,31 +15,12 @@
       "mcp__claude_ai_Gmail__update_draft",
       "mcp__claude_ai_Gmail__list_drafts",
       "mcp__claude_ai_Gmail__get_draft",
-      "mcp__claude_ai_Gmail__search_threads",
-      "mcp__claude_ai_Gmail__get_thread",
-      "mcp__claude_ai_Gmail__get_message",
+      "mcp__claude_ai_Gmail__send_message",
+      "mcp__claude_ai_Gmail__reply",
       "Bash(bin/propose:*)",
       "Bash(bin/lead:*)",
       "Bash(./bin/propose:*)",
-      "Bash(./bin/lead:*)",
-      "Bash(~/.claude/tools/dispatch.sh:*)",
-      "Bash(git status:*)",
-      "Bash(git log:*)",
-      "Bash(git diff:*)",
-      "Bash(git show:*)",
-      "Bash(git branch:*)",
-      "Bash(git rev-parse:*)",
-      "Bash(git ls-files:*)",
-      "Bash(gh pr view:*)",
-      "Bash(gh pr list:*)",
-      "Bash(gh pr status:*)",
-      "Bash(gh pr checks:*)",
-      "Bash(gh pr diff:*)",
-      "Bash(gh issue view:*)",
-      "Bash(gh issue list:*)",
-      "Bash(gh run view:*)",
-      "Bash(gh run list:*)",
-      "Bash(gh repo view:*)"
+      "Bash(./bin/lead:*)"
     ]
   }
 }
