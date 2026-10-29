@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# brain-v2: search the brain's own thread (POST /hooks/brain/thread).
+#
+#   bin/thread "<text>" [limit]     → newest matching turns first, JSON
+#
+# Same auth as bin/propose: loopback, X-Companion-Task-Id: brain, and the pid
+# of the brain's claude process (found by walking up the parent chain).
+set -euo pipefail
+
+Q="${1:-}" LIMIT="${2:-20}"
+if [ -z "$Q" ]; then
+  echo 'thread: usage: bin/thread "<text>" [limit]' >&2
+  exit 2
+fi
+case "$LIMIT" in ''|*[!0-9]*) echo "thread: limit must be a number" >&2; exit 2 ;; esac
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(Q="$Q" LIMIT="$LIMIT" python3 -c 'import json, os; print(json.dumps({"q": os.environ["Q"], "limit": int(os.environ["LIMIT"])}))')
+
+curl -sS --max-time 15 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/thread" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

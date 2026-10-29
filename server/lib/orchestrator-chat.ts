@@ -134,11 +134,22 @@ function toTask(r: TaskRow): Task {
 
 // ---- turns ----------------------------------------------------------------
 
+const appendedListeners = new Set<(turn: Turn) => void>()
+
+/** Run `fn` after every appended turn (wiring/brain.ts wakes the brain on its thread's events). */
+export function onTurnAppended(fn: (turn: Turn) => void): () => void {
+  appendedListeners.add(fn)
+  return () => appendedListeners.delete(fn)
+}
+
 export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = GENERAL_CHANNEL, card?: TurnCard): Turn {
   const turn: Turn = { id: randomUUID(), threadId, role, text, taskId, createdAt: Date.now(), ...(card ? { card } : {}) }
   db.query(
     "INSERT INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at, card) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(turn.id, turn.threadId, turn.role, turn.text, turn.taskId, turn.createdAt, card ? JSON.stringify(card) : null)
+  for (const fn of appendedListeners) {
+    try { fn(turn) } catch { /* a listener never fails the write */ }
+  }
   return turn
 }
 
@@ -180,6 +191,15 @@ export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn
     .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
     .all(threadId, limit) as TurnRow[]
   return rows.reverse().map(toTurn)
+}
+
+/** Turns of one thread whose text contains `q` (case-insensitive), newest first (the brain's bin/thread). */
+export function searchThread(threadId: string, q: string, limit = 20): Turn[] {
+  const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+  const rows = db
+    .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? AND text LIKE ? ESCAPE '\\' ORDER BY created_at DESC, rowid DESC LIMIT ?")
+    .all(threadId, like, limit) as TurnRow[]
+  return rows.map(toTurn)
 }
 
 // ---- dispatch tasks -------------------------------------------------------

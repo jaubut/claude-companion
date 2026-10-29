@@ -1,7 +1,8 @@
 import { checkBearer, unauthorized } from "../lib/auth"
-import { BRAIN_AGENT, brainEnabled } from "../lib/brain"
+import { BRAIN_AGENT, BRAIN_THREAD, brainEnabled } from "../lib/brain"
 import { latestRows, rowsSince } from "../lib/brain-trace"
 import { companionLog } from "../lib/log"
+import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { type BrainWiring, brainWiring } from "../wiring/brain"
@@ -11,6 +12,7 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 //   GET  /api/brain/trace?since=<seq>     → {ok, rows: TraceRow[]}
 //   POST /api/brain/pause|resume|restart  → {ok, brain}; restart while paused → 409 paused
 //   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId}
+//   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
 // brain session's pid with X-Companion-Task-Id: brain.
@@ -20,6 +22,10 @@ const TITLE_MAX = 200
 const PROMPT_MAX = 20_000
 const NOTE_ID_MAX = 300
 const REASONING_MAX = 2_000
+const QUERY_MAX = 200
+const SEARCH_LIMIT_MAX = 50
+/** Per turn in a search answer: enough to recall, short enough for a tool result. */
+const SEARCH_TEXT_MAX = 1_000
 
 export interface BrainRouteDeps {
   wiring: BrainWiring
@@ -75,6 +81,21 @@ async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out.body, { status: out.status })
 }
 
+async function thread(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const q = str(body.q, QUERY_MAX)
+  if (!q) return fail(400, "q required")
+  const limit = typeof body.limit === "number" && Number.isInteger(body.limit) ? Math.min(Math.max(body.limit, 1), SEARCH_LIMIT_MAX) : 20
+  const turns = searchThread(BRAIN_THREAD, q, limit).map((t) => ({
+    id: t.id, role: t.role, at: new Date(t.createdAt).toISOString(),
+    text: t.text.length > SEARCH_TEXT_MAX ? `${t.text.slice(0, SEARCH_TEXT_MAX - 1)}…` : t.text,
+  }))
+  return Response.json({ ok: true, turns })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -82,6 +103,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return propose(req, deps)
+    }
+    if (p === "/hooks/brain/thread") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return thread(req, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()

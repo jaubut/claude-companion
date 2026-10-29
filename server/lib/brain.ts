@@ -35,14 +35,18 @@ export function isSupervisedTask(taskId: string | null | undefined): boolean {
 
 // ── Delivery text ──
 
-export interface DeliveryTurn { id: string; text: string; createdAt: number; card?: { kind: string } | null }
+export interface DeliveryTurn { id: string; text: string; createdAt: number; card?: { kind: string } | null; role?: string }
 
 /** Cap of one typed delivery; the rest waits for the next Stop. */
 export const DELIVERY_MAX = 4_000
 
-/** Jeremie's queued turns as one prompt: `[turn <id>] (voice) text`, oldest first. */
+/** Queued turns as one prompt, oldest first: Jeremie's `[turn <id>] (voice) text`, system `[event <id>] text`. */
 export function deliveryText(turns: DeliveryTurn[]): string {
-  const lines = turns.map((t) => `[turn ${t.id}]${t.card?.kind === "voice" ? " (voice)" : ""} ${t.text.replace(/\s+/g, " ").trim()}`)
+  const lines = turns.map((t) => {
+    const text = t.text.replace(/\s+/g, " ").trim()
+    if (t.role === "orchestrator") return `[event ${t.id}] ${text}`
+    return `[turn ${t.id}]${t.card?.kind === "voice" ? " (voice)" : ""} ${text}`
+  })
   const text = lines.join("\n")
   return text.length > DELIVERY_MAX ? `${text.slice(0, DELIVERY_MAX - 1)}…` : text
 }
@@ -130,6 +134,9 @@ export const MEMORY_TAG = "brain-memory"
 
 const MEMORY_DUTY = (memoryRef: string | null): string =>
   `Append today's decisions, dispatches and outcomes to your daily log note "Brain log <YYYY-MM-DD>" (resources/, tag brain-log; note_create once a day, then note_update). Then rewrite your memory note${memoryRef ? ` ${memoryRef}` : ` (tag ${MEMORY_TAG})`} to under ${MEMORY_MAX_CHARS} chars: open threads, pending proposals, dispatched task ids, what Jeremie is waiting on.`
+
+/** The brain's whole reply to events that need nothing from Jeremie: kept out of the thread. */
+export const QUIET_REPLY = "noted"
 
 /** Typed before an idle /compact so nothing lives only in the context that compaction drops. */
 export function flushPrompt(memoryRef: string | null): string {
