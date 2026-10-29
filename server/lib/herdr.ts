@@ -321,3 +321,44 @@ export function herdrOwnerFor(pane: string): HerdrOwner | undefined {
 export function forgetHerdrAgent(pane: string): void {
   spawnedAgents.delete(pane)
 }
+
+// ── Listing workspaces and panes (brain-workers reconciler) ─────────────
+//
+// `workspace list` / `pane list --workspace` as herdr 0.9.x prints them. Any
+// entry missing an id is dropped and an unknown shape (or an error) is [], so
+// a caller that can't read herdr sees nothing to act on.
+
+export interface HerdrWorkspaceInfo { workspaceId: string; label: string; paneCount: number; agentStatus: string }
+export interface HerdrPaneInfo { paneId: string; workspaceId: string; agent: string; agentStatus: string }
+
+const strOf = (v: unknown): string => (typeof v === "string" ? v : "")
+
+export async function herdrWorkspaces(h: Herdr = realHerdr): Promise<HerdrWorkspaceInfo[]> {
+  try {
+    const list = (await h.call(["workspace", "list"], 5_000)).workspaces
+    if (!Array.isArray(list)) return []
+    return list.flatMap((w: Record<string, unknown> | null) => {
+      const id = strOf(w?.workspace_id)
+      if (!HERDR_WORKSPACE_RE.test(id)) return []
+      const n = w?.pane_count
+      return [{ workspaceId: id, label: strOf(w?.label), paneCount: typeof n === "number" ? n : -1, agentStatus: strOf(w?.agent_status) }]
+    })
+  } catch {
+    return []
+  }
+}
+
+export async function herdrWorkspacePanes(ws: string, h: Herdr = realHerdr): Promise<HerdrPaneInfo[]> {
+  if (!HERDR_WORKSPACE_RE.test(ws)) return []
+  try {
+    const list = (await h.call(["pane", "list", "--workspace", ws], 3_000)).panes
+    if (!Array.isArray(list)) return []
+    return list.flatMap((p: Record<string, unknown> | null) => {
+      const id = validHerdrPane(strOf(p?.pane_id))
+      if (!id || strOf(p?.workspace_id) !== ws) return []
+      return [{ paneId: id, workspaceId: ws, agent: strOf(p?.agent), agentStatus: strOf(p?.agent_status) }]
+    })
+  } catch {
+    return []
+  }
+}

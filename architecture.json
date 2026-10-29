@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 172,
+          "lines": 173,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -89,6 +89,7 @@
             "lib/tmux-pane.ts",
             "routes/brain.ts",
             "wiring/brain.ts",
+            "wiring/brain-workers.ts",
             "lib/brain.ts"
           ],
           "listeners": [],
@@ -903,7 +904,7 @@
         },
         {
           "path": "lib/brain-trace.ts",
-          "lines": 207,
+          "lines": 210,
           "kind": "lib",
           "exports": [
             "TraceKind",
@@ -931,6 +932,43 @@
           "imports": [
             "lib/orchestrator-db.ts",
             "lib/dispatch-tasks.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/brain-workers.ts",
+          "lines": 113,
+          "kind": "lib",
+          "exports": [
+            "ReapMode",
+            "Verdict",
+            "WsKind",
+            "WORKER_GRACE_MS",
+            "WORKER_SWEEP_MS",
+            "SETTLED_SWEEPS",
+            "TERMINAL_PHASES",
+            "WORKER_PREFIX",
+            "reapMode",
+            "workerLabel",
+            "envValue",
+            "SweepView",
+            "Decision",
+            "settledNow",
+            "BrainLive",
+            "classifyBrainWs",
+            "WorkerFacts",
+            "workerTaskId",
+            "classifyWorker"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2028,7 +2066,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 324,
+          "lines": 365,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -2055,7 +2093,11 @@
             "noteHerdrAgent",
             "herdrAgentFor",
             "herdrOwnerFor",
-            "forgetHerdrAgent"
+            "forgetHerdrAgent",
+            "HerdrWorkspaceInfo",
+            "HerdrPaneInfo",
+            "herdrWorkspaces",
+            "herdrWorkspacePanes"
           ],
           "state": [
             "let clientMod",
@@ -5866,7 +5908,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 160,
+          "lines": 197,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -5887,7 +5929,8 @@
             "lib/sessions.ts",
             "lib/vault-guard.ts",
             "wiring/brain.ts",
-            "wiring/brain-todo.ts"
+            "wiring/brain-todo.ts",
+            "wiring/brain-workers.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6832,8 +6875,48 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-workers.ts",
+          "lines": 317,
+          "kind": "lib",
+          "exports": [
+            "ProposalRef",
+            "BrainWorkersDeps",
+            "SessionEntry",
+            "Survey",
+            "CloseOutcome",
+            "createBrainWorkers",
+            "BrainWorkers",
+            "brainWorkers",
+            "brainLiveness"
+          ],
+          "state": [],
+          "emits": [
+            "brain_trace"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-workers.ts",
+            "lib/brain-trace.ts",
+            "lib/discover.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/herdr.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/sessions.ts",
+            "state.ts",
+            "wiring/dispatch.ts",
+            "wiring/takeover-liveness.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain.ts",
-          "lines": 599,
+          "lines": 590,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -6875,7 +6958,7 @@
             "lib/apns.ts",
             "wiring/gauge.ts",
             "wiring/auto-compact.ts",
-            "wiring/takeover-liveness.ts",
+            "wiring/brain-workers.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/dispatch.ts"
@@ -7765,6 +7848,7 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
@@ -7870,6 +7954,7 @@
             "routes/brain.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/dialogs.ts",
@@ -7899,6 +7984,14 @@
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "ws.ts"
+          ]
+        },
+        "brainWorkers": {
+          "module": "wiring/brain-workers.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/brain.ts",
+            "wiring/brain.ts"
           ]
         },
         "brainWiring": {
@@ -8252,6 +8345,7 @@
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/auto-compact.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/dialogs.ts",
             "wiring/events.ts",
@@ -8438,6 +8532,7 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/brain-todo.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
             "wiring/dialogs.ts",
@@ -9066,6 +9161,7 @@
             "lib/status-answer.ts",
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
+            "wiring/brain-workers.ts",
             "wiring/triage.ts"
           ]
         },
@@ -9074,7 +9170,28 @@
           "callers": [
             "lib/brain-trace.ts",
             "lib/dispatch-mirror.ts",
-            "lib/dispatch-poller.ts"
+            "lib/dispatch-poller.ts",
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "BRAIN_AGENT": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-workers.ts",
+            "routes/brain.ts",
+            "wiring/brain-workers.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "BRAIN_THREAD": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-workers.ts",
+            "routes/brain.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/brain.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "Judgement": {
@@ -9735,6 +9852,7 @@
             "lib/session-pane.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
           ]
         },
@@ -9748,6 +9866,7 @@
             "lib/session-pane.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/dialogs.ts"
           ]
@@ -9874,6 +9993,7 @@
           "callers": [
             "lib/herdr-inject.ts",
             "lib/spawn-session.ts",
+            "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
           ]
         },
@@ -12398,7 +12518,8 @@
         "processEnvEntries": {
           "module": "lib/discover.ts",
           "callers": [
-            "lib/worker-hook-gate.ts"
+            "lib/worker-hook-gate.ts",
+            "wiring/brain-workers.ts"
           ]
         },
         "isDispatchWorkerHook": {
@@ -12917,21 +13038,10 @@
             "routes/brain.ts"
           ]
         },
-        "BRAIN_AGENT": {
-          "module": "lib/brain.ts",
+        "BrainWorkers": {
+          "module": "wiring/brain-workers.ts",
           "callers": [
-            "routes/brain.ts",
-            "wiring/brain.ts"
-          ]
-        },
-        "BRAIN_THREAD": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "routes/brain.ts",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/brain.ts",
-            "wiring/orchestrator.ts"
+            "routes/brain.ts"
           ]
         },
         "searchThread": {
@@ -13476,6 +13586,7 @@
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
             "wiring/brain-todo.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts",
@@ -13732,6 +13843,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/brain-workers.ts",
             "wiring/orchestrator.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
@@ -14469,6 +14581,7 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-activity.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
         },
@@ -14496,6 +14609,7 @@
           "callers": [
             "wiring/brain-activity.ts",
             "wiring/brain-todo.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
         },
@@ -14510,6 +14624,7 @@
           "callers": [
             "wiring/brain-activity.ts",
             "wiring/brain-todo.ts",
+            "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/events.ts"
           ]
@@ -14524,6 +14639,111 @@
           "module": "wiring/brain.ts",
           "callers": [
             "wiring/brain-todo.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "ReapMode": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "WsKind": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "reapMode": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "SweepView": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "settledNow": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "classifyBrainWs": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "classifyWorker": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "WORKER_SWEEP_MS": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "WORKER_PREFIX": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "BrainLive": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "workerTaskId": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "createLiveness": {
+          "module": "wiring/takeover-liveness.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "HerdrWorkspaceInfo": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "herdrWorkspacePanes": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "herdrWorkspaces": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "getRow": {
+          "module": "lib/brain-trace.ts",
+          "callers": [
+            "wiring/brain-workers.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "getTaskByDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/brain-workers.ts",
+            "wiring/dispatch.ts",
             "wiring/events.ts"
           ]
         },
@@ -14701,8 +14921,8 @@
             "wiring/brain.ts"
           ]
         },
-        "createLiveness": {
-          "module": "wiring/takeover-liveness.ts",
+        "brainLiveness": {
+          "module": "wiring/brain-workers.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -14863,13 +15083,6 @@
             "wiring/dispatch.ts"
           ]
         },
-        "getTaskByDispatchId": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/dispatch.ts",
-            "wiring/events.ts"
-          ]
-        },
         "traceForDispatch": {
           "module": "lib/brain-trace.ts",
           "callers": [
@@ -14949,12 +15162,6 @@
           ]
         },
         "NEEDS_YOU": {
-          "module": "lib/brain-trace.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "getRow": {
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/events.ts"

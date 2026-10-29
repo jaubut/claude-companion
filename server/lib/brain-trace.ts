@@ -26,7 +26,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_brain_trace_seq ON brain_trace (seq);
 `)
 
-export type TraceKind = "turn" | "repo" | "agent" | "pr" | "approval" | "question" | "voice" | "lead" | "step" | "todo"
+export type TraceKind = "turn" | "repo" | "agent" | "pr" | "approval" | "question" | "voice" | "lead" | "step" | "todo" | "worker"
 export type TraceStatus = "pending" | "running" | "done" | "error"
 
 export interface TraceRef {
@@ -39,6 +39,8 @@ export interface TraceRef {
   audioId?: string
   /** A step row: what the brain is doing (BrainActivityKind), for the line's icon. */
   step?: string
+  /** A worker row: the herdr workspace the brain-workers reaper closed. */
+  workspaceId?: string
 }
 
 export interface TraceRow {
@@ -83,6 +85,7 @@ export const rowId = {
   voice: (turnId: string): string => `voice:${turnId}`,
   lead: (name: string, turnId: string): string => `lead:${name}:${turnId}`,
   step: (toolUseId: string): string => `step:${toolUseId}`,
+  worker: (proposalId: string): string => `worker:${proposalId}`,
 }
 
 const TERMINAL = new Set<TraceStatus>(["done", "error"])

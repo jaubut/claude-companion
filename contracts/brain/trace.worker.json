@@ -1,0 +1,22 @@
+{
+  "type": "brain_trace",
+  "op": "row",
+  "rows": [
+    {
+      "id": "worker:a1b2c3d4",
+      "parentId": "agent:a1b2c3d4",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "worker",
+      "status": "done",
+      "title": "Closed worker",
+      "detail": "finished (pr)",
+      "ref": {
+        "workspaceId": "w50",
+        "taskId": "0123456789abcdef0123456789abcdef"
+      },
+      "startedAt": 1793146231000,
+      "endedAt": 1793146231000,
+      "seq": 12
+    }
+  ]
+}

@@ -40,6 +40,7 @@ import { mirrorViewerCount } from "./wiring/pane-mirror"
 import { ensureUtf8Locale } from "./lib/tmux-pane"
 import { brainRoute } from "./routes/brain"
 import { brainWiring, setBrainDeliver } from "./wiring/brain"
+import { brainWorkers } from "./wiring/brain-workers"
 import { brainEnabled } from "./lib/brain"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
@@ -65,7 +66,7 @@ export function createCompanionServer(port: number) {
   startShellPoll(listSessions)
   startEndedSweep(listSessions)
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
-  if (brainEnabled()) brainWiring.start()
+  if (brainEnabled()) { brainWiring.start(); brainWorkers.start() }
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
