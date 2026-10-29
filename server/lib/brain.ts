@@ -65,6 +65,8 @@ export const RESTARTS_MAX = 3
 export const START_GRACE_MS = 60_000
 /** No hook from the brain for this long while a delivery is in flight → the turn is considered lost. */
 export const BUSY_MAX_MS = 10 * 60_000
+/** Claude Code reports the brain idle this long after the last hook while a delivery is in flight → its Stop was lost: read the reply from the transcript. */
+export const TURN_END_GRACE_MS = 30_000
 
 export interface SuperviseInput {
   paused: boolean
