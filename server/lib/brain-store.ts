@@ -84,16 +84,6 @@ export function setKv(k: string, v: string): void {
   db.query("INSERT INTO brain_kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(k, v)
 }
 
-/** Has this voice turn already auto-filed something? */
-export function consentClaimed(turnId: string): boolean {
-  return !!db.query("SELECT 1 FROM brain_consent WHERE turn_id = ?").get(turnId)
-}
-
-/** Claim a voice turn's one auto-file. False when another proposal already claimed it. */
-export function claimConsent(turnId: string, proposalId: string, now = Date.now()): boolean {
-  return db.query("INSERT OR IGNORE INTO brain_consent (turn_id, proposal_id, at) VALUES (?, ?, ?)").run(turnId, proposalId, now).changes > 0
-}
-
 /** The proposal already created for (source turn, prompt hash), if any. */
 export function proposeSeen(sourceTurnId: string, promptHash: string): string | null {
   return (db.query("SELECT proposal_id FROM brain_proposals WHERE source_turn_id = ? AND prompt_hash = ?").get(sourceTurnId, promptHash) as { proposal_id: string } | null)?.proposal_id ?? null

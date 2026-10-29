@@ -26,7 +26,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_brain_trace_seq ON brain_trace (seq);
 `)
 
-export type TraceKind = "turn" | "repo" | "agent" | "pr" | "approval" | "question" | "voice" | "lead" | "step"
+export type TraceKind = "turn" | "repo" | "agent" | "pr" | "approval" | "question" | "voice" | "lead" | "step" | "todo"
 export type TraceStatus = "pending" | "running" | "done" | "error"
 
 export interface TraceRef {

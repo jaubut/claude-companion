@@ -4,8 +4,8 @@
 #   bin/propose --turn <sourceTurnId> --note <projects/... note id> --title "<title>" \
 #               --prompt "<what the builder must do>" --why "<one line>" [--agent builder]
 #
-# The server decides what happens: a fresh voice turn from the app files it
-# `queued` straight away; anything else becomes a proposal card Jeremie taps.
+# It dispatches at once (filed `queued`, no Approve card); Jeremie sees a trace
+# line. A failed filing stays a proposal card he can tap.
 # Auth is the caller's identity: loopback only, X-Companion-Task-Id: brain and
 # the pid of the brain's claude process (found by walking up the parent chain).
 set -euo pipefail
