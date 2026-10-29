@@ -474,3 +474,40 @@ describe("phase 1.1", () => {
     }
   })
 })
+
+describe("activity", () => {
+  const brainFrames = (h: Harness) => h.frames.filter((f) => f.type === "brain")
+  const stepRows = (h: Harness) => h.frames.filter((f) => f.type === "brain_trace").flatMap((f) => f.rows as Array<Record<string, unknown>>).filter((r) => r.kind === "step")
+
+  test("a turn reads as thinking, a tool call names its step and adds a row under the turn, the Stop clears both", async () => {
+    const h = harness()
+    await upBrain(h)
+    const a = userTurn("what's open?")
+    h.w.enqueue(a)
+    await Bun.sleep(1)
+    expect(h.w.status().activity?.kind).toBe("thinking")
+    h.w.noteActivity("sid-brain", { phase: "pre", tool: "mcp__turso__note", input: { ref_code: "RES-3T6G" }, toolUseId: "tu1" })
+    expect(h.w.status().activity).toMatchObject({ kind: "reading", label: "Reading notes" })
+    expect(stepRows(h).at(-1)).toMatchObject({ id: "step:tu1", parentId: `turn:${a.id}`, status: "running", title: "Reading notes", detail: "RES-3T6G", ref: { step: "reading" } })
+    h.w.noteActivity("sid-brain", { phase: "post", tool: "mcp__turso__note", input: { ref_code: "RES-3T6G" }, toolUseId: "tu1" })
+    expect(h.w.status().activity?.kind).toBe("thinking")
+    expect(stepRows(h).at(-1)).toMatchObject({ id: "step:tu1", status: "done", title: "Read notes" })
+    h.w.noteActivity("sid-brain", { phase: "pre", tool: "Bash", input: { command: "bin/propose --title x" }, toolUseId: "tu2" })
+    expect(h.w.status().activity?.label).toBe("Dispatching")
+    await h.w.onStop("sid-brain", "Two PRs are open.")
+    expect(h.w.status().activity).toBeNull()
+    // The call with no PostToolUse (denied) is closed by the turn's end.
+    expect(stepRows(h).at(-1)).toMatchObject({ id: "step:tu2", status: "done", title: "Dispatched" })
+    expect(brainFrames(h).at(-1)?.activity).toBeNull()
+  })
+
+  test("a tool hook from another session or while idle changes nothing", async () => {
+    const h = harness()
+    await upBrain(h)
+    const before = h.frames.length
+    h.w.noteActivity("sid-other", { phase: "pre", tool: "Read", input: {}, toolUseId: "x" })
+    h.w.noteActivity("sid-brain", { phase: "pre", tool: "Read", input: {}, toolUseId: "y" })
+    expect(h.w.status().activity).toBeNull()
+    expect(h.frames.length).toBe(before)
+  })
+})

@@ -13,8 +13,11 @@ Order on a new socket (brain host only): `init` (with `brain`) → `brain` → `
 ### `brain`
 
 ```
-{type:"brain", state:"up"|"starting"|"down"|"paused", sessionKey:string|null, since:number, restarts:number, host:string}
+{type:"brain", state:"up"|"starting"|"down"|"paused", sessionKey:string|null, since:number, restarts:number, host:string,
+ activity: {kind:"thinking"|"reading"|"searching"|"writing"|"dispatching"|"working"|"compacting", label:string, since:number}|null}
 ```
+
+`activity` is what the brain is doing right now (null = idle): "Thinking" while a turn is in flight, the step its last PreToolUse names ("Reading notes", "Dispatching"…), "Compacting memory" during an idle compact. Re-sent on every change; older clients ignore it.
 
 Sent after `init` and on every state change. `restarts` = respawns in the last 5 min (3 → `down` + one push; it retries once the window clears). `paused` = the kill switch `~/.claude-companion/.brain-paused` exists; nothing respawns it.
 
@@ -29,12 +32,13 @@ Same object as the `brain` frame, minus `type`. Absent off the brain host.
 TraceRow {
   id: string            // "turn:<turnId>" | "repo:<turnId>:<project>" | "agent:<proposalId>" | "pr:<proposalId>"
                         // | "appr:<approvalId>" | "q:<questionId>" | "voice:<turnId>" | "lead:<name>:<turnId>" (P2)
+                        // | "step:<toolUseId>" (one brain tool call, under its turn)
   parentId: string|null // turn → repo → agent → pr; approvals/questions under the asking worker's agent row, else "needs-you"
   turnId: string|null
-  kind: "turn"|"repo"|"agent"|"pr"|"approval"|"question"|"voice"|"lead"
+  kind: "turn"|"repo"|"agent"|"pr"|"approval"|"question"|"voice"|"lead"|"step"
   status: "pending"|"running"|"done"|"error"
   title: string, detail: string|null
-  ref: {taskId?, prUrl?, approvalId?, questionId?, host?, sessionKey?, audioId?}
+  ref: {taskId?, prUrl?, approvalId?, questionId?, host?, sessionKey?, audioId?, step?}   // step: the activity kind of a step row (its icon)
   startedAt: number, endedAt: number|null, seq: number
 }
 ```
