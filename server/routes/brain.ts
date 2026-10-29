@@ -7,6 +7,7 @@ import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
+import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
 // brain-v2 routes (docs/brain-api.md):
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
@@ -15,6 +16,8 @@ import { addBrainTodo } from "../wiring/brain-todo"
 //   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId}
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
 //   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
+//   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
+//   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
 // brain session's pid with X-Companion-Task-Id: brain.
@@ -36,6 +39,8 @@ export interface BrainRouteDeps {
   todo?: typeof addBrainTodo
   sessions: () => Session[]
   enabled: () => boolean
+  /** The brain-workers reaper (default: the real one). */
+  workers?: BrainWorkers
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -118,6 +123,29 @@ async function todo(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out.body, { status: out.status })
 }
 
+const WORKSPACE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
+
+/** The brain's own workspaces only (wiring/brain-workers.ts decides ownership and every close). */
+async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const workers = deps.workers ?? brainWorkers
+  if (body.op === "list") {
+    const s = await workers.survey()
+    return Response.json({ ok: true, sessions: s.sessions, mode: s.mode })
+  }
+  if (body.op === "close") {
+    const ws = typeof body.workspaceId === "string" && WORKSPACE_ID.test(body.workspaceId) ? body.workspaceId : null
+    if (!ws) return fail(400, "workspaceId required")
+    const out = await workers.close(ws)
+    companionLog(`[brain] sessions close ${ws} → ${out.status} ${String(out.body.error ?? "ok")}`)
+    return Response.json(out.body, { status: out.status })
+  }
+  return fail(400, "unknown_op")
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -136,6 +164,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return todo(req, deps)
     }
+    if (p === "/hooks/brain/sessions") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return sessions(req, deps)
+    }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()
     if (!deps.enabled()) return fail(404, "brain_disabled")
@@ -144,6 +177,10 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       const raw = url.searchParams.get("since")
       const since = raw && /^\d{1,15}$/.test(raw) ? Number(raw) : null
       return Response.json({ ok: true, rows: since === null ? latestRows() : rowsSince(since) })
+    }
+    if (p === "/api/brain/workers" && req.method === "GET") {
+      const s = await (deps.workers ?? brainWorkers).survey()
+      return Response.json({ ok: true, mode: s.mode, sessions: s.sessions, foreign: s.foreign })
     }
     if (req.method !== "POST") return fail(405, "method_not_allowed")
     if (p === "/api/brain/pause") return Response.json({ ok: true, brain: deps.wiring.pause() })

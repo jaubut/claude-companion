@@ -24,7 +24,9 @@
       "Bash(bin/thread:*)",
       "Bash(./bin/thread:*)",
       "Bash(bin/todo:*)",
-      "Bash(./bin/todo:*)"
+      "Bash(./bin/todo:*)",
+      "Bash(bin/sessions:*)",
+      "Bash(./bin/sessions:*)"
     ]
   }
 }

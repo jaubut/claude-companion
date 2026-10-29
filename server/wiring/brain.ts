@@ -27,7 +27,7 @@ import { apnsConfigured } from "../lib/apns"
 import type { ApnsPayload } from "../lib/apns"
 import { gauge } from "./gauge"
 import { realAutoCompactDeps } from "./auto-compact"
-import { createLiveness } from "./takeover-liveness"
+import { brainLiveness, brainWorkers } from "./brain-workers"
 import { emitChannel, emitTask, orchEmit } from "./orchestrator"
 import { approveProposal } from "./proposals"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
@@ -547,29 +547,20 @@ export function setBrainDeliver(fn: (text: string, key?: string) => Promise<Resp
   deliverFn = fn
 }
 
-const liveness = createLiveness(() => ({ herdr: realHerdr, sessions: listSessions, now: Date.now }))
-
-async function stopBrainAgent(): Promise<void> {
-  const a = await liveness.agentOf(BRAIN_AGENT)
-  if (a.kind !== "present") return
-  await realHerdr.call(["agent", "stop", BRAIN_AGENT]).catch(() => undefined)
-  if (a.ref.workspaceId) await realHerdr.call(["workspace", "close", a.ref.workspaceId]).catch(() => undefined)
-  liveness.forget(BRAIN_AGENT)
-}
-
 export const brainWiring = createBrainWiring({
   now: Date.now,
-  alive: () => liveness.alive(BRAIN_AGENT),
+  alive: () => brainLiveness.alive(BRAIN_AGENT),
   agentPane: async () => {
-    const a = await liveness.agentOf(BRAIN_AGENT)
+    const a = await brainLiveness.agentOf(BRAIN_AGENT)
     return a.kind === "present" ? a.ref.pane : ""
   },
-  spawn: (resume) => spawnInHerdr(BRAIN_DIR, "claude", { COMPANION_TASK_ID: BRAIN_AGENT }, realHerdr, {
+  // Leftover brain workspaces are swept first (brain-workers.ts), before `workspace create`.
+  spawn: async (resume) => (await brainWorkers.beforeSpawn(), spawnInHerdr(BRAIN_DIR, "claude", { COMPANION_TASK_ID: BRAIN_AGENT }, realHerdr, {
     name: BRAIN_AGENT,
     // --resume of a missing transcript makes claude exit: that would read as a crash loop.
     args: ["--remote-control", BRAIN_AGENT, ...(resume && existsSync(transcriptPath(BRAIN_DIR, resume)) ? ["--resume", resume] : [])],
-  }),
-  stopAgent: stopBrainAgent,
+  })),
+  stopAgent: () => brainWorkers.stopBrain(),
   sessions: listSessions,
   sessionByKey: getSessionByKey,
   tagBrain: (key) => { const s = getSessionByKey(key); return !!s && recordSession({ ...s, taskId: BRAIN_AGENT })?.key === key },
