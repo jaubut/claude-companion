@@ -1,4 +1,5 @@
 import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, parseEdgeInput, parseNodeInput, parseNodePatch, readReferences, referenceRef, type SendResult } from "../lib/canvas"
+import { noteContextBlocks } from "../lib/note-media"
 import type { QueryFn } from "../lib/turso"
 export type { SendResult }
 
@@ -16,6 +17,7 @@ export type { SendResult }
 //   DELETE /api/canvas/edges/<id>     → { ok }
 //   GET    /api/canvas/linked-notes?session=<key> | ?brain=1      → { ok, notes: ReferencedNote[] } — CURRENT content
 //   GET    /api/canvas/linked-notes/<ref | canvas:<nodeId>>?…     → { ok, note } — 404 unless linked to that target
+//          &content=1 adds { content: ContentBlock[], omitted } — the note's text + its attachments (lib/note-media.ts)
 // Errors: 400 { error: invalid_* | empty_patch | self_edge | invalid_endpoints | missing_target }, 404 not_found | node_not_found,
 // 409 edge_exists | edge_sending | edge_sent | edge_linked. A journal note can't be linked (invalid_endpoints). A context edge runs note|task → agent only.
 // A failed send answers with the inject refusal's status + error (409 pane_not_ready / dialog_open …,
@@ -129,7 +131,10 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
         if (nodes.length === 0) return bad("not_found", 404)
       }
       const notes = await readReferences(nodes, deps.query)
-      return path === LINKED ? Response.json({ ok: true, notes }) : Response.json({ ok: true, note: notes[0] })
+      if (path === LINKED) return Response.json({ ok: true, notes })
+      const note = notes[0]!
+      if (url.searchParams.get("content") !== "1") return Response.json({ ok: true, note })
+      return Response.json({ ok: true, note, ...(await noteContextBlocks(note, deps.query)) })
     }
 
     const edgeId = idUnder(path, EDGES)

@@ -98,7 +98,7 @@ function transcripts(): Database {
   return tdb
 }
 
-function deviceTranscript(id: number): string | null {
+export function deviceTranscript(id: number): string | null {
   const row = transcripts().query("SELECT transcript FROM voice_memo_transcripts WHERE inbox_id = ?").get(id) as { transcript: string } | null
   return row?.transcript || null
 }

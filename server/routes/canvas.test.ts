@@ -220,6 +220,9 @@ describe("context edges (P6)", () => {
     const brain = await call("GET", "/api/canvas/linked-notes?brain=1")
     expect(brain.json.notes).toEqual([expect.objectContaining({ nodeId: "ln-sticky", ref: "canvas:ln-sticky", source: "canvas", body: "v2" })])
     expect((await call("GET", "/api/canvas/linked-notes/canvas%3Aln-sticky?brain=1")).json.note).toMatchObject({ body: "v2" })
+    expect((await call("GET", "/api/canvas/linked-notes/canvas%3Aln-sticky?brain=1")).json.content).toBeUndefined() // Phase 1 reply unchanged
+    const rich = await call("GET", "/api/canvas/linked-notes/canvas%3Aln-sticky?brain=1&content=1")
+    expect(rich.json).toMatchObject({ ok: true, note: { body: "v2" }, content: [{ type: "text", text: "v2" }], omitted: 0 })
     expect((await call("GET", "/api/canvas/linked-notes")).json.error).toBe("missing_target")
     for (const id of ["ln-agent", "ln-brain", "ln-spec", "ln-sticky", "ln-other"]) await call("DELETE", `/api/canvas/nodes/${id}`)
   })

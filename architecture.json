@@ -2708,6 +2708,32 @@
           "externals": []
         },
         {
+          "path": "lib/note-media.ts",
+          "lines": 109,
+          "kind": "lib",
+          "exports": [
+            "ContentBlock",
+            "NOTE_MEDIA_MAX_IMAGES",
+            "NOTE_MEDIA_MAX_BYTES",
+            "noteContextBlocks"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/canvas.ts",
+            "lib/media.ts",
+            "lib/sent-files.ts",
+            "lib/turso.ts",
+            "lib/voice-memo.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/orchestrator-brain.ts",
           "lines": 277,
           "kind": "lib",
@@ -5638,6 +5664,7 @@
             "transcriptOf",
             "isoUtc",
             "toMemo",
+            "deviceTranscript",
             "sniffAudio",
             "base64Size",
             "voiceStart",
@@ -6048,7 +6075,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 145,
+          "lines": 150,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",
@@ -6061,6 +6088,7 @@
           "apiCalls": [],
           "imports": [
             "lib/canvas.ts",
+            "lib/note-media.ts",
             "lib/turso.ts"
           ],
           "listeners": [],
@@ -9348,6 +9376,7 @@
             "lib/dispatch-tasks.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
+            "lib/note-media.ts",
             "lib/pipeline.ts",
             "lib/tasks-agent-chat.ts",
             "lib/tasks-agent-testdb.test-util.ts",
@@ -10594,6 +10623,59 @@
           "callers": [
             "lib/mytask-triage.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "sentFilePath": {
+          "module": "lib/sent-files.ts",
+          "callers": [
+            "lib/note-media.ts",
+            "routes/files.ts"
+          ]
+        },
+        "storeImageFile": {
+          "module": "lib/media.ts",
+          "callers": [
+            "lib/note-media.ts",
+            "lib/transcript-artifacts.ts",
+            "lib/transcript.ts"
+          ]
+        },
+        "isMediaId": {
+          "module": "lib/media.ts",
+          "callers": [
+            "lib/note-media.ts",
+            "routes/media.ts#GET /api/media/"
+          ]
+        },
+        "mediaPath": {
+          "module": "lib/media.ts",
+          "callers": [
+            "lib/note-media.ts",
+            "routes/media.ts#GET /api/media/"
+          ]
+        },
+        "VOICE_HINT": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "lib/note-media.ts"
+          ]
+        },
+        "deviceTranscript": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "lib/note-media.ts"
+          ]
+        },
+        "transcriptOf": {
+          "module": "lib/voice-memo.ts",
+          "callers": [
+            "lib/note-media.ts"
+          ]
+        },
+        "ReferencedNote": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "lib/note-media.ts"
           ]
         },
         "parseCliResult": {
@@ -12282,13 +12364,6 @@
             "lib/transcript-artifacts.ts"
           ]
         },
-        "storeImageFile": {
-          "module": "lib/media.ts",
-          "callers": [
-            "lib/transcript-artifacts.ts",
-            "lib/transcript.ts"
-          ]
-        },
         "readTailLines": {
           "module": "lib/transcript-cursor.ts",
           "callers": [
@@ -13406,6 +13481,12 @@
             "routes/canvas.ts"
           ]
         },
+        "noteContextBlocks": {
+          "module": "lib/note-media.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
         "createLimiter": {
           "module": "lib/vault-guard.ts",
           "callers": [
@@ -13632,12 +13713,6 @@
           "module": "lib/dialogs.ts",
           "callers": [
             "routes/dialogs.ts#POST /api/dialog/pick"
-          ]
-        },
-        "sentFilePath": {
-          "module": "lib/sent-files.ts",
-          "callers": [
-            "routes/files.ts"
           ]
         },
         "gauge": {
@@ -13910,18 +13985,6 @@
             "wiring/proposals.ts",
             "wiring/repo-view.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "isMediaId": {
-          "module": "lib/media.ts",
-          "callers": [
-            "routes/media.ts#GET /api/media/"
-          ]
-        },
-        "mediaPath": {
-          "module": "lib/media.ts",
-          "callers": [
-            "routes/media.ts#GET /api/media/"
           ]
         },
         "SessionPane": {
