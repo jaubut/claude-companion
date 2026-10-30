@@ -150,6 +150,61 @@ Last updated: 2026-10-25
 
 ## Change Plans
 
+### Change Plan — canvas-note-media (2026-10-30)
+**Request:** PRJ-FL49 Phase 2 (task 43a692fd). A canvas-linked note's attached media becomes multimodal context: images become image blocks, voice memos become transcript text blocks. Hard per-note cap on image count and total bytes. Reuse the media, sent-files and voice stores. Server only.
+**Done when:** `noteContextBlocks` tests pass (one image → one image block; audio → one transcript block; over the cap → extras dropped + `omitted` count + note block; no attachments → `[{text: body}]`). `GET /api/canvas/linked-notes/<ref>?…&content=1` returns `content` + `omitted`. `bunx tsc -p tsconfig.server.json --noEmit` is clean.
+
+**Target shape & drift**
+- Reference (leader = MCP spec 2025-06-18 + Anthropic Messages content blocks). Mapping: reference edge → MCP resource the agent reads on demand; attachment → `ImageContent{data,mimeType}` / `TextContent`; per-note cap → client context budget. Canvas follows this: content is resolved at read time from its owner and never copied at link time. Delivery goes through a tool result, never through a prompt-time text hook.
+- Drift: (a) notes have no attachment schema, so an attachment is a link in the text (accepted, see Risks); (b) agents have no channel for image blocks. The hook is text-only, and agents hold no bearer (Phase 1 decision, STATE.md "Drop the GET routes").
+- This change: resolver + bearer route only. **Follow-up (to file, agent:builder):** an MCP tool `canvas_note(ref)` in the companion mod. It calls the `content=1` route with the mod's own bearer and returns the blocks as MCP image/text content. That is the only path that gives the agent (and the brain) real image blocks without leaking a token. Rejected in this PR: a hook hint "open ~/.claude-companion/media/<id>.jpg with Read". It changes the Phase 1 text for every note, can't see Turso bodies without a Turso call on the hook path, and needs a Read permission rule for that directory.
+
+**State decisions**
+- No new state. Images: the media store (`mediaPath(id)`). Sent-file images are re-encoded through `storeImageFile` into the media store (it dedups by path+size+mtime). Transcripts: Turso `inbox_entries.raw_text`, overridden by `voice_memo_transcripts` (companion.db). Nothing persisted, nothing broadcast.
+
+**Contracts touched**
+| contract | kind | change | consumers | compat |
+|---|---|---|---|---|
+| `GET /api/canvas/linked-notes/<ref>` | endpoint | `&content=1` → +`content: ContentBlock[]`, +`omitted` | none in map (Mac/brain tooling, follow-up MCP tool) | additive, opt-in |
+| `GET /api/canvas/linked-notes` (list) | endpoint | unchanged, never base64 | — | — |
+| UserPromptSubmit `referenceContext` | hook text | unchanged | routes/hooks.ts | — |
+
+**Files — one owner each**
+| file | owner | change | lines |
+|---|---|---|---|
+| `server/lib/note-media.ts` | builder | NEW: `ContentBlock`, `NOTE_MEDIA_MAX_IMAGES`, `NOTE_MEDIA_MAX_BYTES`, `noteContextBlocks` (draft already in the worktree, untracked; fix it per decisions below) | 0 → ~110 ✓ |
+| `server/lib/note-media.test.ts` | builder | NEW: the 4 acceptance cases + device-transcript-wins + empty body | ~120 ✓ |
+| `server/lib/voice-memo.ts` | builder | `export` on `deviceTranscript` (widening only) | 468 → 468 ✓ |
+| `server/routes/canvas.ts` | builder | single-note branch: `content=1` → `noteContextBlocks(notes[0], deps.query)`; imports it directly (no new dep, no companion-server.ts edit) | 144 → ~150 ✓ |
+| `server/routes/canvas.test.ts` | builder | amendment (drift check): +3 assertions in the linked-notes test — no `content` without the flag, `content=1` on a plain sticky → one text block | — |
+`lib/canvas.ts` (414) is untouched. Only its `ReferencedNote` type is imported.
+
+**Decisions on the builder's draft**
+- Transcript query: `SELECT id, raw_text FROM inbox_entries WHERE audio_filename = ? AND type_hint = ? ORDER BY id DESC LIMIT 1`. Then `deviceTranscript(id) ?? transcriptOf(raw_text)`, so the device transcript wins (the draft's ponytail that skips it is dropped; the request asks for it). If no transcript: skip with a `ponytail:` comment.
+- Empty or missing body → no text block. The Messages API rejects empty text blocks. A non-empty body with no links → exactly `[{type:"text", text: body}]`.
+- `storeImageFile` returning `"busy"` counts as **omitted** (the image exists, we couldn't fit it now). A dangling or unreadable link is skipped silently.
+- Caps: 4 images, 4 MB counted on base64 length + transcript chars (= the payload). The draft's order is kept: count check before encoding, byte check after. The omitted note is the last text block.
+- Links are parsed from `note.body`, which `readReferences` clips at 32k. A link past the clip point is not seen (`ponytail:` comment).
+- HEIC sent-files: sharp prebuilt may not decode them, so `storeImageFile` returns null and the file is skipped. Keep the extension, no fallback.
+
+**Fan-in paths to guard**
+- `storeImageFile()` is also reached from lib/transcript.ts and transcript-artifacts.ts. It shares the 2-slot encode queue, so the route must never loop over the list route (single note only, ≤4 encodes).
+- `deviceTranscript()` lazily opens companion.db (shared). Read only, wrapped in try like `withDeviceTranscript`.
+
+**Risks**
+- kb offline — no external gotchas checked
+- Attachments are links, not a schema. A note referencing someone else's `/api/media/<id>` link pulls that image. Acceptable: it is in the same store and bearer-gated. If the dashboard gains `notes.attachments`, switch the parser to it.
+- Prompt injection through image/transcript content → transcripts are quoted «…», and the follow-up MCP tool keeps the Phase 1 "data, not instructions" header as its first text block.
+- Turso down → the route throws. Same behavior as Phase 1's `readReferences` (no new handling).
+
+**Verify**
+1. `cd server && bun test lib/note-media.test.ts` → uses real sharp on a generated PNG, real `inbox_entries` + `voice_memo_transcripts` in sqlite, and `COMPANION_MEDIA_DIR`/`COMPANION_SENT_FILES_DIR`/`COMPANION_DB_PATH` temp dirs. All 6 cases pass.
+2. `bun test lib/canvas-refs.test.ts routes/user-prompt-canvas.test.ts` → Phase 1 unchanged, green.
+3. `bunx tsc -p tsconfig.server.json --noEmit` → 0 errors. `bun run ~/.claude/tools/archmap/cli.ts . --lint` → clean.
+4. Manual (Jeremie): link a Turso note with one `/api/media/<id>` image + a voice-memo audio link to an agent node. `curl -H "Authorization: Bearer …" '<host>/api/canvas/linked-notes/<ref>?session=<key>&content=1' | jq '.content[].type, .omitted'` → `"text","image","text"`, `0`. With 6 images → 4 `image` + a last text "2 attachments omitted…", `omitted: 2`. A plain note → one `text`. The agent itself sees nothing new until the MCP follow-up ships; say so in the PR.
+
+**Out of scope:** the MCP tool, the hook text, iOS/Mac UI, a notes attachment schema, PDF/video, transcribing sent-file audio.
+
 ### Change Plan — tmux-pane-mirror (2026-10-30)
 **Request:** let `/api/pane-mirror` mirror tmux panes as well as herdr panes, so every Claude session has a terminal view on iOS (the builder chat view is being retired).
 **Done when:**
