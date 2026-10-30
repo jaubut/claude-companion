@@ -169,9 +169,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
+| `routes/taste.ts` | 95 | lib | 1 |  |
 | `lib/recent-sessions.ts` | 93 | lib | 4 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
-| `routes/taste.ts` | 91 | lib | 1 |  |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
 | `state.ts` | 88 | lib | 9 |  |
