@@ -5,8 +5,9 @@ import { join } from "node:path"
 import { PHONE_ORIGIN_TTL_MS, notePhoneOrigin, noteSessionBoundary, noteUserPromptSubmit, watchSubmit } from "../lib/submit-confirm"
 
 // /hooks/user-prompt-submit tells the hook whether the prompt is a phone
-// inject (a pending watchSubmit matched), and companion-user-prompt.sh turns
-// that into Claude Code's additionalContext — and nothing otherwise.
+// inject (a pending watchSubmit matched). companion-user-prompt.sh asks for its
+// exact stdout (X-Companion-Hook-Output) and prints the server's hook JSON —
+// and nothing otherwise. The canvas half: user-prompt-canvas.test.ts.
 
 let handleHookRoute: (req: Request, url: URL) => Promise<Response | null>
 
@@ -110,6 +111,7 @@ const HOOK = join(import.meta.dir, "..", "..", "hooks", "companion-user-prompt.s
 let stub: ReturnType<typeof Bun.serve>
 let answer: () => Response | Promise<Response> = () => Response.json({ fromPhone: false })
 const bodies: unknown[] = []
+const headers: (string | null)[] = []
 
 beforeAll(() => {
   stub = Bun.serve({
@@ -117,6 +119,7 @@ beforeAll(() => {
     async fetch(req) {
       if (new URL(req.url).pathname !== "/hooks/user-prompt-submit") return new Response("nope", { status: 404 })
       bodies.push(await req.json())
+      headers.push(req.headers.get("x-companion-hook-output"))
       return answer()
     },
   })
@@ -136,15 +139,22 @@ async function runHook(url: string): Promise<{ code: number; out: string; ms: nu
   return { code, out, ms: performance.now() - t0 }
 }
 
-test("hook: prints the additionalContext JSON when the server says fromPhone", async () => {
-  answer = () => Response.json({ fromPhone: true })
+test("hook: asks for its stdout and prints the server's hook JSON verbatim (canvas-note-refs)", async () => {
+  const out = { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "This prompt was sent from Jeremie's iPhone via Companion: x\n\nCanvas references: «it's \"quoted\"»" } }
+  answer = () => Response.json(out)
   const before = bodies.length
   const r = await runHook(`http://127.0.0.1:${stub.port}`)
   expect(r.code).toBe(0)
   expect(bodies.length).toBe(before + 1)
-  const parsed = JSON.parse(r.out) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }
-  expect(parsed.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit")
-  expect(parsed.hookSpecificOutput.additionalContext).toContain("iPhone via Companion")
+  expect(headers.at(-1)).toBe("claude")
+  expect(JSON.parse(r.out)).toEqual(out)
+})
+
+test("hook: an older server's {fromPhone:true} or a 204 prints nothing", async () => {
+  answer = () => Response.json({ fromPhone: true })
+  expect(await runHook(`http://127.0.0.1:${stub.port}`)).toMatchObject({ code: 0, out: "" })
+  answer = () => new Response(null, { status: 204 })
+  expect(await runHook(`http://127.0.0.1:${stub.port}`)).toMatchObject({ code: 0, out: "" })
 })
 
 test("hook: prints nothing for a terminal-typed prompt", async () => {
@@ -168,14 +178,14 @@ test("hook: server down → nothing, exit 0", async () => {
 
 test("hook: a partial fromPhone body cut off by the timeout prints nothing", async () => {
   answer = () => new Response(new ReadableStream({
-    start(c) { c.enqueue(new TextEncoder().encode('{"fromPhone":true')) }, // never closes
+    start(c) { c.enqueue(new TextEncoder().encode('{"hookSpecificOutput":{"hookEventName"')) }, // never closes
   }), { headers: { "content-type": "application/json" } })
   const r = await runHook(`http://127.0.0.1:${stub.port}`)
   expect(r).toMatchObject({ code: 0, out: "" })
 }, 10_000)
 
 test("hook: a slow server is cut off at ~1 s and prints nothing", async () => {
-  answer = () => new Promise((resolve) => setTimeout(() => resolve(Response.json({ fromPhone: true })), 3_000))
+  answer = () => new Promise((resolve) => setTimeout(() => resolve(Response.json({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "x" } })), 3_000))
   const r = await runHook(`http://127.0.0.1:${stub.port}`)
   expect(r).toMatchObject({ code: 0, out: "" })
   expect(r.ms).toBeLessThan(2_500)

@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 174,
+          "lines": 175,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -75,6 +75,7 @@
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
             "routes/canvas.ts",
+            "lib/turso.ts",
             "wiring/canvas.ts",
             "lib/vault-guard.ts",
             "ws.ts",
@@ -1055,7 +1056,7 @@
         },
         {
           "path": "lib/canvas.ts",
-          "lines": 338,
+          "lines": 415,
           "kind": "lib",
           "exports": [
             "NODE_KINDS",
@@ -1082,7 +1083,12 @@
             "ContextPrompt",
             "oneLine",
             "contextPrompt",
-            "NOTE_TRUNCATED"
+            "BODY_MAX",
+            "NOTE_TRUNCATED",
+            "referenceRef",
+            "referenceContext",
+            "ReferencedNote",
+            "readReferences"
           ],
           "state": [
             "BLOCKING: Set"
@@ -2119,7 +2125,7 @@
         },
         {
           "path": "lib/hook-common.ts",
-          "lines": 133,
+          "lines": 143,
           "kind": "lib",
           "exports": [
             "agentFromHeaders",
@@ -2127,6 +2133,8 @@
             "cwdFromPayload",
             "hookDecisionResponse",
             "hookPassthroughResponse",
+            "FROM_PHONE_CONTEXT",
+            "userPromptHookOutput",
             "projectLabelFor",
             "subtitleFor",
             "metaFromHeaders",
@@ -6040,7 +6048,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 120,
+          "lines": 145,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",
@@ -6052,7 +6060,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/canvas.ts"
+            "lib/canvas.ts",
+            "lib/turso.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6292,7 +6301,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 547,
+          "lines": 555,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -6372,6 +6381,7 @@
             "lib/push.ts",
             "state.ts",
             "lib/hook-common.ts",
+            "wiring/canvas.ts",
             "wiring/dispatch.ts",
             "lib/vault-guard.ts",
             "lib/auth.ts",
@@ -7124,12 +7134,14 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 126,
+          "lines": 147,
           "kind": "lib",
           "exports": [
             "canvasStore",
             "setCanvasDeliver",
             "canvasSend",
+            "referencesFor",
+            "canvasHookContext",
             "canvasStatus",
             "canvasSnapshot"
           ],
@@ -8081,6 +8093,26 @@
             "companion-server.ts"
           ]
         },
+        "tursoQuery": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "companion-server.ts",
+            "lib/receipt-qa-worker.ts",
+            "routes/body.ts",
+            "routes/goals.ts",
+            "routes/my-tasks.ts",
+            "wiring/auto-compact.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts",
+            "wiring/canvas.ts",
+            "wiring/dispatch.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
+            "wiring/triage.ts",
+            "wiring/trips.ts"
+          ]
+        },
         "createCanvasRoute": {
           "module": "routes/canvas.ts",
           "callers": [
@@ -8109,6 +8141,12 @@
           ]
         },
         "canvasSend": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "referencesFor": {
           "module": "wiring/canvas.ts",
           "callers": [
             "companion-server.ts"
@@ -9315,6 +9353,7 @@
             "lib/trip-autofile.ts",
             "lib/trip-dashboard.ts",
             "routes/body.ts",
+            "routes/canvas.ts",
             "routes/goals.ts",
             "routes/my-tasks.ts",
             "wiring/resolver.ts"
@@ -11043,25 +11082,6 @@
           "module": "lib/receipt-sonnet.ts",
           "callers": [
             "lib/receipt-qa-worker.ts"
-          ]
-        },
-        "tursoQuery": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "lib/receipt-qa-worker.ts",
-            "routes/body.ts",
-            "routes/goals.ts",
-            "routes/my-tasks.ts",
-            "wiring/auto-compact.ts",
-            "wiring/body-investigate.ts",
-            "wiring/body.ts",
-            "wiring/canvas.ts",
-            "wiring/dispatch.ts",
-            "wiring/resolver-dry-run.ts",
-            "wiring/resolver.ts",
-            "wiring/tasks-agent.ts",
-            "wiring/triage.ts",
-            "wiring/trips.ts"
           ]
         },
         "officeDistance": {
@@ -13336,6 +13356,13 @@
             "wiring/canvas.ts"
           ]
         },
+        "CanvasNode": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts",
+            "wiring/canvas.ts"
+          ]
+        },
         "parseNodeInput": {
           "module": "lib/canvas.ts",
           "callers": [
@@ -13349,6 +13376,18 @@
           ]
         },
         "parseEdgeInput": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
+        "referenceRef": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
+        "readReferences": {
           "module": "lib/canvas.ts",
           "callers": [
             "routes/canvas.ts"
@@ -13679,6 +13718,13 @@
             "routes/hooks.ts#* /hooks/"
           ]
         },
+        "userPromptHookOutput": {
+          "module": "lib/hook-common.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
         "QuestionEndDecision": {
           "module": "lib/questions.ts",
           "callers": [
@@ -13786,6 +13832,12 @@
         },
         "rememberTitle": {
           "module": "lib/session-titles.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "canvasHookContext": {
+          "module": "wiring/canvas.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
@@ -15239,6 +15291,12 @@
           ]
         },
         "contextPrompt": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "referenceContext": {
           "module": "lib/canvas.ts",
           "callers": [
             "wiring/canvas.ts"

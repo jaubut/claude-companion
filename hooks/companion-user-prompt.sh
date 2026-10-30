@@ -1,9 +1,11 @@
 #!/bin/bash
 # Claude Companion — start activity timer on new user prompt
 #
-# Synchronous, capped at 1 s: the server answers {"fromPhone":true} when this
-# prompt is a phone inject it was waiting on, and we hand Claude a short
-# context note. Server down, slow or any error → print nothing, exit 0.
+# Synchronous, capped at 1 s. The server answers this hook's exact stdout
+# (X-Companion-Hook-Output: claude): the "sent from the iPhone" note when this
+# prompt is a phone inject it was waiting on, plus the canvas notes linked to
+# this session (live references, server/lib/canvas.ts). 204 = nothing to add.
+# Server down, slow or any error → print nothing, exit 0.
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$HOOK_DIR/_lib.sh"
@@ -20,13 +22,12 @@ companion_headers
 RESPONSE=$(curl -sf --max-time 1 \
   -X POST "$COMPANION_URL/hooks/user-prompt-submit" \
   -H "Content-Type: application/json" \
+  -H "X-Companion-Hook-Output: claude" \
   "${COMPANION_HDRS[@]}" \
   -d "$INPUT" 2>/dev/null) || RESPONSE=""
 
 case "$RESPONSE" in
-  *'"fromPhone":true'*)
-    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"This prompt was sent from Jeremie'"'"'s iPhone via Companion: prefer tappable links over Mac-only steps."}}'
-    ;;
+  '{"hookSpecificOutput":'*) printf '%s\n' "$RESPONSE" ;;
 esac
 
 exit 0

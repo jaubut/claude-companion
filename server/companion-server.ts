@@ -26,7 +26,8 @@ import { handleNotesRoute } from "./routes/notes"
 import { createTasksAgentRoute } from "./routes/tasks-agent"
 import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
 import { createCanvasRoute } from "./routes/canvas"
-import { canvasSend, canvasStatus, canvasStore, setCanvasDeliver } from "./wiring/canvas"
+import { tursoQuery } from "./lib/turso"
+import { canvasSend, canvasStatus, canvasStore, referencesFor, setCanvasDeliver } from "./wiring/canvas"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
@@ -56,7 +57,7 @@ const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 setCanvasDeliver(deliverInject)
 setBrainDeliver(deliverInject)
-const handleCanvasRoute = createCanvasRoute({ store: canvasStore, status: canvasStatus, host: HOST_INFO.name, notify: broadcast, send: canvasSend })
+const handleCanvasRoute = createCanvasRoute({ store: canvasStore, status: canvasStatus, host: HOST_INFO.name, notify: broadcast, send: canvasSend, references: referencesFor, query: tursoQuery })
 
 export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's

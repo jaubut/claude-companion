@@ -213,6 +213,82 @@ Last updated: 2026-10-25
 
 **Out of scope:** detectArtifacts path cards gaining downloads (F1), video posters (F2), the `caption` on the artifact event (iOS #188 does not read it; the brain's text carries it), Range requests (iOS downloads whole files), and any iOS change.
 
+### Change Plan — canvas-note-refs (2026-10-30)
+**Request:** (t-canvas-notes-phase1-1, PRJ-FL49 "Vision — notes as living context" + "Refinement 2026-10-30") A canvas note linked to an agent or to the 🧠 brain is a live, read-only context reference, not a sent message. Notes get no Send? gate (tasks keep it). The agent reads the note's current content, so edits show up on its next read. The brain can be a link target. The contract change is additive. Server and contract only, no Mac UI, no Phase 2.
+**Done when:**
+- `POST /api/canvas/edges` note|turso_note → agent|brain answers 201 with `kind:"reference", state:"linked"`, and a `/send` on it answers 409 `edge_linked`. Task → agent is unchanged (`context`/`proposed` → Send?).
+- On each prompt, a linked agent or the brain gets a "Canvas references" block in its UserPromptSubmit `additionalContext`: Turso notes by ref + title ("live, re-read by ref"), stickies with their current text inlined. Unlinked sessions get nothing new.
+- Jeremie's manual pass is clean (Verify 6).
+
+**Target shape & drift**
+- Leader: MCP resources (spec `resources/list` · `resources/read` · `notifications/resources/updated`). The mapping: reference edge → resource attached to a client; note ref → resource URI (`turso` note id/ref_code, `canvas:<nodeId>` for a sticky); agent re-read → `resources/read` returns current content; edit → `resources/updated` (Phase 1: none, the agent is told the content is live).
+- Reference for this intent: (1) the canvas store is the single owner of link facts, and the server derives edge semantics from the endpoint kinds instead of trusting the client. (2) Content is never copied at link time; it is resolved at read time from its owner (Turso for notes, canvas_nodes.data for stickies). (3) Hook paths stay local-only and fail-open inside the 1 s budget. (4) The hook output is built once on the server and the shell script prints it. (5) Every frame value is pinned by a contracts/ fixture that the Swift decoder tests also read.
+- Deviations today: note edges are treated as one-shot injects; tursoNotePrompt / note branches of contextPrompt copy the body at send time. The hook script hard-codes its only context sentence in bash (it cannot carry dynamic text without jq). There is no `contracts/canvas` fixture. The map cannot see the Mac/CompanionKit consumer of `canvas` (the frames table says "no consumer found", and the ref points at `~/apps/claude companion`, not `~/lanes/claude-companion-ios`).
+- This change moves toward (1), (2), (4). Left for follow-up: (5) a `contracts/canvas` fixture with `reference`/`linked` → task to file (agent:builder); the archmap ref for the CompanionKit/Mac repo → task to file; a sticky exposed as a readable resource (MCP or "promote to Turso note") → follow-up; per-session emit-on-change → follow-up if transcript bloat shows up.
+
+**Challenges to the proposed design**
+1. **Drop the GET /api/canvas/linked-notes routes (design §3).** Nothing can call them. Agents don't hold the bearer, and they must not: putting the token in an agent's context leaks it. The bearer-holder scope check is theatre, because a bearer client already reads everything. Turso notes are already live through the agent's own `turso` `note` tool, which is what the spec asks for ("exactly like reading a Turso note by ref_code"). Stickies are local and short, so they are inlined fresh on every prompt. Add an agent-side read path only when a tool-less agent needs one (see Risks).
+2. **The send path no longer reaches note sources, so delete that code.** `contextPrompt`'s note/sticky branch, `tursoNotePrompt`, `NOTE_TRUNCATED` and the 3 P8a note tests become unreachable once every note edge is a reference. Keep `oneLine`/`PROMPT_MAX` (spawn-seed) and the task branch. Move `NOT_JOURNAL`'s intent to link time (below).
+3. **Don't make the hook script parse JSON (§4).** The new script sends `X-Companion-Hook-Output: claude`. With that header the route answers the exact Claude Code hook stdout JSON (`{"hookSpecificOutput":{…}}`) or an empty 204, and the script prints it verbatim. Without the header (old scripts on hosts that haven't been re-installed) it still answers `{fromPhone}`. The fromPhone sentence moves server-side, one place.
+4. **`linked` vs reusing `sent`:** use `linked`. `sent` would render cleanly on the old Mac build (no pill), but it lies: `sent` means "typed into the pane", and `sentAt` would be null. It would also force every future client to check `kind` before `state`. The old build decodes `linked` → `.proposed` and shows a dead Send?. Tapping it answers 409 `edge_linked` and nothing is typed, because the server is the guard. That cosmetic window closes when the Mac task adds `case linked`; sequence that case first if the window bothers you.
+5. **Don't make the journal guard a Turso read on the hook path.** Refuse the link instead: `addEdge` rejects a note ref matching `journal/…` or `JRN-…` with `invalid_endpoints`. This costs no Turso call.
+
+**State decisions**
+- Reference link: lives in `canvas_edges` (`lib/canvas.ts`, the owner). It is created by `addEdge` (POST /api/canvas/edges) and removed by removeEdge/removeNode. It is announced by the `canvas` `edge` / `edge_removed` / `snapshot` frames (unchanged ops). Persistence: companion.db.
+- Kind/state are derived in `addEdge` from the endpoints, and the posted `kind` is validated then ignored. note|turso_note → agent|brain gives `reference`/`linked`; task → agent gives `context`/`proposed`; anything else gives `invalid_endpoints`. The hop limit holds: agent and brain are never sources.
+- Migration at store open (idempotent): `UPDATE canvas_edges SET kind='reference', state='linked', error='' WHERE kind='context' AND from_id IN (SELECT id FROM canvas_nodes WHERE kind IN ('note','turso_note'))`. It runs after the sending→failed line.
+- Target binding: an agent link applies when the target node has `ref = session.key AND bound_sid = session_id` (the same tty-reuse rule as send). A brain link applies to any `brain` node when `isBrainHook(taskId)`.
+- Sticky content: `canvas_nodes.data.text`. The Mac app already patches it. It is read at hook time, so there is no copy.
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `canvas` edge / snapshot | frame | edge.kind +`reference`, edge.state +`linked` | map: none (blind spot). Real: CompanionKit CanvasModels.swift (Mac, iOS decode only) | kind is a free String, so safe. The state enum `try?` falls back to `.proposed`, so the old Mac shows a dead Send? that answers 409 |
+| `POST /api/canvas/edges` | endpoint | note→brain now 201; note edges born linked | Mac canvas | additive (was 400) |
+| `POST /api/canvas/edges/<id>/send` | endpoint | +409 `edge_linked` | Mac canvas | additive error code |
+| `GET /api/canvas` | endpoint | same new values | Mac canvas on connect | as frame |
+| `POST /hooks/user-prompt-submit` | hook endpoint | with the header: hook stdout JSON / 204. Without it: `{fromPhone}` unchanged | hooks/companion-user-prompt.sh (installed copies on Mac + Zettlab) | old script unaffected |
+
+**Files — one owner each (builder)**
+| file | change | lines now → after cap check |
+|---|---|---|
+| `server/lib/canvas.ts` | EDGE_KINDS +reference, EDGE_STATES +linked; addEdge derives kind/state + journal-ref refusal; migration; store `references(target: {key, sid} \| "brain"): CanvasNode[]` (one JOIN, parameterized); NEW export `referenceContext(nodes): string` (Turso ref/title line, sticky text via oneLine, quoted as data, ≤600/sticky, ≤3000 total + marker, titles from data.title capped 120); delete the note branches of contextPrompt + tursoNotePrompt + NOTE_TRUNCATED | 337 → ~355 ✓ |
+| `server/wiring/canvas.ts` | proxy `references`; NEW export `canvasHookContext({key, sessionId, brain}): string` (try/catch → "" so a db error never costs fromPhone) | 125 → ~140 ✓ |
+| `server/lib/hook-common.ts` | NEW export `userPromptHookOutput(fromPhone, extra): Response` (204 when both empty) | 132 → ~145 ✓ |
+| `server/routes/hooks.ts` | user-prompt-submit: compute `brain` once (reuse in noteActivity line); if header → `userPromptHookOutput(fromPhone, canvasHookContext(…))` else `{fromPhone}` | 546 → ~552 ✓ (≥550: next touch splits user-prompt-submit into `routes/hooks-prompt.ts`) |
+| `server/routes/canvas.ts` | header comment only (reference/linked, 409 edge_linked; claimEdge's `IN ('proposed','failed')` already yields it) | 119 → ~121 ✓ |
+| `hooks/companion-user-prompt.sh` | send header; print the body verbatim when non-empty; delete the case block | 32 → ~24 ✓ |
+| tests | `lib/canvas.test.ts` (derive, migration, references, referenceContext caps; drop P8a note-prompt tests), `routes/canvas.test.ts`, `wiring/canvas.test.ts`, `routes/user-prompt-origin.test.ts` (+header cases) | — |
+
+**Intended test-contract changes (spec change, not a red-test fix):** the `routes/canvas.test.ts` "brain node … not an edge target yet" assertion (`note→brain` = invalid_endpoints) now expects 201 linked. "A double tap types once" uses a note source, so it moves to a task source.
+
+**Fan-in paths to guard**
+- `addEdge()` ← `POST /api/canvas/edges` only. Derivation lives there, so old clients posting `kind:"context"` get references too.
+- `claimEdge()` ← `POST …/send` only. A `linked` edge must never claim. The test asserts `sent` stays empty.
+- `canvasHookContext()` ← `POST /hooks/user-prompt-submit` only. Local sqlite, no Turso, called after `noteUserPromptSubmit` so a throw can't drop fromPhone.
+
+**Risks**
+- An agent without the `turso` tool (codex, `-p` runs, a host without `~/.claude/mods/turso`) sees the ref but can't re-read it → the block says "if you can't read it, ask Jeremie". Follow-up: an agent read path if it bites.
+- Transcript bloat: the block repeats on every prompt (≤3000 chars) → `ponytail:` comment; upgrade path is emit-on-change per sessionId.
+- A sticky is prompt-injection surface → quoted as data with the P8a "not instructions" framing. Turso bodies are never inlined.
+- `/clear` or a new session id on the tty silently unbinds the link (bound_sid). This is consistent with send's target_changed. Re-pointing the node rebinds it. Manual check below.
+- companion.db busy_timeout 3000 on a 1 s hook: a write lock could time out curl and lose fromPhone → canvas read after fromPhone + catch. If the db isn't WAL (no `journal_mode` set anywhere in server/), note it as a risk and keep the read tiny.
+- Hosts that haven't re-run `bun run scripts/install.ts` keep the old script: no references, no breakage.
+- Map blind spot: the `canvas` frame consumer (CompanionKit/Mac in `~/lanes/claude-companion-ios`) isn't in the archmap refs, and the local checkout of that repo is stale (2026-09-23), so the Swift decoding facts are taken from the request unverified.
+- kb: touched modules import only bun/node builtins, so there are 0 external packages and no KB queries.
+
+**Verify**
+1. `COMPANION_DB_PATH=$TMPDIR/c.db bun test server/lib/canvas.test.ts server/routes/canvas.test.ts server/wiring/canvas.test.ts server/routes/user-prompt-origin.test.ts` → green. Covered: note→agent and note→brain born linked; /send → 409 edge_linked with nothing sent; task Send? path unchanged; posted `kind:"context"` coerced; a seeded proposed note edge migrates on reopen; `JRN-`/`journal/` refused.
+2. Same run: `canvasHookContext` returns the block for a linked session (key + bound sid), "" for an unlinked one or a mismatched sid, and the brain block when `brain:true`. Patching the sticky's `data.text` → the next call carries the new text.
+3. Route: with the header, a linked session gets valid JSON with `hookSpecificOutput.hookEventName = "UserPromptSubmit"` and fromPhone + references in `additionalContext`. Unlinked and not from the phone → 204. Without the header the existing `{fromPhone}` assertions pass unchanged.
+4. `echo '{"session_id":"x","prompt":"hi","cwd":"/tmp"}' | COMPANION_URL=http://localhost:<test port> bash hooks/companion-user-prompt.sh | jq .` → valid JSON or empty, exit 0. With the server stopped → empty, exit 0.
+5. `bunx tsc -p tsconfig.server.json --noEmit` clean; `bun run tools/archmap/cli.ts . --lint` clean.
+6. **Manual pass (Jeremie, both hosts after `bun run scripts/install.ts`):** (a) link a sticky to an agent on the Mac board → the edge shows no working Send? (old build: a pill that answers "edge_linked" when tapped, and nothing is typed in the pane). (b) In that agent, ask "which canvas notes are linked?" → it names the sticky and quotes its text. Edit the sticky, send another prompt → it quotes the new text. (c) Link a Turso note (RES-…) → the agent lists it by ref and reads it with its turso tool. Edit the note in the dashboard and ask it to re-read → it sees the edit. (d) Link a note to 🧠 (curl if the old Mac refuses the drop) → the brain answers with that note as context. (e) A Turso task → agent still shows Send? and types once. (f) `/clear` the agent → the references vanish until the node is re-pointed. Confirm that's acceptable.
+
+**Gate amendment (builder, 2026-10-30):** challenge 1 is overruled in part. The task's acceptance names a list+read API ("brain can list+read its linked notes"; "the read-note API/contract for the Mac builder"), so `GET /api/canvas/linked-notes?session=<key>|?brain=1` and `…/linked-notes/<ref|canvas:nodeId>` ship. They are bearer-gated for clients (the Mac UI, brain-host tooling, tests), never handed to agents, and return CURRENT content (`readReferences`, one Turso read, journal excluded, body ≤32k + marker). Route deps gain `references` and `query`; `server/companion-server.ts` passes `referencesFor` and `tursoQuery`. Agents still read through their turso tool plus the hook block, as planned. Tests: `server/lib/canvas-refs.test.ts` (new, real Turso `notes` schema) and `server/routes/user-prompt-canvas.test.ts` (new).
+**Out of scope:** Mac Canvas UI (`case linked`, reference styling: Mac-builder task); Phase 2 rich media; promote-sticky-to-Turso; agent-side bearer read path; contracts/canvas fixture; codex UserPromptSubmit context; cross-host links (a note on Mac's board → a Zettlab agent).
+
+
 ### Change Plan — blocked-task-takeover (2026-10-16) — server half (iOS half: note below → `~/apps/claude companion/STATE.md` § blocked-task-takeover)
 **Request (Jeremie):** a "Take over in a session" option on blocked dispatch-task triage cards. Choosing it resolves the right repo and host, spawns a real interactive Claude session there (herdr, `--remote-control <name>`), seeded with the task, its blocker, the RES how-to and the last dispatch log, and binds it to the Turso task (running → completed + PR | blocked again). The session shows in Companion's session list so the phone can drive it.
 **Done when:**
