@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import {
-  FrameCoalescer, MAX_MIRROR_VIEWERS, MIRROR_ECHO_MS, MIRROR_ENDED, MIRROR_GONE_AFTER, PaneMirror, frameSize, mirrorControl, mirrorInput, paneMirrorUpgrade,
+  FrameCoalescer, MAX_MIRROR_VIEWERS, MIRROR_ECHO_MS, MIRROR_ENDED, MIRROR_GONE_AFTER, PaneMirror, frameSize, mirrorControl, mirrorInput, mirrorKey, paneMirrorUpgrade,
   focusRows, repaintFrame, screenRows, smallestSize, type Clock, type MirrorSize, type MirrorSource, type MirrorUpgradeDeps,
 } from "./pane-mirror"
 import { recordPeer } from "./vault-guard"
@@ -115,9 +115,11 @@ function from(peer: string | null, url = "http://host:4245/api/pane-mirror?key=k
   if (peer) recordPeer(req, peer)
   return [req, new URL(url)]
 }
-const SESS: Record<string, { key: string; herdrPane?: string; tmuxPane?: string }> = {
+const SESS: Record<string, { key: string; herdrPane?: string; tmuxPane?: string; tmuxSocket?: string }> = {
   k1: { key: "k1", herdrPane: "w3:p1" },
   tm: { key: "tm", herdrPane: "w3:p2", tmuxPane: "%4" },
+  tx: { key: "tx", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-1000/cc" },
+  bad: { key: "bad", tmuxPane: "main:0.1" },
   plain: { key: "plain" },
 }
 const deps = (over: Partial<MirrorUpgradeDeps> = {}): MirrorUpgradeDeps => ({
@@ -145,11 +147,11 @@ test("gate: LAN peer, forged XFF, Funnel and an unrecorded peer → 403 network_
   }
 })
 
-test("gate: unknown key, empty key and a non-exact (cwd:) lookup → 410; not a herdr pane (or tmux inside herdr) → 409", async () => {
+test("gate: unknown key, empty key and a non-exact (cwd:) lookup → 410; no pane (or a tmux pane that is not an id) → 409", async () => {
   for (const u of ["?key=nope", "?key=", "", "?key=cwd:/x"]) {
     expect((paneMirrorUpgrade(...from("127.0.0.1", `http://h/api/pane-mirror${u}`), deps()) as Response).status).toBe(410)
   }
-  for (const k of ["plain", "tm"]) {
+  for (const k of ["plain", "bad"]) {
     const r = paneMirrorUpgrade(...from("127.0.0.1", `http://h/api/pane-mirror?key=${k}`), deps()) as Response
     expect(r.status).toBe(409)
     expect(await r.json()).toEqual({ ok: false, error: "not_herdr" })
@@ -160,6 +162,25 @@ test("gate: max viewers per pane → 429; tailnet/loopback with a herdr session 
   expect((paneMirrorUpgrade(...from("100.88.1.2"), deps({ viewers: () => MAX_MIRROR_VIEWERS })) as Response).status).toBe(429)
   expect(paneMirrorUpgrade(...from("100.88.1.2"), deps({ viewers: () => MAX_MIRROR_VIEWERS - 1 }))).toEqual({ key: "k1", pane: "w3:p1" })
   expect(paneMirrorUpgrade(...from("127.0.0.1", undefined, { "x-forwarded-for": "100.101.102.103" }), deps())).toEqual({ key: "k1", pane: "w3:p1" })
+})
+
+test("gate: a tmux session (alone or inside herdr, where tmux wins) → a tmux target; herdr targets keep their shape", () => {
+  const at = (k: string, over: Partial<MirrorUpgradeDeps> = {}) => paneMirrorUpgrade(...from("127.0.0.1", `http://h/api/pane-mirror?key=${k}`), deps(over))
+  expect(at("tx")).toEqual({ key: "tx", pane: "%7", tmux: { pane: "%7", socket: "/tmp/tmux-1000/cc" } })
+  expect(at("tm")).toEqual({ key: "tm", pane: "%4", tmux: { pane: "%4", socket: "" } })
+  expect(at("k1")).toEqual({ key: "k1", pane: "w3:p1" })
+  // The viewer cap counts per mirror key: a tmux pane never shares a herdr pane's count.
+  const asked: string[] = []
+  at("tx", { viewers: (k) => { asked.push(k); return 0 } })
+  at("k1", { viewers: (k) => { asked.push(k); return 0 } })
+  expect(asked).toEqual(["tmux|/tmp/tmux-1000/cc|%7", "w3:p1"])
+  expect((at("tx", { viewers: () => MAX_MIRROR_VIEWERS }) as Response).status).toBe(429)
+})
+
+test("mirrorKey: herdr id as is; tmux keyed by socket + pane, never colliding with a herdr id", () => {
+  expect(mirrorKey({ key: "k", pane: "w3:p1" })).toBe("w3:p1")
+  expect(mirrorKey({ key: "k", pane: "%7", tmux: { pane: "%7", socket: "" } })).toBe("tmux|%7")
+  expect(mirrorKey({ key: "k", pane: "%7", tmux: { pane: "%7", socket: "/s" } })).toBe("tmux|/s|%7")
 })
 
 // ── the mirror loop ──
@@ -232,6 +253,19 @@ test("mirror: a keystroke pulls the next poll forward to MIRROR_ECHO_MS instead 
   m.input(new TextEncoder().encode("x"))
   await advance(MIRROR_ECHO_MS)
   expect(reads()).toBe(2)
+})
+
+test("mirror: no sizer (tmux) → a phone resize is ignored; size frames keep the pane's own cols", async () => {
+  const { clock, advance } = fakeClock()
+  const { src } = fakeSource(["a\r\n", "b\r\n"])
+  const m = new PaneMirror("%7", src, clock, { pollMs: 50, minFrameMs: 0 })
+  const a = viewer()
+  m.add(a.v)
+  m.resize(a.v, { cols: 48, rows: 30 })
+  await advance(120)
+  const sizes = a.controls.filter((c) => (c as { type: string }).type === "size")
+  expect(sizes.length).toBeGreaterThan(0)
+  for (const sz of sizes) expect(sz).toEqual({ type: "size", cols: 10, rows: 1 })
 })
 
 // ── focus ──

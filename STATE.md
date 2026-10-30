@@ -4,6 +4,12 @@ Last updated: 2026-10-25
 
 ## Active Decisions
 
+### Pane mirror covers tmux: capture-pane poll + send-keys -H, no sizer, iOS decides canMirror (2026-10-30)
+**Choice:** `/api/pane-mirror` mirrors a session's tmux pane (tmux wins over herdr, like herdrPaneOf) through a tmux MirrorSource: `capture-pane -e -p` every 50 ms, `#{pane_width}`, keystrokes as `send-keys -H` hex through the shared key gate. No PaneSizer for tmux; a phone resize is ignored and frames keep the pane's width. Each host mirrors its own sessions.
+**Why:** `-H` is byte-exact for ESC sequences, ^C, UTF-8 and a leading `-` (measured on tmux 3.4). `resize-pane` moves the Mac's own layout with no hold or release. A server `canMirror` field would mean editing `wireSessions` (pinned by a test) in a file at its cap, and after this change the rule is just "has a pane", so iOS uses that rule itself.
+**Rejected:** `/api/terminal` (`tmux attach`) — a whole-session client resizes the Mac window to the phone; `send-keys -l` (option-parsing hazard on a leading `-`); a tmux control-mode stream (follow-up if the poll cost shows).
+**Revisit if:** many tmux panes are watched at once (~5 % of a core each), or the Mac's tmux mangles `-H` bytes.
+
 ### Terminal sessions from the phone: tagged tmux shells + a PTY WebSocket (2026-10-25)
 **Choice:** `POST /api/spawn-session {agent:"shell", cwd}` starts `$SHELL -l` in a detached tmux session `sh-<dir>` (argv, `-c <cwd>`, never a command line), tagged `@companion_shell 1`. tmux is the record (`lib/shell-sessions.ts`): a 3 s `list-sessions` poll feeds the list, so a restart loses nothing and `exit` ends it. Shells are appended to the wire session list (`wireSessions`: init, `sessions` frame, `/api/status`, `/api/feed`) as `agent:"shell"`, never into the lib/sessions.ts Map. `GET /api/terminal?key=&cols=&rows=` (Bearer gate, 410 for an unknown key) upgrades to a WS bridged to `tmux attach-session -t =<name>` under a Bun PTY (`lib/terminal-bridge.ts`): binary both ways, JSON `resize`, close 4000 "ended" when the attach exits.
 **Why:** the iPhone has no way to run tmux/ssh (Canvas does, TerminalAttach.swift), so the server is the terminal client. Jeremie wants Moshi-style terminals without paying for Moshi Pro.
@@ -143,6 +149,72 @@ Last updated: 2026-10-25
 **Revisit if:** Mac + Linux host need one shared queue (today each host caps independently).
 
 ## Change Plans
+
+### Change Plan — tmux-pane-mirror (2026-10-30)
+**Request:** let `/api/pane-mirror` mirror tmux panes as well as herdr panes, so every Claude session has a terminal view on iOS (the builder chat view is being retired).
+**Done when:**
+- A Claude session with a `tmuxPane` (default server, `tmux -L cc`, tmux inside herdr) upgrades on `/api/pane-mirror` and gets the same frames a herdr pane gets: `size` → `focus` → binary repaints. Phone keystrokes land in the pane byte for byte.
+- The herdr path does not change: same target, same Map key, same sizer, and every existing herdr test passes untouched.
+- An iOS build opens the Terminal for tmux sessions. A session with no pane still gets 409.
+
+**Target shape & drift**
+- Leader: iTerm2's tmux integration (`tmux -CC`). It reads the screen with `capture-pane -p -e`, then follows the `%output` stream, and types with hex `send-keys`. Mapping to ours: their `%output` stream → our 50 ms `capture-pane -e -p` poll (v1). Their hex send → our `send-keys -H`. Their per-client `refresh-client -C` → nothing (no tmux sizer, see State).
+- Reference shape: one source-agnostic mirror (`lib/pane-mirror.ts`) and one adapter per backend, both in `wiring/`. The pane address comes only from the server's session record, never from the phone. Every byte typed into a pane, whoever sends it, goes through the per-pane key gate. The server decides what can be mirrored, and the client only asks.
+- Deviations today: (a) the gate only knows herdr (`herdrPaneOf`). (b) iOS `canMirror` repeats the server's herdr-only rule on its side. (c) herdr mirror keystrokes skip the key gate (`herdrSocketSource.send` calls `herdrSocketCall` directly), so they can interleave with injects and dialog keys. (d) `PaneMirror` records a phone's asked-for size as `held` even when there is no sizer, so the `size` frame reports the phone's cols, not the pane's.
+- This change moves toward: (a) tmux adapter. (b) server and client rules become the same predicate ("has a pane"), see State. (c) for tmux: its keystrokes go through the gate. (d) fixed, because the tmux path is the first sizer-less one.
+- Leaves for follow-up (to file, `agent:builder`): (c) for herdr, i.e. `herdrGatedText` on the mirror's send. Not done here because it changes herdr behaviour. Also: a tmux control-mode source (`%output` instead of polling), once spawn load shows up.
+- Rejected: reusing `/api/terminal` (`tmux attach -t <pane>`, which STATE.md's "Revisit if" points to). An attach is a whole-session client: it resizes the Mac's window to the phone's size (the 11-column incident in `tmux-pane.ts`, 2026-10-08), draws the status bar and every pane, and flips `session_attached`.
+
+**State decisions**
+- `mirrors` Map stays in `wiring/pane-mirror.ts`. Its key is `mirrorKey(target)`: the bare herdr id, as today, or `tmux|`+`paneKey(pane, socket)`. A herdr id matches `HERDR_PANE_RE`, so it can never start with `tmux|`. Mutated only by `mirrorOpen`/`mirrorClose`. Persistence: none.
+- Size: tmux gets no `PaneSizer` in v1. `resize-pane` moves the Mac's own layout, has no hold or release, and does nothing in a one-pane window. The renderer's frame of reference is the pane grid (`#{pane_width}` × captured rows). Only the Mac's window may move it. The phone scales and pans, as it already does when a herdr hold is refused.
+- `canMirror`: **declined as a server field (challenge to item 4).** The session serializer is the raw `Session` spread through `wireSessions()` at 5 sites (ws.ts init, api.ts `/api/status` + `/api/feed`, events.ts and wiring/shell-sessions.ts `sessions`). `lib/shell-sessions.test.ts:76` pins `wireSessions(agents)` to return the same array, and `lib/sessions.ts` is at its 600-line cap. After this change the server gate is "tmuxPane, or a valid herdrPane", which is the same predicate as iOS `isLive`'s pane check. So iOS changes its rule to that (one line) and nothing moves on the wire. Option, if Jeremie wants the server to be the authority: add `canMirror` inside `wireSessions` and accept that test edit.
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `GET /api/pane-mirror` upgrade | WS upgrade | a tmux session now upgrades (was 409). `not_herdr` now means "no pane" (string kept). 429 is counted per mirror key | iOS `claude companion/TerminalMirror.swift` (does not branch on codes), `CompanionKit/PaneMirror.swift` `url()` | additive |
+| mirror frames `size`/`focus`/binary, phone `resize`/binary | WS frames | none. For tmux, `resize` is accepted and ignored | iOS TerminalMirror.swift, PaneMirror.swift | same shape |
+| `ws.data.mirror` (`WsData`) | internal | +`tmux?: PaneRef` | companion-server.ts, ws.ts, wiring/pane-mirror.ts | internal |
+| `MirrorTarget` | export | +`tmux?: PaneRef`. A herdr target stays `{key, pane}` | companion-server.ts, lib/pane-mirror.test.ts | additive |
+| session JSON / contracts/*.json | — | none (no contracts/ schema covers sessions) | — | — |
+
+**Files — one owner each**
+| file | owner | change | lines now → after |
+|---|---|---|---|
+| `server/lib/pane-mirror.ts` | builder | gate: `paneRefOf(s)` with a `/^%\d+$/` pane → `{key, pane, tmux: ref}`, else herdr as today, else 409 `not_herdr`. NEW: `mirrorKey`. `applySize` returns early when `sizer` is null (guard line). Update the header comment | 358 → ~375 ✓ |
+| `server/wiring/pane-mirror.ts` | builder | NEW: `tmuxPaneSource(ref, gate = keyGate)`. read = `capturePane(pane, undefined, {escapes:true, socket})`. cols = `tmuxPaneWidth(ref)`. send = `gate.send(paneKey(…), text, sig => runTmux(sendKeysArgs(ref, "-H", …utf8 hex), sig))`. `mirrorOpen` picks source and sizer from `t.tmux`. Map keyed by `mirrorKey` | 113 → ~140 ✓ |
+| `server/state.ts` | builder | `mirror?: { key; pane; tmux?: PaneRef }` | 87 → 88 ✓ |
+| `server/lib/pane-mirror.test.ts` | builder | the gate test's `tm` case (tmux inside herdr → 409) is the old contract and becomes "→ tmux target". Add: tmux-only target, bad pane id → 409, no sizer → `size` keeps the pane's cols | 324 → ~360 ✓ |
+| `server/wiring/pane-mirror.test.ts` | builder | `tmuxPaneSource` against a real private `tmux -S` server: hex send is byte-exact, a capture has pane_height rows | 53 → ~100 ✓ |
+| `STATE.md` | builder | Active Decision: tmux mirror, no sizer, no `canMirror` field, `/api/terminal` rejected | — |
+| iOS `CompanionKit/Sources/CompanionKit/PaneMirror.swift` | ios builder (other repo) | `canMirror`: `!isShell && origin != nil && (!tmux.isEmpty \|\| !herdr.isEmpty)`. Update the doc comment. `PaneMirrorTests` tmux case flips | ~1 line |
+
+No edit to `companion-server.ts` or `ws.ts`: the target passes through as `data.mirror`, and `viewers: mirrorViewerCount` gets the mirror key from the gate.
+
+**Fan-in paths to guard**
+- `keyGate.send(paneKey)` is shared with keyboard-inject, inject-verified, submit-confirm, `/api/dialog/key|pick`, `/api/sessions/resume` and command-scrape's `remainingMs`. Mirror keystrokes now take turns there. A lone `\x1b` opens the 250 ms chord window, which is correct and only delays the next send.
+- `capturePane`, `tmuxPaneWidth` and `sendKeysArgs` are reused with their signatures unchanged (5, 2 and 5 callers).
+- `paneMirrorUpgrade` has one caller (companion-server.ts). Herdr output must stay `toEqual({key, pane})`, and the existing test pins it.
+
+**Risks**
+- Cost: a `capture-pane` spawn takes ~2.4 ms (measured, tmux 3.4) → ~5% of a core per watched pane at 20 Hz. All viewers share one poll. The ceiling is the number of distinct watched panes → control-mode follow-up.
+- `send-keys -H` checked byte-exact on tmux 3.4 (Linux), including with `extended-keys on` and an app asking for modifyOtherKeys=2: `61 1b 5b 42 c3 a9 03 0d` arrived as sent. The Mac's tmux version is not checked → Verify 4.
+- `capture-pane -p` trims trailing spaces: a row ending in a background colour loses it. Cols come from `pane_width`, so the grid stays right. Wide chars count as 1 in `visibleWidth`, but `max(pane_width, widest)` covers it. Alternate screen and copy-mode: capture shows the pane's screen, which is what we want.
+- A mirror keystroke landing during inject-verified's read-back can make an inject refuse (`input_not_empty`). The Mac keyboard has the same effect, so this is accepted.
+- New iOS against an old server → 409 loop on tmux sessions → deploy both hosts' servers before the TestFlight build.
+- Map blind spot: the `/api/pane-mirror` and `/api/terminal` upgrades (handled inline in companion-server.ts) are missing from the endpoints table. The `ios` ref map has only the app target, not CompanionKit (PaneMirror.swift, Models.swift), and the frames table shows the `sessions` and `init` consumers as "no consumer found" → archmap adapter bug, to file.
+- kb: touched modules import only bun/node builtins (tmux is a binary) → 0 KB queries.
+
+**Verify**
+1. `bun test server/lib/pane-mirror.test.ts server/wiring/pane-mirror.test.ts server/lib/shell-sessions.test.ts` → green. The herdr gate and sizer tests pass with no edit.
+2. A test where the phone sends `resize {48,30}` and there is no sizer → the next `size` frame still carries the pane's cols.
+3. Zettlab: a Claude in `tmux -L cc` (`ccd`). `websocat -H "Authorization: Bearer $TOKEN" "ws://127.0.0.1:<port>/api/pane-mirror?key=<key>"` → `size` matches `tmux -L cc display -p -t <pane> '#{pane_width}'`, then `focus`, then repaints. Send binary `/` → the slash menu shows in both the repaint and the real pane. Send `\x1b` → it closes. Server log: `pane-mirror open <key> tmux|…`.
+4. Mac: `tmux -V`, then step 3 on a default-server tmux session, plus é and Ctrl-C bytes.
+5. Herdr regression: a herdr session mirrors as before, and the phone resize still holds the pane (log `size hold`).
+6. Manual pass by Jeremie (new iOS build, both servers deployed). Open a tmux Claude session on Zettlab, a tmux one on the Mac, and a herdr one: each opens the Terminal with Claude's input box in view. Typing, arrows in `/`, Esc, and Ctrl-C reach Claude. Rotate or resize: a tmux pane keeps the Mac's width (the phone zooms or pans) and the Mac's window does not shrink. A herdr pane still reflows to the phone's width. A plain (non-pane) session shows no Terminal. Not shipped until this pass is clean.
+
+**Out of scope:** herdr mirror through the key gate; a tmux control-mode stream; a tmux sizer; retiring the iOS chat view; mirroring ended sessions or shells (shells use `/api/terminal`).
 
 ### Change Plan — sent-file-cards (2026-10-30)
 **Request (t-server-filecards-1):** files any session (the brain included) sends with Claude Code's `SendUserFile` reach the iOS app as real thumbnails and downloads, not just a host path.

@@ -1,6 +1,11 @@
-// The phone's "Terminal" view of a herdr Claude session — the real
-// Claude TUI, mirrored off herdr's pane instead of a PTY this server owns
-// (lib/terminal-bridge.ts is the tmux-shell twin).
+// The phone's "Terminal" view of a herdr or tmux Claude session — the real
+// Claude TUI, mirrored off its pane instead of a PTY this server owns
+// (lib/terminal-bridge.ts is the tmux-shell twin). One loop (PaneMirror) over
+// a source per backend (wiring/pane-mirror.ts): herdr's socket below, or tmux
+// `capture-pane -e -p` + `send-keys -H` (2026-10-30). A tmux pane has no
+// sizer: `resize-pane` would move the Mac's own layout with nothing to give
+// it back, so the phone scales/pans at the pane's width, and a phone resize
+// is ignored. Each host's server mirrors its own sessions (no relay).
 //
 // Why polling: herdr 0.9.5 lists `pane_output_changed` in its event schema,
 // but `events.subscribe` rejects it (unknown variant) and `events.wait` only
@@ -30,6 +35,7 @@
 import { clientOrigin, peerOf } from "./vault-guard"
 import { herdrPaneOf } from "./herdr"
 import { parseControl } from "./terminal-bridge"
+import { type PaneRef, paneKey, paneRefOf } from "./tmux-pane"
 
 export const PANE_MIRROR_PATH = "/api/pane-mirror"
 export const MAX_MIRROR_VIEWERS = 3
@@ -45,15 +51,25 @@ export const MIRROR_GONE_AFTER = 20
 
 // ── Upgrade gate ──────────────────────────────────────────────────────────
 
-export interface MirrorTarget { key: string; pane: string }
+// `tmux` set = a tmux pane (`pane` is its id), else a herdr pane.
+export interface MirrorTarget { key: string; pane: string; tmux?: PaneRef }
 export interface MirrorUpgradeDeps {
   authorized(req: Request): boolean // Bearer, header only
-  lookup(key: string): { key: string; herdrPane?: string; tmuxPane?: string } | null
-  viewers(pane: string): number
+  lookup(key: string): { key: string; herdrPane?: string; tmuxPane?: string; tmuxSocket?: string } | null
+  viewers(mirrorKey: string): number
+}
+
+const TMUX_PANE_ID = /^%\d+$/
+
+// One mirror per pane: a herdr id as is; tmux by (socket, pane), since pane
+// ids are unique per tmux server only. A herdr id never starts with "tmux|".
+export function mirrorKey(t: MirrorTarget): string {
+  return t.tmux ? `tmux|${paneKey(t.tmux.pane, t.tmux.socket)}` : t.pane
 }
 
 // The pane to mirror, or the refusal. Same order and codes as /api/terminal:
-// 401 auth, 403 network, 410 unknown key, then 409 not_herdr and 429.
+// 401 auth, 403 network, 410 unknown key, then 409 not_herdr (no pane to
+// mirror; the name predates tmux) and 429. tmux first, like herdrPaneOf.
 export function paneMirrorUpgrade(req: Request, url: URL, deps: MirrorUpgradeDeps): MirrorTarget | Response {
   if (!deps.authorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 })
   if (clientOrigin(req, peerOf(req)).transport === "untrusted") {
@@ -63,10 +79,12 @@ export function paneMirrorUpgrade(req: Request, url: URL, deps: MirrorUpgradeDep
   const s = key ? deps.lookup(key) : null
   // Exact key only: resolveSession also accepts cwd:/sid: lookups.
   if (!s || s.key !== key) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
-  const pane = herdrPaneOf(s)
-  if (!pane) return Response.json({ ok: false, error: "not_herdr" }, { status: 409 })
-  if (deps.viewers(pane) >= MAX_MIRROR_VIEWERS) return Response.json({ ok: false, error: "too_many_viewers" }, { status: 429 })
-  return { key, pane }
+  const ref = paneRefOf(s)
+  const pane = ref ? "" : herdrPaneOf(s)
+  const t: MirrorTarget | null = ref ? (TMUX_PANE_ID.test(ref.pane) ? { key, pane: ref.pane, tmux: ref } : null) : pane ? { key, pane } : null
+  if (!t) return Response.json({ ok: false, error: "not_herdr" }, { status: 409 })
+  if (deps.viewers(mirrorKey(t)) >= MAX_MIRROR_VIEWERS) return Response.json({ ok: false, error: "too_many_viewers" }, { status: 429 })
+  return t
 }
 
 // ── Frames ────────────────────────────────────────────────────────────────
@@ -289,6 +307,7 @@ export class PaneMirror {
   }
 
   private applySize(): void {
+    if (!this.sizer) return // nothing can resize the pane: frames keep its own width
     const want = smallestSize(this.viewers.values())
     if (want?.cols === this.held?.cols && want?.rows === this.held?.rows) return
     this.held = want

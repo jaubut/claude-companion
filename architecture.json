@@ -2940,7 +2940,7 @@
         },
         {
           "path": "lib/pane-mirror.ts",
-          "lines": 358,
+          "lines": 377,
           "kind": "lib",
           "exports": [
             "PANE_MIRROR_PATH",
@@ -2953,6 +2953,7 @@
             "MIRROR_GONE_AFTER",
             "MirrorTarget",
             "MirrorUpgradeDeps",
+            "mirrorKey",
             "paneMirrorUpgrade",
             "screenRows",
             "visibleWidth",
@@ -2980,7 +2981,8 @@
           "imports": [
             "lib/vault-guard.ts",
             "lib/herdr.ts",
-            "lib/terminal-bridge.ts"
+            "lib/terminal-bridge.ts",
+            "lib/tmux-pane.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6766,7 +6768,7 @@
         },
         {
           "path": "state.ts",
-          "lines": 88,
+          "lines": 89,
           "kind": "lib",
           "exports": [
             "WsData",
@@ -7499,10 +7501,11 @@
         },
         {
           "path": "wiring/pane-mirror.ts",
-          "lines": 113,
+          "lines": 139,
           "kind": "lib",
           "exports": [
             "herdrSocketSource",
+            "tmuxPaneSource",
             "HerdrPaneSizer",
             "mirrorViewerCount",
             "mirrorOpen",
@@ -7520,7 +7523,9 @@
           "imports": [
             "lib/log.ts",
             "lib/herdr-socket.ts",
+            "lib/key-gate.ts",
             "lib/pane-mirror.ts",
+            "lib/tmux-pane.ts",
             "state.ts"
           ],
           "listeners": [],
@@ -9779,7 +9784,8 @@
             "lib/submit-confirm.ts",
             "routes/api.ts#POST /api/sessions/resume",
             "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick"
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/pane-mirror.ts"
           ]
         },
         "readSecretValue": {
@@ -9827,9 +9833,11 @@
             "lib/discover.ts",
             "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
+            "lib/pane-mirror.ts",
             "lib/question-hook.ts",
             "lib/session-pane.ts",
-            "lib/submit-confirm.ts"
+            "lib/submit-confirm.ts",
+            "wiring/pane-mirror.ts"
           ]
         },
         "tmuxSocketFromEnv": {
@@ -10350,7 +10358,8 @@
             "lib/session-pane.ts",
             "lib/submit-confirm.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick"
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/pane-mirror.ts"
           ]
         },
         "capturePane": {
@@ -10360,14 +10369,16 @@
             "lib/pane-clean.ts",
             "lib/session-pane.ts",
             "lib/submit-confirm.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "wiring/pane-mirror.ts"
           ]
         },
         "tmuxPaneWidth": {
           "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/inject-verified.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "wiring/pane-mirror.ts"
           ]
         },
         "herdrPaneWidth": {
@@ -10382,11 +10393,13 @@
           "callers": [
             "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
+            "lib/pane-mirror.ts",
             "lib/session-pane.ts",
             "lib/submit-confirm.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "wiring/pane-mirror.ts"
           ]
         },
         "INJECT_QUEUE_MS": {
@@ -10733,6 +10746,14 @@
             "routes/brain.ts",
             "routes/records.ts",
             "routes/vault.ts"
+          ]
+        },
+        "paneRefOf": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/pane-mirror.ts",
+            "lib/session-pane.ts",
+            "wiring/auto-compact.ts"
           ]
         },
         "parseControl": {
@@ -11762,7 +11783,8 @@
           "callers": [
             "lib/session-pane.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
-            "routes/dialogs.ts#POST /api/dialog/pick"
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "wiring/pane-mirror.ts"
           ]
         },
         "herdrGatedKey": {
@@ -11779,13 +11801,6 @@
           "callers": [
             "lib/session-pane.ts",
             "routes/api.ts#POST /api/sessions/resume"
-          ]
-        },
-        "paneRefOf": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/session-pane.ts",
-            "wiring/auto-compact.ts"
           ]
         },
         "getSessionByKey": {
@@ -15844,6 +15859,12 @@
           ]
         },
         "MirrorViewer": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "mirrorKey": {
           "module": "lib/pane-mirror.ts",
           "callers": [
             "wiring/pane-mirror.ts"
