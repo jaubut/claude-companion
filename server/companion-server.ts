@@ -1,5 +1,5 @@
-import { checkBearer, unauthorized } from "./lib/auth"
-import { type WsData, HOST_INFO, broadcast, clientInfo } from "./state"
+import { checkBearer, checkBearerHeaderOnly, unauthorized } from "./lib/auth"
+import { type WsData, HOST_INFO, broadcast, clientBuild, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
 import { deliverInject, handleApiRoute } from "./routes/api"
@@ -12,7 +12,6 @@ import { handleAttachRoute } from "./routes/attach"
 import { handleMediaRoute } from "./routes/media"
 import { handleGoalsRoute } from "./routes/goals"
 import { handleBodyRoute } from "./routes/body"
-import { handleResolverRoute } from "./routes/resolver"
 import { handleVaultRoute } from "./routes/vault"
 import { handleRecordsRoute } from "./routes/records"
 import { VOICE_UPLOAD_PATH, handleCaptureRoute } from "./routes/capture"
@@ -22,6 +21,7 @@ import { handleGaugeRoute } from "./routes/gauge"
 import { handleCopyJobsRoute } from "./routes/copy-jobs"
 import { handleMyTasksRoute } from "./routes/my-tasks"
 import { handleTasteRoute } from "./routes/taste"
+import { handleNotesRoute } from "./routes/notes"
 import { createTasksAgentRoute } from "./routes/tasks-agent"
 import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
 import { createCanvasRoute } from "./routes/canvas"
@@ -30,22 +30,43 @@ import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
+import { getShellSession, startShellPoll } from "./lib/shell-sessions"
+import { startEndedSweep } from "./lib/ended-sessions"
+import { listSessions, resolveSession } from "./lib/sessions"
+import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize, shellNetworkRefusal } from "./lib/terminal-bridge"
+import { attachCount } from "./wiring/shell-sessions"
+import { PANE_MIRROR_PATH, paneMirrorUpgrade } from "./lib/pane-mirror"
+import { mirrorViewerCount } from "./wiring/pane-mirror"
+import { ensureUtf8Locale } from "./lib/tmux-pane"
+import { brainRoute } from "./routes/brain"
+import { brainWiring, setBrainDeliver } from "./wiring/brain"
+import { brainWorkers } from "./wiring/brain-workers"
+import { brainEnabled } from "./lib/brain"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
 // finished wipes its list. Bounded: a slow ps/lsof must not lock clients out.
+ensureUtf8Locale()
+
 const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 // Above the 150 s upstream timeout the forwarding host waits on.
 const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 setCanvasDeliver(deliverInject)
+setBrainDeliver(deliverInject)
 const handleCanvasRoute = createCanvasRoute({ store: canvasStore, status: canvasStatus, host: HOST_INFO.name, notify: broadcast, send: canvasSend })
 
 export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
   // happy-eyeballs path is a known process crash — see lib/apns.ts.
   disableAutoSelectFamily()
+  // Shell sessions are read from tmux (lib/shell-sessions.ts): first read now,
+  // then every few seconds so an `exit` reaches the phone.
+  startShellPoll(listSessions)
+  startEndedSweep(listSessions)
+  // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
+  if (brainEnabled()) { brainWiring.start(); brainWorkers.start() }
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
@@ -87,7 +108,41 @@ export function createCompanionServer(port: number) {
         // Immediate except in the first seconds after boot (lib/discover.ts).
         await waitForFirstDiscovery(WS_FIRST_DISCOVERY_WAIT_MS)
         const upgraded = server.upgrade(req, {
-          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req) },
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req), build: clientBuild(req) },
+        })
+        if (upgraded) return undefined
+        return new Response("WebSocket upgrade failed", { status: 500 })
+      }
+
+      // ── Live terminal (lib/terminal-bridge.ts) ──
+      // Behind the Bearer gate above like every /api/* path. Unknown key → 410
+      // before any upgrade, so nothing is spawned for a stale row.
+      // Header token only: a remote shell must not authenticate with a token
+      // in the URL (URLs land in proxy and access logs).
+      if (url.pathname === TERMINAL_PATH) {
+        if (!checkBearerHeaderOnly(req)) return unauthorized()
+        const refused = shellNetworkRefusal(req)
+        if (refused) return refused
+        const key = url.searchParams.get("key") ?? ""
+        if (!getShellSession(key)) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
+        const size = parseTerminalSize(url.searchParams.get("cols"), url.searchParams.get("rows"))
+        if (!size) return Response.json({ ok: false, error: "bad_size" }, { status: 400 })
+        if (attachCount(key) >= MAX_ATTACHES_PER_KEY) return Response.json({ ok: false, error: "too_many_attaches" }, { status: 429 })
+        const upgraded = server.upgrade(req, {
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), terminal: { key, ...size } },
+        })
+        if (upgraded) return undefined
+        return new Response("WebSocket upgrade failed", { status: 500 })
+      }
+
+      // ── Herdr pane mirror (lib/pane-mirror.ts) ──
+      // Same gates as /api/terminal: header-only Bearer, the vault network
+      // rule, a session key this server knows, and it must be a herdr pane.
+      if (url.pathname === PANE_MIRROR_PATH) {
+        const t = paneMirrorUpgrade(req, url, { authorized: checkBearerHeaderOnly, lookup: resolveSession, viewers: mirrorViewerCount })
+        if (t instanceof Response) return t
+        const upgraded = server.upgrade(req, {
+          data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), mirror: t },
         })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })
@@ -95,7 +150,7 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleResolverRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleCanvasRoute]) {
+      for (const route of [handleHookRoute, brainRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
         const handled = await route(req, url)
         if (handled) return handled
       }

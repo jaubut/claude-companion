@@ -2,7 +2,27 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type { ShFn } from "./resolver-fix"
+
+export interface ShResult { ok: boolean; code: number; out: string; err: string }
+export type ShFn = (cmd: string, args: string[], opts: { cwd: string; timeoutMs: number; env?: Record<string, string> }) => Promise<ShResult>
+
+/** The real shell: Bun.spawn with a timeout; never throws. */
+export const realSh: ShFn = async (cmd, args, opts) => {
+  let proc: ReturnType<typeof Bun.spawn>
+  try {
+    proc = Bun.spawn([cmd, ...args], { cwd: opts.cwd, env: opts.env ?? (process.env as Record<string, string>), stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+  } catch (err) {
+    return { ok: false, code: -1, out: "", err: (err as Error)?.message ?? "spawn failed" }
+  }
+  const timer = setTimeout(() => { try { proc.kill() } catch { /* gone */ } }, opts.timeoutMs)
+  try {
+    const [out, err] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), new Response(proc.stderr as ReadableStream).text()])
+    const code = await proc.exited
+    return { ok: code === 0, code, out, err }
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 // The project → repo table (REPO_MAP), read as text, read-only, from
 // claude-config's tools: `repo-map.ts` (claude-config #21 moved it there:
@@ -10,14 +30,14 @@ import type { ShFn } from "./resolver-fix"
 // checkout, `dispatch-run.ts` (`{ match, path: `${HOME}/dir` }`). Neither is
 // imported (dispatch-run runs on import; repo-map.ts lives outside this repo).
 // First entry whose match hits AND whose directory exists on this host wins —
-// dispatch-run's own rule. Used by live-mode cwd, the resolver's checkout
-// lookup and the brain's project catalog.
+// dispatch-run's own rule. Used by the resolver's checkout lookup (read-only
+// evidence) and the brain's project catalog. Also home of the shell seam
+// (ShFn / realSh) those lookups run git through.
 //
 // `requires: ["xcode"]` (claude-config, 2026-10-05) marks the iOS/macOS apps:
 // code for them runs only on a host with macOS + xcodebuild (the Mac). Here,
-// an Xcode repo on a host without Xcode counts as "no local checkout" for the
-// resolver's fix run (→ forwarded to the Mac peer) and as `no_cwd` for live
-// mode, even when a clone exists on this host.
+// an Xcode repo on a host without Xcode counts as "no local checkout", even
+// when a clone exists on this host.
 
 export interface RepoEntry { match: RegExp; path: string; name?: string; project?: string; requires?: string[]; /** GitHub "owner/name" (claude-config `github`). */ github?: string }
 
@@ -61,14 +81,15 @@ export function readRepoMapSource(file?: string): string | null {
 
 // One entry per object literal: optional `name: "…"`, `match: /re/flags`,
 // `path: `${HOME|home}/dir``, optional `project: "…"`, then any further simple
-// fields (`requires: ["xcode"]`, `platform: "darwin"`, future ones: a string,
-// a flat array or a boolean) — trailing comma allowed. Unknown fields are
-// ignored, never a reason to drop the entry.
+// fields (`requires: ["xcode"]`, `platform: "darwin"`, `verify: JS_VERIFY`,
+// future ones: a string, a flat array, a boolean, a number or a bare constant
+// name) — trailing comma allowed. Unknown fields are ignored, never a reason
+// to drop the entry.
 const ENTRY = new RegExp(
   String.raw`\{\s*(?:name:\s*"([^"\n]*)"\s*,\s*)?match:\s*\/((?:\\.|[^/\\\n])+)\/([a-z]*)\s*,\s*` +
     String.raw`path:\s*` + "`" + String.raw`\$\{(?:HOME|home)\}\/([^` + "`" + String.raw`$]+)` + "`" +
     String.raw`\s*(?:,\s*project:\s*"([^"\n]*)"\s*)?` +
-    String.raw`((?:,\s*[A-Za-z_]\w*:\s*(?:\[[^\]\n]*\]|"[^"\n]*"|true|false)\s*)*)` +
+    String.raw`((?:,\s*[A-Za-z_]\w*:\s*(?:\[[^\]\n]*\]|"[^"\n]*"|-?\d+(?:\.\d+)?|[A-Za-z_][\w.]*)\s*)*)` +
     String.raw`,?\s*\}`,
   "g",
 )
@@ -151,13 +172,6 @@ export function pathBlockedHere(path: string | null | undefined, entries: RepoEn
   return !!path && entriesAt(path, entries).some((e) => !hostCan(e, host))
 }
 
-/** A note mapped (on any host) to a repo this host may not run code for. */
-export function noteBlockedHere(hay: string, entries: RepoEntry[], host: HostProbe = realHost()): boolean {
-  return entries.some((e) => e.match.test(hay) && !hostCan(e, host))
-}
-
-export const XCODE_LIVE_REASON = "Xcode repo — run live from the Mac"
-
 /**
  * The resolver's fix-run checkout: `repo` when this host may run code in it,
  * else null — "no local checkout here", so seams.fix forwards to the Mac peer.
@@ -180,8 +194,8 @@ export function checkRepoMap(files: string[] = repoMapCandidates()): RepoMapChec
 
 /** The log line for checkRepoMap; `warn` = loud (0 entries). */
 export function repoMapCheckLine(c: RepoMapCheck, files: string[] = repoMapCandidates()): { warn: boolean; text: string } {
-  if (!c.file) return { warn: true, text: `[repo-map] WARNING: no REPO_MAP file readable (tried ${files.join(", ")}) — no project resolves to a local checkout (live cwd, resolver fix runs, catalog)` }
-  if (!c.entries) return { warn: true, text: `[repo-map] WARNING: 0 REPO_MAP entries parsed from ${c.file} — the format changed? Every local-checkout lookup will fail (live cwd, resolver fix runs, catalog)` }
+  if (!c.file) return { warn: true, text: `[repo-map] WARNING: no REPO_MAP file readable (tried ${files.join(", ")}) — no project resolves to a local checkout (resolver fix runs, catalog)` }
+  if (!c.entries) return { warn: true, text: `[repo-map] WARNING: 0 REPO_MAP entries parsed from ${c.file} — the format changed? Every local-checkout lookup will fail (resolver fix runs, catalog)` }
   return { warn: false, text: `[repo-map] ${c.entries} REPO_MAP entries from ${c.file} (${c.local} checked out here)` }
 }
 
@@ -201,34 +215,6 @@ export function repoForNote(noteId: string, title: string | null, file?: string)
   const hay = `${noteId} ${title ?? ""}`
   for (const { match, path } of parseRepoMap(source)) if (match.test(hay) && isDir(path)) return path
   return null
-}
-
-export interface LiveCwdInput {
-  explicit?: string | null; noteId?: string | null; noteTitle?: string | null; taskCwd?: string | null; channelCwd?: string | null
-}
-
-/**
- * Live cwd: the explicit one, else the note's mapped repo, else the proposal's
- * or the channel's cwd — the first that is a directory on this host. An Xcode
- * repo (note or path) on a host without Xcode → null with XCODE_LIVE_REASON.
- */
-export function resolveLiveCwdWhy(c: LiveCwdInput, host: HostProbe = realHost()): { cwd: string | null; reason: string | null } {
-  const source = readRepoMapSource()
-  const entries = source ? parseRepoMap(source) : []
-  const blocked = (p: string | null | undefined) => pathBlockedHere(p, entries, host)
-  if (c.explicit) {
-    if (blocked(c.explicit)) return { cwd: null, reason: XCODE_LIVE_REASON }
-    return { cwd: isDir(c.explicit) ? c.explicit : null, reason: null }
-  }
-  if (c.noteId && noteBlockedHere(`${c.noteId} ${c.noteTitle ?? ""}`, entries, host)) return { cwd: null, reason: XCODE_LIVE_REASON }
-  const mapped = c.noteId ? repoForNote(c.noteId, c.noteTitle ?? null) : null
-  const cands = [mapped, c.taskCwd, c.channelCwd].filter(isDir)
-  const cwd = cands.find((p) => !blocked(p)) ?? null
-  return { cwd, reason: !cwd && cands.length ? XCODE_LIVE_REASON : null }
-}
-
-export function resolveLiveCwd(c: LiveCwdInput, host: HostProbe = realHost()): string | null {
-  return resolveLiveCwdWhy(c, host).cwd
 }
 
 /**

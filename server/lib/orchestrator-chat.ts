@@ -25,6 +25,20 @@ export interface Turn {
   text: string
   taskId: string | null
   createdAt: number
+  // brain-v2 card (docs/brain-api.md). Absent on every turn without one, so
+  // those rows serialize byte-identical to before. card.taskId is never copied
+  // into taskId: shipped builds group taskId turns as worker output.
+  card?: TurnCard
+}
+
+/** A brain-thread card: a dispatch receipt or a voice turn from the app. */
+export interface TurnCard {
+  kind: "dispatch" | "voice"
+  source: "app"
+  taskId?: string
+  audioId?: string
+  durationMs?: number
+  locale?: string
 }
 
 export interface Task {
@@ -60,6 +74,7 @@ interface TurnRow {
   text: string
   task_id: string | null
   created_at: number
+  card?: string | null
 }
 
 interface TaskRow {
@@ -81,8 +96,19 @@ interface TaskRow {
   dispatch_task_id: string | null
 }
 
+function parseCard(raw: string | null | undefined): TurnCard | null {
+  if (!raw) return null
+  try {
+    const c = JSON.parse(raw) as unknown
+    return c && typeof c === "object" && !Array.isArray(c) ? c as TurnCard : null
+  } catch {
+    return null
+  }
+}
+
 function toTurn(r: TurnRow): Turn {
-  return { id: r.id, threadId: r.thread_id, role: r.role, text: r.text, taskId: r.task_id, createdAt: r.created_at }
+  const card = parseCard(r.card)
+  return { id: r.id, threadId: r.thread_id, role: r.role, text: r.text, taskId: r.task_id, createdAt: r.created_at, ...(card ? { card } : {}) }
 }
 
 function toTask(r: TaskRow): Task {
@@ -108,12 +134,37 @@ function toTask(r: TaskRow): Task {
 
 // ---- turns ----------------------------------------------------------------
 
-export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = GENERAL_CHANNEL): Turn {
-  const turn: Turn = { id: randomUUID(), threadId, role, text, taskId, createdAt: Date.now() }
+const appendedListeners = new Set<(turn: Turn) => void>()
+
+/** Run `fn` after every appended turn (wiring/brain.ts wakes the brain on its thread's events). */
+export function onTurnAppended(fn: (turn: Turn) => void): () => void {
+  appendedListeners.add(fn)
+  return () => appendedListeners.delete(fn)
+}
+
+export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = GENERAL_CHANNEL, card?: TurnCard): Turn {
+  const turn: Turn = { id: randomUUID(), threadId, role, text, taskId, createdAt: Date.now(), ...(card ? { card } : {}) }
   db.query(
-    "INSERT INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(turn.id, turn.threadId, turn.role, turn.text, turn.taskId, turn.createdAt)
+    "INSERT INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at, card) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(turn.id, turn.threadId, turn.role, turn.text, turn.taskId, turn.createdAt, card ? JSON.stringify(card) : null)
+  for (const fn of appendedListeners) {
+    try { fn(turn) } catch { /* a listener never fails the write */ }
+  }
   return turn
+}
+
+export function getTurn(id: string): Turn | null {
+  const row = db.query("SELECT * FROM orchestrator_turns WHERE id = ?").get(id) as TurnRow | null
+  return row ? toTurn(row) : null
+}
+
+/** Merge fields into a turn's card (brain voice take → audioId). Null when the turn has no card. */
+export function setTurnCard(id: string, patch: Partial<TurnCard>): Turn | null {
+  const turn = getTurn(id)
+  if (!turn?.card) return null
+  const card: TurnCard = { ...turn.card, ...patch }
+  db.query("UPDATE orchestrator_turns SET card = ? WHERE id = ?").run(JSON.stringify(card), id)
+  return { ...turn, card }
 }
 
 // The most recent `limit` turns, oldest-first.
@@ -140,6 +191,15 @@ export function getThread(threadId: string = GENERAL_CHANNEL, limit = 200): Turn
     .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
     .all(threadId, limit) as TurnRow[]
   return rows.reverse().map(toTurn)
+}
+
+/** Turns of one thread whose text contains `q` (case-insensitive), newest first (the brain's bin/thread). */
+export function searchThread(threadId: string, q: string, limit = 20): Turn[] {
+  const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+  const rows = db
+    .query("SELECT * FROM orchestrator_turns WHERE thread_id = ? AND text LIKE ? ESCAPE '\\' ORDER BY created_at DESC, rowid DESC LIMIT ?")
+    .all(threadId, like, limit) as TurnRow[]
+  return rows.map(toTurn)
 }
 
 // ---- dispatch tasks -------------------------------------------------------
@@ -181,8 +241,8 @@ export function createQueuedTask(prompt: string, cwd: string, threadId: string =
   return task
 }
 
-// Propose-confirm (Phase 2): the brain proposes a dispatch; nothing spawns until
-// the user approves (setTaskSpawn flips it to dispatched).
+// Propose-confirm (Phase 2): the brain proposes a dispatch; approve files it to
+// Turso (markFiled).
 export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL, target: ProposalTarget = {}): Task {
   const now = Date.now()
   const task: Task = {
@@ -192,18 +252,6 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
   }
   insertTask(task)
   return task
-}
-
-// Approve a proposal: record the spawned worker's tmux session (and the server
-// it is on — "" / null = default) and flip to dispatched so reconcileDispatch
-// picks it up and delivers the prompt.
-export function setTaskSpawn(taskId: string, tmuxSession: string | null, tmuxSocket: string | null = null): void {
-  db.query("UPDATE orchestrator_tasks SET tmux_session = ?, tmux_socket = ?, status = 'dispatched', updated_at = ? WHERE task_id = ?").run(
-    tmuxSession,
-    tmuxSocket || null,
-    Date.now(),
-    taskId,
-  )
 }
 
 // ---- filing (orchestrator-one-queue P2) -------------------------------------
@@ -229,14 +277,6 @@ export function markFiled(taskId: string, target: { noteId: string; agent: strin
   return res.changes > 0
 }
 
-/** Live run (P4): pin the cwd / note / agent a proposal runs with, while still proposed. */
-export function setLiveTarget(taskId: string, target: { cwd: string; noteId: string; agent: string }): boolean {
-  const res = db.query(
-    "UPDATE orchestrator_tasks SET cwd = ?, note_id = ?, agent = ?, updated_at = ? WHERE task_id = ? AND status = 'proposed'",
-  ).run(target.cwd, target.noteId, target.agent, Date.now(), taskId)
-  return res.changes > 0
-}
-
 export function getTaskByDispatchId(dispatchTaskId: string): Task | null {
   const row = db.query("SELECT * FROM orchestrator_tasks WHERE dispatch_task_id = ?").get(dispatchTaskId) as TaskRow | null
   return row ? toTask(row) : null
@@ -247,105 +287,8 @@ export function getTask(taskId: string): Task | null {
   return row ? toTask(row) : null
 }
 
-export function bindTaskSession(taskId: string, sessionKey: string): void {
-  db.query("UPDATE orchestrator_tasks SET session_key = ?, status = 'running', updated_at = ? WHERE task_id = ?").run(
-    sessionKey,
-    Date.now(),
-    taskId,
-  )
-}
-
 export function setTaskStatus(taskId: string, status: TaskStatus): void {
   db.query("UPDATE orchestrator_tasks SET status = ?, updated_at = ? WHERE task_id = ?").run(status, Date.now(), taskId)
-}
-
-// Final pane snapshot for the collapsed worker card (hybrid output model): live
-// lines stream transiently over WS while running; only this last tail persists.
-export function setTaskLogTail(taskId: string, logTail: string): void {
-  db.query("UPDATE orchestrator_tasks SET log_tail = ?, updated_at = ? WHERE task_id = ?").run(logTail, Date.now(), taskId)
-}
-
-// Match a freshly-registered worker session back to the task that spawned it:
-// the oldest still-unbound dispatched task in the same cwd. cwd is the only
-// signal shared between /api/dispatch (we picked the cwd) and the session-start
-// hook (Claude Code reports its cwd) before we know the session key.
-export function matchUnboundTaskByCwd(cwd: string): Task | null {
-  const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched' ORDER BY created_at ASC LIMIT 1")
-    .get(cwd) as TaskRow | null
-  return row ? toTask(row) : null
-}
-
-// Find the task a turn-end belongs to, by cwd — the only identifier reliably
-// present in every hook payload. A worker running inside tmux reports a pty that
-// differs from the ps-discovered session key used at bind time, so matching on
-// the key misses; cwd is stable across spawn → session-start → stop.
-export function findRunningTaskByCwd(cwd: string): Task | null {
-  const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE cwd = ? AND status = 'running' ORDER BY updated_at DESC LIMIT 1")
-    .get(cwd) as TaskRow | null
-  return row ? toTask(row) : null
-}
-
-// ---- worker identity matchers (PRJ-OR1T Phase 8) ---------------------------
-//
-// Correlating a hook event back to its task by cwd alone breaks the moment two
-// workers share a directory. These are the identity-first lookups the resolver
-// (lib/worker-identity.ts) walks before it ever falls back to cwd: the task id
-// the worker carries in its env, then the tmux session it lives in. Each one
-// filters on the status the event expects, so a task that is already bound (or
-// already closed) never matches a second time.
-
-// Tier 1, bind: the exact task this worker was dispatched as — only while it is
-// still waiting for a session. A bound task returns null so a re-emitted
-// session frame can't re-fire its prompt.
-export function matchUnboundTaskById(taskId: string): Task | null {
-  const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE task_id = ? AND session_key IS NULL AND status = 'dispatched'")
-    .get(taskId) as TaskRow | null
-  return row ? toTask(row) : null
-}
-
-// Tier 1, close: the exact task this turn-end belongs to, only while it runs.
-export function findRunningTaskById(taskId: string): Task | null {
-  const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE task_id = ? AND status = 'running'")
-    .get(taskId) as TaskRow | null
-  return row ? toTask(row) : null
-}
-
-// Tier 2, bind: we spawned every worker into a named tmux session, so the pane's
-// session name identifies it even when the hook carries no task id.
-export function matchUnboundTaskByTmuxSession(tmuxSession: string): Task | null {
-  const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE tmux_session = ? AND session_key IS NULL AND status = 'dispatched' ORDER BY created_at ASC LIMIT 1")
-    .get(tmuxSession) as TaskRow | null
-  return row ? toTask(row) : null
-}
-
-// Tier 2, close.
-export function findRunningTaskByTmuxSession(tmuxSession: string): Task | null {
-  const row = db
-    .query("SELECT * FROM orchestrator_tasks WHERE tmux_session = ? AND status = 'running' ORDER BY updated_at DESC LIMIT 1")
-    .get(tmuxSession) as TaskRow | null
-  return row ? toTask(row) : null
-}
-
-// The ambiguity gate: how many tasks in this cwd a cwd-only match would have to
-// choose between. 1 → the cwd is identity enough (today's behaviour); 2+ → the
-// resolver must find real identity or refuse.
-export function countUnboundTasksInCwd(cwd: string): number {
-  const row = db
-    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND session_key IS NULL AND status = 'dispatched'")
-    .get(cwd) as { n: number }
-  return row.n
-}
-
-export function countRunningTasksInCwd(cwd: string): number {
-  const row = db
-    .query("SELECT COUNT(*) AS n FROM orchestrator_tasks WHERE cwd = ? AND status = 'running'")
-    .get(cwd) as { n: number }
-  return row.n
 }
 
 // List tasks, optionally scoped to one channel. threadId omitted → all channels
@@ -365,12 +308,6 @@ export function listTasks(threadId?: string): Task[] {
 // Every pending proposal, any channel, oldest first (triage).
 export function listProposals(limit = 200): Task[] {
   return (db.query("SELECT * FROM orchestrator_tasks WHERE status = 'proposed' ORDER BY created_at ASC LIMIT ?").all(limit) as TaskRow[]).map(toTask)
-}
-
-// Every local worker row that may still hold a tmux worker (dispatched/running),
-// listed or not — the worker tail resumes these on boot.
-export function listLiveTasks(): Task[] {
-  return (db.query("SELECT * FROM orchestrator_tasks WHERE status IN ('dispatched', 'running') ORDER BY created_at ASC").all() as TaskRow[]).map(toTask)
 }
 
 // ---- backpressure (PRJ-OR1T Phase 7) --------------------------------------

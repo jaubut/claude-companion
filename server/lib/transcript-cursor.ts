@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs"
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs"
 
 // Byte cursor for the incremental transcript reader (split out of transcript.ts
 // to keep it under the module cap). Only appended bytes are parsed on each
@@ -169,4 +169,20 @@ export function lastPastedUserIdx(entries: Located[]): number {
     if (Array.isArray(content) && (content as Array<Record<string, unknown>>).some((b) => b?.type === "image")) return i
   }
   return -1
+}
+
+// The last `tailBytes` of a transcript split into lines, [] when there is no
+// file. The first line may be cut mid-entry; callers skip what fails to parse.
+export function readTailLines(path: string, tailBytes: number): string[] {
+  try {
+    const size = statSync(path).size
+    const start = Math.max(0, size - tailBytes)
+    const len = size - start
+    if (len <= 0) return []
+    const fd = openSync(path, "r")
+    const buf = Buffer.alloc(len)
+    try { readSync(fd, buf, 0, len, start) } finally { closeSync(fd) }
+    return buf.toString("utf8").split("\n")
+  } catch { /* no transcript on disk */ }
+  return []
 }

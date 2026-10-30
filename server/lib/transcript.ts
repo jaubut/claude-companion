@@ -1,9 +1,9 @@
-import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs"
+import { realpathSync, statSync } from "node:fs"
 import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
 import { artifactKey, detectArtifacts } from "./artifacts"
 import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
-import { imageBlockData, lastPastedUserIdx, lineExpectation, lineMatches, readAppended, readLineAt, type LineAt, type ToolUses } from "./transcript-cursor"
+import { imageBlockData, lastPastedUserIdx, lineExpectation, lineMatches, readAppended, readLineAt, readTailLines, type LineAt, type ToolUses } from "./transcript-cursor"
 import { clampLong } from "./tool-format"
 import type { Activity } from "./activity"
 
@@ -174,25 +174,16 @@ export function modelForIdentity(meta: { transcriptPath?: string; sessionId?: st
 // Bounded tail read: transcripts run to megabytes and we only need the last
 // assistant line. A truncated first line just fails JSON.parse and is skipped.
 export function modelFromTranscript(path: string, tailBytes = 131_072): string {
-  try {
-    const size = statSync(path).size
-    const start = Math.max(0, size - tailBytes)
-    const len = size - start
-    if (len <= 0) return ""
-    const fd = openSync(path, "r")
-    const buf = Buffer.alloc(len)
-    try { readSync(fd, buf, 0, len, start) } finally { closeSync(fd) }
-    const lines = buf.toString("utf8").split("\n")
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i]
-      if (!line?.trim()) continue
-      try {
-        const entry = JSON.parse(line) as { message?: { model?: string } }
-        const model = entry.message?.model
-        if (isRealModel(model)) return model
-      } catch { /* partial or non-JSON line */ }
-    }
-  } catch { /* no transcript on disk */ }
+  const lines = readTailLines(path, tailBytes)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line?.trim()) continue
+    try {
+      const entry = JSON.parse(line) as { message?: { model?: string } }
+      const model = entry.message?.model
+      if (isRealModel(model)) return model
+    } catch { /* partial or non-JSON line */ }
+  }
   return ""
 }
 
@@ -329,7 +320,7 @@ export function readTranscriptDelta(
 
 // ── Thinking in the feed (RES-L5NG step 4) ──
 
-const THINKING_MAX = 4000
+export const THINKING_MAX = 4000
 
 // One `assistant_thinking` event per distinct thinking block. Like images it
 // is not counted and never sets streamedThisTurn — turn-end policy stays

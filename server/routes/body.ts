@@ -6,8 +6,6 @@ import { companionLog } from "../lib/log"
 import { type QueryFn, TursoUnreachable, tursoQuery } from "../lib/turso"
 import { type BodyAlertSink, bodyAlertSink, bodySnapshot, tokensSnapshot } from "../wiring/body"
 import { parseInvestigateBody } from "../lib/body-investigator"
-import { parseFixRequest } from "../lib/body-fix"
-import { runBodyFix } from "../wiring/body-fix"
 import { type CompactionStats, localDayStart } from "../lib/auto-compact-stats"
 import { compactionStatsSince } from "../wiring/auto-compact"
 import { parseAgentBody } from "../lib/body-agent"
@@ -23,8 +21,7 @@ import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/b
 //   POST /api/body/alert              collector alert → #Body turn, `body_alert` frame, gated push
 //                                     (+ a problem state triggers an auto-investigation)
 //   POST /api/body/investigate        {component_id,…} investigate on this host / {report} from a peer
-//   POST /api/body/fix                an approved Mac fix forwarded by Zettlab → live run here
-//   POST /api/body/component/:id/agent  "Get an agent on it": a live agent run on the owning host
+//   POST /api/body/component/:id/agent  "Get an agent on it": files a pending agent task tagged for the owning host
 // Turso failures map to 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
 
 export interface BodyRouteDeps {
@@ -34,8 +31,6 @@ export interface BodyRouteDeps {
   /** Auto-compactions since a ms timestamp (wiring/auto-compact.ts). */
   compactions?: (sinceMs: number) => CompactionStats
   sink?: BodyAlertSink
-  /** Owning-host side of an approved Mac fix (wiring/body-fix.ts). */
-  runFix?: typeof runBodyFix
   /** "Get an agent on it" (wiring/body-agent.ts). */
   startAgent?: (componentId: string, instruction: string | null) => Promise<Response>
   /** Lazy: the live investigator is built on first use. */
@@ -60,7 +55,6 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
   const sink = deps.sink ?? bodyAlertSink
   const now = deps.now ?? Date.now
   const investigator = deps.investigator ?? bodyInvestigator
-  const runFix = deps.runFix ?? runBodyFix
   const startAgent = deps.startAgent ?? ((id: string, instruction: string | null) => startBodyAgent(id, instruction))
   const latest = (id: string): InvestigationRecord | null => {
     try { return investigator().latestFor(id) } catch { return null }
@@ -129,17 +123,6 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
       void investigator().consider({ componentId: alert.component_id, state: alert.state, fromState: alert.from_state, trigger: "alert" })
         .catch((err) => companionLog(`[body-investigate] alert trigger failed: ${(err as Error)?.message ?? err}`))
       return Response.json({ ok: true })
-    }
-    if (url.pathname === "/api/body/fix" && req.method === "POST") {
-      let raw: unknown
-      try {
-        raw = await req.json()
-      } catch {
-        return Response.json({ ok: false, error: "invalid JSON" }, { status: 400 })
-      }
-      const fix = parseFixRequest(raw)
-      if ("error" in fix) return Response.json({ ok: false, error: fix.error }, { status: 400 })
-      return runFix(fix)
     }
     if (url.pathname === "/api/body/investigate" && req.method === "POST") {
       let raw: unknown

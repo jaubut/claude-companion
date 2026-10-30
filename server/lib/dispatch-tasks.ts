@@ -2,17 +2,18 @@ import { randomUUID } from "node:crypto"
 import { readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { dashboardBase } from "./dashboard-client"
 import type { Task, TaskStatus } from "./orchestrator-chat"
 import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
 
 // Turso `tasks` as the one work queue (orchestrator-one-queue). P1 = read path:
 // the dispatch task model, the shared task DTO (local + Turso), and the named
-// read queries. P2 = the only Companion writes: file, cancel, requeue, unblock —
-// each a guarded compare-and-set plus one agent_activity row. P4 = live mode,
-// in dispatch-live.ts. Every function takes its QueryFn / ExecFn so tests inject a fake.
+// read queries. P2 = the only Companion writes: file (as `pending`: the dashboard
+// release stamp queues it — one work stream, docs/one-stream-plan.md), cancel,
+// requeue, unblock — each a guarded compare-and-set plus one agent_activity row. Every function takes its QueryFn / ExecFn so tests inject a fake.
 // Contract: docs/orchestrator-dispatch-api.md.
 
-export type DispatchStatus = "queued" | "running" | "blocked" | "pr" | "completed" | "failed" | "cancelled"
+export type DispatchStatus = "pending" | "queued" | "running" | "blocked" | "pr" | "completed" | "failed" | "cancelled"
 export type TaskSource = "dispatch" | "local" | "proposal"
 export type TaskMode = "headless" | "live"
 
@@ -75,9 +76,11 @@ export interface DispatchColumns {
   resultRef: boolean
   /** tasks.origin (CaMeL): only a trusted origin may insert `queued` past the queue guard. */
   origin?: boolean
+  /** tasks.requires_host (any | mac | zettlab): dispatch-run claims only its own host's rows (plan slice G). */
+  requiresHost?: boolean
 }
 
-const KNOWN: readonly string[] = ["queued", "running", "blocked", "completed", "failed", "cancelled"]
+const KNOWN: readonly string[] = ["pending", "queued", "running", "blocked", "completed", "failed", "cancelled"]
 export const BLOCKER_STATES: readonly DispatchStatus[] = ["blocked", "failed"]
 
 // ── mapping ──────────────────────────────────────────────────────────────────
@@ -190,9 +193,7 @@ function dispatchDto(t: DispatchTask, threadId: string, ds: DispatchStatus | nul
 /** A local sqlite task (proposal or legacy tmux worker) in the shared DTO. */
 export function toTaskDto(t: Task): TaskDto {
   const proposal = t.status === "proposed" || t.status === "rejected" || t.status === "filed"
-  // A live run (P4) is represented by its Turso row; the local row reads as
-  // `filed` (the proposal card leaves) and is never listed on its own.
-  const status = isLiveLinked(t) ? "filed" : t.status
+  const status = t.status
   // Spread first: every field the local frame carried before stays (additive).
   return {
     ...t, status,
@@ -202,18 +203,16 @@ export function toTaskDto(t: Task): TaskDto {
   }
 }
 
-/** A local worker row that runs a claimed Turso task (live mode, P4). */
-export function isLiveLinked(t: Pick<Task, "status" | "dispatchTaskId">): boolean {
-  return !!t.dispatchTaskId && t.status !== "proposed" && t.status !== "rejected" && t.status !== "filed"
-}
-
 // ── reads ────────────────────────────────────────────────────────────────────
 
 /** Which optional columns exist. Throws TursoUnreachable like any query. */
 export async function detectColumns(query: QueryFn): Promise<DispatchColumns> {
   const rows = await query("SELECT name FROM pragma_table_info('tasks')", [])
   const names = new Set(rows.map((r) => String(r.name)))
-  return { prUrl: names.has("dispatch_pr_url"), resultRef: names.has("dispatch_result_ref"), ...(names.has("origin") ? { origin: true } : {}) }
+  return {
+    prUrl: names.has("dispatch_pr_url"), resultRef: names.has("dispatch_result_ref"),
+    ...(names.has("origin") ? { origin: true } : {}), ...(names.has("requires_host") ? { requiresHost: true } : {}),
+  }
 }
 
 // Column list built from a fixed vocabulary only — never from input.
@@ -235,7 +234,7 @@ export async function listDispatchTasks(query: QueryFn, cols: DispatchColumns): 
   const rows = await query(
     `SELECT ${selectCols(cols)} FROM tasks t LEFT JOIN notes n ON n.id = t.note_id ` +
       "WHERE t.assignee LIKE 'agent:%' AND t.dispatch_status IS NOT NULL " +
-      "AND (t.updated_at >= datetime('now', ?) OR (t.done = 0 AND t.dispatch_status IN ('queued', 'running', 'blocked'))) " +
+      "AND (t.updated_at >= datetime('now', ?) OR (t.done = 0 AND t.dispatch_status IN ('pending', 'queued', 'running', 'blocked'))) " +
       "ORDER BY t.updated_at DESC LIMIT ?",
     [`-${POLL_WINDOW_DAYS} days`, POLL_LIMIT],
   )
@@ -393,32 +392,42 @@ export async function ledger(ctx: WriteCtx, t: Pick<DispatchTask, "id" | "agent"
   }
 }
 
+export type RequiresHost = "mac" | "zettlab"
+
 export interface FileInput {
   id: string; noteId: string; agent: string; title: string; description: string
   /** "jeremie" only when he typed or tapped it; unset rows default to `unknown` and the queue guard refuses them. */
   origin?: "jeremie"
+  /** Host-specific work (a Mac #Body fix): only that host's dispatch-run may claim it. Written only when the column exists. */
+  requiresHost?: RequiresHost | null
 }
 
-/** The origin column + value for an INSERT, when both the column and a trusted origin exist. */
-export function originInsert(ctx: WriteCtx, input: FileInput): { col: string; val: string; args: string[] } {
-  return ctx.cols.origin && input.origin ? { col: ", origin", val: ", ?", args: [input.origin] } : { col: "", val: "", args: [] }
+/** Where Jeremie releases a pending row (task_stamps release stamp, MFA): the dashboard, never Companion. */
+export function approveUrl(id: string): string {
+  return `${dashboardBase()}/tasks?task=${encodeURIComponent(id)}`
 }
 
 /**
- * Insert a queued agent task under a pre-generated id. INSERT OR IGNORE: a
- * replay with the same id is a no-op (inserted=false) and writes no ledger row.
+ * Insert an agent task under a pre-generated id — the one Companion write that
+ * starts work. Jeremie's own (origin "jeremie": typed, or a tap on his
+ * conversation's proposal) goes in `queued`; anything else `pending`, which the
+ * dashboard release stamp queues. Never `running`. INSERT OR IGNORE: a replay
+ * with the same id is a no-op (inserted=false) and writes no ledger row.
  */
-export async function fileTask(ctx: WriteCtx, input: FileInput): Promise<{ id: string; inserted: boolean }> {
+export async function fileTask(ctx: WriteCtx, input: FileInput): Promise<{ id: string; inserted: boolean; status: "queued" | "pending" }> {
   const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
-  const o = originInsert(ctx, input)
+  const origin = input.origin && ctx.cols.origin ? input.origin : null
+  const host = input.requiresHost && ctx.cols.requiresHost ? input.requiresHost : null
+  const status = origin ? "queued" : "pending"
+  const cols = [...(origin ? ["origin"] : []), ...(host ? ["requires_host"] : [])]
   const { affected } = await ctx.exec(
-    `INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, created_at, updated_at${o.col}) ` +
-      `VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, 'queued', datetime('now'), datetime('now')${o.val})`,
-    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`, ...o.args],
+    `INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, dispatch_status, ${cols.map((c) => `${c}, `).join("")}created_at, updated_at) ` +
+      `VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, ?, ${cols.map(() => "?, ").join("")}datetime('now'), datetime('now'))`,
+    [input.id, input.noteId, title, input.description, input.noteId, `agent:${input.agent}`, status, ...(origin ? [origin] : []), ...(host ? [host] : [])],
   )
   const inserted = affected > 0
-  if (inserted) await ledger(ctx, { id: input.id, agent: input.agent }, "queued", `→queued: ${title}`, { op: "file", note: input.noteId })
-  return { id: input.id, inserted }
+  if (inserted) await ledger(ctx, { id: input.id, agent: input.agent }, status, `→${status}: ${title}`, { op: "file", note: input.noteId, ...(host ? { requiresHost: host } : {}) })
+  return { id: input.id, inserted, status }
 }
 
 // Requeue resets exactly what dispatch.sh's `queued` resets; the P0 columns only when present.
@@ -461,7 +470,7 @@ async function transition(ctx: WriteCtx, id: string, tr: Transition): Promise<Wr
   return { ok: true, task: after.task }
 }
 
-const CANCELLABLE: readonly string[] = ["queued", "blocked", "failed"]
+const CANCELLABLE: readonly string[] = ["pending", "queued", "blocked", "failed"]
 const REQUEUEABLE: readonly string[] = ["blocked", "failed", "cancelled"]
 
 /** queued | blocked | failed → cancelled (done=1). Running → `running` (its runner owns it). */
@@ -469,7 +478,7 @@ export function cancelDispatchTask(ctx: WriteCtx, id: string): Promise<WriteOutc
   return transition(ctx, id, {
     to: "cancelled",
     allowed: (t) => !!t.status && CANCELLABLE.includes(t.status),
-    guard: "dispatch_status IN ('queued', 'blocked', 'failed')", guardArgs: [],
+    guard: "dispatch_status IN ('pending', 'queued', 'blocked', 'failed')", guardArgs: [],
     sets: ["dispatch_status = 'cancelled'", "updated_at = datetime('now')", "done = 1", "dispatch_completed_at = datetime('now')"],
     setArgs: [],
     summary: (t) => `→cancelled: ${t.title}`,

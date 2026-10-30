@@ -39,7 +39,7 @@ const memMirror: Mirror = {
 }
 
 const channel = (id: string): Channel => ({
-  id, name: id, cwd: null, createdAt: 0, archived: false, autoDispatch: false,
+  id, name: id, cwd: null, createdAt: 0, archived: false,
   trust: { approved: 0, rejected: 0, streak: 0, eligible: false }, noteId: null, noteTitle: null, noteRef: null,
 })
 

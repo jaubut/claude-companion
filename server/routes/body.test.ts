@@ -71,7 +71,7 @@ describe("POST /api/body/alert", () => {
 
     const thread = chat.getThread("body")
     expect(thread.at(-1)).toMatchObject({ role: "orchestrator", text: "backup dead\nexit 1", threadId: "body", taskId: null })
-    expect(chat.getChannel("body")).toMatchObject({ name: "Body", autoDispatch: false })
+    expect(chat.getChannel("body")).toMatchObject({ name: "Body" })
 
     expect(frames.map((f) => f.type)).toEqual(["orchestrator_channel", "orchestrator", "body_alert"])
     expect(frames[2]).toEqual({

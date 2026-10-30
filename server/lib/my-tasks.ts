@@ -257,3 +257,18 @@ export async function setDue(exec: ExecFn, id: string, due: string | null): Prom
   }
   return { ok: true, done: after.done, due: after.due }
 }
+
+/**
+ * A to-do for Jeremie on a project note (the brain's bin/todo). His task, never
+ * an agent's: no dispatch_status, so nothing is ever queued. Same `id` twice →
+ * one row (INSERT OR IGNORE). `due` = YYYY-MM-DD or null.
+ */
+export async function addTodo(exec: ExecFn, t: { id: string; noteId: string; text: string; due: string | null }): Promise<{ inserted: boolean }> {
+  const { affected } = await exec(
+    "INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, due_date, position, assignee, created_at, updated_at) " +
+      "VALUES (?, ?, ?, '', 0, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), ?, datetime('now'), datetime('now'))",
+    [t.id, t.noteId, t.text, t.due ?? "", t.noteId, MINE[0] ?? "human:jeremie"],
+  )
+  if (affected > 0) await ledger(exec, t.id, "task_created", `to-do from the brain: ${t.text}`, { note: t.noteId, due: t.due, by: "brain" })
+  return { inserted: affected > 0 }
+}

@@ -6,6 +6,17 @@ import { realpathSync } from "node:fs"
 import { readdir, realpath } from "node:fs/promises"
 import { join } from "node:path"
 
+// tmux prints a format's tab separators as "_" unless the client's locale
+// (LC_ALL, else LC_CTYPE, else LANG) names UTF-8. launchd starts the Mac
+// server with none of them, so every `-F` list split on "\t" came back as
+// one field. Set once at startup; an existing UTF-8 locale is left alone.
+export function ensureUtf8Locale(env: Record<string, string | undefined> = process.env): void {
+  const current = env.LC_ALL || env.LC_CTYPE || env.LANG || ""
+  if (/utf-?8/i.test(current)) return
+  env.LC_CTYPE = "UTF-8"
+  delete env.LC_ALL
+}
+
 // ── Which tmux server ────────────────────────────────────────────────────
 //
 // A pane id (%N) is only unique WITHIN one tmux server. Sessions launched on
@@ -244,37 +255,7 @@ export function paneHasDialog(pane: string): boolean {
   return /new MCP servers found|wish to enable|Do you trust|Select any you wish|enable this MCP/i.test(pane)
 }
 
-// Which tmux session owns this pane? The worker-identity resolver's tier 2:
-// a hook carries $TMUX_PANE (%N), the orchestrator knows the session name it
-// spawned (cc-<project>), and this is the only bridge between them.
-//
-// Called only when a cwd holds two or more candidate tasks, so the common
-// single-worker path never pays for a subprocess. Null on anything unexpected
-// — a malformed pane id, a dead pane, a slow tmux — and the caller refuses to
-// guess rather than treating the failure as a match.
 const PANE_ID = /^%\d+$/
-
-export async function tmuxSessionForPane(pane: string, socket?: string): Promise<string | null> {
-  if (!PANE_ID.test(pane)) return null
-  try {
-    const p = Bun.spawn([...tmuxArgv(socket), "display-message", "-p", "-t", pane, "#S"], {
-      stdout: "pipe",
-      stderr: "ignore",
-    })
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      p.kill()
-    }, 1_000)
-    const out = await new Response(p.stdout).text()
-    const code = await p.exited
-    clearTimeout(timer)
-    if (timedOut || code !== 0) return null
-    return out.trim() || null
-  } catch {
-    return null
-  }
-}
 
 // Does anyone have this pane's tmux session open in a terminal right now?
 // `#{session_attached}` counts attached clients. Null when tmux can't say

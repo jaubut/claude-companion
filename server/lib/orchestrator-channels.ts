@@ -1,12 +1,14 @@
 import { db } from "./orchestrator-db"
 import type { TaskStatus } from "./orchestrator-chat"
+import { RESERVED_CHANNELS } from "./brain"
 
 // ---- channels (PRJ-OR1T Phase 6) ------------------------------------------
 
-// Trust ramp (Phase 7): how this channel's proposals have fared. approved = the
-// user (or auto mode) let it run; rejected = tapped reject; streak = consecutive
-// approvals since the last reject, newest first. eligible flags a streak long
-// enough that the client may suggest auto-dispatch — the server never flips it.
+// Trust (Phase 7): how this channel's proposals have fared. approved = the user
+// let it run; rejected = tapped reject; streak = consecutive approvals since the
+// last reject, newest first. eligible flags a streak of AUTO_ELIGIBLE_STREAK.
+// The auto-dispatch toggle it once gated is gone (one-stream Q3); the
+// orchestrator_channels.auto_dispatch column is left unread (no migration).
 export interface ChannelTrust {
   approved: number
   rejected: number
@@ -22,7 +24,6 @@ export interface Channel {
   cwd: string | null
   createdAt: number
   archived: boolean
-  autoDispatch: boolean
   trust: ChannelTrust
   // Project link (orchestrator-one-queue): the Turso note this channel views.
   // At most one non-archived channel per note; title/ref are a display cache.
@@ -37,7 +38,6 @@ interface ChannelRow {
   cwd: string | null
   created_at: number
   archived: number
-  auto_dispatch: number
   note_id: string | null
   note_title: string | null
   note_ref: string | null
@@ -71,15 +71,9 @@ export function channelTrust(threadId: string): ChannelTrust {
 function toChannel(r: ChannelRow): Channel {
   return {
     id: r.id, name: r.name, cwd: r.cwd, createdAt: r.created_at, archived: !!r.archived,
-    autoDispatch: !!r.auto_dispatch, trust: channelTrust(r.id),
+    trust: channelTrust(r.id),
     noteId: r.note_id ?? null, noteTitle: r.note_title ?? null, noteRef: r.note_ref ?? null,
   }
-}
-
-// Flip a channel's auto-dispatch. Returns the updated channel, null if unknown.
-export function setChannelAuto(id: string, enabled: boolean): Channel | null {
-  db.query("UPDATE orchestrator_channels SET auto_dispatch = ? WHERE id = ?").run(enabled ? 1 : 0, id)
-  return getChannel(id)
 }
 
 function slugify(name: string): string {
@@ -98,18 +92,24 @@ export function getChannel(id: string): Channel | null {
   return row ? toChannel(row) : null
 }
 
+/** A name whose slug is a system channel id (brain / general / body): POST /channels refuses it. */
+export function isReservedName(name: string): boolean {
+  return RESERVED_CHANNELS.has(slugify(name))
+}
+
 // Create a user-defined channel. The id is a slug of the name, disambiguated with
-// a -N suffix on collision so two "TLS Dashboard" channels can coexist.
+// a -N suffix on collision so two "TLS Dashboard" channels can coexist. Never a
+// reserved id, even on a host where that system channel was never seeded.
 export function createChannel(name: string, cwd: string | null = null): Channel {
   const base = slugify(name)
   let id = base
-  for (let n = 2; getChannel(id); n++) id = `${base}-${n}`
+  for (let n = 2; getChannel(id) || RESERVED_CHANNELS.has(id); n++) id = `${base}-${n}`
   const ch: Channel = {
     id, name: name.trim(), cwd: cwd?.trim() || null, createdAt: Date.now(), archived: false,
-    autoDispatch: false, trust: { approved: 0, rejected: 0, streak: 0, eligible: false },
+    trust: { approved: 0, rejected: 0, streak: 0, eligible: false },
     noteId: null, noteTitle: null, noteRef: null,
   }
-  db.query("INSERT INTO orchestrator_channels (id, name, cwd, created_at, archived, auto_dispatch) VALUES (?, ?, ?, ?, 0, 0)").run(
+  db.query("INSERT INTO orchestrator_channels (id, name, cwd, created_at, archived) VALUES (?, ?, ?, ?, 0)").run(
     ch.id, ch.name, ch.cwd, ch.createdAt,
   )
   return ch
@@ -118,7 +118,7 @@ export function createChannel(name: string, cwd: string | null = null): Channel 
 // A system channel with a fixed id (e.g. the Body monitor's "body"). Created
 // once; an existing row with that id is reused as-is, even if archived.
 export function ensureChannel(id: string, name: string): { channel: Channel; created: boolean } {
-  const res = db.query("INSERT OR IGNORE INTO orchestrator_channels (id, name, cwd, created_at, archived, auto_dispatch) VALUES (?, ?, NULL, ?, 0, 0)").run(
+  const res = db.query("INSERT OR IGNORE INTO orchestrator_channels (id, name, cwd, created_at, archived) VALUES (?, ?, NULL, ?, 0)").run(
     id, name, Date.now(),
   )
   return { channel: getChannel(id)!, created: res.changes > 0 }

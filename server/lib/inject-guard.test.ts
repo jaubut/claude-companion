@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test"
 import { injectRefusal, paneExcerpt, paneNotReady } from "./inject-guard"
 import type { Dialog } from "./dialogs"
 import type { Session } from "./sessions"
+import { herdrScreen } from "./herdr"
 
 function session(over: Partial<Session> = {}): Session {
   return {
@@ -290,5 +291,34 @@ describe("pane_too_narrow", () => {
   test("a dialog still outranks a narrow pane", () => {
     expect(injectRefusal({ lookup: "k", target: session(), paneFree: true, dialog: dialog(), pane: IDLE, paneWidth: 11 })?.error)
       .toBe("dialog_open")
+  })
+})
+
+// Device, build 66: a `/` typed into a herdr session from the phone's
+// Terminal view stayed in the input line; the next chat send was pasted after
+// it and Claude got "/@/path … it's working!". The phone inject guard now
+// reads a herdr-only session's screen too (wiring/dialogs.ts
+// screenSnapshotFor), so the same rule as tmux applies: never type onto text
+// the server cannot prove is empty — refuse, never wipe it.
+describe("injectRefusal — herdr screen", () => {
+  const herdr = (rows: string[]) => herdrScreen(rows.map((l) => (l ? `\x1b[0m\x1b[38;2;153;153;153m${l}\x1b[0m   ` : "")).join("\r\n"))
+  const target = session({ tmuxPane: "", herdrPane: "w1:p2" } as Partial<Session>)
+  const at = { lookup: target.key, target, dialog: null, paneFree: true }
+
+  test("a leftover `/` (slash menu open) is refused, not typed after", () => {
+    const pane = herdr(["", DIV, "❯ /", DIV, "  /add-dir     Add a new working directory", "  /agents      Manage agent configurations", ""])
+    const r = injectRefusal({ ...at, pane })
+    expect(r?.error).toBe("pane_not_ready")
+    expect(r?.excerpt).toContain("❯ /")
+  })
+
+  test("a leftover `/` with the menu closed is input_not_empty", () => {
+    const r = injectRefusal({ ...at, pane: herdr(["", DIV, "❯ /", DIV, FOOTER, ""]) })
+    expect(r?.error).toBe("pane_not_ready")
+    expect(r?.reason).toBe("input_not_empty")
+  })
+
+  test("an empty herdr input box proceeds", () => {
+    expect(injectRefusal({ ...at, pane: herdr(["", DIV, "❯ ", DIV, FOOTER, ""]) })).toBeNull()
   })
 })

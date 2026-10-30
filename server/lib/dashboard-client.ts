@@ -174,3 +174,18 @@ export function getNote(q: { id?: string; ref?: string }): Promise<DashReply> {
 export function listNotesLite(): Promise<{ status: number; value: unknown }> {
   return dashboardValue("GET", "/api/notes?lite=1", undefined, 30_000)
 }
+
+/** List-view projection of every note (a JSON array; carries updated_at, body cut to 280 chars). */
+export function listNotes(): Promise<{ status: number; value: unknown }> {
+  return dashboardValue("GET", "/api/notes", undefined, 30_000)
+}
+
+/** `{ok, updated_at}` — tls-dashboard-v2 PUT /api/note (merge by id). */
+export function updateNote(fields: Record<string, unknown>): Promise<DashReply> {
+  return dashboardJson("PUT", "/api/note", fields, 30_000)
+}
+
+/** `{results:[{kind, id, title, ...}]}` — tls-dashboard-v2 POST /api/search (notes get ceil(limit/4) slots). */
+export function searchDashboard(query: string, limit: number): Promise<DashReply> {
+  return dashboardJson("POST", "/api/search", { query, limit })
+}

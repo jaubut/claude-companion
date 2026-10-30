@@ -192,7 +192,10 @@ export async function paneWidthFor(
 
 // The session's screen, styled, from whichever pane it has: tmux first
 // (paneSnapshotFor), else herdr `pane read`. Same undefined/null contract.
-// Used by auto-compact; the phone inject guard stays on paneSnapshotFor.
+// Used by auto-compact and the phone inject guard (api.ts, ws.ts): a herdr
+// session's leftover input (a `/` typed from the phone's Terminal view) is
+// refused like a tmux one, never typed after. Width stays on paneWidthFor:
+// herdr's paste delivery has no read-back for a narrow pane to break.
 export async function screenSnapshotFor(
   target: { tmuxPane?: string; tmuxSocket?: string; herdrPane?: string } | null | undefined,
 ): Promise<string | null | undefined> {

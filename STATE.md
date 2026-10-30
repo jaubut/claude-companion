@@ -1,8 +1,23 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-04
+Last updated: 2026-10-25
 
 ## Active Decisions
+
+### Terminal sessions from the phone: tagged tmux shells + a PTY WebSocket (2026-10-25)
+**Choice:** `POST /api/spawn-session {agent:"shell", cwd}` starts `$SHELL -l` in a detached tmux session `sh-<dir>` (argv, `-c <cwd>`, never a command line), tagged `@companion_shell 1`. tmux is the record (`lib/shell-sessions.ts`): a 3 s `list-sessions` poll feeds the list, so a restart loses nothing and `exit` ends it. Shells are appended to the wire session list (`wireSessions`: init, `sessions` frame, `/api/status`, `/api/feed`) as `agent:"shell"`, never into the lib/sessions.ts Map. `GET /api/terminal?key=&cols=&rows=` (Bearer gate, 410 for an unknown key) upgrades to a WS bridged to `tmux attach-session -t =<name>` under a Bun PTY (`lib/terminal-bridge.ts`): binary both ways, JSON `resize`, close 4000 "ended" when the attach exits.
+**Why:** the iPhone has no way to run tmux/ssh (Canvas does, TerminalAttach.swift), so the server is the terminal client. Jeremie wants Moshi-style terminals without paying for Moshi Pro.
+**Rejected:** herdr for shells (no PTY attach client to bridge); shell rows in the sessions Map (inject/triage/canvas/waiting would all have to learn to skip them).
+**Revisit if:** the phone needs to attach agent panes too (same bridge, `-t <pane>`), or the poll shows up in load.
+
+### One work stream: Companion files `pending` rows, never claims (task d2487443, 2026-10-21)
+**Date:** 2026-10-21 (plan: `docs/one-stream-plan.md`)
+**Choice:** code work has one path: tasks row → `pending` → dashboard `/tasks` release stamp (task_stamps, C-020, MFA) → `queued` → dispatch-run → builder PR → shepherd → merged. Companion approve / dispatch / #Body taps file a `pending` row and nothing else. Deleted: live mode (claimLive, tmux worker runner), Mac live fix forward, blocked-task takeover (it becomes guarded unblock/requeue), the resolver's own PR fix run. Relay ACK no longer claims a row; the planner claims via dispatch.sh from `queued`.
+**Why:** Jeremie 2026-10-21: "ONE pipeline, no side channels". Turso `tasks_queue_guard_ins` already refuses Companion's `queued` insert (origin defaults to `unknown`), so headless approve is broken today, and `claimLive` inserts `running`, which skips the stamp.
+**Rejected:** keeping live mode behind the stamp (that is still a second runner); a Companion-side approve with an API key (MFA stays dashboard-only).
+**Amended 2026-10-22 (Jeremie: Q1 to Q3):** Mac-only work is routed by a machine tag, `tasks.requires_host` (`any|mac|zettlab`); dispatch-run claims only `any` or its own host (slice G: claude-config + the dashboard schema). Companion sets `mac` on Mac #Body fix rows when the column exists. The resolver's PR fix run gives way to the shepherd's `pr:unpark`. The auto-dispatch toggle is removed.
+**Slice A2 (2026-10-23):** deleted the local tmux worker runner (`executeDispatch`, `workerQueue` + `lib/orchestrator-queue.ts`, worker tail, worker identity + `reconcileDispatch` + the stop-hook close, `sendToTmux`, `tmuxSessionForPane`, `setTaskSpawn` / `bindTaskSession` / `setLiveTarget` and the identity matchers), the channel auto-dispatch toggle (route, `setChannelAuto`, `vetoAuto`, `Channel.autoDispatch`; the `auto_dispatch` column stays unread, no migration) and the triage label "Approve and start it" (now "Approve it"). `queue.cap` is reported as 0. Removing the `local` queue summary entirely (`QueueSummary.cap/live/queued`, status line "Live workers here") and the `trust.eligible` ramp is left for a follow-up.
+**Revisit if:** the dashboard stamp round-trip turns out too slow from the phone, or a third host appears (widen the tag's CHECK).
 
 ### Canvas graph store + tri-state status (PRJ-FL49 P5)
 **Date:** 2026-10-18

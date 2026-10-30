@@ -148,13 +148,13 @@ beforeEach(() => {
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES (?, 'projects', 'TLS Dashboard', 'PRJ-WCLS', 'active')").run("projects/dash")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES (?, 'projects', 'Pelchat', 'PRJ-PELC', 'active')").run("projects/pel")
   sqlite.exec("DELETE FROM dispatch_seen")
-  sqlite.exec("UPDATE orchestrator_channels SET note_id = NULL, note_title = NULL, note_ref = NULL, auto_dispatch = 0")
+  sqlite.exec("UPDATE orchestrator_channels SET note_id = NULL, note_title = NULL, note_ref = NULL")
 })
 
 // ── approve → Turso ──────────────────────────────────────────────────────────
 
 describe("POST /api/orchestrator/proposal/<id>/approve", () => {
-  test("files one queued Turso task; a replay returns the same id and inserts nothing", async () => {
+  test("files one pending Turso task (the dashboard stamp queues it); a replay returns the same id and inserts nothing", async () => {
     const { handler, frames } = makeWiring()
     const ch = channels.createChannel("Approve A")
     channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
@@ -162,16 +162,17 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
 
     const first = await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/approve`)
     expect(first.status).toBe(200)
-    expect(first.json).toMatchObject({ ok: true, taskId: p.taskId, status: "queued", replay: false })
+    expect(first.json).toMatchObject({ ok: true, taskId: p.taskId, status: "pending_approval", replay: false })
     const id = first.json.dispatchTaskId as string
     expect(id).toMatch(/^[0-9a-f]{32}$/)
 
     const row = tursoTask(id)!
-    expect(row).toMatchObject({ note_id: "projects/dash", text: "Fix the payload", assignee: "agent:builder", dispatch_status: "queued", done: 0 })
+    expect(first.json.approveUrl).toEndWith(`/tasks?task=${id}`)
+    expect(row).toMatchObject({ note_id: "projects/dash", text: "Fix the payload", assignee: "agent:builder", dispatch_status: "pending", done: 0 })
     expect(row.description).toContain("Fix the payload\nfull detail")
     expect(row.description).toContain(`proposal ${p.taskId}`)
     expect(activity(id)).toHaveLength(1)
-    expect(activity(id)[0]).toMatchObject({ agent_slug: "builder", action: "dispatch:queued", target_kind: "task" })
+    expect(activity(id)[0]).toMatchObject({ agent_slug: "builder", action: "dispatch:pending", target_kind: "task" })
     expect(JSON.parse(activity(id)[0]!.meta)).toMatchObject({ source: "companion", channel: ch.id, op: "file" })
 
     expect(chat.getTask(p.taskId)).toMatchObject({ status: "filed", dispatchTaskId: id, noteId: "projects/dash", agent: "builder" })
@@ -183,6 +184,43 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
     expect(inserts).toBe(1) // the replay never reached Turso
     expect(activity(id)).toHaveLength(1)
+  })
+
+  // One work stream (docs/one-stream-plan.md): approve is a filer, never a runner.
+  test("approve → exactly 1 pending tasks row and 0 direct claims, {mode:\"live\"} included; passes the Turso queue guard", async () => {
+    turso.exec(`CREATE TABLE IF NOT EXISTS task_stamps (task_id TEXT, kind TEXT);
+      CREATE TRIGGER guard_ins BEFORE INSERT ON tasks WHEN lower(trim(NEW.dispatch_status)) = 'queued'
+        AND NOT EXISTS (SELECT 1 FROM task_stamps s WHERE s.task_id = NEW.id AND s.kind = 'release')
+      BEGIN SELECT RAISE(ABORT, 'tainted task needs a human stamp'); END`)
+    try {
+      const { handler } = makeWiring()
+      const ch = channels.createChannel("One stream")
+      channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
+      for (const body of [{}, { mode: "live", cwd: "/tmp" }]) {
+        const before = (turso.query("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n
+        const p = chat.createProposal("Do the thing", "", "why", ch.id, { title: "Do the thing" })
+        const res = await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/approve`, body)
+        expect(res).toMatchObject({ status: 200, json: { ok: true, status: "pending_approval" } })
+        expect((turso.query("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n).toBe(before + 1)
+        expect(tursoTask(res.json.dispatchTaskId)).toMatchObject({ dispatch_status: "pending", dispatch_owner: null, dispatch_started_at: null })
+        expect(chat.getTask(p.taskId)).toMatchObject({ status: "filed", tmuxSession: null })
+      }
+      expect(turso.query("SELECT COUNT(*) AS n FROM tasks WHERE dispatch_status IN ('queued', 'running')").get()).toEqual({ n: 0 })
+      expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action IN ('dispatch:queued', 'dispatch:running')").get()).toEqual({ n: 0 })
+    } finally {
+      turso.exec("DROP TRIGGER guard_ins")
+    }
+  })
+
+  test("reject withdraws the pending row an interrupted approve left behind", async () => {
+    const { handler } = makeWiring()
+    const p = chat.createProposal("Half filed", "", "why", "general", { noteId: "projects/dash" })
+    const id = tid()
+    seedTask(id, { dispatch_status: "pending" })
+    chat.stampDispatchId(p.taskId, id)
+    expect((await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/reject`)).status).toBe(200)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(tursoTask(id)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
   })
 
   test("fileProposal twice, concurrently and after a Turso failure: still one row, same id", async () => {
@@ -224,37 +262,40 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
   })
 })
 
-describe("auto-dispatch channel", () => {
-  test("a brain proposal files straight to Turso, reasoning turn visible, card filed", async () => {
+// One work stream Q3: no auto-dispatch toggle. A brain proposal always waits for a tap.
+describe("brain proposals (no auto-dispatch)", () => {
+  test("a brain proposal files nothing to Turso; the card waits for a tap", async () => {
     const { w } = makeWiring()
     const ch = channels.createChannel("Auto A")
     channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
-    const auto = channels.setChannelAuto(ch.id, true)!
-    const projects = await w.projects(true)
     await orch.applyDecision(
       { kind: "proposal", cwd: "", prompt: "Bump the rate limit", reasoning: "user asked", noteId: "projects/dash", agent: "build", title: "Bump rate limit" },
-      auto, projects, w,
+      channels.getChannel(ch.id)!, await w.projects(true),
     )
-    const rows = turso.query("SELECT * FROM tasks").all() as Record<string, any>[]
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ text: "Bump rate limit", assignee: "agent:builder", dispatch_status: "queued", note_id: "projects/dash" })
-    const turns = chat.getThread(ch.id).map((t) => t.text)
-    expect(turns.some((t) => t.startsWith("Auto-dispatch [") && t.includes("Why: user asked"))).toBe(true)
-    expect(turns.some((t) => t.startsWith("filed ["))).toBe(true)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
+    const p = chat.listTasks(ch.id).find((t) => t.prompt === "Bump the rate limit")!
+    expect(p).toMatchObject({ status: "proposed", noteId: "projects/dash" })
+    expect(chat.getThread(ch.id).some((t) => t.text.startsWith("Proposal [") && t.text.includes("Why: user asked"))).toBe(true)
   })
 
-  test("#Body never auto-files, and a hallucinated note is dropped", async () => {
+  test("a hallucinated note is dropped", async () => {
     const { w } = makeWiring()
-    const { ensureChannel } = channels
-    const bodyCh = channels.setChannelAuto(ensureChannel("body", "Body").channel.id, true)!
+    const bodyCh = channels.ensureChannel("body", "Body").channel
     await orch.applyDecision(
       { kind: "proposal", cwd: "", prompt: "Restart backup", reasoning: "dead", noteId: "projects/made-up", agent: "builder", title: null },
-      bodyCh, await w.projects(true), w,
+      bodyCh, await w.projects(true),
     )
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
     const p = chat.listTasks("body").find((t) => t.prompt === "Restart backup")!
     expect(p).toMatchObject({ status: "proposed", noteId: null })
-    channels.setChannelAuto("body", false)
+  })
+
+  test("the channel auto toggle route is gone", async () => {
+    const { handler } = makeWiring()
+    const ch = channels.createChannel("Auto gone")
+    expect(await call(handler, "POST", `/api/orchestrator/channels/${ch.id}/auto`, { enabled: true }))
+      .toMatchObject({ status: 400, json: { ok: false, error: "unknown action" } })
+    expect(channels.getChannel(ch.id)).not.toHaveProperty("autoDispatch")
   })
 })
 
@@ -317,17 +358,6 @@ describe("POST /api/orchestrator/task/<id>/cancel", () => {
     expect((await call(handler, "POST", `/api/orchestrator/task/${tid()}/cancel`)).status).toBe(404)
     down = true
     expect(await call(handler, "POST", `/api/orchestrator/task/${id}/cancel`)).toEqual({ status: 503, json: { ok: false, error: "turso_unreachable" } })
-  })
-
-  test("a cancel in an auto channel flips auto off (the veto)", async () => {
-    const { handler } = makeWiring()
-    const ch = channels.createChannel("Veto A")
-    channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: null })
-    channels.setChannelAuto(ch.id, true)
-    const id = tid()
-    seedTask(id)
-    expect((await call(handler, "POST", `/api/orchestrator/task/${id}/cancel`)).status).toBe(200)
-    expect(channels.getChannel(ch.id)!.autoDispatch).toBe(false)
   })
 })
 
@@ -425,12 +455,60 @@ describe("POST /api/orchestrator/channels {noteId}", () => {
 })
 
 describe("POST /api/orchestrator/dispatch", () => {
-  test("files to Turso under the given note; no note → 422", async () => {
+  test("files one pending task under the given note ({mode:\"live\"} too: no claim); no note → 422", async () => {
     const { handler } = makeWiring()
     const res = await call(handler, "POST", "/api/orchestrator/dispatch", { prompt: "Add a test", noteId: "projects/dash" })
-    expect(res).toMatchObject({ status: 200, json: { ok: true, status: "queued" } })
-    expect(tursoTask(res.json.dispatchTaskId)).toMatchObject({ text: "Add a test", assignee: "agent:builder", dispatch_status: "queued" })
+    expect(res).toMatchObject({ status: 200, json: { ok: true, status: "pending_approval" } })
+    expect(tursoTask(res.json.dispatchTaskId)).toMatchObject({ text: "Add a test", assignee: "agent:builder", dispatch_status: "pending" })
+    const live = await call(handler, "POST", "/api/orchestrator/dispatch", { prompt: "Live one", noteId: "projects/dash", mode: "live" })
+    expect(tursoTask(live.json.dispatchTaskId)).toMatchObject({ dispatch_status: "pending", dispatch_owner: null })
     expect((await call(handler, "POST", "/api/orchestrator/dispatch", { prompt: "x" })).status).toBe(422)
+  })
+})
+
+// ── one pipeline list (one-stream slice D) ───────────────────────────────────
+
+describe("GET /api/orchestrator/pipeline", () => {
+  test("one state per task, read from Turso; approveUrl only on pending_approval; shepherd only on pr_open", async () => {
+    const { handler } = makeWiring()
+    const pr = (n: number) => `https://github.com/jaubut/dash/pull/${n}`
+    const ids = {
+      pending: tid(), queued: tid(), running: tid(), prOpen: tid(), merged: tid(), blocked: tid(), failed: tid(), cancelled: tid(),
+    }
+    seedTask(ids.pending, { dispatch_status: "pending" })
+    seedTask(ids.queued, { dispatch_status: "queued" })
+    seedTask(ids.running, { dispatch_status: "running", dispatch_owner: "zettlab", dispatch_run_id: "r1" })
+    seedTask(ids.prOpen, { dispatch_status: "completed", dispatch_pr_url: pr(1) })
+    seedTask(ids.merged, { dispatch_status: "completed", dispatch_pr_url: pr(2), done: 1 })
+    seedTask(ids.blocked, { dispatch_status: "blocked", dispatch_blocker: "needs key" })
+    seedTask(ids.failed, { dispatch_status: "failed" })
+    seedTask(ids.cancelled, { dispatch_status: "cancelled", done: 1 })
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:local-gates', 'task', ?, ?)")
+      .run(ids.prOpen, JSON.stringify({ url: pr(1), tests: "pass", build: "pass" }))
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'outcome:merged', 'task', ?, '{}')")
+      .run(ids.merged)
+
+    const res = await call(handler, "GET", "/api/orchestrator/pipeline")
+    expect(res.status).toBe(200)
+    expect(typeof res.json.generatedAt).toBe("number")
+    const by = new Map((res.json.items as Record<string, any>[]).map((i) => [i.id, i]))
+    expect(by.size).toBe(8)
+    const state = (id: string) => by.get(id)!.state
+    expect(Object.fromEntries(Object.entries(ids).map(([k, id]) => [k, state(id)]))).toEqual({
+      pending: "pending_approval", queued: "queued", running: "running", prOpen: "pr_open", merged: "merged",
+      blocked: "blocked", failed: "failed", cancelled: "cancelled",
+    })
+    expect(by.get(ids.pending)).toMatchObject({ title: "Fix tax rounding", agent: "builder", noteId: "projects/dash", prUrl: null, shepherd: null })
+    expect(by.get(ids.pending)!.approveUrl).toEndWith(`/tasks?task=${ids.pending}`)
+    for (const [k, id] of Object.entries(ids)) if (k !== "pending") expect("approveUrl" in by.get(id)!).toBe(false)
+    expect(by.get(ids.prOpen)).toMatchObject({ prUrl: pr(1), shepherd: { ci: "passing", parked: false } })
+    expect(by.get(ids.merged)).toMatchObject({ prUrl: pr(2), shepherd: null })
+  })
+
+  test("Turso down → 503 turso_unreachable", async () => {
+    const { handler } = makeWiring()
+    down = true
+    expect(await call(handler, "GET", "/api/orchestrator/pipeline")).toMatchObject({ status: 503, json: { ok: false, error: "turso_unreachable" } })
   })
 })
 

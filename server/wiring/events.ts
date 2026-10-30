@@ -3,15 +3,15 @@ import { broadcast } from "../state"
 import { onApprovalRequest, onApprovalExpired, onApprovalResolved } from "../lib/pty-manager"
 import { onQuestionRequest, onQuestionExpired, onQuestionResolved } from "../lib/questions"
 import { onActivity, reconcileActivityLiveness, type Activity } from "../lib/activity"
-import { onFeed, onFeedReset, type FeedEvent } from "../lib/feed"
+import { onFeed, onFeedReset, sessionRetention, setFeedRetention, type FeedEvent } from "../lib/feed"
 import { summarize } from "../lib/tool-format"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
+import { wireSessions } from "../lib/shell-sessions"
 import { onSessions, setSessionModel, setTitleResolver, type Session } from "../lib/sessions"
 import { resolveTitle, transcriptPath } from "../lib/session-titles"
 import { modelForIdentity, modelFromTranscript } from "../lib/transcript"
 import { projectLabelFor, agentTitle, subtitleFor } from "../lib/hook-common"
-import { reconcileDispatch } from "./orchestrator"
 import { markWaiting, unmarkWaiting } from "./waiting"
 import {
   type HistoryItem,
@@ -25,11 +25,28 @@ import {
 } from "../lib/approval-history"
 import { createAutoFrameThrottle, onAutoHistoryFlush, startAutoHistoryRetention } from "../lib/approval-history-auto"
 import { companionLog } from "../lib/log"
+import { brainEnabled } from "../lib/brain"
+import { type ApprovalTrace, NEEDS_YOU, getRow, rowId, traceForApproval } from "../lib/brain-trace"
+import { getSessionByKey } from "../lib/sessions"
+import { getTaskByDispatchId } from "../lib/orchestrator-chat"
+import { emitTrace } from "./brain"
+
+// brain-v2 (brain host only): approvals and questions are trace rows, under the
+// asking dispatch worker's agent row when the brain proposed it, else "needs-you".
+function traceAsk(a: Omit<ApprovalTrace, "parentId">): void {
+  if (!brainEnabled()) return
+  try {
+    const task = a.sessionKey ? getSessionByKey(a.sessionKey)?.taskId : ""
+    const local = task ? getTaskByDispatchId(task) : null
+    const parent = local && getRow(rowId.agent(local.taskId)) ? rowId.agent(local.taskId) : NEEDS_YOU
+    emitTrace(traceForApproval({ ...a, parentId: parent }))
+  } catch (err) {
+    companionLog(`[brain] trace failed — ${(err as Error).message}`)
+  }
+}
 
 // Event wiring: every lib store's listener → WS frame (+ push where the phone
-// must be interrupted). One onSessions listener does the `sessions` frame and
-// then reconcileDispatch, so a worker's `orchestrator_task` never precedes the
-// `sessions` frame that introduced it. Registered at import time.
+// must be interrupted). Registered at import time.
 //
 // It also joins the approval/question lifecycles to the session's waiting state
 // (PRJ-OR1T Phase 11) — here and not in the routes, because the expiry timers
@@ -54,6 +71,7 @@ onApprovalRequest((req) => {
     ...(req.reason ? { reason: req.reason } : {}),
   })
   markWaiting(req.sessionKey, "approval", req.id)
+  traceAsk({ kind: "approval", id: req.id, title: `${req.tool}: ${summarize(req.tool, req.input)}`, detail: req.reason ?? null, sessionKey: req.sessionKey })
   // Approval = interruptive, time-sensitive. Blocks Claude until answered.
   if (apnsConfigured()) {
     const project = projectLabelFor(req.cwd)
@@ -83,6 +101,7 @@ onApprovalExpired((req, decision, via) => {
   broadcast({ type: "resolved", id: req.id, decision })
   unmarkWaiting(req.sessionKey, "approval", req.id)
   history("update", () => recordOutcome(req.id, decision, via))
+  traceAsk({ kind: "approval", id: req.id, title: req.tool, ended: decision })
 })
 
 // Deliberately does NOT broadcast `resolved`: ws.ts and routes/api.ts already
@@ -90,6 +109,7 @@ onApprovalExpired((req, decision, via) => {
 onApprovalResolved((req, decision, by) => {
   unmarkWaiting(req.sessionKey, "approval", req.id)
   history("update", () => recordOutcome(req.id, decision === "allow" ? "allowed" : "denied", "phone", { device: by.device }))
+  traceAsk({ kind: "approval", id: req.id, title: req.tool, ended: decision })
 })
 
 onQuestionRequest((req) => {
@@ -104,6 +124,7 @@ onQuestionRequest((req) => {
     questions: req.questions,
   })
   markWaiting(req.sessionKey, "question", req.id)
+  traceAsk({ kind: "question", id: req.id, title: req.questions[0]?.question ?? "Question", sessionKey: req.sessionKey })
   // Same urgency tier as approvals — Claude is blocked until the phone
   // answers. The push title carries the first question's text so a glance
   // at the lock screen shows what's being asked.
@@ -133,12 +154,14 @@ onQuestionExpired((req, decision, via) => {
   broadcast({ type: "resolved", id: req.id, decision })
   unmarkWaiting(req.sessionKey, "question", req.id)
   history("update", () => recordOutcome(req.id, questionEndState(decision), via))
+  traceAsk({ kind: "question", id: req.id, title: req.questions[0]?.question ?? "Question", ended: decision })
 })
 
 // Same rule as onApprovalResolved: the `resolved` frame is already sent.
 onQuestionResolved((req, answers, by) => {
   unmarkWaiting(req.sessionKey, "question", req.id)
   history("update", () => recordOutcome(req.id, "answered", "phone", { device: by.device, detailPatch: answersPatch(answers) }))
+  traceAsk({ kind: "question", id: req.id, title: req.questions[0]?.question ?? "Question", ended: "answered" })
 })
 
 // Every insert / transition, live to the phone's Approvals list. Additive
@@ -187,8 +210,9 @@ onSessions((sessions: Session[]) => {
     }
     if (model) setSessionModel(s.key, model)
   }
-  broadcast({ type: "sessions", sessions })
-  reconcileDispatch(sessions)
+  broadcast({ type: "sessions", sessions: wireSessions(sessions) })
+  // A listed session keeps its feed tail past the shared cap (lib/feed.ts).
+  setFeedRetention(sessionRetention(sessions))
   // A SIGKILLed terminal fires no session-end hook — this is the only thing
   // that retires its pill. Emits only when it actually clears one.
   reconcileActivityLiveness(sessions)

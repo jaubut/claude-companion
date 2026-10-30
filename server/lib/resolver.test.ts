@@ -136,11 +136,13 @@ describe("policy: PRs", () => {
   test("non-sensitive merges also stay with Jeremie / the shepherd", () => {
     expect(decide(parkedPr(), output({ action: { kind: "merge" }, confidence: 1 }), normal).kind).toBe("card")
   })
-  test("sensitive + problems → a fix run, then still a card; no problems → no fix", () => {
+  test("sensitive: a fix is Jeremie's card, never an Opus hand-back; his ask hands it back to the shepherd", () => {
     const review = { whatChanged: "auth middleware", risk: "session bypass", prodFailure: "logged-out users", testsCover: "no", problems: ["missing expiry check"], verdict: "changes" as const }
     const fix = { kind: "fix" as const, instructions: "Add the expiry check" }
-    expect(decide(parkedPr(), output({ action: fix, review }), sensitive)).toMatchObject({ kind: "act", then: "card" })
+    expect(decide(parkedPr(), output({ action: fix, review }), sensitive)).toMatchObject({ kind: "card", reason: "sensitive PR: Jeremie decides on the changes" })
     expect(decide(parkedPr(), output({ action: fix, review: { ...review, problems: [] } }), sensitive).kind).toBe("card")
+    expect(decide(parkedPr(), output({ action: fix, review }), { ...sensitive, autonomy: "elevated", instruction: "Fix on the PR branch: missing expiry check" }))
+      .toMatchObject({ kind: "act", then: "unpark" })
   })
   test("stale / superseded / task done close themselves; ambiguous or sensitive does not", () => {
     for (const category of ["stale", "superseded", "task_done"]) {
@@ -207,7 +209,7 @@ describe("the prepared card", () => {
 describe("digest", () => {
   test("Opus handled N items today: answered X, closed Y, prepared Z for you", () => {
     expect(digestText({ answer: 2, close_pr: 1, reject: 1, prepared: 3 })).toBe("🤖 Opus handled 7 items today: answered 2, closed 2, prepared 3 for you.")
-    expect(digestText({ answer: 1, fix: 1, failed: 2 })).toBe("🤖 Opus handled 2 items today: answered 1, closed 0, prepared 0 for you, fixed 1 PR (2 fell through to you).")
+    expect(digestText({ answer: 1, fix: 1, failed: 2 })).toBe("🤖 Opus handled 2 items today: answered 1, closed 0, prepared 0 for you, handed 1 PR back for a fix (2 fell through to you).")
     expect(digestText({ failed: 1 })).toBeNull()
   })
 })
@@ -317,13 +319,5 @@ describe("policy: delegated (Jeremie's Yes on a repo card, 2026-10-15)", () => {
     expect(decide(parkedPr(), close("superseded", 0.6), delegated).kind).toBe("card")
     expect(decide(parkedPr(), close("ambiguous"), delegated).kind).toBe("card")
     expect(decide(parkedPr(), close("superseded"), { ...delegated, sensitive: true }).kind).toBe("card")
-  })
-})
-
-describe("takeover (blocked-task-takeover)", () => {
-  test("a task whose blocker a takeover wrote is Jeremie's, never Opus's", () => {
-    expect(routable(blockedTask("t9", "Takeover ended without a PR — No local repo mapped — how-to: RES-AB12"))).toBe(false)
-    expect(routable(blockedTask("t9", "Takeover failed to start (git fetch: denied) — Which repo?"))).toBe(false)
-    expect(routable(blockedTask("t9", "Which repo? A takeover would help"))).toBe(true)
   })
 })

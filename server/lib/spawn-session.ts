@@ -16,7 +16,7 @@
 // "auto" now prefers herdr (spawnInHerdr below) when its version gate passes,
 // on macOS and Linux alike; the tmux path above is the fallback.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 import { type Herdr, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
@@ -241,8 +241,8 @@ export function detachedSpawnArgv(
   return [...tmuxArgv(), ...spawnNewSessionFlags(serverEnv), ...detachedNewSessionArgs(sessionName, inner)]
 }
 
-function agentTmuxSessionName(cwd: string, agent: SpawnAgent): string {
-  const prefix = agent === "codex" ? "cx" : agent === "kimi" ? "km" : "cc"
+function agentTmuxSessionName(cwd: string, agent: SpawnAgent | "shell"): string {
+  const prefix = agent === "codex" ? "cx" : agent === "kimi" ? "km" : agent === "shell" ? "sh" : "cc"
   const base = cwd.split("/").filter(Boolean).pop() ?? "session"
   const safe = base.replace(/[:.]/g, "-").replace(/\s+/g, "-")
   return `${prefix}-${safe}`
@@ -266,7 +266,7 @@ async function tmuxSessionExists(name: string): Promise<boolean> {
   return !timedOut && code === 0
 }
 
-async function uniqueTmuxSessionName(cwd: string, agent: SpawnAgent, exists = tmuxSessionExists): Promise<string> {
+export async function uniqueTmuxSessionName(cwd: string, agent: SpawnAgent | "shell", exists = tmuxSessionExists): Promise<string> {
   const base = agentTmuxSessionName(cwd, agent)
   if (!(await exists(base))) return base
   for (let i = 2; i < 100; i++) {
@@ -512,6 +512,27 @@ export function homeSpawnCwd(
   return target.startsWith("~") ? target.replace(/^~/, strip(env.home)) : target
 }
 
+// The phone's cwd → the directory a spawn starts in: absolute or ~-relative,
+// ~ expanded (osascript runs outside a shell, and a shell spawn passes it as
+// an argv entry), the Linux home remap applied, and an existing directory.
+export function resolveSpawnCwd(raw: string): { dir: string } | { error: string } {
+  const cwd = raw.trim()
+  if (!cwd) return { error: "cwd required" }
+  if (!cwd.startsWith("/") && !cwd.startsWith("~")) return { error: "cwd must be absolute" }
+  const expanded = cwd.startsWith("~") ? cwd.replace(/^~/, process.env.HOME ?? "") : cwd
+  const resolved = homeSpawnCwd(expanded)
+  if (resolved !== expanded) {
+    try {
+      mkdirSync(resolved, { recursive: true })
+    } catch (err) {
+      return { error: `cannot create ${resolved}: ${(err as Error).message}` }
+    }
+  }
+  if (!existsSync(resolved)) return { error: `cwd does not exist: ${resolved}` }
+  if (!statSync(resolved).isDirectory()) return { error: `cwd is not a directory: ${resolved}` }
+  return { dir: resolved }
+}
+
 export async function spawnCompanionSession(opts: {
   cwd: string
   app?: SpawnApp
@@ -525,26 +546,9 @@ export async function spawnCompanionSession(opts: {
   // Takeover: the main checkout whose MCP-server choices the worktree inherits.
   mcpFrom?: string
 }): Promise<SpawnResult> {
-  const cwd = opts.cwd.trim()
-  if (!cwd) return { ok: false, error: "cwd required" }
-  if (!cwd.startsWith("/") && !cwd.startsWith("~")) {
-    return { ok: false, error: "cwd must be absolute" }
-  }
-  // Expand ~ manually — osascript runs outside a shell so ~ isn't expanded.
-  const expanded = cwd.startsWith("~")
-    ? cwd.replace(/^~/, process.env.HOME ?? "")
-    : cwd
-  const resolved = homeSpawnCwd(expanded)
-  if (resolved !== expanded) {
-    try {
-      mkdirSync(resolved, { recursive: true })
-    } catch (err) {
-      return { ok: false, error: `cannot create ${resolved}: ${(err as Error).message}` }
-    }
-  }
-  if (!existsSync(resolved)) {
-    return { ok: false, error: `cwd does not exist: ${resolved}` }
-  }
+  const cwd = resolveSpawnCwd(opts.cwd)
+  if ("error" in cwd) return { ok: false, error: cwd.error }
+  const resolved = cwd.dir
 
   const app: SpawnApp = opts.app ?? "auto"
   const agent: SpawnAgent =

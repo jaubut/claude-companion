@@ -5,11 +5,11 @@ import { companionLog } from "../lib/log"
 import { appendTurn, countLiveTasks, getTaskByDispatchId, listQueued } from "../lib/orchestrator-chat"
 import { getChannel, linkedNotes } from "../lib/orchestrator-channels"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
-import { wipCap } from "../lib/orchestrator-queue"
 import { pushToAll } from "../lib/push"
 import { tursoExec, tursoQuery } from "../lib/turso"
 import { broadcast } from "../state"
-import { takeoverIdentity } from "./takeover"
+import { BRAIN_THREAD, brainEnabled } from "../lib/brain"
+import { traceForDispatch } from "../lib/brain-trace"
 
 // The live Turso dispatch poller (orchestrator-one-queue P1): real Turso, the
 // sqlite announce cursor, WS broadcast, APNs. Started by cli.ts; nudged by
@@ -35,7 +35,13 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   query: tursoQuery,
   exec: tursoExec,
   broadcast,
-  appendTurn: (text, taskId, channelId) => appendTurn("orchestrator", text, taskId, channelId),
+  appendTurn: (text, taskId, channelId, card) => appendTurn("orchestrator", text, taskId, channelId, card),
+  brainThread: () => (brainEnabled() ? BRAIN_THREAD : null),
+  traceTask: (t) => {
+    const local = brainEnabled() ? getTaskByDispatchId(t.id) : null
+    const rows = local ? traceForDispatch(t, local.taskId) : []
+    if (rows.length) broadcast({ type: "brain_trace", op: "row", rows })
+  },
   push: (payload) => void pushToAll(payload).catch(() => { /* a failed push never breaks the poll */ }),
   pushEnabled: () => dispatchPushEnabled(apnsConfigured()),
   linkedNotes,
@@ -44,10 +50,10 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   log: companionLog,
   onPolled: () => { for (const fn of polledListeners) fn() },
   getChannel,
-  localQueue: () => ({ cap: wipCap(), live: countLiveTasks(), queued: listQueued().length }),
+  // No local worker runner any more (one-stream A2): no slots; live/queued only count legacy rows.
+  localQueue: () => ({ cap: 0, live: countLiveTasks(), queued: listQueued().length }),
   liveIdentity: (id) => {
     const t = getTaskByDispatchId(id)
-    // A takeover (owner companion:takeover:<name>) has no local row: its session on this host.
-    return t ? { localTaskId: t.taskId, tmuxSession: t.tmuxSession, tmuxSocket: t.tmuxSocket ?? null, sessionKey: t.sessionKey, logTail: t.logTail } : takeoverIdentity(id)
+    return t ? { localTaskId: t.taskId, tmuxSession: t.tmuxSession, tmuxSocket: t.tmuxSocket ?? null, sessionKey: t.sessionKey, logTail: t.logTail } : null
   },
 })

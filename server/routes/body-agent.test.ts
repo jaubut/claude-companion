@@ -4,8 +4,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
-import type { LiveRunner } from "../wiring/live"
-import type { Task } from "../lib/orchestrator-chat"
 import type { BodyComponentDetail } from "../lib/body"
 import type { InvestigationRecord } from "../lib/body-investigate"
 import { agentFor, buildAgentPrompt, parseAgentBody } from "../lib/body-agent"
@@ -13,8 +11,9 @@ import { createBodyHandler } from "./body"
 
 // "Get an agent on it" — POST /api/body/component/:id/agent. Same harness as
 // body-fix.test.ts: real Companion sqlite (isolated COMPANION_DB_PATH), "Turso"
-// = in-memory bun:sqlite behind the QueryFn / ExecFn seams, a fake tmux runner,
-// and an in-process "Mac" peer (runBodyFix with local "mac").
+// = in-memory bun:sqlite behind the QueryFn / ExecFn seams. The tap files ONE
+// pending row tagged requires_host=<owner> (docs/one-stream-plan.md): no worker,
+// no peer forward.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-agent-")), "test.db")
 
@@ -31,13 +30,8 @@ let poller: typeof import("../lib/dispatch-poller")
 let mirror: typeof import("../lib/dispatch-mirror")
 let chat: typeof import("../lib/orchestrator-chat")
 let channels: typeof import("../lib/orchestrator-channels")
-let live: typeof import("../wiring/live")
-let fix: typeof import("../wiring/body-fix")
-let fixLib: typeof import("../lib/body-fix")
 let agent: typeof import("../wiring/body-agent")
-let host: string
 let prevAgentDeps: import("../wiring/body-agent").BodyAgentDeps
-let prevFixDeps: import("../wiring/body-fix").BodyFixDeps
 
 // ── fake Turso ───────────────────────────────────────────────────────────────
 
@@ -49,14 +43,17 @@ turso.exec(`
     done INTEGER DEFAULT 0, due_date TEXT DEFAULT '', position INTEGER DEFAULT 0, assignee TEXT,
     created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
     dispatch_status TEXT, dispatch_run_id TEXT, dispatch_started_at TEXT, dispatch_completed_at TEXT,
-    dispatch_blocker TEXT, dispatch_owner TEXT, dispatch_result_ref TEXT, dispatch_pr_url TEXT, last_pm_review TEXT
+    dispatch_blocker TEXT, dispatch_owner TEXT, dispatch_result_ref TEXT, dispatch_pr_url TEXT, last_pm_review TEXT,
+    requires_host TEXT NOT NULL DEFAULT 'any', origin TEXT
   );
   CREATE TABLE agent_activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT, agent_slug TEXT NOT NULL, action TEXT NOT NULL, target_kind TEXT,
     target_id TEXT, summary TEXT, meta TEXT, ts TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `)
+let insertFails = false
 const exec: ExecFn = async (sql: string, args: SqlArg[]) => {
+  if (insertFails && /^\s*INSERT OR IGNORE INTO tasks/i.test(sql)) throw new Error("turso down")
   if (/^\s*(SELECT|WITH)/i.test(sql)) return { rows: turso.query(sql).all(...args) as Row[], affected: 0 }
   const res = turso.query(sql).run(...args)
   return { rows: [], affected: res.changes }
@@ -65,31 +62,7 @@ const query: QueryFn = async (sql, args) => (await exec(sql, args)).rows
 const tursoRows = () => turso.query("SELECT * FROM tasks").all() as Record<string, any>[]
 const activity = () => turso.query("SELECT * FROM agent_activity WHERE action = 'body:agent'").all() as Record<string, any>[]
 
-// ── fakes ────────────────────────────────────────────────────────────────────
-
-const spawns: { taskId: string; cwd: string; prompt: string; agent: string | null | undefined }[] = []
-const fakeRunner: LiveRunner = {
-  async spawn(t: Task) {
-    spawns.push({ taskId: t.taskId, cwd: t.cwd, prompt: t.prompt, agent: t.agent })
-    chat.setTaskSpawn(t.taskId, `cc-fake-${t.taskId}`, null)
-    return { ok: true }
-  },
-  async kill() {},
-  async alive() { return true },
-}
-
-let macDown = false
-const peerCalls: { url: string; body: Record<string, unknown> }[] = []
 let w: ReturnType<typeof makeWiring>
-
-const peerFetch = (async (url: string, init: RequestInit) => {
-  if (macDown) throw new TypeError("fetch failed")
-  const body = JSON.parse(String(init.body)) as Record<string, unknown>
-  peerCalls.push({ url, body })
-  const req = fixLib.parseFixRequest(body)
-  if ("error" in req) return Response.json({ ok: false, error: req.error }, { status: 400 })
-  return fix.runBodyFix(req, w, "mac")
-}) as unknown as typeof fetch
 
 function makeWiring() {
   return poller.createDispatchWiring({
@@ -155,19 +128,12 @@ beforeAll(async () => {
   const sqlite = (await import("../lib/orchestrator-db")).db
   mirror = await import("../lib/dispatch-mirror")
   poller = await import("../lib/dispatch-poller")
-  live = await import("../wiring/live")
-  fix = await import("../wiring/body-fix")
-  fixLib = await import("../lib/body-fix")
   agent = await import("../wiring/body-agent")
   const agentLib = await import("../lib/body-agent")
-  host = (await import("../state")).HOST_INFO.name
-  live.setLiveRunner(fakeRunner)
   w = makeWiring()
-  const peer = () => ({ base: "https://mac.test", token: "peer-token" })
-  prevFixDeps = fix.setBodyFixDeps({ store: fixLib.createBodyFixStore(sqlite), localHost: () => "zettlab", peer, fetchFn: peerFetch })
   prevAgentDeps = agent.setBodyAgentDeps({
     store: agentLib.createBodyAgentStore(sqlite),
-    localHost: () => "zettlab", peer, fetchFn: peerFetch,
+    localHost: () => "zettlab",
     detail: async (id) => {
       if (id.includes("turso-down")) throw new Error("turso down")
       return components.get(id) ?? null
@@ -181,11 +147,6 @@ beforeAll(async () => {
 
 afterAll(() => {
   agent.setBodyAgentDeps(prevAgentDeps)
-  fix.setBodyFixDeps(prevFixDeps)
-  live.setLiveRunner(live.tmuxRunner)
-  live.setLiveCap(null)
-  // bun shares one sqlite across test files: leave no live rows behind.
-  for (const s of spawns) chat.setTaskStatus(s.taskId, "done")
   delete process.env.COMPANION_DISPATCH_RUN
   if (savedNote === undefined) delete process.env.COMPANION_BODY_NOTE_ID
   else process.env.COMPANION_BODY_NOTE_ID = savedNote
@@ -194,13 +155,9 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  macDown = false
-  for (const s of spawns) chat.setTaskStatus(s.taskId, "done")
-  spawns.length = 0
-  peerCalls.length = 0
+  insertFails = false
   turso.exec("DELETE FROM tasks; DELETE FROM agent_activity; DELETE FROM notes")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/dash', 'projects', 'Companion Orchestrator', 'PRJ-OR1T', 'active')").run()
-  live.setLiveCap(chat.countLiveTasks() + 3)
 })
 
 // ── pure parts ───────────────────────────────────────────────────────────────
@@ -259,88 +216,81 @@ describe("POST /api/body/component/:id/agent", () => {
     expect((await post("/api/body/component//agent"))!.status).toBe(400)
   })
 
-  test("zettlab-owned (cloud:*) → live run here: inbox-processor, claimed running, Sessions-visible, logged", async () => {
+  test("zettlab-owned (cloud:*) → ONE queued row (origin jeremie) tagged zettlab: inbox-processor, no claim, logged", async () => {
     const id = "cloud:turso-table:inbox_entries"
     component(id, "turso-table", "failing")
     investigated(id)
     const r = await json(await start(id))
     expect(r.status).toBe(200)
-    expect(r.body).toMatchObject({ ok: true, host: "zettlab", agent: "inbox-processor", status: "running", mode: "live" })
+    expect(r.body).toMatchObject({ ok: true, host: "zettlab", agent: "inbox-processor", status: "queued" })
     const { taskId, dispatchTaskId } = r.body
-    expect(peerCalls).toHaveLength(0)
+    expect(r.body.approveUrl).toBeUndefined()
 
     const rows = tursoRows()
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ id: dispatchTaskId, dispatch_status: "running", dispatch_owner: `companion:${host}`, assignee: "agent:inbox-processor", note_id: "projects/dash" })
-    expect(spawns).toHaveLength(1)
-    expect(spawns[0]).toMatchObject({ taskId, cwd: join(tempHome, ".claude"), agent: "inbox-processor" })
-    expect(spawns[0]!.prompt).toContain("inbox backlog 47 > 40")
-    expect(chat.getTask(taskId)).toMatchObject({ threadId: "body", dispatchTaskId })
+    expect(rows[0]).toMatchObject({
+      id: dispatchTaskId, dispatch_status: "queued", origin: "jeremie", dispatch_owner: null, requires_host: "zettlab", assignee: "agent:inbox-processor", note_id: "projects/dash",
+    })
+    expect(rows[0]!.description).toContain("inbox backlog 47 > 40")
+    expect(chat.getTask(taskId)).toMatchObject({ threadId: "body", dispatchTaskId, status: "filed", cwd: join(tempHome, ".claude"), tmuxSession: null })
 
     const log = activity()
     expect(log).toHaveLength(1)
     expect(log[0]).toMatchObject({ agent_slug: "inbox-processor", target_kind: "body_component", target_id: id })
     expect(JSON.parse(log[0]!.meta)).toMatchObject({ taskId, dispatchTaskId, owner: "zettlab" })
 
-    // One open run per component: a second tap names the running one.
+    // One open run per component: a second tap names the open one.
     const again = await json(await start(id))
     expect(again).toMatchObject({ status: 409, body: { ok: false, error: "already_running", taskId, dispatchTaskId } })
-    expect(spawns).toHaveLength(1)
+    expect(tursoRows()).toHaveLength(1)
 
-    // Once that run is finished, a new tap starts a new one.
+    // Once that run is finished, a new tap files a new one.
     turso.query("UPDATE tasks SET dispatch_status = 'completed' WHERE id = ?").run(dispatchTaskId)
     const third = await json(await start(id))
     expect(third.status).toBe(200)
     expect(third.body.dispatchTaskId).not.toBe(dispatchTaskId)
   })
 
-  test("a concurrent double tap starts one run", async () => {
+  test("the run asks for the herdr runner, on a line of its own", async () => {
+    const id = uid("zettlab:systemd-service:runner")
+    component(id, "systemd-service", "dead")
+    expect((await start(id)).status).toBe(200)
+    expect(tursoRows()[0]!.description).toMatch(/^dispatch-runner: herdr$/m)
+  })
+
+  test("a concurrent double tap files one row", async () => {
     const id = uid("zettlab:systemd-service:kb")
     component(id, "systemd-service", "dead")
     const [a, b] = await Promise.all([start(id), start(id)])
     expect([a.status, b.status].sort()).toEqual([200, 409])
-    expect(spawns).toHaveLength(1)
     expect(tursoRows()).toHaveLength(1)
   })
 
-  test("state ok: refused without an instruction, started with one", async () => {
+  test("state ok: refused without an instruction, filed with one", async () => {
     const id = uid("zettlab:systemd-timer:t")
     component(id, "systemd-timer", "ok")
     expect(await json(await start(id))).toMatchObject({ status: 409, body: { error: "component_ok" } })
-    expect(spawns).toHaveLength(0)
+    expect(tursoRows()).toHaveLength(0)
     const r = await json(await start(id, "rotate the logs"))
     expect(r).toMatchObject({ status: 200, body: { ok: true, agent: "claude", host: "zettlab" } })
-    expect(spawns[0]!.prompt).toContain("Instruction from Jeremie: rotate the logs")
+    expect(tursoRows()[0]!.description).toContain("Instruction from Jeremie: rotate the logs")
     expect(JSON.parse(activity()[0]!.meta).instruction).toBe("rotate the logs")
   })
 
-  test("mac:* → forwarded to the Mac's /api/body/fix; the Mac claims live in the fix card's cwd", async () => {
+  test("mac:* → ONE queued row tagged requires_host=mac, the fix card's cwd in the brief; no forward", async () => {
     const id = uid("mac:launchd:com.job")
     component(id, "launchd", "crash_loop")
     investigated(id, "card-mac")
     const r = await json(await start(id))
     expect(r.status).toBe(200)
-    expect(r.body).toMatchObject({ ok: true, host: "mac", agent: "claude" })
-    expect(peerCalls).toHaveLength(1)
-    expect(peerCalls[0]).toMatchObject({ url: "https://mac.test/api/body/fix", body: { host: "mac", componentId: id, cwd: fixCwd, agent: "claude" } })
-    expect(String(peerCalls[0]!.body.fixId)).toMatch(/^agent-/)
-    expect(tursoRows()).toEqual([expect.objectContaining({ id: r.body.dispatchTaskId, dispatch_status: "running", dispatch_owner: `companion:${host}` })])
-    expect(spawns).toEqual([expect.objectContaining({ taskId: r.body.taskId, cwd: fixCwd })])
+    expect(r.body).toMatchObject({ ok: true, host: "mac", agent: "claude", status: "queued" })
+    const rows = tursoRows()
+    expect(rows).toEqual([expect.objectContaining({ id: r.body.dispatchTaskId, dispatch_status: "queued", origin: "jeremie", requires_host: "mac", dispatch_owner: null })])
+    expect(rows[0]!.description).toContain(fixCwd)
     expect(activity()).toHaveLength(1)
 
     const again = await json(await start(id))
     expect(again).toMatchObject({ status: 409, body: { error: "already_running", taskId: r.body.taskId, host: "mac" } })
-  })
-
-  test("Mac unreachable → 503 host_unreachable, nothing recorded", async () => {
-    const id = uid("mac:launchd:com.down")
-    component(id, "launchd", "dead")
-    macDown = true
-    expect(await json(await start(id))).toMatchObject({ status: 503, body: { ok: false, error: "host_unreachable", host: "mac" } })
-    expect(tursoRows()).toHaveLength(0)
-    expect(activity()).toHaveLength(0)
-    macDown = false
-    expect((await start(id)).status).toBe(200)
   })
 
   test("404 unknown component, 503 when Turso is down", async () => {
@@ -348,14 +298,14 @@ describe("POST /api/body/component/:id/agent", () => {
     expect(await json(await start("zettlab:docker:turso-down"))).toMatchObject({ status: 503, body: { error: "turso_unreachable" } })
   })
 
-  test("a failed live start leaves no stray #Body card", async () => {
+  test("a failed file leaves no stray #Body card and records nothing", async () => {
     const id = uid("zettlab:docker:c")
     component(id, "docker", "dead")
-    live.setLiveCap(chat.countLiveTasks())
+    insertFails = true
     const r = await json(await start(id))
-    expect(r).toMatchObject({ status: 429, body: { error: "live_cap", host: "zettlab" } })
-    const mine = chat.listTasks("body").filter((t) => t.prompt.includes(id))
-    expect(mine).toHaveLength(1)
-    expect(mine[0]!.status).toBe("cancelled")
+    expect(r).toMatchObject({ status: 503, body: { error: "turso_unreachable", host: "zettlab" } })
+    expect(chat.listTasks("body").filter((t) => t.prompt.includes(id) && t.status === "proposed")).toHaveLength(0)
+    expect(tursoRows()).toHaveLength(0)
+    expect(activity()).toHaveLength(0)
   })
 })
