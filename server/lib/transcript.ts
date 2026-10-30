@@ -1,7 +1,7 @@
 import { realpathSync, statSync } from "node:fs"
 import { basename, isAbsolute, join } from "node:path"
 import { appendFeedEvent } from "./feed"
-import { artifactKey, detectArtifacts } from "./artifacts"
+import { emitArtifacts, scanToolResultArtifacts } from "./transcript-artifacts"
 import { storeImageBase64, storeImageFile, type StoreResult } from "./media"
 import { imageBlockData, lastPastedUserIdx, lineExpectation, lineMatches, readAppended, readLineAt, readTailLines, type LineAt, type ToolUses } from "./transcript-cursor"
 import { clampLong } from "./tool-format"
@@ -275,17 +275,18 @@ export function readTranscriptDelta(
       const lineId = typeof entry.uuid === "string" && entry.uuid ? entry.uuid : `@${offset}`
       const at: LineAt = { path, offset, length, expect: lineExpectation(entry) }
       scanToolResultImages(s, blocks, toolUses, { silent: opts.silent && i !== primeIdx }, at, lineId)
-      scanToolResultArtifacts(s, blocks, toolUses, opts)
+      scanToolResultArtifacts(s, identityFor(s), blocks, toolUses, opts)
       continue
     }
     if (entry.type !== "assistant") continue
 
     for (const block of blocks) {
       if (block.type === "tool_use" && typeof block.id === "string") {
-        // Only file_path is ever read back (captionFor); don't pin a Write's
-        // whole content in memory for the session's lifetime.
-        const filePath = (block.input as { file_path?: unknown } | undefined)?.file_path
-        toolUses.set(block.id, { name: String(block.name ?? ""), input: { file_path: filePath } })
+        // Only file_path is ever read back (captionFor) — plus SendUserFile's
+        // files (transcript-artifacts.ts); don't pin a Write's whole content
+        // in memory for the session's lifetime.
+        const input = block.input as { file_path?: unknown; files?: unknown } | undefined
+        toolUses.set(block.id, { name: String(block.name ?? ""), input: block.name === "SendUserFile" ? { files: input?.files } : { file_path: input?.file_path } })
         continue
       }
       if (block.type === "thinking") {
@@ -299,7 +300,7 @@ export function readTranscriptDelta(
       if (s.seenAssistantText.has(key)) continue
       s.seenAssistantText.add(key)
       if (opts.silent) {
-        emitArtifacts(s, text, undefined, opts)
+        emitArtifacts(s, identityFor(s), text, undefined, opts)
         continue
       }
       appendFeedEvent({
@@ -312,7 +313,7 @@ export function readTranscriptDelta(
       s.streamedThisTurn = true
       emitted++
       scanMarkdownImages(s, text)
-      emitArtifacts(s, text, undefined, opts)
+      emitArtifacts(s, identityFor(s), text, undefined, opts)
     }
   }
   return emitted
@@ -360,65 +361,6 @@ function gapMs(
   const to = Date.parse(b.timestamp)
   if (Number.isNaN(from) || Number.isNaN(to) || to < from) return undefined
   return to - from
-}
-
-// ── Artifacts in the feed (Phase 19 step 3, RES-B9CL) ──
-
-// Bash output can be megabytes; artifacts worth a card sit near the top.
-const ARTIFACT_SCAN_MAX = 100_000
-
-// One `artifact` event per distinct artifact per session. Like images and
-// thinking: never counted, never sets streamedThisTurn; a silent read marks
-// the seen keys without emitting.
-function emitArtifacts(s: PathState, text: string, tool: string | undefined, opts: { silent?: boolean }): void {
-  for (const a of detectArtifacts(text.slice(0, ARTIFACT_SCAN_MAX))) {
-    const seenKey = artifactKey(a)
-    if (s.seenArtifacts.has(seenKey)) continue
-    s.seenArtifacts.add(seenKey)
-    if (opts.silent) continue
-    appendFeedEvent({
-      id: crypto.randomUUID(),
-      ts: Date.now(),
-      kind: "artifact",
-      artifactKind: a.kind,
-      title: a.title,
-      ...(a.url ? { url: a.url } : {}),
-      ...(a.path ? { path: a.path } : {}),
-      ...(a.ref ? { ref: a.ref } : {}),
-      ...(tool ? { tool } : {}),
-      ...identityFor(s),
-    })
-  }
-}
-
-// tool_result content is a string or an array of blocks; only text counts.
-function toolResultText(content: unknown): string {
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return ""
-  const parts: string[] = []
-  for (const item of content as Array<Record<string, unknown>>) {
-    if (item?.type === "text" && typeof item.text === "string") parts.push(item.text)
-  }
-  return parts.join("\n")
-}
-
-function scanToolResultArtifacts(
-  s: PathState,
-  blocks: Array<Record<string, unknown>>,
-  toolUses: ToolUses,
-  opts: { silent?: boolean },
-): void {
-  for (const block of blocks) {
-    if (block.type !== "tool_result") continue
-    const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : ""
-    if (!toolUseId) continue
-    const scannedKey = `tr:${toolUseId}`
-    if (s.seenArtifacts.has(scannedKey)) continue
-    s.seenArtifacts.add(scannedKey)
-    const text = toolResultText(block.content)
-    if (!text) continue
-    emitArtifacts(s, text, toolUses.get(toolUseId)?.name || undefined, opts)
-  }
 }
 
 // ── Images in the feed (RES-L5NG step 3) ──

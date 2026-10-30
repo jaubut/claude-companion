@@ -144,6 +144,75 @@ Last updated: 2026-10-25
 
 ## Change Plans
 
+### Change Plan — sent-file-cards (2026-10-30)
+**Request (t-server-filecards-1):** files any session (the brain included) sends with Claude Code's `SendUserFile` reach the iOS app as real thumbnails and downloads, not just a host path.
+**Done when:**
+- A `SendUserFile` of a PNG + a ZIP gives two `artifact` events (kind `file`). Each has `url=/api/files/<id>/<name>`, and the PNG also has `mediaId/width/height`. The phone (build 78) shows a thumbnail for the PNG and a downloadable ZIP, both open in Quick Look.
+- A secret path, a file over 50 MB or a non-regular file gets no copy and no `url`. It falls back to today's path-only card.
+- No duplicate path-only card for the same file, from the tool_result or from later assistant text.
+
+**Reference (leader: Slack `files.*` — file object, from knowledge, not fetched)**
+- `url_private` / `url_private_download` (bearer) → `url` (bearer gate, `Content-Disposition: attachment`). `thumb_360/720` + `thumb_w/h` → `mediaId` + `width/height` (existing media store). `name` → `title`, the last path segment. `id` (stable) → the content id `sha256(realpath\0size\0mtime)`.
+- What we copy: the original is separate from the thumbnail. A download needs the same token as the API. The file object is immutable, and expiry is a store policy, not a feed event.
+
+**Target shape & drift**
+- Reference: (1) transcript readers are pure detectors, and the side-effectful stores (media, sent files) are leaf libs; (2) the feed carries references, never bytes or host paths, as the only handle a client needs; (3) every served byte goes through the `/api/*` bearer gate, with id-validated routes and no paths from the client; (4) stores sweep themselves (age + byte cap); (5) feed shapes are fixtures synced to iOS.
+- Deviations: (a) `lib/transcript.ts` is at 589/600 and mixes the reader, images and artifacts; (b) file artifacts are path-only, so a host path is useless on the phone; (c) `ToolUses` strips input to `file_path`, so tool-specific results cannot see their input; (d) map blind spot: the frames table shows `event` / `brain` with "no consumer found" because the iOS repo (`~/apps/claude companion`) is not on this host, so iOS consumers below come from the request, not the map.
+- This change moves toward (a): the artifact section moves to `lib/transcript-artifacts.ts`. It fixes (b) and (c) for `SendUserFile` only. Follow-ups: F1 serve detectArtifacts' existing path-only file cards through the same store (bigger blast radius, every Bash output); F2 video poster frames for mov/mp4 (needs ffmpeg, not sharp); F3 an `iOS ref map` for archmap on Linux (commit the iOS map so `ref:` rows join).
+
+**State decisions**
+- Sent-file store: `~/.claude-companion/sent-files/<id>/<basename>` (`COMPANION_SENT_FILES_DIR` in tests), owned by `lib/sent-files.ts`, written only by `storeSentFile`. Copy to `<dest>.<pid>.tmp`, then rename. A hit on an existing id touches its mtime and skips the copy. Swept on write: 7-day age, then 1 GB total, oldest mtime first. Hooking `sweepSentFiles` into `wiring/media.ts`'s hourly timer costs one line (in scope), so an idle host still ages files out.
+- Pending tool input: `ToolUses` keeps `{files, caption}` only when `name === "SendUserFile"`. Other tools keep only `file_path`, which bounds memory.
+- Feed event id is `sentfile:<tool_use_id>:<i>`, so a re-append is a no-op (`appendFeedEvent` dedupes by id). `ts` is the detection time, not the copy completion time. No new frame: the existing `event` frame carries it.
+- Silent read (boot, prompt start) marks `tr:<id>` seen and does no copy and no emit.
+- `storeImageFile` returning `"busy"` leads to an emit without `mediaId`. It is not parked, so iOS shows the file icon. Only image extensions (png/jpe?g/gif/webp/heic) try the thumbnail, and the thumbnail is read from the COPY, not the original (no swap between the check and the read).
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `event` (FeedEvent `artifact`) | frame | file kind gains `url` (relative) + `mediaId/width/height` | iOS FeedEventPayload / artifact card (#188, build 78), not in the map (blind spot d) | additive; build 78 already decodes them; older builds ignore them |
+| `contracts/feed-events/artifact.json` | fixture | +`mediaId`,`width`,`height` | `lib/feed-contract.test.ts`, iOS `claude companionTests/Fixtures/feed-events/` | additive; `bun run contracts:sync` must run ON THE MAC (the iOS repo is absent here, so the drift check skips silently) |
+| `GET /api/files/:id/:name` | endpoint | NEW | iOS #188 download (fetch with bearer) | new |
+| `SendUserFile` tool_result text | external input | parsed | Claude Code format (`"N files delivered…\n  <path> → file_uuid:"`) | not ours; see Risks |
+
+**Files — one owner each**
+| file | owner | change | lines now → after |
+|---|---|---|---|
+| `server/lib/sent-files.ts` | builder | NEW: `storeSentFile`, `sentFilePath`, `isSentFileId`, `sweepSentFiles`, `isSecretPath` (tested directly), type `SentFile`. Deny = `SECRET_PATHS` + `**/.secrets`, `**/.kb_*`, `~/.config/telegram-bot.env`, `**/*.key`, `**/id_rsa*`, `**/id_ed25519*`, `~/.claude-companion/*` (covers `auth.token.bak-*`, `companion.db`, `.p8`, log; the subdirs stay allowed). Match the given path AND its realpath with `Bun.Glob` (`~` expanded). Refuse when not `isFile()` or > 50 MB | 0 → ~110 ✓ |
+| `server/lib/transcript-artifacts.ts` | builder | NEW: `emitArtifacts`, `scanToolResultArtifacts`, type `ArtifactState` (their parameter) (moved from transcript.ts; they take `ident` + `seenArtifacts`, so there is no runtime cycle). Adds a SendUserFile branch: skip on `is_error`; files = `input.files` whose path appears in the result text (all of `input.files` when none match, which covers a format drift); a relative path resolves against `s.cwd`; mark `art:file:<path>` seen so later text does not re-card it | 0 → ~120 ✓ |
+| `server/lib/transcript.ts` | builder | remove the artifact section (lines 365-422) and import it; widen the `toolUses.set` input for SendUserFile | 589 → ~540 ✓ |
+| `server/routes/files.ts` | builder | NEW: `handleFilesRoute`. GET only. `id` must match `/^[a-f0-9]{32}$/`; the decoded `name` must equal the single entry in `<dir>/<id>/` (no join on client input). `Content-Type` = `Bun.file().type` (unknown types get octet-stream). `Content-Disposition: attachment; filename*=UTF-8''…`, `X-Content-Type-Options: nosniff`, immutable cache + ETag as in media.ts. Never log the URL (`?token=`) | 0 → ~45 ✓ |
+| `server/companion-server.ts` | builder | add `handleFilesRoute` to the route chain next to `handleMediaRoute` | 172 → 173 ✓ |
+| `server/wiring/media.ts` | builder | the hourly timer also calls `sweepSentFiles` | 34 → 36 ✓ |
+| `server/lib/feed.ts` | builder | comment only: a file artifact may carry `url` (`/api/files`) + `mediaId` | 208 → 209 ✓ |
+| `contracts/feed-events/artifact.json` | builder | +`mediaId`,`width`,`height` | — |
+| `server/lib/sent-files.test.ts`, `server/lib/transcript-artifacts.test.ts`, `server/routes/files.test.ts` | builder | NEW tests next to the modules. `transcript.test.ts` is at 539, so new cases do not go there | — |
+
+**Fan-in paths to guard**
+- `readTranscriptDelta()` is reached from the 1.5 s poll (activity.ts:95), PostToolUse (activity.ts:396), the silent prompt-start read (activity.ts:445) and the turn-end retry loop (activity.ts:498, up to 16 reads). `tr:<tool_use_id>` must be marked synchronously BEFORE the async copy, or the retry loop copies and emits N times. The id-dedupe in `appendFeedEvent` is the backstop, not the guard.
+- `storeImageFile()` is reached from `scanMarkdownImages` and now sent-files. They share the 2-slot / 6-pending encode queue, so a 10-image send can return `"busy"` for some images, which then ship without a thumbnail (accepted, see State).
+- The brain's Stop hook returns early (hooks.ts:437) and never calls `recordTurnEnd`. Its SendUserFile result is picked up by PostToolUse and the 1.5 s poll, so verify it on the brain itself, not only on a plain session.
+
+**Risks**
+- Where the brain's file shows on the phone: these are feed events under the brain's `sessionKey`. If the iOS brain thread renders only orchestrator turns and `brain_trace`, the card is visible only in the brain's session view → decide with Jeremie before calling it done. A trace row pointing at the artifact would be a separate iOS+server change (follow-up F4).
+- The tool_result format is Claude Code's, not ours. The filter falls back to all of `input.files`, and a test pins the current text.
+- The relative `url` must resolve against the host that produced the event (Mac vs zettlab), since each host has its own WS. → Verify step 6.
+- Deny list is defense-in-depth. SendUserFile has already uploaded the file to claude.ai, and the real exposure is a prompt-injected brain copying a secret onto the phone's disk, which the deny list catches.
+- After the sweep (7 days), the phone's cached card points at a 404 → iOS has to show "expired", not spin (iOS-side check in the manual pass).
+- 50 MB cap vs real footage: most mp4s are refused, and refused files keep the path-only card. Raising the cap is a disk question, not code.
+- kb: not queried. The touched modules import only builtins (`node:fs`, `node:path`, `node:crypto`, `Bun.Glob`, `Bun.file`), so no third-party externals.
+
+**Verify**
+1. `bun test server/lib/sent-files.test.ts`: `~/.ssh/x`, `.env.local`, a symlink to `auth.token` and `~/.claude-companion/auth.token.bak-x` are each refused; a 51 MB sparse file is refused; a directory is refused; a zip is copied byte-identical; the same file twice gives one id, one dir and a touched mtime; the sweep removes old and over-cap entries oldest first.
+2. `bun test server/routes/files.test.ts`: no bearer → 401 (through `companion-server` fetch, not the bare handler); a bad id or `..%2F` → 404; a name mismatch → 404; a good request → bytes, `application/zip`, `attachment` and `nosniff`.
+3. `bun test server/lib/transcript-artifacts.test.ts`: a SendUserFile png+zip gives 2 events, with `url` on both and `mediaId` on the png only; `is_error` gives 0 events; a silent read gives 0 events and no copy; a second read gives no duplicate; later assistant text naming the same path gives no extra card; a secret path gives a path-only card with no `url`.
+4. `bun test` (whole server, `feed-contract.test.ts` included) is green, `bun run tools/archmap/cli.ts . --lint` is clean, and `wc -l server/lib/transcript.ts` is ≤ 560.
+5. Scratch server (`COMPANION_SENT_FILES_DIR`, `COMPANION_MEDIA_DIR` in a tmp dir): a session sends a PNG with SendUserFile, then `curl -H "Authorization: Bearer …" <origin><url>` returns the bytes and `GET /api/media/<mediaId>` returns a JPEG.
+6. On the Mac: `bun run contracts:sync`, then the iOS decode test passes, and both repos are committed.
+7. **Manual pass by Jeremie (build 78, live host):** ask the brain to SendUserFile a screenshot PNG, a `.zip` and a `.csv`. He should see a thumbnail card for the PNG, and file cards for the zip and csv that download and open in Quick Look with the right filename, with no second path-only card. Repeat once on the other host (Mac / zettlab), where the download must come from that host. Ask it to send `~/.claude-companion/auth.token`: a path-only card, and no download possible. Not shipped until this pass is clean.
+
+**Out of scope:** detectArtifacts path cards gaining downloads (F1), video posters (F2), the `caption` on the artifact event (iOS #188 does not read it; the brain's text carries it), Range requests (iOS downloads whole files), and any iOS change.
+
 ### Change Plan — blocked-task-takeover (2026-10-16) — server half (iOS half: note below → `~/apps/claude companion/STATE.md` § blocked-task-takeover)
 **Request (Jeremie):** a "Take over in a session" option on blocked dispatch-task triage cards. Choosing it resolves the right repo and host, spawns a real interactive Claude session there (herdr, `--remote-control <name>`), seeded with the task, its blocker, the RES how-to and the last dispatch log, and binds it to the Turso task (running → completed + PR | blocked again). The session shows in Companion's session list so the phone can drive it.
 **Done when:**

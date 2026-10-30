@@ -60,7 +60,8 @@ export interface FeedEvent {
   height?: number
   caption?: string
   // kind "artifact" (RES-B9CL) — see lib/artifacts.ts. `url` for a PR, `ref`
-  // for a TLS note, `path` for a file on this host.
+  // for a TLS note, `path` for a file on this host. A file SendUserFile sent
+  // also carries `url` (/api/files/<id>/<name>) and, for images, `mediaId`.
   artifactKind?: "pr" | "note" | "file" | "url"
   title?: string
   url?: string

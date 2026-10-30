@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 173,
+          "lines": 174,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -59,6 +59,7 @@
             "routes/command.ts",
             "routes/attach.ts",
             "routes/media.ts",
+            "routes/files.ts",
             "routes/goals.ts",
             "routes/body.ts",
             "routes/vault.ts",
@@ -1893,7 +1894,7 @@
         },
         {
           "path": "lib/feed.ts",
-          "lines": 209,
+          "lines": 210,
           "kind": "lib",
           "exports": [
             "FEED_EVENT_KINDS",
@@ -4045,6 +4046,30 @@
           "externals": []
         },
         {
+          "path": "lib/sent-files.ts",
+          "lines": 123,
+          "kind": "lib",
+          "exports": [
+            "SentFile",
+            "isSentFileId",
+            "isSecretPath",
+            "sentFilePath",
+            "storeSentFile",
+            "sweepSentFiles"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/readonly-claude.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-identity.ts",
           "lines": 58,
           "kind": "lib",
@@ -4832,6 +4857,31 @@
           "externals": []
         },
         {
+          "path": "lib/transcript-artifacts.ts",
+          "lines": 131,
+          "kind": "lib",
+          "exports": [
+            "ArtifactState",
+            "emitArtifacts",
+            "scanToolResultArtifacts"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feed.ts",
+            "lib/artifacts.ts",
+            "lib/media.ts",
+            "lib/sent-files.ts",
+            "lib/transcript-cursor.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/transcript-backfill.ts",
           "lines": 119,
           "kind": "lib",
@@ -4892,7 +4942,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 590,
+          "lines": 532,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -4921,7 +4971,7 @@
           "apiCalls": [],
           "imports": [
             "lib/feed.ts",
-            "lib/artifacts.ts",
+            "lib/transcript-artifacts.ts",
             "lib/media.ts",
             "lib/transcript-cursor.ts",
             "lib/tool-format.ts",
@@ -6153,6 +6203,25 @@
           "externals": []
         },
         {
+          "path": "routes/files.ts",
+          "lines": 36,
+          "kind": "lib",
+          "exports": [
+            "handleFilesRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sent-files.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/gauge.ts",
           "lines": 31,
           "kind": "route-host",
@@ -7317,7 +7386,7 @@
         },
         {
           "path": "wiring/media.ts",
-          "lines": 35,
+          "lines": 37,
           "kind": "lib",
           "exports": [
             "startMediaSweeper",
@@ -7331,7 +7400,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/media.ts"
+            "lib/media.ts",
+            "lib/sent-files.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8334,6 +8404,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleFilesRoute": {
+          "module": "routes/files.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleGaugeRoute": {
           "module": "routes/gauge.ts",
           "callers": [
@@ -8490,6 +8566,7 @@
           "callers": [
             "lib/activity.ts",
             "lib/codex-feed.ts",
+            "lib/transcript-artifacts.ts",
             "lib/transcript.ts"
           ]
         },
@@ -9337,6 +9414,7 @@
           "module": "lib/feed.ts",
           "callers": [
             "lib/codex-feed.ts",
+            "lib/transcript-artifacts.ts",
             "lib/transcript-backfill.ts",
             "wiring/events.ts"
           ]
@@ -11655,6 +11733,12 @@
             "routes/vault.ts"
           ]
         },
+        "SECRET_PATHS": {
+          "module": "lib/readonly-claude.ts",
+          "callers": [
+            "lib/sent-files.ts"
+          ]
+        },
         "runTmux": {
           "module": "lib/key-gate.ts",
           "callers": [
@@ -12140,6 +12224,38 @@
             "lib/terminal-bridge.ts"
           ]
         },
+        "detectArtifacts": {
+          "module": "lib/artifacts.ts",
+          "callers": [
+            "lib/transcript-artifacts.ts"
+          ]
+        },
+        "artifactKey": {
+          "module": "lib/artifacts.ts",
+          "callers": [
+            "lib/transcript-artifacts.ts"
+          ]
+        },
+        "ToolUses": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/transcript-artifacts.ts",
+            "lib/transcript.ts"
+          ]
+        },
+        "storeSentFile": {
+          "module": "lib/sent-files.ts",
+          "callers": [
+            "lib/transcript-artifacts.ts"
+          ]
+        },
+        "storeImageFile": {
+          "module": "lib/media.ts",
+          "callers": [
+            "lib/transcript-artifacts.ts",
+            "lib/transcript.ts"
+          ]
+        },
         "readTailLines": {
           "module": "lib/transcript-cursor.ts",
           "callers": [
@@ -12198,20 +12314,14 @@
             "lib/transcript.ts"
           ]
         },
-        "detectArtifacts": {
-          "module": "lib/artifacts.ts",
+        "scanToolResultArtifacts": {
+          "module": "lib/transcript-artifacts.ts",
           "callers": [
             "lib/transcript.ts"
           ]
         },
-        "artifactKey": {
-          "module": "lib/artifacts.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "ToolUses": {
-          "module": "lib/transcript-cursor.ts",
+        "emitArtifacts": {
+          "module": "lib/transcript-artifacts.ts",
           "callers": [
             "lib/transcript.ts"
           ]
@@ -12241,12 +12351,6 @@
           ]
         },
         "storeImageBase64": {
-          "module": "lib/media.ts",
-          "callers": [
-            "lib/transcript.ts"
-          ]
-        },
-        "storeImageFile": {
           "module": "lib/media.ts",
           "callers": [
             "lib/transcript.ts"
@@ -13476,6 +13580,12 @@
           "module": "lib/dialogs.ts",
           "callers": [
             "routes/dialogs.ts#POST /api/dialog/pick"
+          ]
+        },
+        "sentFilePath": {
+          "module": "lib/sent-files.ts",
+          "callers": [
+            "routes/files.ts"
           ]
         },
         "gauge": {
@@ -15556,6 +15666,12 @@
         },
         "sweepMedia": {
           "module": "lib/media.ts",
+          "callers": [
+            "wiring/media.ts"
+          ]
+        },
+        "sweepSentFiles": {
+          "module": "lib/sent-files.ts",
           "callers": [
             "wiring/media.ts"
           ]
