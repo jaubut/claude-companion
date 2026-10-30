@@ -65,7 +65,7 @@ export function hookPassthroughResponse(agent: SpawnAgent): Response {
   return agent === "codex" ? new Response("") : Response.json({})
 }
 
-export const FROM_PHONE_CONTEXT = "This prompt was sent from Jeremie's iPhone via Companion: prefer tappable links over Mac-only steps."
+const FROM_PHONE_CONTEXT = "This prompt was sent from Jeremie's iPhone via Companion: prefer tappable links over Mac-only steps."
 
 // UserPromptSubmit stdout, built here so the hook script just prints it (it has no jq): the
 // fromPhone note and the canvas references (wiring/canvas.ts). 204 = print nothing.

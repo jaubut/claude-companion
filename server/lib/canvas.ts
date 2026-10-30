@@ -345,7 +345,7 @@ export async function contextPrompt(node: CanvasNode, query: QueryFn): Promise<C
 const STICKY_MAX = 600
 const CONTEXT_MAX = 3000
 const TITLE_MAX = 120
-export const BODY_MAX = 32_000
+const BODY_MAX = 32_000
 export const NOTE_TRUNCATED = " [… truncated — read it in full by its ref]"
 
 const clip = (text: string, max: number): string => (text.length > max ? text.slice(0, max - NOTE_TRUNCATED.length) + NOTE_TRUNCATED : text)
