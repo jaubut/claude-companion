@@ -4,7 +4,8 @@
       "Edit",
       "Write",
       "MultiEdit",
-      "NotebookEdit"
+      "NotebookEdit",
+      "Bash(gh pr merge:*)"
     ],
     "allow": [
       "mcp__turso__query",
@@ -28,7 +29,9 @@
       "Bash(bin/sessions:*)",
       "Bash(./bin/sessions:*)",
       "Bash(bin/pr-close:*)",
-      "Bash(./bin/pr-close:*)"
+      "Bash(./bin/pr-close:*)",
+      "Bash(bin/pr-merge:*)",
+      "Bash(./bin/pr-merge:*)"
     ]
   }
 }
