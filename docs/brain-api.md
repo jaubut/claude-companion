@@ -81,6 +81,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/sessions` | `{op:"list"}` · `{op:"close", workspaceId}` | see below. Same auth as propose (brain/bin/sessions). |
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
+| POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
 All `/api/brain*` are Bearer-gated; every one answers 404 `brain_disabled` off the brain host.
@@ -131,6 +132,33 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 | 409 `not_open` (+`state`) | already closed or merged |
 | 409 `not_dead` | none of the four signals |
 | 502 `close_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
+
+### Routine agent PRs (`/hooks/brain/pr-merge`)
+
+`wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word, and refuses on any doubt. It checks, in order:
+1. The PR is open, not a draft, and its head is `dispatch/*`.
+2. **needs_human** refuses when any of these holds:
+   - The PR has no task linked by `dispatch_pr_url` (a branch match is guessable), or any linked task's `origin` is not `jeremie`/`system`.
+   - A path matches the money, MFA, auth, secret, migration, CI or agent-config list. The list is a superset of the shepherd's `SENSITIVE_RE`, and it includes `brain/` and this gate.
+   - The file list is incomplete.
+   - The title or body mentions MFA, billing, payment, Stripe, invoice, bank, tax, credentials and similar.
+   - A label says mfa, billing, security, hold, do-not-merge or wip.
+   - The newest shepherd `pr:needs-human` / `pr:hold` is not lifted by a `pr:unpark`.
+3. **not_green** refuses unless `mergeable` is MERGEABLE, `mergeStateStatus` is CLEAN, and every check passed, with at least one SUCCESS.
+4. **not_approved** refuses unless both a Claude (`🤖 **Auto-review**`) and a Codex (`🧠 **Codex review**`) comment say `VERDICT: APPROVE`, stamped `<!-- reviewed-sha: <head> -->` and posted by the PR's author. It also refuses on any CHANGES on that head, or a GitHub CHANGES_REQUESTED.
+5. **merge_cap** refuses after 10 brain merges in 24 h.
+
+The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <checked head>`. The state is read back as MERGED, then an `agent_activity` row `brain:pr-merge` is written (meta: repo, pr, url, branch, head, title, reason, tasks; the machine digest lists these) and an event turn goes to the brain thread.
+
+| answer | when |
+|---|---|
+| 200 `{ok, merged, url, head}` | merged |
+| 400 | bad repo / pr / reason |
+| 403 `not_agent_branch` (+`branch`) · 403 `needs_human` (+`reasons`) | never the brain's to merge |
+| 404 `pr_not_found` | gh cannot read it |
+| 409 `not_open` / `draft` · 409 `not_green` / `not_approved` (+`reasons`) | not now |
+| 429 `merge_cap` | 10 brain merges in 24 h |
+| 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
 
 ## Hooks (no hook-script change)
 

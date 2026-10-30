@@ -150,6 +150,23 @@ Last updated: 2026-10-25
 
 ## Change Plans
 
+### Change Plan — brain-pr-merge (2026-10-30)
+**Request:** (task t-pr-merge-1) The brain stops asking Jeremie to hand-merge routine agent PRs. Add `bin/pr-merge`, modeled on `bin/pr-close`: the server re-checks every condition on GitHub and Turso and refuses on any doubt. It is the only merge path; raw `gh pr merge` is denied in the brain's settings.
+**State decisions**
+- **Gate order:** open/draft → `dispatch/*` → needs_human → not_green → not_approved → merge_cap. needs_human comes before green/approved, so the brain never waits on a PR it may never merge.
+- **Trust comes from Turso, not the PR:** tasks are linked by `dispatch_pr_url`, never by the guessable branch; every linked task's origin must be jeremie/system; review comments count only from the PR's author (the shepherd's `trustedComments` rule).
+- **Path list:** local and a superset of the shepherd's `SENSITIVE_RE`, plus money, MFA and the brain's own authority (`brain/`, this gate). It is not imported from claude-config: an import failure would have to fail closed anyway, and a false hit only costs a hand-merge.
+- **TOCTOU:** `--match-head-commit <checked sha>`; the state is read back as MERGED before anything is recorded.
+**Contracts touched**
+| contract | kind | change | consumers | compat |
+|---|---|---|---|---|
+| `POST /hooks/brain/pr-merge` | hook endpoint | new | brain/bin/pr-merge | additive |
+| `BrainRouteDeps.prMerge` | export | new optional | routes/brain.test.ts | additive |
+| `agent_activity` action `brain:pr-merge` | row | new | claude-config tools/machine-digest.ts (#174) | additive |
+| brain `permissions` | settings | allow `bin/pr-merge`, deny `gh pr merge` | the brain session | tighter |
+**Files** (one owner): `server/wiring/brain-pr-merge.ts` (new) · `server/wiring/brain-pr-merge.test.ts` (new) · `server/routes/brain.ts` (route, sharing pr-close's input checks) · `server/routes/brain.test.ts` · `brain/bin/pr-merge` (new) · `brain/CLAUDE.md` · `brain/.claude/settings.json` · `docs/brain-api.md` · `STATE.md` · `architecture.*` (regenerated)
+**Verify:** each refusal and the happy path in brain-pr-merge.test.ts (gh faked, sqlite Turso); route auth/input in brain.test.ts; tsc; archmap --check --lint; full `bun test --isolate`.
+
 ### Change Plan — canvas-note-media (2026-10-30)
 **Request:** PRJ-FL49 Phase 2 (task 43a692fd). A canvas-linked note's attached media becomes multimodal context: images become image blocks, voice memos become transcript text blocks. Hard per-note cap on image count and total bytes. Reuse the media, sent-files and voice stores. Server only.
 **Done when:** `noteContextBlocks` tests pass (one image → one image block; audio → one transcript block; over the cap → extras dropped + `omitted` count + note block; no attachments → `[{text: body}]`). `GET /api/canvas/linked-notes/<ref>?…&content=1` returns `content` + `omitted`. `bunx tsc -p tsconfig.server.json --noEmit` is clean.
