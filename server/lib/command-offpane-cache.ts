@@ -167,7 +167,16 @@ export function createCommandLister(deps: ListerDeps) {
     return { cached: false, result: await Promise.race([job, gaveUp]) }
   }
 
-  return { list, clear: () => { cache.clear(); failures.clear() } }
+  // The cached whole list for a cwd, or null. Never prepares or enumerates:
+  // a fallback that must answer now (the `/` suggest when the pane gives
+  // nothing). The fingerprint is not re-checked, so it can trail a skill
+  // change by up to the TTL, like any cached answer would.
+  function peek(cwd: string): CommandEntry[] | null {
+    const hit = cache.get(cwd)
+    return hit && now() - hit.at < ttl ? hit.commands : null
+  }
+
+  return { list, peek, clear: () => { cache.clear(); failures.clear() } }
 }
 
 // Launch resolution is memoised briefly: the phone warms every session at

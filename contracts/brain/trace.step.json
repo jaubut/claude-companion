@@ -1,0 +1,21 @@
+{
+  "type": "brain_trace",
+  "op": "row",
+  "rows": [
+    {
+      "id": "step:toolu_01ABC",
+      "parentId": "turn:5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "turnId": "5f0c2a8e-1b7d-4a53-9c11-2f6e0d9a7b31",
+      "kind": "step",
+      "status": "running",
+      "title": "Reading notes",
+      "detail": "RES-3T6G",
+      "ref": {
+        "step": "reading"
+      },
+      "startedAt": 1793145660000,
+      "endedAt": null,
+      "seq": 7
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "type": "brain",
+  "state": "up",
+  "sessionKey": "herdr:p_brain",
+  "since": 1793145600000,
+  "restarts": 0,
+  "host": "zettlab",
+  "activity": {
+    "kind": "reading",
+    "label": "Reading notes",
+    "since": 1793145660000
+  }
+}

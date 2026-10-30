@@ -466,6 +466,52 @@ describe("POST /api/orchestrator/dispatch", () => {
   })
 })
 
+// ── one pipeline list (one-stream slice D) ───────────────────────────────────
+
+describe("GET /api/orchestrator/pipeline", () => {
+  test("one state per task, read from Turso; approveUrl only on pending_approval; shepherd only on pr_open", async () => {
+    const { handler } = makeWiring()
+    const pr = (n: number) => `https://github.com/jaubut/dash/pull/${n}`
+    const ids = {
+      pending: tid(), queued: tid(), running: tid(), prOpen: tid(), merged: tid(), blocked: tid(), failed: tid(), cancelled: tid(),
+    }
+    seedTask(ids.pending, { dispatch_status: "pending" })
+    seedTask(ids.queued, { dispatch_status: "queued" })
+    seedTask(ids.running, { dispatch_status: "running", dispatch_owner: "zettlab", dispatch_run_id: "r1" })
+    seedTask(ids.prOpen, { dispatch_status: "completed", dispatch_pr_url: pr(1) })
+    seedTask(ids.merged, { dispatch_status: "completed", dispatch_pr_url: pr(2), done: 1 })
+    seedTask(ids.blocked, { dispatch_status: "blocked", dispatch_blocker: "needs key" })
+    seedTask(ids.failed, { dispatch_status: "failed" })
+    seedTask(ids.cancelled, { dispatch_status: "cancelled", done: 1 })
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:local-gates', 'task', ?, ?)")
+      .run(ids.prOpen, JSON.stringify({ url: pr(1), tests: "pass", build: "pass" }))
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'outcome:merged', 'task', ?, '{}')")
+      .run(ids.merged)
+
+    const res = await call(handler, "GET", "/api/orchestrator/pipeline")
+    expect(res.status).toBe(200)
+    expect(typeof res.json.generatedAt).toBe("number")
+    const by = new Map((res.json.items as Record<string, any>[]).map((i) => [i.id, i]))
+    expect(by.size).toBe(8)
+    const state = (id: string) => by.get(id)!.state
+    expect(Object.fromEntries(Object.entries(ids).map(([k, id]) => [k, state(id)]))).toEqual({
+      pending: "pending_approval", queued: "queued", running: "running", prOpen: "pr_open", merged: "merged",
+      blocked: "blocked", failed: "failed", cancelled: "cancelled",
+    })
+    expect(by.get(ids.pending)).toMatchObject({ title: "Fix tax rounding", agent: "builder", noteId: "projects/dash", prUrl: null, shepherd: null })
+    expect(by.get(ids.pending)!.approveUrl).toEndWith(`/tasks?task=${ids.pending}`)
+    for (const [k, id] of Object.entries(ids)) if (k !== "pending") expect("approveUrl" in by.get(id)!).toBe(false)
+    expect(by.get(ids.prOpen)).toMatchObject({ prUrl: pr(1), shepherd: { ci: "passing", parked: false } })
+    expect(by.get(ids.merged)).toMatchObject({ prUrl: pr(2), shepherd: null })
+  })
+
+  test("Turso down → 503 turso_unreachable", async () => {
+    const { handler } = makeWiring()
+    down = true
+    expect(await call(handler, "GET", "/api/orchestrator/pipeline")).toMatchObject({ status: 503, json: { ok: false, error: "turso_unreachable" } })
+  })
+})
+
 // ── P3: #Body triage ─────────────────────────────────────────────────────────
 
 describe("#Body triage", () => {

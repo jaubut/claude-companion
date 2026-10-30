@@ -1,5 +1,7 @@
 import { getAuthToken } from "../lib/auth"
-import { DashboardKeyMissing, DashboardUnreachable, fetchReceiptFile, postInbox } from "../lib/dashboard-client"
+import { DashboardKeyMissing, DashboardUnreachable, fetchReceiptFile, patchInbox, postInbox } from "../lib/dashboard-client"
+import { BRAIN_TAKE_PREFIX, brainEnabled } from "../lib/brain"
+import { brainWiring } from "../wiring/brain"
 import { withIdempotency } from "../lib/idempotency"
 import { companionLog } from "../lib/log"
 import { captureReceipt } from "../lib/receipt-capture"
@@ -18,7 +20,7 @@ import { HOP_HEADER, type UpstreamConfig, forwardVault, forwardedDevice, vaultUp
 //   POST /api/receipts/qa/:id/resolve  {fields, note?}             → {ok}
 //   POST /api/receipts/qa/:id/accept                               → {ok}
 //   POST /api/capture/voice/upload     multipart {audio(file ≤ 25 MB), transcript?} → {ok, id, filename, bytes, status:"pending", transcript|null}
-//   POST /api/capture/voice/start      {mime}                      → {ok, id, filename}
+//   POST /api/capture/voice/start      {mime, brainTurnId?}        → {ok, id, filename}
 //   POST /api/capture/voice/:id/chunk  {seq, audio(base64 ≤ 512 KB)} → {ok, seq, bytes}
 //   POST /api/capture/voice/:id/finalize                           → {ok, bytes, transcript|null}
 //   POST /api/capture/voice/:id/transcribe                         → {ok, transcript}
@@ -57,6 +59,25 @@ const ACTIONS = ["image", "resolve", "accept"] as const
 type Action = typeof ACTIONS[number]
 
 export const captureLimiter = createLimiter(30, 60_000)
+
+const BRAIN_TURN_ID = /^[\w:-]{1,64}$/
+
+/**
+ * brain-v2: a take from the 🧠 composer is archived only. Best effort, after
+ * the start already succeeded: the inbox row is marked `brain:<turn>` (so it
+ * never lists as a Quick Capture memo) and the turn card gets the audio id. A
+ * bad id or any failure here never fails the start.
+ */
+async function archiveBrainTake(id: number, raw: unknown): Promise<void> {
+  if (!brainEnabled() || typeof raw !== "string" || !BRAIN_TURN_ID.test(raw)) return
+  try {
+    const r = await patchInbox(id, `${BRAIN_TAKE_PREFIX}${raw}`)
+    if (r.status !== 200) companionLog(`voice #${id} brain take mark refused (HTTP ${r.status})`)
+    brainWiring.attachAudio(raw, String(id))
+  } catch (err) {
+    companionLog(`voice #${id} brain take not archived (${(err as Error)?.name ?? "error"})`)
+  }
+}
 // A 30-min memo is ~30 chunks, plus retries: chunks get their own, looser budget.
 export const voiceChunkLimiter = createLimiter(300, 60_000)
 
@@ -274,7 +295,12 @@ async function handleVoice(req: Request, url: URL, up: UpstreamConfig | null): P
     if (wait) return wait
     const body = await readBody(req)
     if (!body) return fail(400, "bad_json")
-    return withIdempotency(req, "capture-voice-start", async () => up ? forwardJson(up, req, p, body) : outcome(await voiceStart(body)))
+    return withIdempotency(req, "capture-voice-start", async () => {
+      if (up) return forwardJson(up, req, p, body)
+      const o = await voiceStart(body)
+      if (o.ok && typeof o.body.id === "number") await archiveBrainTake(o.body.id, body.brainTurnId)
+      return outcome(o)
+    })
   }
   if (p === VOICE_UPLOAD_PATH) {
     if (req.method !== "POST") return fail(405, "method_not_allowed")

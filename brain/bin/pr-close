@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Close a DEAD agent PR (POST /hooks/brain/pr-close), always with a reason.
+#
+#   bin/pr-close --repo <owner/name> --pr <n> --reason "<why it is dead>"
+#
+# The server re-checks everything on GitHub and Turso: open, head dispatch/*
+# (403 not_agent_branch otherwise) and dead — conflicting, superseded, task
+# done/cancelled, or parked by the shepherd with its fix budget spent
+# (409 not_dead otherwise). Comments "Closed by the brain: <reason>", keeps
+# the branch. Same auth as bin/propose: loopback, X-Companion-Task-Id: brain
+# and the pid of the brain's claude process (found by walking up the parent chain).
+set -euo pipefail
+
+REPO="" PR="" REASON=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --pr) PR="$2"; shift 2 ;;
+    --reason) REASON="$2"; shift 2 ;;
+    *) echo "pr-close: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+case "$PR" in ''|*[!0-9]*) echo "pr-close: --pr <number> is required" >&2; exit 2 ;; esac
+if [ -z "$REPO" ] || [ -z "$REASON" ]; then
+  echo "pr-close: --repo, --pr and --reason are required" >&2
+  exit 2
+fi
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(REPO="$REPO" PR="$PR" REASON="$REASON" python3 -c '
+import json, os
+print(json.dumps({"repo": os.environ["REPO"], "pr": int(os.environ["PR"]), "reason": os.environ["REASON"]}))')
+
+curl -sS --max-time 90 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/pr-close" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

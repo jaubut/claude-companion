@@ -19,9 +19,12 @@ import { type DispatchWiring, dispatchWiring } from "./dispatch"
 import { fileProposal } from "./orchestrator"
 
 // POST /api/body/component/:id/agent — "Get an agent on it" (lib/body-agent.ts).
-// The tap files ONE `pending` Turso agent task (a #Body proposal row filed at
-// once), tagged requires_host=<owning host> so only that host's dispatch-run
-// claims it; Jeremie releases it on the dashboard (docs/one-stream-plan.md).
+// The tap files ONE Turso agent task (a #Body proposal row filed at once),
+// tagged requires_host=<owning host> so only that host's dispatch-run claims
+// it. The tap is Jeremie's own approval (2026-10-25): origin `jeremie`, so it
+// goes straight to `queued`. It asks for dispatch-run's herdr runner, so
+// the run is a session Jeremie can watch in Companion, not a headless -p. Only a Turso without the origin column leaves it
+// `pending` for the dashboard stamp (docs/one-stream-plan.md).
 // One open run per component (409 already_running), a component in state ok
 // needs an instruction, every start logs agent_activity `body:agent`.
 
@@ -101,7 +104,7 @@ function plan(detail: BodyComponentDetail, owner: BodyHost, instruction: string 
   }
 }
 
-type Started = { ok: true; taskId: string; dispatchTaskId: string } | { ok: false; res: Response }
+type Started = { ok: true; taskId: string; dispatchTaskId: string; queued: boolean } | { ok: false; res: Response }
 
 async function file(componentId: string, p: Plan, dispatch: DispatchWiring): Promise<Started> {
   const { channel, created } = ensureChannel(BODY_CHANNEL, BODY_CHANNEL_NAME)
@@ -110,8 +113,8 @@ async function file(componentId: string, p: Plan, dispatch: DispatchWiring): Pro
   const t = createProposal(p.prompt, cwd, `Body agent run on ${componentId} (tapped "Get an agent on it")`, BODY_CHANNEL, {
     noteId: p.noteId, agent: p.agent, title: p.title,
   })
-  const out = await fileProposal(t.taskId, { noteId: p.noteId, agent: p.agent, requiresHost: p.owner }, dispatch)
-  if (out.ok) return { ok: true, taskId: t.taskId, dispatchTaskId: out.dispatchTaskId }
+  const out = await fileProposal(t.taskId, { noteId: p.noteId, agent: p.agent, requiresHost: p.owner, byHand: true, runner: "herdr" }, dispatch)
+  if (out.ok) return { ok: true, taskId: t.taskId, dispatchTaskId: out.dispatchTaskId, queued: out.queued }
   // The tap was the approval: never leave a stray card to approve a second time.
   if (getTask(t.taskId)?.status === "proposed") setTaskStatus(t.taskId, "cancelled")
   return { ok: false, res: err(out.status, out.error, { host: p.owner }) }
@@ -156,10 +159,10 @@ export async function startBodyAgent(componentId: string, instruction: string | 
     if (!started.ok) return started.res
     deps.store.record({ componentId, taskId: started.taskId, dispatchTaskId: started.dispatchTaskId, host: owner, agent: p.agent, createdAt: deps.now() })
     await logActivity(dispatch, componentId, p, started, instruction)
-    companionLog(`[body-agent] ${componentId} → ${p.agent} filed for ${owner} as ${started.dispatchTaskId.slice(0, 8)} (pending approval)`)
+    companionLog(`[body-agent] ${componentId} → ${p.agent} filed for ${owner} as ${started.dispatchTaskId.slice(0, 8)} (${started.queued ? "queued" : "pending approval"})`)
     return Response.json({
       ok: true, taskId: started.taskId, dispatchTaskId: started.dispatchTaskId, host: owner, agent: p.agent,
-      status: "pending_approval", approveUrl: approveUrl(started.dispatchTaskId),
+      ...(started.queued ? { status: "queued" } : { status: "pending_approval", approveUrl: approveUrl(started.dispatchTaskId) }),
     })
   } finally {
     starting.delete(componentId)

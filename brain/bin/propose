@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# brain-v2: file a dispatch proposal from the brain (POST /hooks/brain/propose).
+#
+#   bin/propose --turn <sourceTurnId> --note <projects/... note id> --title "<title>" \
+#               --prompt "<what the builder must do>" --why "<one line>" [--agent builder]
+#
+# It dispatches at once (filed `queued`, no Approve card); Jeremie sees a trace
+# line. A failed filing stays a proposal card he can tap.
+# Auth is the caller's identity: loopback only, X-Companion-Task-Id: brain and
+# the pid of the brain's claude process (found by walking up the parent chain).
+set -euo pipefail
+
+TURN="" NOTE="" TITLE="" PROMPT="" WHY="" AGENT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --turn) TURN="$2"; shift 2 ;;
+    --note) NOTE="$2"; shift 2 ;;
+    --title) TITLE="$2"; shift 2 ;;
+    --prompt) PROMPT="$2"; shift 2 ;;
+    --why) WHY="$2"; shift 2 ;;
+    --agent) AGENT="$2"; shift 2 ;;
+    *) echo "propose: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+if [ -z "$TURN" ] || [ -z "$NOTE" ] || [ -z "$PROMPT" ]; then
+  echo "propose: --turn, --note and --prompt are required" >&2
+  exit 2
+fi
+
+# The claude process this command runs under: walk PPID until a `claude` command.
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" AGENT="$AGENT" python3 -c '
+import json, os
+b = {"sourceTurnId": os.environ["TURN"], "noteId": os.environ["NOTE"], "prompt": os.environ["PROMPT"],
+     "title": os.environ["TITLE"], "reasoning": os.environ["WHY"]}
+if os.environ["AGENT"]: b["agent"] = os.environ["AGENT"]
+print(json.dumps(b))')
+
+curl -sS --max-time 30 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/propose" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

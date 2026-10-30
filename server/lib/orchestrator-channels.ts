@@ -1,5 +1,6 @@
 import { db } from "./orchestrator-db"
 import type { TaskStatus } from "./orchestrator-chat"
+import { RESERVED_CHANNELS } from "./brain"
 
 // ---- channels (PRJ-OR1T Phase 6) ------------------------------------------
 
@@ -91,12 +92,18 @@ export function getChannel(id: string): Channel | null {
   return row ? toChannel(row) : null
 }
 
+/** A name whose slug is a system channel id (brain / general / body): POST /channels refuses it. */
+export function isReservedName(name: string): boolean {
+  return RESERVED_CHANNELS.has(slugify(name))
+}
+
 // Create a user-defined channel. The id is a slug of the name, disambiguated with
-// a -N suffix on collision so two "TLS Dashboard" channels can coexist.
+// a -N suffix on collision so two "TLS Dashboard" channels can coexist. Never a
+// reserved id, even on a host where that system channel was never seeded.
 export function createChannel(name: string, cwd: string | null = null): Channel {
   const base = slugify(name)
   let id = base
-  for (let n = 2; getChannel(id); n++) id = `${base}-${n}`
+  for (let n = 2; getChannel(id) || RESERVED_CHANNELS.has(id); n++) id = `${base}-${n}`
   const ch: Channel = {
     id, name: name.trim(), cwd: cwd?.trim() || null, createdAt: Date.now(), archived: false,
     trust: { approved: 0, rejected: 0, streak: 0, eligible: false },

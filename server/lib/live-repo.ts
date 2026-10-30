@@ -81,14 +81,15 @@ export function readRepoMapSource(file?: string): string | null {
 
 // One entry per object literal: optional `name: "…"`, `match: /re/flags`,
 // `path: `${HOME|home}/dir``, optional `project: "…"`, then any further simple
-// fields (`requires: ["xcode"]`, `platform: "darwin"`, future ones: a string,
-// a flat array or a boolean) — trailing comma allowed. Unknown fields are
-// ignored, never a reason to drop the entry.
+// fields (`requires: ["xcode"]`, `platform: "darwin"`, `verify: JS_VERIFY`,
+// future ones: a string, a flat array, a boolean, a number or a bare constant
+// name) — trailing comma allowed. Unknown fields are ignored, never a reason
+// to drop the entry.
 const ENTRY = new RegExp(
   String.raw`\{\s*(?:name:\s*"([^"\n]*)"\s*,\s*)?match:\s*\/((?:\\.|[^/\\\n])+)\/([a-z]*)\s*,\s*` +
     String.raw`path:\s*` + "`" + String.raw`\$\{(?:HOME|home)\}\/([^` + "`" + String.raw`$]+)` + "`" +
     String.raw`\s*(?:,\s*project:\s*"([^"\n]*)"\s*)?` +
-    String.raw`((?:,\s*[A-Za-z_]\w*:\s*(?:\[[^\]\n]*\]|"[^"\n]*"|true|false)\s*)*)` +
+    String.raw`((?:,\s*[A-Za-z_]\w*:\s*(?:\[[^\]\n]*\]|"[^"\n]*"|-?\d+(?:\.\d+)?|[A-Za-z_][\w.]*)\s*)*)` +
     String.raw`,?\s*\}`,
   "g",
 )

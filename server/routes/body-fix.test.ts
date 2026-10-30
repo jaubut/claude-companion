@@ -106,9 +106,9 @@ afterAll(() => {
   else process.env.HOME = savedHome
 })
 
-function resetTurso(withHostColumn: boolean) {
+function resetTurso(withHostColumn: boolean, withOriginColumn = false) {
   turso.exec("DROP TABLE IF EXISTS tasks; DELETE FROM agent_activity; DELETE FROM notes")
-  turso.exec(TASKS(withHostColumn ? ", requires_host TEXT NOT NULL DEFAULT 'any'" : ""))
+  turso.exec(TASKS((withHostColumn ? ", requires_host TEXT NOT NULL DEFAULT 'any'" : "") + (withOriginColumn ? ", origin TEXT" : "")))
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/dash', 'projects', 'Companion Orchestrator', 'PRJ-OR1T', 'active')").run()
 }
 
@@ -142,6 +142,15 @@ describe("approving a Mac body fix", () => {
     expect(rows()).toHaveLength(1)
     expect(rows()[0]).toMatchObject({ dispatch_status: "pending" })
     expect("requires_host" in rows()[0]!).toBe(false)
+  })
+
+  test("with the origin column, the tap is the approval: ONE queued row, origin jeremie", async () => {
+    resetTurso(true, true)
+    const r = await approve(card("mac").taskId)
+    expect(r.status).toBe(200)
+    expect(r.json).toMatchObject({ ok: true, status: "queued" })
+    expect(r.json.approveUrl).toBeUndefined()
+    expect(rows()).toEqual([expect.objectContaining({ dispatch_status: "queued", origin: "jeremie", requires_host: "mac" })])
   })
 
   test("a replayed approve returns the same row", async () => {

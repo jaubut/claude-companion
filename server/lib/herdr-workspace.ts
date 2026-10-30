@@ -1,6 +1,15 @@
 import type { Session } from "./sessions"
 import { closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, herdrOwnerFor, herdrPaneOf, type HerdrOwner } from "./herdr"
 import { companionLog } from "./log"
+import { endedStore } from "./ended-sessions"
+
+// A session left the registry (SessionEnd, pid-dead prune): release its
+// workspace, and while its herdr pane stays open keep the chat as
+// "Ended · Resume" (lib/ended-sessions.ts).
+export function herdrSessionGone(s: Session, live: () => Session[], reason: string): void {
+  releaseHerdrWorkspace(s, live)
+  void endedStore.note(s, live, reason)
+}
 
 // Opt-in (COMPANION_HERDR_AUTOCLOSE=1 exactly; read per call so tests can
 // toggle it). Off by default: herdr 0.9.3 has no atomic conditional close, so

@@ -1,0 +1,22 @@
+{
+  "type": "init",
+  "pending": 0,
+  "waiting": false,
+  "activity": null,
+  "activities": [],
+  "feed": [],
+  "sessions": [],
+  "superAuto": false,
+  "dialogs": [],
+  "host": {
+    "name": "zettlab",
+    "platform": "linux"
+  },
+  "brain": {
+    "state": "up",
+    "sessionKey": "herdr:p_brain",
+    "since": 1793145600000,
+    "restarts": 0,
+    "host": "zettlab"
+  }
+}

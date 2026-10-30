@@ -10,20 +10,30 @@ import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } f
 import { getActivity, listActivities } from "./lib/activity"
 import { getFeed } from "./lib/feed"
 import { clients, broadcast, describeClient, HOST_INFO, type WsData } from "./state"
-import { dialogWatcher, openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "./wiring/dialogs"
+import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 import { copyJobs } from "./wiring/copy-jobs"
 import { canvasSnapshot } from "./wiring/canvas"
+import { wireSessions } from "./lib/shell-sessions"
+import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-sessions"
+import { mirrorClose, mirrorMessage, mirrorOpen } from "./wiring/pane-mirror"
+import { brainEnabled } from "./lib/brain"
+import { latestRows } from "./lib/brain-trace"
+import { brainWiring } from "./wiring/brain"
 
 // WebSocket handlers: on open, send the init frame, the host's copy jobs,
 // then replay pending approvals/questions; on message, approve/deny/answer/input/ping; on close,
 // drop the client. Same frames and log lines as before the split.
 export const websocket: WebSocketHandler<WsData> = {
   open(ws) {
+    if (ws.data.terminal) return terminalOpen(ws)
+    if (ws.data.mirror) return mirrorOpen(ws)
     clients.add(ws)
     companionLog(`\x1b[2mws open ${describeClient("ws", ws.data.client)} (${clients.size} client${clients.size === 1 ? "" : "s"})\x1b[0m`)
 
     const pendingList = getPending()
+    // brain-v2: only on the brain host; absent everywhere else (shipped init unchanged).
+    const brain = brainEnabled() ? brainWiring.status() : null
 
     // init FIRST, replays after: iOS treats init as "this host resynced" and
     // drops every approval/question it holds from the host (resetHostState).
@@ -36,11 +46,17 @@ export const websocket: WebSocketHandler<WsData> = {
       activity: getActivity(),
       activities: listActivities(),
       feed: getFeed(),
-      sessions: listSessions(),
+      sessions: wireSessions(listSessions()),
       superAuto: isSuperAuto(),
       dialogs: dialogWatcher.current(),
       host: HOST_INFO,
+      ...(brain ? { brain } : {}),
     }))
+    // brain-v2 right after init (same reset trap): the brain's status, then the trace snapshot.
+    if (brain) {
+      ws.send(JSON.stringify({ type: "brain", ...brain }))
+      ws.send(JSON.stringify({ type: "brain_trace", op: "snapshot", rows: latestRows() }))
+    }
     // The host's copy jobs right after init (same reset trap), only when any.
     const copies = copyJobs.frame()
     if (copies.jobs.length > 0) ws.send(JSON.stringify(copies))
@@ -75,6 +91,8 @@ export const websocket: WebSocketHandler<WsData> = {
     }
   },
   async message(ws, raw) {
+    if (ws.data.terminal) return terminalMessage(ws, raw)
+    if (ws.data.mirror) return mirrorMessage(ws, raw)
     let msg: {
       type: string
       id?: string
@@ -149,7 +167,7 @@ export const websocket: WebSocketHandler<WsData> = {
           const refusal = injectRefusal({
             lookup, target, paneFree,
             dialog: paneFree ? await openDialogFor(target) : null,
-            pane: paneFree ? await paneSnapshotFor(target) : undefined,
+            pane: paneFree ? await screenSnapshotFor(target) : undefined,
             paneWidth: paneFree ? await paneWidthFor(target) : undefined,
           })
           if (refusal) {
@@ -202,6 +220,8 @@ export const websocket: WebSocketHandler<WsData> = {
     }
   },
   close(ws, code) {
+    if (ws.data.terminal) return terminalClose(ws)
+    if (ws.data.mirror) return mirrorClose(ws)
     clients.delete(ws)
     companionLog(`\x1b[2mws close ${describeClient("ws", ws.data.client)} code=${code} (${clients.size} left)\x1b[0m`)
   },

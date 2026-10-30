@@ -16,7 +16,7 @@ import {
   removeSessionByKey,
   setSessionTitle,
 } from "../lib/sessions"
-import { releaseHerdrWorkspace } from "../lib/herdr-workspace"
+import { herdrSessionGone } from "../lib/herdr-workspace"
 import { announceKeylessWaiting, markWaiting, unmarkWaiting } from "../wiring/waiting"
 import {
   forgetSession,
@@ -47,6 +47,8 @@ import { autoCompactor, compactTargetFor } from "../wiring/auto-compact"
 import { gauge, gaugeFromTranscript } from "../wiring/gauge"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { workerHookGate } from "../lib/worker-hook-gate"
+import { isBrainHook } from "../lib/brain"
+import { brainWiring } from "../wiring/brain"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -124,6 +126,11 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
     // ── AskUserQuestion / request_user_input fast path ─────────────
     if (worker.is && isQuestionTool(tool)) return hookPassthroughResponse(agent)
+    // brain-v2: the brain is a normal session (SUPER, auto-judge → phone). A
+    // hook from it refreshes the supervisor's busy deadline. Header first: a
+    // payload with no cwd has no session.
+    const brainCall = isBrainHook(headerMeta.taskId || session?.taskId)
+    if (brainCall) brainWiring.noteActivity(sessionId, { phase: "pre", tool, input, toolUseId: body.tool_use_id ?? "" })
     {
       const handled = await questionFastPath({ agent, eventName: "PreToolUse", tool, input, sessionId, cwd, tty, toolUseId: body.tool_use_id, session, headerMeta })
       if (handled) return handled
@@ -226,6 +233,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     const session = cwd
       ? recordSession({ cwd, sessionId: body.session_id ?? "", ...headerMeta })
       : null
+    if (isBrainHook(headerMeta.taskId || session?.taskId)) brainWiring.noteActivity(body.session_id ?? "", { phase: "post", tool, input, toolUseId: body.tool_use_id ?? "" })
 
     if (isQuestionTool(tool)) {
       closeQuestionsFor(body.session_id, session?.key, "answered", "answered at the terminal", "post_tool_use")
@@ -273,6 +281,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       : null
     // Proof of submission for any phone inject waiting on this session. A
     // match also tells the hook the prompt came from the phone.
+    if (isBrainHook(headerMeta.taskId || session?.taskId)) brainWiring.noteActivity(body.session_id ?? "")
     const fromPhone = noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty }, body.prompt)
     // Resets the auto-compact idle window and cancels a pending countdown.
     if (session) autoCompactor.noteUserActivity(session.key)
@@ -423,6 +432,14 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       sessionKey: session?.key ?? "",
     })
 
+    // brain-v2: the brain's reply goes to its thread. No waiting badge, no
+    // global auto-compact (the supervisor compacts it when idle), no push.
+    if (isBrainHook(headerMeta.taskId || session?.taskId)) {
+      if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
+      void brainWiring.onStop(body.session_id ?? "", lastMessage).catch(() => { /* logged inside */ })
+      return Response.json({})
+    }
+
     // Waiting now lives on the Session record as one reason among four; the
     // scalars are its projection and wiring/waiting.ts owns the frame. `session`
     // is only assigned when cwd is truthy (see above), and a stop hook with no
@@ -472,6 +489,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (cwd) {
       const started = recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
       if (started && body.source === "compact") void autoCompactor.onCompacted(started.key)
+      if (started && isBrainHook(started.taskId)) brainWiring.onSessionStart(started)
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       companionLog(`${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}`)
     }
@@ -500,7 +518,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     }
     const removedKeys = victims.map((s) => s.key).filter((k) => removeSessionByKey(k))
     for (const k of removedKeys) autoCompactor.forget(k)
-    for (const v of victims) releaseHerdrWorkspace(v, listSessions)
+    for (const v of victims) herdrSessionGone(v, listSessions, body.reason ?? "")
     const removed = removedKeys.length > 0
     {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"

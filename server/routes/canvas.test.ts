@@ -96,6 +96,19 @@ describe("REST", () => {
     await call("DELETE", `/api/canvas/nodes/${id}`)
   })
 
+  test("brain node (P7a): stored once by its fixed id, not an edge target yet", async () => {
+    const brain = { id: "brain", kind: "brain", x: -700, y: -230, w: 360, h: 460 }
+    const first = await call("POST", "/api/canvas/nodes", brain)
+    expect(first.status).toBe(201)
+    expect(first.json.node).toMatchObject({ id: "brain", kind: "brain", w: 360 })
+    expect((await call("POST", "/api/canvas/nodes", { ...brain, x: 5 })).status).toBe(200)
+    expect((await call("GET", "/api/canvas")).json.nodes).toEqual([expect.objectContaining({ id: "brain", x: -700 })])
+    await call("POST", "/api/canvas/nodes", { id: "note-b", kind: "note", x: 0, y: 0, w: 1, h: 1, data: { text: "x" } })
+    expect((await call("POST", "/api/canvas/edges", { from: "note-b", to: "brain" })).json.error).toBe("invalid_endpoints")
+    await call("DELETE", "/api/canvas/nodes/note-b")
+    expect((await call("DELETE", "/api/canvas/nodes/brain")).status).toBe(200)
+  })
+
   test("client ids must match [A-Za-z0-9_-]+", async () => {
     for (const bad of ["a/b", "..", "."]) {
       const r = await call("POST", "/api/canvas/nodes", { ...agent, id: bad })

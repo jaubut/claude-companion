@@ -6,10 +6,19 @@ import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/
 import { injectRefusal } from "../lib/inject-guard"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { keyCommandGate, originLabel } from "../lib/vault-guard"
-import { type SpawnAgent, type SpawnResult, spawnCompanionSession } from "../lib/spawn-session"
+import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
+import { SESSION_ID_RE, listRecentSessions } from "../lib/recent-sessions"
+import { shellNetworkRefusal } from "../lib/terminal-bridge"
+import { checkoutForRepo, deliverSeed, parseSeed } from "../lib/spawn-seed"
+import { repoEntriesSafe } from "../lib/live-repo"
+import { deleteEnded, endedStore, resumeInPane } from "../lib/ended-sessions"
+import { herdrGatedKey, herdrGatedText } from "../lib/herdr"
+import { keyGate } from "../lib/key-gate"
+import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
-import { clearWaitingForTarget, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
+import { clearWaitingForTarget, getSessionByKey, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
+import { historyFor } from "../lib/transcript-backfill"
 import { getActivity, listActivities, recordUserPrompt } from "../lib/activity"
 import { getFeed } from "../lib/feed"
 import {
@@ -22,7 +31,7 @@ import {
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
-import { dialogWatcher, openDialogFor, paneSnapshotFor, paneWidthFor, yieldPaneForInject } from "../wiring/dialogs"
+import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
 import { withIdempotency } from "../lib/idempotency"
 import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
@@ -177,11 +186,21 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ ok: true, enabled: next })
   }
 
-  // ── Spawn a fresh Claude/Codex session from the phone ──
+  // ── Spawn a fresh Claude/Codex session (or a plain shell) from the phone ──
   if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent }
-    const cwd = (body.cwd ?? "").trim()
+    const body = await req.json() as { cwd?: string; repo?: unknown; seed?: unknown; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell"; resume?: string }
+    // `repo` (a GitHub / map name) instead of a cwd: this host's checkout, or
+    // 409 no_checkout so the phone tries its other host. `seed`: lib/spawn-seed.ts.
+    if (body.agent === "shell" && (body.seed !== undefined || body.repo !== undefined)) return Response.json({ ok: false, error: "agent_only" }, { status: 400 })
+    const seed = parseSeed(body.seed)
+    if (!seed.ok) return Response.json({ ok: false, error: seed.error }, { status: 400 })
+    const repo = typeof body.repo === "string" ? body.repo.trim() : ""
+    if (body.repo !== undefined && !/^[A-Za-z0-9._-]{1,100}$/.test(repo)) return Response.json({ ok: false, error: "bad_repo" }, { status: 400 })
+    const fromRepo = repo ? checkoutForRepo(repo, repoEntriesSafe()) : null
+    if (repo && !fromRepo) return Response.json({ ok: false, error: "no_checkout", repo }, { status: 409 })
+    const cwd = fromRepo ?? (body.cwd ?? "").trim()
     if (!cwd) return Response.json({ ok: false, error: "cwd required" }, { status: 400 })
+    if (body.agent === "shell") return shellNetworkRefusal(req) ?? spawnShell(cwd, body.resume)
     const agent: SpawnAgent =
       body.agent === "codex" || body.agent === "kimi" ? body.agent : "claude"
 
@@ -200,7 +219,73 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       companionLog(`${red}spawn failed${reset} — ${result.error}`)
       return Response.json({ ok: false, error: result.error }, { status: 400 })
     }
-    return Response.json({ ok: true, app: result.app, cwd, agent })
+    // Typed in the background once the session registers; only a herdr pane can be matched.
+    const seeded = !seed.seed ? undefined : !result.herdrPane ? "unsupported" : "pending"
+    if (seed.seed && result.herdrPane) {
+      const pane = result.herdrPane, text = seed.seed
+      void deliverSeed(pane, text, {
+        find: (p) => listSessions().find((s) => s.herdrPane === p),
+        inject: async (t, key) => {
+          const r = await deliverInject(t, key)
+          const j = await r.json().catch(() => ({})) as { error?: string }
+          return { ok: r.ok, error: j.error }
+        },
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        now: Date.now,
+      }).then((out) => companionLog(`${cyan}spawn seed${reset} ${pane}: ${out}`))
+    }
+    return Response.json({ ok: true, app: result.app, cwd, agent, ...(seeded ? { seed: seeded } : {}) })
+  }
+
+  // ── Resume an ended session in its own herdr pane (lib/ended-sessions.ts) ──
+  // {key: "ended:<sessionId>"} → 200 {ok, via:"pane"} once `claude --resume`
+  // is typed; the row leaves when the resumed session shows up in the pane.
+  // Pane closed meanwhile → a new terminal resuming it (the spawn reply, as
+  // for agent "shell", key "shell:…"), under the shell spawn's network rule.
+  if (url.pathname === "/api/sessions/resume" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: unknown }
+    const key = typeof body.key === "string" ? body.key : ""
+    const ended = endedStore.get(key)
+    const r = await resumeInPane(endedStore, key, {
+      sendText: (p, t) => herdrGatedText(keyGate, p, t),
+      sendKey: (p, k) => herdrGatedKey(keyGate, p, k),
+    })
+    if (r.ok) {
+      companionLog(`\x1b[36mresume\x1b[0m ${ended?.sessionId} typed in herdr pane ${ended?.herdrPane}`)
+      return Response.json({ ok: true, via: "pane" })
+    }
+    if (r.error === "pane_gone" && ended) return shellNetworkRefusal(req) ?? spawnShell(ended.cwd, ended.sessionId)
+    const status = { target_gone: 410, bad_resume: 400, pane_gone: 410, pane_busy: 409, send_failed: 502 }[r.error]
+    return Response.json({ ok: false, error: r.error }, { status })
+  }
+
+  // ── Delete an ended session: close its herdr pane, drop the row ──
+  // 200 {ok, closed} | 409 pane_busy (something runs in it) | 410 | 502 close_failed.
+  if (url.pathname === "/api/sessions/ended/delete" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as { key?: unknown }
+    const key = typeof body.key === "string" ? body.key : ""
+    const pane = endedStore.get(key)?.herdrPane
+    const r = await deleteEnded(endedStore, key)
+    if (r.ok) {
+      companionLog(`\x1b[35mended session deleted\x1b[0m ${key}${r.closed ? ` (herdr pane ${pane} closed)` : " (pane already gone)"}`)
+      return Response.json(r)
+    }
+    const status = { target_gone: 410, pane_busy: 409, close_failed: 502 }[r.error]
+    return Response.json(r, { status })
+  }
+
+  // ── Recent interactive Claude sessions (terminal: Recent sessions, Resume chip) ──
+  // {ok, sessions: [{sessionId, cwd, title, updatedAt}]}, newest first.
+  if (url.pathname === "/api/sessions/recent" && req.method === "GET") {
+    return Response.json({ ok: true, sessions: await listRecentSessions() })
+  }
+
+  // ── A listed session's older chat rows, from its transcript (lib/transcript-backfill.ts) ──
+  // {ok, key, events: FeedEvent[]} oldest first; 404 for a key not listed.
+  if (url.pathname === "/api/sessions/history" && req.method === "GET") {
+    const session = getSessionByKey(url.searchParams.get("key") ?? "")
+    if (!session) return Response.json({ ok: false, error: "unknown_session" }, { status: 404 })
+    return Response.json({ ok: true, key: session.key, events: await historyFor(session) })
   }
 
   // ── Approval history (the phone's Approvals tab) ──
@@ -215,7 +300,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       pending: getPending().length,
       clients: clients.size,
       ...waitingSummary(),
-      sessions: listSessions(),
+      sessions: wireSessions(listSessions()),
       dialogs: dialogWatcher.current(),
       host: HOST_INFO,
     })
@@ -228,10 +313,31 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       activity: getActivity(),
       activities: listActivities(),
       feed: getFeed(),
-      sessions: listSessions(),
+      sessions: wireSessions(listSessions()),
     })
   }
   return null
+}
+
+// A login shell in a detached tmux session (lib/shell-sessions.ts). Always
+// tmux, whatever `app` says: the phone attaches it through /api/terminal.
+// Replies with the session's wire record so the phone can open it at once.
+// `resume` (a Claude session id) types `claude --resume <id>` into it.
+async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
+  if (resume !== undefined && (typeof resume !== "string" || !SESSION_ID_RE.test(resume))) {
+    return Response.json({ ok: false, error: "bad_resume" }, { status: 400 })
+  }
+  const cwd = resolveSpawnCwd(rawCwd)
+  if ("error" in cwd) return Response.json({ ok: false, error: cwd.error }, { status: 400 })
+  companionLog(`\x1b[36mspawn\x1b[0m shell in ${cwd.dir}${resume ? ` resuming ${resume}` : ""}`)
+  // The resumed claude must not stop at the folder-trust dialog.
+  if (resume) ensureFolderTrusted(cwd.dir)
+  const r = await spawnShellSession(cwd.dir, undefined, resume as string | undefined)
+  if (!r.ok) {
+    companionLog(`\x1b[31mspawn failed\x1b[0m — ${r.error}`)
+    return Response.json({ ok: false, error: r.error }, { status: 400 })
+  }
+  return Response.json({ ok: true, app: "tmux", cwd: cwd.dir, agent: "shell", key: r.session.key, sessionName: r.session.name })
 }
 
 async function handleResolve(req: Request): Promise<Response> {
@@ -347,7 +453,7 @@ export async function deliverInject(text: string, key?: string, cwd?: string): P
   const refusal = injectRefusal({
     lookup, target, paneFree,
     dialog: paneFree ? await openDialogFor(target) : null,
-    pane: paneFree ? await paneSnapshotFor(target) : undefined,
+    pane: paneFree ? await screenSnapshotFor(target) : undefined,
     paneWidth: paneFree ? await paneWidthFor(target) : undefined,
   })
   if (refusal) {

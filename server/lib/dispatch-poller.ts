@@ -18,7 +18,7 @@ import {
 import { listPrLedger, stageFields } from "./dispatch-stage"
 import { localDay } from "./my-tasks"
 import type { Channel } from "./orchestrator-channels"
-import type { Turn } from "./orchestrator-chat"
+import type { Turn, TurnCard } from "./orchestrator-chat"
 import { type ExecFn, type QueryFn, type Row, TursoUnreachable } from "./turso"
 
 // Turso dispatch poller core (orchestrator-one-queue P1). Status flows from the
@@ -49,7 +49,11 @@ export interface DispatchWiringDeps {
   /** Guarded writes (P2). Absent → every write fails as turso_unreachable. */
   exec?: ExecFn
   broadcast: (frame: Record<string, unknown>) => void
-  appendTurn: (text: string, taskId: string, channelId: string) => Turn
+  appendTurn: (text: string, taskId: string | null, channelId: string, card?: TurnCard) => Turn
+  /** brain-v2: the brain thread when this host runs the brain, else null. An announce also lands there as a card turn. */
+  brainThread?: () => string | null
+  /** brain-v2: every changed task, for its trace rows (wiring/brain.ts). */
+  traceTask?: (t: DispatchTask) => void
   push: (payload: ApnsPayload) => void
   pushEnabled: () => boolean
   linkedNotes: () => Map<string, string>
@@ -249,10 +253,17 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
       }
       mirror.markSeen(t, now())
       emitTask(t, links)
+      deps.traceTask?.(t)
       const phase = phaseOf(t)
       if (seeding || prev?.phase === phase || !ANNOUNCE.has(phase)) continue
       const channelId = threadIdFor(t, links)
       deps.broadcast({ type: "orchestrator", turn: deps.appendTurn(turnText(t, phase), t.id, channelId) })
+      // The brain thread gets the same receipt as a card (role orchestrator, no
+      // Turn.taskId); the old channel write stays until P3.
+      const brain = deps.brainThread?.() ?? null
+      if (brain && brain !== channelId) {
+        deps.broadcast({ type: "orchestrator", turn: deps.appendTurn(turnText(t, phase), null, brain, { kind: "dispatch", source: "app", taskId: t.id }) })
+      }
       if (!pushAllowed || !PUSH.has(phase)) continue
       if (pushes < MAX_PUSHES_PER_POLL) { deps.push(pushPayload(t, phase, channelId)); pushes++ } else overflow++
     }

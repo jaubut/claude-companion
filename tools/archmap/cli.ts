@@ -2,7 +2,8 @@
 // archmap — generate (or check / lint) a repo's architecture map.
 //   bun run ~/.claude/tools/archmap/cli.ts <repo> [--check] [--lint [--baseline <json>]] [--quiet]
 //   bun run ~/.claude/tools/archmap/cli.ts --fleet <out.json> [--fleet-from <roster.json>]
-// Reads <repo>/archmap.json, writes <repo>/architecture.md + architecture.json,
+// Reads <repo>/archmap.json, writes <repo>/architecture.md + architecture.json
+// (+ architecture.refs.json, the referenced siblings' snapshot, when refs are configured),
 // and FEATUREMAP.md + featuremap.json when a `featuremap` target is configured (nav map,
 // see adapters/featuremap.ts; feature → routes → API → files index, see features.ts).
 // --check: exit 1 if the committed map is stale (JSON differs, timestamp aside) or FEATUREMAP.md /
@@ -15,7 +16,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
-import type { ArchMap, RepoConfig, Target } from "./types"
+import type { ArchMap, RefSnapshots, RepoConfig, Target } from "./types"
 import { scanBunServer } from "./adapters/bun-server"
 import { scanHonoServer } from "./adapters/hono-server"
 import { scanReactClient } from "./adapters/react-client"
@@ -169,14 +170,30 @@ if (doLint) {
 if (check || doLint) process.exit(failed ? 1 : 0)
 
 // Referenced maps join the rendered contracts only; the JSON keeps the pointer.
+// Each resolved ref is snapshotted into architecture.refs.json; a host without
+// the sibling renders from the committed snapshot, so the output is host-independent.
+const refsPath = join(repo, "architecture.refs.json")
+let cachedRefs: RefSnapshots = {}
+try { cachedRefs = JSON.parse(readFileSync(refsPath, "utf-8")) as RefSnapshots } catch { /* none committed yet */ }
+const snapshots: RefSnapshots = {}
 const refs: RefTarget[] = []
 const unresolved: string[] = []
 for (const r of map.refs) {
-  const dir = resolveRoot(repo, r.repo)
-  const p = join(dir, "architecture.json")
-  if (!existsSync(p)) { unresolved.push(`${r.name} (${r.repo})`); continue }
-  const sub = JSON.parse(readFileSync(p, "utf-8")) as ArchMap
-  for (const t of sub.targets) refs.push({ ...t, ref: r.name, repo: r.repo, generatedAt: sub.generatedAt })
+  const p = join(resolveRoot(repo, r.repo), "architecture.json")
+  let snap = cachedRefs[r.name]?.repo === r.repo ? cachedRefs[r.name] : undefined
+  if (existsSync(p)) {
+    const sub = JSON.parse(readFileSync(p, "utf-8")) as ArchMap
+    snap = {
+      repo: r.repo, generatedAt: sub.generatedAt,
+      targets: sub.targets.map((t) => ({ name: t.name, adapter: t.adapter, root: t.root, modules: t.modules.map(({ path, emits, consumes, endpoints, apiCalls }) => ({ path, emits, consumes, endpoints, apiCalls })) })),
+    }
+  }
+  if (!snap) { unresolved.push(`${r.name} (${r.repo})`); continue }
+  snapshots[r.name] = snap
+  for (const t of snap.targets) refs.push({
+    ...t, cap: 0, fanIn: {}, ref: r.name, repo: r.repo, generatedAt: snap.generatedAt,
+    modules: t.modules.map((m) => ({ lines: 0, kind: "", exports: [], state: [], imports: [], listeners: [], sheets: 0, ...m })),
+  })
 }
 // A ref the committed map had joined but this host cannot see (the sibling
 // repo is not checked out here) must not silently drop that sibling's
@@ -196,6 +213,8 @@ if (featureJson && existsSync(featureJsonPath) && !isGeneratedFeatureIndex(readF
 }
 writeFileSync(jsonPath, JSON.stringify(map, null, 2) + "\n")
 writeFileSync(mdPath, renderMarkdown(map, refs, unresolved) + "\n")
+if (map.refs.length) writeFileSync(refsPath, JSON.stringify(snapshots, null, 2) + "\n")
+else if (existsSync(refsPath)) unlinkSync(refsPath)
 if (featureMd) writeFileSync(featurePath, featureMd)
 else if (orphanFeatureMap) unlinkSync(featurePath)
 if (featureJson) writeFileSync(featureJsonPath, featureJson)
