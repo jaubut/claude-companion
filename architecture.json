@@ -1053,7 +1053,7 @@
         },
         {
           "path": "lib/canvas.ts",
-          "lines": 317,
+          "lines": 338,
           "kind": "lib",
           "exports": [
             "NODE_KINDS",
@@ -1079,7 +1079,8 @@
             "PROMPT_MAX",
             "ContextPrompt",
             "oneLine",
-            "contextPrompt"
+            "contextPrompt",
+            "NOTE_TRUNCATED"
           ],
           "state": [
             "BLOCKING: Set"
