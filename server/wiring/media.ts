@@ -1,4 +1,5 @@
 import { sweepMedia } from "../lib/media"
+import { sweepSentFiles } from "../lib/sent-files"
 
 // Media lifetime wiring. Files are NOT freed on feed eviction (neither the
 // 200-cap trim nor a session prune): the phone keeps its own cached
@@ -7,6 +8,7 @@ import { sweepMedia } from "../lib/media"
 // events from several sessions. lib/media.ts removes files only by age
 // (COMPANION_MEDIA_MAX_AGE, default 7 days) or the byte cap — swept on every
 // write and here on a 1 h timer so an idle server still ages files out.
+// The SendUserFile copies (lib/sent-files.ts) ride the same timer.
 //
 // Started explicitly by cli.ts, NOT at import time: static imports are hoisted
 // above cli.ts's loadDefaultDotEnv(), so an import-time sweep would run with
@@ -22,7 +24,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 // Idempotent. Returns the ids removed by the startup sweep.
 export function startMediaSweeper(): string[] {
   if (timer) return []
-  timer = setInterval(sweepMedia, SWEEP_MS)
+  timer = setInterval(() => { sweepMedia(); sweepSentFiles() }, SWEEP_MS)
   timer.unref()
   return sweepMedia()
 }
