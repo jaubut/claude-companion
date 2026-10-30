@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-29",
+  "generatedAt": "2026-10-30",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1053,7 +1053,7 @@
         },
         {
           "path": "lib/canvas.ts",
-          "lines": 315,
+          "lines": 317,
           "kind": "lib",
           "exports": [
             "NODE_KINDS",
@@ -5908,7 +5908,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 197,
+          "lines": 225,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -5930,6 +5930,7 @@
             "lib/vault-guard.ts",
             "wiring/brain.ts",
             "wiring/brain-todo.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain-workers.ts"
           ],
           "listeners": [],
@@ -6843,6 +6844,37 @@
           "imports": [
             "lib/brain.ts",
             "lib/brain-trace.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-pr-close.ts",
+          "lines": 122,
+          "kind": "lib",
+          "exports": [
+            "PR_CLOSE_ACTION",
+            "REASON_MAX",
+            "PrCloseInput",
+            "PrCloseDeps",
+            "deadReasons",
+            "closeDeadPr"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8531,6 +8563,7 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -8571,7 +8604,8 @@
             "lib/approval-history.ts",
             "lib/body-investigator.ts",
             "lib/jev-route-log.ts",
-            "lib/quick-look.ts"
+            "lib/quick-look.ts",
+            "wiring/brain-pr-close.ts"
           ]
         },
         "ApprovalRequest": {
@@ -8980,6 +9014,7 @@
             "lib/tasks-agent.ts",
             "lib/triage-pr.ts",
             "routes/my-tasks.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -9179,6 +9214,7 @@
           "callers": [
             "lib/brain-workers.ts",
             "routes/brain.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
@@ -9190,6 +9226,7 @@
             "routes/brain.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/brain-pr-close.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
@@ -9756,6 +9793,7 @@
             "routes/my-tasks.ts",
             "routes/orchestrator.ts",
             "routes/tasks-agent.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain-todo.ts",
             "wiring/orchestrator.ts",
             "wiring/triage-repos.ts"
@@ -13044,8 +13082,20 @@
             "routes/brain.ts"
           ]
         },
+        "closeDeadPr": {
+          "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "REASON_MAX": {
+          "module": "wiring/brain-pr-close.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -13585,6 +13635,7 @@
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -13713,6 +13764,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/brain-pr-close.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/proposals.ts",
@@ -13735,6 +13787,7 @@
             "routes/orchestrator.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
@@ -14309,13 +14362,15 @@
         "prState": {
           "module": "lib/triage-pr.ts",
           "callers": [
-            "wiring/auto-compact.ts"
+            "wiring/auto-compact.ts",
+            "wiring/brain-pr-close.ts"
           ]
         },
         "realGh": {
           "module": "lib/triage-pr.ts",
           "callers": [
             "wiring/auto-compact.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
@@ -14627,6 +14682,15 @@
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/events.ts"
+          ]
+        },
+        "GhFn": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/brain-pr-close.ts",
+            "wiring/repo-view.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
           ]
         },
         "addTodo": {
@@ -15496,14 +15560,6 @@
           "module": "lib/repo-view.ts",
           "callers": [
             "wiring/repo-view.ts"
-          ]
-        },
-        "GhFn": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/repo-view.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
           ]
         },
         "queryPrRows": {

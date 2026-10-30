@@ -8,7 +8,9 @@ import type { QueryFn } from "./turso"
 // the same board and P6's edges can run with the app closed. One board per
 // host. Positions are last-write-wins: a move is a single-field fact, no CAS.
 
-export const NODE_KINDS = ["agent", "task", "note", "preview", "group"] as const
+// `brain` (P7a): the one Brain card per board, on the brain host (Mac app id "brain"; it reads the
+// brain thread over the turn API, never a tty). Not an edge endpoint yet (P7b).
+export const NODE_KINDS = ["agent", "task", "note", "preview", "group", "brain"] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 // v1 = Context only (brief decision 1, 2026-10-17).
 export const EDGE_KINDS = ["context"] as const
