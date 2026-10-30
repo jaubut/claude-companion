@@ -34,7 +34,7 @@ Scope: the Companion server (Mac and Zettlab), the Zettlab systemd units, the `c
 | Off-pane slash-command list (command-offpane*.ts) | a throwaway detached tmux session `cc-scrape-*` (220x60) runs a hidden `claude` with a temp HOME, hooks off and no MCP, scrapes `/help` by capture-pane, then is killed and confirmed dead | not ported | **Gap D:** a hidden herdr workspace would be visible in herdr's UI and detected as an agent by herdr's Claude integration, and its env must carry the temp HOME (`--env`). Port with those two checks, or drop it if #157's `/` suggestions already cover the list |
 | Orchestrator "Run live" + legacy local tasks (orchestrator-db `tmux_session`/`tmux_socket`, DTO `tmuxSession`/`tmuxSocket` → iOS side chat, `cancelLocal` kill-session at routes/orchestrator.ts:182) | "Run live" now only logs `dispatch-runner: herdr`; the external `dispatch-run` (claude-config tools) spawns and has its own tmux fallback. `createTask(…tmuxSession)` has no callers | brain workers run in herdr (wiring/brain.ts:567, herdr only, no fallback) | **partial:** the DTO tmux fields are legacy. The real remaining tmux fallback is in `dispatch-run`/`herdr-client.ts`, outside this repo |
 | Durability across reboot | resurrect + `cc-claude-resume` (`claude --resume <sid>`) | herdr keeps each pane's Claude session id (`~/.config/herdr/session.json`) and resumed all 7 Mac panes after the 0.9.5 server restart | ✅ for agents; shells are not resumed, which is the point |
-| Server restart without killing agents | tmux server outlives Companion | `herdr update --handoff` = live handoff. **`herdr server stop` SIGKILLs every pane, and `herdr.service`'s `ExecStop` is `herdr server stop`** | ⚠ see Risk 1 |
+| Server restart without killing agents | tmux server outlives Companion | `herdr update --handoff` = live handoff (untested here). Any stop ends every pane process (SIGHUP; panes are the server's PTY children), and herdr resumes them from `session.json`. Stage 0 makes `herdr.service` refuse a manual stop/restart | ⚠ see Risk 1 and Stage 0 results |
 
 **The seam.** `server/lib/session-pane.ts` `sessionPaneOf()` is the one place that picks the driver: "tmux when the session has a tmux pane, else herdr". dialog-watch, pickers, model control and inject read and type through it. `discover.ts` maps ttys to tmux panes for ps-discovered sessions. Retiring tmux on the driving side means removing one branch in `sessionPaneOf`, plus the tmux discovery in `discover.ts` (Stage 5), not touching every consumer.
 
@@ -55,8 +55,8 @@ None of the three blocks retiring tmux for agents. B and C decide whether the ph
 
 1. **Brain safety lives in `herdr.service`, not tmux.**
    - The brain and every worker already run in herdr. A `systemctl --user restart herdr.service` (or a reboot without handoff) SIGKILLs them all. They come back only through herdr's own agent resume.
-   - Cutting tmux makes herdr the single point of failure for every session. Fix this first (Stage 0): make `ExecStop` hand off or detach rather than run `server stop`, or at least document "never restart herdr.service, use `herdr update --handoff`".
-   - Also verify that resume works after a cold reboot on Zettlab. It is only proven for the Mac server restart.
+   - Cutting tmux makes herdr the single point of failure for every session. Stage 0 found that no unit setting keeps pane processes alive across a server stop. What it can do is refuse the routine restart and make every unavoidable stop resume cleanly (see Stage 0 results).
+   - A resumed agent loses its pane env and launch args (Stage 0, finding 2). For the brain and the workers that is their identity.
 2. **Gap C (terminal stream).** If the phone Terminal view and the Mac Canvas terminal must stay real PTYs (vim, Ctrl-C, scrollback), herdr has no equivalent for plain shells. The fallback, pane-mirror polling, is good for agents and weak for a shell running vim.
 3. **The version pin.** Spawn uses herdr only when its version is in `HERDR_PINNED_VERSIONS` / `DISPATCH_HERDR_VERSIONS`. Today an unpinned version silently falls back to tmux. Once tmux is gone there is no fallback, so an unpinned upgrade breaks every spawn. The gate must become a loud error plus an upgrade checklist.
 4. **Mac differs from Zettlab.** The Mac `auto` fallback is Terminal/iTerm running tmux, and the Mac server can't hand off on a brew upgrade. Run every stage on Zettlab first, then on the Mac.
@@ -66,11 +66,37 @@ None of the three blocks retiring tmux for agents. B and C decide whether the ph
 Each stage is shippable alone. The brain, the companion server and the running workers are never restarted by a stage. Code changes go through `/change` with the plan in STATE.md.
 
 ### Stage 0: make herdr safe to depend on (ops + one small PR)
-- `herdr.service`: replace `ExecStop=herdr server stop` with no ExecStop (systemd SIGTERMs the server at shutdown anyway), and write down in `docs/herdr-spawn.md` that upgrades go through `herdr update --handoff`. Do this on a quiet window, because a daemon-reload doesn't restart the unit.
-- Prove a cold-reboot resume on Zettlab. Reboot with only throwaway sessions running, then confirm that herdr resumes the claude panes and that Companion re-binds them.
-- Widen the pin: the default `HERDR_PINNED_VERSIONS` is `["0.9.3"]`, while 0.9.5 is installed and comes only from the `DISPATCH_HERDR_VERSIONS` drop-in. Make the installed version the default before tmux stops being a fallback.
-- Spike Gap C. Does `herdr agent attach` / `pane input` give a raw single-pane stream for a non-agent pane? Settle it with one throwaway workspace, never a live pane.
-- **Rollback:** restore the unit file from `.bak`, then `daemon-reload`.
+- `herdr.service` (written by `scripts/herdr-zettlab-setup.sh`, which now rewrites it whenever it differs):
+  - `RefuseManualStop=yes`: `systemctl --user stop|restart herdr` is refused. Shutdown and logout still stop the unit.
+  - `ExecStop=-herdr server stop`: kept, because it saves `session.json` before the panes go. The `-` stops a hand-run `herdr server stop` reading as a crash, which would restart the server.
+  - `ExecReload=herdr server reload-config`: `systemctl --user reload herdr` is the config path.
+  - A deliberate restart is `herdr server stop`, then `systemctl --user start herdr`. The script's `HERDR_RESTART=1` path does exactly that.
+- Pin: `HERDR_PINNED_VERSIONS = ["0.9.5", "0.9.3"]` (claude-config `tools/herdr-client.ts`); the setup script pins 0.9.5 plus its sha256.
+- Gap C is settled by decision: a polled terminal is acceptable (Jeremie, 2026-10-30), so no raw attach is needed.
+- **Apply on Zettlab** (from a login shell): `bash scripts/herdr-zettlab-setup.sh`. It does a daemon-reload only; the running server and its panes are not touched.
+- **Rollback:** `cp ~/.config/systemd/user/herdr.service.bak-<date> ~/.config/systemd/user/herdr.service && systemctl --user daemon-reload` (again no restart), plus a revert of the claude-config pin PR.
+
+#### Stage 0 results (2026-10-30, Zettlab, herdr 0.9.5)
+
+All of these ran on a throwaway herdr session (`herdr --session s0probe` under a transient `systemd-run --user` unit with the new settings). The live server (PID 2141060, up since 2026-10-15) was never touched.
+- **Restart refused:** `systemctl --user restart` → `Operation refused … configured to refuse manual start/stop` (exit 4), and `stop` likewise; the unit stays active. `systemctl --user reload` → exit 0, no restart. A hand-run `herdr server stop` with the `-` prefix → unit `inactive`, result `success`, 0 restarts. Without the `-`, the ExecStop failure made systemd restart it.
+- **Cold-reboot equivalent:** after `systemctl --user kill -s SIGKILL` on the whole cgroup (no shutdown hook, like power loss), `Restart=on-failure` had the server back within 12 s (the check interval):
+  - both workspaces and the same pane ids (`w1:p1`, `w2:p1`) came back;
+  - the claude pane was relaunched as `claude --resume 02353638-…` with the same session id, and asked for the codeword it was given before the kill, it answered `ZEBRA-731`;
+  - the plain shell came back as a new shell with its screen history.
+  A clean `herdr server stop`, then a start, gave the same result. A real reboot was not done: that is Jeremie's call. The boot side is `UnitFileState=enabled` (WantedBy=default.target) plus `Linger=yes`. Zettlab has been up since 2026-10-06, so no real reboot has happened under herdr yet; the 2026-10-15 upgrade restart logged `session restore … workspaces=9`.
+- **Polled plain shell:** the companion's own `PaneMirror` + `herdrSocketSource` (wiring/pane-mirror.ts) on a plain-shell pane:
+  - first frame in 112 ms;
+  - a typed `echo POLLED-$((6*7))` showed `POLLED-42` in a frame 32 ms later;
+  - a raw `\x03` interrupted a `sleep 30`, and the next command ran;
+  - colour reached the frame (`\e[1m\e[38;5;1mRED`);
+  - frames were sent only when the screen changed.
+- **Finding 1, the save window:** herdr writes `session.json` about 5 s after a change. A SIGKILL 2 s after creating a workspace lost that workspace; after an 8 s wait it survived. Power loss can drop the last ~5 s of layout changes.
+- **Finding 2, env and args are not restored:** a pane created with `--env S0VAR=keepme` had `S0VAR` empty after the restore, and `session.json` stores no env. A resumed agent runs as `claude --resume <id>` only.
+  - **The brain** (`spawnInHerdr(…, { COMPANION_TASK_ID: "brain" }, …, ["--remote-control", "brain"])`, wiring/brain.ts:567) would come back with the same conversation and herdr name, but without `COMPANION_TASK_ID=brain` and without Remote Control. The brain supervisor sees the herdr agent `brain` as alive and does not respawn it.
+  - **Dispatch workers** lose their `COMPANION_TASK_ID` the same way.
+  - This is a gate item for Stage 0b. Either the companion closes and respawns its own agents after a herdr restore (it already knows their session ids and has `spawn(resume)`), or identity moves off env (session record by session id). Not built here.
+- **Untested:** `herdr update --handoff` (it downloads and replaces the live binary) and a real reboot.
 
 ### Stage 1: stop creating new tmux sessions (code, Zettlab then Mac)
 - `spawn-session.ts`: `app: "auto"` → herdr only. A gate failure becomes an error (`herdr_unavailable: <reason>`), never a tmux fallback, the same as takeover today. `app: "tmux"` returns 400 `tmux_retired`. Mac Terminal/iTerm: keep or drop is Jeremie's call; they are tmux under the hood.
