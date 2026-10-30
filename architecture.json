@@ -7047,13 +7047,7 @@
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
-            "REASON_MAX",
             "MERGE_CAP",
-            "PrMergeInput",
-            "PrMergeDeps",
-            "notGreen",
-            "notApproved",
-            "needsHuman",
             "mergeAgentPr"
           ],
           "state": [
@@ -13442,6 +13436,12 @@
         },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "REASON_MAX": {
+          "module": "wiring/brain-pr-close.ts",
           "callers": [
             "routes/brain.ts"
           ]

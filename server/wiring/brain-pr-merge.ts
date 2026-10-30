@@ -24,7 +24,7 @@ import { orchEmit } from "./orchestrator"
 // agent_activity row (the machine digest lists them) and a brain-thread event.
 
 export const PR_MERGE_ACTION = "brain:pr-merge"
-export const REASON_MAX = 300
+const REASON_MAX = 300
 export const MERGE_CAP = 10
 
 // ponytail: path/word lists, not a classifier. Superset of the shepherd's SENSITIVE_RE (claude-config
@@ -37,8 +37,8 @@ const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
-export interface PrMergeInput { repo: string; pr: number; reason: string }
-export interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void }
+interface PrMergeInput { repo: string; pr: number; reason: string }
+interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void }
 type Out = { status: number; body: Record<string, unknown> }
 
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}): Out => ({ status, body: { ok: false, error, ...extra } })
@@ -83,7 +83,7 @@ function checkPassed(c: Check): boolean {
 }
 
 /** Why CI is not green (empty = green). */
-export function notGreen(v: PrView): string[] {
+function notGreen(v: PrView): string[] {
   const out: string[] = []
   if (v.mergeable !== "MERGEABLE") out.push(`mergeable ${v.mergeable || "unknown"}`)
   if (v.mergeStateStatus !== "CLEAN") out.push(`mergeStateStatus ${v.mergeStateStatus || "unknown"}`)
@@ -94,7 +94,7 @@ export function notGreen(v: PrView): string[] {
 }
 
 /** Why the review cascade has not approved this head (empty = approved). */
-export function notApproved(v: PrView): string[] {
+function notApproved(v: PrView): string[] {
   const out: string[] = []
   const login = v.author?.login
   if (!login || !v.headRefOid) return ["no PR author or head sha"]
@@ -109,7 +109,7 @@ export function notApproved(v: PrView): string[] {
 }
 
 /** Why this PR stays Jeremie's hand-merge (empty = routine). Turso errors propagate. */
-export async function needsHuman(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[] }> {
+async function needsHuman(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[] }> {
   const reasons: string[] = []
   const paths = v.files.map((f) => String(f.path ?? ""))
   if (!Number.isFinite(v.changedFiles) || paths.length < v.changedFiles || !paths.length) reasons.push("file list incomplete")

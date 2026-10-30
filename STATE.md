@@ -164,7 +164,7 @@ Last updated: 2026-10-25
 | `BrainRouteDeps.prMerge` | export | new optional | routes/brain.test.ts | additive |
 | `agent_activity` action `brain:pr-merge` | row | new | claude-config tools/machine-digest.ts (#174) | additive |
 | brain `permissions` | settings | allow `bin/pr-merge`, deny `gh pr merge` | the brain session | tighter |
-**Files** (one owner): `server/wiring/brain-pr-merge.ts` (new) · `server/wiring/brain-pr-merge.test.ts` (new) · `server/routes/brain.ts` (route, sharing pr-close's input checks) · `server/routes/brain.test.ts` · `brain/bin/pr-merge` (new) · `brain/CLAUDE.md` · `brain/.claude/settings.json` · `docs/brain-api.md` · `STATE.md` · `architecture.*` (regenerated)
+**Files** (one owner): `server/wiring/brain-pr-merge.ts` (new; exports only `mergeAgentPr`, `PR_MERGE_ACTION`, `MERGE_CAP`; module state: the constant `TRUSTED_ORIGINS` set and the path/word/label regexes, no mutable state) · `server/wiring/brain-pr-merge.test.ts` (new) · `server/routes/brain.ts` (route, sharing pr-close's input checks) · `server/routes/brain.test.ts` · `brain/bin/pr-merge` (new) · `brain/CLAUDE.md` · `brain/.claude/settings.json` · `docs/brain-api.md` · `STATE.md` · `architecture.*` (regenerated)
 **Verify:** each refusal and the happy path in brain-pr-merge.test.ts (gh faked, sqlite Turso); route auth/input in brain.test.ts; tsc; archmap --check --lint; full `bun test --isolate`.
 
 ### Change Plan — canvas-note-media (2026-10-30)

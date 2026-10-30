@@ -113,7 +113,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
-| `wiring/brain-pr-merge.ts` | 194 | lib | 9 | state: TRUSTED_ORIGINS: Set |
+| `wiring/brain-pr-merge.ts` | 194 | lib | 3 | state: TRUSTED_ORIGINS: Set |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
