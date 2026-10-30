@@ -240,7 +240,11 @@ function toResolverAction(v: unknown, allowed: readonly ResolverActionKind[]): R
   const kind = String(o.kind ?? "none") as ResolverActionKind
   if (!allowed.includes(kind)) return null
   switch (kind) {
-    case "answer": { const text = str(o.text, ANSWER_TEXT_MAX); return text ? { kind, text } : null }
+    case "answer": {
+      // Over the cap → not an answer (reads as none), never a shortened one.
+      const text = typeof o.text === "string" ? o.text.trim() : ""
+      return text && text.length <= ANSWER_TEXT_MAX ? { kind, text } : null
+    }
     case "close_pr": return { kind, reason: str(o.reason, 300) || "closed by the Opus resolver" }
     case "reject": return { kind, reason: str(o.reason, 300) || "rejected by the Opus resolver" }
     case "fix": { const instructions = str(o.instructions, 4000); return instructions ? { kind, instructions } : null }

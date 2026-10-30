@@ -410,6 +410,16 @@ describe("requeue / unblock", () => {
     expect(chat.getThread("general", 1000).some((t) => t.taskId === id && t.text.includes("Answer: use tls-dashboard-v2"))).toBe(true)
   })
 
+  test("unblock: a 2000-char answer lands whole in description, never shortened", async () => {
+    const { handler } = makeWiring()
+    const id = tid()
+    seedTask(id, { dispatch_status: "blocked", dispatch_blocker: "confirm?", description: "Spec" })
+    const answer = `${"x".repeat(1996)} END`
+    expect((await call(handler, "POST", `/api/orchestrator/task/${id}/unblock`, { answer })).status).toBe(200)
+    const today = new Date().toISOString().slice(0, 10)
+    expect(tursoTask(id)!.description).toBe(`Spec\n\n[unblock ${today}] ${answer}`)
+  })
+
   test("unblock: not blocked → 409 and description untouched; empty / oversized answer → 400", async () => {
     const { handler } = makeWiring()
     const id = tid()

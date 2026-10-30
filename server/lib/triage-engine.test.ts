@@ -157,6 +157,24 @@ describe("choose", () => {
     expect(executed[0]!.text).toBe("Use CAD")
   })
 
+  test("a 2000-char answer (card option or typed) reaches the executor whole; over ANSWER_MAX → 400", async () => {
+    const long = `${"x".repeat(1996)} END`
+    modelOut = () => JSON.stringify({
+      title: "Confirm?", problem: "p", action: "a",
+      options: [{ label: "Confirm", action: { kind: "answer", text: long } }, { label: "Cancel", action: { kind: "cancel" } }],
+    })
+    const e = await ready()
+    const opt = e.items()[0]!.options
+    expect(opt[0]!.action).toEqual({ kind: "answer", text: long })
+    expect((await e.choose({ id: "task:t1", optionId: "a" })).status).toBe(200)
+    expect((executed[0]!.option.action as { text: string }).text).toBe(long)
+    const custom = opt.find((o) => o.action.kind === "answer_custom")!
+    expect((await e.choose({ id: "task:t1", optionId: custom.id, text: long })).status).toBe(200)
+    expect(executed[1]!.text).toBe(long)
+    expect(await e.choose({ id: "task:t1", optionId: custom.id, text: "x".repeat(4001) })).toMatchObject({ status: 400, body: { error: "text_too_long" } })
+    expect(executed).toHaveLength(2)
+  })
+
   test("409 stale when the underlying version moved; the item comes back refreshed", async () => {
     const e = await ready()
     const moved = blocked("t1", "v2", 100, "A new question?")

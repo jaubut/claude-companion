@@ -3784,7 +3784,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 529,
+          "lines": 533,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -5078,7 +5078,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 463,
+          "lines": 469,
           "kind": "lib",
           "exports": [
             "TriageSource",
