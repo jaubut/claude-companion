@@ -976,11 +976,12 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 209,
+          "lines": 216,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
             "BRAIN_AGENT",
+            "brainFiling",
             "RESERVED_CHANNELS",
             "BRAIN_TAKE_PREFIX",
             "BrainState",
@@ -3783,7 +3784,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 526,
+          "lines": 529,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -6949,13 +6950,14 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 590,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "BrainStatus",
             "ProposeInput",
             "BrainDeps",
             "emitTrace",
+            "proposalHandedOff",
             "createBrainWiring",
             "BrainWiring",
             "BRAIN_DIR",
@@ -7501,7 +7503,7 @@
         },
         {
           "path": "wiring/resolver.ts",
-          "lines": 334,
+          "lines": 339,
           "kind": "lib",
           "exports": [
             "RESOLVER_ALLOWED",
@@ -7546,6 +7548,7 @@
             "lib/triage-pr.ts",
             "lib/turso.ts",
             "wiring/body-investigate.ts",
+            "wiring/brain.ts",
             "wiring/orchestrator.ts",
             "state.ts",
             "wiring/proposals.ts"
@@ -13804,6 +13807,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
+            "wiring/brain.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts",
@@ -14812,6 +14816,12 @@
             "wiring/events.ts"
           ]
         },
+        "brainFiling": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "BrainState": {
           "module": "lib/brain.ts",
           "callers": [
@@ -15803,6 +15813,12 @@
         },
         "createResolverEngine": {
           "module": "lib/resolver-engine.ts",
+          "callers": [
+            "wiring/resolver.ts"
+          ]
+        },
+        "proposalHandedOff": {
+          "module": "wiring/brain.ts",
           "callers": [
             "wiring/resolver.ts"
           ]
