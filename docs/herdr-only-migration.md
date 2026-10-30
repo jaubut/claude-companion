@@ -10,6 +10,7 @@ Scope: the Companion server (Mac and Zettlab), the Zettlab systemd units, the `c
   - herdr 0.9.5 runs as `herdr.service` (linger).
   - It hosts the brain (workspace `brain`, pane `w3T:p1`, `claude --remote-control brain`, `COMPANION_TASK_ID=brain`), every `builder-zettlab-*` worker, and the phone-spawned `cc-*` sessions.
   - This plan was written from a herdr pane (`w3V:p1`).
+- **Which tmux the server uses:** Companion itself never targets `-L cc`. `COMPANION_TMUX_SOCKET` / `COMPANION_TMUX_CONF` are unset in the units, so a spawn fallback, a phone shell or the off-pane scrape all land on the **default** tmux server (`tmux-pane.ts:61-93`). `-L cc` is owned by the `claude()` wrapper and the two units. Retiring tmux therefore means both servers.
 - **What's left on `tmux -L cc`:** `_boot_holder` (the resurrect anchor), `cc-aubut-` (a `claude` in `~` that the `claude()` wrapper launched on 2026-10-27), and three phone shells (`sh-work`, `sh-work-2`, `sh-work-3`). The shells are the ones that keep coming back after a reboot.
 - **The units that keep tmux alive:**
   - `tmux-resurrect-boot.service` (enabled): starts `tmux -L cc` at boot, runs tmux-resurrect `restore.sh`, then `cc-claude-resume`. At stop it runs `cc-claude-snapshot --force` and resurrect `save.sh`.
@@ -26,16 +27,23 @@ Scope: the Companion server (Mac and Zettlab), the Zettlab systemd units, the `c
 | Type a prompt + confirm submit | `send-keys -l` + Enter, submit check by capture | `agent prompt` / `pane send-text` + `send-keys` (herdr-inject.ts, "delivered (herdr)" + "submit confirmed" verified) | ✅ exists |
 | Keys (Esc, picker arrows, dialog answers) | `send-keys` through the key gate (tmux-pane.ts) | `pane send-keys` (exit 0, no stdout → `silentSuccess`, #155) | ✅ exists |
 | Read the screen (dialogs, pickers, idle check, auto-compact) | `capture-pane -p` plain / `-e` coloured, per consumer | `pane read --source visible --format text\|ansi` (#157 parity: dialog mirror, auto-compact, `/` suggestions) | ✅ exists; same plain-vs-coloured rule |
-| Phone pane mirror (#234 / pane-mirror.ts) | tmux MirrorSource: `capture-pane -e` poll + `send-keys -H` | herdr MirrorSource (the original source; tmux was added second) | ✅ exists. **Gap A:** resize. herdr has no per-pane resize API for a single pane in a workspace (`pane resize` resizes a split), so the mirror uses the frame size it reads. That is acceptable: the herdr source already works this way today |
+| Phone pane mirror (#234 / pane-mirror.ts) | tmux MirrorSource (wiring/pane-mirror.ts:37): `capture-pane -e -p` + `send-keys -H` through the key gate; no resize | herdr MirrorSource (:14, the original): socket `pane.read` visible/ansi every 50 ms (`events.subscribe` has no `pane_output_changed`, so it polls), `pane.send_text`, and `HerdrPaneSizer` sizes the pane to the smallest viewer | ✅ herdr is *ahead* (resize). **Gap A:** herdr mirror keystrokes skip the key gate (STATE.md, pane-mirror plan, deviation c). Route them through `herdrGateKey` before tmux goes |
 | Plain shell from the phone (`sh-*`, shell-sessions.ts) | `tmux new-session` tagged `@companion_shell`; tmux *is* the record | none: a shell is not an agent, so nothing registers it | **Gap B:** needs a herdr record (see Stage 2) |
 | Live terminal bridge for those shells (terminal-bridge.ts, `/api/terminal`) | `tmux attach-session` under a PTY, raw byte stream | `herdr agent attach <agent>` attaches ONE agent terminal, but shells aren't agents. `herdr --session` attaches the whole multi-workspace UI, not one pane | **Gap C:** no raw single-pane attach for a plain shell. Use the pane-mirror WS instead (read + send-keys), which is screen polling, not a PTY stream |
 | Mac Canvas terminal node | `TerminalAttach.swift`: SwiftTerm running `tmux attach` / `ssh -t zettlab tmux attach` (PRJ-FL49 core call) | same gap as C | **Gap C** (consumer outside this repo; the Mac repo checkout here is stale, so not verified) |
 | Off-pane slash-command list (command-offpane*.ts) | a throwaway detached tmux session `cc-scrape-*` (220x60) runs a hidden `claude` with a temp HOME, hooks off and no MCP, scrapes `/help` by capture-pane, then is killed and confirmed dead | not ported | **Gap D:** a hidden herdr workspace would be visible in herdr's UI and detected as an agent by herdr's Claude integration, and its env must carry the temp HOME (`--env`). Port with those two checks, or drop it if #157's `/` suggestions already cover the list |
-| Orchestrator "Run live" workers (orchestrator-db `tmux_session`/`tmux_socket`, dispatch-tasks/poller DTO `tmuxSession`/`tmuxSocket` → iOS side chat) | local tmux worker per live row | brain workers already run in herdr (`builder-zettlab-*`, reaper #227) | **partial:** the live-row DTO still names a tmux session. It needs a `herdrPane` field (additive) before the tmux fields go |
+| Orchestrator "Run live" + legacy local tasks (orchestrator-db `tmux_session`/`tmux_socket`, DTO `tmuxSession`/`tmuxSocket` → iOS side chat, `cancelLocal` kill-session at routes/orchestrator.ts:182) | "Run live" now only logs `dispatch-runner: herdr`; the external `dispatch-run` (claude-config tools) spawns and has its own tmux fallback. `createTask(…tmuxSession)` has no callers | brain workers run in herdr (wiring/brain.ts:567, herdr only, no fallback) | **partial:** the DTO tmux fields are legacy. The real remaining tmux fallback is in `dispatch-run`/`herdr-client.ts`, outside this repo |
 | Durability across reboot | resurrect + `cc-claude-resume` (`claude --resume <sid>`) | herdr keeps each pane's Claude session id (`~/.config/herdr/session.json`) and resumed all 7 Mac panes after the 0.9.5 server restart | ✅ for agents; shells are not resumed, which is the point |
 | Server restart without killing agents | tmux server outlives Companion | `herdr update --handoff` = live handoff. **`herdr server stop` SIGKILLs every pane, and `herdr.service`'s `ExecStop` is `herdr server stop`** | ⚠ see Risk 1 |
 
 **The seam.** `server/lib/session-pane.ts` `sessionPaneOf()` is the one place that picks the driver: "tmux when the session has a tmux pane, else herdr". dialog-watch, pickers, model control and inject read and type through it. `discover.ts` maps ttys to tmux panes for ps-discovered sessions. Retiring tmux on the driving side means removing one branch in `sessionPaneOf`, plus the tmux discovery in `discover.ts` (Stage 5), not touching every consumer.
+
+**Smaller parity gaps** (from the code map; each is a Stage 1–2 item):
+- herdr inject refuses text with a leading `-`, because 0.9.3 had no `--` (`herdr-inject.ts:44`). Re-check on 0.9.5.
+- `localTerminalAttached` is tmux-only (`#{session_attached}`, `question-hook.ts:72`), so a herdr pane always reads "not attached". Decide whether herdr's `focused` / client count can stand in.
+- The submit failure hint still says "relaunch it in tmux (cc-tmux)" (`submit-confirm.ts:318`), and `scripts/cc-tmux` is still shipped.
+- tty→pane discovery is tmux-only (`tmux-pane.ts:166`, `discover.ts:255`). herdr sessions are found only through `$HERDR_PANE_ID` in the hook or process env, which covers every herdr-launched claude.
+- "Resume ended session" falls back to a tmux shell when its pane is gone (`routes/api.ts:256`).
 
 **Bottom line.** Agent inject and output mirroring work on herdr today and have been verified on both hosts. The gaps are:
 - **B and C:** plain shells and the raw terminal stream that the phone Terminal view and the Mac Canvas node attach to.
@@ -60,6 +68,7 @@ Each stage is shippable alone. The brain, the companion server and the running w
 ### Stage 0: make herdr safe to depend on (ops + one small PR)
 - `herdr.service`: replace `ExecStop=herdr server stop` with no ExecStop (systemd SIGTERMs the server at shutdown anyway), and write down in `docs/herdr-spawn.md` that upgrades go through `herdr update --handoff`. Do this on a quiet window, because a daemon-reload doesn't restart the unit.
 - Prove a cold-reboot resume on Zettlab. Reboot with only throwaway sessions running, then confirm that herdr resumes the claude panes and that Companion re-binds them.
+- Widen the pin: the default `HERDR_PINNED_VERSIONS` is `["0.9.3"]`, while 0.9.5 is installed and comes only from the `DISPATCH_HERDR_VERSIONS` drop-in. Make the installed version the default before tmux stops being a fallback.
 - Spike Gap C. Does `herdr agent attach` / `pane input` give a raw single-pane stream for a non-agent pane? Settle it with one throwaway workspace, never a live pane.
 - **Rollback:** restore the unit file from `.bak`, then `daemon-reload`.
 
@@ -80,9 +89,10 @@ Each stage is shippable alone. The brain, the companion server and the running w
 - `command-offpane*.ts`: run the hidden capture in a hidden herdr workspace (`workspace create` + `pane run` + `pane read`), or drop off-pane commands if the herdr `/` suggestions path from #157 already covers them. Decide after measuring how often off-pane runs today.
 - **Rollback:** revert.
 
-### Stage 3b: "Run live" rows (orchestrator)
-- Live workers spawn through `spawnInHerdr`. Add an additive `herdrPane` field to the live-row DTO (`dispatch-tasks.ts`, `dispatch-poller.ts`) so iOS opens the side chat by pane. `tmuxSession`/`tmuxSocket` become null for new rows.
-- **Rollback:** revert. Old rows keep their tmux identity.
+### Stage 3b: dispatch runner + legacy task rows
+- claude-config `dispatch-run` / `herdr-client.ts`: remove the tmux fallback (a gate failure becomes a loud requeue, not tmux). Same PR as the version-pin change in Stage 1 if possible.
+- companion: delete the dead legacy-tmux task paths (`createTask(…tmuxSession)` with no callers, the `cancelLocal` kill-session). The DTO `tmuxSession`/`tmuxSocket` become null, then are removed after one iOS release.
+- **Rollback:** revert.
 
 ### Stage 4: retire the tmux ops (Zettlab, then Mac)
 Only after Stages 1–3 have run for a week with zero tmux spawns (`grep "app=tmux"` in the companion log). The commands below are the exact steps.
@@ -108,8 +118,9 @@ herdr workspace list   # close only workspaces with agent_status unknown and no 
 ### Stage 5: delete the tmux code (one PR per module)
 Only after Stage 4, plus two weeks of no tmux session on either host.
 - **Delete:** the tmux spawn paths in `spawn-session.ts` (detached tmux, Mac Terminal/iTerm, `tmux-spawn-confirm`), the tmux `MirrorSource` from #234, the tmux branch of `keyboard-inject.ts`, `tmux-pane.ts` (key gate tmux side, socket flags), `tmuxPane` / `tmuxSocket` resolution, the `X-Companion-Tmux*` headers in `hooks/_lib.sh`, and the tmux half of `command-offpane-launch.ts`.
+- **Also:** `scripts/cc-tmux`, the `submit-confirm.ts` "relaunch in tmux" hint, the tmux branch of `sessionPaneOf` and of the dialog / model-control / command-menu / auto-compact twins, `removeSessionByTmuxPane` / `socketForPane` (`sessions.ts:554,571`), and `ensureUtf8Locale`, if only tmux needed it.
 - **Rewrite:** `shell-sessions.ts` (Stage 2), `terminal-bridge.ts` (Stage 2), `herdrPaneOf`. The "tmux inside herdr defers to tmux" rule goes once no wrapper puts tmux in a herdr pane.
-- **Keep as contract (iOS):** session JSON `tmuxPane` stays as `""` for one iOS release, because shipped builds decode it, then it is removed. `canMirror` stays (server-computed).
+- **Keep as contract (iOS):** session JSON `tmuxPane`/`tmuxSocket` stay as `""` for one iOS release, because shipped builds decode them, then they are removed. iOS works out "can mirror" from "has a pane" (there is no server `canMirror` field), so `herdrPane` must be set on every mirrorable session before `tmuxPane` empties.
 - **Rollback:** revert per module. Stage 4 is reversible separately.
 
 ## 4. Deleted vs rewritten (summary)
