@@ -35,7 +35,7 @@ const DENY = [
   "**/.secrets", "**/.kb_*", "~/.config/telegram-bot.env", "**/*.key", "**/id_rsa*", "**/id_ed25519*", "~/.claude-companion/*",
 ].map((p) => new Bun.Glob(p.startsWith("~/") ? join(homedir(), p.slice(2)) : p))
 
-export function sentFilesDir(): string {
+function sentFilesDir(): string {
   return process.env.COMPANION_SENT_FILES_DIR || join(homedir(), ".claude-companion", "sent-files")
 }
 

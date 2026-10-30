@@ -4051,7 +4051,6 @@
           "kind": "lib",
           "exports": [
             "SentFile",
-            "sentFilesDir",
             "isSentFileId",
             "isSecretPath",
             "sentFilePath",

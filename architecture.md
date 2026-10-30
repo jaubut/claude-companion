@@ -151,7 +151,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `wiring/canvas.ts` | 126 | lib | 5 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
-| `lib/sent-files.ts` | 123 | lib | 7 |  |
+| `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
 | `routes/canvas.ts` | 120 | lib | 2 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
