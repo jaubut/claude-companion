@@ -10,9 +10,9 @@
 #   5. herdr's Claude integration (pane agent-state hook)
 set -euo pipefail
 
-VERSION="${HERDR_VERSION:-0.9.3}"
-# sha256 of herdr-linux-x86_64 v0.9.3, from https://herdr.dev/latest.json
-SHA256="${HERDR_SHA256:-18a8dc65f1c2fa485884344356dea1cfd911c6f06cf46fa78e193f4087f4dba7}"
+VERSION="${HERDR_VERSION:-0.9.5}"
+# sha256 of herdr-linux-x86_64 v0.9.5 (the GitHub release asset; = Zettlab's installed binary)
+SHA256="${HERDR_SHA256:-14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d}"
 BIN="$HOME/.local/bin/herdr"
 UNIT_DIR="$HOME/.config/systemd/user"
 CFG="$HOME/.config/herdr/config.toml"
@@ -57,16 +57,26 @@ rm -f "$cfg_new"
 
 # 3. systemd --user unit (shared with the dispatch herdr runner — one server per host)
 mkdir -p "$UNIT_DIR"
-if [ ! -f "$UNIT_DIR/herdr.service" ]; then
-  cat > "$UNIT_DIR/herdr.service" <<'EOF'
+# Every pane is a child of the server, so no stop or restart keeps them
+# running. What survives is session.json (layout, screen history, each
+# claude's session id), which the next start resumes. The brain and every
+# worker live here, so a manual stop/restart is refused. Shutdown still stops
+# the unit through ExecStop, which saves the session first. The "-": after a
+# `herdr server stop` by hand the server is already gone, and that ExecStop
+# failure must not read as a crash and restart it. A deliberate restart is
+# `herdr server stop`, then `systemctl --user start herdr`.
+unit_new="$(mktemp)"
+cat > "$unit_new" <<'EOF'
 [Unit]
-Description=herdr headless server (dispatch workers + companion phone spawns — RES-RY7A)
+Description=herdr headless server (brain, dispatch workers, companion phone spawns — RES-RY7A)
 After=network-online.target
+RefuseManualStop=yes
 
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/herdr server
-ExecStop=%h/.local/bin/herdr server stop
+ExecReload=%h/.local/bin/herdr server reload-config
+ExecStop=-%h/.local/bin/herdr server stop
 Environment=PATH=%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 UnsetEnvironment=ANTHROPIC_API_KEY
 Restart=on-failure
@@ -76,8 +86,12 @@ TimeoutStopSec=30
 [Install]
 WantedBy=default.target
 EOF
-  log "wrote $UNIT_DIR/herdr.service"
+if ! cmp -s "$unit_new" "$UNIT_DIR/herdr.service"; then
+  [ -f "$UNIT_DIR/herdr.service" ] && cp "$UNIT_DIR/herdr.service" "$UNIT_DIR/herdr.service.bak-$(date +%F)"
+  cat "$unit_new" > "$UNIT_DIR/herdr.service"
+  log "wrote $UNIT_DIR/herdr.service (daemon-reload only: the running server keeps going)"
 fi
+rm -f "$unit_new"
 
 # 4. the companion calls `herdr` via $HERDR_BIN (server/lib/herdr.ts)
 mkdir -p "$UNIT_DIR/claude-companion.service.d"
@@ -106,7 +120,7 @@ if systemctl --user is-active --quiet herdr.service; then
   elif [ "$rv" != "$VERSION" ]; then
     need_restart="running server is v$rv, binary is v$VERSION (version gate keeps spawns on tmux)"
   elif [ "$CFG_CHANGED" = 1 ]; then
-    "$BIN" server reload-config || need_restart="reload-config failed; headless size not applied"
+    systemctl --user reload herdr.service || need_restart="reload-config failed; headless size not applied"
   fi
   # HERDR_RESTART=1 always restarts, e.g. the retry after a reload-config failure
   # (the config is already written, so CFG_CHANGED is 0 on that run).
@@ -115,8 +129,12 @@ if systemctl --user is-active --quiet herdr.service; then
   fi
   if [ -n "$need_restart" ]; then
     if [ "${HERDR_RESTART:-0}" = 1 ]; then
-      log "restarting herdr.service: $need_restart"
-      systemctl --user restart herdr.service
+      # `systemctl restart` is refused (RefuseManualStop). This ends every pane
+      # process; herdr resumes the claude panes from session.json on start.
+      log "restarting herdr: $need_restart"
+      "$BIN" server stop || true
+      for _ in $(seq 30); do systemctl --user is-active --quiet herdr.service || break; sleep 1; done
+      systemctl --user start herdr.service
     else
       log "ERROR: $need_restart"
       log "check no dispatch worker is running (herdr workspace list), then re-run with HERDR_RESTART=1"

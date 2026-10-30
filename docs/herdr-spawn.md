@@ -3,7 +3,7 @@
 `POST /api/spawn-session` with `app: "auto"` (the phone default) starts the agent in a
 **herdr workspace** when herdr's gate passes (`gateReason()` in
 `~/.claude/tools/herdr-client.ts`: server up, protocol 22, version in
-`DISPATCH_HERDR_VERSIONS`, default `0.9.3`). Gate fails → the old tmux path:
+`DISPATCH_HERDR_VERSIONS`, default `0.9.5,0.9.3`). Gate fails → the old tmux path:
 Terminal/iTerm on the Mac, a detached 220x60 tmux session on Linux. A failure *after* the
 gate never falls back (a workspace may exist; a fallback would start a second agent).
 
@@ -90,19 +90,23 @@ systemctl --user restart claude-companion
 
 It is idempotent and:
 
-1. installs herdr `0.9.3` to `~/.local/bin/herdr` (sha256-checked) if the version differs;
+1. installs herdr `0.9.5` to `~/.local/bin/herdr` (sha256-checked) if the version differs;
 2. forces `[server] headless_cols = 220`, `headless_rows = 60` in `~/.config/herdr/config.toml`
    (overwrites existing values, adds whichever key is missing)
    — a pane with no client attached gets this size (default 120x40), and Claude Code
    dialogs + the `/help` scrape need the rows (same reason as tmux `DETACHED_COLS/ROWS`);
-3. ensures `herdr.service` (systemd `--user`, shared with the dispatch herdr runner) is
-   enabled + started, and linger is on — never restarts a running server by default (that
-   would kill worker panes). If the running server's version differs from the binary
+3. writes `herdr.service` (systemd `--user`, shared with the brain and the dispatch herdr
+   runner) when it differs, and ensures it is enabled + started with linger on. The unit has
+   `RefuseManualStop=yes`: `systemctl --user stop|restart herdr` is refused, because any stop
+   ends every pane process (herdr resumes the claude panes from `session.json` on the next
+   start, but not their env). Use `systemctl --user reload herdr` for config. A deliberate
+   restart is `herdr server stop`, then `systemctl --user start herdr`. The script never
+   restarts a running server by default. If the running server's version differs from the binary
    (reload-config doesn't upgrade it, so the version gate would keep spawns on tmux),
    `reload-config` fails, or the server doesn't answer within 10s, the script stops with
    exit 2: check no dispatch worker runs (`herdr workspace list`), then re-run with
-   `HERDR_RESTART=1`, which always restarts an active server. It ends by checking that the
-   running server reports `0.9.3`. If a pane is still 120x40 after the first spawn, restart
+   `HERDR_RESTART=1`, which always restarts an active server (stop + start, as above). It
+   ends by checking that the running server reports `0.9.5`. If a pane is still 120x40 after the first spawn, restart
    herdr the same way;
 4. adds `claude-companion.service.d/herdr.conf` with `HERDR_BIN=%h/.local/bin/herdr`
    (the companion unit's PATH has no `~/.local/bin`; without it the gate reads
@@ -114,7 +118,7 @@ Check:
 ```bash
 systemctl --user status herdr claude-companion
 loginctl show-user "$USER" -p Linger        # Linger=yes → survives logout/reboot
-herdr status server --json                   # version 0.9.3, protocol 22
+herdr status server --json                   # version 0.9.5, protocol 22
 herdr integration status | grep '^claude:'   # claude: current
 grep "herdr skipped" ~/.claude-companion/companion.log | tail -3   # gate fallbacks, if any
 ```
