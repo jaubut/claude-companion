@@ -82,6 +82,10 @@ describe("routing per source", () => {
     expect(routable(proposal("mine"), { createdByResolver: (id) => id === "mine" })).toBe(false)
     expect(routable(bodyItem(), { bodyLocal: () => false })).toBe(false)
   })
+  test("a proposal already handed off (brain filing it, or queued) is not a resolver item; a failed filing is", () => {
+    expect(routable(proposal("brain1"), { handedOff: (id) => id === "brain1" })).toBe(false)
+    expect(routable(proposal("brain2"), { handedOff: () => false })).toBe(true)
+  })
   test("the resolver key ignores updated_at churn on a still-blocked task, and moves with a new question", () => {
     const a = resolverKey(blockedTask("t1", "Q?", "blocked|10:00"))
     expect(resolverKey(blockedTask("t1", "Q?", "blocked|11:00"))).toBe(a)

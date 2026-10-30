@@ -5,7 +5,7 @@ import { dirname, join } from "node:path"
 import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
-  BRAIN_AGENT, BRAIN_THREAD, type BrainActivity, type BrainState, type DeliveryTurn,
+  BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainActivity, type BrainState, type DeliveryTurn,
   BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import {
@@ -14,7 +14,7 @@ import {
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
 import { createBrainActivity } from "./brain-activity"
-import { type Turn, appendTurn, createProposal, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
+import { type Turn, appendTurn, createProposal, getTask, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
 import { ensureChannel } from "../lib/orchestrator-channels"
 import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
 import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
@@ -78,6 +78,9 @@ export interface BrainDeps {
 export function emitTrace(rows: TraceRow[]): void {
   if (rows.length) broadcast({ type: "brain_trace", op: "row", rows })
 }
+
+/** The resolver leaves a proposal alone once it is handed off: the brain is filing it, or it is no longer `proposed`. */
+export const proposalHandedOff = (taskId: string): boolean => brainFiling.has(taskId) || getTask(taskId)?.status !== "proposed"
 
 export function createBrainWiring(deps: BrainDeps) {
   let state: BrainState = "starting"
@@ -466,6 +469,7 @@ export function createBrainWiring(deps: BrainDeps) {
       const seen = proposeSeen(p.sourceTurnId, hash)
       if (seen) return { status: 200, body: { ok: true, proposalId: seen, replay: true } }
       const task = createProposal(p.prompt, "", p.reasoning, BRAIN_THREAD, { noteId: note.noteId, agent, title: p.title })
+      brainFiling.add(task.taskId) // no await since the insert: triage never sees it un-flagged
       rememberPropose(p.sourceTurnId, hash, task.taskId)
       const project = note.ref ?? note.title ?? note.noteId
       const repoId = rowId.repo(p.sourceTurnId, project)
@@ -476,8 +480,13 @@ export function createBrainWiring(deps: BrainDeps) {
       emitTask(task.taskId)
       // The brain hands off: filed and queued at once, no Approve card (Jeremie, 2026-10-29).
       // The trace row is what he sees; a failed file stays a proposal he can tap.
-      const res = await approveProposal(task, {}, deps.dispatch)
-      const body = await res.json() as Record<string, unknown>
+      let res: Response, body: Record<string, unknown>
+      try {
+        res = await approveProposal(task, {}, deps.dispatch)
+        body = await res.json() as Record<string, unknown>
+      } finally {
+        brainFiling.delete(task.taskId)
+      }
       if (res.ok) {
         trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: body.status === "queued" ? "dispatched" : "waits for the dashboard stamp", ref: { taskId: String(body.dispatchTaskId ?? "") } })])
         return { status: 200, body: { ...body, proposalId: task.taskId } }

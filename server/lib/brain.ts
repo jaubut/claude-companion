@@ -10,6 +10,13 @@
 export const BRAIN_THREAD = "brain"
 /** Its herdr agent name, Remote Control name and COMPANION_TASK_ID. */
 export const BRAIN_AGENT = "brain"
+/**
+ * Brain proposals being filed right now (bin/propose → approveProposal). They are `proposed` for the
+ * length of the Turso write; the resolver must not take them (2026-10-30: it carded two of them
+ * "approving is Jeremie's call" after they were already queued). A failed filing leaves the set.
+ */
+export const brainFiling = new Set<string>()
+
 /** Channel ids no user-created channel may take. */
 export const RESERVED_CHANNELS: ReadonlySet<string> = new Set(["brain", "general", "body"])
 
