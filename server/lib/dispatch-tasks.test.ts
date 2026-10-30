@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  ANSWER_MAX,
   type DispatchTask,
   detectColumns,
   dispatchToDto,
@@ -18,6 +19,7 @@ import {
   unblockMarker,
 } from "./dispatch-tasks"
 import type { Task } from "./orchestrator-chat"
+import { ANSWER_TEXT_MAX } from "./triage"
 import type { QueryFn, Row, SqlArg } from "./turso"
 
 // Pure mapping + the read queries against a fake QueryFn (no network).
@@ -169,6 +171,12 @@ describe("write helpers (P2)", () => {
 
   test("unblockMarker: blank line, dated UTC marker, trimmed answer", () => {
     expect(unblockMarker("  use repo X \n", Date.parse("2026-10-03T23:30:00Z"))).toBe("\n\n[unblock 2026-10-03] use repo X")
+  })
+
+  test("unblockMarker keeps a 2000-char answer whole; the model answer cap matches ANSWER_MAX", () => {
+    const long = `${"x".repeat(1996)} END`
+    expect(unblockMarker(long, Date.parse("2026-10-15T14:34:51Z"))).toBe(`\n\n[unblock 2026-10-15] ${long}`)
+    expect(ANSWER_TEXT_MAX).toBe(ANSWER_MAX)
   })
 
   test("toTaskDto: a filed proposal keeps its Turso id, note and agent", () => {

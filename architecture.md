@@ -22,8 +22,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 534 | lib | 54 |  |
-| `lib/resolver.ts` | 530 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
-| `lib/triage.ts` | 508 | lib | 47 | state: DESTRUCTIVE: Set |
+| `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
+| `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |

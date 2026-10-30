@@ -3,7 +3,7 @@ import {
   CONFIDENT, DELEGATED_MIN_CONFIDENCE, type PolicyCtx, REPO_YES_INSTRUCTION, type ResolverOutput, cardSummary, consentOf, consents, decide, digestText, isSensitivePr, outcomePhrase,
   parseResolverOutput, preparedPhrase, resolverConfig, resolverInfo, resolverKey, routable,
 } from "./resolver"
-import type { SourceItem } from "./triage"
+import { ANSWER_TEXT_MAX, type SourceItem } from "./triage"
 
 // The resolver's pure half: config + kill switch, routing per source, the
 // resolver key, output parsing, the POLICY (what may run without Jeremie),
@@ -100,6 +100,12 @@ describe("output parsing", () => {
     const out = parseResolverOutput(raw, blockedTask())!
     expect(out.confidence).toBe(0.85)
     expect(out.action).toEqual({ kind: "none" })
+  })
+  test("an answer keeps its full text up to ANSWER_TEXT_MAX; above it the action reads as none, never sliced", () => {
+    const long = `${"x".repeat(1996)} END`
+    expect(parseResolverOutput(JSON.stringify({ analysis: "a", action: { kind: "answer", text: long } }), blockedTask())!.action).toEqual({ kind: "answer", text: long })
+    const over = parseResolverOutput(JSON.stringify({ analysis: "a", action: { kind: "answer", text: "y".repeat(ANSWER_TEXT_MAX + 1) } }), blockedTask())!
+    expect(over.action).toEqual({ kind: "none" })
   })
   test("needsJeremie defaults to true; garbage → null", () => {
     expect(parseResolverOutput(JSON.stringify({ analysis: "a", action: { kind: "answer", text: "CAD" } }), blockedTask())!.needsJeremie).toBe(true)
