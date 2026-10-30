@@ -34,7 +34,9 @@ turso.exec(`
     target_id TEXT, summary TEXT, meta TEXT, ts TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `)
+const hooks: { beforeExec: ((sql: string) => void) | null } = { beforeExec: null }
 const exec: ExecFn = async (sql: string, args: SqlArg[]) => {
+  hooks.beforeExec?.(sql)
   if (/^\s*(SELECT|WITH)/i.test(sql)) return { rows: turso.query(sql).all(...args) as Row[], affected: 0 }
   return { rows: [], affected: turso.query(sql).run(...args).changes }
 }
@@ -156,6 +158,29 @@ describe("POST /hooks/brain/propose — the brain hands off, no Approve card", (
     const b = await propose(body(t))
     expect(b.json).toMatchObject({ ok: true, proposalId: a.json.proposalId, replay: true })
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
+  })
+  test("the resolver never takes it: handed off while filing and once queued; a failed filing stays a card", async () => {
+    const seen: boolean[] = []
+    let fail = false
+    const watch = (sql: string) => {
+      if (!/INSERT\s+(OR\s+\w+\s+)?INTO tasks/i.test(sql)) return
+      const id = (sqlite.query("SELECT task_id FROM orchestrator_tasks ORDER BY created_at DESC LIMIT 1").get() as { task_id: string }).task_id
+      seen.push(wiringMod.proposalHandedOff(id))
+      if (fail) throw new Error("turso down")
+    }
+    hooks.beforeExec = watch
+    try {
+      const ok = await propose(body(voiceTurn().id, "merge PR 368"))
+      expect(ok.json).toMatchObject({ status: "queued" })
+      expect(seen).toEqual([true])
+      expect(wiringMod.proposalHandedOff(String(ok.json.proposalId))).toBe(true)
+      fail = true
+      const bad = await propose(body(voiceTurn().id, "merge PR 369"))
+      expect(bad.json).toMatchObject({ status: "proposed" })
+      expect(wiringMod.proposalHandedOff(String(bad.json.proposalId))).toBe(false)
+    } finally {
+      hooks.beforeExec = null
+    }
   })
   test("two prompts from one turn → two dispatches", async () => {
     const v = voiceTurn().id

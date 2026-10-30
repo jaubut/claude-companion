@@ -72,12 +72,15 @@ export function resolverConfig(
   }
 }
 
-/** Which items the resolver takes. A proposal Opus wrote itself is never re-resolved. */
-export function routable(src: SourceItem, opts: { createdByResolver?: (taskId: string) => boolean; bodyLocal?: (componentId: string) => boolean } = {}): boolean {
+/**
+ * Which items the resolver takes. A proposal Opus wrote itself is never re-resolved, nor one already
+ * handed off (the brain filing it right now, or no longer `proposed`): a brain direct ask runs, no card.
+ */
+export function routable(src: SourceItem, opts: { createdByResolver?: (taskId: string) => boolean; handedOff?: (taskId: string) => boolean; bodyLocal?: (componentId: string) => boolean } = {}): boolean {
   const ref = src.ref
   switch (ref.source) {
     case "mytask": return false // Jeremie's own list: his call, never Opus's
-    case "proposal": return !opts.createdByResolver?.(ref.taskId)
+    case "proposal": return !opts.createdByResolver?.(ref.taskId) && !opts.handedOff?.(ref.taskId)
     case "body": return opts.bodyLocal?.(ref.componentId) ?? true
     default: return true
   }
