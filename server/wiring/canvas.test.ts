@@ -37,9 +37,9 @@ test("approval → needs-you frame; re-asserting it sends nothing; clearing → 
 })
 
 test("send goes through the inject guards: an unregistered agent session is refused, nothing typed", async () => {
-  const add = (kind: "agent" | "note", ref: string, data: Record<string, unknown> = {}) =>
+  const add = (kind: "agent" | "task", ref: string, data: Record<string, unknown> = {}) =>
     canvas.canvasStore.addNode({ kind, ref, x: 0, y: 0, w: 1, h: 1, data }, 1).node
-  const note = add("note", "", { text: "hello" })
+  const note = add("task", "task-hello") // only tasks are sent; notes are references (canvas-note-refs)
   const gone = add("agent", "claude:tty:/dev/pts/nope")
   const unbound = add("agent", "")
   for (const [to, error] of [[gone, "target_gone"], [unbound, "target_gone"]] as const) {

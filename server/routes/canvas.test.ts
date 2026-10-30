@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import type { Server, ServerWebSocket } from "bun"
 import { createCanvasStore } from "../lib/canvas"
+import type { Row } from "../lib/turso"
 import { broadcast, clients, type WsData } from "../state"
 import { type SendResult, createCanvasRoute } from "./canvas"
 
@@ -10,10 +11,17 @@ import { type SendResult, createCanvasRoute } from "./canvas"
 // broadcast to the real `clients` set, two real WebSocket clients.
 
 const store = createCanvasStore(new Database(":memory:"))
+// Turso's real `notes` table (sqlite_master, 2026-10-30) behind the route's QueryFn.
+const notes = new Database(":memory:")
+notes.exec(`CREATE TABLE notes (id TEXT PRIMARY KEY, folder TEXT NOT NULL, filename TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+  body TEXT DEFAULT '', updated_at TEXT DEFAULT (datetime('now')), ref_code TEXT DEFAULT NULL)`)
+const SID = "sid-route"
 const sent: string[] = []
 let sendResult: SendResult | Error = { ok: true }
 const route = createCanvasRoute({
   store, status: () => ({ "claude:tty:/dev/ttys001": "working" }), host: "testhost", notify: broadcast,
+  references: (who) => (who.brain ? store.references("brain") : store.references({ key: who.key ?? "", sid: SID })),
+  query: async (sql, args) => notes.query(sql).all(...(args as (string | number | null)[])) as Row[],
   send: async (edge) => {
     sent.push(edge.id)
     if (sendResult instanceof Error) throw sendResult
@@ -67,7 +75,7 @@ describe("REST", () => {
 
     const e = await call("POST", "/api/canvas/edges", { from: "note-1", to: aid })
     expect(e.status).toBe(201)
-    expect(e.json.edge).toMatchObject({ kind: "context", from: "note-1", to: aid })
+    expect(e.json.edge).toMatchObject({ kind: "reference", state: "linked", from: "note-1", to: aid })
     expect((await call("POST", "/api/canvas/edges", { from: "note-1", to: aid })).status).toBe(409)
     expect((await call("POST", "/api/canvas/edges", { from: "note-1", to: "note-1" })).json.error).toBe("self_edge")
     expect((await call("POST", "/api/canvas/edges", { from: "note-1", to: "nope" })).status).toBe(404)
@@ -96,7 +104,7 @@ describe("REST", () => {
     await call("DELETE", `/api/canvas/nodes/${id}`)
   })
 
-  test("brain node (P7a): stored once by its fixed id, not an edge target yet", async () => {
+  test("brain node (P7a): stored once by its fixed id; a note links to it as a reference", async () => {
     const brain = { id: "brain", kind: "brain", x: -700, y: -230, w: 360, h: 460 }
     const first = await call("POST", "/api/canvas/nodes", brain)
     expect(first.status).toBe(201)
@@ -104,7 +112,9 @@ describe("REST", () => {
     expect((await call("POST", "/api/canvas/nodes", { ...brain, x: 5 })).status).toBe(200)
     expect((await call("GET", "/api/canvas")).json.nodes).toEqual([expect.objectContaining({ id: "brain", x: -700 })])
     await call("POST", "/api/canvas/nodes", { id: "note-b", kind: "note", x: 0, y: 0, w: 1, h: 1, data: { text: "x" } })
-    expect((await call("POST", "/api/canvas/edges", { from: "note-b", to: "brain" })).json.error).toBe("invalid_endpoints")
+    const link = await call("POST", "/api/canvas/edges", { from: "note-b", to: "brain" })
+    expect(link.status).toBe(201)
+    expect(link.json.edge).toMatchObject({ kind: "reference", state: "linked", from: "note-b", to: "brain" })
     await call("DELETE", "/api/canvas/nodes/note-b")
     expect((await call("DELETE", "/api/canvas/nodes/brain")).status).toBe(200)
   })
@@ -122,7 +132,7 @@ describe("REST", () => {
 })
 
 describe("context edges (P6)", () => {
-  test("only note|task → agent", async () => {
+  test("only note|task → agent (and note → brain)", async () => {
     const aid = ((await call("POST", "/api/canvas/nodes", agent)).json.node as { id: string }).id
     await call("POST", "/api/canvas/nodes", { kind: "note", x: 0, y: 0, w: 1, h: 1, id: "ep-note" })
     await call("POST", "/api/canvas/nodes", { kind: "preview", x: 0, y: 0, w: 1, h: 1, id: "ep-preview" })
@@ -166,7 +176,7 @@ describe("context edges (P6)", () => {
 
   test("a double tap types once", async () => {
     const aid = ((await call("POST", "/api/canvas/nodes", agent)).json.node as { id: string }).id
-    await call("POST", "/api/canvas/nodes", { kind: "note", x: 0, y: 0, w: 1, h: 1, id: "tap-note", data: { text: "x" } })
+    await call("POST", "/api/canvas/nodes", { kind: "task", ref: "task-2", x: 0, y: 0, w: 1, h: 1, id: "tap-note" })
     const e = (await call("POST", "/api/canvas/edges", { from: "tap-note", to: aid })).json.edge as { id: string }
     sent.length = 0
     sendResult = { ok: true }
@@ -174,6 +184,44 @@ describe("context edges (P6)", () => {
     expect([a.status, b.status].sort()).toEqual([200, 409])
     expect(sent).toEqual([e.id])
     for (const id of [aid, "tap-note"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("a note link needs no Send?: /send answers 409 edge_linked and types nothing", async () => {
+    const aid = ((await call("POST", "/api/canvas/nodes", agent)).json.node as { id: string }).id
+    await call("POST", "/api/canvas/nodes", { kind: "note", x: 0, y: 0, w: 1, h: 1, id: "ref-note", data: { text: "x" } })
+    const e = (await call("POST", "/api/canvas/edges", { kind: "context", from: "ref-note", to: aid })).json.edge as { id: string }
+    sent.length = 0
+    const r = await call("POST", `/api/canvas/edges/${e.id}/send`)
+    expect(r.status).toBe(409)
+    expect(r.json.error).toBe("edge_linked")
+    expect(sent).toEqual([])
+    for (const id of [aid, "ref-note"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("linked-notes: an agent's and the brain's linked notes, CURRENT content, scoped to the target", async () => {
+    store.addNode({ id: "ln-agent", kind: "agent", ref: "claude:tty:/dev/ttys009", x: 0, y: 0, w: 1, h: 1, data: {}, boundSid: SID }, 1)
+    await call("POST", "/api/canvas/nodes", { id: "ln-brain", kind: "brain", x: 0, y: 0, w: 1, h: 1 })
+    await call("POST", "/api/canvas/nodes", { id: "ln-spec", kind: "turso_note", ref: "RES-LN01", x: 0, y: 0, w: 1, h: 1, data: { title: "Spec" } })
+    await call("POST", "/api/canvas/nodes", { id: "ln-sticky", kind: "note", x: 0, y: 0, w: 1, h: 1, data: { text: "v1" } })
+    await call("POST", "/api/canvas/nodes", { id: "ln-other", kind: "note", x: 0, y: 0, w: 1, h: 1, data: { text: "not linked" } })
+    notes.query("INSERT INTO notes (id, folder, filename, title, body, ref_code) VALUES ('resources/ln', 'resources', 'ln.md', 'Spec', 'body v1', 'RES-LN01')").run()
+    await call("POST", "/api/canvas/edges", { from: "ln-spec", to: "ln-agent" })
+    await call("POST", "/api/canvas/edges", { from: "ln-sticky", to: "ln-brain" })
+
+    const q = "?session=" + encodeURIComponent("claude:tty:/dev/ttys009")
+    const list = await call("GET", "/api/canvas/linked-notes" + q)
+    expect(list.json.notes).toEqual([expect.objectContaining({ nodeId: "ln-spec", ref: "RES-LN01", refCode: "RES-LN01", title: "Spec", body: "body v1", source: "turso" })])
+
+    notes.query("UPDATE notes SET body = 'body v2' WHERE ref_code = 'RES-LN01'").run()
+    expect((await call("GET", "/api/canvas/linked-notes/RES-LN01" + q)).json.note).toMatchObject({ body: "body v2" })
+    expect((await call("GET", "/api/canvas/linked-notes/canvas:ln-other" + q)).status).toBe(404) // not linked to it
+
+    await call("PATCH", "/api/canvas/nodes/ln-sticky", { data: { text: "v2" } })
+    const brain = await call("GET", "/api/canvas/linked-notes?brain=1")
+    expect(brain.json.notes).toEqual([expect.objectContaining({ nodeId: "ln-sticky", ref: "canvas:ln-sticky", source: "canvas", body: "v2" })])
+    expect((await call("GET", "/api/canvas/linked-notes/canvas%3Aln-sticky?brain=1")).json.note).toMatchObject({ body: "v2" })
+    expect((await call("GET", "/api/canvas/linked-notes")).json.error).toBe("missing_target")
+    for (const id of ["ln-agent", "ln-brain", "ln-spec", "ln-sticky", "ln-other"]) await call("DELETE", `/api/canvas/nodes/${id}`)
   })
 })
 

@@ -39,7 +39,9 @@ import {
   metaFromHeaders,
   projectLabelFor,
   scrapeHookPassthrough,
+  userPromptHookOutput,
 } from "../lib/hook-common"
+import { canvasHookContext } from "../wiring/canvas"
 import { dispatchWiring } from "../wiring/dispatch"
 import { isLoopback, peerOf } from "../lib/vault-guard"
 import { checkBearer } from "../lib/auth"
@@ -281,7 +283,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       : null
     // Proof of submission for any phone inject waiting on this session. A
     // match also tells the hook the prompt came from the phone.
-    if (isBrainHook(headerMeta.taskId || session?.taskId)) brainWiring.noteActivity(body.session_id ?? "")
+    const brain = isBrainHook(headerMeta.taskId || session?.taskId)
+    if (brain) brainWiring.noteActivity(body.session_id ?? "")
     const fromPhone = noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty }, body.prompt)
     // Resets the auto-compact idle window and cancels a pending countdown.
     if (session) autoCompactor.noteUserActivity(session.key)
@@ -317,6 +320,11 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       cwd,
       sessionId: body.session_id ?? "",
     })
+    // The current hook script asks for its exact stdout (fromPhone note + canvas references);
+    // an older installed script still gets {fromPhone} and matches on it.
+    if (req.headers.get("x-companion-hook-output") === "claude") {
+      return userPromptHookOutput(fromPhone, canvasHookContext({ key: session?.key, sessionId: body.session_id, brain }))
+    }
     return Response.json({ fromPhone })
   }
 

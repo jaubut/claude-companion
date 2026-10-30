@@ -65,6 +65,16 @@ export function hookPassthroughResponse(agent: SpawnAgent): Response {
   return agent === "codex" ? new Response("") : Response.json({})
 }
 
+const FROM_PHONE_CONTEXT = "This prompt was sent from Jeremie's iPhone via Companion: prefer tappable links over Mac-only steps."
+
+// UserPromptSubmit stdout, built here so the hook script just prints it (it has no jq): the
+// fromPhone note and the canvas references (wiring/canvas.ts). 204 = print nothing.
+export function userPromptHookOutput(fromPhone: boolean, references: string): Response {
+  const context = [fromPhone ? FROM_PHONE_CONTEXT : "", references].filter(Boolean).join("\n\n")
+  if (!context) return new Response(null, { status: 204 })
+  return Response.json({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } })
+}
+
 // "claude-companion", "tls-dashboard-v2", or undefined when cwd is the
 // user's home dir (the default `cwd.split('/').pop()` would return the
 // macOS username which is meaningless project context). Empty cwds also

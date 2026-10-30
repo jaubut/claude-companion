@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { companionDbPath } from "../lib/db-path"
-import { type CanvasEdge, type CanvasStatus, type CanvasStore, type SendResult, contextPrompt, createCanvasStore, sessionStatuses } from "../lib/canvas"
+import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, type SendResult, contextPrompt, createCanvasStore, referenceContext, sessionStatuses } from "../lib/canvas"
 import { listActivities, onActivity } from "../lib/activity"
 import { companionLog } from "../lib/log"
 import { listSessions, onSessions } from "../lib/sessions"
@@ -48,6 +48,7 @@ export const canvasStore: CanvasStore = {
   node: (id) => openStore().node(id),
   edge: (id) => openStore().edge(id),
   claimEdge: (id, now) => openStore().claimEdge(id, now),
+  references: (target) => openStore().references(target),
   settleEdge: (id, result, now) => openStore().settleEdge(id, result, now),
 }
 
@@ -87,6 +88,26 @@ export async function canvasSend(edge: CanvasEdge): Promise<SendResult> {
   const body = (await res.json()) as Record<string, unknown>
   if (res.ok && body.ok === true) return { ok: true }
   return { ok: false, status: res.ok ? 502 : res.status, error: typeof body.error === "string" ? body.error : "deliver_failed", detail: body }
+}
+
+// canvas-note-refs: the note nodes linked to whoever sent a prompt — a session (its agent node,
+// bound to this exact session id, the same tty-reuse rule as a send) or the brain.
+// A key alone (GET /api/canvas/linked-notes) means the session live on it now.
+export function referencesFor(who: { key?: string; sessionId?: string; brain?: boolean }): CanvasNode[] {
+  if (who.brain) return canvasStore.references("brain")
+  const sid = who.sessionId || sidOf(who.key ?? "")
+  return who.key && sid ? canvasStore.references({ key: who.key, sid }) : []
+}
+
+// The UserPromptSubmit context block (routes/hooks.ts). Local sqlite only, inside the hook's 1 s
+// budget; any error is "" so it can never cost the prompt its fromPhone note.
+export function canvasHookContext(who: { key?: string; sessionId?: string; brain?: boolean }): string {
+  try {
+    return referenceContext(referencesFor(who))
+  } catch (err) {
+    console.error("[canvas] hook context failed:", err)
+    return ""
+  }
 }
 
 let lastStatus: Record<string, CanvasStatus> = sessionStatuses(listSessions(), listActivities())

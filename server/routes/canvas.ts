@@ -1,4 +1,5 @@
-import { type CanvasEdge, type CanvasStatus, type CanvasStore, parseEdgeInput, parseNodeInput, parseNodePatch, type SendResult } from "../lib/canvas"
+import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, parseEdgeInput, parseNodeInput, parseNodePatch, readReferences, referenceRef, type SendResult } from "../lib/canvas"
+import type { QueryFn } from "../lib/turso"
 export type { SendResult }
 
 // Canvas graph REST (PRJ-FL49 P5). Bearer-gated like every /api/*. Every write
@@ -8,11 +9,15 @@ export type { SendResult }
 //   POST   /api/canvas/nodes          { kind, x, y, w, h, ref?, data?, id? } → 201 { ok, node } (200 when id exists)
 //   PATCH  /api/canvas/nodes/<id>     { x?, y?, w?, h?, ref?, data? }       → { ok, node }
 //   DELETE /api/canvas/nodes/<id>     → { ok, edgeIds } (its edges go with it)
-//   POST   /api/canvas/edges          { from, to, kind? = "context" }       → 201 { ok, edge } (state "proposed")
-//   POST   /api/canvas/edges/<id>/send → { ok, edge } (state "sent") — the "Send?" tap (P6)
+//   POST   /api/canvas/edges          { from, to, kind? }                   → 201 { ok, edge }. Kind/state come from
+//          the endpoints (a posted kind is ignored): task → agent = "context"/"proposed" (Send?);
+//          note|turso_note → agent|brain = "reference"/"linked" (a live read-only link, never sent)
+//   POST   /api/canvas/edges/<id>/send → { ok, edge } (state "sent") — the "Send?" tap (P6); 409 edge_linked on a reference
 //   DELETE /api/canvas/edges/<id>     → { ok }
-// Errors: 400 { error: invalid_* | empty_patch | self_edge | invalid_endpoints }, 404 not_found | node_not_found,
-// 409 edge_exists | edge_sending | edge_sent. A context edge runs note|task → agent only.
+//   GET    /api/canvas/linked-notes?session=<key> | ?brain=1      → { ok, notes: ReferencedNote[] } — CURRENT content
+//   GET    /api/canvas/linked-notes/<ref | canvas:<nodeId>>?…     → { ok, note } — 404 unless linked to that target
+// Errors: 400 { error: invalid_* | empty_patch | self_edge | invalid_endpoints | missing_target }, 404 not_found | node_not_found,
+// 409 edge_exists | edge_sending | edge_sent | edge_linked. A journal note can't be linked (invalid_endpoints). A context edge runs note|task → agent only.
 // A failed send answers with the inject refusal's status + error (409 pane_not_ready / dialog_open …,
 // 410 target_gone …) and leaves the edge `failed` with that error, ready to be sent again.
 
@@ -24,11 +29,15 @@ export interface CanvasRouteDeps {
   notify: (frame: Record<string, unknown>) => void
   /** Build the edge's prompt server-side and deliver it through the inject guards (wiring/canvas.ts). */
   send: (edge: CanvasEdge) => Promise<SendResult>
+  /** The note nodes linked to a live session (by key) or to the brain (wiring/canvas.ts). */
+  references: (who: { key?: string; brain?: boolean }) => CanvasNode[]
+  query: QueryFn
   now?: () => number
 }
 
 const NODES = "/api/canvas/nodes"
 const EDGES = "/api/canvas/edges"
+const LINKED = "/api/canvas/linked-notes"
 
 const bad = (error: string, status = 400): Response => Response.json({ ok: false, error }, { status })
 
@@ -105,6 +114,22 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       return r.ok
         ? Response.json({ ok: true, edge })
         : Response.json({ ...r.detail, ok: false, error: r.error, edge }, { status: r.status })
+    }
+
+    if ((path === LINKED || path.startsWith(LINKED + "/")) && req.method === "GET") {
+      const key = url.searchParams.get("session") ?? ""
+      const brain = url.searchParams.get("brain") === "1"
+      if (!key && !brain) return bad("missing_target")
+      let nodes = deps.references(brain ? { brain } : { key })
+      if (path !== LINKED) {
+        // A Turso note id has a slash (projects/2026-…): send it percent-encoded, decoded whole here.
+        let one = ""
+        try { one = decodeURIComponent(path.slice(LINKED.length + 1)) } catch { /* stays "" */ }
+        nodes = nodes.filter((n) => one !== "" && (referenceRef(n) === one || n.id === one))
+        if (nodes.length === 0) return bad("not_found", 404)
+      }
+      const notes = await readReferences(nodes, deps.query)
+      return path === LINKED ? Response.json({ ok: true, notes }) : Response.json({ ok: true, note: notes[0] })
     }
 
     const edgeId = idUnder(path, EDGES)
