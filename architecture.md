@@ -241,7 +241,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## Referenced maps (joined by reference — regenerate the sibling to refresh)
 
-- `ios:ios` — `~/apps/claude companion/architecture.json` generated 2026-10-29, 215 modules
+- `ios:ios` — `~/apps/claude companion/architecture.json` generated 2026-10-29, 216 modules
 
 ## Contracts — WS frames
 
@@ -285,7 +285,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | route | handler | called by |
 |---|---|---|
 | `* /` | server/companion-server.ts | — |
-| `* /api/…` | server/companion-server.ts | ios:ios/AppState+Gauge.swift, ios:ios/AppState+SendQueue.swift, ios:ios/AutoCompact.swift, ios:ios/BodyTokens.swift, ios:ios/Capture/CaptureClient.swift, ios:ios/Capture/VoiceMemoClient.swift, ios:ios/MediaImageView.swift, ios:ios/Notes/NotesAPI.swift, ios:ios/OrchestratorClient.swift, ios:ios/RecordsClient.swift, ios:ios/Tasks/TasksAPI.swift, ios:ios/Tasks/TasksAgentAPI.swift, ios:ios/Taste/TasteAPI.swift, ios:ios/Trips/TripsAPI.swift, ios:ios/VaultClient.swift |
+| `* /api/…` | server/companion-server.ts | ios:ios/AppState+Gauge.swift, ios:ios/AppState+SendQueue.swift, ios:ios/AutoCompact.swift, ios:ios/BodyTokens.swift, ios:ios/Capture/CaptureClient.swift, ios:ios/Capture/VoiceMemoClient.swift, ios:ios/MediaImageView.swift, ios:ios/Notes/NotesAPI.swift, ios:ios/OrchestratorClient.swift, ios:ios/RecordsClient.swift, ios:ios/Tasks/TasksAPI.swift, ios:ios/Taste/TasteAPI.swift, ios:ios/Trips/TripsAPI.swift, ios:ios/VaultClient.swift |
 | `* /api/feed` | server/routes/api.ts | — |
 | `* /api/status` | server/routes/api.ts | — |
 | `* /api/tasks/mine` | server/routes/my-tasks.ts | ios:ios/Tasks/TasksAPI.swift |
@@ -307,7 +307,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `GET /api/goals` | server/routes/goals.ts | — |
 | `GET /api/learned` | server/routes/api.ts | — |
 | `GET /api/media/…` | server/routes/media.ts | ios:ios/MediaImageView.swift |
-| `GET /api/orchestrator/channels` | server/routes/orchestrator.ts | ios:ios/OrchestratorClient.swift |
+| `GET /api/orchestrator/channels` | server/routes/orchestrator.ts | — |
 | `GET /api/orchestrator/pipeline` | server/routes/orchestrator.ts | — |
 | `GET /api/orchestrator/projects` | server/routes/orchestrator.ts | ios:ios/OrchestratorClient.swift |
 | `GET /api/orchestrator/task/…` | server/routes/orchestrator.ts | ios:ios/OrchestratorClient.swift |
@@ -330,8 +330,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `POST /api/model/cancel` | server/routes/model.ts | — |
 | `POST /api/model/open` | server/routes/model.ts | — |
 | `POST /api/model/set` | server/routes/model.ts | — |
-| `POST /api/orchestrator/channels` | server/routes/orchestrator.ts | ios:ios/OrchestratorClient.swift |
-| `POST /api/orchestrator/channels/…` | server/routes/orchestrator.ts | ios:ios/OrchestratorClient.swift |
+| `POST /api/orchestrator/channels` | server/routes/orchestrator.ts | — |
+| `POST /api/orchestrator/channels/…` | server/routes/orchestrator.ts | — |
 | `POST /api/orchestrator/dispatch` | server/routes/orchestrator.ts | — |
 | `POST /api/orchestrator/proposal/…` | server/routes/orchestrator.ts | — |
 | `POST /api/orchestrator/send` | server/routes/orchestrator.ts | ios:ios/OrchestratorClient.swift |

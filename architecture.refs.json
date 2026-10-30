@@ -1,0 +1,1795 @@
+{
+  "ios": {
+    "repo": "~/apps/claude companion",
+    "generatedAt": "2026-10-29",
+    "targets": [
+      {
+        "name": "ios",
+        "adapter": "swiftui",
+        "root": "claude companion",
+        "modules": [
+          {
+            "path": "ActivityLog.swift",
+            "emits": [],
+            "consumes": [
+              "Bash",
+              "Read",
+              "Write",
+              "Edit",
+              "MultiEdit",
+              "NotebookEdit",
+              "Grep",
+              "Glob",
+              "Agent",
+              "Task",
+              "WebSearch",
+              "WebFetch"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ActivitySelection.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ActivityView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppDelegate.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+ApprovalHistory.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+Approvals.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+AutoCompact.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+Body.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+Commands.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+Dialogs.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+Dispatch.swift",
+            "emits": [],
+            "consumes": [
+              "body_alert",
+              "dispatch_task"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+Gauge.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/gauge"
+            ]
+          },
+          {
+            "path": "AppState+Orchestrator.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+SendQueue.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/inject"
+            ]
+          },
+          {
+            "path": "AppState+Sessions.swift",
+            "emits": [],
+            "consumes": [
+              "pane_busy",
+              "target_gone",
+              "network",
+              "send_failed",
+              "network_refused"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState+SocketEvents.swift",
+            "emits": [],
+            "consumes": [
+              "allow",
+              "deny",
+              "expired",
+              "answered",
+              "elsewhere",
+              "user_prompt",
+              "assistant_text",
+              "assistant_thinking",
+              "tool_start",
+              "image",
+              "artifact",
+              "tool_end",
+              "turn_end"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AppState.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalCard.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsAuto.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsAutoRow.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsClient.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsDetailView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsFormat+Color.swift",
+            "emits": [],
+            "consumes": [
+              "Bash",
+              "Edit",
+              "MultiEdit",
+              "Write",
+              "NotebookEdit",
+              "Read",
+              "Grep",
+              "Glob",
+              "WebFetch",
+              "WebSearch"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsPager.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsRow.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsTheme.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ApprovalsView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ArtifactChip.swift",
+            "emits": [],
+            "consumes": [
+              "pr",
+              "note",
+              "url",
+              "file"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AttachmentPickers.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "AutoCompact.swift",
+            "emits": [],
+            "consumes": [
+              "scheduled",
+              "countdown",
+              "injecting",
+              "awaiting_boundary"
+            ],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/auto-compact",
+              "/api/auto-compact/cancel"
+            ]
+          },
+          {
+            "path": "AutoCompactViews.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "BodyAgent.swift",
+            "emits": [],
+            "consumes": [
+              "mac",
+              "zettlab",
+              "cloud",
+              "network",
+              "component_ok",
+              "live_cap",
+              "host_unreachable",
+              "host_refused",
+              "no_cwd",
+              "unknown_host",
+              "turso_unreachable"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "BodyAgentSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "BodyComponentDetailView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "BodyTokenBurnCard.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "BodyTokens.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/body/tokens"
+            ]
+          },
+          {
+            "path": "BodyView.swift",
+            "emits": [],
+            "consumes": [
+              "mac",
+              "zettlab",
+              "cloud"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "BodyVitalsHeader.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/AppState+Brain.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/AppState+TaskSession.swift",
+            "emits": [],
+            "consumes": [
+              "no_checkout",
+              "network",
+              "bad_repo"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/AppState+Triage.swift",
+            "emits": [],
+            "consumes": [
+              "repo_busy",
+              "note_required",
+              "note_too_long",
+              "text_required",
+              "text_too_long",
+              "unknown_option",
+              "merge_unverified",
+              "close_unverified",
+              "host_refused",
+              "resolving",
+              "resolver_disabled",
+              "not_routable"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainHost.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainNavigator.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainPipelineGraph.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainQueueView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainRow.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainSummary.swift",
+            "emits": [],
+            "consumes": [
+              "queued",
+              "dispatched",
+              "running",
+              "error",
+              "task",
+              "proposal",
+              "pr"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainUnread.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainV2Model.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainVoice.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/RepoDecisionCard.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/RepoNoSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/RepoSummaryView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/SessionRepoSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/TraceModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/TraceView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/TriageAnswerSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/TriageCard.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/TriageOpusSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/TurnMarkdown.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/AppState+Capture.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/CaptureCenter.swift",
+            "emits": [],
+            "consumes": [
+              "offline",
+              "dashboard_key_missing",
+              "dashboard_unreachable",
+              "status_502",
+              "save_failed",
+              "extract_failed",
+              "too_large",
+              "payload_too_large",
+              "status_413",
+              "unsupported_media",
+              "status_415",
+              "rate_limited",
+              "too_many_requests",
+              "status_429"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/CaptureClient.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/receipts/qa",
+              "/api/capture/inbox",
+              "/api/capture/receipt",
+              "/api/receipts/qa/:p"
+            ]
+          },
+          {
+            "path": "Capture/CaptureIntents.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/CaptureOutbox.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/CaptureSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/DocumentScanner.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/ReceiptPayload.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/ReceiptQA+Color.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/ReceiptReviewView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/ReceiptsList.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/ScanReceiptSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceFileWriter.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceMemoCenter.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceMemoClient.swift",
+            "emits": [],
+            "consumes": [
+              "offline",
+              "not_found",
+              "status_404",
+              "not_voice_memo",
+              "chunk_too_large",
+              "status_413",
+              "transcript_too_long",
+              "transcribe_failed",
+              "not_finalized",
+              "unknown_project",
+              "already_validated",
+              "already_discarded",
+              "no_chunks",
+              "missing_chunks",
+              "bad_mime",
+              "bad_base64",
+              "bad_seq",
+              "bad_status",
+              "dashboard_error"
+            ],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/capture/voice/:p",
+              "/api/capture/voice/start",
+              "/api/capture/voice",
+              "/api/capture/projects"
+            ]
+          },
+          {
+            "path": "Capture/VoiceMemoOutbox.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceMemoReviewView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceMemoSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceMemosList.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceRecorder.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Capture/VoiceTranscriber.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ChannelLinkPicker.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "CommandPaletteSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Composer.swift",
+            "emits": [],
+            "consumes": [
+              "too_large",
+              "target_gone",
+              "network"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ComposerMic.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ComposerParts.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ComposerStopButton.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ContentView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ContextGaugeViews.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ConversationView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "CopyJobsStrip.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "DialogSheet.swift",
+            "emits": [],
+            "consumes": [
+              "Up",
+              "Down",
+              "Escape",
+              "Enter",
+              "Tab",
+              "Space"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "DiffView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "EndedRowView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "EndedSessionSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "FeedA11y.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "FeedGrouping.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "FeedLayout.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "FeedRows.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "HostBadge.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "InjectErrorBanner.swift",
+            "emits": [],
+            "consumes": [
+              "target_gone",
+              "target_idle",
+              "osascript_failed",
+              "not_submitted",
+              "pane_not_ready",
+              "busy_flow",
+              "input_busy",
+              "dialog_open"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "LiveActivityManager.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "MarkdownStyles.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "MarkdownText.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "MediaImageView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/media/:p"
+            ]
+          },
+          {
+            "path": "MessageDetailSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "MicroPresence.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ModelSheet.swift",
+            "emits": [],
+            "consumes": [
+              "busy",
+              "other_dialog",
+              "no_pane",
+              "not_a_picker",
+              "target_gone",
+              "not_settled",
+              "busy_flow",
+              "network"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "NewSessionSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Notes/NoteEditorView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Notes/NotesAPI.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/notes",
+              "/api/notes/\\(escape(ref))",
+              "/api/notes/:p"
+            ]
+          },
+          {
+            "path": "Notes/NotesModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Notes/NotesModels.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Notes/NotesView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "NotificationCategories.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "NotificationWithdrawer.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "OrchestratorClient.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/orchestrator/thread",
+              "/api/orchestrator/send",
+              "/api/brain/trace",
+              "/api/brain/\\(action.rawValue)",
+              "/api/orchestrator/task/\\(pathSegment(id))",
+              "/api/orchestrator/triage",
+              "/api/body",
+              "/api/brain/:p",
+              "/api/orchestrator/projects",
+              "/api/orchestrator/task/:p"
+            ]
+          },
+          {
+            "path": "OrchestratorTaskRow.swift",
+            "emits": [],
+            "consumes": [
+              "proposed",
+              "running",
+              "dispatched",
+              "queued",
+              "done",
+              "error",
+              "cancelled",
+              "rejected"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "OrchestratorTurnRow.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "PendingApprovalActivityAttributes.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "PendingNoticeBanner.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "PendingQueueList.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "PresenceHeader.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ProposalCard.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "QRScannerView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "QuestionSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "RecordsClient.swift",
+            "emits": [],
+            "consumes": [
+              "bad_type",
+              "bad_field",
+              "bad_date",
+              "missing_expiry"
+            ],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/records",
+              "/api/records/\\(encodedID(id))",
+              "/api/records/\\(encodedID(id))/reveal",
+              "/api/records/:p"
+            ]
+          },
+          {
+            "path": "RecordsDetailView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "RecordsEditSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "RecordsModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SendQueueStore.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SendQueueViews.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SessionChip.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SessionListStore.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SessionRowView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SessionWaiting+App.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Settings/BrainSettingsSection.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SettingsView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Shared/CaptureWidgetViews.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Shared/OpenCompanionLinkIntent.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Shared/SharedStore.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ShellRowView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SignalBarsView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "SpeechDictation.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "StatusBar.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/BrainButton.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/FloatingTabBar.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/HidesTabBar.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/RootTabView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/SessionsDrawer.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/SessionsGroupedList.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/SessionsView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tabs/TabModel.swift",
+            "emits": [],
+            "consumes": [
+              "ideas",
+              "approvals",
+              "tasks",
+              "trips",
+              "activity"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "TaskDetailView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tasks/TasksAPI.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/tasks/mine",
+              "/api/tasks/:p"
+            ]
+          },
+          {
+            "path": "Tasks/TasksModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tasks/TasksModels.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tasks/TasksView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Taste/TasteAPI.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/taste/next",
+              "/api/taste/swipe",
+              "/api/taste/stats",
+              "/api/taste/items/\\(itemID)/image",
+              "/api/taste/items/:p/image"
+            ]
+          },
+          {
+            "path": "Taste/TasteModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Taste/TasteModels.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Taste/TasteSets.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Taste/TasteSite.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Taste/TasteView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "TerminalKeyBar.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "TerminalLines.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "TerminalMirror.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "TerminalScreen.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Theme.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ThinkingRow.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ToolDetailSheet.swift",
+            "emits": [],
+            "consumes": [
+              "auto-allow",
+              "approved",
+              "denied",
+              "auto-deny",
+              "pending",
+              "expired",
+              "terminal"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "ToolGroupRow.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TravelLogSettingsView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripClientPicker.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripDetailView.swift",
+            "emits": [],
+            "consumes": [
+              "human",
+              "jev",
+              "rules"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripDetector.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripGeo.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripLogger.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripModels.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripOutbox.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripPermissionExplainer.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripPermissions.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripPrefs.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripProviders.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripRowViews.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripStorage.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripsAPI.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/trips",
+              "/api/trips/\\(CompanionClient.pathSegment(id))",
+              "/api/trips/:p",
+              "/api/trips/clients"
+            ]
+          },
+          {
+            "path": "Trips/TripsModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Trips/TripsView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "TurnInterrupt.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "UnblockSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "UndeliveredNote.swift",
+            "emits": [],
+            "consumes": [
+              "not_submitted",
+              "pane_not_ready",
+              "busy_flow",
+              "input_busy",
+              "dialog_open",
+              "target_gone",
+              "target_idle",
+              "network",
+              "cancelled"
+            ],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "VaultClient.swift",
+            "emits": [],
+            "consumes": [
+              "bad_name",
+              "bad_value",
+              "bad_hosts"
+            ],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/vault",
+              "/api/vault/\\(encodedName(name))",
+              "/api/vault/\\(encodedName(name))/reveal",
+              "/api/vault/:p"
+            ]
+          },
+          {
+            "path": "VaultDetailView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "VaultEditSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "VaultModel+Records.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "VaultModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "VaultStyle.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "VaultView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "WorkerChatView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "WorkerIdentity.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "WorkerTailCard.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "claude_companionApp.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/CockpitBrainPane.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/CockpitDestination.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/CockpitLayout.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/CockpitMetrics.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/CockpitModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/CockpitStatusLine.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/CockpitWorkspace.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/IPadCockpitView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/InspectorView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/PaneHeader.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "iPad/SessionsRailView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          }
+        ]
+      }
+    ]
+  }
+}
