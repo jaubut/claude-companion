@@ -62,7 +62,8 @@ export interface TriageEngineDeps {
   expire?: (src: SourceItem, idleMs: number) => Promise<void>
 }
 
-export interface ChooseInput { id: string; optionId: string; text?: string | null; idemKey?: string | null }
+/** `version` = the card version the client saw (required to approve an `outbound` card). */
+export interface ChooseInput { id: string; optionId: string; text?: string | null; idemKey?: string | null; version?: string | null }
 export interface ChooseResult { status: number; body: Record<string, unknown> }
 
 export const HOUR_MS = 60 * 60_000
@@ -139,6 +140,11 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     const card = r?.enabled() ? withAskOpus : (i: TriageItem) => i
     for (const [id, src] of sources) {
       if (deps.store.snoozedUntil(id, t) || deps.store.expired(id, src.version)) continue
+      // An outbound action is Jeremie's call only: deterministic card built fresh, never the resolver or the model.
+      if (src.source === "outbound") {
+        out.push(buildItem(src, fallbackPhrase(src), heuristicSeverity(src)))
+        continue
+      }
       r?.consider(id, src)
       const v = r?.view(id, src) ?? null
       if (v?.state === "resolving") {
@@ -235,9 +241,17 @@ export function createTriageEngine(deps: TriageEngineDeps) {
   const fail = (status: number, error: string, extra: Record<string, unknown> = {}): ChooseResult => ({ status, body: { ok: false, error, ...extra } })
   const itemNow = (id: string) => items.find((i) => i.id === id) ?? null
 
-  async function stale(id: string): Promise<ChooseResult> {
+  async function stale(id: string, error = "stale"): Promise<ChooseResult> {
     await refresh()
-    return fail(409, "stale", { id, next: itemNow(id) })
+    return fail(409, error, { id, next: itemNow(id) })
+  }
+
+  /** An outbound card acts only on the version the client saw: approve must echo it, any echo must match. */
+  function outboundVersionOk(input: ChooseInput, src: SourceItem, kind: string): boolean {
+    if (src.source !== "outbound") return true
+    const v = input.version?.trim() || null
+    if (kind === "approve" && !v) return false
+    return v === null || v === src.version
   }
 
   async function runChoice(input: ChooseInput, seen: { kind: string }): Promise<ChooseResult> {
@@ -255,7 +269,9 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     seen.kind = option.action.kind
     const text = input.text?.trim() || null
     if (option.action.kind === "answer_custom" && !text) return fail(422, "text_required", { id: input.id })
-    if (text && text.length > ANSWER_MAX) return fail(400, "text_too_long", { id: input.id })
+    // An outbound edit is a whole email body: its limit is the send policy's (422 refused), not ANSWER_MAX.
+    if (text && text.length > ANSWER_MAX && src.source !== "outbound") return fail(400, "text_too_long", { id: input.id })
+    if (!outboundVersionOk(input, src, option.action.kind)) return stale(input.id, "stale_approval")
     if (option.action.kind === "ask_opus") return askOpus(input, src, option.action.instruction ?? null, text)
     if (option.action.kind === "snooze") {
       deps.store.snooze(input.id, now() + option.action.hours * HOUR_MS)
@@ -268,7 +284,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     } catch (err) {
       return unavailable(err)
     }
-    if (out.kind === "stale") return stale(input.id)
+    if (out.kind === "stale") return stale(input.id, src.source === "outbound" ? "stale_approval" : "stale")
     if (out.kind === "error") return fail(out.status, out.error, { id: input.id, ...out.extra })
     await refresh()
     if (out.kind === "queued") return done(input, out.detail, 202, "queued")
@@ -294,7 +310,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     const src = sources.get(id)
     if (!src) return { ok: false, error: "no_such_item" }
     const r = deps.resolver
-    if (!r) return { ok: false, error: "resolver_disabled" }
+    if (!r || src.source === "outbound") return { ok: false, error: "resolver_disabled" }
     const out = r.ask(id, src, instruction, autonomy)
     if (out.ok) render()
     return out

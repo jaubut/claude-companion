@@ -27,6 +27,8 @@ import { type LiveResolver, type ResolverLiveOpts, createLiveResolver, repoMapSe
 import { type RepoRunnerDeps, sweepInterruptedRuns } from "./triage-repos"
 import { resolverConfig } from "../lib/resolver"
 import { ownsTrips } from "./trips"
+import { type OutboundSender, type OutboundStore, createOutboundStore, currentOutbound, executeOutbound, outboundSource } from "../lib/outbound"
+import { gmailSender, outboundStore } from "./outbound"
 
 // Brain triage, live instance (docs/orchestrator-triage-api.md): collectors
 // over the poller snapshot, local proposals, Turso PR rows and the Body
@@ -59,6 +61,8 @@ export interface LiveTriageOpts {
   resolver?: TriageResolverHook | null
   /** Build the live resolver anyway (tests), with seam overrides (e.g. a mock model). */
   resolverLive?: ResolverLiveOpts
+  /** Source `outbound`: its store and sender; default = companion.db + gmail.py; null = off. */
+  outbound?: { store: OutboundStore; sender: OutboundSender } | null
 }
 
 function defaultModel(prompt: string): Promise<string | null> {
@@ -67,7 +71,7 @@ function defaultModel(prompt: string): Promise<string | null> {
 }
 
 async function jevSeverity(src: SourceItem, phrase: Phrase): Promise<Severity | null> {
-  if (src.source === "mytask") return null
+  if (src.source === "mytask" || src.source === "outbound") return null
   if (process.env.COMPANION_TRIAGE_JEV?.trim() === "0" || process.env.NODE_ENV === "test") return null
   const out = await systemOne(
     { source: src.source, title: src.title, project: src.project, problem: phrase.problem, facts: src.facts },
@@ -128,6 +132,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   const now = opts.now ?? Date.now
   const mytasks = opts.mytasks !== undefined ? opts.mytasks
     : ownsTrips() && process.env.NODE_ENV !== "test" ? createMyTaskTriage({ query: tursoQuery, exec: tursoExec, log: companionLog, onWrite: () => wsBroadcast({ type: "tasks_changed", why: "triage" }) }) : null
+  const outbound = opts.outbound !== undefined ? opts.outbound
+    : { store: opts.db ? createOutboundStore(opts.db) : outboundStore(), sender: gmailSender }
   let prCache: { at: number; items: SourceItem[] } | null = null
   prCacheDrop.set(dispatch, () => { prCache = null })
   let approved: ResolvingItem[] = []
@@ -225,7 +231,8 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     const [prs, lookup, mine] = await Promise.all([
       prItems(), bodyLookup(), mytasks ? mytasks.collect() : Promise.resolve([]),
     ])
-    return [...tasks, ...proposals, ...prs, ...bodySources(investigations(), now(), lookup), ...mine]
+    const outs = outbound ? outbound.store.listProposed().map(outboundSource) : []
+    return [...tasks, ...proposals, ...prs, ...bodySources(investigations(), now(), lookup), ...mine, ...outs]
   }
 
   async function current(src: SourceItem): Promise<SourceItem | null> {
@@ -239,11 +246,12 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     if (ref.source === "proposal") return proposalItem(ref.taskId)
     if (ref.source === "pr") return (await prItems(true)).find((p) => p.refId === src.refId) ?? null
     if (ref.source === "mytask") return mytasks ? mytasks.current(src) : null
+    if (ref.source === "outbound") return outbound ? currentOutbound(outbound.store, ref.outboundId) : null
     return bodySources(investigations(), now(), await bodyLookup()).find((b) => b.refId === src.refId) ?? null
   }
 
   async function phrase(src: SourceItem): Promise<string | null> {
-    if (src.source === "mytask") return null // deterministic card (lib/triage.ts), no model call
+    if (src.source === "mytask" || src.source === "outbound") return null // deterministic card (lib/triage.ts), no model call
     let item = src
     if (src.ref.source === "task") {
       const found = await getDispatchTask(dispatch.query, await dispatch.columns(), src.ref.taskId).catch(() => null)
@@ -314,6 +322,10 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
 
   async function execute(src: SourceItem, option: TriageOption, text: string | null, by = "triage"): Promise<ExecOutcome> {
     const a = option.action
+    if (src.ref.source === "outbound") {
+      if (a.kind === "snooze") return { kind: "done" }
+      return outbound ? executeOutbound({ ...outbound, now }, src, option, text, by) : { kind: "error", status: 400, error: "wrong_source" }
+    }
     switch (a.kind) {
       case "answer": return taskWrite("answer", src, a.text, by)
       case "answer_custom": return taskWrite("answer", src, text, by)

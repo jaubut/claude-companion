@@ -2863,6 +2863,52 @@
           "externals": []
         },
         {
+          "path": "lib/outbound.ts",
+          "lines": 335,
+          "kind": "lib",
+          "exports": [
+            "OutboundAccount",
+            "OutboundStatus",
+            "OutboundPayload",
+            "OutboundProposal",
+            "OutboundRecord",
+            "OutboundView",
+            "BODY_MAX_BYTES",
+            "RECIPIENTS_MAX",
+            "sendable",
+            "canonicalJson",
+            "payloadHash",
+            "policyRefusal",
+            "ParseResult",
+            "parseProposal",
+            "ProduceResult",
+            "produceOutbound",
+            "OutboundStore",
+            "createOutboundStore",
+            "outboundView",
+            "outboundSource",
+            "OutboundSender",
+            "SendOutcome",
+            "sendApproved",
+            "OutboundExecDeps",
+            "executeOutbound",
+            "currentOutbound",
+            "parseMessageId"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/triage.ts",
+            "lib/triage-engine.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/pane-clean.ts",
           "lines": 31,
           "kind": "lib",
@@ -3784,7 +3830,7 @@
         },
         {
           "path": "lib/resolver.ts",
-          "lines": 533,
+          "lines": 534,
           "kind": "lib",
           "exports": [
             "DEFAULT_MODEL",
@@ -4887,7 +4933,7 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 385,
+          "lines": 401,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
@@ -5078,7 +5124,7 @@
         },
         {
           "path": "lib/triage.ts",
-          "lines": 469,
+          "lines": 514,
           "kind": "lib",
           "exports": [
             "TriageSource",
@@ -5116,6 +5162,8 @@
             "PhraseOpts",
             "validatePhrase",
             "validatePhraseObject",
+            "payloadText",
+            "outboundPhrase",
             "fallbackPhrase",
             "heuristicSeverity",
             "orderItems",
@@ -5135,7 +5183,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/mytask-triage.ts"
+            "lib/mytask-triage.ts",
+            "lib/outbound.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6555,7 +6604,7 @@
         },
         {
           "path": "routes/triage.ts",
-          "lines": 150,
+          "lines": 165,
           "kind": "lib",
           "exports": [
             "createTriageHandler",
@@ -6573,6 +6622,8 @@
             "lib/triage-repos.ts",
             "wiring/triage.ts",
             "wiring/triage-repos.ts",
+            "lib/outbound.ts",
+            "wiring/outbound.ts",
             "wiring/repo-view.ts"
           ],
           "listeners": [],
@@ -7342,6 +7393,31 @@
           "externals": []
         },
         {
+          "path": "wiring/outbound.ts",
+          "lines": 53,
+          "kind": "lib",
+          "exports": [
+            "SEND_TIMEOUT_MS",
+            "outboundStore",
+            "gmailArgv",
+            "gmailSender"
+          ],
+          "state": [
+            "let live"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts",
+            "lib/outbound.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/pane-mirror.ts",
           "lines": 113,
           "kind": "lib",
@@ -7685,7 +7761,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 451,
+          "lines": 463,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -7737,7 +7813,9 @@
             "wiring/resolver.ts",
             "wiring/triage-repos.ts",
             "lib/resolver.ts",
-            "wiring/trips.ts"
+            "wiring/trips.ts",
+            "lib/outbound.ts",
+            "wiring/outbound.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -10321,6 +10399,7 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/mytask-triage.ts",
+            "lib/outbound.ts",
             "lib/resolver-engine.ts",
             "lib/resolver-prompt.ts",
             "lib/resolver-work.ts",
@@ -10356,6 +10435,7 @@
           "module": "lib/triage-engine.ts",
           "callers": [
             "lib/mytask-triage.ts",
+            "lib/outbound.ts",
             "lib/resolver-work.ts",
             "lib/triage-pr.ts",
             "wiring/resolver.ts",
@@ -10367,6 +10447,7 @@
           "module": "lib/triage.ts",
           "callers": [
             "lib/mytask-triage.ts",
+            "lib/outbound.ts",
             "lib/resolver.ts",
             "lib/triage-engine.ts",
             "wiring/resolver.ts",
@@ -12284,6 +12365,12 @@
             "wiring/triage-repos.ts"
           ]
         },
+        "OutboundView": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/triage.ts"
+          ]
+        },
         "mytaskOptions": {
           "module": "lib/mytask-triage.ts",
           "callers": [
@@ -14134,6 +14221,27 @@
             "routes/triage.ts"
           ]
         },
+        "OutboundStore": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "routes/triage.ts",
+            "wiring/outbound.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "produceOutbound": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "routes/triage.ts"
+          ]
+        },
+        "outboundStore": {
+          "module": "wiring/outbound.ts",
+          "callers": [
+            "routes/triage.ts",
+            "wiring/triage.ts"
+          ]
+        },
         "RepoView": {
           "module": "wiring/repo-view.ts",
           "callers": [
@@ -15507,6 +15615,32 @@
             "wiring/orchestrator.ts"
           ]
         },
+        "createOutboundStore": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "wiring/outbound.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "OutboundPayload": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "wiring/outbound.ts"
+          ]
+        },
+        "OutboundSender": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "wiring/outbound.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "parseMessageId": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "wiring/outbound.ts"
+          ]
+        },
         "MirrorSource": {
           "module": "lib/pane-mirror.ts",
           "callers": [
@@ -16053,6 +16187,12 @@
             "wiring/triage.ts"
           ]
         },
+        "gmailSender": {
+          "module": "wiring/outbound.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
         "PrReadiness": {
           "module": "lib/triage-pr.ts",
           "callers": [
@@ -16113,8 +16253,20 @@
             "wiring/triage.ts"
           ]
         },
+        "outboundSource": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
         "taskSource": {
           "module": "lib/triage-sources.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "currentOutbound": {
+          "module": "lib/outbound.ts",
           "callers": [
             "wiring/triage.ts"
           ]
@@ -16133,6 +16285,12 @@
         },
         "closePr": {
           "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/triage.ts"
+          ]
+        },
+        "executeOutbound": {
+          "module": "lib/outbound.ts",
           "callers": [
             "wiring/triage.ts"
           ]
