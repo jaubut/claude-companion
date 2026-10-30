@@ -21,9 +21,10 @@ export interface WsData {
   // Set on a /api/terminal socket (lib/terminal-bridge.ts): the shell session
   // it attaches and the phone's size. Such a socket is never in `clients`.
   terminal?: { key: string; cols: number; rows: number }
-  // Set on a /api/pane-mirror socket (lib/pane-mirror.ts): the herdr
-  // session's key and pane. Never in `clients` either.
-  mirror?: { key: string; pane: string }
+  // Set on a /api/pane-mirror socket (lib/pane-mirror.ts MirrorTarget): the
+  // session's key and pane, + its tmux address for a tmux pane. Never in
+  // `clients` either.
+  mirror?: { key: string; pane: string; tmux?: { pane: string; socket: string } }
   // The iOS build that opened this socket (X-Companion-Build at upgrade,
   // brain-v2): P3 gates archived-channel frames on it. Absent = a shipped build.
   build?: string

@@ -1,12 +1,15 @@
 import type { ServerWebSocket, Subprocess } from "bun"
 import { companionLog } from "../lib/log"
 import { herdrSocketCall } from "../lib/herdr-socket"
-import { PaneMirror, mirrorControl, type MirrorSize, type MirrorSource, type MirrorViewer, type PaneSizer } from "../lib/pane-mirror"
+import { type KeyGate, keyGate, runTmux } from "../lib/key-gate"
+import { PaneMirror, mirrorControl, mirrorKey, type MirrorSize, type MirrorSource, type MirrorViewer, type PaneSizer } from "../lib/pane-mirror"
+import { type PaneRef, capturePane, paneKey, sendKeysArgs, tmuxPaneWidth } from "../lib/tmux-pane"
 import { describeClient, type WsData } from "../state"
 
-// /api/pane-mirror sockets (lib/pane-mirror.ts). One PaneMirror per
-// herdr pane, shared by up to MAX_MIRROR_VIEWERS sockets; the last one to
-// close stops its poll and releases its size hold.
+// /api/pane-mirror sockets (lib/pane-mirror.ts). One PaneMirror per pane
+// (mirrorKey: herdr id, or tmux socket+pane), shared by up to
+// MAX_MIRROR_VIEWERS sockets; the last one to close stops its poll and
+// releases its size hold (herdr only: tmux has no sizer).
 
 export const herdrSocketSource: MirrorSource = {
   async read(pane) {
@@ -23,6 +26,24 @@ export const herdrSocketSource: MirrorSource = {
   async send(pane, text) {
     await herdrSocketCall("pane.send_text", { pane_id: pane, text }, { timeoutMs: 1_500 })
   },
+}
+
+// A tmux pane: the visible screen with escapes (`capture-pane -e -p`, ~2.4 ms
+// a spawn on tmux 3.4), its width, and keystrokes as `send-keys -H` hex bytes:
+// byte-exact for ESC sequences, \x03, UTF-8 and a leading "-" (measured), one
+// spawn per send. Sends take the pane's turn on the shared key gate, so they
+// never interleave with an inject or a dialog key (a lone ESC opens the
+// gate's chord window, as from any sender).
+export function tmuxPaneSource(ref: PaneRef, gate: Pick<KeyGate, "send"> = keyGate): MirrorSource {
+  const gk = paneKey(ref.pane, ref.socket)
+  return {
+    read: () => capturePane(ref.pane, undefined, { escapes: true, socket: ref.socket }),
+    cols: () => tmuxPaneWidth(ref),
+    async send(_pane, text) {
+      const hex = [...new TextEncoder().encode(text)].map((b) => b.toString(16).padStart(2, "0"))
+      await gate.send(gk, text, (signal) => runTmux(sendKeysArgs(ref, "-H", ...hex), signal))
+    },
+  }
 }
 
 // Sizes one pane with `herdr terminal session control <pane> --cols --rows`
@@ -72,16 +93,21 @@ export class HerdrPaneSizer implements PaneSizer {
 const mirrors = new Map<string, PaneMirror>()
 const viewers = new WeakMap<ServerWebSocket<WsData>, MirrorViewer>()
 
-export const mirrorViewerCount = (pane: string): number => mirrors.get(pane)?.viewerCount ?? 0
+export const mirrorViewerCount = (key: string): number => mirrors.get(key)?.viewerCount ?? 0
 
-export function mirrorOpen(ws: ServerWebSocket<WsData>, source: MirrorSource = herdrSocketSource): void {
-  const { pane, key } = ws.data.mirror!
-  let m = mirrors.get(pane)
+export function mirrorOpen(ws: ServerWebSocket<WsData>, source?: MirrorSource): void {
+  const t = ws.data.mirror!
+  const { pane, key } = t
+  const mk = mirrorKey(t)
+  let m = mirrors.get(mk)
   if (!m) {
-    const sizer = new HerdrPaneSizer(pane, () => created.sizeLost())
-    const created: PaneMirror = new PaneMirror(pane, source, undefined, {}, sizer)
-    m = created
-    mirrors.set(pane, m)
+    if (t.tmux) m = new PaneMirror(pane, source ?? tmuxPaneSource(t.tmux))
+    else {
+      const sizer = new HerdrPaneSizer(pane, () => created.sizeLost())
+      const created: PaneMirror = new PaneMirror(pane, source ?? herdrSocketSource, undefined, {}, sizer)
+      m = created
+    }
+    mirrors.set(mk, m)
   }
   const v: MirrorViewer = {
     frame: (bytes) => { ws.sendBinary(new TextEncoder().encode(bytes)) },
@@ -90,11 +116,11 @@ export function mirrorOpen(ws: ServerWebSocket<WsData>, source: MirrorSource = h
   }
   viewers.set(ws, v)
   m.add(v)
-  companionLog(`\x1b[36mpane-mirror\x1b[0m open ${key} ${pane} (${m.viewerCount}) ${describeClient("ws", ws.data.client)}`)
+  companionLog(`\x1b[36mpane-mirror\x1b[0m open ${key} ${mk} (${m.viewerCount}) ${describeClient("ws", ws.data.client)}`)
 }
 
 export function mirrorMessage(ws: ServerWebSocket<WsData>, raw: string | Buffer): void {
-  const m = mirrors.get(ws.data.mirror!.pane)
+  const m = mirrors.get(mirrorKey(ws.data.mirror!))
   const v = viewers.get(ws)
   if (!m) return
   const data = typeof raw === "string" ? raw : new Uint8Array(raw)
@@ -103,10 +129,10 @@ export function mirrorMessage(ws: ServerWebSocket<WsData>, raw: string | Buffer)
 }
 
 export function mirrorClose(ws: ServerWebSocket<WsData>): void {
-  const pane = ws.data.mirror!.pane
+  const mk = mirrorKey(ws.data.mirror!)
   const v = viewers.get(ws)
-  const m = mirrors.get(pane)
-  if (v && m && m.remove(v)) mirrors.delete(pane)
+  const m = mirrors.get(mk)
+  if (v && m && m.remove(v)) mirrors.delete(mk)
   viewers.delete(ws)
-  companionLog(`\x1b[2mpane-mirror close ${pane}\x1b[0m`)
+  companionLog(`\x1b[2mpane-mirror close ${mk}\x1b[0m`)
 }
