@@ -26,6 +26,7 @@ import type { GhFn } from "../lib/triage-pr"
 import { tursoQuery } from "../lib/turso"
 import type { QueryFn } from "../lib/turso"
 import { bodyReportApplier, investigationStore } from "./body-investigate"
+import { proposalHandedOff } from "./brain"
 import { orchEmit } from "./orchestrator"
 import { HOST_INFO } from "../state"
 import { reviseProposal } from "./proposals"
@@ -278,7 +279,11 @@ export function createLiveResolver(o: Omit<LiveResolverOpts, "store"> & Resolver
   const engine = createResolverEngine({
     store, work,
     config: o.config ?? (() => resolverConfig()),
-    routable: (src) => routable(src, { createdByResolver: (id) => store.isCreated(id), bodyLocal: () => bodyLocal(src) }),
+    routable: (src) => routable(src, {
+      createdByResolver: (id) => store.isCreated(id),
+      handedOff: proposalHandedOff,
+      bodyLocal: () => bodyLocal(src),
+    }),
     refKey: itemRef,
     onChange: o.onChange,
     log: companionLog,

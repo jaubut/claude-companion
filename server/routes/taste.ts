@@ -4,7 +4,7 @@ import { DashboardKeyMissing, DashboardUnreachable, dashboardBytes, dashboardJso
 // (PR #280), behind the standard /api bearer gate. The phone never holds the
 // dashboard key; dashboard-client adds it per call.
 //   GET  /api/taste/next?dataset=&limit=                 → {items:[{id, dataset, source_url, title, image_url}]}
-//   POST /api/taste/swipe {item_id, verdict, reason_tag?} → {ok:true}   (re-swipe overwrites)
+//   POST /api/taste/swipe {item_id, verdict, reason_tag?, comment?} → {ok:true}   (re-swipe overwrites)
 //   GET  /api/taste/items/:id/image                      → image bytes (nosniff)
 //   GET  /api/taste/stats                                → {stats:[{dataset, verdict, count}]}
 // Dashboard 4xx pass through (JSON routes: status + body; image: status); 5xx/network/redirect → 502
@@ -51,12 +51,16 @@ function next(url: URL): Response | Promise<Response> {
 async function swipe(req: Request): Promise<Response> {
   const body = await req.json().catch(() => null) as unknown
   if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "bad_json")
-  const { item_id, verdict, reason_tag } = body as Record<string, unknown>
+  const { item_id, verdict, reason_tag, comment } = body as Record<string, unknown>
   if (typeof item_id !== "number" || !Number.isInteger(item_id) || item_id < 1) return fail(400, "invalid_item_id")
   if (typeof verdict !== "string" || !VERDICTS.includes(verdict)) return fail(400, "invalid_verdict", { allowed: VERDICTS })
   if (reason_tag != null && (typeof reason_tag !== "string" || !REASON_TAGS.includes(reason_tag))) return fail(400, "invalid_reason_tag", { allowed: REASON_TAGS })
+  // Length cap (1000) is enforced by the dashboard; 4xx passes through.
+  if (comment != null && typeof comment !== "string") return fail(400, "invalid_comment")
   // Only the known fields go upstream.
-  return relay("POST", "/api/taste/swipe", { item_id, verdict, ...(reason_tag != null ? { reason_tag } : {}) })
+  return relay("POST", "/api/taste/swipe", {
+    item_id, verdict, ...(reason_tag != null ? { reason_tag } : {}), ...(comment != null ? { comment } : {}),
+  })
 }
 
 // Screenshots are <=~250 KB, so buffering (dashboardBytes) is fine. Only raster
