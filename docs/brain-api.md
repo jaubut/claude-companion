@@ -82,6 +82,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
+| POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
 All `/api/brain*` are Bearer-gated; every one answers 404 `brain_disabled` off the brain host.
@@ -158,9 +159,22 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 429 `merge_cap` | 10 brain merges in 24 h |
 | 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
 
+### Deploys (`wiring/auto-deploy.ts`, `/hooks/brain/deploy`)
+
+The brain host (`COMPANION_BRAIN=1`, Linux) polls every 60 s. It fetches origin/main for two fixed checkouts: `~/claude-companion` and `~/.claude` (claude-config). A new origin/main deploys once it has stayed put for 2 min, so a burst of merges is one deploy. A refused head is retried only when origin/main moves. `bin/deploy` deploys now, with the same checks.
+
+- **Both repos:** the checkout is on `main`, and HEAD is an ancestor of origin/main. Otherwise 409 `not_on_main` / `not_fast_forward`; the deployer never resets, forces or checks out a ref.
+- **claude-companion:**
+  - `git merge --ff-only`. If a local edit would be overwritten, git refuses before touching anything: 409 `dirty_overlap`. Other local edits stay.
+  - `bun install --frozen-lockfile` when `package.json` or `bun.lock` changed. On failure: 502 `install_failed`, no restart.
+  - `systemctl --user restart --no-block claude-companion.service`. The row and event are written first; the next boot posts "restarted at <sha>".
+- **claude-config:** `systemctl --user start --no-block claude-config-sync.service`. That unit is the existing ff-only pull, which sets the `memory/` and `skills/` runtime edits aside and restores them. A later poll posts "deployed" once `~/.claude` reaches the head, or "not deployed" with the sync flags after 10 min.
+
+Every step writes an `agent_activity` row (`agent_slug` auto-deploy, action `deploy`, meta: repo, from, to, commits, result, source) and an event to the brain thread. The answers are `{ok, result: up_to_date | restarting | sync_started, from, to, commits}`, or `{ok: false, error}`. The errors are 400 `repo_not_allowed`, 409 `deploy_in_progress` and 502 `fetch_failed` / `sync_start_failed` / `restart_failed`. The route answers 404 `deploy_disabled` where the deployer doesn't run.
+
 ## Hooks (no hook-script change)
 
-The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
 - PreToolUse: the brain takes the normal path like any session (SUPER, then auto-judge → phone; Jeremie, 2026-10-29). Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
 - Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).

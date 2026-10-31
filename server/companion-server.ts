@@ -44,6 +44,7 @@ import { brainRoute } from "./routes/brain"
 import { brainWiring, setBrainDeliver } from "./wiring/brain"
 import { brainWorkers } from "./wiring/brain-workers"
 import { brainEnabled } from "./lib/brain"
+import { startAutoDeploy } from "./wiring/auto-deploy"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -68,7 +69,8 @@ export function createCompanionServer(port: number) {
   startShellPoll(listSessions)
   startEndedSweep(listSessions)
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
-  if (brainEnabled()) { brainWiring.start(); brainWorkers.start() }
+  // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
+  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy() }
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",

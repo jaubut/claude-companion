@@ -150,6 +150,24 @@ Last updated: 2026-10-25
 
 ## Change Plans
 
+### Change Plan — auto-deploy (2026-10-31)
+**Request:** (task t-auto-deploy-1, relayed by brain-72) No hand pull + restart after a merge. On the brain host, claude-companion and claude-config follow origin/main. `bin/deploy` deploys now, with the same auth as pr-merge.
+**State decisions**
+- **Trigger:** a poll, not a webhook. Every 60 s, `git fetch` origin main for the two fixed checkouts, inside the companion that already runs there. Nothing new is exposed and no secret is needed.
+- **Debounce:** a head must stay put for `QUIET_MS` (2 min) before it deploys. A refused head is retried only when origin/main moves. One deploy per repo at a time.
+- **claude-companion:** `merge --ff-only`, then `bun install --frozen-lockfile` when the lockfile changed, then `systemctl --user restart --no-block`. The row and event are written before the restart; a marker file lets the next boot confirm the head.
+- **claude-config:** deploys through the existing `claude-config-sync.service`. That unit is the ff-only pull with the memory/skills reset-and-restore. It is **not** a second puller and **not** stash/pop. A stash pop on a file upstream changed conflicts, which is the thing that unit was built to avoid. The poll confirms when the head lands, or reports the sync flags after 10 min.
+- **Runs where:** `brainEnabled()` (Zettlab) and on Linux only. No new flag.
+**Contracts touched**
+| contract | kind | change | consumers | compat |
+|---|---|---|---|---|
+| `POST /hooks/brain/deploy` | hook endpoint | new | brain/bin/deploy | additive |
+| `BrainRouteDeps.deploy` | export | new optional | routes/brain.test.ts | additive |
+| `agent_activity` action `deploy` | row | new | brain thread / digest readers | additive |
+| brain permissions | settings | allow `bin/deploy` | the brain session | additive |
+**Files** (one owner): `server/wiring/auto-deploy.ts` (new; module state: the `live` deployer, per-repo poll state inside it) · `server/wiring/auto-deploy.test.ts` (new) · `server/routes/brain.ts` · `server/routes/brain.test.ts` · `server/companion-server.ts` (start with the brain) · `brain/bin/deploy` (new) · `brain/.claude/settings.json` · `brain/CLAUDE.md` · `docs/brain-api.md` · `STATE.md` · `architecture.*`
+**Verify:** auto-deploy.test.ts (real git, faked systemctl/bun): allowlist, ff-only guard, not-on-main, dirty tree kept / overlap refused, lockfile install, claude-config via the sync unit and its confirmation, debounce, no retry of a refused head. Route auth and input in brain.test.ts. tsc; archmap --check --lint; full `bun test --isolate`.
+
 ### Change Plan — pr-merge-retire-mfa (2026-10-31)
 **Request:** (task t-pr-merge-loosen-1, relayed by brain-72: Jeremie "retire mfa pr task") Retire bin/pr-merge's human-review gate: a green, twice-approved `dispatch/*` PR merges whatever its money, path or origin.
 **State decisions**

@@ -31,7 +31,9 @@
       "Bash(bin/pr-close:*)",
       "Bash(./bin/pr-close:*)",
       "Bash(bin/pr-merge:*)",
-      "Bash(./bin/pr-merge:*)"
+      "Bash(./bin/pr-merge:*)",
+      "Bash(bin/deploy:*)",
+      "Bash(./bin/deploy:*)"
     ]
   }
 }

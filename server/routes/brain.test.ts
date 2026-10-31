@@ -344,3 +344,37 @@ describe("POST /hooks/brain/pr-merge", () => {
     expect((await h(req, new URL(req.url)))!.status).toBe(404)
   })
 })
+
+describe("POST /hooks/brain/deploy", () => {
+  const post = (h: ReturnType<typeof route.createBrainRoute>) => async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+    const req = new Request("http://localhost:4245/hooks/brain/deploy", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
+    recordPeer(req, peer)
+    const res = (await h(req, new URL(req.url)))!
+    return { status: res.status, json: await res.json() as Record<string, unknown> }
+  }
+
+  test("brain auth, then the repo allowlist and a reason; only a valid call reaches the deployer", async () => {
+    const seen: string[] = []
+    const call = post(route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      deploy: async (repo) => { seen.push(repo); return { ok: false, repo, error: "not_fast_forward", from: "a", to: "b" } },
+    }))
+    const ok = { repo: "claude-config", reason: "merge #176 needs to be live now" }
+    expect((await call(ok, {})).status).toBe(403)
+    expect((await call(ok, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await call(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await call(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    for (const repo of ["tls-dashboard-v2", "jaubut/claude-config", "../claude-companion", 7]) expect((await call({ ...ok, repo })).status).toBe(400)
+    expect((await call({ ...ok, reason: "" })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await call(ok)
+    expect([r.status, r.json.error]).toEqual([409, "not_fast_forward"])
+    expect(seen).toEqual(["claude-config"])
+  })
+
+  test("404 deploy_disabled where the deployer does not run (not the brain host)", async () => {
+    const call = post(route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => true, deploy: null }))
+    const r = await call({ repo: "claude-companion", reason: "now" })
+    expect([r.status, r.json.error]).toEqual([404, "deploy_disabled"])
+  })
+})
