@@ -9,6 +9,7 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
 // brain-v2 routes (docs/brain-api.md):
@@ -21,6 +22,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
+//   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
@@ -49,6 +51,8 @@ export interface BrainRouteDeps {
   prClose?: typeof closeDeadPr
   /** The routine-PR merge (default: the real one, gh + Turso). */
   prMerge?: typeof mergeAgentPr
+  /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
+  deploy?: ((repo: string) => Promise<DeployResult>) | null
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -174,6 +178,23 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   return Response.json(out.body, { status: out.status })
 }
 
+/** bin/deploy: the deployer (wiring/auto-deploy.ts) re-checks the repo allowlist and fast-forward itself. */
+async function deploy(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  if (!isDeployRepo(body.repo)) return fail(400, "repo must be claude-companion or claude-config")
+  const reason = str(body.reason, REASON_MAX)
+  if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
+  const run = deps.deploy !== undefined ? deps.deploy : autoDeploy()?.deployNow ?? null
+  if (!run) return fail(404, "deploy_disabled")
+  const out = await run(body.repo)
+  companionLog(`[brain] deploy ${body.repo} (${reason.slice(0, 80)}) → ${out.ok ? out.result : out.error}`)
+  const status = out.ok ? 200 : out.error === "deploy_in_progress" ? 409 : out.error === "repo_not_allowed" ? 400 : ["fetch_failed", "sync_start_failed", "restart_failed", "install_failed"].includes(out.error) ? 502 : 409
+  return Response.json(out, { status })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -206,6 +227,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-merge")
+    }
+    if (p === "/hooks/brain/deploy") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return deploy(req, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()

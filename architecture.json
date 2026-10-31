@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 175,
+          "lines": 177,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -92,7 +92,8 @@
             "routes/brain.ts",
             "wiring/brain.ts",
             "wiring/brain-workers.ts",
-            "lib/brain.ts"
+            "lib/brain.ts",
+            "wiring/auto-deploy.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6044,7 +6045,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 235,
+          "lines": 261,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6068,6 +6069,7 @@
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/auto-deploy.ts",
             "wiring/brain-workers.ts"
           ],
           "listeners": [],
@@ -6862,6 +6864,47 @@
             "lib/apns.ts",
             "lib/push.ts",
             "wiring/dialogs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/auto-deploy.ts",
+          "lines": 228,
+          "kind": "lib",
+          "exports": [
+            "DEPLOY_REPOS",
+            "DeployRepo",
+            "DEPLOY_ACTION",
+            "POLL_MS",
+            "QUIET_MS",
+            "SYNC_GRACE_MS",
+            "DeployDeps",
+            "DeployResult",
+            "isDeployRepo",
+            "deployRepo",
+            "confirmBoot",
+            "createAutoDeploy",
+            "autoDeploy",
+            "startAutoDeploy"
+          ],
+          "state": [
+            "let live"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/live-repo.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8268,6 +8311,12 @@
             "ws.ts"
           ]
         },
+        "startAutoDeploy": {
+          "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "brainWorkers": {
           "module": "wiring/brain-workers.ts",
           "callers": [
@@ -8817,6 +8866,7 @@
             "routes/trips.ts",
             "routes/vault.ts",
             "wiring/auto-compact.ts",
+            "wiring/auto-deploy.ts",
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -8863,6 +8913,7 @@
             "lib/body-investigator.ts",
             "lib/jev-route-log.ts",
             "lib/quick-look.ts",
+            "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts"
           ]
@@ -9273,6 +9324,7 @@
             "lib/tasks-agent.ts",
             "lib/triage-pr.ts",
             "routes/my-tasks.ts",
+            "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/resolver-dry-run.ts"
@@ -9489,6 +9541,7 @@
             "routes/brain.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
@@ -13432,6 +13485,12 @@
             "routes/brain.ts"
           ]
         },
+        "DeployResult": {
+          "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -13440,6 +13499,18 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "isDeployRepo": {
+          "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "autoDeploy": {
+          "module": "wiring/auto-deploy.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -14016,6 +14087,7 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/orchestrator.ts",
+            "wiring/auto-deploy.ts",
             "wiring/body-agent.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
@@ -14135,6 +14207,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
@@ -14157,6 +14230,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/auto-deploy.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
@@ -14807,6 +14881,20 @@
           "module": "lib/brain.ts",
           "callers": [
             "wiring/auto-compact.ts"
+          ]
+        },
+        "ShFn": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/auto-deploy.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "realSh": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "wiring/auto-deploy.ts",
+            "wiring/resolver.ts"
           ]
         },
         "DEFAULT_BODY_AGENT": {
@@ -16171,18 +16259,6 @@
         },
         "EvidenceBlock": {
           "module": "lib/resolver-prompt.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "ShFn": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "realSh": {
-          "module": "lib/live-repo.ts",
           "callers": [
             "wiring/resolver.ts"
           ]
