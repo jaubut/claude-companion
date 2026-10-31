@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Live preview of a web repo on Jeremie's phone, tailnet only, hot reload (/hooks/brain/preview).
+#
+#   bin/preview start <repo> [branch]   → {ok, url, branch, reused}   (branch defaults to main)
+#   bin/preview stop <repo>
+#   bin/preview list
+#
+# The server decides everything: allowlisted repos only (tlstudio,
+# tls-dashboard-v2, remorquage-pelchat, remorquage-pelchat-web; 400
+# repo_not_allowed), a validated branch (400 bad_branch), its own worktree
+# under the previews dir, tailscale serve on the repo's fixed https port, never
+# funnel. One preview per repo: a second start returns the running one. It
+# stops itself after 2 h without a request. Same auth as bin/deploy: loopback,
+# X-Companion-Task-Id: brain and the pid of the brain's claude process.
+set -euo pipefail
+
+OP="${1:-}" REPO="${2:-}" BRANCH="${3:-}"
+case "$OP" in
+  start|stop) [ -n "$REPO" ] || { echo "preview: $OP <repo> is required" >&2; exit 2; } ;;
+  list) ;;
+  *) echo "preview: start <repo> [branch] | stop <repo> | list" >&2; exit 2 ;;
+esac
+case "$REPO" in *[!A-Za-z0-9._-]*) echo "preview: bad repo name" >&2; exit 2 ;; esac
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+URL="${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/preview"
+H=(-H "Content-Type: application/json" -H "X-Companion-Task-Id: brain" -H "X-Companion-Pid: $(claude_pid)")
+
+case "$OP" in
+  start)
+    BODY=$(REPO="$REPO" BRANCH="$BRANCH" python3 -c '
+import json, os
+b = {"repo": os.environ["REPO"]}
+if os.environ["BRANCH"]: b["branch"] = os.environ["BRANCH"]
+print(json.dumps(b))')
+    curl -sS --max-time 900 -X POST "$URL" "${H[@]}" --data-binary "$BODY" ;;
+  stop) curl -sS --max-time 60 -X DELETE "$URL/$REPO" "${H[@]}" ;;
+  list) curl -sS --max-time 30 "$URL" "${H[@]}" ;;
+esac
+echo

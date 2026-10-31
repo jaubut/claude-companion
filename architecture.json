@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 177,
+          "lines": 180,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -39,6 +39,11 @@
               "method": "*",
               "path": "/api/",
               "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/preview",
+              "prefix": false
             },
             {
               "method": "*",
@@ -93,7 +98,8 @@
             "wiring/brain.ts",
             "wiring/brain-workers.ts",
             "lib/brain.ts",
-            "wiring/auto-deploy.ts"
+            "wiring/auto-deploy.ts",
+            "wiring/brain-preview.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -3036,6 +3042,24 @@
             "lib/dispatch-tasks.ts",
             "lib/turso.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/preview-proxy.ts",
+          "lines": 70,
+          "kind": "lib",
+          "exports": [
+            "PreviewProxy",
+            "startPreviewProxy"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -6045,8 +6069,8 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
-          "kind": "lib",
+          "lines": 298,
+          "kind": "route-host",
           "exports": [
             "BrainRouteDeps",
             "createBrainRoute",
@@ -6055,7 +6079,13 @@
           "state": [],
           "emits": [],
           "consumes": [],
-          "endpoints": [],
+          "endpoints": [
+            {
+              "method": "*",
+              "path": "/hooks/brain/preview",
+              "prefix": false
+            }
+          ],
           "apiCalls": [],
           "imports": [
             "lib/auth.ts",
@@ -6070,7 +6100,8 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/auto-deploy.ts",
-            "wiring/brain-workers.ts"
+            "wiring/brain-workers.ts",
+            "wiring/brain-preview.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7107,6 +7138,43 @@
             "lib/turso.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-preview.ts",
+          "lines": 317,
+          "kind": "lib",
+          "exports": [
+            "PREVIEW_REPOS",
+            "IDLE_MS",
+            "DevProc",
+            "PreviewDeps",
+            "previewRepo",
+            "validBranch",
+            "devPlan",
+            "devArgs",
+            "previewEnv",
+            "logTail",
+            "createPreviews",
+            "Previews",
+            "previews",
+            "startPreviews"
+          ],
+          "state": [
+            "let shared"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/live-repo.ts",
+            "lib/log.ts",
+            "lib/preview-proxy.ts",
+            "lib/secret-redact.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8276,7 +8344,7 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
-            "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/brain-workers.ts",
@@ -8304,7 +8372,7 @@
           "module": "lib/brain.ts",
           "callers": [
             "companion-server.ts",
-            "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "routes/capture.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -8317,11 +8385,18 @@
             "companion-server.ts"
           ]
         },
+        "startPreviews": {
+          "module": "wiring/brain-preview.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "brainWorkers": {
           "module": "wiring/brain-workers.ts",
           "callers": [
             "companion-server.ts",
             "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "wiring/brain.ts"
           ]
         },
@@ -8329,7 +8404,7 @@
           "module": "wiring/brain.ts",
           "callers": [
             "companion-server.ts",
-            "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "routes/capture.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/post-tool-use",
@@ -8359,7 +8434,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
-            "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
@@ -8369,7 +8444,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
-            "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "routes/records.ts",
             "routes/vault.ts"
           ]
@@ -8845,6 +8920,7 @@
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/body.ts#POST /api/body/alert",
             "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "routes/capture.ts",
             "routes/command.ts",
             "routes/command.ts#POST /api/command/suggest",
@@ -8872,6 +8948,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-preview.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -8915,7 +8992,8 @@
             "lib/quick-look.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-preview.ts"
           ]
         },
         "ApprovalRequest": {
@@ -10974,6 +11052,7 @@
           "callers": [
             "lib/project-catalog.ts",
             "lib/spawn-seed.ts",
+            "wiring/brain-preview.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts"
           ]
@@ -13038,6 +13117,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session",
+            "wiring/brain-preview.ts",
             "wiring/repo-view.ts",
             "wiring/triage.ts"
           ]
@@ -13491,6 +13571,18 @@
             "routes/brain.ts"
           ]
         },
+        "Previews": {
+          "module": "wiring/brain-preview.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "previews": {
+          "module": "wiring/brain-preview.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -13515,16 +13607,28 @@
             "routes/brain.ts"
           ]
         },
+        "previewRepo": {
+          "module": "wiring/brain-preview.ts",
+          "callers": [
+            "routes/brain.ts#* /hooks/brain/preview"
+          ]
+        },
+        "validBranch": {
+          "module": "wiring/brain-preview.ts",
+          "callers": [
+            "routes/brain.ts#* /hooks/brain/preview"
+          ]
+        },
         "rowsSince": {
           "module": "lib/brain-trace.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts#* /hooks/brain/preview"
           ]
         },
         "latestRows": {
           "module": "lib/brain-trace.ts",
           "callers": [
-            "routes/brain.ts",
+            "routes/brain.ts#* /hooks/brain/preview",
             "ws.ts"
           ]
         },
@@ -14887,6 +14991,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/auto-deploy.ts",
+            "wiring/brain-preview.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -14894,6 +14999,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/auto-deploy.ts",
+            "wiring/brain-preview.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -15177,6 +15283,18 @@
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "PreviewProxy": {
+          "module": "lib/preview-proxy.ts",
+          "callers": [
+            "wiring/brain-preview.ts"
+          ]
+        },
+        "startPreviewProxy": {
+          "module": "lib/preview-proxy.ts",
+          "callers": [
+            "wiring/brain-preview.ts"
           ]
         },
         "addTodo": {

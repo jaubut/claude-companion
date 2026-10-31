@@ -45,6 +45,7 @@ import { brainWiring, setBrainDeliver } from "./wiring/brain"
 import { brainWorkers } from "./wiring/brain-workers"
 import { brainEnabled } from "./lib/brain"
 import { startAutoDeploy } from "./wiring/auto-deploy"
+import { startPreviews } from "./wiring/brain-preview"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -70,7 +71,7 @@ export function createCompanionServer(port: number) {
   startEndedSweep(listSessions)
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
-  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy() }
+  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy(); startPreviews() }
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
@@ -99,6 +100,8 @@ export function createCompanionServer(port: number) {
       if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
+      // bin/preview start: worktree + install + dev server boot can take minutes (the route refuses non-brain callers first).
+      if (req.method === "POST" && url.pathname === "/hooks/brain/preview") server.timeout(req, 0)
 
       // ── Public liveness probe ──
       // Used by the hook scripts to skip the 300s wait when the server is

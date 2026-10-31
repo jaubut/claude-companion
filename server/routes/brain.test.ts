@@ -378,3 +378,45 @@ describe("POST /hooks/brain/deploy", () => {
     expect([r.status, r.json.error]).toEqual([404, "deploy_disabled"])
   })
 })
+
+describe("/hooks/brain/preview", () => {
+  const calls: string[] = []
+  const fake = {
+    start: async (repo: string, branch: string) => { calls.push(`start ${repo}@${branch}`); return { status: 200, body: { ok: true, repo, branch, url: "https://h.ts.net:9401/" } } },
+    stop: async (repo: string) => { calls.push(`stop ${repo}`); return { status: 200, body: { ok: true, stopped: true } } },
+    list: () => [],
+    sweepIdle: async () => [],
+    clearStale: async () => {},
+  }
+  const h = () => route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => true, previews: fake })
+  const call = async (method: string, path: string, b?: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1") => {
+    const req = new Request(`http://localhost:4245${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: b === undefined ? undefined : JSON.stringify(b) })
+    recordPeer(req, peer)
+    const res = (await h()(req, new URL(req.url)))!
+    return { status: res.status, json: await res.json() as Record<string, unknown> }
+  }
+
+  test("brain auth on every verb; nothing reaches the manager otherwise", async () => {
+    calls.length = 0
+    expect((await call("POST", "/hooks/brain/preview", { repo: "tlstudio" }, {})).status).toBe(403)
+    expect((await call("POST", "/hooks/brain/preview", { repo: "tlstudio" }, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await call("DELETE", "/hooks/brain/preview/tlstudio", undefined, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await call("GET", "/hooks/brain/preview", undefined, {})).status).toBe(403)
+    expect(calls).toEqual([])
+  })
+
+  test("repo allowlist and branch validation; branch defaults to main", async () => {
+    calls.length = 0
+    for (const repo of ["claude-companion", "../tlstudio", "jaubut/TLSTUDIO", 3, ""]) expect((await call("POST", "/hooks/brain/preview", { repo })).json.error).toBe("repo_not_allowed")
+    for (const branch of ["-x", "a..b", "x;rm -rf", 5]) expect((await call("POST", "/hooks/brain/preview", { repo: "tlstudio", branch })).json.error).toBe("bad_branch")
+    expect((await call("DELETE", "/hooks/brain/preview/claude-companion")).json.error).toBe("repo_not_allowed")
+    expect((await call("DELETE", "/hooks/brain/preview/%E0%A4%A")).status).toBe(400)
+    expect(calls).toEqual([])
+    expect((await call("POST", "/hooks/brain/preview", { repo: "TLSTUDIO" })).json.url).toBe("https://h.ts.net:9401/")
+    await call("POST", "/hooks/brain/preview", { repo: "tls-dashboard-v2", branch: "feat/x" })
+    expect((await call("GET", "/hooks/brain/preview")).json).toEqual({ ok: true, previews: [] })
+    expect((await call("DELETE", "/hooks/brain/preview/tlstudio")).json.stopped).toBe(true)
+    expect((await call("PUT", "/hooks/brain/preview", {})).status).toBe(405)
+    expect(calls).toEqual(["start tlstudio@main", "start tls-dashboard-v2@feat/x", "stop tlstudio"])
+  })
+})

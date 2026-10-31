@@ -11,6 +11,7 @@ import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
+import { type Previews, previewRepo, previews, validBranch } from "../wiring/brain-preview"
 
 // brain-v2 routes (docs/brain-api.md):
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
@@ -23,6 +24,9 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
+//   POST /hooks/brain/preview             → bin/preview start: {repo, branch?} → {ok, repo, branch, url, reused} (tailnet-only dev server)
+//   GET  /hooks/brain/preview             → bin/preview list: {ok, previews}
+//   DELETE /hooks/brain/preview/<repo>    → bin/preview stop: {ok, stopped}
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
@@ -53,6 +57,8 @@ export interface BrainRouteDeps {
   prMerge?: typeof mergeAgentPr
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
+  /** bin/preview (default: this host's preview manager). */
+  previews?: Previews
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -195,6 +201,33 @@ async function deploy(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out, { status })
 }
 
+/** bin/preview: the manager (wiring/brain-preview.ts) owns the allowlist, the worktree and every process. */
+async function preview(req: Request, url: URL, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const mgr = deps.previews ?? previews()
+  if (url.pathname === "/hooks/brain/preview") {
+    if (req.method === "GET") return Response.json({ ok: true, previews: mgr.list() })
+    if (req.method !== "POST") return fail(405, "method_not_allowed")
+    const body = await readJson(req)
+    if (!body) return fail(400, "bad_json")
+    const repo = previewRepo(body.repo)
+    if (!repo) return fail(400, "repo_not_allowed")
+    const branch = body.branch === undefined || body.branch === null || body.branch === "" ? "main" : body.branch
+    if (!validBranch(branch)) return fail(400, "bad_branch")
+    const out = await mgr.start(repo, branch)
+    companionLog(`[brain] preview start ${repo}@${branch} → ${out.status} ${String(out.body.error ?? "ok")}`)
+    return Response.json(out.body, { status: out.status })
+  }
+  if (req.method !== "DELETE") return fail(405, "method_not_allowed")
+  let name = ""
+  try { name = decodeURIComponent(url.pathname.slice("/hooks/brain/preview/".length)) } catch { /* bad escape: refused below */ }
+  const repo = previewRepo(name)
+  if (!repo) return fail(400, "repo_not_allowed")
+  const out = await mgr.stop(repo)
+  return Response.json(out.body, { status: out.status })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -232,6 +265,10 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return deploy(req, deps)
+    }
+    if (p === "/hooks/brain/preview" || p.startsWith("/hooks/brain/preview/")) {
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return preview(req, url, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()
