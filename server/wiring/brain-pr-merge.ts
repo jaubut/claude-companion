@@ -11,9 +11,10 @@ import { orchEmit } from "./orchestrator"
 // PR. The brain's word counts for nothing: every check is made here, from
 // GitHub and Turso, and any doubt refuses. In order:
 //   open, not draft · head `dispatch/*` (403 not_agent_branch)
-//   needs_human (403): a linked task (by dispatch_pr_url, never the guessable
-//     branch) whose every origin is jeremie/system; no money/MFA/auth/config
-//     path, title, body or label; full file list; no live shepherd park/hold
+//   parked (403): no do-not-merge/wip label; no live shepherd park or hold,
+//     except the client-origin / tainted / sensitive-path park (the MFA
+//     human-review policy, retired 2026-10-31: money, origin and paths no
+//     longer gate a green, twice-approved agent PR)
 //   not_green (409): MERGEABLE + mergeStateStatus CLEAN + every check passed (≥ 1)
 //   not_approved (409): Claude AND Codex auto-review comments with VERDICT:
 //     APPROVE stamped with the current head sha, from the PR's author (the
@@ -27,12 +28,10 @@ export const PR_MERGE_ACTION = "brain:pr-merge"
 const REASON_MAX = 300
 export const MERGE_CAP = 10
 
-// ponytail: path/word lists, not a classifier. Superset of the shepherd's SENSITIVE_RE (claude-config
-// tools/dep-lane.ts) plus money, MFA and the brain's own authority. A false hit only costs a hand-merge.
-const SENSITIVE_PATH = /auth|login|passw|token|secret|cookie|csrf|cors|mfa|totp|2fa|(^|[^a-z])otp|webauthn|passkey|permission|payment|billing|stripe|invoice|checkout|subscription|pricing|refund|payroll|ledger|bank|(^|[^a-z])tax|money|wallet|crypto|hmac|signature|\.env|migration|schema\.sql|\.sql$|\.github\/|dockerfile|docker-compose|middleware|keyboard-inject|auto-compact|inject-guard|(^|\/)tmux[^/]*$|(^|\/)brain\/|brain-pr-|routes\/brain|(^|\/)bin\/|^(rules|agents|hooks|skills|commands|workflows|mods|output-styles|memory)\/|(^|\/)CLAUDE\.md$|(^|\/)\.claude\/|(^|\/)settings(\.local)?\.json$|^tools\//i
-const SENSITIVE_TEXT = /\b(mfa|2fa|totp|otp|billing|payments?|stripe|invoices?|checkout|subscriptions?|refunds?|payroll|bank|taxes|gst|qst|money|credentials?|passwords?|secrets?)\b/i
-const HUMAN_LABEL = /mfa|billing|payment|money|security|human|hold|do-not-merge|dnm|wip|blocked/i
-const TRUSTED_ORIGINS = new Set(["jeremie", "system"])
+const HOLD_LABEL = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
+// The shepherd's human-review parks (pr-shepherd clientPark / taint / sensitive): retired, they no longer refuse.
+// Every other park (conflict unresolved, fix budget spent, infra hold, no CI…) means the work is broken: refuse.
+const RETIRED_PARK = /^(client(-origin)? PR|tainted \(|touches .+ — needs your review)/
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
@@ -47,11 +46,10 @@ interface Check { __typename?: string; name?: string; context?: string; status?:
 interface Comment { body?: string; author?: { login?: string } | null }
 interface PrView {
   state: string; isDraft: boolean; headRefName: string; headRefOid: string; mergeable: string; mergeStateStatus: string
-  reviewDecision: string; url: string; title: string; body: string; author: { login?: string } | null
-  files: Array<{ path?: string }>; changedFiles: number; labels: Array<{ name?: string }>
+  reviewDecision: string; url: string; title: string; author: { login?: string } | null; labels: Array<{ name?: string }>
   statusCheckRollup: Check[]; comments: Comment[]
 }
-const FIELDS = "state,isDraft,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,url,title,body,author,files,changedFiles,labels,statusCheckRollup,comments"
+const FIELDS = "state,isDraft,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,url,title,author,labels,statusCheckRollup,comments"
 
 async function view(gh: GhFn, p: PrMergeInput): Promise<PrView | Out> {
   let r: Awaited<ReturnType<GhFn>>
@@ -66,8 +64,7 @@ async function view(gh: GhFn, p: PrMergeInput): Promise<PrView | Out> {
     return {
       state: String(v.state ?? ""), isDraft: v.isDraft !== false, headRefName: String(v.headRefName ?? ""), headRefOid: String(v.headRefOid ?? ""),
       mergeable: String(v.mergeable ?? ""), mergeStateStatus: String(v.mergeStateStatus ?? ""), reviewDecision: String(v.reviewDecision ?? ""),
-      url: String(v.url ?? ""), title: String(v.title ?? ""), body: String(v.body ?? ""), author: v.author ?? null,
-      files: Array.isArray(v.files) ? v.files : [], changedFiles: Number(v.changedFiles ?? NaN),
+      url: String(v.url ?? ""), title: String(v.title ?? ""), author: v.author ?? null,
       labels: Array.isArray(v.labels) ? v.labels : [], statusCheckRollup: Array.isArray(v.statusCheckRollup) ? v.statusCheckRollup : [],
       comments: Array.isArray(v.comments) ? v.comments : [],
     }
@@ -108,33 +105,27 @@ function notApproved(v: PrView): string[] {
   return out
 }
 
-/** Why this PR stays Jeremie's hand-merge (empty = routine). Turso errors propagate. */
-async function needsHuman(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[] }> {
+/** Why this PR is parked as broken or held (empty = mergeable). Turso errors propagate. */
+async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[] }> {
   const reasons: string[] = []
-  const paths = v.files.map((f) => String(f.path ?? ""))
-  if (!Number.isFinite(v.changedFiles) || paths.length < v.changedFiles || !paths.length) reasons.push("file list incomplete")
-  const hits = paths.filter((p) => SENSITIVE_PATH.test(p))
-  if (hits.length) reasons.push(`sensitive paths: ${hits.slice(0, 5).join(", ")}${hits.length > 5 ? ` +${hits.length - 5}` : ""}`)
-  const word = `${v.title}\n${v.body}`.match(SENSITIVE_TEXT)
-  if (word) reasons.push(`mentions "${word[0]}"`)
-  const labels = v.labels.map((l) => String(l.name ?? "")).filter((l) => HUMAN_LABEL.test(l))
+  const labels = v.labels.map((l) => String(l.name ?? "")).filter((l) => HOLD_LABEL.test(l))
   if (labels.length) reasons.push(`label ${labels.join(", ")}`)
-  // Trust only tasks linked by the PR url: a branch-name match is guessable.
-  const { rows } = await exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ?", [v.url])
+  // Tasks linked by the PR url (a branch-name match is guessable): park rows and the digest row key on them.
+  const { rows } = await exec("SELECT id FROM tasks WHERE dispatch_pr_url = ?", [v.url])
   const taskIds = rows.map((r) => String(r.id))
-  if (!rows.length) reasons.push("no task linked to this PR")
-  const untrusted = rows.map((r) => String(r.origin ?? "unset")).filter((o) => !TRUSTED_ORIGINS.has(o))
-  if (untrusted.length) reasons.push(`task origin ${[...new Set(untrusted)].join(", ")}`)
-  // The newest shepherd park / hold / unpark for this PR: a live park or hold is Jeremie's.
-  const park = await exec(
+  // The newest shepherd park / hold / unpark for this PR: a live one refuses unless it is a retired human-review park.
+  const last = await exec(
     "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND target_id IN (" + [v.url, ...taskIds].map(() => "?").join(", ") + ") ORDER BY id DESC LIMIT 20",
     [v.url, ...taskIds],
   )
-  for (const row of park.rows) {
+  for (const row of last.rows) {
     let meta: Record<string, unknown> = {}
     try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → counts */ }
     if (meta.url !== undefined && meta.url !== v.url) continue
-    if (row.action !== "pr:unpark") reasons.push(`${row.action === "pr:hold" ? "held" : "parked"} by the shepherd${typeof meta.reason === "string" ? `: ${meta.reason.slice(0, 120)}` : ""}`)
+    const why = typeof meta.reason === "string" ? meta.reason : ""
+    if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !RETIRED_PARK.test(why))) {
+      reasons.push(`${row.action === "pr:hold" ? "held" : "parked"} by the shepherd${why ? `: ${why.slice(0, 120)}` : ""}`)
+    }
     break
   }
   return { reasons, taskIds }
@@ -146,17 +137,17 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
-  let human: Awaited<ReturnType<typeof needsHuman>>
+  let park: Awaited<ReturnType<typeof parked>>
   let recent: number
   try {
-    human = await needsHuman(deps.exec, v)
+    park = await parked(deps.exec, v)
     const c = await deps.exec("SELECT COUNT(*) AS n FROM agent_activity WHERE action = ? AND ts >= datetime('now', '-1 day')", [PR_MERGE_ACTION])
     recent = Number(c.rows[0]?.n ?? NaN)
   } catch (err) {
     companionLog(`[brain] pr-merge: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")
   }
-  if (human.reasons.length) return fail(403, "needs_human", { reasons: human.reasons })
+  if (park.reasons.length) return fail(403, "parked", { reasons: park.reasons })
   const red = notGreen(v)
   if (red.length) return fail(409, "not_green", { reasons: red })
   const unapproved = notApproved(v)
@@ -171,12 +162,12 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   }
   const after = await prState(deps.gh, v.url).catch(() => "unknown")
   if (after !== "MERGED") return fail(502, "merge_unverified", { state: after, detail: (run.stderr || run.stdout).trim().slice(0, 200) })
-  const taskId = human.taskIds[0] ?? null
+  const taskId = park.taskIds[0] ?? null
   try {
     await deps.exec(
       "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",
       [BRAIN_AGENT, PR_MERGE_ACTION, taskId ? "task" : "pr", taskId ?? v.url, `${p.repo}#${p.pr} merged by the brain: ${reason}`.slice(0, 200),
-        JSON.stringify({ repo: p.repo, pr: p.pr, url: v.url, branch: v.headRefName, head: v.headRefOid, title: v.title.slice(0, 200), reason, tasks: human.taskIds, source: "companion" })],
+        JSON.stringify({ repo: p.repo, pr: p.pr, url: v.url, branch: v.headRefName, head: v.headRefOid, title: v.title.slice(0, 200), reason, tasks: park.taskIds, source: "companion" })],
     )
   } catch (err) {
     companionLog(`[brain] pr-merge: activity row failed (${(err as Error)?.name ?? "error"})`)

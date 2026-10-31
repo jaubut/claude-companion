@@ -137,13 +137,11 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 
 `wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word, and refuses on any doubt. It checks, in order:
 1. The PR is open, not a draft, and its head is `dispatch/*`.
-2. **needs_human** refuses when any of these holds:
-   - The PR has no task linked by `dispatch_pr_url` (a branch match is guessable), or any linked task's `origin` is not `jeremie`/`system`.
-   - A path matches the money, MFA, auth, secret, migration, CI or agent-config list. The list is a superset of the shepherd's `SENSITIVE_RE`, and it includes `brain/` and this gate.
-   - The file list is incomplete.
-   - The title or body mentions MFA, billing, payment, Stripe, invoice, bank, tax, credentials and similar.
-   - A label says mfa, billing, security, hold, do-not-merge or wip.
-   - The newest shepherd `pr:needs-human` / `pr:hold` is not lifted by a `pr:unpark`.
+2. **parked** refuses when any of these holds:
+   - A label says do-not-merge, dnm or wip.
+   - The newest shepherd `pr:hold`, or a `pr:needs-human` whose reason means the work is broken (conflict unresolved, fix budget spent, no CI…), is not lifted by a `pr:unpark`. Park rows are matched on the PR url and on the tasks linked by `dispatch_pr_url`.
+
+   The MFA / human-review gate was retired on 2026-10-31. Money, billing, MFA, auth, schema or config paths, title, body or labels no longer refuse. A web, client, internal or unset task origin no longer refuses. The shepherd's human-review park no longer refuses either (`client-origin PR`, `tainted (…)`, `touches … — needs your review`).
 3. **not_green** refuses unless `mergeable` is MERGEABLE, `mergeStateStatus` is CLEAN, and every check passed, with at least one SUCCESS.
 4. **not_approved** refuses unless both a Claude (`🤖 **Auto-review**`) and a Codex (`🧠 **Codex review**`) comment say `VERDICT: APPROVE`, stamped `<!-- reviewed-sha: <head> -->` and posted by the PR's author. It also refuses on any CHANGES on that head, or a GitHub CHANGES_REQUESTED.
 5. **merge_cap** refuses after 10 brain merges in 24 h.
@@ -154,7 +152,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 |---|---|
 | 200 `{ok, merged, url, head}` | merged |
 | 400 | bad repo / pr / reason |
-| 403 `not_agent_branch` (+`branch`) · 403 `needs_human` (+`reasons`) | never the brain's to merge |
+| 403 `not_agent_branch` (+`branch`) · 403 `parked` (+`reasons`) | broken or held |
 | 404 `pr_not_found` | gh cannot read it |
 | 409 `not_open` / `draft` · 409 `not_green` / `not_approved` (+`reasons`) | not now |
 | 429 `merge_cap` | 10 brain merges in 24 h |

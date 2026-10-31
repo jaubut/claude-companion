@@ -62,6 +62,8 @@ function world(pr: Record<string, unknown>, seed = TASK, opts: { mergeSticks?: b
   return { db, calls, events, deps: { gh, exec, event: (t: string) => events.push(t) } }
 }
 
+const park = (action: string, reason: string) =>
+  `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', '${action}', 'task', 'abcd1234-0000', '{"url":"${URL}","reason":"${reason}"}');`
 const input = { repo: "o/r", pr: 7, reason: "routine: feed fix, cascade approved" }
 const merges = (calls: string[][]) => calls.filter((c) => c[1] === "merge")
 async function refused(pr: Record<string, unknown>, seed = TASK) {
@@ -87,35 +89,19 @@ describe("bin/pr-merge gate: refusals", () => {
     })
   }
 
-  const human: Array<[string, Record<string, unknown>, string?]> = [
-    ["a billing path", { files: [{ path: "server/lib/billing/charge.ts" }], changedFiles: 1 }],
-    ["a payment path", { files: [{ path: "src/pages/payments.tsx" }], changedFiles: 1 }],
-    ["an auth path", { files: [{ path: "server/lib/auth.ts" }], changedFiles: 1 }],
-    ["an MFA path", { files: [{ path: "client/src/mfa/Totp.tsx" }], changedFiles: 1 }],
-    ["a migration", { files: [{ path: "db/migrations/0042_add.sql" }], changedFiles: 1 }],
-    ["the brain's own instructions", { files: [{ path: "brain/CLAUDE.md" }], changedFiles: 1 }],
-    ["this gate", { files: [{ path: "server/wiring/brain-pr-merge.ts" }], changedFiles: 1 }],
-    ["a settings.json", { files: [{ path: ".claude/settings.json" }], changedFiles: 1 }],
-    ["CI config", { files: [{ path: ".github/workflows/ci.yml" }], changedFiles: 1 }],
-    ["a truncated file list", { changedFiles: 140 }],
-    ["an empty file list", { files: [], changedFiles: 0 }],
-    ["a Stripe title", { title: "checkout: Stripe webhook retry" }],
-    ["MFA in the body", { body: "Needs Jeremie's MFA release before deploy." }],
-    ["an invoice body", { body: "Changes the invoice footer" }],
-    ["a needs-mfa label", { labels: [{ name: "needs-mfa" }] }],
-    ["a do-not-merge label", { labels: [{ name: "do-not-merge" }] }],
-    ["a web-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'web', '${URL}');`],
-    ["a client-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'client', '${URL}');`],
-    ["an unset-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', NULL, '${URL}');`],
-    ["a rolling PR with one untrusted task", {}, `${TASK} INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('ffff0000-1111', 'internal-user', '${URL}');`],
-    ["no task linked by url (branch match only)", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'jeremie', NULL);`],
-    ["a live shepherd park", {}, `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}","reason":"touches lockfile"}');`],
+  const held: Array<[string, Record<string, unknown>, string?]> = [
+    ["a conflict park", {}, park("pr:needs-human", "merge conflict unresolved after 2 attempts")],
+    ["a spent CI fix budget", {}, park("pr:needs-human", "CI still failing after 3 fixes: tsc")],
+    ["a spent review fix budget", {}, park("pr:needs-human", "review verdict CHANGES after 2 fix runs — see the reviewer summary")],
+    ["a park with no reason", {}, `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}"}');`],
     ["a cascade hold", {}, `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:hold', 'pr', '${URL}', '{"url":"${URL}"}');`],
+    ["a do-not-merge label", { labels: [{ name: "do-not-merge" }] }],
+    ["a wip label", { labels: [{ name: "WIP" }] }],
   ]
-  for (const [what, over, seed] of human) {
-    test(`403 needs_human: ${what}`, async () => {
+  for (const [what, over, seed] of held) {
+    test(`403 parked: ${what}`, async () => {
       const out = await refused(green(over), seed ?? TASK)
-      expect([out.status, out.body.error]).toEqual([403, "needs_human"])
+      expect([out.status, out.body.error]).toEqual([403, "parked"])
       expect((out.body.reasons as string[]).length).toBeGreaterThan(0)
     })
   }
@@ -149,6 +135,7 @@ describe("bin/pr-merge gate: refusals", () => {
     ["an unstamped APPROVE", { comments: [{ author: { login: BOT }, body: "🤖 **Auto-review**\nVERDICT: APPROVE" }, review("codex", "APPROVE")] }],
     ["a quoted heading mid-comment", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: `note: 🧠 **Codex review** VERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->` }] }],
     ["GitHub CHANGES_REQUESTED", { reviewDecision: "CHANGES_REQUESTED" }],
+    ["Codex skipped (Claude APPROVE only, a skip note from Codex)", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: `🧠 **Codex review** skipped: quota\n<!-- reviewed-sha: ${SHA} -->` }] }],
   ]
   for (const [what, over] of unapproved) {
     test(`409 not_approved: ${what}`, async () => {
@@ -191,6 +178,28 @@ describe("bin/pr-merge gate: the merge", () => {
     const w = world(green({ comments: [review("codex", "CHANGES", OLD), review("claude", "APPROVE"), review("codex", "APPROVE")] }), seed)
     expect((await mergeAgentPr(input, w.deps)).status).toBe(200)
   })
+
+  // The MFA / human-review gate is retired (2026-10-31): money, schema, origin and the shepherd's human-review park
+  // no longer refuse a green, twice-approved dispatch PR.
+  const routine: Array<[string, Record<string, unknown>, string?]> = [
+    ["an invoice / billing path", { title: "invoices: Stripe checkout retry", body: "Changes the invoice footer and payment webhook.", files: [{ path: "server/lib/billing/invoice.ts" }], changedFiles: 1 }],
+    ["a migration / schema.sql", { files: [{ path: "db/migrations/0042_add.sql" }, { path: "schema.sql" }], changedFiles: 2 }],
+    ["an MFA path and a needs-mfa label", { files: [{ path: "client/src/mfa/Totp.tsx" }], changedFiles: 1, labels: [{ name: "needs-mfa" }, { name: "billing" }] }],
+    ["a web-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'web', '${URL}');`],
+    ["a client-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'client', '${URL}');`],
+    ["an unset-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', NULL, '${URL}');`],
+    ["no task linked by url", {}, ""],
+    ["a client-origin park", {}, park("pr:needs-human", "client-origin PR — human review required: touches server/lib/pay.ts")],
+    ["a tainted human-merge-only park", {}, park("pr:needs-human", "tainted (web) PR touches server/lib/auth.ts — human merge only")],
+    ["a sensitive-path park", {}, park("pr:needs-human", "touches server/lib/invoice.ts — needs your review · Opus: escalate")],
+  ]
+  for (const [what, over, seed] of routine) {
+    test(`merges a green, twice-approved PR with ${what}`, async () => {
+      const w = world(green(over), seed ?? TASK)
+      expect((await mergeAgentPr(input, w.deps)).status).toBe(200)
+      expect(merges(w.calls)).toHaveLength(1)
+    })
+  }
 
   test("502 merge_unverified when GitHub still reports OPEN; no activity row", async () => {
     const w = world(green(), TASK, { mergeSticks: false })

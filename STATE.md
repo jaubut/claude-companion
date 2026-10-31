@@ -150,6 +150,19 @@ Last updated: 2026-10-25
 
 ## Change Plans
 
+### Change Plan — pr-merge-retire-mfa (2026-10-31)
+**Request:** (task t-pr-merge-loosen-1, relayed by brain-72: Jeremie "retire mfa pr task") Retire bin/pr-merge's human-review gate: a green, twice-approved `dispatch/*` PR merges whatever its money, path or origin.
+**State decisions**
+- `needs_human` becomes `parked` (403). It keeps only the not-MFA signals: a do-not-merge/dnm/wip label; a live `pr:hold`; a live `pr:needs-human` whose reason is not the shepherd's human-review park (`client-origin PR` / `tainted (` / `touches … — needs your review`, the prefixes the cascade's `classifyPark` already routes on). Conflict, fix budget, no-CI, stale and reasonless parks still refuse: the allowlist is the retired prefixes, so an unknown park refuses.
+- Removed: the path regex and file-list completeness, title/body words, MFA/billing/security labels, task-origin trust and "no task linked". Tasks are still looked up by `dispatch_pr_url` for the park rows and the digest row.
+- Unchanged: branch, green, approved, cap, `--match-head-commit`, MERGED read-back, activity row, event, digest. The shepherd itself still parks client/tainted PRs (claude-config, not touched here); the brain can now merge them through this gate.
+**Contracts touched**
+| contract | kind | change | consumers | compat |
+|---|---|---|---|---|
+| `POST /hooks/brain/pr-merge` 403 body | hook endpoint | `needs_human` → `parked` | brain/bin/pr-merge (pass-through), brain/CLAUDE.md, docs/brain-api.md | rename; the brain reads `error` from its CLAUDE.md, updated here |
+**Files** (one owner): `server/wiring/brain-pr-merge.ts` (module state: `HOLD_LABEL`, `RETIRED_PARK` regexes; `files`/`changedFiles`/`body` dropped from the gh read) · `server/wiring/brain-pr-merge.test.ts` · `brain/bin/pr-merge` (usage text) · `brain/CLAUDE.md` · `docs/brain-api.md` · `STATE.md`
+**Verify:** brain-pr-merge.test.ts: money/schema/MFA/web/client/unset-origin/no-task and the three retired parks now merge; conflict/budget/reasonless park, hold, do-not-merge/wip label, not_green, not_approved (incl. Codex skipped), non-dispatch branch and the cap still refuse. tsc; archmap --check --lint; full `bun test --isolate`.
+
 ### Change Plan — brain-pr-merge (2026-10-30)
 **Request:** (task t-pr-merge-1) The brain stops asking Jeremie to hand-merge routine agent PRs. Add `bin/pr-merge`, modeled on `bin/pr-close`: the server re-checks every condition on GitHub and Turso and refuses on any doubt. It is the only merge path; raw `gh pr merge` is denied in the brain's settings.
 **State decisions**
