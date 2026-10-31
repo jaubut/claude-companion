@@ -4,8 +4,8 @@
 #   bin/pr-merge --repo <owner/name> --pr <n> --reason "<why it is routine>"
 #
 # The server re-checks everything on GitHub and Turso and refuses on any doubt:
-# head dispatch/* (403 not_agent_branch) · no money/MFA/auth/config path, title,
-# label or untrusted task origin, no shepherd park (403 needs_human) · CI green +
+# head dispatch/* (403 not_agent_branch) · no do-not-merge/wip label, no broken
+# shepherd park or hold (403 parked; money/MFA/origin don't block) · CI green +
 # CLEAN (409 not_green) · Claude AND Codex APPROVE on the current head (409
 # not_approved) · ≤ 10 brain merges a day (429 merge_cap). Squash-merges the
 # checked head only. Same auth as bin/propose: loopback, X-Companion-Task-Id:

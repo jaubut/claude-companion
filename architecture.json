@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30",
+  "generatedAt": "2026-10-31",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -7043,16 +7043,14 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 194,
+          "lines": 185,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
             "mergeAgentPr"
           ],
-          "state": [
-            "TRUSTED_ORIGINS: Set"
-          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],

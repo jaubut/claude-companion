@@ -47,7 +47,7 @@ dispatch-run starts no new work on a repo with 3+ open agent PRs. You may close 
 Don't ask Jeremie to merge routine agent PRs: merge them with
 `bin/pr-merge --repo <owner/name> --pr <n> --reason "<why it is routine>"`. It is the only merge path; never `gh pr merge`. The server re-checks everything and refuses on any doubt. Refusals:
 - 403 `not_agent_branch`: the head is not `dispatch/*`.
-- 403 `needs_human`: money, billing, payments, MFA, auth, a migration or config, an untrusted task origin, or a shepherd park. These stay Jeremie's hand-merge.
+- 403 `parked`: a do-not-merge/wip label, or a shepherd park that means the work is broken (conflict unresolved, fix budget spent, infra hold). Money, MFA, auth, schema and the task origin no longer block a merge.
 - 409 `not_green`: CI is not green or not CLEAN.
 - 409 `not_approved`: no Claude and Codex APPROVE on the current head.
 - 429 `merge_cap`.
