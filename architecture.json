@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 177,
+          "lines": 181,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -27,11 +27,6 @@
             },
             {
               "method": "*",
-              "path": "/health",
-              "prefix": false
-            },
-            {
-              "method": "*",
               "path": "/ws",
               "prefix": false
             },
@@ -39,6 +34,11 @@
               "method": "*",
               "path": "/api/",
               "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/health",
+              "prefix": false
             },
             {
               "method": "*",
@@ -78,6 +78,7 @@
             "lib/turso.ts",
             "wiring/canvas.ts",
             "lib/vault-guard.ts",
+            "lib/request-gate.ts",
             "ws.ts",
             "lib/apns.ts",
             "lib/discover.ts",
@@ -3746,6 +3747,29 @@
             "lib/dispatch-tasks.ts",
             "lib/triage-pr.ts",
             "lib/triage.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/request-gate.ts",
+          "lines": 40,
+          "kind": "lib",
+          "exports": [
+            "hostAllowed",
+            "hookCallerAllowed"
+          ],
+          "state": [
+            "NAMES: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/vault-guard.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8349,16 +8373,29 @@
             "ws.ts"
           ]
         },
+        "hostAllowed": {
+          "module": "lib/request-gate.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "recordPeer": {
           "module": "lib/vault-guard.ts",
           "callers": [
             "companion-server.ts"
           ]
         },
+        "hookCallerAllowed": {
+          "module": "lib/request-gate.ts",
+          "callers": [
+            "companion-server.ts#* /hooks/"
+          ]
+        },
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "lib/request-gate.ts",
             "routes/brain.ts",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
@@ -10899,6 +10936,7 @@
           "module": "lib/vault-guard.ts",
           "callers": [
             "lib/pane-mirror.ts",
+            "lib/request-gate.ts",
             "lib/terminal-bridge.ts",
             "routes/brain.ts",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
@@ -10912,6 +10950,7 @@
           "module": "lib/vault-guard.ts",
           "callers": [
             "lib/pane-mirror.ts",
+            "lib/request-gate.ts",
             "lib/terminal-bridge.ts",
             "routes/brain.ts",
             "routes/records.ts",
@@ -11589,6 +11628,21 @@
           "module": "lib/triage-pr.ts",
           "callers": [
             "lib/repo-view.ts"
+          ]
+        },
+        "isLoopback": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/request-gate.ts",
+            "routes/copy-jobs.ts#POST /hooks/copy-progress",
+            "routes/gauge.ts#POST /hooks/gauge",
+            "routes/hooks.ts#POST /hooks/dispatch-event"
+          ]
+        },
+        "isTailnet": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/request-gate.ts"
           ]
         },
         "TRANSIENT_REASON": {
@@ -13785,14 +13839,6 @@
           "module": "lib/suggest-cleanup.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "isLoopback": {
-          "module": "lib/vault-guard.ts",
-          "callers": [
-            "routes/copy-jobs.ts#POST /hooks/copy-progress",
-            "routes/gauge.ts#POST /hooks/gauge",
-            "routes/hooks.ts#POST /hooks/dispatch-event"
           ]
         },
         "parseCopyReport": {
