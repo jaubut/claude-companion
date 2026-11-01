@@ -9,8 +9,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 // arbitrary keystrokes into the frontmost terminal. Without auth, anyone on
 // the LAN (or behind Tailscale Serve) could hit /api/inject and execute
 // commands. We require a Bearer token on every state-mutating endpoint and
-// on the WebSocket upgrade, and exempt the local-only /hooks/* surface so
-// the Claude Code hook scripts don't need credentials.
+// on the WebSocket upgrade. /hooks/* takes a direct loopback peer instead so
+// the Claude Code hook scripts don't need credentials (lib/request-gate.ts).
 //
 // Storage: ~/.claude-companion/auth.token (mode 0600). Generated on first
 // boot if missing. Override with COMPANION_AUTH_TOKEN env var if you'd

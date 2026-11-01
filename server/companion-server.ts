@@ -29,6 +29,7 @@ import { createCanvasRoute } from "./routes/canvas"
 import { tursoQuery } from "./lib/turso"
 import { canvasSend, canvasStatus, canvasStore, referencesFor, setCanvasDeliver } from "./wiring/canvas"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
+import { hookCallerAllowed, hostAllowed } from "./lib/request-gate"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
@@ -76,21 +77,24 @@ export function createCompanionServer(port: number) {
     hostname: "0.0.0.0",
     async fetch(req, server) {
       const url = new URL(req.url)
+      // DNS rebinding (lib/request-gate.ts): an unknown Host never reaches a route.
+      if (!hostAllowed(req.headers.get("host"))) return new Response("Misdirected request\n", { status: 421 })
       // TCP peer for the vault's network gate and the resolve/WS audit log
       // (routes only get req + url). Weak map: dies with the Request.
       recordPeer(req, server.requestIP(req)?.address)
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
-      // same machine, so we exempt them from auth (those scripts can't
-      // easily carry credentials and the surface is loopback-only by
-      // convention). `/` and `/health` are open plain-text probes. Everything
-      // else — /ws, /api/* — requires a valid Bearer token. Without this gate any device on the
+      // same machine, which carry no credentials: /hooks/* needs a direct
+      // loopback peer (not tailscale serve) OR the Bearer — a tailnet/LAN
+      // caller could otherwise push fake approval cards, register sessions
+      // or end real ones. `/` and `/health` are open plain-text probes.
+      // Everything else — /ws, /api/* — requires a valid Bearer token. Without this gate any device on the
       // LAN could hit /api/inject and paste arbitrary keystrokes.
       const isHookCall = url.pathname.startsWith("/hooks/")
-      const isHealth = url.pathname === "/health"
+      if (isHookCall && !hookCallerAllowed(req)) return Response.json({ ok: false, error: "forbidden" }, { status: 403 })
       const isStateMutation = url.pathname === "/ws" || url.pathname.startsWith("/api/")
-      if (isStateMutation && !isHookCall && !isHealth && !checkBearer(req)) {
+      if (isStateMutation && !checkBearer(req)) {
         return unauthorized()
       }
       // A one-shot voice upload streams ~50 chunks + finalize (Deepgram) to the
