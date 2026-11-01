@@ -7145,6 +7145,36 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-restore.ts",
+          "lines": 100,
+          "kind": "lib",
+          "exports": [
+            "herdrEpoch",
+            "BrainIdentity",
+            "brainIdentity",
+            "BrainRestoreDeps",
+            "createBrainRestore",
+            "brainRestore"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-workers.ts",
+            "lib/discover.ts",
+            "lib/herdr.ts",
+            "lib/log.ts",
+            "wiring/brain-workers.ts",
+            "wiring/takeover-liveness.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain-todo.ts",
           "lines": 40,
           "kind": "lib",
@@ -7212,7 +7242,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 599,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -7256,6 +7286,7 @@
             "wiring/gauge.ts",
             "wiring/auto-compact.ts",
             "wiring/brain-workers.ts",
+            "wiring/brain-restore.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/dispatch.ts"
@@ -8356,6 +8387,7 @@
           "callers": [
             "companion-server.ts",
             "routes/brain.ts",
+            "wiring/brain-restore.ts",
             "wiring/brain.ts"
           ]
         },
@@ -8921,6 +8953,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-restore.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -9579,6 +9612,7 @@
             "routes/brain.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
@@ -10261,6 +10295,7 @@
             "lib/session-pane.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
           ]
@@ -10275,6 +10310,7 @@
             "lib/session-pane.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/dialogs.ts"
@@ -13014,6 +13050,7 @@
           "module": "lib/discover.ts",
           "callers": [
             "lib/worker-hook-gate.ts",
+            "wiring/brain-restore.ts",
             "wiring/brain-workers.ts"
           ]
         },
@@ -15249,6 +15286,25 @@
             "wiring/triage.ts"
           ]
         },
+        "AgentLookup": {
+          "module": "wiring/takeover-liveness.ts",
+          "callers": [
+            "wiring/brain-restore.ts"
+          ]
+        },
+        "envValue": {
+          "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-restore.ts"
+          ]
+        },
+        "brainLiveness": {
+          "module": "wiring/brain-workers.ts",
+          "callers": [
+            "wiring/brain-restore.ts",
+            "wiring/brain.ts"
+          ]
+        },
         "addTodo": {
           "module": "lib/my-tasks.ts",
           "callers": [
@@ -15547,8 +15603,8 @@
             "wiring/brain.ts"
           ]
         },
-        "brainLiveness": {
-          "module": "wiring/brain-workers.ts",
+        "brainRestore": {
+          "module": "wiring/brain-restore.ts",
           "callers": [
             "wiring/brain.ts"
           ]
