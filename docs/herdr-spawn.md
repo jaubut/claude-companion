@@ -1,18 +1,22 @@
 # Phone spawn → herdr (Mac + Zettlab)
 
 `POST /api/spawn-session` with `app: "auto"` (the phone default) starts the agent in a
-**herdr workspace** when herdr's gate passes (`gateReason()` in
-`~/.claude/tools/herdr-client.ts`: server up, protocol 22, version in
-`DISPATCH_HERDR_VERSIONS`, default `0.9.5,0.9.3`). Gate fails → the old tmux path:
-Terminal/iTerm on the Mac, a detached 220x60 tmux session on Linux. A failure *after* the
-gate never falls back (a workspace may exist; a fallback would start a second agent).
+**herdr workspace**, and only there (herdr-only Stage 1, docs/herdr-only-migration.md).
+herdr's gate (`gateReason()` in `~/.claude/tools/herdr-client.ts`: server up, protocol 22,
+version pinned) must pass, else the spawn fails with 400
+**`herdr_unavailable: <reason>`**. There is no tmux fallback.
+
+Version pin: one env var, **`DISPATCH_HERDR_VERSIONS`** (comma-separated, the same one
+claude-config's `dispatch-run` reads), default `0.9.5` (`HERDR_DEFAULT_PIN` in
+`server/lib/herdr.ts`). Upgrading herdr = install, then add the new version to this var
+on the host (or bump the default) before spawning; an unpinned herdr fails every spawn.
 
 | app | Mac | Linux (Zettlab) |
 |---|---|---|
-| `auto` | herdr → Terminal/iTerm tmux | herdr → detached tmux |
+| `auto` | herdr only | herdr only |
 | `herdr` | herdr only | herdr only |
-| `tmux` | detached tmux | detached tmux |
-| `terminal` / `iterm` | that app | error (macOS-only) |
+| `tmux` | 400 `tmux_retired` | 400 `tmux_retired` |
+| `terminal` / `iterm` | that app (tmux inside; kept for now) | error (macOS-only) |
 
 Same code path on both hosts (`spawnInHerdr`, `spawnMacAuto` in
 `server/lib/spawn-session.ts`): `~` → `~/work` on Linux, folder trust pre-seeded, kimi
@@ -35,7 +39,7 @@ task: the row stays blocked) — `server/lib/spawn-seed.ts`:
   the task is ever the first character Claude Code reads), typed through the `/api/inject` guards once the session in
   the spawned herdr pane registers (≤ 2 min; start dialogs / a not-ready pane are waited out, a
   typed-but-unsubmitted seed is never retyped). Reply `seed: "pending"`, or `"unsupported"` when
-  the spawn fell back to tmux (no pane to match). Both refused on `agent: "shell"` (400 `agent_only`).
+  the spawn has no herdr pane to match (Mac `terminal` / `iterm`). Both refused on `agent: "shell"` (400 `agent_only`).
 
 Not changed: the Zettlab `~/.bashrc` `claude()` tmux wrapper (manual SSH launches) and
 dispatch workers (`DISPATCH_WORKER=1`, hidden from the picker). Both share the one herdr
