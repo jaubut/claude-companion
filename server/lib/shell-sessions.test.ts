@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  SHELL_OPTION, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, loginShell, parseShellList,
+  SHELL_OPTION, closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, loginShell, parseShellList,
   shellNewSessionArgv, shellWire, spawnShellSession, store, wireSessions, type ShellSession,
 } from "./shell-sessions"
 import { resolveSpawnCwd } from "./spawn-session"
@@ -153,6 +153,74 @@ test("spawn shell: the tag can't be set → an error, not an untracked shell rep
   const r = await spawnShellSession("/x/repo", f.deps)
   expect(r.ok).toBe(false)
   expect(f.calls.at(-1)).toContain("kill-session")
+})
+
+// ── Close (POST /api/shell/close) ──
+
+const CLOSE_LIST = "sh-a\t1\t%7\t/x\t1700000000\t/tmp/tmux-501/default\t70\nsh-b\t1\t%8\t/y\t1700000001\t/tmp/tmux-501/default\t80\n"
+
+// list-sessions shows sh-a and sh-b until a kill of that `=name` lands (unless `unkillable`).
+function fakeCloseTmux(opts: { unkillable?: boolean; killCode?: number } = {}) {
+  const calls: string[][] = []
+  const killed = new Set<string>()
+  const run: DetachedDeps["run"] = async (argv) => {
+    calls.push(argv)
+    if (argv.includes("kill-session")) {
+      if (!opts.unkillable) killed.add(argv.at(-1)!.slice(1))
+      return { code: opts.killCode ?? 0, stdout: "", stderr: "" }
+    }
+    if (argv.includes("list-sessions")) {
+      return { code: 0, stdout: CLOSE_LIST.split("\n").filter((l) => !killed.has(l.split("\t")[0]!)).join("\n"), stderr: "" }
+    }
+    return { code: 0, stdout: "", stderr: "" }
+  }
+  return { run, calls }
+}
+
+test("close shell: detaches first, kills the exact name, drops the row, broadcasts once", async () => {
+  store.replace(parseShellList(CLOSE_LIST, ""))
+  const f = fakeCloseTmux()
+  const order: string[] = []
+  const seen: string[][] = []
+  const off = store.on((l) => seen.push(l.map((s) => s.name)))
+  const r = await closeShellSession("sh-a", [], (key) => { order.push(`detach ${key}`); order.push(`kills so far ${f.calls.length}`) }, f)
+  off()
+  expect(r).toEqual({ ok: true, gone: false })
+  expect(order).toEqual(["detach shell:sh-a", "kills so far 0"])
+  expect(f.calls[0]!.slice(-3)).toEqual(["kill-session", "-t", "=sh-a"])
+  expect(listShellSessions().map((s) => s.name)).toEqual(["sh-b"])
+  expect(seen).toEqual([["sh-b"]])
+  // A retry after the row left: ok, gone.
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: true })
+})
+
+test("close shell: not in the list → unknown_shell, nothing run", async () => {
+  store.replace(parseShellList(CLOSE_LIST, ""))
+  const f = fakeCloseTmux()
+  expect(await closeShellSession("dispatch-x", [], () => undefined, f)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(f.calls).toEqual([])
+})
+
+test("close shell: a Claude in the shell (linked or on its pane) → claude_running, nothing run", async () => {
+  const f = fakeCloseTmux()
+  store.replace(parseShellList(CLOSE_LIST, "").map((s) => (s.name === "sh-a" ? { ...s, claudeKey: "claude:1" } : s)))
+  expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
+  const agent = { key: "claude:2", pid: "", tmuxPane: "%8", tmuxSocket: "/tmp/tmux-501/default" }
+  expect(await closeShellSession("sh-b", [agent], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-b", [{ ...agent, tmuxSocket: "/other" }], () => undefined, f)).toMatchObject({ ok: true })
+  expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.at(-1))).toEqual(["=sh-b"])
+})
+
+test("close shell: the session survives the kill → kill_failed, row kept", async () => {
+  store.replace(parseShellList(CLOSE_LIST, ""))
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ unkillable: true }))).toEqual({ ok: false, error: "kill_failed" })
+  expect(listShellSessions().map((s) => s.name)).toEqual(["sh-a", "sh-b"])
+})
+
+test("close shell: kill-session fails because it already exited → ok, gone", async () => {
+  store.replace(parseShellList(CLOSE_LIST, ""))
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ killCode: 1 }))).toEqual({ ok: true, gone: true })
+  store.replace([])
 })
 
 test("resolveSpawnCwd: required, absolute, existing, a directory", () => {

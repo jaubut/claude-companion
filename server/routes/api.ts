@@ -14,7 +14,7 @@ import { repoEntriesSafe } from "../lib/live-repo"
 import { deleteEnded, endedStore, resumeInPane } from "../lib/ended-sessions"
 import { herdrGatedKey, herdrGatedText } from "../lib/herdr"
 import { keyGate } from "../lib/key-gate"
-import { spawnShellSession, wireSessions } from "../lib/shell-sessions"
+import { closeShellSession, spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
 import { clearWaitingForTarget, getSessionByKey, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
@@ -33,6 +33,7 @@ import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
 import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
 import { announceWaiting } from "../wiring/waiting"
+import { detachTerminals } from "../wiring/shell-sessions"
 import { withIdempotency } from "../lib/idempotency"
 import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
 
@@ -271,6 +272,25 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       return Response.json(r)
     }
     const status = { target_gone: 410, pane_busy: 409, close_failed: 502 }[r.error]
+    return Response.json(r, { status })
+  }
+
+  // ── Close a terminal row (lib/shell-sessions.ts closeShellSession) ──
+  // {name} → 200 {ok, gone} (gone: it had already exited) | 400 bad_name |
+  // 404 unknown_shell (not in the shell list) | 409 claude_running | 502 kill_failed.
+  // The row leaves every client through the shell store's `sessions` broadcast.
+  if (url.pathname === "/api/shell/close" && req.method === "POST") {
+    const refused = shellNetworkRefusal(req)
+    if (refused) return refused
+    const body = await req.json().catch(() => ({})) as { name?: unknown }
+    const name = typeof body.name === "string" ? body.name : ""
+    if (!name || name.length > 200) return Response.json({ ok: false, error: "bad_name" }, { status: 400 })
+    const r = await closeShellSession(name, listSessions(), detachTerminals)
+    if (r.ok) {
+      companionLog(`\x1b[35mshell closed\x1b[0m ${name}${r.gone ? " (already gone)" : ""}`)
+      return Response.json(r)
+    }
+    const status = { unknown_shell: 404, claude_running: 409, kill_failed: 502 }[r.error]
     return Response.json(r, { status })
   }
 
