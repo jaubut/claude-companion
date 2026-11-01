@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
@@ -15,13 +16,15 @@ import { redactSecrets } from "../lib/secret-redact"
 //     branch is validated; the brain never passes a command.
 //   - a detached git worktree of origin/<branch> under the previews dir (never
 //     the repo's main checkout, never ~/.claude), reused across starts and kept
-//     on stop; `bun install` when node_modules is missing.
+//     on stop, but fetched and force-checked-out to origin/<branch> on every
+//     start; `bun install --ignore-scripts` when node_modules is missing.
 //   - the dev binary (astro / vite) from node_modules/.bin, chosen from the dev
 //     script's text but never running it, bound to 127.0.0.1 on a free port,
-//     with a minimal env: no server secrets, no .env (the worktree has none).
+//     with a minimal env: no server secrets, no .env (the worktree has none),
+//     and a sandbox HOME under the previews dir (dispatch/* code is unreviewed).
 //   - lib/preview-proxy.ts in front (counts requests, passes HMR websockets),
 //     exposed by `tailscale serve --https=<fixed port>`; never funnel.
-//   - one preview per repo; 2 h without a request, a DELETE or the dev server
+//   - one preview per repo, one start/stop in flight per repo; 2 h without a request, a DELETE or the dev server
 //     exiting stops it: process group killed, serve mapping removed.
 // A failed start answers the dev log's last lines, redacted, never env contents.
 
@@ -93,11 +96,16 @@ export function devArgs(bin: "astro" | "vite", port: number): string[] {
   return bin === "astro" ? ["dev", "--host", "127.0.0.1", "--port", p] : ["--host", "127.0.0.1", "--port", p, "--strictPort"]
 }
 
-/** The only env a preview process gets: no tokens from the companion server's own env. */
-export function previewEnv(host: string | null): Record<string, string> {
+/** The worktree folder for a branch: `/` made path-safe plus a short hash of the raw name, so feat/x and feat__x never share one. */
+export function branchDir(branch: string): string {
+  return `${branch.replace(/\//g, "__")}-${createHash("sha256").update(branch).digest("hex").slice(0, 8)}`
+}
+
+/** The only env a preview process gets: no tokens from the companion server's own env, never the real HOME. */
+export function previewEnv(host: string | null, home: string): Record<string, string> {
   const env: Record<string, string> = {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-    HOME: process.env.HOME || homedir(),
+    HOME: home,
     LANG: process.env.LANG ?? "C.UTF-8",
     NODE_ENV: "development",
     BROWSER: "none",
@@ -116,30 +124,45 @@ export function logTail(file: string): string[] {
 
 export function createPreviews(deps: PreviewDeps) {
   const live = new Map<string, Live>()
-  const starting = new Map<string, Promise<Out>>()
+  const ops = new Map<string, Promise<unknown>>()
+  const home = join(deps.root, ".home")
   const view = (l: Live) => ({
     repo: l.repo, branch: l.branch, url: l.url,
     since: new Date(l.since).toISOString(), lastRequestAt: new Date(l.lastHit).toISOString(),
     idleStopAt: new Date(l.lastHit + IDLE_MS).toISOString(),
   })
-  const sh = (cmd: string, args: string[], cwd: string, timeoutMs = 60_000) => deps.sh(cmd, args, { cwd, timeoutMs, env: previewEnv(null) })
+  const sh = (cmd: string, args: string[], cwd: string, timeoutMs = 60_000) => deps.sh(cmd, args, { cwd, timeoutMs, env: previewEnv(null, home) })
+  /** One start/stop in flight per repo: each op runs after the previous one settles. */
+  function serial<T>(repo: string, op: () => Promise<T>): Promise<T> {
+    const p = (ops.get(repo) ?? Promise.resolve()).then(op, op)
+    const tail = p.catch(() => {})
+    ops.set(repo, tail)
+    void tail.then(() => { if (ops.get(repo) === tail) ops.delete(repo) })
+    return p
+  }
   const serveOff = (port: number) => sh("tailscale", ["serve", `--https=${port}`, "off"], "/", 20_000)
 
+  /** The worktree at origin/<branch>'s current head: fetched on every start, created once, then force-checked-out. */
   async function worktree(repoPath: string, wt: string, branch: string): Promise<Out | null> {
-    if (existsSync(join(wt, ".git"))) return null
-    await sh("git", ["-C", repoPath, "fetch", "--quiet", "origin", branch], repoPath, 90_000)
+    // The fetch keeps the server's normal env (SSH agent / credential helper).
+    const fetched = await deps.sh("git", ["-C", repoPath, "fetch", "--quiet", "origin", branch], { cwd: repoPath, timeoutMs: 90_000 })
+    if (!fetched.ok) return fail(502, "fetch_failed", { detail: redactSecrets(fetched.err.trim()).slice(-300) })
     const ref = `refs/remotes/origin/${branch}`
     if (!(await sh("git", ["-C", repoPath, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repoPath)).ok) return fail(404, "branch_not_found", { branch })
-    await sh("git", ["-C", repoPath, "worktree", "prune"], repoPath)
-    mkdirSync(join(wt, ".."), { recursive: true })
-    const add = await sh("git", ["-C", repoPath, "worktree", "add", "--detach", wt, ref], repoPath)
-    return add.ok ? null : fail(502, "worktree_failed", { detail: redactSecrets(add.err.trim()).slice(-300) })
+    if (!existsSync(join(wt, ".git"))) {
+      await sh("git", ["-C", repoPath, "worktree", "prune"], repoPath)
+      mkdirSync(join(wt, ".."), { recursive: true })
+      const add = await sh("git", ["-C", repoPath, "worktree", "add", "--detach", wt, ref], repoPath)
+      if (!add.ok) return fail(502, "worktree_failed", { detail: redactSecrets(add.err.trim()).slice(-300) })
+    }
+    const co = await sh("git", ["-C", wt, "checkout", "--detach", "--force", `origin/${branch}`], wt)
+    return co.ok ? null : fail(502, "checkout_failed", { detail: redactSecrets(co.err.trim()).slice(-300) })
   }
 
   async function install(dirs: string[]): Promise<Out | null> {
     for (const dir of [...new Set(dirs)]) {
       if (!existsSync(join(dir, "package.json")) || isDir(join(dir, "node_modules"))) continue
-      const r = await sh("bun", ["install"], dir, INSTALL_MS)
+      const r = await sh("bun", ["install", "--ignore-scripts"], dir, INSTALL_MS)
       if (!r.ok) return fail(502, "install_failed", { log: (r.err || r.out).trim().split("\n").slice(-TAIL_LINES).map((l) => redactSecrets(l).slice(0, 300)) })
     }
     return null
@@ -150,7 +173,7 @@ export function createPreviews(deps: PreviewDeps) {
     if (!repoPath) return fail(404, "repo_not_found", { repo })
     const host = await deps.tailnetHost()
     if (!host) return fail(503, "tailscale_unavailable")
-    const wt = join(deps.root, repo, branch.replace(/\//g, "__"))
+    const wt = join(deps.root, repo, branchDir(branch))
     const refusal = await worktree(repoPath, wt, branch)
     if (refusal) return refusal
     const plan = devPlan(wt)
@@ -163,7 +186,8 @@ export function createPreviews(deps: PreviewDeps) {
     const logFile = join(deps.root, `${repo}.log`)
     const servePort = PREVIEW_REPOS[repo]!
     let entry: Live | null = null
-    const proc = deps.spawnDev([bin, ...devArgs(plan.bin, port)], plan.cwd, previewEnv(host), logFile, () => {
+    mkdirSync(home, { recursive: true })
+    const proc = deps.spawnDev([bin, ...devArgs(plan.bin, port)], plan.cwd, previewEnv(host, home), logFile, () => {
       if (entry && live.get(repo) === entry) void stop(repo, "exited")
     })
     if (!(await deps.ready(port, proc, READY_MS))) {
@@ -180,22 +204,30 @@ export function createPreviews(deps: PreviewDeps) {
       e.proxy.stop()
       return fail(502, "serve_failed", { detail: redactSecrets(serve.err.trim()).slice(-300) })
     }
+    if (proc.exited) {
+      // Died while serve was being set up: its onExit saw no live entry, so clean up here.
+      e.proxy.stop()
+      await serveOff(servePort)
+      return fail(502, "dev_failed", { log: logTail(logFile) })
+    }
     live.set(repo, e)
     companionLog(`[preview] ${repo}@${branch} up at ${e.url} (dev 127.0.0.1:${port})`)
     return { status: 200, body: { ok: true, ...view(e), reused: false } }
   }
 
-  async function start(repo: string, branch: string): Promise<Out> {
-    const l = live.get(repo)
-    if (l) return { status: 200, body: { ok: true, ...view(l), reused: true } }
-    const pending = starting.get(repo)
-    if (pending) return pending
-    const p = launch(repo, branch).finally(() => starting.delete(repo))
-    starting.set(repo, p)
-    return p
+  function start(repo: string, branch: string): Promise<Out> {
+    return serial(repo, async () => {
+      const l = live.get(repo)
+      if (l) return { status: 200, body: { ok: true, ...view(l), reused: true } }
+      return launch(repo, branch)
+    })
   }
 
-  async function stop(repo: string, why = "stopped"): Promise<Out> {
+  function stop(repo: string, why = "stopped"): Promise<Out> {
+    return serial(repo, () => stopNow(repo, why))
+  }
+
+  async function stopNow(repo: string, why: string): Promise<Out> {
     const l = live.get(repo)
     if (!l) return fail(404, "not_running", { repo })
     live.delete(repo)
