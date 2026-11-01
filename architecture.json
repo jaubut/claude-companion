@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31",
+  "generatedAt": "2026-11-01",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 177,
+          "lines": 179,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -92,6 +92,7 @@
             "routes/brain.ts",
             "wiring/brain.ts",
             "wiring/brain-workers.ts",
+            "wiring/turso-watch.ts",
             "lib/brain.ts",
             "wiring/auto-deploy.ts"
           ],
@@ -5549,6 +5550,47 @@
           "externals": []
         },
         {
+          "path": "lib/turso-watch.ts",
+          "lines": 279,
+          "kind": "lib",
+          "exports": [
+            "WATCH_TICK_MS",
+            "COALESCE_MS",
+            "EVENT_ITEMS_MAX",
+            "READ_LIMIT",
+            "LOOKBACK",
+            "OVERDUE_DAYS",
+            "SELF_SLUGS",
+            "NOISE_TAGS",
+            "SignalName",
+            "Item",
+            "shortTitle",
+            "SIGNALS",
+            "WatchState",
+            "emptyState",
+            "parseState",
+            "eventText",
+            "WatchDeps",
+            "createTursoWatch",
+            "TursoWatch"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/my-tasks.ts",
+            "lib/resolver.ts",
+            "lib/tasks-agent.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/turso.ts",
           "lines": 168,
           "kind": "lib",
@@ -8044,6 +8086,33 @@
           "externals": []
         },
         {
+          "path": "wiring/turso-watch.ts",
+          "lines": 35,
+          "kind": "lib",
+          "exports": [
+            "startTursoWatch"
+          ],
+          "state": [
+            "let started"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/turso.ts",
+            "lib/turso-watch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/waiting.ts",
           "lines": 78,
           "kind": "lib",
@@ -8213,7 +8282,8 @@
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage.ts",
-            "wiring/trips.ts"
+            "wiring/trips.ts",
+            "wiring/turso-watch.ts"
           ]
         },
         "createCanvasRoute": {
@@ -8338,6 +8408,12 @@
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "ws.ts"
+          ]
+        },
+        "startTursoWatch": {
+          "module": "wiring/turso-watch.ts",
+          "callers": [
+            "companion-server.ts"
           ]
         },
         "WsData": {
@@ -8889,6 +8965,7 @@
             "wiring/triage-repos.ts",
             "wiring/triage.ts",
             "wiring/trips.ts",
+            "wiring/turso-watch.ts",
             "ws.ts"
           ]
         },
@@ -9415,7 +9492,8 @@
             "lib/mytask-triage.ts",
             "lib/tasks-agent-load.ts",
             "lib/tasks-agent-rules.ts",
-            "lib/tasks-agent.ts"
+            "lib/tasks-agent.ts",
+            "lib/turso-watch.ts"
           ]
         },
         "usdRowSql": {
@@ -9445,6 +9523,7 @@
             "lib/tasks-agent.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
+            "lib/turso-watch.ts",
             "routes/goals.ts",
             "wiring/auto-compact.ts"
           ]
@@ -9468,6 +9547,7 @@
             "lib/triage-sources.ts",
             "lib/trip-autofile.ts",
             "lib/trip-dashboard.ts",
+            "lib/turso-watch.ts",
             "routes/body.ts",
             "routes/canvas.ts",
             "routes/goals.ts",
@@ -9490,7 +9570,8 @@
             "lib/tasks-agent-row.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
-            "lib/triage-sources.ts"
+            "lib/triage-sources.ts",
+            "lib/turso-watch.ts"
           ]
         },
         "BODY_CACHE_TTL_MS": {
@@ -9527,6 +9608,7 @@
           "module": "lib/brain.ts",
           "callers": [
             "lib/brain-workers.ts",
+            "lib/turso-watch.ts",
             "routes/brain.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
@@ -9545,7 +9627,8 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/turso-watch.ts"
           ]
         },
         "Judgement": {
@@ -12254,6 +12337,7 @@
           "callers": [
             "lib/tasks-agent-chat.ts",
             "lib/tasks-agent.ts",
+            "lib/turso-watch.ts",
             "wiring/auto-compact.ts"
           ]
         },
@@ -12873,6 +12957,13 @@
           "module": "lib/trip-store.ts",
           "callers": [
             "lib/trip-service.ts"
+          ]
+        },
+        "RESOLVER_SLUG": {
+          "module": "lib/resolver.ts",
+          "callers": [
+            "lib/turso-watch.ts",
+            "wiring/resolver.ts"
           ]
         },
         "finalizeRecording": {
@@ -14215,7 +14306,8 @@
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/turso-watch.ts"
           ]
         },
         "writeCtx": {
@@ -14242,7 +14334,8 @@
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/turso-watch.ts"
           ]
         },
         "getTask": {
@@ -15420,7 +15513,8 @@
         "getKv": {
           "module": "lib/brain-store.ts",
           "callers": [
-            "wiring/brain.ts"
+            "wiring/brain.ts",
+            "wiring/turso-watch.ts"
           ]
         },
         "takeDeliveries": {
@@ -15438,7 +15532,8 @@
         "setKv": {
           "module": "lib/brain-store.ts",
           "callers": [
-            "wiring/brain.ts"
+            "wiring/brain.ts",
+            "wiring/turso-watch.ts"
           ]
         },
         "proposeSeen": {
@@ -16293,12 +16388,6 @@
             "wiring/resolver.ts"
           ]
         },
-        "RESOLVER_SLUG": {
-          "module": "lib/resolver.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
         "routeTask": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -16852,6 +16941,18 @@
           "module": "lib/trip-autofile.ts",
           "callers": [
             "wiring/trips.ts"
+          ]
+        },
+        "createTursoWatch": {
+          "module": "lib/turso-watch.ts",
+          "callers": [
+            "wiring/turso-watch.ts"
+          ]
+        },
+        "WATCH_TICK_MS": {
+          "module": "lib/turso-watch.ts",
+          "callers": [
+            "wiring/turso-watch.ts"
           ]
         },
         "clearSessionWaiting": {
