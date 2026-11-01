@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DETACHED_COLS, DETACHED_ROWS, buildInner, buildTmuxLaunch, detachedNewSessionArgs, detachedSpawnArgv, ensureFolderTrusted, homeSpawnCwd, spawnInTmuxDetached } from "./spawn-session"
+import { DETACHED_COLS, DETACHED_ROWS, buildInner, detachedNewSessionArgs, detachedSpawnArgv, ensureFolderTrusted, homeSpawnCwd, spawnInTmuxDetached } from "./spawn-session"
 import type { DetachedDeps } from "./tmux-spawn-confirm"
 
 // The inner command tmux runs. Both spawn paths build it here — the Mac one
@@ -119,20 +119,6 @@ test("headless spawn argv: set → -L <name> -f <conf> ahead of new-session, siz
     "tmux", "-L", "cc", "-f", "/home/a/.tmux/cc.conf",
     "new-session", "-d", "-x", "220", "-y", "60", "-s", "cc-repo", "/bin/sh", "-c", "cd '/x' && claude",
   ])
-})
-
-test("Terminal/iTerm launch line: unset → byte-identical to the pre-socket form", () => {
-  expect(buildTmuxLaunch("/x", "cc-x", "claude", undefined, {})).toBe(
-    `tmux new-session -s 'cc-x' 'cd '\\''/x'\\'' && claude' \\; set-option -t 'cc-x' detach-on-destroy on`,
-  )
-})
-
-test("Terminal/iTerm launch line: set → quoted -L/-f before new-session", () => {
-  const line = buildTmuxLaunch("/x", "cc-x", "claude", undefined, {
-    COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/Users/j/My Conf's/cc.conf",
-  })
-  expect(line.startsWith(`tmux -L 'cc' -f '/Users/j/My Conf'\\''s/cc.conf' new-session -s 'cc-x' `)).toBe(true)
-  expect(line.endsWith(` \\; set-option -t 'cc-x' detach-on-destroy on`)).toBe(true)
 })
 
 // Takeover worktree: carry the main checkout's MCP choices, else disable every .mcp.json server.

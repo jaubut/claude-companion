@@ -4398,16 +4398,17 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 584,
+          "lines": 493,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
             "TMUX_RETIRED",
+            "APP_RETIRED",
+            "APP_RETIRED_HINT",
             "SpawnApp",
             "SpawnAgent",
             "buildInner",
             "SpawnResult",
-            "buildTmuxLaunch",
             "DETACHED_COLS",
             "DETACHED_ROWS",
             "detachedNewSessionArgs",
@@ -4418,13 +4419,17 @@
             "HERDR_START_TIMEOUT_MS",
             "HerdrSpawnOpts",
             "spawnInHerdr",
+            "ghosttyOpenArgv",
+            "spawnInGhostty",
             "spawnMacAuto",
             "spawnLinux",
             "homeSpawnCwd",
             "resolveSpawnCwd",
             "spawnCompanionSession"
           ],
-          "state": [],
+          "state": [
+            "RETIRED_APPS: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -10512,7 +10517,8 @@
         "herdrOwnerFor": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/herdr-workspace.ts"
+            "lib/herdr-workspace.ts",
+            "lib/spawn-session.ts"
           ]
         },
         "forgetHerdrAgent": {
@@ -12289,6 +12295,12 @@
         },
         "noteHerdrAgent": {
           "module": "lib/herdr.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "TmuxArgvRunner": {
+          "module": "lib/tmux-spawn-confirm.ts",
           "callers": [
             "lib/spawn-session.ts"
           ]
