@@ -7,13 +7,15 @@ import type { QueryFn, Row, SqlArg } from "./turso"
 // Brain Turso watcher, pure core (wiring/turso-watch.ts runs it): every tick,
 // read the important Turso changes since a per-signal high-water mark and hand
 // the brain ONE grouped `[event]` at most every 3 min. Only ids, ref_codes,
-// invoice numbers and short task titles reach the text — never a body, raw_text
-// or ticket title: the brain reads content itself, as untrusted data.
+// invoice numbers and enum fields reach the text — never a body, raw_text, task
+// text or ticket title: the brain reads content itself, as untrusted data.
 //
 // Marks are DB time (the row's own updated_at / created_at), never the host
 // clock, and every read re-scans LOOKBACK before the mark: a row written with a
 // slightly older timestamp is still seen, and the (signal, id, state) dedupe
-// absorbs the overlap. Never read: the journal folder, token_usage,
+// absorbs the overlap. Reads page through (at, id) with a persisted keyset
+// cursor, so a burst bigger than READ_LIMIT drains instead of re-reading the
+// same page forever. Never read: the journal folder, token_usage,
 // token_sessions, brain-log / brain-memory / session-archive notes, and task
 // changes the brain or this server logged in agent_activity.
 
@@ -49,26 +51,24 @@ interface Signal {
   at: string | null
   /** Columns this signal reads (probed with pragma_table_info; a missing one disables the signal). */
   needs: string[]
-  /** Rows changed since `mark` (DB time). Columns: id, at, and what `label` reads. */
+  /** Rows changed since `mark` (DB time), after the cursor. Columns: id, at, and what `label` reads. */
   sql: string
-  args(mark: string, today: string): SqlArg[]
+  /** `w`: the since() args (mark, then cursor). */
+  args(w: SqlArg[], today: string): SqlArg[]
   item(r: Row): Item
 }
 
 const ph = (n: number): string => Array.from({ length: n }, () => "?").join(", ")
 const s = (v: unknown): string => (v == null ? "" : String(v))
-/** A short system title: one line, ≤ 60 chars, no brackets or quotes that could pass for event syntax. */
-export const shortTitle = (v: unknown): string => {
-  const t = s(v).replace(/[\s\[\]"`]+/g, " ").trim()
-  return t.length > 60 ? `${t.slice(0, 59)}…` : t
-}
-// An empty mark (the table was empty at seed time) reads every row.
-const since = (col: string): string => `${col} > COALESCE(datetime(?, '${LOOKBACK}'), '')`
+// An empty mark (the table was empty at seed time) reads every row. Then keyset on (col, id) past the cursor (null: from the start).
+const since = (col: string, id = "id"): string =>
+  `${col} > COALESCE(datetime(?, '${LOOKBACK}'), '') AND (? IS NULL OR ${col} > ? OR (${col} = ? AND ${id} > ?))`
 /** The task's latest change was not logged by the brain or this server. */
 const NOT_SELF = `NOT EXISTS (SELECT 1 FROM agent_activity a WHERE a.target_kind = 'task' AND a.target_id = t.id ` +
   `AND a.agent_slug IN (${ph(SELF_SLUGS.length)}) AND a.ts >= datetime(t.updated_at, '-5 seconds'))`
 const NOT_AGENT = "(t.assignee IS NULL OR t.assignee NOT LIKE 'agent:%')"
-const taskItem = (signal: SignalName) => (r: Row): Item => ({ signal, id: s(r.id), label: `${s(r.id).slice(0, 8)} ${shortTitle(r.text)}`.trim() })
+// Never tasks.text: free text written by anyone, untrusted.
+const taskItem = (signal: SignalName) => (r: Row): Item => ({ signal, id: s(r.id), label: s(r.id).slice(0, 8) })
 const noteTagsClean = NOISE_TAGS.map(() => "COALESCE(n.tags, '') NOT LIKE ?").join(" AND ")
 const tagArgs = NOISE_TAGS.map((t) => `%"${t}"%`)
 
@@ -79,31 +79,31 @@ export const SIGNALS: Signal[] = [
     needs: ["id", "processed", "result_id", "created_at"],
     sql: "SELECT id, created_at AS at FROM inbox_entries WHERE processed = 0 AND COALESCE(result_id, '') NOT LIKE 'brain:%' " +
       `AND ${since("created_at")} ORDER BY created_at, id LIMIT ?`,
-    args: (mark) => [mark, READ_LIMIT],
+    args: (w) => [...w, READ_LIMIT],
     item: (r) => ({ signal: "inbox", id: s(r.id), label: s(r.id) }),
   },
   {
     // Agent tasks' blocked moves are announced by the dispatch poller (lib/dispatch-poller.ts): only the rest here.
     name: "task-blocked", label: "task blocked", table: "tasks", at: "updated_at",
-    needs: ["id", "text", "assignee", "dispatch_status", "done", "updated_at"],
-    sql: `SELECT t.id, t.text, t.updated_at AS at FROM tasks t WHERE t.dispatch_status = 'blocked' AND t.done = 0 AND ${NOT_AGENT} ` +
-      `AND ${NOT_SELF} AND ${since("t.updated_at")} ORDER BY t.updated_at, t.id LIMIT ?`,
-    args: (mark) => [...SELF_SLUGS, mark, READ_LIMIT],
+    needs: ["id", "assignee", "dispatch_status", "done", "updated_at"],
+    sql: `SELECT t.id, t.updated_at AS at FROM tasks t WHERE t.dispatch_status = 'blocked' AND t.done = 0 AND ${NOT_AGENT} ` +
+      `AND ${NOT_SELF} AND ${since("t.updated_at", "t.id")} ORDER BY t.updated_at, t.id LIMIT ?`,
+    args: (w) => [...SELF_SLUGS, ...w, READ_LIMIT],
     item: taskItem("task-blocked"),
   },
   {
     name: "task-mine", label: "task for Jeremie", table: "tasks", at: "updated_at",
-    needs: ["id", "text", "assignee", "origin", "done", "updated_at"],
-    sql: `SELECT t.id, t.text, t.updated_at AS at FROM tasks t WHERE t.done = 0 AND t.origin = 'jeremie' ` +
+    needs: ["id", "assignee", "origin", "done", "updated_at"],
+    sql: `SELECT t.id, t.updated_at AS at FROM tasks t WHERE t.done = 0 AND t.origin = 'jeremie' ` +
       `AND (COALESCE(t.assignee, '') = '' OR t.assignee IN (${ph(JEREMIE.length)})) ` +
-      `AND ${NOT_SELF} AND ${since("t.updated_at")} ORDER BY t.updated_at, t.id LIMIT ?`,
-    args: (mark) => [...JEREMIE, ...SELF_SLUGS, mark, READ_LIMIT],
+      `AND ${NOT_SELF} AND ${since("t.updated_at", "t.id")} ORDER BY t.updated_at, t.id LIMIT ?`,
+    args: (w) => [...JEREMIE, ...SELF_SLUGS, ...w, READ_LIMIT],
     item: taskItem("task-mine"),
   },
   {
     name: "task-overdue", label: "task overdue", table: "tasks", at: null,
-    needs: ["id", "text", "assignee", "due_date", "done"],
-    sql: `SELECT t.id, t.text FROM tasks t WHERE t.done = 0 AND ${NOT_AGENT} AND t.due_date >= ? AND t.due_date < ? ORDER BY t.due_date, t.id LIMIT ?`,
+    needs: ["id", "assignee", "due_date", "done"],
+    sql: `SELECT t.id FROM tasks t WHERE t.done = 0 AND ${NOT_AGENT} AND t.due_date >= ? AND t.due_date < ? ORDER BY t.due_date, t.id LIMIT ?`,
     args: (_mark, today) => [addDays(today, -OVERDUE_DAYS), today, READ_LIMIT],
     item: taskItem("task-overdue"),
   },
@@ -113,8 +113,8 @@ export const SIGNALS: Signal[] = [
     needs: ["id", "folder", "tags", "ref_code", "date", "updated_at"],
     sql: `SELECT n.id, n.ref_code, n.updated_at AS at FROM notes n WHERE n.folder = 'meetings' AND ${noteTagsClean} ` +
       // "new": a note dated within 2 days of its write, not an old note re-saved.
-      `AND n.date >= date(n.updated_at, '-2 days') AND ${since("n.updated_at")} ORDER BY n.updated_at, n.id LIMIT ?`,
-    args: (mark) => [...tagArgs, mark, READ_LIMIT],
+      `AND n.date >= date(n.updated_at, '-2 days') AND ${since("n.updated_at", "n.id")} ORDER BY n.updated_at, n.id LIMIT ?`,
+    args: (w) => [...tagArgs, ...w, READ_LIMIT],
     item: (r) => ({ signal: "meeting", id: s(r.id), label: s(r.ref_code) || s(r.id) }),
   },
   {
@@ -122,21 +122,21 @@ export const SIGNALS: Signal[] = [
     name: "ticket", label: "client ticket", table: "client_tickets", at: "created_at",
     needs: ["id", "ref_code", "type", "created_at"],
     sql: `SELECT id, ref_code, type, created_at AS at FROM client_tickets WHERE ${since("created_at")} ORDER BY created_at, id LIMIT ?`,
-    args: (mark) => [mark, READ_LIMIT],
+    args: (w) => [...w, READ_LIMIT],
     item: (r) => ({ signal: "ticket", id: s(r.id), label: `${s(r.ref_code) || s(r.id).slice(0, 8)}${r.type === "feature-request" ? " feature-request" : ""}` }),
   },
   {
     name: "invoice-paid", label: "invoice paid", table: "invoices", at: "updated_at",
     needs: ["id", "number", "status", "updated_at"],
     sql: `SELECT id, number, updated_at AS at FROM invoices WHERE status = 'paid' AND ${since("updated_at")} ORDER BY updated_at, id LIMIT ?`,
-    args: (mark) => [mark, READ_LIMIT],
+    args: (w) => [...w, READ_LIMIT],
     item: (r) => ({ signal: "invoice-paid", id: s(r.id), label: s(r.number) || s(r.id) }),
   },
   {
     name: "invoice-overdue", label: "invoice overdue", table: "invoices", at: "updated_at",
     needs: ["id", "number", "status", "updated_at"],
     sql: `SELECT id, number, updated_at AS at FROM invoices WHERE status = 'overdue' AND ${since("updated_at")} ORDER BY updated_at, id LIMIT ?`,
-    args: (mark) => [mark, READ_LIMIT],
+    args: (w) => [...w, READ_LIMIT],
     item: (r) => ({ signal: "invoice-overdue", id: s(r.id), label: s(r.number) || s(r.id) }),
   },
 ]
@@ -144,19 +144,21 @@ export const SIGNALS: Signal[] = [
 export interface WatchState {
   /** Per signal: the newest DB time read. Absent = not seeded yet (its first read is silent). */
   marks: Partial<Record<SignalName, string>>
+  /** Per signal: last (at, id) read while a page was full; absent = start from mark − LOOKBACK. */
+  cursors: Partial<Record<SignalName, { at: string; id: string | number }>>
   /** `signal:id` → when it was queued: never queued twice. */
   sent: Record<string, number>
   pending: Item[]
   lastEventAt: number
 }
 
-export const emptyState = (): WatchState => ({ marks: {}, sent: {}, pending: [], lastEventAt: 0 })
+export const emptyState = (): WatchState => ({ marks: {}, cursors: {}, sent: {}, pending: [], lastEventAt: 0 })
 
 export function parseState(raw: string | null): WatchState {
   if (!raw) return emptyState()
   try {
     const v = JSON.parse(raw) as Partial<WatchState>
-    return { marks: v.marks ?? {}, sent: v.sent ?? {}, pending: Array.isArray(v.pending) ? v.pending : [], lastEventAt: Number(v.lastEventAt) || 0 }
+    return { marks: v.marks ?? {}, cursors: v.cursors ?? {}, sent: v.sent ?? {}, pending: Array.isArray(v.pending) ? v.pending : [], lastEventAt: Number(v.lastEventAt) || 0 }
   } catch {
     return emptyState()
   }
@@ -164,7 +166,7 @@ export function parseState(raw: string | null): WatchState {
 
 const keyOf = (i: Item): string => `${i.signal}:${i.id}`
 
-/** `Turso: 3 changes - inbox x1 (id 944), task blocked x1 (id 1a2b3c4d Title), …` — at most 10 items, then +N more. */
+/** `Turso: 3 changes - inbox x1 (id 944), task blocked x1 (id 1a2b3c4d), …` — at most 10 items, then +N more. */
 export function eventText(items: Item[], max = EVENT_ITEMS_MAX): string {
   const shown = items.slice(0, max)
   const groups = SIGNALS.map((sig) => ({ sig, labels: shown.filter((i) => i.signal === sig.name).map((i) => i.label) })).filter((g) => g.labels.length)
@@ -189,6 +191,7 @@ export function createTursoWatch(deps: WatchDeps) {
   let cols: Map<string, Set<string>> | null = null
   let failures = 0
   let retryAt = 0
+  let busy = false
   const disabledLogged = new Set<SignalName>()
 
   async function columns(): Promise<Map<string, Set<string>>> {
@@ -209,8 +212,17 @@ export function createTursoWatch(deps: WatchDeps) {
       const [r] = await deps.query("SELECT datetime('now') AS at", [])
       next.marks[sig.name] = s(r?.at)
     }
-    const rows = await deps.query(sig.sql, sig.args(next.marks[sig.name] ?? "", today))
-    if (sig.at) for (const r of rows) if (s(r.at) > (next.marks[sig.name] ?? "")) next.marks[sig.name] = s(r.at)
+    const c = next.cursors[sig.name]
+    const w: SqlArg[] = [next.marks[sig.name] ?? "", c?.at ?? null, c?.at ?? null, c?.at ?? null, c?.id ?? null]
+    const rows = await deps.query(sig.sql, sig.args(w, today))
+    if (sig.at) {
+      for (const r of rows) if (s(r.at) > (next.marks[sig.name] ?? "")) next.marks[sig.name] = s(r.at)
+      // Full page: continue after its last row next tick. Short page: caught up, next tick re-scans the lookback.
+      // ponytail: one page per signal per tick — a 1200-row burst takes 3 ticks; loop pages in-tick if latency matters.
+      const last = rows.at(-1)
+      if (rows.length >= READ_LIMIT && last) next.cursors[sig.name] = { at: s(last.at), id: last.id ?? "" }
+      else delete next.cursors[sig.name]
+    }
     const fresh: Item[] = []
     for (const r of rows) {
       const it = sig.item(r)
@@ -246,7 +258,17 @@ export function createTursoWatch(deps: WatchDeps) {
   }
 
   async function tick(): Promise<void> {
-    if (!deps.enabled()) return
+    // A slow tick still running: skip, never overlap (two scans of one state would queue the same rows twice).
+    if (busy || !deps.enabled()) return
+    busy = true
+    try {
+      await tickOnce()
+    } finally {
+      busy = false
+    }
+  }
+
+  async function tickOnce(): Promise<void> {
     const now = deps.now()
     if (now < retryAt) return
     let next: WatchState
