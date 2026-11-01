@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_THREAD } from "../lib/brain"
 import { type CdpBrowser, cdpBrowser } from "../lib/cdp"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
-import { readInstagram } from "../lib/web-read-instagram"
+import { OffAllowlistError, readInstagram } from "../lib/web-read-instagram"
 import { MIN_GAP_MS, ReadLimiter, UNTRUSTED_NOTICE, checkReadUrl, isAllowedHostUrl } from "../lib/web-read-policy"
 import { orchEmit } from "./orchestrator"
 
@@ -41,30 +41,29 @@ export function createWebReader(deps: WebReadDeps): { read(raw: unknown): Promis
 
   async function readOne(url: string): Promise<WebReadOut> {
     const now = deps.now()
-    const gate = limiter.take(now)
+    const gate = limiter.check(now)
     if (!gate.ok) return { status: 429, body: { ok: false, error: "rate_limited", retryAfterSec: gate.retryAfterSec } }
     const wait = lastAt + MIN_GAP_MS - now
     if (wait > 0) await deps.sleep(wait)
-    lastAt = deps.now()
-
-    pruneScratch(deps.scratchRoot, deps.now())
-    const dir = join(deps.scratchRoot, `${new Date(deps.now()).toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`)
-    mkdirSync(dir, { recursive: true })
-    const io = {
-      sleep: deps.sleep,
-      save: async (name: string, b64: string): Promise<string> => {
-        const path = join(dir, name)
-        await Bun.write(path, Buffer.from(b64, "base64"))
-        return path
-      },
-    }
 
     let tab
     try { tab = await deps.browser.open() } catch (err) {
       companionLog(`[web-read] browser unreachable: ${(err as Error)?.message ?? err}`)
       return { status: 503, body: { ok: false, error: "browser_down" } }
     }
+    // Only a read that reached the browser counts against the budget and the gap.
+    lastAt = deps.now()
+    limiter.record(lastAt)
     try {
+      const dir = scratchDir(deps.scratchRoot, deps.now())
+      const io = {
+        sleep: deps.sleep,
+        save: async (name: string, b64: string): Promise<string> => {
+          const path = join(dir, name)
+          writeFileSync(path, Buffer.from(b64, "base64"), { mode: 0o600 })
+          return path
+        },
+      }
       const got = await readInstagram(tab, url, io)
       if (got.loginRequired) {
         if (!loginAlerted) { loginAlerted = true; deps.event(LOGIN_EVENT) }
@@ -77,6 +76,10 @@ export function createWebReader(deps: WebReadDeps): { read(raw: unknown): Promis
       companionLog(`[web-read] ${got.kind} ok (${got.files.length} files)`)
       return { status: 200, body: { ok: true, untrusted: true, notice: UNTRUSTED_NOTICE, url, finalUrl: got.finalUrl, kind: got.kind, scratchDir: dir, files: got.files, content: data } }
     } catch (err) {
+      if (err instanceof OffAllowlistError) {
+        companionLog(`[web-read] refused: navigation left the allowlist (${err.url.slice(0, 200)})`)
+        return { status: 403, body: { ok: false, error: "url_not_allowed", hint: "The page redirected off instagram.com; nothing was read." } }
+      }
       companionLog(`[web-read] read failed: ${(err as Error)?.message ?? err}`)
       return { status: 502, body: { ok: false, error: "read_failed" } }
     } finally {
@@ -94,6 +97,21 @@ export function createWebReader(deps: WebReadDeps): { read(raw: unknown): Promis
       return run
     },
   }
+}
+
+/**
+ * A fresh 0700 dir for one read under a 0700 root this user owns. The root
+ * lives in /tmp: one another user pre-created (or a symlink) is refused.
+ */
+export function scratchDir(root: string, now: number): string {
+  mkdirSync(root, { recursive: true, mode: 0o700 })
+  const st = lstatSync(root)
+  if (!st.isDirectory() || st.uid !== process.getuid?.()) throw new Error(`scratch root ${root} is not ours`)
+  if ((st.mode & 0o777) !== 0o700) chmodSync(root, 0o700)
+  pruneScratch(root, now)
+  const dir = join(root, `${new Date(now).toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`)
+  mkdirSync(dir, { mode: 0o700 })
+  return dir
 }
 
 /** Drops read dirs older than a day so frames don't pile up. */

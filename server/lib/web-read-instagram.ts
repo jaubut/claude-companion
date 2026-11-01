@@ -1,5 +1,5 @@
 import type { CdpTab } from "./cdp"
-import { BLOCKED_URL_PATTERNS, type PageKind, isAllowedHostUrl, isBlockedUrl, isLoginWallPath, pageKind } from "./web-read-policy"
+import { BLOCKED_URL_PATTERNS, type PageKind, isAllowedHostUrl, isAllowedPageUrl, isBlockedUrl, isLoginWallPath, pageKind } from "./web-read-policy"
 
 // Reads one Instagram page in an open CDP tab (docs/web-read.md). Read-only:
 // the only clicks are a caption's "more" and a carousel's "Next"; no typing.
@@ -144,20 +144,40 @@ const asProbe = (v: unknown): Probe | null => {
   return p && typeof p.path === "string" && typeof p.href === "string" ? { href: p.href, path: p.path, ready: p.ready === true, loginWall: p.loginWall === true } : null
 }
 
-/** Navigates and waits for content or a login wall. */
+/** The navigation (a redirect hop or where it landed) left the allowlist: refused, nothing is read. */
+export class OffAllowlistError extends Error {
+  constructor(readonly url: string) { super("navigation left the allowlist") }
+}
+
+/**
+ * Navigates and waits for content or a login wall. Every main-frame document
+ * request (each redirect hop included) and the final href must be an
+ * allowlisted page. A page that never gets ready throws: it is not a read.
+ */
 async function load(tab: CdpTab, url: string, io: ReadIo): Promise<Probe> {
+  const docs: { frameId: unknown; url: string }[] = []
+  tab.on("Network.requestWillBeSent", (p) => {
+    const req = p.request as { url?: unknown } | undefined
+    if (p.type === "Document" && typeof req?.url === "string") docs.push({ frameId: p.frameId, url: req.url })
+  })
   await tab.send("Network.enable")
   await tab.send("Network.setBlockedURLs", { urls: [...BLOCKED_URL_PATTERNS] })
   const nav = await tab.send("Page.navigate", { url })
   if (typeof nav.errorText === "string" && nav.errorText) throw new Error(`navigate: ${nav.errorText}`)
-  let last: Probe | null = null
+  const checkChain = (): void => {
+    const off = docs.find((d) => d.frameId === nav.frameId && !isAllowedPageUrl(d.url))
+    if (off) throw new OffAllowlistError(off.url)
+  }
   for (let waited = 0; waited < LOAD_TIMEOUT_MS; waited += 500) {
-    last = asProbe(await evaluate(tab, PROBE))
-    if (last && (last.ready || last.loginWall || isLoginWallPath(last.path))) return last
+    checkChain()
+    const last = asProbe(await evaluate(tab, PROBE))
+    if (last && last.href !== "about:blank") {
+      if (!isAllowedPageUrl(last.href)) throw new OffAllowlistError(last.href)
+      if (last.ready || last.loginWall || isLoginWallPath(last.path)) { checkChain(); return last }
+    }
     await io.sleep(500)
   }
-  if (!last) throw new Error("page did not load")
-  return last
+  throw new Error("page did not load in time")
 }
 
 /** Instagram's outbound links go through l.instagram.com/?u=<target>. */

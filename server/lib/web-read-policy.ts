@@ -53,6 +53,11 @@ export function isAllowedHostUrl(raw: string): boolean {
   return ALLOWED_HOSTS.some((re) => re.test(u.hostname.toLowerCase()))
 }
 
+/** An allowlisted page (not a CDN host): what the browser may navigate to or land on. */
+export function isAllowedPageUrl(raw: string): boolean {
+  return isAllowedHostUrl(raw) && PAGE_HOSTS.some((re) => re.test(new URL(raw).hostname.toLowerCase()))
+}
+
 export type UrlCheck = { ok: true; url: string } | { ok: false; error: "bad_url" | "url_not_allowed" | "url_blocked" }
 
 /** The URL the brain asked for: an allowlisted page, never a blocked path. */
@@ -60,7 +65,7 @@ export function checkReadUrl(raw: unknown): UrlCheck {
   if (typeof raw !== "string" || !raw.trim() || raw.length > 2_000) return { ok: false, error: "bad_url" }
   let u: URL
   try { u = new URL(raw.trim()) } catch { return { ok: false, error: "bad_url" } }
-  if (!isAllowedHostUrl(u.href) || !PAGE_HOSTS.some((re) => re.test(u.hostname.toLowerCase()))) return { ok: false, error: "url_not_allowed" }
+  if (!isAllowedPageUrl(u.href)) return { ok: false, error: "url_not_allowed" }
   if (isBlockedUrl(u.href)) return { ok: false, error: "url_blocked" }
   u.hash = ""
   return { ok: true, url: u.href }
@@ -89,15 +94,22 @@ export const READS_PER_HOUR = 20
 export const MIN_GAP_MS = 8_000
 const HOUR = 60 * 60_000
 
-/** Sliding one-hour window. take() records the read when it is allowed. */
+/** Sliding one-hour window. check() only looks, record() counts a read, take() does both. */
 export class ReadLimiter {
   private stamps: number[] = []
   constructor(private readonly max = READS_PER_HOUR) {}
-  take(now: number): { ok: true } | { ok: false; retryAfterSec: number } {
+  check(now: number): { ok: true } | { ok: false; retryAfterSec: number } {
     this.stamps = this.stamps.filter((t) => now - t < HOUR)
     if (this.stamps.length >= this.max) return { ok: false, retryAfterSec: Math.ceil((this.stamps[0]! + HOUR - now) / 1000) }
-    this.stamps.push(now)
     return { ok: true }
+  }
+  record(now: number): void {
+    this.stamps.push(now)
+  }
+  take(now: number): { ok: true } | { ok: false; retryAfterSec: number } {
+    const gate = this.check(now)
+    if (gate.ok) this.record(now)
+    return gate
   }
 }
 

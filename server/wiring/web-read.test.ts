@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { CdpBrowser, CdpTab } from "../lib/cdp"
@@ -15,16 +15,26 @@ type Page = Record<string, unknown | ((expr: string) => unknown)>
 const RECT = { x: 0, y: 0, width: 400, height: 700 }
 const JPEG = Buffer.from("fake-jpeg").toString("base64")
 
-function world(page: Page, opts: { down?: boolean } = {}) {
+function world(page: Page, opts: { down?: boolean; redirects?: string[] } = {}) {
   const calls: { method: string; params: Record<string, unknown> }[] = []
   const events: string[] = []
   const sleeps: number[] = []
   let now = 10_000_000
   let opened = 0
   let closed = 0
+  let down = opts.down === true
+  const listeners: Record<string, ((p: Record<string, unknown>) => void)[]> = {}
   const tab: CdpTab = {
+    on(method, fn) { (listeners[method] ??= []).push(fn) },
     async send(method, params = {}) {
       calls.push({ method, params })
+      if (method === "Page.navigate") {
+        // the main frame's document requests: the asked URL, then each redirect hop
+        for (const url of [String(params.url), ...(opts.redirects ?? [])]) {
+          for (const fn of listeners["Network.requestWillBeSent"] ?? []) fn({ type: "Document", frameId: "main", request: { url } })
+        }
+        return { frameId: "main" }
+      }
       if (method === "Page.captureScreenshot") return { data: JPEG }
       if (method !== "Runtime.evaluate") return {}
       const expr = String(params.expression)
@@ -34,7 +44,7 @@ function world(page: Page, opts: { down?: boolean } = {}) {
     },
     async close() { closed++ },
   }
-  const browser: CdpBrowser = { async open() { if (opts.down) throw new Error("ECONNREFUSED"); opened++; return tab } }
+  const browser: CdpBrowser = { async open() { if (down) throw new Error("ECONNREFUSED"); opened++; return tab } }
   const scratchRoot = mkdtempSync(join(tmpdir(), "cc-web-scratch-"))
   const reader = createWebReader({
     browser,
@@ -47,6 +57,7 @@ function world(page: Page, opts: { down?: boolean } = {}) {
   return {
     reader, calls, events, sleeps, scratchRoot,
     advance: (ms: number) => { now += ms },
+    setDown: (v: boolean) => { down = v },
     counts: () => ({ opened, closed }),
     tags: () => calls.filter((c) => c.method === "Runtime.evaluate").map((c) => /^\/\*(\w+)\*\//.exec(String(c.params.expression))?.[1]),
   }
@@ -190,5 +201,66 @@ describe("rate limit and polite delay", () => {
     const w = world(REEL, { down: true })
     const out = await w.reader.read("https://www.instagram.com/reel/abc/")
     expect([out.status, out.body.error]).toEqual([503, "browser_down"])
+  })
+
+  test("failed opens don't spend the hourly budget", async () => {
+    const w = world({ probe: probe("/x/"), page: { title: "x" } })
+    w.setDown(true)
+    for (let i = 0; i < READS_PER_HOUR + 5; i++) expect((await w.reader.read("https://www.instagram.com/explore/")).body.error).toBe("browser_down")
+    w.setDown(false)
+    for (let i = 0; i < READS_PER_HOUR; i++) expect((await w.reader.read("https://www.instagram.com/explore/")).status).toBe(200)
+    expect((await w.reader.read("https://www.instagram.com/explore/")).status).toBe(429)
+  })
+})
+
+describe("navigation must stay on the allowlist", () => {
+  test("a redirect hop off instagram.com → 403 url_not_allowed, nothing read, tab closed", async () => {
+    const w = world(REEL, { redirects: ["https://evil.example/landing"] })
+    const out = await w.reader.read("https://www.instagram.com/reel/abc/")
+    expect([out.status, out.body.error]).toEqual([403, "url_not_allowed"])
+    expect(out.body.content).toBeUndefined()
+    expect(w.tags()).toEqual([])
+    expect(w.counts()).toEqual({ opened: 1, closed: 1 })
+  })
+
+  test("a chain that leaves and comes back is still refused (every hop counts, not only the end)", async () => {
+    const w = world(REEL, { redirects: ["https://l.facebook.com/x", "https://www.instagram.com/reel/abc/"] })
+    expect((await w.reader.read("https://www.instagram.com/reel/abc/")).body.error).toBe("url_not_allowed")
+  })
+
+  test("landing off the allowlist (final href) → 403 url_not_allowed", async () => {
+    const w = world({ ...REEL, probe: { href: "https://evil.example/reel/abc/", path: "/reel/abc/", ready: true, loginWall: false } })
+    const out = await w.reader.read("https://www.instagram.com/reel/abc/")
+    expect([out.status, out.body.error]).toEqual([403, "url_not_allowed"])
+    expect(new Set(w.tags())).toEqual(new Set(["probe"]))
+  })
+
+  test("an allowlisted redirect (instagram.com → www.instagram.com) reads normally", async () => {
+    const w = world(REEL, { redirects: ["https://www.instagram.com/reel/abc/"] })
+    expect((await w.reader.read("https://instagram.com/reel/abc/")).status).toBe(200)
+  })
+})
+
+describe("load timeout", () => {
+  test("a page that never gets ready → 502 read_failed, nothing extracted", async () => {
+    const w = world({ ...REEL, probe: probe("/reel/abc/", { ready: false }) })
+    const out = await w.reader.read("https://www.instagram.com/reel/abc/")
+    expect([out.status, out.body.error]).toEqual([502, "read_failed"])
+    expect(new Set(w.tags())).toEqual(new Set(["probe"]))
+    expect(w.counts()).toEqual({ opened: 1, closed: 1 })
+  })
+})
+
+describe("scratch modes", () => {
+  test("root and read dir 0700, frames 0600; a loose root is tightened", async () => {
+    const w = world(REEL)
+    chmodSync(w.scratchRoot, 0o755)
+    const out = await w.reader.read("https://www.instagram.com/reel/abc/")
+    expect(out.status).toBe(200)
+    expect(statSync(w.scratchRoot).mode & 0o777).toBe(0o700)
+    expect(statSync(String(out.body.scratchDir)).mode & 0o777).toBe(0o700)
+    const files = out.body.files as string[]
+    expect(files.length).toBeGreaterThan(0)
+    for (const f of files) expect(statSync(f).mode & 0o777).toBe(0o600)
   })
 })

@@ -3,7 +3,8 @@
 #
 #   web-browser.sh setup   once, from a real login shell (not the Claude sandbox):
 #                          pinned Playwright Chromium + companion-browser.service
-#   web-browser.sh run     what the unit runs: Xvfb :99 + Chromium, CDP on 127.0.0.1 only
+#   web-browser.sh run     what the unit runs: the Xvfb :99 display. The companion server
+#                          spawns Chromium itself on first read (CDP over --remote-debugging-pipe, no port)
 #   web-browser.sh login   short-lived x11vnc on 127.0.0.1:5999 so Jeremie can log in
 #
 # Dedicated profile under the companion state dir, never Jeremie's own.
@@ -11,7 +12,6 @@ set -euo pipefail
 
 PW_VERSION="${PLAYWRIGHT_VERSION:-1.56.1}"
 DISPLAY_NUM="${COMPANION_WEB_DISPLAY:-99}"
-CDP_PORT="${COMPANION_WEB_CDP_PORT:-9333}"
 VNC_PORT=5999
 PROFILE="$HOME/.claude-companion/web-browser-profile"
 UNIT_DIR="$HOME/.config/systemd/user"
@@ -35,13 +35,12 @@ setup() {
   chmod 700 "$PROFILE"
   cat > "$UNIT_DIR/$UNIT" <<EOF
 [Unit]
-Description=Companion read-only browser (Chromium under Xvfb, CDP on 127.0.0.1:$CDP_PORT) — docs/web-read.md
+Description=Companion read-only browser display (Xvfb :$DISPLAY_NUM; Chromium is spawned by the companion server) — docs/web-read.md
 After=network-online.target
 
 [Service]
 Type=simple
 ExecStart=$REPO/scripts/web-browser.sh run
-Environment=COMPANION_WEB_CDP_PORT=$CDP_PORT
 Restart=on-failure
 RestartSec=10
 MemoryMax=2G
@@ -51,28 +50,13 @@ WantedBy=default.target
 EOF
   systemctl --user daemon-reload
   systemctl --user enable --now "$UNIT"
-  log "started $UNIT; check: ss -ltn | grep $CDP_PORT (must show 127.0.0.1 only)"
+  log "started $UNIT; the companion server spawns Chromium on the first read (pipe CDP, no port)"
 }
 
 run() {
-  local chrome
-  chrome="$(chrome_bin)"
-  [ -n "$chrome" ] || { log "Chromium not installed: run web-browser.sh setup"; exit 1; }
-  mkdir -p "$PROFILE"
-  # A crash leaves the profile locked; only this unit ever uses the profile.
-  rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
-  Xvfb ":$DISPLAY_NUM" -screen 0 1280x1000x24 -nolisten tcp &
-  sleep 1
-  # exec: when Chromium exits the unit stops, systemd kills Xvfb with the cgroup and restarts both.
-  DISPLAY=":$DISPLAY_NUM" exec "$chrome" \
-    --user-data-dir="$PROFILE" \
-    --remote-debugging-address=127.0.0.1 \
-    --remote-debugging-port="$CDP_PORT" \
-    --no-first-run --no-default-browser-check \
-    --disable-features=Translate,MediaRouter \
-    --autoplay-policy=no-user-gesture-required \
-    --window-size=1280,1000 --window-position=0,0 \
-    about:blank
+  # Only the display: Chromium runs under the companion server, which talks CDP
+  # to it over a pipe, so no debugging port exists for another process to drive.
+  exec Xvfb ":$DISPLAY_NUM" -screen 0 1280x1000x24 -nolisten tcp
 }
 
 login() {
