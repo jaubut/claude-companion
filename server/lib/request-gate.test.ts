@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { hostname } from "node:os"
+import { hostname, networkInterfaces } from "node:os"
 import { getAuthToken } from "./auth"
 import { recordPeer } from "./vault-guard"
 import { hookCallerAllowed, hostAllowed } from "./request-gate"
@@ -52,6 +52,30 @@ test("Host allowlist: this machine's names and IPs only", () => {
   for (const h of [
     null, "", "evil.example", "evil.example:4245", "localhost.evil.example", `${short}.evil.example`,
     `evil.tailfc45f2.ts.net`, `${short}.tailfc45f2.ts.net.evil.example`, `x.${short}.tailfc45f2.ts.net`,
-    "evil.example@localhost", "localhost/evil", "192.168.1.20:4245", "8.8.8.8", "[2001:db8::1]", "127.0.0.1:4245 evil",
+    "evil.example@localhost", "localhost/evil", "8.8.8.8", "[2001:db8::1]", "127.0.0.1:4245 evil",
   ]) expect([h, hostAllowed(h)]).toEqual([h, false])
+})
+
+test("Host allowlist: this machine's LAN addresses and <short>.local (pairing QR), not a foreign LAN IP", () => {
+  const short = hostname().toLowerCase().split(".")[0]!
+  const v4 = Object.values(networkInterfaces()).flatMap((l) => l ?? []).find((a) => a.family === "IPv4" && !a.internal)
+  if (v4) expect(hostAllowed(`${v4.address}:4245`)).toBe(true)
+  expect(hostAllowed(`${short}.local:4245`)).toBe(true)
+  const mine = new Set(Object.values(networkInterfaces()).flatMap((l) => (l ?? []).map((a) => a.address)))
+  const foreign = ["192.168.1.20", "192.168.250.250", "10.250.250.250"].find((ip) => !mine.has(ip))!
+  expect(hostAllowed(`${foreign}:4245`)).toBe(false)
+  expect(hostAllowed(`evil.local:4245`)).toBe(false)
+})
+
+test("browser-originated hook calls are refused even from loopback or with the Bearer", () => {
+  const bearer = { authorization: `Bearer ${getAuthToken()}` }
+  for (const path of HOOK_PATHS) {
+    expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { origin: "https://evil.example" }))).toBe(false)
+    expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { origin: "null" }))).toBe(false)
+    expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { "sec-fetch-site": "cross-site" }))).toBe(false)
+    expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { "sec-fetch-site": "same-site" }))).toBe(false)
+    expect(hookCallerAllowed(hookReq(path, "100.64.0.9", { ...bearer, origin: "https://evil.example" }))).toBe(false)
+    expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { "sec-fetch-site": "none" }))).toBe(true)
+    expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { "sec-fetch-site": "same-origin" }))).toBe(true)
+  }
 })
