@@ -13,12 +13,15 @@
 // terminal window mirroring the first (tmux mirrors any session attached
 // from multiple clients in real time, which looked like a "copy" bug).
 //
-// "auto" now prefers herdr (spawnInHerdr below) when its version gate passes,
-// on macOS and Linux alike; the tmux path above is the fallback.
+// Herdr-only (docs/herdr-only-migration.md, Stage 1): "auto" is herdr on macOS
+// and Linux alike, a gate failure is an error (herdr_unavailable), and
+// app "tmux" is refused (tmux_retired). The tmux spawn code below stays,
+// unreachable from "auto"/"tmux", so a revert restores it; Stage 5 deletes it.
+// Mac Terminal/iTerm (tmux under the hood) are still reachable by name.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
-import { type Herdr, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
+import { type Herdr, HERDR_VERSIONS_ENV, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
 import { applyMcpChoices } from "./claude-mcp-trust"
 import { type DetachedDeps, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
@@ -50,6 +53,8 @@ export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${
     renameSync(tmp, cfgPath)
   } catch { /* best-effort — worst case the trust dialog still appears */ }
 }
+
+export const TMUX_RETIRED = "tmux_retired"
 
 export type SpawnApp = "terminal" | "iterm" | "tmux" | "herdr" | "auto"
 export type SpawnAgent = "claude" | "codex" | "kimi"
@@ -112,9 +117,9 @@ export interface SpawnResult {
   tmuxSocket?: string
   // herdr spawns: the workspace's root pane (what hooks report as $HERDR_PANE_ID).
   herdrPane?: string
-  // Set when herdr was not even tried (version gate / server down): the
-  // caller may fall back to tmux. A failure after the gate never sets it — a
-  // workspace may exist by then, and a fallback would start a second agent.
+  // Set when herdr was not even tried (version gate / server down); `error`
+  // is then `herdr_unavailable: <reason>`. A failure after the gate never
+  // sets it. Since Stage 1 nothing falls back to tmux on it.
   fallback?: string
   error?: string
 }
@@ -395,7 +400,7 @@ export async function spawnInHerdr(
   const badArg = agentArgs.find((a) => !AGENT_ARG.test(a))
   if (badArg !== undefined) return { ok: false, app: "herdr", error: `spawn args: unsafe value ${JSON.stringify(badArg)}` }
   const gate = await h.gate()
-  if (gate) return { ok: false, app: "herdr", error: gate, fallback: gate }
+  if (gate) return { ok: false, app: "herdr", error: `herdr_unavailable: ${gate}`, fallback: gate }
 
   if (opts && await herdrNameTaken(opts.name, h)) return { ok: false, app: "herdr", error: `name_taken: ${opts.name}` }
   const name = opts?.name ?? await uniqueHerdrAgentName(cwd, agent, h)
@@ -435,29 +440,27 @@ export async function spawnInHerdr(
   return { ok: true, app: "herdr", sessionName: name, herdrPane: paneId }
 }
 
-// "auto": herdr when its gate passes, else `legacy` (Mac: Terminal/iTerm tmux;
-// Linux: detached tmux). Only a gate failure falls back (see SpawnResult.fallback).
+// "auto": herdr only (Stage 1). A gate failure comes back as herdr_unavailable
+// and is logged; it never falls back to tmux.
 export async function spawnMacAuto(
   cwd: string,
   agent: SpawnAgent,
   env: Record<string, string> | undefined,
   deps: {
     herdr: typeof spawnInHerdr
-    legacy: (cwd: string, agent: SpawnAgent, env?: Record<string, string>) => Promise<SpawnResult>
     log: (line: string) => void
-  } = { herdr: spawnInHerdr, legacy: spawnMacTerminalAuto, log: companionLog },
+  } = { herdr: spawnInHerdr, log: companionLog },
 ): Promise<SpawnResult> {
-  const r = await deps.herdr(cwd, agent, env)
-  if (r.ok || !r.fallback) return r
-  deps.log(`spawn: herdr skipped (${r.fallback}) — falling back to tmux`)
-  return deps.legacy(cwd, agent, env)
+  const { fallback, ...r } = await deps.herdr(cwd, agent, env)
+  if (fallback) deps.log(`spawn: herdr unavailable (${fallback}), no tmux fallback (herdr-only); fix herdr or ${HERDR_VERSIONS_ENV}`)
+  return r
 }
 
 // Linux / headless server path (Zettlab). No GUI Terminal: "auto" is a herdr
 // workspace on the host's herdr server (scripts/herdr-zettlab-setup.sh; panes
-// sized by its headless_cols/rows = 220x60), else a detached tmux session.
-// Attach over SSH with `herdr --remote` / the Mac's `herdr machine`, or
-// `tmux attach` for the fallback.
+// sized by its headless_cols/rows = 220x60), nothing else: app "tmux" is
+// refused upstream (spawnCompanionSession). Attach over SSH with
+// `herdr --remote` / the Mac's `herdr machine`.
 export function spawnLinux(
   cwd: string,
   app: SpawnApp,
@@ -465,19 +468,17 @@ export function spawnLinux(
   env: Record<string, string> | undefined,
   deps: {
     herdr: typeof spawnInHerdr
-    tmux: (cwd: string, agent: SpawnAgent, env?: Record<string, string>) => Promise<SpawnResult>
     log: (line: string) => void
-  } = { herdr: spawnInHerdr, tmux: spawnInTmuxDetached, log: companionLog },
+  } = { herdr: spawnInHerdr, log: companionLog },
 ): Promise<SpawnResult> {
   if (app === "terminal" || app === "iterm") {
-    return Promise.resolve({ ok: false, error: `app="${app}" is macOS-only; use "tmux", "herdr" or "auto" on this server` })
+    return Promise.resolve({ ok: false, error: `app="${app}" is macOS-only; use "herdr" or "auto" on this server` })
   }
-  if (app === "tmux") return deps.tmux(cwd, agent, env)
   if (app === "herdr") return deps.herdr(cwd, agent, env)
-  return spawnMacAuto(cwd, agent, env, { herdr: deps.herdr, legacy: deps.tmux, log: deps.log })
+  return spawnMacAuto(cwd, agent, env, deps)
 }
 
-// The pre-herdr macOS auto: prefer the app that's already running. If both,
+// Unreachable since Stage 1 (kept for a revert, deleted in Stage 5): the pre-herdr macOS auto: prefer the app that's already running. If both,
 // prefer Terminal (that's what today's sessions show); if neither, launch
 // Terminal.
 async function spawnMacTerminalAuto(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
@@ -546,6 +547,10 @@ export async function spawnCompanionSession(opts: {
   // Takeover: the main checkout whose MCP-server choices the worktree inherits.
   mcpFrom?: string
 }): Promise<SpawnResult> {
+  // Stage 1: no new tmux sessions. Refused before the cwd is resolved or
+  // trusted, so the request has no side effect. Existing tmux sessions keep
+  // working: inject, mirror and dialogs resolve their pane as before.
+  if (opts.app === "tmux") return { ok: false, error: TMUX_RETIRED }
   const cwd = resolveSpawnCwd(opts.cwd)
   if ("error" in cwd) return { ok: false, error: cwd.error }
   const resolved = cwd.dir
@@ -571,7 +576,6 @@ export async function spawnCompanionSession(opts: {
   }
   if (process.platform !== "darwin") return spawnLinux(resolved, app, agent, opts.env)
 
-  if (app === "tmux") return spawnInTmuxDetached(resolved, agent, opts.env)
   if (app === "iterm") return spawnInIterm(resolved, agent, opts.env)
   if (app === "terminal") return spawnInTerminal(resolved, agent, opts.env)
   if (app === "herdr") return spawnInHerdr(resolved, agent, opts.env)

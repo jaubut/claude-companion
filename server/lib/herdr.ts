@@ -77,9 +77,17 @@ export interface Herdr {
   call(args: string[], timeoutMs?: number, signal?: AbortSignal): Promise<Record<string, unknown>>
   // `pane read` (plain/ANSI text, not JSON); null when unreadable.
   read(pane: string, signal?: AbortSignal): Promise<string | null>
-  // null = herdr is usable; else the fallback reason.
+  // null = herdr is usable; else why not (spawn fails with it).
   gate(): Promise<string | null>
 }
+
+// The herdr versions spawn accepts, one env var on both hosts (the same one
+// claude-config's dispatch-run reads, so both pin one list): comma-separated,
+// e.g. `DISPATCH_HERDR_VERSIONS=0.9.5,0.9.6`. Unset → HERDR_DEFAULT_PIN, the
+// version scripts/herdr-zettlab-setup.sh installs. An unpinned herdr fails
+// every spawn (herdr_unavailable): there is no tmux fallback since Stage 1.
+export const HERDR_VERSIONS_ENV = "DISPATCH_HERDR_VERSIONS"
+export const HERDR_DEFAULT_PIN = "0.9.5"
 
 export const realHerdr: Herdr = {
   async call(args, timeoutMs = 10_000, signal) {
@@ -100,7 +108,7 @@ export const realHerdr: Herdr = {
     if (!mod) return `herdr-client-missing (${HERDR_CLIENT_PATH})`
     try {
       const status = await realHerdr.call(["status", "server", "--json"], 5_000)
-      return mod.gateReason(status, mod.pinnedFromEnv(process.env.DISPATCH_HERDR_VERSIONS))
+      return mod.gateReason(status, mod.pinnedFromEnv(process.env[HERDR_VERSIONS_ENV] || HERDR_DEFAULT_PIN))
     } catch (err) {
       return `herdr-down: ${(err as Error).message.slice(0, 120)}`
     }

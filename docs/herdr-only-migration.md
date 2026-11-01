@@ -126,6 +126,18 @@ All of these ran on a throwaway herdr session (`herdr --session s0probe` under a
 - Existing tmux sessions keep working. Inject, mirror and dialogs still resolve their tmux pane, and the read paths are untouched.
 - **Rollback:** revert the PR. The fallback code is still there.
 
+#### Stage 1 results (companion side, 2026-11-01)
+
+Shipped in `server/lib/spawn-session.ts` + `server/lib/herdr.ts`:
+- `app: "auto"` is herdr only, on the Mac and Linux. A gate failure returns `herdr_unavailable: <reason>` (400 from `/api/spawn-session`) and logs `spawn: herdr unavailable (…), no tmux fallback`. `app: "herdr"` and takeover return the same error string; the brain's `spawnInHerdr` does too.
+- `app: "tmux"` returns 400 `tmux_retired`, checked before the cwd is resolved or trusted, so a refused request has no side effect.
+- Version gate: pinned list from one env var, `DISPATCH_HERDR_VERSIONS` (the name `dispatch-run` already reads, so one var covers both), default `0.9.5` (`HERDR_DEFAULT_PIN`). Unset no longer means the client's `0.9.5,0.9.3`. Neither host's units set the var today.
+- Mac `terminal` / `iterm`: unchanged, still reachable by name (open question 1, deferred).
+- Kept unreachable, not deleted (Stage 5): `spawnInTmuxDetached`, `spawnMacTerminalAuto`, `buildTmuxLaunch`, `tmux-spawn-confirm.ts`.
+- Untouched: inject, pane mirror, dialogs and every read path still resolve tmux panes, so existing tmux sessions keep working (their tests are unchanged and green).
+- Tests: `server/lib/spawn-herdr.test.ts` (the spawn half of `herdr.test.ts`, split out because that file was over the 600-line cap; the fake moved to `herdr-fake.test-util.ts`): auto → herdr, gate failure → `herdr_unavailable` with nothing created and no tmux, app tmux → `tmux_retired`.
+- Not in this PR: the `claude()` wrappers and the dispatch-run pin/fallback (claude-config).
+
 ### Stage 2: shells on herdr (Gaps B and C)
 - `shell-sessions.ts`: a phone shell becomes a herdr workspace labelled `sh-<dir>` with a known metadata tag (`pane report-metadata` or workspace label). The record is read back from `herdr pane list` instead of tmux options. A restart still loses nothing.
 - `terminal-bridge.ts`: if the Stage 0 spike finds a raw attach, keep the PTY bridge pointed at it. If not, the phone Terminal view switches to the pane-mirror WS (`/api/pane-mirror`, herdr MirrorSource), which also needs an iOS change.
