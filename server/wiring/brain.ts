@@ -28,6 +28,7 @@ import type { ApnsPayload } from "../lib/apns"
 import { gauge } from "./gauge"
 import { realAutoCompactDeps } from "./auto-compact"
 import { brainLiveness, brainWorkers } from "./brain-workers"
+import { brainRestore } from "./brain-restore"
 import { emitChannel, emitTask, orchEmit } from "./orchestrator"
 import { approveProposal } from "./proposals"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
@@ -558,7 +559,7 @@ export function setBrainDeliver(fn: (text: string, key?: string) => Promise<Resp
 
 export const brainWiring = createBrainWiring({
   now: Date.now,
-  alive: () => brainLiveness.alive(BRAIN_AGENT),
+  alive: () => brainRestore.alive(),
   agentPane: async () => {
     const a = await brainLiveness.agentOf(BRAIN_AGENT)
     return a.kind === "present" ? a.ref.pane : ""

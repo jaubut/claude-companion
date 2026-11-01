@@ -95,8 +95,29 @@ All of these ran on a throwaway herdr session (`herdr --session s0probe` under a
 - **Finding 2, env and args are not restored:** a pane created with `--env S0VAR=keepme` had `S0VAR` empty after the restore, and `session.json` stores no env. A resumed agent runs as `claude --resume <id>` only.
   - **The brain** (`spawnInHerdr(…, { COMPANION_TASK_ID: "brain" }, …, ["--remote-control", "brain"])`, wiring/brain.ts:567) would come back with the same conversation and herdr name, but without `COMPANION_TASK_ID=brain` and without Remote Control. The brain supervisor sees the herdr agent `brain` as alive and does not respawn it.
   - **Dispatch workers** lose their `COMPANION_TASK_ID` the same way.
-  - This is a gate item for Stage 0b. Either the companion closes and respawns its own agents after a herdr restore (it already knows their session ids and has `spawn(resume)`), or identity moves off env (session record by session id). Not built here.
+  - This is a gate item for Stage 0b. Either the companion closes and respawns its own agents after a herdr restore (it already knows their session ids and has `spawn(resume)`), or identity moves off env (session record by session id). Built in Stage 0b, below.
 - **Untested:** `herdr update --handoff` (it downloads and replaces the live binary) and a real reboot.
+
+### Stage 0b: the brain gets its identity back after a restore (`wiring/brain-restore.ts`)
+
+- **Pick: option A (close and respawn).** Option B (a session-id → task-id record) cannot bring back `--remote-control brain`, which is a launch arg, so the brain would still need a respawn. A also needs no change to hooks, sessions or the routes.
+- **Detection:** the supervisor tick (15 s) stats herdr's API socket (`$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock`). Every server start re-creates it, so a new inode + mtime means a new server instance. A stat makes no herdr call.
+  - On a new instance (and once at Companion boot, which covers a reboot of both), it reads the env of the `brain` pane's shell (`pane process-info` → `/proc/<shell_pid>/environ`).
+  - `COMPANION_TASK_ID=brain` → settled, no respawn. This covers a live handoff.
+  - Missing → `brainWorkers.stopBrain()`, and `alive()` returns false. The supervisor's normal spawn then runs `--resume <kv session_id>`, with `COMPANION_TASK_ID=brain` and `--remote-control brain`.
+  - Agent absent, or herdr or `/proc` unreadable → not settled, read again next tick (claude may still be starting in the restored pane).
+- **No duplicate brain:** the instance is marked settled before the stop, so a restore gets one respawn. Ticks are serialized (`ticking`), and `spawnInHerdr` refuses a taken `brain` name (`name_taken` → stop, then the next tick spawns). The respawn counts against the restart budget (3 in 5 min).
+- **Dispatch workers: not respawned, on purpose.** A restore already fails the runner's attempt (`dispatch-runner.ts herdrAttempt`: `server_unreachable` → "herdr lost the worker mid-run"; see its `TODO(WP5)`). A respawned worker would have nothing driving it.
+  - What is left is the restored `dispatch-*` workspace without `DISPATCH_TASK_ID`. The reaper counts it as foreign and keeps it, so it needs a manual close. Re-attaching workers belongs to claude-config WP5.
+- **Assumption, from Stage 0:** herdr gives the restored pane back its agent name `brain`. If it didn't, the supervisor would see the brain absent and spawn while the restored `claude --resume` ran. Stage 0 saw the name come back.
+- **Unit tests:** `server/wiring/brain-restore.test.ts`, with a fake herdr. They cover the epoch change, the env read (ok, lost, absent, unknown), a single stop per restore, live handoff, a reboot of both, and an unreadable socket.
+- **Live check: pending, run by Jeremie.** The dispatch sandbox refused to start a probe herdr server. Steps:
+  1. `systemd-run --user --unit=s0bprobe herdr --session s0bprobe server`.
+  2. In that session, `workspace create --label brain --env COMPANION_TASK_ID=brain` and `agent start brain --kind claude -- --remote-control s0b`. Send it a codeword.
+  3. Note `stat -c '%i:%Y' <probe socket>` and `/proc/<shell_pid>/environ`.
+  4. `systemctl --user kill -s SIGKILL s0bprobe`, then let it restart.
+  5. Check that the socket stat changed and `COMPANION_TASK_ID` is gone, then run `createBrainRestore` against the probe (`HERDR_SOCKET_PATH` set to the probe's socket, for both the stat and the herdr CLI). It should log `herdr restore` and stop the agent once. A spawn with resume should bring back the codeword, the env and Remote Control.
+  6. Never touch the live server.
 
 ### Stage 1: stop creating new tmux sessions (code, Zettlab then Mac)
 - `spawn-session.ts`: `app: "auto"` → herdr only. A gate failure becomes an error (`herdr_unavailable: <reason>`), never a tmux fallback, the same as takeover today. `app: "tmux"` returns 400 `tmux_retired`. Mac Terminal/iTerm: keep or drop is Jeremie's call; they are tmux under the hood.
