@@ -378,3 +378,25 @@ describe("POST /hooks/brain/deploy", () => {
     expect([r.status, r.json.error]).toEqual([404, "deploy_disabled"])
   })
 })
+
+describe("POST /hooks/brain/web-read and /api/web/read", () => {
+  test("hook: brain auth before the reader; api: Bearer before the reader", async () => {
+    const seen: unknown[] = []
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      webRead: async (url) => { seen.push(url); return { status: 200, body: { ok: true, untrusted: true } } },
+    })
+    const call = async (path: string, headers: Record<string, string>, peer = "127.0.0.1") => {
+      const req = new Request(`http://localhost:4245${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ url: "https://www.instagram.com/p/abc/" }) })
+      recordPeer(req, peer)
+      return (await h(req, new URL(req.url)))!.status
+    }
+    expect(await call("/hooks/brain/web-read", {})).toBe(403)
+    expect(await call("/hooks/brain/web-read", AUTH, "100.64.0.9")).toBe(403)
+    expect(await call("/api/web/read", AUTH)).toBe(401)
+    expect(seen).toHaveLength(0)
+    expect(await call("/hooks/brain/web-read", AUTH)).toBe(200)
+    expect(await call("/api/web/read", { authorization: `Bearer ${getAuthToken()}` })).toBe(200)
+    expect(seen).toEqual(["https://www.instagram.com/p/abc/", "https://www.instagram.com/p/abc/"])
+  })
+})

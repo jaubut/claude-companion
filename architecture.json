@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31",
+  "generatedAt": "2026-11-01",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 177,
+          "lines": 180,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -39,6 +39,16 @@
               "method": "*",
               "path": "/api/",
               "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/web-read",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/web/read",
+              "prefix": false
             },
             {
               "method": "*",
@@ -1102,6 +1112,26 @@
             "lib/sessions.ts",
             "lib/turso.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/cdp.ts",
+          "lines": 86,
+          "kind": "lib",
+          "exports": [
+            "CdpTab",
+            "CdpBrowser",
+            "WEB_CDP_PORT",
+            "cdpBrowser"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -5721,6 +5751,59 @@
           "externals": []
         },
         {
+          "path": "lib/web-read-instagram.ts",
+          "lines": 249,
+          "kind": "lib",
+          "exports": [
+            "FRAME_EVERY_S",
+            "MAX_FRAMES",
+            "ReadIo",
+            "Extracted",
+            "creatorFromTitle",
+            "readInstagram"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/cdp.ts",
+            "lib/web-read-policy.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/web-read-policy.ts",
+          "lines": 106,
+          "kind": "lib",
+          "exports": [
+            "BLOCKED_URL_PATTERNS",
+            "isBlockedUrl",
+            "isAllowedHostUrl",
+            "UrlCheck",
+            "checkReadUrl",
+            "PageKind",
+            "pageKind",
+            "isLoginWallPath",
+            "READS_PER_HOUR",
+            "MIN_GAP_MS",
+            "ReadLimiter",
+            "UNTRUSTED_NOTICE"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-hook-gate.ts",
           "lines": 25,
           "kind": "lib",
@@ -6045,7 +6128,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
+          "lines": 285,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6070,7 +6153,8 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/auto-deploy.ts",
-            "wiring/brain-workers.ts"
+            "wiring/brain-workers.ts",
+            "wiring/web-read.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8070,6 +8154,39 @@
           "externals": []
         },
         {
+          "path": "wiring/web-read.ts",
+          "lines": 144,
+          "kind": "lib",
+          "exports": [
+            "SCRATCH_ROOT",
+            "WebReadDeps",
+            "WebReadOut",
+            "LOGIN_EVENT",
+            "createWebReader",
+            "pruneScratch",
+            "webRead"
+          ],
+          "state": [
+            "let reader"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/cdp.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/web-read-instagram.ts",
+            "lib/web-read-policy.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "ws.ts",
           "lines": 240,
           "kind": "lib",
@@ -8889,6 +9006,7 @@
             "wiring/triage-repos.ts",
             "wiring/triage.ts",
             "wiring/trips.ts",
+            "wiring/web-read.ts",
             "ws.ts"
           ]
         },
@@ -9545,7 +9663,8 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/web-read.ts"
           ]
         },
         "Judgement": {
@@ -12944,6 +13063,49 @@
             "routes/capture.ts"
           ]
         },
+        "PageKind": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "lib/web-read-instagram.ts"
+          ]
+        },
+        "CdpTab": {
+          "module": "lib/cdp.ts",
+          "callers": [
+            "lib/web-read-instagram.ts"
+          ]
+        },
+        "BLOCKED_URL_PATTERNS": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "lib/web-read-instagram.ts"
+          ]
+        },
+        "isLoginWallPath": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "lib/web-read-instagram.ts"
+          ]
+        },
+        "isAllowedHostUrl": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "lib/web-read-instagram.ts",
+            "wiring/web-read.ts"
+          ]
+        },
+        "isBlockedUrl": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "lib/web-read-instagram.ts"
+          ]
+        },
+        "pageKind": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "lib/web-read-instagram.ts"
+          ]
+        },
         "processEnvEntries": {
           "module": "lib/discover.ts",
           "callers": [
@@ -13487,6 +13649,12 @@
         },
         "DeployResult": {
           "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "webRead": {
+          "module": "wiring/web-read.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -14215,7 +14383,8 @@
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/web-read.ts"
           ]
         },
         "writeCtx": {
@@ -14242,7 +14411,8 @@
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/web-read.ts"
           ]
         },
         "getTask": {
@@ -16870,6 +17040,42 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/waiting.ts"
+          ]
+        },
+        "CdpBrowser": {
+          "module": "lib/cdp.ts",
+          "callers": [
+            "wiring/web-read.ts"
+          ]
+        },
+        "ReadLimiter": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "wiring/web-read.ts"
+          ]
+        },
+        "readInstagram": {
+          "module": "lib/web-read-instagram.ts",
+          "callers": [
+            "wiring/web-read.ts"
+          ]
+        },
+        "UNTRUSTED_NOTICE": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "wiring/web-read.ts"
+          ]
+        },
+        "checkReadUrl": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "wiring/web-read.ts"
+          ]
+        },
+        "cdpBrowser": {
+          "module": "lib/cdp.ts",
+          "callers": [
+            "wiring/web-read.ts"
           ]
         },
         "terminalOpen": {

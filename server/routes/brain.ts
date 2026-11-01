@@ -11,6 +11,7 @@ import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
+import { webRead } from "../wiring/web-read"
 
 // brain-v2 routes (docs/brain-api.md):
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
@@ -23,7 +24,9 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
-//   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
+//   POST /hooks/brain/web-read            → bin/web-read: {url} → {ok, untrusted, notice, kind, content, files, scratchDir} (docs/web-read.md)
+//   POST /api/web/read                    → the same read, Bearer-gated (Instagram only, 20/h, read-only)
+//   GET  /api/brain/workers              → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
 // brain session's pid with X-Companion-Task-Id: brain.
@@ -53,6 +56,8 @@ export interface BrainRouteDeps {
   prMerge?: typeof mergeAgentPr
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
+  /** bin/web-read (default: the real reader over the host's CDP browser). */
+  webRead?: typeof webRead
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -195,6 +200,14 @@ async function deploy(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out, { status })
 }
 
+/** bin/web-read and /api/web/read: the reader (wiring/web-read.ts) re-checks the URL allowlist and the rate limit. */
+async function readWeb(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const out = await (deps.webRead ?? webRead)(body.url)
+  return Response.json(out.body, { status: out.status })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -232,6 +245,17 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return deploy(req, deps)
+    }
+    if (p === "/hooks/brain/web-read") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return proposeRefusal(req, deps) ?? readWeb(req, deps)
+    }
+    if (p === "/api/web/read") {
+      if (!checkBearer(req)) return unauthorized()
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return readWeb(req, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()

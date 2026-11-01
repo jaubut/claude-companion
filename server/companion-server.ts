@@ -54,6 +54,7 @@ ensureUtf8Locale()
 const WS_FIRST_DISCOVERY_WAIT_MS = 3_000
 // Above the 150 s upstream timeout the forwarding host waits on.
 const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
+const WEB_READ_IDLE_TIMEOUT_S = 600
 
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 setCanvasDeliver(deliverInject)
@@ -99,6 +100,8 @@ export function createCompanionServer(port: number) {
       if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
+      // web-read waits its turn, samples frames and may run whisper (docs/web-read.md).
+      if (url.pathname === "/hooks/brain/web-read" || url.pathname === "/api/web/read") server.timeout(req, WEB_READ_IDLE_TIMEOUT_S)
 
       // ── Public liveness probe ──
       // Used by the hook scripts to skip the 300s wait when the server is
