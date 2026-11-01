@@ -119,14 +119,53 @@ export async function spawnShellSession(cwd: string, deps: DetachedDeps = realDe
     await tmux("kill-session", "-t", `=${name}`)
     return { ok: false, error: "session_exited" }
   }
-  // Links stand until the next poll re-checks them.
-  const linked = new Map(store.list().map((s) => [s.key, s.claudeKey]))
-  store.replace(sessions.map((s) => ({ ...s, claudeKey: linked.get(s.key) ?? "" })))
+  replaceKeepingLinks(sessions)
   if (resume) {
     await tmux("send-keys", "-t", session.tmuxPane, "-l", `claude --resume ${resume}`)
     await tmux("send-keys", "-t", session.tmuxPane, "Enter")
   }
   return { ok: true, session }
+}
+
+// A fresh tmux read into the store. Links stand until the next poll re-checks them.
+function replaceKeepingLinks(sessions: ShellSession[]): void {
+  const linked = new Map(store.list().map((s) => [s.key, s.claudeKey]))
+  store.replace(sessions.map((s) => ({ ...s, claudeKey: linked.get(s.key) ?? "" })))
+}
+
+export type CloseShellResult =
+  | { ok: true; gone: boolean }
+  | { ok: false; error: "unknown_shell" | "claude_running" | "kill_failed" }
+
+// Names closed through closeShellSession, so a retry answers gone:true
+// instead of unknown_shell. ponytail: last 50 only, a later retry gets 404.
+const closedNames: string[] = []
+
+// Close a row of the shell list (POST /api/shell/close). Only a name in the
+// list can be closed, and the list holds only `@companion_shell` sessions:
+// a Claude session's pane, a dispatch-* worker, the brain or herdr are never
+// in it. A shell with a Claude running inside (linked, or any agent on its
+// pane right now) is refused too. `detach` runs before the kill so open
+// terminal sockets end cleanly rather than on tmux's "[exited]".
+export async function closeShellSession(
+  name: string,
+  agents: AgentRef[],
+  detach: (key: string) => void,
+  deps: Pick<DetachedDeps, "run"> = realDetachedDeps,
+): Promise<CloseShellResult> {
+  const shell = store.list().find((s) => s.name === name)
+  if (!shell) return closedNames.includes(name) ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
+  const inPane = agents.some((a) => a.tmuxPane === shell.tmuxPane && (a.tmuxSocket ?? "") === shell.tmuxSocket)
+  if (shell.claudeKey || inPane) return { ok: false, error: "claude_running" }
+  detach(shell.key)
+  const kill = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])
+  const after = await readShellSessions(deps)
+  replaceKeepingLinks(after)
+  if (after.some((s) => s.name === name)) return { ok: false, error: "kill_failed" }
+  closedNames.push(name)
+  if (closedNames.length > 50) closedNames.shift()
+  // kill-session failing on a name that is no longer listed: it exited first.
+  return { ok: true, gone: kill.code !== 0 }
 }
 
 // socket_path: the server's real socket, the same string a hook reports from
