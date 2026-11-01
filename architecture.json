@@ -5551,7 +5551,7 @@
         },
         {
           "path": "lib/turso-watch.ts",
-          "lines": 279,
+          "lines": 301,
           "kind": "lib",
           "exports": [
             "WATCH_TICK_MS",
@@ -5564,7 +5564,6 @@
             "NOISE_TAGS",
             "SignalName",
             "Item",
-            "shortTitle",
             "SIGNALS",
             "WatchState",
             "emptyState",

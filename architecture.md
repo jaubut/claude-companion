@@ -56,6 +56,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
+| `lib/turso-watch.ts` | 301 | lib | 18 |  |
 | `lib/shell-sessions.ts` | 293 | lib | 24 |  |
 | `lib/live-repo.ts` | 290 | lib | 26 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
@@ -63,7 +64,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `wiring/auto-compact.ts` | 285 | lib | 6 | state: let statsDb · emits: inject_error |
 | `lib/ended-sessions.ts` | 282 | lib | 17 |  |
-| `lib/turso-watch.ts` | 279 | lib | 19 |  |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
