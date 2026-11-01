@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31",
+  "generatedAt": "2026-11-01",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -4277,7 +4277,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 293,
+          "lines": 332,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -4288,6 +4288,8 @@
             "shellNewSessionArgv",
             "SpawnShellResult",
             "spawnShellSession",
+            "CloseShellResult",
+            "closeShellSession",
             "readShellSessions",
             "parseShellList",
             "createShellStore",
@@ -5746,7 +5748,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 575,
+          "lines": 595,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -5844,6 +5846,11 @@
               "prefix": false
             },
             {
+              "method": "POST",
+              "path": "/api/shell/close",
+              "prefix": false
+            },
+            {
               "method": "GET",
               "path": "/api/sessions/recent",
               "prefix": false
@@ -5914,6 +5921,7 @@
             "state.ts",
             "wiring/dialogs.ts",
             "wiring/waiting.ts",
+            "wiring/shell-sessions.ts",
             "lib/idempotency.ts",
             "lib/approval-history.ts"
           ],
@@ -7820,10 +7828,11 @@
         },
         {
           "path": "wiring/shell-sessions.ts",
-          "lines": 59,
+          "lines": 64,
           "kind": "lib",
           "exports": [
             "attachCount",
+            "detachTerminals",
             "terminalOpen",
             "terminalMessage",
             "terminalClose"
@@ -8274,6 +8283,7 @@
             "lib/codex-feed.ts",
             "lib/session-resolve.ts",
             "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#POST /api/shell/close",
             "routes/api.ts#* /api/status",
             "routes/api.ts#* /api/feed",
             "routes/brain.ts",
@@ -8434,7 +8444,8 @@
           "callers": [
             "companion-server.ts#* /ws",
             "routes/api.ts#POST /api/spawn-session",
-            "routes/api.ts#POST /api/sessions/resume"
+            "routes/api.ts#POST /api/sessions/resume",
+            "routes/api.ts#POST /api/shell/close"
           ]
         },
         "getShellSession": {
@@ -8839,6 +8850,7 @@
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#POST /api/sessions/resume",
             "routes/api.ts#POST /api/sessions/ended/delete",
+            "routes/api.ts#POST /api/shell/close",
             "routes/api.ts#* /api/feed",
             "routes/attach.ts",
             "routes/auto-compact.ts#POST /api/auto-compact/test",
@@ -13077,6 +13089,18 @@
           "module": "lib/ended-sessions.ts",
           "callers": [
             "routes/api.ts#POST /api/sessions/ended/delete"
+          ]
+        },
+        "closeShellSession": {
+          "module": "lib/shell-sessions.ts",
+          "callers": [
+            "routes/api.ts#POST /api/shell/close"
+          ]
+        },
+        "detachTerminals": {
+          "module": "wiring/shell-sessions.ts",
+          "callers": [
+            "routes/api.ts#POST /api/shell/close"
           ]
         },
         "listRecentSessions": {
