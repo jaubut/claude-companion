@@ -2001,6 +2001,25 @@
           "externals": []
         },
         {
+          "path": "lib/herdr-fake.test-util.ts",
+          "lines": 28,
+          "kind": "lib",
+          "exports": [
+            "fakeHerdr"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/herdr.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/herdr-inject.ts",
           "lines": 83,
           "kind": "lib",
@@ -2076,7 +2095,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 365,
+          "lines": 373,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -2084,6 +2103,8 @@
             "herdrErrorCode",
             "silentSuccess",
             "Herdr",
+            "HERDR_VERSIONS_ENV",
+            "HERDR_DEFAULT_PIN",
             "realHerdr",
             "herdrScreen",
             "herdrPaneWidth",
@@ -4377,10 +4398,11 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 580,
+          "lines": 584,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
+            "TMUX_RETIRED",
             "SpawnApp",
             "SpawnAgent",
             "buildInner",
@@ -10288,6 +10310,7 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/ended-sessions.ts",
+            "lib/herdr-fake.test-util.ts",
             "lib/herdr-inject.ts",
             "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
@@ -12265,6 +12288,12 @@
           ]
         },
         "noteHerdrAgent": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "HERDR_VERSIONS_ENV": {
           "module": "lib/herdr.ts",
           "callers": [
             "lib/spawn-session.ts"
