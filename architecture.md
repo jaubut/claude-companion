@@ -71,6 +71,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
+| `lib/web-read-instagram.ts` | 269 | lib | 7 |  |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/question-hook.ts` | 268 | lib | 7 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
@@ -78,7 +79,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/orchestrator.ts` | 252 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
-| `lib/web-read-instagram.ts` | 249 | lib | 6 |  |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `ws.ts` | 240 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
@@ -122,6 +122,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `wiring/brain-pr-merge.ts` | 185 | lib | 3 |  |
 | `companion-server.ts` | 180 | route-host | 1 | routes: 7 |
+| `lib/cdp.ts` | 174 | lib | 6 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
@@ -131,6 +132,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `routes/triage.ts` | 165 | lib | 2 |  |
+| `wiring/web-read.ts` | 162 | lib | 8 | state: let reader |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/terminal-bridge.ts` | 153 | lib | 17 |  |
@@ -143,7 +145,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/canvas.ts` | 147 | lib | 7 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
-| `wiring/web-read.ts` | 144 | lib | 7 | state: let reader |
 | `lib/hook-common.ts` | 143 | lib | 10 |  |
 | `lib/jev.ts` | 143 | lib | 16 |  |
 | `lib/dispatch-stage.ts` | 141 | lib | 8 |  |
@@ -162,6 +163,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/transcript-backfill.ts` | 119 | lib | 5 |  |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
+| `lib/web-read-policy.ts` | 118 | lib | 13 |  |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
@@ -170,7 +172,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `lib/note-media.ts` | 109 | lib | 4 |  |
-| `lib/web-read-policy.ts` | 106 | lib | 12 |  |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `routes/dialogs.ts` | 103 | route-host | 1 | routes: 2 |
 | `lib/orchestrator-db.ts` | 101 | lib | 2 |  |
@@ -185,7 +186,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `state.ts` | 89 | lib | 9 |  |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
 | `lib/trip-geocode.ts` | 87 | lib | 8 |  |
-| `lib/cdp.ts` | 86 | lib | 4 |  |
 | `lib/herdr-inject.ts` | 83 | lib | 6 |  |
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |

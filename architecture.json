@@ -1118,12 +1118,14 @@
         },
         {
           "path": "lib/cdp.ts",
-          "lines": 86,
+          "lines": 174,
           "kind": "lib",
           "exports": [
             "CdpTab",
             "CdpBrowser",
-            "WEB_CDP_PORT",
+            "CONNECT_TIMEOUT_MS",
+            "WEB_PROFILE_DIR",
+            "CdpConnection",
             "cdpBrowser"
           ],
           "state": [],
@@ -5752,13 +5754,14 @@
         },
         {
           "path": "lib/web-read-instagram.ts",
-          "lines": 249,
+          "lines": 269,
           "kind": "lib",
           "exports": [
             "FRAME_EVERY_S",
             "MAX_FRAMES",
             "ReadIo",
             "Extracted",
+            "OffAllowlistError",
             "creatorFromTitle",
             "readInstagram"
           ],
@@ -5777,12 +5780,13 @@
         },
         {
           "path": "lib/web-read-policy.ts",
-          "lines": 106,
+          "lines": 118,
           "kind": "lib",
           "exports": [
             "BLOCKED_URL_PATTERNS",
             "isBlockedUrl",
             "isAllowedHostUrl",
+            "isAllowedPageUrl",
             "UrlCheck",
             "checkReadUrl",
             "PageKind",
@@ -8155,7 +8159,7 @@
         },
         {
           "path": "wiring/web-read.ts",
-          "lines": 144,
+          "lines": 162,
           "kind": "lib",
           "exports": [
             "SCRATCH_ROOT",
@@ -8163,6 +8167,7 @@
             "WebReadOut",
             "LOGIN_EVENT",
             "createWebReader",
+            "scratchDir",
             "pruneScratch",
             "webRead"
           ],
@@ -13081,6 +13086,12 @@
             "lib/web-read-instagram.ts"
           ]
         },
+        "isAllowedPageUrl": {
+          "module": "lib/web-read-policy.ts",
+          "callers": [
+            "lib/web-read-instagram.ts"
+          ]
+        },
         "isLoginWallPath": {
           "module": "lib/web-read-policy.ts",
           "callers": [
@@ -17062,6 +17073,12 @@
         },
         "UNTRUSTED_NOTICE": {
           "module": "lib/web-read-policy.ts",
+          "callers": [
+            "wiring/web-read.ts"
+          ]
+        },
+        "OffAllowlistError": {
+          "module": "lib/web-read-instagram.ts",
           "callers": [
             "wiring/web-read.ts"
           ]
