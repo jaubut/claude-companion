@@ -16,7 +16,8 @@ on the host (or bump the default) before spawning; an unpinned herdr fails every
 | `auto` | herdr only | herdr only |
 | `herdr` | herdr only | herdr only |
 | `tmux` | 400 `tmux_retired` | 400 `tmux_retired` |
-| `terminal` / `iterm` | that app (tmux inside; kept for now) | error (macOS-only) |
+| `ghostty` | herdr spawn as `auto`, then `workspace focus` + `open -na Ghostty.app --args -e herdr` (reply `app: "Ghostty"`; a failed open is logged, reply `app: "herdr"`) | error (macOS-only) |
+| `terminal` / `iterm` | 400 `app_retired` + `hint` (use `ghostty` or `auto`; dropped 2026-11-01) | 400 `app_retired` |
 
 Same code path on both hosts (`spawnInHerdr`, `spawnMacAuto` in
 `server/lib/spawn-session.ts`): `~` → `~/work` on Linux, folder trust pre-seeded, kimi
@@ -39,7 +40,7 @@ task: the row stays blocked) — `server/lib/spawn-seed.ts`:
   the task is ever the first character Claude Code reads), typed through the `/api/inject` guards once the session in
   the spawned herdr pane registers (≤ 2 min; start dialogs / a not-ready pane are waited out, a
   typed-but-unsubmitted seed is never retyped). Reply `seed: "pending"`, or `"unsupported"` when
-  the spawn has no herdr pane to match (Mac `terminal` / `iterm`). Both refused on `agent: "shell"` (400 `agent_only`).
+  the spawn has no herdr pane to match. Both refused on `agent: "shell"` (400 `agent_only`).
 
 Not changed: the Zettlab `~/.bashrc` `claude()` tmux wrapper (manual SSH launches) and
 dispatch workers (`DISPATCH_WORKER=1`, hidden from the picker). Both share the one herdr

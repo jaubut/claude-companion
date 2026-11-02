@@ -189,7 +189,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Spawn a fresh Claude/Codex session (or a plain shell) from the phone ──
   if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; repo?: unknown; seed?: unknown; app?: "terminal" | "iterm" | "auto"; agent?: SpawnAgent | "shell"; resume?: string }
+    const body = await req.json() as { cwd?: string; repo?: unknown; seed?: unknown; app?: string; agent?: SpawnAgent | "shell"; resume?: string }
     // `repo` (a GitHub / map name) instead of a cwd: this host's checkout, or
     // 409 no_checkout so the phone tries its other host. `seed`: lib/spawn-seed.ts.
     if (body.agent === "shell" && (body.seed !== undefined || body.repo !== undefined)) return Response.json({ ok: false, error: "agent_only" }, { status: 400 })
@@ -218,7 +218,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     }
     if (!result.ok) {
       companionLog(`${red}spawn failed${reset} — ${result.error}`)
-      return Response.json({ ok: false, error: result.error }, { status: 400 })
+      return Response.json({ ok: false, error: result.error, ...(result.hint ? { hint: result.hint } : {}) }, { status: 400 })
     }
     // Typed in the background once the session registers; only a herdr pane can be matched.
     const seeded = !seed.seed ? undefined : !result.herdrPane ? "unsupported" : "pending"

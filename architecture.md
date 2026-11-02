@@ -15,7 +15,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 595 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
-| `lib/spawn-session.ts` | 584 | lib | 22 |  |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 555 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
@@ -24,6 +23,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/transcript.ts` | 532 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
+| `lib/spawn-session.ts` | 493 | lib | 25 | state: RETIRED_APPS: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
@@ -628,6 +628,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `BrainDecision()` | `lib/orchestrator-brain.ts` | `lib/front-door.ts`, `wiring/orchestrator.ts` |
 | `PickerIO()` | `lib/question-driver.ts` | `lib/herdr-inject.ts`, `lib/keyboard-inject.ts` |
 | `herdrSendText()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/inject-verified.ts` |
+| `herdrOwnerFor()` | `lib/herdr.ts` | `lib/herdr-workspace.ts`, `lib/spawn-session.ts` |
 | `forgetHerdrAgent()` | `lib/herdr.ts` | `lib/herdr-workspace.ts`, `lib/spawn-session.ts` |
 | `inputText()` | `lib/command-menu.ts` | `lib/inject-verified.ts`, `wiring/takeover-liveness.ts` |
 | `tmuxSendKeys()` | `lib/keyboard-inject.ts` | `lib/inject-verified.ts`, `lib/submit-confirm.ts` |
