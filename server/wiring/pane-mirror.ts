@@ -2,7 +2,7 @@ import type { ServerWebSocket, Subprocess } from "bun"
 import { companionLog } from "../lib/log"
 import { herdrSocketCall } from "../lib/herdr-socket"
 import { type KeyGate, keyGate, runTmux } from "../lib/key-gate"
-import { PaneMirror, mirrorControl, mirrorKey, type MirrorSize, type MirrorSource, type MirrorViewer, type PaneSizer } from "../lib/pane-mirror"
+import { MIRROR_MAX_SCROLLBACK, PaneMirror, mirrorControl, mirrorKey, scrollbackRequest, type MirrorSize, type MirrorSource, type MirrorViewer, type PaneSizer } from "../lib/pane-mirror"
 import { type PaneRef, capturePane, paneKey, sendKeysArgs, tmuxPaneWidth } from "../lib/tmux-pane"
 import { describeClient, type WsData } from "../state"
 
@@ -14,6 +14,12 @@ import { describeClient, type WsData } from "../state"
 export const herdrSocketSource: MirrorSource = {
   async read(pane) {
     const r = await herdrSocketCall("pane.read", { pane_id: pane, source: "visible", format: "ansi" }, { timeoutMs: 1_500 })
+    const text = (r.read as { text?: unknown } | undefined)?.text
+    return typeof text === "string" ? text : null
+  },
+  async history(pane, lines) {
+    const n = Math.min(MIRROR_MAX_SCROLLBACK, Math.max(1, Math.floor(lines)))
+    const r = await herdrSocketCall("pane.read", { pane_id: pane, source: "recent", lines: n, format: "ansi" }, { timeoutMs: 3_000 })
     const text = (r.read as { text?: unknown } | undefined)?.text
     return typeof text === "string" ? text : null
   },
@@ -124,6 +130,8 @@ export function mirrorMessage(ws: ServerWebSocket<WsData>, raw: string | Buffer)
   const v = viewers.get(ws)
   if (!m) return
   const data = typeof raw === "string" ? raw : new Uint8Array(raw)
+  const lines = scrollbackRequest(data)
+  if (lines !== null) { if (v) m.scrollback(v, lines); return }
   const size = mirrorControl(data)
   if (size) { if (v) m.resize(v, size) } else m.input(data)
 }
