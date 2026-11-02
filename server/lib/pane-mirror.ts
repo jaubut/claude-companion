@@ -19,6 +19,15 @@
 // one full repaint (cursor-addressed rows, each cleared first). Phone → server binary = keystrokes as bytes,
 // passed to `pane.send_text`, which writes them to the PTY verbatim (measured:
 // ESC[B moves Claude's "/" menu, a lone ESC closes it, \x03 is Ctrl-C).
+// Phone → server text = {"type":"scrollback","lines":N} (opt-in, newer
+// apps): the server answers that viewer alone with {"type":"history","lines":M}
+// and then ONE binary frame of M plain rows (CRLF between rows, SGR reset at
+// each row's end, no cursor addressing): the pane's last M lines, the visible
+// screen included (`pane.read --source recent --lines N`). N is capped at
+// MIRROR_MAX_SCROLLBACK; one answer per viewer per MIRROR_SCROLLBACK_MIN_MS
+// (a request inside the window is answered when it ends, latest wins). No
+// history (a tmux pane, a failed read) → {"type":"history","lines":0} and no
+// binary frame. A viewer that never asks gets exactly the frames above.
 // Phone → server text = {"type":"resize",cols,rows}: the pane is sized to the
 // smallest viewer through a `herdr terminal session control` process held
 // for as long as any viewer has sent a size (wiring/pane-mirror.ts). herdr
@@ -48,6 +57,8 @@ export const MIRROR_MAX_INPUT = 4096
 export const MIRROR_ENDED = 4000
 // Consecutive unreadable polls before the viewers are told the pane is gone.
 export const MIRROR_GONE_AFTER = 20
+export const MIRROR_MAX_SCROLLBACK = 2000
+export const MIRROR_SCROLLBACK_MIN_MS = 1000
 
 // ── Upgrade gate ──────────────────────────────────────────────────────────
 
@@ -148,6 +159,14 @@ export function repaintFrame(ansi: string): string {
   return out
 }
 
+// The history answer's binary frame: plain rows a terminal appends to its
+// scrollback as they come (CRLF between rows, attributes reset per row).
+export function historyFrame(ansi: string): { lines: number; frame: string } {
+  const rows = screenRows(ansi)
+  if (rows.length === 1 && rows[0] === "") return { lines: 0, frame: "" }
+  return { lines: rows.length, frame: rows.map((r) => `${r}\x1b[0m`).join("\r\n") }
+}
+
 // ── Input ─────────────────────────────────────────────────────────────────
 
 const decoder = new TextDecoder("utf-8", { fatal: false })
@@ -159,6 +178,18 @@ export function mirrorInput(data: string | Uint8Array): string | null {
   if (data.length === 0 || data.length > MIRROR_MAX_INPUT) return null
   const text = decoder.decode(data)
   return text.length ? text : null
+}
+
+// A phone text frame asking for history → the lines (1…MIRROR_MAX_SCROLLBACK), else null.
+export function scrollbackRequest(data: string | Uint8Array): number | null {
+  if (typeof data !== "string") return null
+  try {
+    const m = JSON.parse(data) as { type?: unknown; lines?: unknown }
+    if (m.type !== "scrollback" || typeof m.lines !== "number" || !Number.isFinite(m.lines) || m.lines < 1) return null
+    return Math.min(MIRROR_MAX_SCROLLBACK, Math.floor(m.lines))
+  } catch {
+    return null
+  }
 }
 
 // A phone text frame → the size it asks for, or null (ignored).
@@ -239,6 +270,8 @@ export interface MirrorSource {
   read(pane: string): Promise<string | null>
   cols(pane: string): Promise<number | null>
   send(pane: string, text: string): Promise<void>
+  // The pane's last `lines` lines, visible screen included; absent = none.
+  history?(pane: string, lines: number): Promise<string | null>
 }
 
 // Holds the pane at a size (null = give it back to the Mac's layout). When
@@ -260,6 +293,7 @@ export class PaneMirror {
   private running = false
   private stopped = false
   private inputChain: Promise<void> = Promise.resolve()
+  private historyAsk = new Map<MirrorViewer, { lastAt: number; pending: number | null; timer: unknown }>()
 
   constructor(
     readonly pane: string,
@@ -287,6 +321,9 @@ export class PaneMirror {
   // True when this was the last viewer (the caller drops the mirror).
   remove(v: MirrorViewer): boolean {
     this.viewers.delete(v)
+    const ask = this.historyAsk.get(v)
+    if (ask?.timer != null) this.clock.clearTimeout(ask.timer)
+    this.historyAsk.delete(v)
     if (this.viewers.size === 0) this.stop()
     else this.applySize()
     return this.viewers.size === 0
@@ -297,6 +334,31 @@ export class PaneMirror {
     if (!this.viewers.has(v) || this.stopped) return
     this.viewers.set(v, size)
     this.applySize()
+  }
+
+  // A viewer asks for the pane's history (scrollbackRequest); answered to it
+  // alone, at most once per MIRROR_SCROLLBACK_MIN_MS.
+  scrollback(v: MirrorViewer, lines: number): void {
+    if (!this.viewers.has(v) || this.stopped) return
+    const ask = this.historyAsk.get(v) ?? { lastAt: -Infinity, pending: null, timer: null }
+    this.historyAsk.set(v, ask)
+    ask.pending = lines
+    if (ask.timer !== null) return
+    const wait = ask.lastAt + MIRROR_SCROLLBACK_MIN_MS - this.clock.now()
+    if (wait <= 0) void this.answerHistory(v, ask)
+    else ask.timer = this.clock.setTimeout(() => { ask.timer = null; void this.answerHistory(v, ask) }, wait)
+  }
+
+  private async answerHistory(v: MirrorViewer, ask: { lastAt: number; pending: number | null; timer: unknown }): Promise<void> {
+    const lines = ask.pending
+    ask.pending = null
+    if (lines === null) return
+    ask.lastAt = this.clock.now()
+    const text = this.source.history ? await this.source.history(this.pane, lines).catch(() => null) : null
+    if (this.stopped || !this.viewers.has(v)) return
+    const h = historyFrame(text ?? "")
+    v.control(JSON.stringify({ type: "history", lines: h.lines }))
+    if (h.lines > 0) v.frame(h.frame)
   }
 
   // The hold ended without us (refused by another controller, or the
@@ -337,6 +399,8 @@ export class PaneMirror {
     if (this.timer !== null) this.clock.clearTimeout(this.timer)
     this.timer = null
     this.coalescer.stop()
+    for (const ask of this.historyAsk.values()) if (ask.timer !== null) this.clock.clearTimeout(ask.timer)
+    this.historyAsk.clear()
   }
 
   private async poll(): Promise<void> {
