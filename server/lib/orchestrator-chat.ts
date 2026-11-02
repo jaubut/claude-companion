@@ -31,14 +31,22 @@ export interface Turn {
   card?: TurnCard
 }
 
-/** A brain-thread card: a dispatch receipt or a voice turn from the app. */
+/** A brain-thread card: a dispatch receipt, a voice turn from the app, or a blocked worker's dialog. */
 export interface TurnCard {
-  kind: "dispatch" | "voice"
+  kind: "dispatch" | "voice" | "worker_blocked"
   source: "app"
   taskId?: string
   audioId?: string
   durationMs?: number
   locale?: string
+  /** worker_blocked only (lib/worker-blocked.ts). */
+  worker?: string
+  title?: string
+  dialog?: string
+  options?: { id: string; label: string }[]
+  state?: "open" | "answered" | "expired"
+  chosen?: string
+  expiresAt?: number
 }
 
 export interface Task {
