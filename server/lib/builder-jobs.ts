@@ -7,13 +7,16 @@
 // idempotent `builder_jobs` frame on every change. It is state, never chat.
 //
 // `task` creates the job (title, builder); `progress` creates it too when the
-// TASK was missed (restart) and updates pct / step; `done` / `aborted` drop it.
+// TASK was missed (restart) and updates pct / step; `done` / `aborted` drop it
+// and leave a tombstone (bounded, unknown ids too) so a late, out-of-order
+// PROGRESS / TASK for a finished job is ignored instead of recreating it.
 // No update for STALE_MS → `stale: true` (frame re-sent); DROP_MS → dropped.
 // Not persisted: a restart loses the list, the next PROGRESS recreates the job.
 
 export const STALE_MS = 10 * 60_000
 export const DROP_MS = 2 * 60 * 60_000
 export const MAX_JOBS = 16
+export const MAX_TOMBSTONES = 64
 
 export type BuilderEvent = "task" | "progress" | "done" | "aborted"
 
@@ -74,6 +77,7 @@ export function parseBuilderReport(body: unknown): BuilderReport | null {
 
 export class BuilderJobStore {
   private jobs = new Map<string, Omit<BuilderJobItem, "stale">>()
+  private finished = new Set<string>()
   private timer: unknown = null
 
   constructor(private deps: BuilderJobsDeps) {}
@@ -82,9 +86,13 @@ export class BuilderJobStore {
     const now = this.deps.now()
     const prev = this.jobs.get(r.id)
     if (r.event === "done" || r.event === "aborted") {
+      this.finished.delete(r.id)
+      this.finished.add(r.id)
+      if (this.finished.size > MAX_TOMBSTONES) this.finished.delete(this.finished.values().next().value!)
       if (!prev) return
       this.jobs.delete(r.id)
     } else {
+      if (this.finished.has(r.id)) return
       if (!prev) this.makeRoom()
       this.jobs.set(r.id, {
         id: r.id,
@@ -109,6 +117,7 @@ export class BuilderJobStore {
     if (this.timer) this.deps.clearTimer(this.timer)
     this.timer = null
     this.jobs.clear()
+    this.finished.clear()
   }
 
   // Drops jobs past DROP_MS; true when the list changed.

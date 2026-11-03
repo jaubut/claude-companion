@@ -1059,12 +1059,13 @@
         },
         {
           "path": "lib/builder-jobs.ts",
-          "lines": 158,
+          "lines": 167,
           "kind": "lib",
           "exports": [
             "STALE_MS",
             "DROP_MS",
             "MAX_JOBS",
+            "MAX_TOMBSTONES",
             "BuilderEvent",
             "BuilderReport",
             "BuilderJobItem",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { BuilderJobStore, type BuilderJobsFrame, DROP_MS, MAX_JOBS, STALE_MS, parseBuilderReport } from "./builder-jobs"
+import { BuilderJobStore, type BuilderJobsFrame, DROP_MS, MAX_JOBS, MAX_TOMBSTONES, STALE_MS, parseBuilderReport } from "./builder-jobs"
 
 // Store-level: transitions, stale / drop timers, clear on DONE / ABORTED, validation.
 
@@ -9,8 +9,8 @@ function harness() {
   const frames: BuilderJobsFrame[] = []
   const store = new BuilderJobStore({
     now: () => now,
-    setTimer: (fn, ms) => timers.push({ fn, at: now + ms }) - 1,
-    clearTimer: (h) => { timers[h as number] = null },
+    setTimer: (fn, ms) => timers.push({ fn, at: now + ms }),
+    clearTimer: (h) => { timers[(h as number) - 1] = null },
     emit: (f) => frames.push(f),
   })
   // Advances the clock, firing due timers in order.
@@ -67,6 +67,27 @@ describe("BuilderJobStore", () => {
     const n = h.frames.length
     h.report({ event: "done", id: "nope" })
     expect(h.frames.length).toBe(n)
+  })
+
+  test("TASK → DONE → late PROGRESS / TASK: stays gone (out-of-order POSTs)", () => {
+    const h = harness()
+    h.report({ event: "task", id: "t1", title: "x" })
+    h.report({ event: "done", id: "t1" })
+    const n = h.frames.length
+    h.report({ event: "progress", id: "t1", pct: 90 })
+    h.report({ event: "task", id: "t1", title: "x" })
+    expect(h.frames.length).toBe(n)
+    expect(h.store.frame().jobs).toEqual([])
+  })
+
+  test("DONE for an unknown id tombstones it; tombstones are bounded", () => {
+    const h = harness()
+    h.report({ event: "aborted", id: "u1" })
+    h.report({ event: "progress", id: "u1", pct: 10 })
+    expect(h.store.frame().jobs).toEqual([])
+    for (let i = 0; i < MAX_TOMBSTONES; i++) h.report({ event: "done", id: `d${i}` })
+    h.report({ event: "progress", id: "u1", pct: 10 })
+    expect(h.last().map((j) => j.id)).toEqual(["u1"])
   })
 
   test("TASK re-send keeps progress", () => {
