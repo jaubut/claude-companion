@@ -9,6 +9,7 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { TASK_REASON_MAX, TASK_REF, cancelAgentTask } from "../wiring/brain-task-cancel"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -22,6 +23,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
+//   POST /hooks/brain/task-cancel         → bin/task-cancel: {task, reason} → {ok, cancelled, from, pr?} (agent:* tasks only)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
@@ -51,6 +53,8 @@ export interface BrainRouteDeps {
   prClose?: typeof closeDeadPr
   /** The routine-PR merge (default: the real one, gh + Turso). */
   prMerge?: typeof mergeAgentPr
+  /** The obsolete-task cancel (default: the real one, Turso). */
+  taskCancel?: typeof cancelAgentTask
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
 }
@@ -178,6 +182,21 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   return Response.json(out.body, { status: out.status })
 }
 
+/** bin/task-cancel: the gate (wiring/brain-task-cancel.ts) re-checks the task in Turso. */
+async function taskCancel(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const task = typeof body.task === "string" && TASK_REF.test(body.task) ? body.task : null
+  if (!task) return fail(400, "task must be a task id or its 8-char prefix")
+  const reason = str(body.reason, TASK_REASON_MAX)
+  if (!reason) return fail(400, `reason required (≤ ${TASK_REASON_MAX} chars)`)
+  const out = await (deps.taskCancel ?? cancelAgentTask)({ task, reason })
+  companionLog(`[brain] task-cancel ${task.slice(0, 8)} → ${out.status} ${String(out.body.error ?? "ok")}`)
+  return Response.json(out.body, { status: out.status })
+}
+
 /** bin/deploy: the deployer (wiring/auto-deploy.ts) re-checks the repo allowlist and fast-forward itself. */
 async function deploy(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const refused = proposeRefusal(req, deps)
@@ -227,6 +246,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-merge")
+    }
+    if (p === "/hooks/brain/task-cancel") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return taskCancel(req, deps)
     }
     if (p === "/hooks/brain/deploy") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")

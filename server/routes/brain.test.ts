@@ -305,6 +305,37 @@ describe("POST /hooks/brain/pr-close", () => {
   })
 })
 
+describe("POST /hooks/brain/task-cancel", () => {
+  test("brain auth, then input checks; only a valid call reaches the gate", async () => {
+    const seen: unknown[] = []
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      taskCancel: async (p) => { seen.push(p); return { status: 403, body: { ok: false, error: "not_agent_task" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+      const req = new Request("http://localhost:4245/hooks/brain/task-cancel", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { task: "abcd1234", reason: "superseded by 9f00aa11" }
+    expect((await post(ok, {})).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-task-id": "worker" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    expect((await post({ ...ok, task: "abc" })).status).toBe(400)
+    expect((await post({ ...ok, task: "abcd1234' OR 1=1" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "x".repeat(301) })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await post(ok)
+    expect(r.status).toBe(403)
+    expect(r.json.error).toBe("not_agent_task")
+    expect(seen).toEqual([ok])
+  })
+})
+
 describe("POST /hooks/brain/pr-merge", () => {
   test("brain auth, then input checks; only a valid call reaches the merge gate, never the close gate", async () => {
     const seen: unknown[] = []

@@ -6108,7 +6108,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
+          "lines": 285,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6132,6 +6132,7 @@
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-workers.ts"
           ],
@@ -7200,6 +7201,39 @@
             "lib/log.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-task-cancel.ts",
+          "lines": 106,
+          "kind": "lib",
+          "exports": [
+            "TASK_CANCEL_ACTION",
+            "TASK_REASON_MAX",
+            "TASK_REF",
+            "TaskCancelInput",
+            "TaskCancelDeps",
+            "cancelAgentTask"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/body-investigate.ts",
+            "lib/discover.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8985,6 +9019,7 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -9028,7 +9063,8 @@
             "lib/quick-look.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "ApprovalRequest": {
@@ -9271,6 +9307,7 @@
             "lib/body-investigate-engine.ts",
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -9440,6 +9477,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -9559,7 +9597,8 @@
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
             "routes/goals.ts",
-            "wiring/auto-compact.ts"
+            "wiring/auto-compact.ts",
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "QueryFn": {
@@ -9644,6 +9683,7 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
@@ -9658,6 +9698,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
@@ -10230,6 +10271,7 @@
             "routes/tasks-agent.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-todo.ts",
             "wiring/orchestrator.ts",
             "wiring/triage-repos.ts"
@@ -13096,6 +13138,7 @@
           "callers": [
             "lib/worker-hook-gate.ts",
             "wiring/brain-restore.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-workers.ts"
           ]
         },
@@ -13645,6 +13688,12 @@
             "routes/brain.ts"
           ]
         },
+        "cancelAgentTask": {
+          "module": "wiring/brain-task-cancel.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "DeployResult": {
           "module": "wiring/auto-deploy.ts",
           "callers": [
@@ -13659,6 +13708,18 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "TASK_REF": {
+          "module": "wiring/brain-task-cancel.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "TASK_REASON_MAX": {
+          "module": "wiring/brain-task-cancel.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -14243,6 +14304,7 @@
             "wiring/body-agent.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -14362,6 +14424,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/proposals.ts",
@@ -14387,6 +14450,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
@@ -14985,7 +15049,8 @@
           "callers": [
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "realGh": {
@@ -14994,6 +15059,7 @@
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
