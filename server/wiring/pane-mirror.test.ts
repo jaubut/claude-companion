@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { HerdrPaneSizer } from "./pane-mirror"
@@ -73,6 +73,8 @@ test.skipIf(!Bun.which("tmux"))("tmux source: send is byte-exact for control byt
   const t = await privateTmux("stty raw -echo; head -c 13 | od -An -tx1 > $OUT")
   try {
     const src = tmuxPaneSource({ pane: t.pane, socket: t.socket }, createKeyGate({ settleMs: 0 }))
+    // $OUT exists once stty has run: sent before that, \x03 hits a cooked tty and SIGINTs the shell.
+    await until(() => existsSync(t.out))
     await src.send(t.pane, "a\x1b[B")
     await src.send(t.pane, "é\x03\r")
     await src.send(t.pane, "-x;q\x7f") // would read as an option / a command separator without -H
