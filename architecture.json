@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02",
+  "generatedAt": "2026-11-03",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -2989,7 +2989,7 @@
         },
         {
           "path": "lib/pane-mirror.ts",
-          "lines": 377,
+          "lines": 441,
           "kind": "lib",
           "exports": [
             "PANE_MIRROR_PATH",
@@ -3000,6 +3000,8 @@
             "MIRROR_MAX_INPUT",
             "MIRROR_ENDED",
             "MIRROR_GONE_AFTER",
+            "MIRROR_MAX_SCROLLBACK",
+            "MIRROR_SCROLLBACK_MIN_MS",
             "MirrorTarget",
             "MirrorUpgradeDeps",
             "mirrorKey",
@@ -3011,7 +3013,9 @@
             "MirrorFocus",
             "focusRows",
             "repaintFrame",
+            "historyFrame",
             "mirrorInput",
+            "scrollbackRequest",
             "mirrorControl",
             "smallestSize",
             "Clock",
@@ -6104,7 +6108,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
+          "lines": 276,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6128,6 +6132,7 @@
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-workers.ts"
           ],
@@ -7150,6 +7155,7 @@
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
+            "HOLD_LABEL",
             "mergeAgentPr"
           ],
           "state": [],
@@ -7164,6 +7170,38 @@
             "lib/secret-redact.ts",
             "lib/triage-pr.ts",
             "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-pr-unpark.ts",
+          "lines": 119,
+          "kind": "lib",
+          "exports": [
+            "UNPARK_ACTION",
+            "UNPARK_SOURCE",
+            "UNPARK_CAP",
+            "GUIDANCE_MAX",
+            "unparkAgentPr"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ],
@@ -7691,7 +7729,7 @@
         },
         {
           "path": "wiring/pane-mirror.ts",
-          "lines": 139,
+          "lines": 147,
           "kind": "lib",
           "exports": [
             "herdrSocketSource",
@@ -8980,6 +9018,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
@@ -9024,7 +9063,8 @@
             "lib/quick-look.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts"
           ]
         },
         "ApprovalRequest": {
@@ -9436,6 +9476,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -9639,6 +9680,7 @@
             "routes/brain.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
@@ -9654,6 +9696,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
@@ -10226,6 +10269,7 @@
             "routes/tasks-agent.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-todo.ts",
             "wiring/orchestrator.ts",
             "wiring/triage-repos.ts"
@@ -13641,6 +13685,12 @@
             "routes/brain.ts"
           ]
         },
+        "unparkAgentPr": {
+          "module": "wiring/brain-pr-unpark.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "DeployResult": {
           "module": "wiring/auto-deploy.ts",
           "callers": [
@@ -13655,6 +13705,13 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts",
+            "wiring/brain-pr-unpark.ts"
+          ]
+        },
+        "GUIDANCE_MAX": {
+          "module": "wiring/brain-pr-unpark.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -14239,6 +14296,7 @@
             "wiring/body-agent.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -14358,6 +14416,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/proposals.ts",
@@ -14383,6 +14442,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
@@ -14990,6 +15050,7 @@
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
@@ -15322,9 +15383,16 @@
           "callers": [
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "HOLD_LABEL": {
+          "module": "wiring/brain-pr-merge.ts",
+          "callers": [
+            "wiring/brain-pr-unpark.ts"
           ]
         },
         "AgentLookup": {
@@ -16205,6 +16273,12 @@
             "wiring/pane-mirror.ts"
           ]
         },
+        "MIRROR_MAX_SCROLLBACK": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
         "PaneSizer": {
           "module": "lib/pane-mirror.ts",
           "callers": [
@@ -16230,6 +16304,12 @@
           ]
         },
         "mirrorKey": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "scrollbackRequest": {
           "module": "lib/pane-mirror.ts",
           "callers": [
             "wiring/pane-mirror.ts"

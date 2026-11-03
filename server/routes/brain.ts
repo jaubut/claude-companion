@@ -9,6 +9,7 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { GUIDANCE_MAX, unparkAgentPr } from "../wiring/brain-pr-unpark"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -22,7 +23,8 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
-//   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
+//   POST /hooks/brain/pr-unpark           → bin/pr-unpark: {repo, pr, reason, guidance} → {ok, unparked, url, unparks, cap} (shepherd-parked dispatch/* PRs)
+//   POST /hooks/brain/deploy             → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
@@ -51,6 +53,8 @@ export interface BrainRouteDeps {
   prClose?: typeof closeDeadPr
   /** The routine-PR merge (default: the real one, gh + Turso). */
   prMerge?: typeof mergeAgentPr
+  /** The shepherd-park hand-back (default: the real one, gh + Turso). */
+  prUnpark?: typeof unparkAgentPr
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
 }
@@ -160,8 +164,8 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
-/** bin/pr-close and bin/pr-merge: the gate (wiring/brain-pr-close.ts, brain-pr-merge.ts) re-checks it all on GitHub and Turso. */
-async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge"): Promise<Response> {
+/** bin/pr-close, bin/pr-merge and bin/pr-unpark: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and Turso. */
+async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge" | "pr-unpark"): Promise<Response> {
   const refused = proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
@@ -172,8 +176,14 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
-  const run = op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prMerge ?? mergeAgentPr
-  const out = await run({ repo, pr, reason })
+  let out: { status: number; body: Record<string, unknown> }
+  if (op === "pr-unpark") {
+    const guidance = str(body.guidance, GUIDANCE_MAX)
+    if (!guidance) return fail(400, `guidance required (≤ ${GUIDANCE_MAX} chars)`)
+    out = await (deps.prUnpark ?? unparkAgentPr)({ repo, pr, reason, guidance })
+  } else {
+    out = await (op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prMerge ?? mergeAgentPr)({ repo, pr, reason })
+  }
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
 }
@@ -227,6 +237,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-merge")
+    }
+    if (p === "/hooks/brain/pr-unpark") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return prAction(req, deps, "pr-unpark")
     }
     if (p === "/hooks/brain/deploy") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")

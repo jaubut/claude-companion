@@ -82,6 +82,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
+| POST | `/hooks/brain/pr-unpark` | `{repo, pr, reason, guidance}` (reason ≤ 300, guidance ≤ 2,000) | see below. Same auth as propose (brain/bin/pr-unpark). |
 | POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
@@ -158,6 +159,19 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 409 `not_open` / `draft` · 409 `not_green` / `not_approved` (+`reasons`) | not now |
 | 429 `merge_cap` | 10 brain merges in 24 h |
 | 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
+
+### Shepherd unpark (`/hooks/brain/pr-unpark`)
+
+`wiring/brain-pr-unpark.ts` hands a shepherd-parked agent PR back with guidance for its next fix run. Body `{repo, pr, reason, guidance}` (reason ≤ 300, guidance ≤ 2,000). It checks, from GitHub and Turso: open, head `dispatch/*`; the newest `pr:needs-human` / `pr:unpark` / `pr:approved-merge` row for the PR url is a park; no do-not-merge/wip label on the PR or in the park reason; fewer than 2 brain unparks of this PR. It then writes one `agent_activity` row, the contract `claude-config tools/pr-shepherd*.ts` reads: `agent_slug brain`, `action pr:unpark`, target = the linked task (else `pr` + url), meta `{url, repo, pr, reason, guidance, source: "brain", head_sha, prior_reason, prior_park_id, unpark_no}`. No `by` and no `category`, so the shepherd treats it as a hand unpark (fix budget resets). An event turn goes to the brain thread.
+
+| answer | when |
+|---|---|
+| 200 `{ok, unparked, url, unparks, cap}` | row written |
+| 400 | bad repo / pr / reason / guidance |
+| 403 `not_agent_branch` | head not `dispatch/*` |
+| 409 `not_open` · 409 `not_parked` · 409 `label_park` | nothing to lift, or Jeremie's label |
+| 429 `unpark_cap` | 2 brain unparks of this PR |
+| 404 `pr_not_found` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
 
 ### Deploys (`wiring/auto-deploy.ts`, `/hooks/brain/deploy`)
 
