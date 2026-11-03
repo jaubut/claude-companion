@@ -1058,7 +1058,7 @@
         },
         {
           "path": "lib/canvas.ts",
-          "lines": 415,
+          "lines": 440,
           "kind": "lib",
           "exports": [
             "NODE_KINDS",
@@ -1073,9 +1073,11 @@
             "NodePatch",
             "EdgeInput",
             "SendResult",
+            "PickResult",
             "EdgeAddResult",
             "CanvasStore",
             "createCanvasStore",
+            "NODE_ID",
             "parseNodeInput",
             "parseNodePatch",
             "parseEdgeInput",
@@ -6141,7 +6143,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 150,
+          "lines": 170,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",
@@ -7328,12 +7330,13 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 147,
+          "lines": 184,
           "kind": "lib",
           "exports": [
             "canvasStore",
             "setCanvasDeliver",
             "canvasSend",
+            "canvasPickNotify",
             "referencesFor",
             "canvasHookContext",
             "canvasStatus",
@@ -8339,6 +8342,12 @@
           ]
         },
         "canvasSend": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasPickNotify": {
           "module": "wiring/canvas.ts",
           "callers": [
             "companion-server.ts"
@@ -12275,7 +12284,8 @@
         "oneLine": {
           "module": "lib/canvas.ts",
           "callers": [
-            "lib/spawn-seed.ts"
+            "lib/spawn-seed.ts",
+            "wiring/canvas.ts"
           ]
         },
         "hostCan": {
@@ -13724,6 +13734,12 @@
           ]
         },
         "parseNodeInput": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "routes/canvas.ts"
+          ]
+        },
+        "NODE_ID": {
           "module": "lib/canvas.ts",
           "callers": [
             "routes/canvas.ts"
@@ -15667,6 +15683,18 @@
           ]
         },
         "createCanvasStore": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "NodeKind": {
+          "module": "lib/canvas.ts",
+          "callers": [
+            "wiring/canvas.ts"
+          ]
+        },
+        "NodePatch": {
           "module": "lib/canvas.ts",
           "callers": [
             "wiring/canvas.ts"

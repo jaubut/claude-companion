@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { companionDbPath } from "../lib/db-path"
-import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, type SendResult, contextPrompt, createCanvasStore, referenceContext, sessionStatuses } from "../lib/canvas"
+import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, type NodeKind, type NodePatch, type SendResult, contextPrompt, createCanvasStore, oneLine, referenceContext, sessionStatuses } from "../lib/canvas"
 import { listActivities, onActivity } from "../lib/activity"
 import { companionLog } from "../lib/log"
 import { listSessions, onSessions } from "../lib/sessions"
@@ -39,15 +39,17 @@ function openStore(): CanvasStore {
 export const canvasStore: CanvasStore = {
   nodes: () => openStore().nodes(),
   edges: () => openStore().edges(),
-  // Setting `ref` (re)binds the node to whichever agent holds that session right now.
-  addNode: (input, now) => openStore().addNode({ ...input, boundSid: sidOf(input.ref) }, now),
-  patchNode: (id, patch, now) => openStore().patchNode(id, patch.ref === undefined ? patch : { ...patch, boundSid: sidOf(patch.ref) }, now),
+  // Setting `ref` (re)binds the node to whichever agent holds that session right now;
+  // a preview binds to the agent that posted it (data.sessionKey), set with its data.
+  addNode: (input, now) => openStore().addNode({ ...input, boundSid: sidOf(bindKey(input.kind, input)) }, now),
+  patchNode: (id, patch, now) => openStore().patchNode(id, rebind(id, patch), now),
   removeNode: (id) => openStore().removeNode(id),
   addEdge: (input, now) => openStore().addEdge(input, now),
   removeEdge: (id) => openStore().removeEdge(id),
   node: (id) => openStore().node(id),
   edge: (id) => openStore().edge(id),
   claimEdge: (id, now) => openStore().claimEdge(id, now),
+  pickNode: (id, now) => openStore().pickNode(id, now),
   references: (target) => openStore().references(target),
   settleEdge: (id, result, now) => openStore().settleEdge(id, result, now),
 }
@@ -70,24 +72,59 @@ function sidOf(ref: string): string {
   return ref ? listSessions().find((s) => s.key === ref)?.sessionId ?? "" : ""
 }
 
+// The session key a node is bound to: its ref, or a preview's data.sessionKey.
+function bindKey(kind: NodeKind, n: { ref?: string; data?: Record<string, unknown> }): string {
+  if (kind !== "preview") return n.ref ?? ""
+  return typeof n.data?.sessionKey === "string" ? n.data.sessionKey : ""
+}
+
+function rebind(id: string, patch: NodePatch): NodePatch {
+  const kind = openStore().node(id)?.kind
+  if (!kind || (kind === "preview" ? patch.data : patch.ref) === undefined) return patch
+  return { ...patch, boundSid: sidOf(bindKey(kind, patch)) }
+}
+
+// The bound-session check before typing into `key`: a refusal, or null when it may go ahead.
+function boundCheck(key: string, boundSid: string | undefined): SendResult | null {
+  // An empty key would make deliverInject fall back to the frontmost session.
+  if (!key) return { ok: false, status: 410, error: "target_gone" }
+  const live = listSessions().find((s) => s.key === key)
+  if (!live) return { ok: false, status: 410, error: "target_gone" }
+  // The key is tty-based: another agent on that tty would pass every inject guard. Re-pointing rebinds.
+  if (!live.sessionId || live.sessionId !== boundSid) return { ok: false, status: 409, error: "target_changed" }
+  return null
+}
+
+async function inject(text: string, key: string): Promise<SendResult> {
+  if (!deliver) return { ok: false, status: 503, error: "deliver_unavailable" }
+  const res = await deliver(text, key)
+  const body = (await res.json()) as Record<string, unknown>
+  if (res.ok && body.ok === true) return { ok: true }
+  return { ok: false, status: res.ok ? 502 : res.status, error: typeof body.error === "string" ? body.error : "deliver_failed", detail: body }
+}
+
 export async function canvasSend(edge: CanvasEdge): Promise<SendResult> {
   const from = canvasStore.node(edge.from)
   const to = canvasStore.node(edge.to)
   if (!from || !to) return { ok: false, status: 404, error: "node_not_found" }
-  // An empty key would make deliverInject fall back to the frontmost session.
-  if (!to.ref) return { ok: false, status: 410, error: "target_gone" }
-  const live = listSessions().find((s) => s.key === to.ref)
-  if (!live) return { ok: false, status: 410, error: "target_gone" }
-  // The key is tty-based: another agent on that tty would pass every inject guard. Re-pointing rebinds.
-  if (!live.sessionId || live.sessionId !== to.boundSid) return { ok: false, status: 409, error: "target_changed" }
+  const refused = boundCheck(to.ref, to.boundSid)
+  if (refused) return refused
   const prompt = await contextPrompt(from, tursoQuery)
   if (!prompt.ok) return { ok: false, status: prompt.error === "source_not_found" ? 404 : 400, error: prompt.error }
   companionLog(`canvas send ${edge.id}: ${from.kind} ${from.ref || from.id} → ${to.ref}`)
-  if (!deliver) return { ok: false, status: 503, error: "deliver_unavailable" }
-  const res = await deliver(prompt.text, to.ref)
-  const body = (await res.json()) as Record<string, unknown>
-  if (res.ok && body.ok === true) return { ok: true }
-  return { ok: false, status: res.ok ? 502 : res.status, error: typeof body.error === "string" ? body.error : "deliver_failed", detail: body }
+  return inject(prompt.text, to.ref)
+}
+
+// Design-first pick: tell the agent that posted the preview (data.sessionKey) which direction won.
+// null = no live session to tell: the pick is only stored, the agent reads it from GET /api/canvas.
+export async function canvasPickNotify(node: CanvasNode): Promise<SendResult | null> {
+  const key = bindKey(node.kind, node)
+  if (!key || !listSessions().some((s) => s.key === key)) return null
+  const refused = boundCheck(key, node.boundSid)
+  if (refused) return refused
+  const direction = typeof node.data.direction === "string" ? node.data.direction : ""
+  companionLog(`canvas pick ${node.id}: ${direction} → ${key}`)
+  return inject(oneLine(`Picked direction: ${direction} — ${node.ref}`), key)
 }
 
 // canvas-note-refs: the note nodes linked to whoever sent a prompt — a session (its agent node,

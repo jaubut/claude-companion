@@ -74,6 +74,9 @@ export type NodePatch = Partial<Pick<CanvasNode, "ref" | "x" | "y" | "w" | "h" |
 export type EdgeInput = Pick<CanvasEdge, "kind" | "from" | "to">
 export type SendResult = { ok: true } | { ok: false; status: number; error: string; detail?: Record<string, unknown> }
 
+/** A preview pick: the picked node plus every node it changed (itself first, then group siblings un-picked). */
+export type PickResult = { ok: true; node: CanvasNode; changed: CanvasNode[] } | { ok: false; error: "not_found" | "invalid_kind" }
+
 export type EdgeAddResult = { ok: true; edge: CanvasEdge } | { ok: false; error: "node_not_found" | "self_edge" | "edge_exists" | "invalid_endpoints" }
 
 export interface CanvasStore {
@@ -92,6 +95,8 @@ export interface CanvasStore {
   claimEdge(id: string, now: number): CanvasEdge | null
   /** The note nodes referenced by an agent bound to (key, sid), or by any brain node. */
   references(target: { key: string; sid: string } | "brain"): CanvasNode[]
+  /** Design-first pick: data.picked/pickedAt on a preview, data.picked = false on the other previews of its data.group. */
+  pickNode(id: string, now: number): PickResult
   /** sending → sent|failed; null when the edge was removed meanwhile. */
   settleEdge(id: string, result: { ok: true } | { ok: false; error: string }, now: number): CanvasEdge | null
 }
@@ -148,6 +153,23 @@ export function createCanvasStore(db: Database): CanvasStore {
     db.query("DELETE FROM canvas_edges WHERE from_id = ? OR to_id = ?").run(id, id)
     return { edgeIds }
   })
+  const setData = (n: CanvasNode, data: Record<string, unknown>, now: number): CanvasNode => {
+    db.query("UPDATE canvas_nodes SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(data), now, n.id)
+    return getNode(n.id)!
+  }
+  const pickTx = db.transaction((id: string, now: number): PickResult => {
+    const n = getNode(id)
+    if (!n) return { ok: false, error: "not_found" }
+    if (n.kind !== "preview") return { ok: false, error: "invalid_kind" }
+    const node = setData(n, { ...n.data, picked: true, pickedAt: now }, now)
+    const group = n.data.group
+    // No group (or a non-scalar one) → no siblings to un-pick.
+    const siblings = typeof group === "string" || typeof group === "number"
+      ? (db.query("SELECT * FROM canvas_nodes WHERE kind = 'preview' AND id != ? AND json_extract(data, '$.group') = ?").all(id, group) as RawNode[]).map(toNode)
+      : []
+    const unpicked = siblings.filter((s) => s.data.picked !== false).map((s) => setData(s, { ...s.data, picked: false }, now))
+    return { ok: true, node, changed: [node, ...unpicked] }
+  })
   return {
     nodes: () => (db.query("SELECT * FROM canvas_nodes ORDER BY created_at, id").all() as RawNode[]).map(toNode),
     edges: () => (db.query("SELECT * FROM canvas_edges ORDER BY created_at, id").all() as RawEdge[]).map(toEdge),
@@ -201,6 +223,7 @@ export function createCanvasStore(db: Database): CanvasStore {
       const r = db.query("UPDATE canvas_edges SET state = 'sending', error = '', updated_at = ? WHERE id = ? AND state IN ('proposed', 'failed')").run(now, id)
       return r.changes > 0 ? getEdge(id) : null
     },
+    pickNode: (id, now) => pickTx(id, now),
     settleEdge(id, result, now) {
       const r = result.ok
         ? db.query("UPDATE canvas_edges SET state = 'sent', error = '', sent_at = ?, updated_at = ? WHERE id = ? AND state = 'sending'").run(now, now, id)
@@ -217,6 +240,8 @@ const SIZE_MAX = 1e5
 const REF_MAX = 500
 const ID_MAX = 100
 const DATA_MAX = 16_000
+/** A client-chosen node id (also checked on a pick's path). */
+export const NODE_ID = /^[A-Za-z0-9_-]{1,100}$/
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string }
 
@@ -251,7 +276,7 @@ function parseFields(b: Record<string, unknown>, required: boolean): Parsed<Node
 export function parseNodeInput(raw: unknown): Parsed<NodeInput> {
   if (!isObj(raw)) return { ok: false, error: "invalid_body" }
   if (!NODE_KINDS.includes(raw.kind as NodeKind)) return { ok: false, error: "invalid_kind" }
-  if (raw.id !== undefined && (typeof raw.id !== "string" || !raw.id || raw.id.length > ID_MAX || !/^[A-Za-z0-9_-]+$/.test(raw.id))) return { ok: false, error: "invalid_id" }
+  if (raw.id !== undefined && (typeof raw.id !== "string" || !NODE_ID.test(raw.id))) return { ok: false, error: "invalid_id" }
   const f = parseFields(raw, true)
   if (!f.ok) return f
   const { x, y, w, h } = f.value as Required<Pick<NodePatch, "x" | "y" | "w" | "h">>

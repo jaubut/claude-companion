@@ -1,4 +1,4 @@
-import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, parseEdgeInput, parseNodeInput, parseNodePatch, readReferences, referenceRef, type SendResult } from "../lib/canvas"
+import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, NODE_ID, parseEdgeInput, parseNodeInput, parseNodePatch, readReferences, referenceRef, type SendResult } from "../lib/canvas"
 import { noteContextBlocks } from "../lib/note-media"
 import type { QueryFn } from "../lib/turso"
 export type { SendResult }
@@ -10,6 +10,12 @@ export type { SendResult }
 //   POST   /api/canvas/nodes          { kind, x, y, w, h, ref?, data?, id? } → 201 { ok, node } (200 when id exists)
 //   PATCH  /api/canvas/nodes/<id>     { x?, y?, w?, h?, ref?, data? }       → { ok, node }
 //   DELETE /api/canvas/nodes/<id>     → { ok, edgeIds } (its edges go with it)
+//   POST   /api/canvas/nodes/<id>/pick {} → { ok, node, delivered } — design-first pick on a `preview`:
+//          data.picked = true + data.pickedAt (ms) on it, data.picked = false on the other previews of its
+//          data.group, a `node` frame per changed node. If data.sessionKey is a live session (bound when the
+//          card was posted), "Picked direction: <data.direction> — <ref>" is typed into it (delivered: true);
+//          else stored only (delivered: false). 400 invalid_kind unless preview; inject refusals as /send,
+//          with the pick already stored.
 //   POST   /api/canvas/edges          { from, to, kind? }                   → 201 { ok, edge }. Kind/state come from
 //          the endpoints (a posted kind is ignored): task → agent = "context"/"proposed" (Send?);
 //          note|turso_note → agent|brain = "reference"/"linked" (a live read-only link, never sent)
@@ -33,6 +39,8 @@ export interface CanvasRouteDeps {
   send: (edge: CanvasEdge) => Promise<SendResult>
   /** The note nodes linked to a live session (by key) or to the brain (wiring/canvas.ts). */
   references: (who: { key?: string; brain?: boolean }) => CanvasNode[]
+  /** Type a preview pick into the agent that posted it; null = no live session, stored only (wiring/canvas.ts). */
+  pickNotify: (node: CanvasNode) => Promise<SendResult | null>
   query: QueryFn
   now?: () => number
 }
@@ -73,6 +81,18 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       const { node, created } = deps.store.addNode(p.value, now())
       if (created) frame("node", { node })
       return Response.json({ ok: true, node }, { status: created ? 201 : 200 })
+    }
+
+    const pickId = path.endsWith("/pick") ? idUnder(path.slice(0, -"/pick".length), NODES) : null
+    if (pickId && req.method === "POST") {
+      if (!NODE_ID.test(pickId)) return bad("invalid_id")
+      const p = deps.store.pickNode(pickId, now())
+      if (!p.ok) return bad(p.error, p.error === "not_found" ? 404 : 400)
+      for (const node of p.changed) frame("node", { node })
+      // The pick is stored before typing: a refused inject still leaves it for GET /api/canvas.
+      const r = await deps.pickNotify(p.node).catch((): SendResult => ({ ok: false, status: 503, error: "send_failed" }))
+      if (!r || r.ok) return Response.json({ ok: true, node: p.node, delivered: r !== null })
+      return Response.json({ ...r.detail, ok: false, error: r.error, node: p.node, delivered: false }, { status: r.status })
     }
 
     const nodeId = idUnder(path, NODES)
