@@ -13,7 +13,9 @@ A herdr dispatch worker (`dispatch-<id8>`) sitting on an interactive dialog (per
 - `worker` must match `^dispatch-[0-9a-f]{8}$` (never `cc-*`, `builder-*`, `tko-*`).
 - `key` is one character the runner sends to the pane (`"1"`, `"3"`). An option whose label mentions "auto mode" is dropped (never offered). Max 9 options.
 - `dialog` and labels are passed through `redactSecrets` server-side too (the runner redacts first). Dialog ≤ 2000 chars.
-- An open alert expires 30 min after it was posted (`ALERT_TTL_MS`), the runner's extended give-up.
+- An open alert expires 30 min after it was posted (`ALERT_TTL_MS`), the runner's extended give-up. A sweep every minute flips it (and re-sends the card) even if nobody reads it.
+- Both replay keys are stored on the card (`postKey`, `answerKey`), so replays hold across a server restart.
+- The push is retried 3 times (5 s, 30 s, 2 min) when every token fails transiently, with the same collapse id.
 
 ## Phone → server (Bearer)
 
@@ -26,7 +28,12 @@ An `orchestrator` turn in the brain thread (`#General` off the brain host), re-s
 
 ```
 turn.card = {kind:"worker_blocked", source:"app", taskId, worker, title, dialog,
-             options:[{id, label}], state:"open"|"answered"|"expired", chosen?, expiresAt}
+             options:[{id, label}], state:"open"|"answered"|"expired", chosen?, expiresAt,
+             brief, postKey?, answerKey?}
 ```
 
-`turn.text` carries the dialog and the numbered options, so a build that does not know the card still shows them. Push: category `dispatch_task`, time-sensitive, `userInfo {kind:"worker_blocked", turnId, taskId, channel}`.
+## The brain
+
+On the brain host the card lands in the brain thread, so the brain hears it, but only `card.brief`: task id, worker, the tool from the dialog's first line and that line (≤ 80 chars, punctuation-stripped, already redacted), plus "never answer it, type into or drive that worker's pane". The dialog text and the options never reach the brain (`deliveryText` in `lib/brain.ts`). Answering is the phone's Bearer endpoint only.
+
+`turn.text` carries the dialog and the numbered options, so a build that does not know the card still shows them. Shipped iOS builds decode `card` with `try?` and `kind` as a `String` (claude-companion-ios `BrainTrace.swift`), so the new kind never fails a turn. Push: category `dispatch_task`, time-sensitive, `userInfo {kind:"worker_blocked", turnId, taskId, channel}`.

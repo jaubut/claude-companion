@@ -5,7 +5,8 @@ import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import type { ApnsPayload } from "../lib/apns"
 import type { Turn, TurnCard } from "../lib/orchestrator-chat"
-import { ALERT_TTL_MS, createWorkerBlocked } from "../lib/worker-blocked"
+import { deliveryText } from "../lib/brain"
+import { ALERT_TTL_MS, createWorkerBlocked, pushWithRetry } from "../lib/worker-blocked"
 
 // Blocked dispatch worker alerts (lib/worker-blocked.ts + routes/worker-blocked.ts)
 // over fakes: an in-memory turn store, a clock, captured frames and pushes. The
@@ -31,7 +32,7 @@ function harness() {
   const frames: Array<Record<string, unknown>> = []
   const pushes: ApnsPayload[] = []
   let t = 1_000_000
-  const alerts = createWorkerBlocked({
+  const make = () => createWorkerBlocked({
     appendTurn: (text, card) => {
       const turn: Turn = { id: randomUUID(), threadId: "brain", role: "orchestrator", text, taskId: null, createdAt: t, card }
       turns.set(turn.id, turn)
@@ -45,11 +46,14 @@ function harness() {
       turns.set(id, next)
       return next
     },
+    findByPostKey: (key) => [...turns.values()].find((x) => x.card?.postKey === key) ?? null,
+    openIds: () => [...turns.values()].filter((x) => x.card?.kind === "worker_blocked" && x.card.state === "open").map((x) => x.id),
     broadcast: (f) => frames.push(f),
     push: (p) => pushes.push(p),
     now: () => t,
   })
-  const handle = route(alerts)
+  let alerts = make()
+  let handle = route(alerts)
   async function call(method: string, path: string, body?: unknown, key?: string): Promise<{ status: number; json: Record<string, unknown>; replayed: boolean }> {
     const url = new URL(`http://localhost:4245${path}`)
     const headers: Record<string, string> = { "content-type": "application/json" }
@@ -60,7 +64,9 @@ function harness() {
   }
   const post = (key = "runner-1", worker = "dispatch-0123abcd") =>
     call("POST", "/hooks/worker-blocked", { taskId: "0123abcd99999999", title: "Fix tax rounding", worker, dialog: DIALOG, options: OPTIONS }, key)
-  return { turns, frames, pushes, call, post, advance: (ms: number) => { t += ms } }
+  // A server restart: new store instance, same persisted turns.
+  const restart = () => { alerts = make(); handle = route(alerts) }
+  return { turns, frames, pushes, call, post, restart, sweep: () => alerts.sweep(), advance: (ms: number) => { t += ms } }
 }
 
 test("a dialog becomes one open card without auto mode, secrets redacted, and one push", async () => {
@@ -162,4 +168,67 @@ test("e2e: fake worker dialog → persisted card → choice → keys sent to the
   expect(second.status).toBe(409)
   expect(pane.keys).toEqual(["1"])
   expect(chat.getTurn(id)?.card).toMatchObject({ kind: "worker_blocked", state: "answered", chosen: "1" })
+})
+
+test("the brain hears a sanitized brief: task, tool, short reason, no dialog text or options", async () => {
+  const h = harness()
+  const turn = h.turns.get((await h.post()).json.id as string)!
+  const said = deliveryText([{ id: turn.id, text: turn.text, createdAt: turn.createdAt, card: turn.card, role: "orchestrator" }])
+  expect(said).toContain("task 0123abcd99999999 (dispatch-0123abcd)")
+  expect(said).toContain("Bash dialog")
+  expect(said).toContain("never answer it, type into or drive that worker's pane")
+  for (const raw of ["echo", "curl", "Authorization", "obfuscation", "1. Yes", "3. No"]) expect(said).not.toContain(raw)
+})
+
+test("older iOS builds: kind is a plain string and turn.text still carries the dialog and options", async () => {
+  // Shipped decoder (claude-companion-ios BrainTrace.swift TurnCard): kind: String, unknown keys ignored,
+  // the card decoded with try? — so an unknown kind never fails the turn, and text is the fallback.
+  const h = harness()
+  const turn = h.turns.get((await h.post()).json.id as string)!
+  expect(typeof turn.card!.kind).toBe("string")
+  expect(turn.text).toContain("Do you want to proceed?")
+  expect(turn.text).toContain("1. Yes")
+  expect(turn.text).toContain("3. No")
+})
+
+test("replay keys survive a restart: same create key replays, same answer key replays", async () => {
+  const h = harness()
+  const a = await h.post("runner-k")
+  const id = a.json.id as string
+  await h.call("POST", `/api/orchestrator/worker-blocked/${id}/choose`, { optionId: "1" }, "phone-k")
+  h.restart()
+  const again = await h.post("runner-k")
+  expect(again.status).toBe(200)
+  expect(again.json.id).toBe(id)
+  expect(h.turns.size).toBe(1)
+  expect(h.pushes).toHaveLength(1)
+  const answer = await h.call("POST", `/api/orchestrator/worker-blocked/${id}/choose`, { optionId: "1" }, "phone-k")
+  expect(answer.status).toBe(200)
+  expect(answer.replayed).toBe(true)
+})
+
+test("an unread alert expires on the sweep and is re-broadcast", async () => {
+  const h = harness()
+  const id = (await h.post()).json.id as string
+  h.sweep()
+  expect(h.turns.get(id)!.card!.state).toBe("open")
+  h.advance(ALERT_TTL_MS)
+  h.sweep()
+  expect(h.turns.get(id)!.card!.state).toBe("expired")
+  expect(h.frames.at(-1)).toMatchObject({ type: "orchestrator", turn: { id, card: { state: "expired" } } })
+})
+
+test("pushWithRetry retries transient failures and stops on success or when only pruned tokens remain", async () => {
+  const P: ApnsPayload = { title: "t", body: "b", category: "dispatch_task" }
+  const waits: number[] = []
+  const sleep = async (ms: number) => { waits.push(ms) }
+  const results = [{ sent: 0, pruned: 0, total: 1 }, { sent: 1, pruned: 0, total: 1 }]
+  let n = 0
+  expect(await pushWithRetry(async () => { if (n++ === 0) throw new Error("net"); return results[n - 2]! }, P, sleep)).toBe(true)
+  expect(n).toBe(3)
+  expect(waits).toEqual([5_000, 30_000])
+  let m = 0
+  expect(await pushWithRetry(async () => { m++; return { sent: 0, pruned: 0, total: 1 } }, P, sleep)).toBe(false)
+  expect(m).toBe(4)
+  expect(await pushWithRetry(async () => ({ sent: 0, pruned: 1, total: 1 }), P, sleep)).toBe(true)
 })

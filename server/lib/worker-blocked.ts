@@ -7,8 +7,9 @@ import { redactSecrets } from "./secret-redact"
 // 30 s; it becomes a brain-thread card with the dialog's options + one push.
 // The phone answers once (first answer wins, Idempotency-Key replays); the
 // runner polls the alert and types the chosen key into the pane itself. The
-// card's state (open → answered | expired) lives in the turn's card (sqlite),
-// so it survives a restart; the replay keys are memory only.
+// card's state (open → answered | expired) and both replay keys live in the
+// turn's card (sqlite), so they survive a restart. The brain hears only `brief`
+// (lib/brain.ts deliveryText), never the dialog: it is untrusted pane text.
 // Contract: docs/worker-blocked-api.md.
 
 /** Only herdr dispatch workers: never cc-*, builder-*, tko-* or anything else. */
@@ -33,10 +34,37 @@ export interface BlockedInput {
   options: { key: string; label: string }[]
 }
 
+/** What the brain hears: task, tool, a short redacted reason. No dialog text, no keys. */
+export function alertBrief(input: BlockedInput): string {
+  const head = input.dialog.split("\n").map((l) => l.trim()).find(Boolean) ?? ""
+  const tool = /^[A-Za-z][\w-]{0,30}/.exec(head)?.[0] ?? "unknown"
+  const reason = head.replace(/[^\w .,:?()/-]/g, "").slice(0, 80)
+  return `Worker blocked: task ${input.taskId} (${input.worker}) waits on a ${tool} dialog: "${reason}". Jeremie answers it from his phone; never answer it, type into or drive that worker's pane.`
+}
+
+/** Push with bounded retry: a transient APNs failure gets 3 more tries (same payload, so the same collapse id). */
+export async function pushWithRetry(
+  send: (p: ApnsPayload) => Promise<{ sent: number; pruned: number; total: number }>,
+  payload: ApnsPayload,
+  sleep: (ms: number) => Promise<unknown> = Bun.sleep,
+  delays = [5_000, 30_000, 120_000],
+): Promise<boolean> {
+  for (let i = 0; ; i++) {
+    const r = await send(payload).catch(() => null)
+    if (r && (r.sent > 0 || r.total === r.pruned)) return true
+    if (i >= delays.length) return false
+    await sleep(delays[i]!)
+  }
+}
+
 export interface WorkerBlockedDeps {
   appendTurn: (text: string, card: TurnCard) => Turn
   getTurn: (id: string) => Turn | null
   setCard: (id: string, patch: Partial<TurnCard>) => Turn | null
+  /** The worker_blocked turn whose card carries this runner Idempotency-Key. */
+  findByPostKey: (key: string) => Turn | null
+  /** Ids of worker_blocked turns whose card is still open. */
+  openIds: () => string[]
   broadcast: (frame: Record<string, unknown>) => void
   push: (payload: ApnsPayload) => void
   now?: () => number
@@ -73,8 +101,6 @@ export function parseBlocked(raw: unknown): BlockedInput | string {
 
 export function createWorkerBlocked(deps: WorkerBlockedDeps) {
   const now = deps.now ?? Date.now
-  const byPostKey = new Map<string, string>()
-  const answerKey = new Map<string, { idemKey: string; optionId: string }>()
 
   /** The alert's card, expired first if its TTL passed while open. Null = no such alert. */
   function card(id: string): TurnCard | null {
@@ -97,7 +123,7 @@ export function createWorkerBlocked(deps: WorkerBlockedDeps) {
   }
 
   function create(input: BlockedInput, idemKey: string | null): Result {
-    const seen = idemKey ? byPostKey.get(idemKey) : undefined
+    const seen = idemKey ? deps.findByPostKey(idemKey)?.id : undefined
     const prior = seen ? card(seen) : null
     if (seen && prior) return { status: 200, body: { ...view(seen, prior), replay: true } }
     const options = input.options.map((o) => ({ id: o.key, label: o.label }))
@@ -105,8 +131,8 @@ export function createWorkerBlocked(deps: WorkerBlockedDeps) {
     const turn = deps.appendTurn(text, {
       kind: "worker_blocked", source: "app", taskId: input.taskId, worker: input.worker, title: input.title,
       dialog: input.dialog, options, state: "open", expiresAt: now() + ALERT_TTL_MS,
+      brief: alertBrief(input), ...(idemKey ? { postKey: idemKey } : {}),
     })
-    if (idemKey) byPostKey.set(idemKey, turn.id)
     deps.broadcast({ type: "orchestrator", turn })
     deps.push({
       title: `Worker needs you: ${input.title || input.worker}`.slice(0, 120),
@@ -130,14 +156,12 @@ export function createWorkerBlocked(deps: WorkerBlockedDeps) {
     const c = card(id)
     if (!c) return fail(404, "no_such_alert")
     if (c.state === "answered") {
-      const prev = answerKey.get(id)
-      if (idemKey && prev?.idemKey === idemKey && prev.optionId === optionId) return { status: 200, body: { ...view(id, c), replay: true } }
+      if (idemKey && c.answerKey === idemKey && c.chosen === optionId) return { status: 200, body: { ...view(id, c), replay: true } }
       return fail(409, "already_answered", { choice: view(id, c).choice })
     }
     if (c.state !== "open") return fail(410, "expired")
     if (!c.options?.some((o) => o.id === optionId)) return fail(400, "unknown_option")
-    const next = update(id, { state: "answered", chosen: optionId })
-    if (idemKey) answerKey.set(id, { idemKey, optionId })
+    const next = update(id, { state: "answered", chosen: optionId, ...(idemKey ? { answerKey: idemKey } : {}) })
     return { status: 200, body: view(id, next ?? { ...c, state: "answered", chosen: optionId }) }
   }
 
@@ -149,7 +173,12 @@ export function createWorkerBlocked(deps: WorkerBlockedDeps) {
     return { status: 200, body: view(id, out) }
   }
 
-  return { create, status, choose, close }
+  /** Expire every open alert past its TTL, read or not (the wiring runs it every minute). */
+  function sweep(): void {
+    for (const id of deps.openIds()) card(id)
+  }
+
+  return { create, status, choose, close, sweep }
 }
 
 export type WorkerBlocked = ReturnType<typeof createWorkerBlocked>

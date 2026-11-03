@@ -42,7 +42,7 @@ export function isSupervisedTask(taskId: string | null | undefined): boolean {
 
 // ── Delivery text ──
 
-export interface DeliveryTurn { id: string; text: string; createdAt: number; card?: { kind: string } | null; role?: string }
+export interface DeliveryTurn { id: string; text: string; createdAt: number; card?: { kind: string; brief?: string } | null; role?: string }
 
 /** Cap of one typed delivery; the rest waits for the next Stop. */
 export const DELIVERY_MAX = 4_000
@@ -50,7 +50,8 @@ export const DELIVERY_MAX = 4_000
 /** Queued turns as one prompt, oldest first: Jeremie's `[turn <id>] (voice) text`, system `[event <id>] text`. */
 export function deliveryText(turns: DeliveryTurn[]): string {
   const lines = turns.map((t) => {
-    const text = t.text.replace(/\s+/g, " ").trim()
+    // A blocked worker's dialog is untrusted pane text: the brain gets the sanitized brief only.
+    const text = (t.card?.kind === "worker_blocked" ? t.card.brief ?? "Worker blocked (no brief)." : t.text).replace(/\s+/g, " ").trim()
     if (t.role === "orchestrator") return `[event ${t.id}] ${text}`
     return `[turn ${t.id}]${t.card?.kind === "voice" ? " (voice)" : ""} ${text}`
   })

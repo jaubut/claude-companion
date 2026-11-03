@@ -981,7 +981,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 216,
+          "lines": 217,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -2819,7 +2819,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 339,
+          "lines": 354,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -2833,6 +2833,8 @@
             "appendTurn",
             "getTurn",
             "setTurnCard",
+            "findWorkerAlert",
+            "openWorkerAlertIds",
             "getThread",
             "searchThread",
             "createTask",
@@ -5780,12 +5782,14 @@
         },
         {
           "path": "lib/worker-blocked.ts",
-          "lines": 156,
+          "lines": 185,
           "kind": "lib",
           "exports": [
             "WORKER_RE",
             "ALERT_TTL_MS",
             "BlockedInput",
+            "alertBrief",
+            "pushWithRetry",
             "WorkerBlockedDeps",
             "Result",
             "parseBlocked",
@@ -8219,7 +8223,7 @@
         },
         {
           "path": "wiring/worker-blocked.ts",
-          "lines": 18,
+          "lines": 24,
           "kind": "lib",
           "exports": [
             "workerBlocked"
@@ -8237,7 +8241,9 @@
             "lib/worker-blocked.ts",
             "state.ts"
           ],
-          "listeners": [],
+          "listeners": [
+            "setInterval"
+          ],
           "sheets": 0,
           "externals": []
         },
@@ -17175,6 +17181,24 @@
           ]
         },
         "createWorkerBlocked": {
+          "module": "lib/worker-blocked.ts",
+          "callers": [
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "findWorkerAlert": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "openWorkerAlertIds": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "pushWithRetry": {
           "module": "lib/worker-blocked.ts",
           "callers": [
             "wiring/worker-blocked.ts"
