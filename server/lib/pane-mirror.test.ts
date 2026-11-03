@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import {
   FrameCoalescer, MAX_MIRROR_VIEWERS, MIRROR_ECHO_MS, MIRROR_ENDED, MIRROR_GONE_AFTER, PaneMirror, frameSize, mirrorControl, mirrorInput, mirrorKey, paneMirrorUpgrade,
-  focusRows, repaintFrame, screenRows, smallestSize, type Clock, type MirrorSize, type MirrorSource, type MirrorUpgradeDeps,
+  focusRows, repaintFrame, screenRows, smallestSize, historyFrame, scrollbackRequest, MIRROR_MAX_SCROLLBACK, MIRROR_SCROLLBACK_MIN_MS, type Clock, type MirrorSize, type MirrorSource, type MirrorUpgradeDeps,
 } from "./pane-mirror"
 import { recordPeer } from "./vault-guard"
 import { readFileSync } from "node:fs"
@@ -354,5 +354,77 @@ test("hold: frames report the held width, not herdr's (Mac) layout width; a lost
   m.sizeLost()
   await advance(60)
   expect(sizes().at(-1)).toEqual({ type: "size", cols: 10, rows: 1 })
+  m.stop()
+})
+
+// ── scrollback (opt-in history) ──
+
+test("scrollback: a phone request → its lines, floored and capped; other frames → null", () => {
+  expect(scrollbackRequest('{"type":"scrollback","lines":300}')).toBe(300)
+  expect(scrollbackRequest('{"type":"scrollback","lines":12.7}')).toBe(12)
+  expect(scrollbackRequest('{"type":"scrollback","lines":99999}')).toBe(MIRROR_MAX_SCROLLBACK)
+  for (const bad of ['{"type":"scrollback","lines":0}', '{"type":"scrollback"}', '{"type":"scrollback","lines":"9"}', '{"type":"resize","cols":40,"rows":20}', "junk"]) {
+    expect(scrollbackRequest(bad)).toBeNull()
+  }
+  expect(scrollbackRequest(new TextEncoder().encode('{"type":"scrollback","lines":5}'))).toBeNull()
+})
+
+test("history frame: plain rows, CRLF between them, SGR reset per row; empty text → 0 lines", () => {
+  expect(historyFrame("a\r\n\x1b[1mb\r\n")).toEqual({ lines: 2, frame: "a\x1b[0m\r\n\x1b[1mb\x1b[0m" })
+  expect(historyFrame("")).toEqual({ lines: 0, frame: "" })
+})
+
+function historySource(screens: string[], history: (lines: number) => string | null) {
+  const asked: number[] = []
+  const { src } = fakeSource(screens)
+  src.history = async (_p, lines) => { asked.push(lines); return history(lines) }
+  return { src, asked }
+}
+
+test("mirror: scrollback answers the asking viewer alone (history then one binary frame); the other gets today's frames only", async () => {
+  const { clock, advance } = fakeClock()
+  const { src, asked } = historySource(["s\r\n"], (n) => Array.from({ length: n }, (_, i) => `h${i}`).join("\r\n") + "\r\n")
+  const m = new PaneMirror("w3:p1", src, clock, { pollMs: 50, minFrameMs: 33 })
+  const a = viewer(), b = viewer()
+  m.add(a.v); m.add(b.v)
+  await advance(0)
+  m.scrollback(a.v, 3)
+  await advance(0)
+  expect(asked).toEqual([3])
+  expect(a.controls.at(-1)).toEqual({ type: "history", lines: 3 })
+  expect(a.frames.at(-1)).toBe("h0\x1b[0m\r\nh1\x1b[0m\r\nh2\x1b[0m")
+  expect(b.controls.some((c) => (c as { type: string }).type === "history")).toBe(false)
+  expect(b.frames).toEqual([repaintFrame("s\r\n")])
+  m.stop()
+})
+
+test("mirror: scrollback is rate-limited per viewer; requests inside the window collapse to the latest", async () => {
+  const { clock, advance } = fakeClock()
+  const { src, asked } = historySource(["s\r\n"], () => "x\r\n")
+  const m = new PaneMirror("w3:p1", src, clock, { pollMs: 50, minFrameMs: 33 })
+  const a = viewer()
+  m.add(a.v)
+  m.scrollback(a.v, 10)
+  await advance(0)
+  m.scrollback(a.v, 20); m.scrollback(a.v, 30)
+  await advance(MIRROR_SCROLLBACK_MIN_MS - 1)
+  expect(asked).toEqual([10])
+  await advance(1)
+  expect(asked).toEqual([10, 30])
+  m.stop()
+})
+
+test("mirror: a source without history (tmux) or a failed read → history 0 and no binary frame", async () => {
+  const { clock, advance } = fakeClock()
+  const { src } = fakeSource(["s\r\n"])
+  const m = new PaneMirror("w3:p1", src, clock, { pollMs: 50, minFrameMs: 33 })
+  const a = viewer()
+  m.add(a.v)
+  await advance(0)
+  const frames = a.frames.length
+  m.scrollback(a.v, 50)
+  await advance(0)
+  expect(a.controls.at(-1)).toEqual({ type: "history", lines: 0 })
+  expect(a.frames.length).toBe(frames)
   m.stop()
 })

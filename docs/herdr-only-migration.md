@@ -120,7 +120,7 @@ All of these ran on a throwaway herdr session (`herdr --session s0probe` under a
   6. Never touch the live server.
 
 ### Stage 1: stop creating new tmux sessions (code, Zettlab then Mac)
-- `spawn-session.ts`: `app: "auto"` → herdr only. A gate failure becomes an error (`herdr_unavailable: <reason>`), never a tmux fallback, the same as takeover today. `app: "tmux"` returns 400 `tmux_retired`. Mac Terminal/iTerm: keep or drop is Jeremie's call; they are tmux under the hood.
+- `spawn-session.ts`: `app: "auto"` → herdr only. A gate failure becomes an error (`herdr_unavailable: <reason>`), never a tmux fallback, the same as takeover today. `app: "tmux"` returns 400 `tmux_retired`. Mac Terminal/iTerm: dropped for Ghostty (Jeremie, 2026-11-01).
 - The version gate becomes a hard error, with the pinned list moved to one env var on both hosts.
 - `claude()` wrappers in `~/.bashrc` and `~/.zshrc` (claude-config): launch into herdr instead of `tmux -L cc` (`herdr workspace create` + `agent start`, as spawn does), or simply run `command claude` when already inside herdr.
 - Existing tmux sessions keep working. Inject, mirror and dialogs still resolve their tmux pane, and the read paths are untouched.
@@ -132,8 +132,8 @@ Shipped in `server/lib/spawn-session.ts` + `server/lib/herdr.ts`:
 - `app: "auto"` is herdr only, on the Mac and Linux. A gate failure returns `herdr_unavailable: <reason>` (400 from `/api/spawn-session`) and logs `spawn: herdr unavailable (…), no tmux fallback`. `app: "herdr"` and takeover return the same error string; the brain's `spawnInHerdr` does too.
 - `app: "tmux"` returns 400 `tmux_retired`, checked before the cwd is resolved or trusted, so a refused request has no side effect.
 - Version gate: pinned list from one env var, `DISPATCH_HERDR_VERSIONS` (the name `dispatch-run` already reads, so one var covers both), default `0.9.5` (`HERDR_DEFAULT_PIN`). Unset no longer means the client's `0.9.5,0.9.3`. Neither host's units set the var today.
-- Mac `terminal` / `iterm`: unchanged, still reachable by name (open question 1, deferred).
-- Kept unreachable, not deleted (Stage 5): `spawnInTmuxDetached`, `spawnMacTerminalAuto`, `buildTmuxLaunch`, `tmux-spawn-confirm.ts`.
+- Mac `terminal` / `iterm`: **dropped for Ghostty (2026-11-01)**. Both return 400 `app_retired` with `hint` (use `ghostty` or `auto`), before the cwd is resolved. `app: "ghostty"` (Mac only; Linux → macOS-only error) is the `auto` herdr spawn, then `herdr workspace focus <id>` and `open -na Ghostty.app --args -e <herdr>`: plain `herdr` attaches to the persistent session (herdr has no per-workspace attach), `-e` sets Ghostty's initial-command. A failed open is logged and the spawn still succeeds as `herdr`. `spawnInTerminal`, `spawnInIterm`, `spawnMacTerminalAuto` and `buildTmuxLaunch` are deleted. Tests in `spawn-herdr.test.ts`.
+- Kept unreachable, not deleted (Stage 5): `spawnInTmuxDetached`, `tmux-spawn-confirm.ts`.
 - Untouched: inject, pane mirror, dialogs and every read path still resolve tmux panes, so existing tmux sessions keep working (their tests are unchanged and green).
 - Tests: `server/lib/spawn-herdr.test.ts` (the spawn half of `herdr.test.ts`, split out because that file was over the 600-line cap; the fake moved to `herdr-fake.test-util.ts`): auto → herdr, gate failure → `herdr_unavailable` with nothing created and no tmux, app tmux → `tmux_retired`.
 - Not in this PR: the `claude()` wrappers and the dispatch-run pin/fallback (claude-config).
@@ -199,6 +199,6 @@ Only after Stage 4, plus two weeks of no tmux session on either host.
 | session JSON `tmuxPane` | empty for one iOS release, then remove |
 
 ## 5. Open questions for Jeremie
-1. Mac `terminal` / `iterm` spawn apps: drop them (herdr only), or keep them for desk sessions you watch in Ghostty?
+1. ~~Mac `terminal` / `iterm` spawn apps: drop them or keep them?~~ Dropped for `ghostty` (2026-11-01, Stage 1).
 2. If herdr has no raw attach for shells (Gap C), is a polled pane-mirror good enough for the phone Terminal view and the Canvas terminal node?
 3. `cc-aubut-` (claude in `~`, idle since 2026-10-27): end it, or resume it in herdr?

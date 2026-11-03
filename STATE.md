@@ -10,6 +10,12 @@ Last updated: 2026-10-25
 **Rejected:** progress as chat turns (noise, wakes nobody usefully); the server parsing the brain's transcript for PROGRESS lines (the relay swallows them, so they never reach it).
 **Revisit if:** a builder's progress should show on hosts other than the brain's, or jobs must survive a Companion restart.
 
+### Pane mirror scrollback: opt-in history request, answered to the asking viewer only (2026-11-02, t-ios-term-input-1)
+**Choice:** phone → `{"type":"scrollback","lines":N}` (cap 2000); server → that viewer only `{"type":"history","lines":M}` + one binary frame of M plain rows (CRLF, SGR reset per row), from `pane.read --source recent --lines N` (visible screen included). One answer per viewer per 1 s, latest wins. tmux / failed read → `lines:0`, no binary frame.
+**Why:** the mirror reads `--source visible`, so the phone had nothing to scroll (Jeremie: "can't scroll the terminal output"). Opt-in keeps old app builds on exactly today's frames.
+**Rejected:** history in every repaint (cost on every frame for every viewer); `herdr pane scroll` on the shared pane (moves the Mac's view too).
+**Revisit if:** tmux panes need history (`capture-pane -S -N`).
+
 ### Pane mirror covers tmux: capture-pane poll + send-keys -H, no sizer, iOS decides canMirror (2026-10-30)
 **Choice:** `/api/pane-mirror` mirrors a session's tmux pane (tmux wins over herdr, like herdrPaneOf) through a tmux MirrorSource: `capture-pane -e -p` every 50 ms, `#{pane_width}`, keystrokes as `send-keys -H` hex through the shared key gate. No PaneSizer for tmux; a phone resize is ignored and frames keep the pane's width. Each host mirrors its own sessions.
 **Why:** `-H` is byte-exact for ESC sequences, ^C, UTF-8 and a leading `-` (measured on tmux 3.4). `resize-pane` moves the Mac's own layout with no hold or release. A server `canMirror` field would mean editing `wireSessions` (pinned by a test) in a file at its cap, and after this change the rule is just "has a pane", so iOS uses that rule itself.

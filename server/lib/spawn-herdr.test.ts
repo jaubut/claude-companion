@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { fakeHerdr } from "./herdr-fake.test-util"
-import { herdrAgentBaseName, spawnCompanionSession, spawnInHerdr, spawnLinux, spawnMacAuto } from "./spawn-session"
+import { APP_RETIRED_HINT, type SpawnAgent, ghosttyOpenArgv, herdrAgentBaseName, spawnCompanionSession, spawnInGhostty, spawnInHerdr, spawnLinux, spawnMacAuto } from "./spawn-session"
 
 const CWD = "/Users/j/Claude Companion"
 
@@ -129,13 +129,71 @@ test("linux auto: gate fails → herdr_unavailable, nothing created, no tmux", a
   expect(f.calls).toEqual([])
 })
 
-test("linux: terminal/iterm stay macOS-only", async () => {
+test("linux: ghostty is macOS-only", async () => {
   const { f, deps } = linuxDeps(null)
-  expect((await spawnLinux("/w", "iterm", "claude", undefined, deps)).error).toContain("macOS-only")
+  expect((await spawnLinux("/w", "ghostty", "claude", undefined, deps)).error).toContain("macOS-only")
   expect(f.calls).toEqual([])
 })
 
 test("app tmux → tmux_retired before any side effect (route answers 400)", async () => {
   const r = await spawnCompanionSession({ cwd: "/definitely/not/a/dir", app: "tmux", agent: "codex" })
   expect(r).toEqual({ ok: false, error: "tmux_retired" })
+})
+
+test("app terminal / iterm → app_retired with a hint, before any side effect (route answers 400)", async () => {
+  for (const app of ["terminal", "iterm"]) {
+    const r = await spawnCompanionSession({ cwd: "/definitely/not/a/dir", app, agent: "codex" })
+    expect(r).toEqual({ ok: false, error: "app_retired", hint: APP_RETIRED_HINT })
+  }
+  expect(APP_RETIRED_HINT).toContain('"ghostty"')
+  expect(APP_RETIRED_HINT).toContain('"auto"')
+})
+
+// ── ghostty (Mac) ─────────────────────────────────────────────────────────
+
+function ghosttyDeps(code = 0) {
+  const f = fakeHerdr()
+  const runs: string[][] = []
+  const logs: string[] = []
+  const deps = {
+    herdr: (cwd: string, agent: SpawnAgent, env?: Record<string, string>) => spawnInHerdr(cwd, agent, env, f.h),
+    h: f.h,
+    run: async (argv: string[]) => { runs.push(argv); return { code, stdout: "", stderr: code ? "LSOpenURLsWithRole() failed" : "" } },
+    log: (l: string) => logs.push(l),
+  }
+  return { f, runs, logs, deps }
+}
+
+test("ghostty open argv: new Ghostty instance running herdr (attach) via -e", () => {
+  expect(ghosttyOpenArgv("/opt/homebrew/bin/herdr")).toEqual(["open", "-na", "Ghostty.app", "--args", "-e", "/opt/homebrew/bin/herdr"])
+})
+
+test("ghostty: herdr spawn like auto, then focus its workspace, then open Ghostty attached", async () => {
+  const { f, runs, deps } = ghosttyDeps()
+  const r = await spawnInGhostty(CWD, "claude", undefined, deps)
+  expect(r).toEqual({ ok: true, app: "Ghostty", sessionName: "cc-claude-companion", herdrPane: "w7:p1" })
+  expect(f.verbs()).toEqual(["agent get", "workspace create", "agent start", "workspace focus"])
+  expect(f.calls.at(-1)).toEqual(["workspace", "focus", "w7"])
+  expect(runs).toEqual([ghosttyOpenArgv()])
+})
+
+test("ghostty: open fails → agent still runs, spawn ok as herdr, failure logged", async () => {
+  const { runs, logs, deps } = ghosttyDeps(1)
+  const r = await spawnInGhostty(CWD, "claude", undefined, deps)
+  expect(r).toEqual({ ok: true, app: "herdr", sessionName: "cc-claude-companion", herdrPane: "w7:p1" })
+  expect(runs.length).toBe(1)
+  expect(logs.join()).toContain("Ghostty open failed")
+})
+
+test("ghostty: herdr gate fails → herdr_unavailable, no Ghostty window", async () => {
+  const f = fakeHerdr({ gate: "herdr-version-unpinned (0.9.6 not in 0.9.5)" })
+  const runs: string[][] = []
+  const r = await spawnInGhostty(CWD, "claude", undefined, {
+    herdr: (cwd, agent, env) => spawnInHerdr(cwd, agent, env, f.h),
+    h: f.h,
+    run: async (argv) => { runs.push(argv); return { code: 0, stdout: "", stderr: "" } },
+    log: () => {},
+  })
+  expect(r).toEqual({ ok: false, app: "herdr", error: "herdr_unavailable: herdr-version-unpinned (0.9.6 not in 0.9.5)" })
+  expect(runs).toEqual([])
 })

@@ -1,30 +1,21 @@
-// Spawn a fresh Claude/Codex session from the companion (phone tap → new
-// Terminal/iTerm window on the Mac, cd'd into a directory, agent already
-// launched inside a tmux session). The usual session hooks pick up the
-// new session within a second or two, and the phone picker sees it
-// automatically.
-//
-// Why tmux: phone-spawned sessions land in the focus-race-prone osascript
-// inject path otherwise. Wrapping the launch in `tmux new-session -s
-// cc-<basename>` makes $TMUX_PANE available to the hook, so subsequent
-// phone messages route via tmux send-keys (pane-keyed, focus-independent).
-// If a session with that name already exists, we suffix `-2`, `-3`, ... so
-// a re-tap launches a *new* agent instance instead of opening a second
-// terminal window mirroring the first (tmux mirrors any session attached
-// from multiple clients in real time, which looked like a "copy" bug).
+// Spawn a fresh Claude/Codex session from the companion (phone tap → a new
+// herdr workspace cd'd into a directory, agent already started). The usual
+// session hooks pick up the new session within a second or two, and the
+// phone picker sees it automatically.
 //
 // Herdr-only (docs/herdr-only-migration.md, Stage 1): "auto" is herdr on macOS
 // and Linux alike, a gate failure is an error (herdr_unavailable), and
 // app "tmux" is refused (tmux_retired). The tmux spawn code below stays,
 // unreachable from "auto"/"tmux", so a revert restores it; Stage 5 deletes it.
-// Mac Terminal/iTerm (tmux under the hood) are still reachable by name.
+// Mac Terminal/iTerm were dropped for "ghostty" (2026-11-01): the same herdr
+// spawn, plus a Ghostty window attached to herdr. They answer app_retired.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
-import { type Herdr, HERDR_VERSIONS_ENV, forgetHerdrAgent, herdrErrorCode, noteHerdrAgent, realHerdr } from "./herdr"
+import { type Herdr, HERDR_VERSIONS_ENV, forgetHerdrAgent, herdrErrorCode, herdrOwnerFor, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
 import { applyMcpChoices } from "./claude-mcp-trust"
-import { type DetachedDeps, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
+import { type DetachedDeps, type TmuxArgvRunner, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
 
 // Claude Code blocks interactive startup at the "Do you trust the files in
 // this folder?" dialog until the dir is accepted — and the SessionStart hook
@@ -56,7 +47,11 @@ export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${
 
 export const TMUX_RETIRED = "tmux_retired"
 
-export type SpawnApp = "terminal" | "iterm" | "tmux" | "herdr" | "auto"
+export const APP_RETIRED = "app_retired"
+const RETIRED_APPS = new Set(["terminal", "iterm"])
+export const APP_RETIRED_HINT = 'Terminal/iTerm were dropped for Ghostty: use app "ghostty" or "auto"'
+
+export type SpawnApp = "ghostty" | "tmux" | "herdr" | "auto"
 export type SpawnAgent = "claude" | "codex" | "kimi"
 
 // Kimi sessions are regular Claude Code pointed at Moonshot's Anthropic-
@@ -102,7 +97,7 @@ function envPrefix(env?: Record<string, string>): string {
 }
 
 // The command tmux runs inside the new session, shared by every spawn path
-// (Terminal, iTerm, headless tmux) so they can't drift apart. The env prefix
+// (headless tmux, shells) so they can't drift apart. The env prefix
 // precedes the `cd`, and therefore also the kimi `. kimi.env` sourcing.
 export function buildInner(cwd: string, agent: SpawnAgent, env?: Record<string, string>): string {
   return `${envPrefix(env)}cd '${escapeForShellSingleQuoted(cwd)}' && ${agentLaunchCommand(agent)}`
@@ -110,7 +105,7 @@ export function buildInner(cwd: string, agent: SpawnAgent, env?: Record<string, 
 
 export interface SpawnResult {
   ok: boolean
-  app?: "Terminal" | "iTerm" | "tmux" | "herdr"
+  app?: "Ghostty" | "tmux" | "herdr"
   sessionName?: string
   // Socket path of the tmux server the session landed on ("" = the default
   // server). Same form discovery records from $TMUX, so `-S` reaches it.
@@ -122,88 +117,14 @@ export interface SpawnResult {
   // sets it. Since Stage 1 nothing falls back to tmux on it.
   fallback?: string
   error?: string
+  // With error app_retired: what to send instead.
+  hint?: string
 }
 
 function escapeForShellSingleQuoted(s: string): string {
   // Wrapping in single quotes in the shell blocks interpolation; the only
   // escape we need is for embedded single quotes themselves.
   return s.replace(/'/g, `'\\''`)
-}
-
-function escapeForAppleScript(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-}
-
-async function runOsa(script: string, timeoutMs = 15_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["osascript", "-e", script], { stdout: "pipe", stderr: "pipe" })
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, timeoutMs)
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ])
-  clearTimeout(timer)
-  await proc.exited
-  if (timedOut) return { ok: false, stdout: stdout.trim(), stderr: "Terminal launch timed out" }
-  return { ok: (proc.exitCode ?? 0) === 0, stdout: stdout.trim(), stderr: stderr.trim() }
-}
-
-async function isAppRunning(appName: string): Promise<boolean> {
-  // Avoid System Events here. AppleScript process-list checks can hang or
-  // require extra automation permissions, which makes the phone-side spawn
-  // request time out before Terminal is even opened.
-  const proc = Bun.spawn(["pgrep", "-x", appName], { stdout: "ignore", stderr: "ignore" })
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill()
-  }, 1_000)
-  const code = await proc.exited
-  clearTimeout(timer)
-  return !timedOut && code === 0
-}
-
-// Build a tmux-wrapped invocation. The result is a single shell command
-// suitable for AppleScript's `do script` / iTerm's `write text`. Layout:
-//
-//   tmux new-session -s '<sess>' 'cd '\''<cwd>'\'' && claude' \; \
-//     set-option -t '<sess>' detach-on-destroy on
-//
-// All single-quote nesting goes through escapeForShellSingleQuoted so paths
-// containing apostrophes survive intact. tmux runs the inner command via
-// /bin/sh so standard POSIX quoting applies.
-//
-// With COMPANION_TMUX_SOCKET set the line leads with `-L '<name>'` (and
-// `-f '<conf>'`), so the window attaches to that server; the chained
-// set-option rides the same client and so the same server. Unset → the exact
-// pre-socket string.
-//
-// detach-on-destroy=on is forced per-session: when claude exits, the tmux
-// client detaches cleanly and Terminal returns to its parent shell. Without
-// this, a global `detach-on-destroy off` (Jeremie's setup) makes the client
-// switch to a sibling tmux session — a stray `cc-…` from a cmd+W'd window
-// or an unrelated long-lived session — which surfaces as "an emulation of
-// another tmux terminal" appearing right when the user expected a clean exit.
-export function buildTmuxLaunch(
-  cwd: string,
-  sessionName: string,
-  agent: SpawnAgent,
-  env?: Record<string, string>,
-  serverEnv: Record<string, string | undefined> = process.env,
-): string {
-  const sessEscaped = escapeForShellSingleQuoted(sessionName)
-  const innerEscaped = escapeForShellSingleQuoted(buildInner(cwd, agent, env))
-  const server = spawnNewSessionFlags(serverEnv)
-    .map((f) => (f.startsWith("-") ? f : `'${escapeForShellSingleQuoted(f)}'`))
-    .map((f) => `${f} `)
-    .join("")
-  return (
-    `tmux ${server}new-session -s '${sessEscaped}' '${innerEscaped}'`
-    + ` \\; set-option -t '${sessEscaped}' detach-on-destroy on`
-  )
 }
 
 // A detached tmux session has no client, so tmux sizes it from `default-size`
@@ -281,21 +202,6 @@ export async function uniqueTmuxSessionName(cwd: string, agent: SpawnAgent | "sh
   return `${base}-${Date.now()}`
 }
 
-async function spawnInTerminal(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
-  const sessionName = await uniqueTmuxSessionName(cwd, agent)
-  const cmd = buildTmuxLaunch(cwd, sessionName, agent, env)
-  const cmdEscaped = escapeForAppleScript(cmd)
-  const r = await runOsa(`
-    tell application "Terminal"
-      activate
-      do script "${cmdEscaped}"
-    end tell
-    return "OK"
-  `)
-  if (!r.ok) return { ok: false, app: "Terminal", error: r.stderr || "Terminal spawn failed" }
-  return { ok: true, app: "Terminal", sessionName, tmuxSocket: spawnSocketPath() }
-}
-
 // Headless tmux spawn — the Linux/server path. No GUI Terminal to open;
 // we just create a detached tmux session running the agent at the given cwd.
 // The session-start hook (~/.claude/hooks/companion-session-start.sh) picks
@@ -326,26 +232,6 @@ export async function spawnInTmuxDetached(
   if (error) return { ok: false, app: "tmux", error }
   // Socket path resolved after the create: the server (and its dir) now exist.
   return { ok: true, app: "tmux", sessionName, tmuxSocket: spawnSocketPath() }
-}
-
-async function spawnInIterm(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
-  const sessionName = await uniqueTmuxSessionName(cwd, agent)
-  const cmd = buildTmuxLaunch(cwd, sessionName, agent, env)
-  const cmdEscaped = escapeForAppleScript(cmd)
-  // iTerm's AppleScript dictionary: create window with default profile, then
-  // write text into its current session.
-  const r = await runOsa(`
-    tell application "iTerm"
-      activate
-      set newWindow to (create window with default profile)
-      tell current session of newWindow
-        write text "${cmdEscaped}"
-      end tell
-    end tell
-    return "OK"
-  `)
-  if (!r.ok) return { ok: false, app: "iTerm", error: r.stderr || "iTerm spawn failed" }
-  return { ok: true, app: "iTerm", sessionName, tmuxSocket: spawnSocketPath() }
 }
 
 // ── herdr (Mac, desk-cockpit trial — RES-RY7A) ─────────────────────────────
@@ -440,6 +326,41 @@ export async function spawnInHerdr(
   return { ok: true, app: "herdr", sessionName: name, herdrPane: paneId }
 }
 
+// What Ghostty runs: plain `herdr` attaches to the persistent session (there
+// is no per-workspace attach; `workspace focus` picks what it shows). The
+// absolute path because Ghostty's login shell may not have the server's PATH.
+// `open -na Ghostty.app --args -e <cmd>`: Ghostty's macOS CLI can't open a
+// window itself; -e sets initial-command, the new instance's first window.
+export function ghosttyOpenArgv(herdrBin = process.env.HERDR_BIN || Bun.which("herdr") || "herdr"): string[] {
+  return ["open", "-na", "Ghostty.app", "--args", "-e", herdrBin]
+}
+
+// "ghostty": the "auto" herdr spawn, then its workspace focused and a Ghostty
+// window attached. The agent already runs, so a failed open is logged and the
+// spawn still succeeds (app "herdr": the phone sees it, no desk window).
+export async function spawnInGhostty(
+  cwd: string,
+  agent: SpawnAgent,
+  env: Record<string, string> | undefined,
+  deps: {
+    herdr: typeof spawnInHerdr
+    h: Herdr
+    run: TmuxArgvRunner
+    log: (line: string) => void
+  } = { herdr: spawnInHerdr, h: realHerdr, run: realDetachedDeps.run, log: companionLog },
+): Promise<SpawnResult> {
+  const r = await spawnMacAuto(cwd, agent, env, deps)
+  if (!r.ok || !r.herdrPane) return r
+  const ws = herdrOwnerFor(r.herdrPane)?.workspaceId
+  if (ws) await deps.h.call(["workspace", "focus", ws]).catch((err) => deps.log(`spawn: herdr workspace focus ${ws}: ${(err as Error).message}`))
+  const open = await deps.run(ghosttyOpenArgv(), 10_000)
+  if (open.code !== 0) {
+    deps.log(`spawn: Ghostty open failed (${open.stderr.trim() || `exit ${open.code}`}); ${r.sessionName} runs in herdr`)
+    return r
+  }
+  return { ...r, app: "Ghostty" }
+}
+
 // "auto": herdr only (Stage 1). A gate failure comes back as herdr_unavailable
 // and is logged; it never falls back to tmux.
 export async function spawnMacAuto(
@@ -471,24 +392,11 @@ export function spawnLinux(
     log: (line: string) => void
   } = { herdr: spawnInHerdr, log: companionLog },
 ): Promise<SpawnResult> {
-  if (app === "terminal" || app === "iterm") {
+  if (app === "ghostty") {
     return Promise.resolve({ ok: false, error: `app="${app}" is macOS-only; use "herdr" or "auto" on this server` })
   }
   if (app === "herdr") return deps.herdr(cwd, agent, env)
   return spawnMacAuto(cwd, agent, env, deps)
-}
-
-// Unreachable since Stage 1 (kept for a revert, deleted in Stage 5): the pre-herdr macOS auto: prefer the app that's already running. If both,
-// prefer Terminal (that's what today's sessions show); if neither, launch
-// Terminal.
-async function spawnMacTerminalAuto(cwd: string, agent: SpawnAgent, env?: Record<string, string>): Promise<SpawnResult> {
-  const [terminalRunning, itermRunning] = await Promise.all([
-    isAppRunning("Terminal"),
-    isAppRunning("iTerm2"),
-  ])
-  if (terminalRunning) return spawnInTerminal(cwd, agent, env)
-  if (itermRunning) return spawnInIterm(cwd, agent, env)
-  return spawnInTerminal(cwd, agent, env)
 }
 
 // A spawn in the bare home dir moves to ~/work on Linux. Claude Code's Linux
@@ -536,7 +444,8 @@ export function resolveSpawnCwd(raw: string): { dir: string } | { error: string 
 
 export async function spawnCompanionSession(opts: {
   cwd: string
-  app?: SpawnApp
+  // Untrusted from the route: retired names are refused below.
+  app?: SpawnApp | string
   agent?: SpawnAgent
   // Extra environment for the spawned agent, exported inside its tmux command
   // so hooks launched by that agent inherit it (PRJ-OR1T Phase 8).
@@ -551,11 +460,12 @@ export async function spawnCompanionSession(opts: {
   // trusted, so the request has no side effect. Existing tmux sessions keep
   // working: inject, mirror and dialogs resolve their pane as before.
   if (opts.app === "tmux") return { ok: false, error: TMUX_RETIRED }
+  if (opts.app !== undefined && RETIRED_APPS.has(opts.app)) return { ok: false, error: APP_RETIRED, hint: APP_RETIRED_HINT }
   const cwd = resolveSpawnCwd(opts.cwd)
   if ("error" in cwd) return { ok: false, error: cwd.error }
   const resolved = cwd.dir
 
-  const app: SpawnApp = opts.app ?? "auto"
+  const app = (opts.app ?? "auto") as SpawnApp
   const agent: SpawnAgent =
     opts.agent === "codex" || opts.agent === "kimi" ? opts.agent : "claude"
 
@@ -576,8 +486,7 @@ export async function spawnCompanionSession(opts: {
   }
   if (process.platform !== "darwin") return spawnLinux(resolved, app, agent, opts.env)
 
-  if (app === "iterm") return spawnInIterm(resolved, agent, opts.env)
-  if (app === "terminal") return spawnInTerminal(resolved, agent, opts.env)
+  if (app === "ghostty") return spawnInGhostty(resolved, agent, opts.env)
   if (app === "herdr") return spawnInHerdr(resolved, agent, opts.env)
   return spawnMacAuto(resolved, agent, opts.env)
 }
