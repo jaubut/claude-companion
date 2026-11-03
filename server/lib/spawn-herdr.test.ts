@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { fakeHerdr } from "./herdr-fake.test-util"
-import { APP_RETIRED_HINT, ghosttyOpenArgv, herdrAgentBaseName, spawnCompanionSession, spawnInGhostty, spawnInHerdr, spawnLinux, spawnMacAuto } from "./spawn-session"
+import { APP_RETIRED_HINT, type SpawnAgent, ghosttyOpenArgv, herdrAgentBaseName, spawnCompanionSession, spawnInGhostty, spawnInHerdr, spawnLinux, spawnMacAuto } from "./spawn-session"
 
 const CWD = "/Users/j/Claude Companion"
 
@@ -156,7 +156,7 @@ function ghosttyDeps(code = 0) {
   const runs: string[][] = []
   const logs: string[] = []
   const deps = {
-    herdr: (cwd: string, agent: "claude", env?: Record<string, string>) => spawnInHerdr(cwd, agent, env, f.h),
+    herdr: (cwd: string, agent: SpawnAgent, env?: Record<string, string>) => spawnInHerdr(cwd, agent, env, f.h),
     h: f.h,
     run: async (argv: string[]) => { runs.push(argv); return { code, stdout: "", stderr: code ? "LSOpenURLsWithRole() failed" : "" } },
     log: (l: string) => logs.push(l),

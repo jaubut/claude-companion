@@ -57,16 +57,18 @@ afterAll(() => {
 
 // A live process with (or without) the worker marker in its environment.
 // Named `claude`: the session registry prunes a pid whose command is not an agent.
+// A bun symlink, not `sleep`: a multicall coreutils (uutils, Ubuntu 26.04) picks
+// the utility from argv0 and exits at once when called `claude`.
 let claudeBin = ""
 function proc(worker: boolean): string {
   if (!claudeBin) {
     claudeBin = join(mkdtempSync(join(tmpdir(), "hooks-worker-bin-")), "claude")
-    symlinkSync(Bun.which("sleep")!, claudeBin)
+    symlinkSync(process.execPath, claudeBin)
   }
   const env: Record<string, string> = { ...process.env as Record<string, string> }
   delete env.DISPATCH_WORKER
   if (worker) env.DISPATCH_WORKER = "1"
-  const p = Bun.spawn([claudeBin, "120"], { env, stdout: "ignore", stderr: "ignore" })
+  const p = Bun.spawn([claudeBin, "-e", "setTimeout(() => {}, 120_000)"], { env, stdout: "ignore", stderr: "ignore" })
   procs.push(p)
   if (worker) marked.add(String(p.pid))
   return String(p.pid)

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02",
+  "generatedAt": "2026-11-03",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -2989,7 +2989,7 @@
         },
         {
           "path": "lib/pane-mirror.ts",
-          "lines": 377,
+          "lines": 441,
           "kind": "lib",
           "exports": [
             "PANE_MIRROR_PATH",
@@ -3000,6 +3000,8 @@
             "MIRROR_MAX_INPUT",
             "MIRROR_ENDED",
             "MIRROR_GONE_AFTER",
+            "MIRROR_MAX_SCROLLBACK",
+            "MIRROR_SCROLLBACK_MIN_MS",
             "MirrorTarget",
             "MirrorUpgradeDeps",
             "mirrorKey",
@@ -3011,7 +3013,9 @@
             "MirrorFocus",
             "focusRows",
             "repaintFrame",
+            "historyFrame",
             "mirrorInput",
+            "scrollbackRequest",
             "mirrorControl",
             "smallestSize",
             "Clock",
@@ -7691,7 +7695,7 @@
         },
         {
           "path": "wiring/pane-mirror.ts",
-          "lines": 139,
+          "lines": 147,
           "kind": "lib",
           "exports": [
             "herdrSocketSource",
@@ -16205,6 +16209,12 @@
             "wiring/pane-mirror.ts"
           ]
         },
+        "MIRROR_MAX_SCROLLBACK": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
         "PaneSizer": {
           "module": "lib/pane-mirror.ts",
           "callers": [
@@ -16230,6 +16240,12 @@
           ]
         },
         "mirrorKey": {
+          "module": "lib/pane-mirror.ts",
+          "callers": [
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "scrollbackRequest": {
           "module": "lib/pane-mirror.ts",
           "callers": [
             "wiring/pane-mirror.ts"
