@@ -25,7 +25,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   POST /hooks/brain/media               → bin/media: {url} → {ok, kind, meta, palette, transcript, frames, contactSheet} | {ok:false, error, reason}
-//   GET  /api/brain/workers             → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
+//   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
 // brain session's pid with X-Companion-Task-Id: brain.

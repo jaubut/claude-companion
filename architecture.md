@@ -54,6 +54,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 331 | lib | 25 | state: appendedListeners: Set |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
+| `lib/link-media.ts` | 309 | lib | 10 | state: inflight: Map |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
@@ -69,7 +70,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
 | `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
-| `lib/link-media.ts` | 272 | lib | 4 | state: inflight: Map |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
@@ -135,6 +135,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/terminal-bridge.ts` | 153 | lib | 17 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
+| `lib/link-media-guard.ts` | 150 | lib | 7 | state: let shared |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
 | `routes/canvas.ts` | 150 | lib | 2 |  |
 | `routes/records.ts` | 150 | lib | 5 |  |
@@ -194,7 +195,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
 | `wiring/front-door.ts` | 74 | lib | 1 | emits: orchestrator |
 | `wiring/proposals.ts` | 74 | lib | 5 |  |
-| `lib/link-media-guard.ts` | 71 | lib | 4 |  |
 | `lib/spawn-seed.ts` | 71 | lib | 8 | state: RETRY: Set |
 | `wiring/body.ts` | 71 | lib | 8 | emits: orchestrator_channel, orchestrator, body_alert |
 | `lib/body-fix.ts` | 67 | lib | 4 |  |

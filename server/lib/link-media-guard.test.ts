@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { checkUrl, isPrivateIp } from "./link-media-guard"
+import { checkUrl, isPrivateIp, startGuardProxy, vetHost } from "./link-media-guard"
 
 describe("bin/media URL guard", () => {
   test("private, loopback, link-local and tailnet IPs are private", () => {
@@ -23,5 +23,42 @@ describe("bin/media URL guard", () => {
   test("accepts a public IP literal", async () => {
     const c = await checkUrl("https://8.8.8.8/image.png")
     expect(c.ok).toBe(true)
+  })
+
+  test("guard proxy refuses loopback and private hosts, by name and through CONNECT", async () => {
+    const origin = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("internal") })
+    const proxy = await startGuardProxy()
+    try {
+      for (const u of [`http://127.0.0.1:${origin.port}/`, `http://localhost:${origin.port}/`, "http://169.254.169.254/latest/meta-data"]) {
+        const res = await fetch(u, { proxy: { url: proxy.url, respectNoProxy: false } })
+        expect(res.status).toBe(403)
+        expect(await res.text()).toBe("")
+      }
+      await expect(fetch(`https://localhost:${origin.port}/`, { proxy: { url: proxy.url, respectNoProxy: false } })).rejects.toThrow()
+    } finally {
+      proxy.close()
+      origin.stop(true)
+    }
+  })
+
+  test("guard proxy connects to the vetted address, not a fresh lookup (rebinding)", async () => {
+    const origin = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => new Response(`${new URL(req.url).pathname}${new URL(req.url).search} ${req.headers.get("host")}`) })
+    const asked: string[] = []
+    // The vet pins "rebind.test" to loopback; nothing else resolves that name.
+    const proxy = await startGuardProxy(async (host) => { asked.push(host); if (host !== "rebind.test") throw new Error("refused"); return "127.0.0.1" })
+    try {
+      const res = await fetch(`http://rebind.test:${origin.port}/a?b=1`, { proxy: { url: proxy.url, respectNoProxy: false } })
+      expect(await res.text()).toBe(`/a?b=1 rebind.test:${origin.port}`)
+      expect(asked).toEqual(["rebind.test"])
+    } finally {
+      proxy.close()
+      origin.stop(true)
+    }
+  })
+
+  test("vetHost returns a public address and refuses loopback names", async () => {
+    expect(await vetHost("8.8.8.8")).toBe("8.8.8.8")
+    expect(await vetHost("[2a03:2880:f12f:83:face:b00c::25de]")).toBe("2a03:2880:f12f:83:face:b00c::25de")
+    await expect(vetHost("localhost")).rejects.toThrow("private or loopback host refused")
   })
 })

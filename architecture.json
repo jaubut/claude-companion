@@ -2508,15 +2508,20 @@
         },
         {
           "path": "lib/link-media-guard.ts",
-          "lines": 71,
+          "lines": 150,
           "kind": "lib",
           "exports": [
             "UrlCheck",
             "isPrivateIp",
+            "vetHost",
             "checkUrl",
+            "startGuardProxy",
+            "guardProxy",
             "safeFetch"
           ],
-          "state": [],
+          "state": [
+            "let shared"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -2549,12 +2554,18 @@
         },
         {
           "path": "lib/link-media.ts",
-          "lines": 272,
+          "lines": 309,
           "kind": "lib",
           "exports": [
             "LinkMediaMeta",
             "LinkMediaOut",
+            "MediaError",
+            "beforeDeadline",
+            "run",
+            "ytArgs",
             "vttText",
+            "asImage",
+            "imageTitle",
             "analyseLink"
           ],
           "state": [
@@ -10821,6 +10832,12 @@
             "lib/keyboard-inject.ts"
           ]
         },
+        "guardProxy": {
+          "module": "lib/link-media-guard.ts",
+          "callers": [
+            "lib/link-media.ts"
+          ]
+        },
         "safeFetch": {
           "module": "lib/link-media-guard.ts",
           "callers": [
@@ -13765,6 +13782,12 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "run": {
+          "module": "lib/link-media.ts",
           "callers": [
             "routes/brain.ts"
           ]

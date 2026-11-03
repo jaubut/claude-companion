@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { homedir } from "node:os"
 import { join } from "node:path"
 import sharp from "sharp"
-import { checkUrl, safeFetch } from "./link-media-guard"
+import { checkUrl, guardProxy, safeFetch } from "./link-media-guard"
 import { type Swatch, palette } from "./link-media-palette"
 import { companionLog } from "./log"
 
@@ -13,7 +13,9 @@ import { companionLog } from "./log"
 // transcript (no Whisper) and absolute paths of ~10 frames + a contact sheet
 // (the brain opens them with Read). One folder per URL, reused while present,
 // pruned after 7 days. yt-dlp does the fetching (Instagram 401 → the embed
-// captions page), ffmpeg the frames.
+// captions page), ffmpeg the frames. All network traffic goes through the
+// guard proxy (link-media-guard.ts) and the whole job, fetches and sharp
+// included, ends at a 120 s deadline.
 
 const ROOT = process.env.COMPANION_LINK_MEDIA_DIR ?? join(homedir(), ".cache", "companion", "media")
 const TIMEOUT_MS = 120_000
@@ -36,24 +38,43 @@ export interface LinkMediaMeta {
 }
 export interface LinkMediaOut { status: number; body: Record<string, unknown> }
 
-class MediaError extends Error {
+export class MediaError extends Error {
   constructor(readonly status: number, readonly reason: string) { super(reason) }
 }
 
 interface RunResult { code: number; stdout: string; stderr: string }
 
-async function run(cmd: string[], deadline: number): Promise<RunResult> {
+/** An abort signal for the time left before `deadline`, capped at `max` ms. */
+const until = (deadline: number, max = Infinity): AbortSignal => AbortSignal.timeout(Math.max(1, Math.min(max, deadline - Date.now())))
+
+/** Reject with a 504 at `deadline`; whatever `p` does later is ignored. */
+export function beforeDeadline<T>(p: Promise<T>, deadline: number): Promise<T> {
+  p.catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new MediaError(504, "timed out")), Math.max(0, deadline - Date.now())) })
+  return Promise.race([p, late]).finally(() => clearTimeout(timer))
+}
+
+/** Run a command in its own process group; at the deadline the whole group (yt-dlp's ffmpeg too) is killed. */
+export async function run(cmd: string[], deadline: number): Promise<RunResult> {
   const left = deadline - Date.now()
   if (left <= 0) throw new MediaError(504, "timed out")
-  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
-  const timer = setTimeout(() => proc.kill(), left)
+  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true, env: { ...process.env, NO_PROXY: "", no_proxy: "" } })
+  const timer = setTimeout(() => {
+    try {
+      process.kill(-proc.pid, "SIGKILL")
+    } catch {
+      proc.kill("SIGKILL")
+    }
+  }, left)
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
   clearTimeout(timer)
   if (Date.now() >= deadline) throw new MediaError(504, "timed out")
   return { code, stdout, stderr }
 }
 
-const ytBase = ["--no-warnings", "--no-playlist", "--no-progress", "--socket-timeout", "20"]
+/** yt-dlp flags: no host config, and every request (ffmpeg's too) through the guard proxy. */
+export const ytArgs = (proxy: string): string[] => ["--ignore-config", "--proxy", proxy, "--no-warnings", "--no-playlist", "--no-progress", "--socket-timeout", "20"]
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
 
 /** Stream a response to disk, refusing past `max` bytes. */
@@ -80,7 +101,7 @@ function hasCaptions(raw: Record<string, unknown>): boolean {
 }
 
 async function ytInfo(url: string, deadline: number): Promise<Info | { error: string }> {
-  const r = await run([YTDLP, ...ytBase, "-J", "--skip-download", url], deadline)
+  const r = await run([YTDLP, ...ytArgs(await guardProxy()), "-J", "--skip-download", url], deadline)
   if (r.code !== 0) return { error: r.stderr.trim().split("\n").pop()?.slice(0, 300) ?? "yt-dlp failed" }
   const raw = JSON.parse(r.stdout) as Record<string, unknown>
   return {
@@ -98,10 +119,10 @@ async function ytInfo(url: string, deadline: number): Promise<Info | { error: st
 const IG_CODE = /^\/(?:[\w.]+\/)?(?:reels?|p|tv)\/([\w-]+)/
 
 /** Instagram without yt-dlp: the embed captions page carries caption + video_url (best effort). */
-async function instagramEmbed(url: URL): Promise<Info | null> {
+async function instagramEmbed(url: URL, deadline: number): Promise<Info | null> {
   const code = url.pathname.match(IG_CODE)?.[1]
   if (!code) return null
-  const res = await safeFetch(`https://www.instagram.com/reel/${code}/embed/captions/`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(20_000) })
+  const res = await safeFetch(`https://www.instagram.com/reel/${code}/embed/captions/`, { headers: { "User-Agent": UA }, signal: until(deadline, 20_000) })
   if (!res.ok) return null
   const html = (await res.text()).replace(/\\"/g, '"')
   const m = html.match(/"video_url":"((?:[^"\\]|\\.)*)"/)
@@ -117,7 +138,7 @@ async function fetchInfo(url: URL, deadline: number): Promise<Info> {
   const yt = await ytInfo(url.href, deadline)
   if (!("error" in yt)) return yt
   if (/(^|\.)instagram\.com$/.test(url.hostname)) {
-    const embed = await instagramEmbed(url).catch(() => null)
+    const embed = await instagramEmbed(url, deadline).catch(() => null)
     if (embed) return embed
   }
   throw new MediaError(422, `could not read this link: ${yt.error}`)
@@ -132,10 +153,10 @@ function findVideo(dir: string): string | null {
 
 async function download(url: string, info: Info, dir: string, deadline: number): Promise<string> {
   if (info.videoUrl) {
-    await saveCapped(await safeFetch(info.videoUrl, { headers: { "User-Agent": UA } }), join(dir, "video.mp4"), MAX_VIDEO_BYTES)
+    await saveCapped(await safeFetch(info.videoUrl, { headers: { "User-Agent": UA }, signal: until(deadline) }), join(dir, "video.mp4"), MAX_VIDEO_BYTES)
   } else {
     const long = (info.meta.duration ?? 0) > MAX_SECONDS ? ["--download-sections", `*0-${MAX_SECONDS}`] : []
-    const r = await run([YTDLP, ...ytBase, "-f", "bv*[width<=?1080]/b[width<=?1080]/bv*/b", "--max-filesize", "200M", ...long, "-o", join(dir, "video.%(ext)s"), url], deadline)
+    const r = await run([YTDLP, ...ytArgs(await guardProxy()), "-f", "bv*[width<=?1080]/b[width<=?1080]/bv*/b", "--max-filesize", "200M", ...long, "-o", join(dir, "video.%(ext)s"), url], deadline)
     if (r.code !== 0) throw new MediaError(502, `download failed: ${r.stderr.trim().split("\n").pop()?.slice(0, 300)}`)
   }
   const v = findVideo(dir)
@@ -184,7 +205,7 @@ export function vttText(vtt: string): string {
 async function transcript(url: string, info: Info, dir: string, deadline: number): Promise<string | null> {
   if (!info.raw || !hasCaptions(info.raw)) return null
   const langs = [text(info.raw.language), "en.*", "fr.*"].filter(Boolean).join(",")
-  await run([YTDLP, ...ytBase, "--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", langs, "--sub-format", "vtt", "-o", join(dir, "subs.%(ext)s"), url], deadline)
+  await run([YTDLP, ...ytArgs(await guardProxy()), "--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", langs, "--sub-format", "vtt", "-o", join(dir, "subs.%(ext)s"), url], deadline)
   const vtt = readdirSync(dir).find((n) => n.startsWith("subs.") && n.endsWith(".vtt"))
   if (!vtt) return null
   const t = vttText(readFileSync(join(dir, vtt), "utf8"))
@@ -208,10 +229,26 @@ async function analyseVideo(url: URL, dir: string, deadline: number): Promise<Re
 
 // ── Image ──
 
-async function imageResponse(url: URL): Promise<Response | null> {
-  const head = await safeFetch(url.href, { method: "HEAD", headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) }).catch(() => null)
-  if (!head?.ok || !(head.headers.get("content-type") ?? "").startsWith("image/")) return null
-  return safeFetch(url.href, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(60_000) })
+/** The response if it is an image, else null (its body cancelled). */
+export async function asImage(res: Response | null): Promise<Response | null> {
+  if (res?.ok && (res.headers.get("content-type") ?? "").startsWith("image/")) return res
+  await res?.body?.cancel().catch(() => {})
+  return null
+}
+
+// One GET (not HEAD: some hosts and GET-signed URLs refuse it); not an image → the video path.
+async function imageResponse(url: URL, deadline: number): Promise<Response | null> {
+  return asImage(await safeFetch(url.href, { headers: { "User-Agent": UA }, signal: until(deadline) }).catch(() => null))
+}
+
+/** Last path segment as a title; a malformed %-escape stays raw. */
+export function imageTitle(url: URL): string | null {
+  const seg = url.pathname.split("/").pop() ?? ""
+  try {
+    return decodeURIComponent(seg) || null
+  } catch {
+    return seg || null
+  }
 }
 
 async function analyseImage(url: URL, res: Response, dir: string): Promise<Record<string, unknown>> {
@@ -220,7 +257,7 @@ async function analyseImage(url: URL, res: Response, dir: string): Promise<Recor
   const image = join(dir, "image.jpg")
   await sharp(src).rotate().resize({ width: FRAME_WIDTH, withoutEnlargement: true }).jpeg({ quality: 85 }).toFile(image)
   rmSync(src, { force: true })
-  const meta: LinkMediaMeta = { source: "direct", uploader: null, title: decodeURIComponent(url.pathname.split("/").pop() ?? "") || null, description: null, duration: null }
+  const meta: LinkMediaMeta = { source: "direct", uploader: null, title: imageTitle(url), description: null, duration: null }
   return { kind: "image", meta, palette: await palette([image]), transcript: null, frames: [image], contactSheet: null }
 }
 
@@ -243,8 +280,8 @@ async function build(url: URL, dir: string): Promise<LinkMediaOut> {
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
   try {
-    const img = await imageResponse(url)
-    const result = { ok: true, url: url.href, dir, ...(img ? await analyseImage(url, img, dir) : await analyseVideo(url, dir, deadline)) }
+    const analysis = imageResponse(url, deadline).then((img) => (img ? analyseImage(url, img, dir) : analyseVideo(url, dir, deadline)))
+    const result = { ok: true, url: url.href, dir, ...await beforeDeadline(analysis, deadline) }
     writeFileSync(join(dir, "result.json"), JSON.stringify(result))
     return { status: 200, body: { ...result, cached: false } }
   } catch (err) {
