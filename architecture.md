@@ -54,7 +54,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 331 | lib | 25 | state: appendedListeners: Set |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
-| `lib/link-media.ts` | 309 | lib | 10 | state: inflight: Map |
+| `lib/link-media.ts` | 313 | lib | 11 | state: inflight: Map |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |

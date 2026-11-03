@@ -75,6 +75,10 @@ export async function run(cmd: string[], deadline: number): Promise<RunResult> {
 
 /** yt-dlp flags: no host config, and every request (ffmpeg's too) through the guard proxy. */
 export const ytArgs = (proxy: string): string[] => ["--ignore-config", "--proxy", proxy, "--no-warnings", "--no-playlist", "--no-progress", "--socket-timeout", "20"]
+// Only formats fetched over http(s)/HLS/DASH: ffmpeg would open rtmp:// and
+// friends directly, past the guard proxy.
+const SAFE_PROTOCOL = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']"
+export const VIDEO_FORMAT = ["bv*[width<=?1080]", "b[width<=?1080]", "bv*", "b"].map((f) => f + SAFE_PROTOCOL).join("/")
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
 
 /** Stream a response to disk, refusing past `max` bytes. */
@@ -156,7 +160,7 @@ async function download(url: string, info: Info, dir: string, deadline: number):
     await saveCapped(await safeFetch(info.videoUrl, { headers: { "User-Agent": UA }, signal: until(deadline) }), join(dir, "video.mp4"), MAX_VIDEO_BYTES)
   } else {
     const long = (info.meta.duration ?? 0) > MAX_SECONDS ? ["--download-sections", `*0-${MAX_SECONDS}`] : []
-    const r = await run([YTDLP, ...ytArgs(await guardProxy()), "-f", "bv*[width<=?1080]/b[width<=?1080]/bv*/b", "--max-filesize", "200M", ...long, "-o", join(dir, "video.%(ext)s"), url], deadline)
+    const r = await run([YTDLP, ...ytArgs(await guardProxy()), "-f", VIDEO_FORMAT, "--max-filesize", "200M", ...long, "-o", join(dir, "video.%(ext)s"), url], deadline)
     if (r.code !== 0) throw new MediaError(502, `download failed: ${r.stderr.trim().split("\n").pop()?.slice(0, 300)}`)
   }
   const v = findVideo(dir)

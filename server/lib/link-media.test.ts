@@ -2,13 +2,17 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { asImage, beforeDeadline, imageTitle, run, ytArgs } from "./link-media"
+import { VIDEO_FORMAT, asImage, beforeDeadline, imageTitle, run, ytArgs } from "./link-media"
 
 describe("bin/media pipeline", () => {
   test("yt-dlp ignores host config and goes through the guard proxy", () => {
     const a = ytArgs("http://127.0.0.1:9")
     expect(a).toContain("--ignore-config")
     expect(a.slice(a.indexOf("--proxy"), a.indexOf("--proxy") + 2)).toEqual(["--proxy", "http://127.0.0.1:9"])
+  })
+
+  test("every video format alternative is limited to proxied protocols (no rtmp)", () => {
+    for (const alt of VIDEO_FORMAT.split("/")) expect(alt).toEndWith("[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']")
   })
 
   test("a hung step fails with 504 at the deadline instead of hanging the job", async () => {

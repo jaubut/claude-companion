@@ -2554,7 +2554,7 @@
         },
         {
           "path": "lib/link-media.ts",
-          "lines": 309,
+          "lines": 313,
           "kind": "lib",
           "exports": [
             "LinkMediaMeta",
@@ -2563,6 +2563,7 @@
             "beforeDeadline",
             "run",
             "ytArgs",
+            "VIDEO_FORMAT",
             "vttText",
             "asImage",
             "imageTitle",
