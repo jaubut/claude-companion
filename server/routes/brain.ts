@@ -9,6 +9,7 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { updateAgentPr } from "../wiring/brain-pr-update-branch"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -22,6 +23,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
+//   POST /hooks/brain/pr-update-branch    → bin/pr-update-branch: {repo, pr, reason} → {ok, updated, url, head} (stale dispatch/* PRs only)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
@@ -51,6 +53,8 @@ export interface BrainRouteDeps {
   prClose?: typeof closeDeadPr
   /** The routine-PR merge (default: the real one, gh + Turso). */
   prMerge?: typeof mergeAgentPr
+  /** The stale-PR update (default: the real one, gh + Turso). */
+  prUpdate?: typeof updateAgentPr
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
 }
@@ -160,8 +164,8 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
-/** bin/pr-close and bin/pr-merge: the gate (wiring/brain-pr-close.ts, brain-pr-merge.ts) re-checks it all on GitHub and Turso. */
-async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge"): Promise<Response> {
+/** bin/pr-close, pr-merge and pr-update-branch: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and Turso. */
+async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge" | "pr-update-branch"): Promise<Response> {
   const refused = proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
@@ -172,7 +176,7 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
-  const run = op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prMerge ?? mergeAgentPr
+  const run = op === "pr-close" ? deps.prClose ?? closeDeadPr : op === "pr-merge" ? deps.prMerge ?? mergeAgentPr : deps.prUpdate ?? updateAgentPr
   const out = await run({ repo, pr, reason })
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
@@ -227,6 +231,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-merge")
+    }
+    if (p === "/hooks/brain/pr-update-branch") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return prAction(req, deps, "pr-update-branch")
     }
     if (p === "/hooks/brain/deploy") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")
