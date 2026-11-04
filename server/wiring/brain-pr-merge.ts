@@ -28,7 +28,7 @@ export const PR_MERGE_ACTION = "brain:pr-merge"
 const REASON_MAX = 300
 export const MERGE_CAP = 10
 
-const HOLD_LABEL = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
+export const HOLD_LABEL =/do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
 // The shepherd's human-review parks (pr-shepherd clientPark / taint / sensitive): retired, they no longer refuse.
 // Every other park (conflict unresolved, fix budget spent, infra hold, no CI…) means the work is broken: refuse.
 const RETIRED_PARK = /^(client(-origin)? PR|tainted \(|touches .+ — needs your review)/

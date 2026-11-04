@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03",
+  "generatedAt": "2026-11-04",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -6108,7 +6108,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
+          "lines": 276,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6132,6 +6132,7 @@
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-workers.ts"
           ],
@@ -7154,6 +7155,7 @@
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
+            "HOLD_LABEL",
             "mergeAgentPr"
           ],
           "state": [],
@@ -7168,6 +7170,40 @@
             "lib/secret-redact.ts",
             "lib/triage-pr.ts",
             "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-pr-unpark.ts",
+          "lines": 126,
+          "kind": "lib",
+          "exports": [
+            "UNPARK_ACTION",
+            "UNPARK_SOURCE",
+            "UNPARK_CAP",
+            "GUIDANCE_MAX",
+            "unparkAgentPr"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/dispatch-stage.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
+            "lib/triage-sources.ts",
+            "lib/turso.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ],
@@ -8984,6 +9020,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
@@ -9028,7 +9065,8 @@
             "lib/quick-look.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts"
           ]
         },
         "ApprovalRequest": {
@@ -9440,6 +9478,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -9643,6 +9682,7 @@
             "routes/brain.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
@@ -9658,6 +9698,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
@@ -10230,6 +10271,7 @@
             "routes/tasks-agent.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-todo.ts",
             "wiring/orchestrator.ts",
             "wiring/triage-repos.ts"
@@ -10260,6 +10302,7 @@
           "module": "lib/triage-sources.ts",
           "callers": [
             "lib/dispatch-stage.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/triage.ts"
           ]
         },
@@ -13645,6 +13688,12 @@
             "routes/brain.ts"
           ]
         },
+        "unparkAgentPr": {
+          "module": "wiring/brain-pr-unpark.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "DeployResult": {
           "module": "wiring/auto-deploy.ts",
           "callers": [
@@ -13659,6 +13708,13 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts",
+            "wiring/brain-pr-unpark.ts"
+          ]
+        },
+        "GUIDANCE_MAX": {
+          "module": "wiring/brain-pr-unpark.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -14243,6 +14299,7 @@
             "wiring/body-agent.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -14362,6 +14419,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/proposals.ts",
@@ -14387,6 +14445,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
@@ -14994,6 +15053,7 @@
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
@@ -15326,9 +15386,22 @@
           "callers": [
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-unpark.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "shepherdOf": {
+          "module": "lib/dispatch-stage.ts",
+          "callers": [
+            "wiring/brain-pr-unpark.ts"
+          ]
+        },
+        "HOLD_LABEL": {
+          "module": "wiring/brain-pr-merge.ts",
+          "callers": [
+            "wiring/brain-pr-unpark.ts"
           ]
         },
         "AgentLookup": {
