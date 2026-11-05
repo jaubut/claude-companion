@@ -121,8 +121,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `companion-server.ts` | 189 | route-host | 1 | routes: 5 |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
+| `wiring/brain-pr-merge.ts` | 187 | lib | 3 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
-| `wiring/brain-pr-merge.ts` | 185 | lib | 3 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
@@ -768,6 +768,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `runInvestigatorCli()` | `lib/body-investigator.ts` | `wiring/body-investigate.ts`, `wiring/resolver.ts` |
 | `BrainActivity()` | `lib/brain.ts` | `wiring/brain-activity.ts`, `wiring/brain.ts` |
 | `TICK_MS()` | `lib/brain.ts` | `wiring/brain-lead.ts`, `wiring/brain.ts` |
+| `LEAD_REPOS()` | `lib/lead-loop.ts` | `wiring/brain-lead.ts`, `wiring/brain-pr-merge.ts` |
 | `envValue()` | `lib/brain-workers.ts` | `wiring/brain-lead.ts`, `wiring/brain-restore.ts` |
 | `spawnInHerdr()` | `lib/spawn-session.ts` | `wiring/brain-lead.ts`, `wiring/brain.ts` |
 | `realAutoCompactDeps()` | `wiring/auto-compact.ts` | `wiring/brain-lead.ts`, `wiring/brain.ts` |

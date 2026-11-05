@@ -161,7 +161,7 @@ Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, the p
 ### Routine agent PRs (`/hooks/brain/pr-merge`)
 
 `wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word, and refuses on any doubt. It checks, in order:
-1. The PR is open, not a draft, and its head is `dispatch/*` or `builder/*`.
+1. The PR is open, not a draft, and its head is `dispatch/*`, or `builder/*` on a repo with a lead.
 2. **parked** refuses when any of these holds:
    - A label says do-not-merge, dnm or wip.
    - The newest shepherd `pr:hold`, or a `pr:needs-human` whose reason means the work is broken (conflict unresolved, fix budget spent, no CI…), is not lifted by a `pr:unpark`. Park rows are matched on the PR url and on the tasks linked by `dispatch_pr_url`.

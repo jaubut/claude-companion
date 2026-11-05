@@ -89,11 +89,17 @@ describe("bin/pr-merge gate: refusals", () => {
     })
   }
 
-  test("a builder/* head merges with both approvals, and is refused without them", async () => {
+  test("a builder/* head merges with both approvals on a repo with a lead, and is refused without them", async () => {
+    const leadRepo = { ...input, repo: "jaubut/claude-companion" }
     const w = world(green({ headRefName: "builder/repo-leads" }))
-    expect((await mergeAgentPr(input, w.deps)).status).toBe(200)
-    const out = await refused(green({ headRefName: "builder/repo-leads", comments: [review("claude", "APPROVE")] }))
+    expect((await mergeAgentPr(leadRepo, w.deps)).status).toBe(200)
+    const out = await mergeAgentPr(leadRepo, world(green({ headRefName: "builder/repo-leads", comments: [review("claude", "APPROVE")] })).deps)
     expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+  })
+
+  test("403 not_agent_branch on builder/* in a repo with no lead", async () => {
+    const out = await refused(green({ headRefName: "builder/repo-leads" }))
+    expect([out.status, out.body.error]).toEqual([403, "not_agent_branch"])
   })
 
   const held: Array<[string, Record<string, unknown>, string?]> = [

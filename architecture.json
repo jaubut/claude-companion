@@ -7262,7 +7262,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 185,
+          "lines": 187,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -7276,6 +7276,7 @@
           "apiCalls": [],
           "imports": [
             "lib/brain.ts",
+            "lib/lead-loop.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/secret-redact.ts",
@@ -15587,7 +15588,8 @@
         "LEAD_REPOS": {
           "module": "lib/lead-loop.ts",
           "callers": [
-            "wiring/brain-lead.ts"
+            "wiring/brain-lead.ts",
+            "wiring/brain-pr-merge.ts"
           ]
         },
         "LeadQueue": {
