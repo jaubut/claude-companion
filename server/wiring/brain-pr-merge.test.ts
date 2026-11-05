@@ -89,6 +89,41 @@ describe("bin/pr-merge gate: refusals", () => {
     })
   }
 
+  const tier = (name: string) => ({ body: `Review tier: ${name} <!-- review-tier: ${name} -->`, author: { login: BOT } })
+  const docsOnly = [{ path: "docs/brain-api.md" }, { path: "server/lib/a.test.ts" }, { path: "architecture.json" }]
+
+  test("low tier: green CI merges with no review, on files the server sees are low", async () => {
+    expect((await mergeAgentPr(input, world(green({ files: docsOnly, comments: [tier("low")] })).deps)).status).toBe(200)
+  })
+
+  test("low tier: a CHANGES on the head still refuses", async () => {
+    const out = await refused(green({ files: docsOnly, comments: [tier("low"), review("claude", "CHANGES")] }))
+    expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+  })
+
+  for (const [what, files] of [["code", [{ path: "server/lib/a.ts" }]], ["agent instructions", [{ path: "brain/CLAUDE.md" }]], ["no file list", []]] as const) {
+    test(`a low marker on ${what} needs both reviews: the comment alone proves nothing`, async () => {
+      const out = await refused(green({ files, comments: [tier("low")] }))
+      expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+    })
+  }
+
+  test("normal tier: one Claude APPROVE on the head merges", async () => {
+    expect((await mergeAgentPr(input, world(green({ comments: [tier("normal"), review("claude", "APPROVE")] })).deps)).status).toBe(200)
+  })
+
+  test("normal tier: an APPROVE of an older head does not count", async () => {
+    const out = await refused(green({ comments: [tier("normal"), review("codex", "APPROVE")] }))
+    expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+  })
+
+  for (const [what, marker] of [["high", [tier("high")]], ["no", []], ["a stale normal then high", [tier("normal"), tier("high")]], ["a stranger's normal", [{ ...tier("normal"), author: { login: "x" } }]]] as const) {
+    test(`${what} marker needs Codex too`, async () => {
+      const out = await refused(green({ comments: [...marker, review("claude", "APPROVE")] }))
+      expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+    })
+  }
+
   const held: Array<[string, Record<string, unknown>, string?]> = [
     ["a conflict park", {}, park("pr:needs-human", "merge conflict unresolved after 2 attempts")],
     ["a spent CI fix budget", {}, park("pr:needs-human", "CI still failing after 3 fixes: tsc")],
