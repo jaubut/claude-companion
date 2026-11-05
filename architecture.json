@@ -5787,7 +5787,7 @@
         },
         {
           "path": "lib/worker-blocked.ts",
-          "lines": 186,
+          "lines": 185,
           "kind": "lib",
           "exports": [
             "WORKER_RE",

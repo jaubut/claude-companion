@@ -11,7 +11,7 @@ A herdr dispatch worker (`dispatch-<id8>`) sitting on an interactive dialog (per
 | POST | `/hooks/worker-blocked/<id>/close` | | the runner gave up or the dialog left the screen: an open card → `expired`; an answered one stays answered |
 
 - `worker` must match `^dispatch-[0-9a-f]{8}$` (never `cc-*`, `builder-*`, `tko-*`).
-- `key` is one character the runner sends to the pane (`"1"`, `"3"`). An option whose label mentions "auto mode" is dropped (never offered). Max 9 options.
+- `key` is one character the runner sends to the pane (`"1"`, `"3"`). An option whose label mentions "auto mode" or "don't ask again" is dropped (never offered). Max 9 options.
 - `dialog` and labels are passed through `redactSecrets` server-side too (the runner redacts first). Dialog ≤ 2000 chars.
 - An open alert expires 30 min after it was posted (`ALERT_TTL_MS`), the runner's extended give-up. A sweep every minute flips it (and re-sends the card) even if nobody reads it.
 - Both replay keys are stored on the card (`postKey`, `answerKey`), so replays hold across a server restart.
@@ -34,6 +34,6 @@ turn.card = {kind:"worker_blocked", source:"app", taskId, worker, title, dialog,
 
 ## The brain
 
-On the brain host the card lands in the brain thread, so the brain hears it, but only `card.brief`: task id, worker, the tool from the dialog's first line and that line (≤ 80 chars, punctuation-stripped, already redacted), plus "never answer it, type into or drive that worker's pane". That first line is still pane text, bounded and filtered, not trusted. The rest of the dialog and the options never reach the brain: delivery, the boot seed and `bin/thread` all read `brainText` in `lib/brain.ts`. Answering is the phone's Bearer endpoint only.
+On the brain host the card lands in the brain thread, so the brain hears it, but only `card.brief`: task id, worker and the tool (the first word of the dialog's first line), plus "never answer it, type into or drive that worker's pane". The dialog text and the options never reach the brain: delivery, the boot seed and `bin/thread` all read `brainText` in `lib/brain.ts`. Answering is the phone's Bearer endpoint only.
 
 `turn.text` carries the dialog and the numbered options, so a build that does not know the card still shows them. Shipped iOS builds decode `card` with `try?` and `kind` as a `String` (claude-companion-ios `BrainTrace.swift`), so the new kind never fails a turn. Push: category `dispatch_task`, time-sensitive, `userInfo {kind:"worker_blocked", turnId, taskId, channel}`.

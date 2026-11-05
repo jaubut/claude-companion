@@ -15,8 +15,8 @@ import { redactSecrets } from "./secret-redact"
 
 /** Only herdr dispatch workers: never cc-*, builder-*, tko-* or anything else. */
 export const WORKER_RE = /^dispatch-[0-9a-f]{8}$/
-/** Never offered: "Yes, and switch to auto mode" would lift every later prompt too. */
-const AUTO_MODE_RE = /auto[\s-]*mode/i
+/** Never offered: "Yes, and switch to auto mode" or "Yes, and don't ask again" would lift later prompts too. */
+const STANDING_GRANT_RE = /auto[\s-]*mode|(don['’]?t|do not) ask again/i
 /** The runner's give-up while an alert is open; past it the card reads expired. */
 export const ALERT_TTL_MS = 30 * 60_000
 const KEY_RE = /^[0-9A-Za-z]$/
@@ -35,12 +35,11 @@ export interface BlockedInput {
   options: { key: string; label: string }[]
 }
 
-/** What the brain reads: task, tool, and the dialog's first line, redacted, filtered and cut to 80 chars. No keys. */
+/** What the brain reads: task, worker and the tool word. Any more of the dialog would be an injection path. */
 export function alertBrief(input: BlockedInput): string {
   const head = input.dialog.split("\n").map((l) => l.trim()).find(Boolean) ?? ""
   const tool = /^[A-Za-z][\w-]{0,30}/.exec(head)?.[0] ?? "unknown"
-  const reason = head.replace(/[^\w .,:?()/-]/g, "").slice(0, 80)
-  return `Worker blocked: task ${input.taskId} (${input.worker}) waits on a ${tool} dialog: "${reason}". Jeremie answers it from his phone; never answer it, type into or drive that worker's pane.`
+  return `Worker blocked: task ${input.taskId} (${input.worker}) waits on a ${tool} dialog. Jeremie answers it from his phone; never answer it, type into or drive that worker's pane.`
 }
 
 /** Push with bounded retry: a transient APNs failure gets 3 more tries (same payload, so the same collapse id). */
@@ -94,7 +93,7 @@ export function parseBlocked(raw: unknown): BlockedInput | string {
     const key = str(rec.key)
     const label = redactSecrets(str(rec.label)).slice(0, LABEL_MAX)
     if (!KEY_RE.test(key) || !label) return "options_invalid"
-    if (!AUTO_MODE_RE.test(label) && !options.some((x) => x.key === key)) options.push({ key, label })
+    if (!STANDING_GRANT_RE.test(label) && !options.some((x) => x.key === key)) options.push({ key, label })
   }
   if (!options.length) return "options_invalid"
   return { taskId, title, worker, dialog, options }

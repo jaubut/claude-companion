@@ -119,7 +119,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
-| `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |
+| `lib/worker-blocked.ts` | 185 | lib | 10 | emits: orchestrator |
 | `wiring/brain-pr-merge.ts` | 185 | lib | 3 |  |
 | `companion-server.ts` | 183 | route-host | 1 | routes: 5 |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
