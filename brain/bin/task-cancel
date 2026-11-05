@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Cancel an OBSOLETE or superseded dispatch task (POST /hooks/brain/task-cancel), always with a reason.
+#
+#   bin/task-cancel --task <id or 8-char prefix> --reason "<why it is obsolete>"
+#
+# The server re-checks it in Turso: 404 not_found (no such task, ambiguous
+# prefix), 403 not_agent_task (assignee not agent:*), 409 running (a live
+# worker), 409 already_final (done, cancelled or merged). An open dispatch/*
+# PR is not closed: the reply names it, close it with bin/pr-close. Same auth
+# as bin/propose: loopback, X-Companion-Task-Id: brain and the pid of the
+# brain's claude process (found by walking up the parent chain).
+set -euo pipefail
+
+TASK="" REASON=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --task) TASK="$2"; shift 2 ;;
+    --reason) REASON="$2"; shift 2 ;;
+    *) echo "task-cancel: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+if [ -z "$TASK" ] || [ -z "$REASON" ]; then
+  echo "task-cancel: --task and --reason are required" >&2
+  exit 2
+fi
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(TASK="$TASK" REASON="$REASON" python3 -c '
+import json, os
+print(json.dumps({"task": os.environ["TASK"], "reason": os.environ["REASON"]}))')
+
+curl -sS --max-time 60 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/task-cancel" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo
