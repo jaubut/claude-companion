@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { BadJsonBody, jsonObject } from "./json-body"
+import { BadJsonBody, checked, jsonObject } from "./json-body"
 
 const req = (body: string): Request => new Request("http://x/", { method: "POST", body })
 
@@ -18,4 +18,15 @@ test("malformed or empty: throws, unless the route gave a fallback", async () =>
     expect(jsonObject(req(body))).rejects.toBeInstanceOf(BadJsonBody)
     expect(await jsonObject(req(body), { fallback: true })).toEqual({ fallback: true })
   }
+})
+
+test("checked: an absent or null field passes, a wrong type throws", () => {
+  const body: { a?: unknown; b?: unknown } = { a: "x", b: {} }
+  expect(checked(body, { a: "string", b: "object" })).toBe(body)
+  expect(checked({ a: null } as { a?: unknown }, { a: "string" })).toEqual({ a: null })
+  expect(checked({} as { a?: unknown }, { a: "string" })).toEqual({})
+  for (const a of [5, true, [], {}]) expect(() => checked({ a }, { a: "string" })).toThrow(BadJsonBody)
+  for (const a of [5, "x", []]) expect(() => checked({ a }, { a: "object" })).toThrow(BadJsonBody)
+  expect(checked({ a: false }, { a: "boolean" })).toEqual({ a: false })
+  expect(() => checked({ a: 5 }, { a: "boolean" })).toThrow(BadJsonBody)
 })

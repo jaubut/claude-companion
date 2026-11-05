@@ -151,7 +151,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
-| `lib/tool-format.ts` | 134 | lib | 6 |  |
+| `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
@@ -232,6 +232,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-settings.ts` | 35 | lib | 5 |  |
 | `lib/dotenv.ts` | 34 | lib | 2 |  |
 | `wiring/gauge.ts` | 34 | lib | 2 | emits: gauge |
+| `lib/json-body.ts` | 31 | lib | 4 |  |
 | `lib/pane-clean.ts` | 31 | lib | 3 |  |
 | `routes/copy-jobs.ts` | 31 | route-host | 1 | routes: 2 |
 | `routes/gauge.ts` | 31 | route-host | 1 | routes: 2 |
@@ -240,7 +241,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/worker-hook-gate.ts` | 25 | lib | 2 | state: let envReader |
 | `lib/session-removal-log.ts` | 24 | lib | 2 | state: let removedSinceDrain |
 | `wiring/copy-jobs.ts` | 20 | lib | 1 | emits: copy_jobs |
-| `lib/json-body.ts` | 19 | lib | 2 |  |
 | `lib/session-resolve.ts` | 15 | lib | 1 |  |
 | `lib/db-path.ts` | 14 | lib | 1 |  |
 | `lib/dispatch-live.ts` | 10 | lib | 1 |  |
@@ -383,6 +383,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `jsonObject()` | `lib/json-body.ts` | `routes/api.ts#POST /api/register-token`, `routes/api.ts#DELETE /api/register-token`, `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#DELETE /api/learned`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#POST /api/sessions/resume`, `routes/api.ts#POST /api/sessions/ended/delete`, `routes/api.ts#POST /api/shell/close`, `routes/api.ts#* /api/feed`, `routes/auto-compact.ts#POST /api/auto-compact/cancel`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `routes/my-tasks.ts#* /api/tasks/mine`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send` |
 | `broadcast()` | `state.ts` | `companion-server.ts`, `lib/secret-requests.ts`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#* /api/feed`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/my-tasks.ts`, `wiring/auto-compact.ts`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/canvas.ts`, `wiring/copy-jobs.ts`, `wiring/dialogs.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/front-door.ts`, `wiring/gauge.ts`, `wiring/orchestrator.ts`, `wiring/receipt-qa.ts`, `wiring/shell-sessions.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/waiting.ts`, `ws.ts` |
 | `Session()` | `lib/sessions.ts` | `lib/activity.ts`, `lib/agent-pid.ts`, `lib/canvas.ts`, `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/herdr-workspace.ts`, `lib/hook-common.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/session-identity.ts`, `lib/session-removal-log.ts`, `routes/brain.ts`, `routes/command.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/dialogs.ts`, `wiring/events.ts`, `wiring/gauge.ts`, `wiring/waiting.ts` |
+| `checked()` | `lib/json-body.ts` | `routes/api.ts#POST /api/register-token`, `routes/api.ts#DELETE /api/register-token`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#DELETE /api/learned`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#* /api/feed`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `routes/orchestrator.ts#POST /api/orchestrator/send` |
 | `QueryFn()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/canvas.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/note-media.ts`, `lib/pipeline.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-autofile.ts`, `lib/trip-dashboard.ts`, `routes/body.ts`, `routes/canvas.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/resolver.ts` |
 | `listSessions()` | `lib/sessions.ts` | `companion-server.ts`, `lib/codex-feed.ts`, `lib/session-resolve.ts`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#POST /api/shell/close`, `routes/api.ts#* /api/status`, `routes/api.ts#* /api/feed`, `routes/brain.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/canvas.ts`, `wiring/dialogs.ts`, `wiring/orchestrator.ts`, `wiring/shell-sessions.ts`, `ws.ts` |
 | `tursoQuery()` | `lib/turso.ts` | `companion-server.ts`, `lib/receipt-qa-worker.ts`, `routes/body.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/canvas.ts`, `wiring/dispatch.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/trips.ts` |

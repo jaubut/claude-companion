@@ -35,7 +35,7 @@ import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPan
 import { announceWaiting } from "../wiring/waiting"
 import { detachTerminals } from "../wiring/shell-sessions"
 import { withIdempotency } from "../lib/idempotency"
-import { jsonObject } from "../lib/json-body"
+import { checked, isObject, jsonObject } from "../lib/json-body"
 import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
@@ -63,11 +63,11 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Device token registration (iOS companion app) ──
   if (url.pathname === "/api/register-token" && req.method === "POST") {
-    const body = await jsonObject<{
+    const body = checked(await jsonObject<{
       token?: string
       environment?: ApnsEnv
       device_name?: string
-    }>(req)
+    }>(req), { token: "string", device_name: "string" })
     const token = (body.token ?? "").trim()
     if (!token || !/^[A-Fa-f0-9]{32,200}$/.test(token)) {
       return Response.json({ ok: false, error: "invalid-token" }, { status: 400 })
@@ -79,7 +79,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ ok: true, configured: apnsConfigured(), total: tokenCount() })
   }
   if (url.pathname === "/api/register-token" && req.method === "DELETE") {
-    const body = await jsonObject<{ token?: string }>(req)
+    const body = checked(await jsonObject<{ token?: string }>(req), { token: "string" })
     const token = (body.token ?? "").trim()
     if (!token) return Response.json({ ok: false, error: "missing-token" }, { status: 400 })
     removeToken(token)
@@ -124,14 +124,14 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // to every registered device. category="briefing" keeps these
   // semantically distinct from approval / waiting_input flows.
   if (url.pathname === "/api/push/broadcast" && req.method === "POST") {
-    const body = await jsonObject<{
+    const body = checked(await jsonObject<{
       title?: string
       subtitle?: string
       body?: string
       category?: "approval" | "waiting_input" | "briefing"
       threadId?: string
       userInfo?: Record<string, string>
-    }>(req)
+    }>(req), { title: "string", body: "string" })
     const title = (body.title ?? "").trim()
     const text = (body.body ?? "").trim()
     if (!title || !text) {
@@ -163,7 +163,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ entries: listLearned() })
   }
   if (url.pathname === "/api/learned" && req.method === "DELETE") {
-    const body = await jsonObject<{ tool?: string }>(req, {})
+    const body = checked(await jsonObject<{ tool?: string }>(req, {}), { tool: "string" })
     const removed = clearLearned(body.tool)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     companionLog(`${yellow}learned cleared${reset} ${body.tool ?? "all"} (${removed} entries)`)
@@ -180,7 +180,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ enabled: isSuperAuto() })
   }
   if (url.pathname === "/api/super-auto" && req.method === "POST") {
-    const body = await jsonObject<{ enabled?: boolean }>(req)
+    const body = checked(await jsonObject<{ enabled?: boolean }>(req), { enabled: "boolean" })
     const next = setSuperAuto(!!body.enabled)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const purple = "\x1b[35m"
     companionLog(`${purple}super-auto${reset} ${next ? "ON" : "off"}`)
@@ -190,7 +190,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Spawn a fresh Claude/Codex session (or a plain shell) from the phone ──
   if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-    const body = await jsonObject<{ cwd?: string; repo?: unknown; seed?: unknown; app?: string; agent?: SpawnAgent | "shell"; resume?: string }>(req)
+    const body = checked(await jsonObject<{ cwd?: string; repo?: unknown; seed?: unknown; app?: string; agent?: SpawnAgent | "shell"; resume?: string }>(req), { cwd: "string" })
     // `repo` (a GitHub / map name) instead of a cwd: this host's checkout, or
     // 409 no_checkout so the phone tries its other host. `seed`: lib/spawn-seed.ts.
     if (body.agent === "shell" && (body.seed !== undefined || body.repo !== undefined)) return Response.json({ ok: false, error: "agent_only" }, { status: 400 })
@@ -362,7 +362,7 @@ async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
 }
 
 async function handleResolve(req: Request): Promise<Response> {
-  const body = await jsonObject<{ id?: string; decision?: "allow" | "deny" }>(req)
+  const body = checked(await jsonObject<{ id?: string; decision?: "allow" | "deny" }>(req), { id: "string" })
   const id = (body.id ?? "").trim()
   const decision = body.decision
   if (!id || (decision !== "allow" && decision !== "deny")) {
@@ -382,13 +382,13 @@ function logResolve(req: Request, what: "approval" | "question", id: string, dec
 }
 
 async function handleAnswer(req: Request): Promise<Response> {
-  const body = await jsonObject<{
+  const body = checked(await jsonObject<{
     id?: string
     answers?: Array<{ selected?: string[]; otherText?: string }>
-  }>(req)
+  }>(req), { id: "string" })
   const id = (body.id ?? "").trim()
   const rawAnswers = body.answers
-  if (!id || !Array.isArray(rawAnswers) || rawAnswers.length === 0) {
+  if (!id || !Array.isArray(rawAnswers) || rawAnswers.length === 0 || !rawAnswers.every(isObject)) {
     return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
   }
   const answers: QuestionAnswer[] = rawAnswers.map((a) => ({
@@ -403,7 +403,7 @@ async function handleAnswer(req: Request): Promise<Response> {
 
 // Inject text from phone into terminal.
 async function handleInject(req: Request): Promise<Response> {
-  const { text, key, cwd } = await jsonObject<{ text: string; key?: string; cwd?: string }>(req)
+  const { text, key, cwd } = checked(await jsonObject<{ text: string; key?: string; cwd?: string }>(req), { text: "string", key: "string", cwd: "string" })
   if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
 
   // `/key NAME value` goes to secrets.env, never into the pane or a log —
