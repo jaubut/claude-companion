@@ -126,7 +126,7 @@ export async function forwardVault(cfg: UpstreamConfig, method: string, path: st
   if (res.status >= 300 && res.status < 400) {
     void res.body?.cancel()
     companionLog(`vault upstream ${method} refused redirect ${res.status}`)
-    return { status: 502, text: UNREACHABLE, retryAfter: null, json: JSON.parse(UNREACHABLE) }
+    return { status: 502, text: UNREACHABLE, retryAfter: null, json: JSON.parse(UNREACHABLE) } // ast-grep-ignore: no-unguarded-json-parse
   }
   const text = await res.text().catch(() => "")
   let json: Record<string, unknown> | null = null
