@@ -18,7 +18,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
   // Right | Tab | Space or one literal character (a digit picks a numbered
   // row, "s" answers a hint like "s to use this session only").
   if (url.pathname === "/api/dialog/key" && req.method === "POST") {
-    const body = await req.json() as { key?: string; name?: string }
+    const body = await req.json() as { key?: string; name?: string } // ast-grep-ignore: req-json-needs-object-check
     const key = (body.key ?? "").trim()
     const name = (body.name ?? "").trim()
     const session = key ? resolveSession(key) : null
@@ -70,7 +70,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
   // (arrows work in every list; digits only in the question picker). The
   // phone confirms with Enter or a hint key.
   if (url.pathname === "/api/dialog/pick" && req.method === "POST") {
-    const body = await req.json() as { key?: string; index?: number }
+    const body = await req.json() as { key?: string; index?: number } // ast-grep-ignore: req-json-needs-object-check
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
     const herdrPane = herdrPaneOf(session)

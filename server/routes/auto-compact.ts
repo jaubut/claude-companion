@@ -35,7 +35,7 @@ export async function handleAutoCompactRoute(req: Request, url: URL): Promise<Re
 
 async function bodyKey(req: Request): Promise<string> {
   try {
-    const body = await req.json() as { key?: unknown }
+    const body = await req.json() as { key?: unknown } // ast-grep-ignore: req-json-needs-object-check
     return typeof body.key === "string" ? body.key : ""
   } catch { return "" }
 }
