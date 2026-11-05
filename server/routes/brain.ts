@@ -191,9 +191,9 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
-  // A lead's dead PR has no Turso row: its queue, not its word, says the fix budget is gone.
-  const spent = lead !== null && op === "pr-close" && (deps.lead ?? brainLead).spent(lead, pr)
-  const out = op === "pr-close" ? await (deps.prClose ?? closeDeadPr)({ repo, pr, reason, ...(spent ? { leadSpent: true } : {}) }) : await (deps.prMerge ?? mergeAgentPr)({ repo, pr, reason })
+  // A lead's dead PR has no Turso row: its queue names the task's heads once the fix budget is gone, the gate checks the real one.
+  const heads = lead !== null && op === "pr-close" ? (deps.lead ?? brainLead).spent(lead, pr) : []
+  const out = op === "pr-close" ? await (deps.prClose ?? closeDeadPr)({ repo, pr, reason, ...(heads.length ? { leadHeads: heads } : {}) }) : await (deps.prMerge ?? mergeAgentPr)({ repo, pr, reason })
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
 }

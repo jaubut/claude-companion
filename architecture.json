@@ -2494,7 +2494,7 @@
         },
         {
           "path": "lib/lead-loop.ts",
-          "lines": 177,
+          "lines": 186,
           "kind": "lib",
           "exports": [
             "LEAD_REPOS",
@@ -2513,7 +2513,7 @@
             "emptyQueue",
             "enqueue",
             "adopt",
-            "budgetSpent",
+            "spentHeads",
             "applyEvent",
             "nextAction"
           ],
@@ -7191,10 +7191,10 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 235,
+          "lines": 257,
           "kind": "lib",
           "exports": [
-            "LEAD_DISALLOWED",
+            "leadArgs",
             "LeadDeps",
             "repoSlug",
             "createBrainLead",
@@ -7230,7 +7230,7 @@
         },
         {
           "path": "wiring/brain-pr-close.ts",
-          "lines": 125,
+          "lines": 126,
           "kind": "lib",
           "exports": [
             "PR_CLOSE_ACTION",
@@ -15643,7 +15643,7 @@
             "wiring/brain-lead.ts"
           ]
         },
-        "budgetSpent": {
+        "spentHeads": {
           "module": "lib/lead-loop.ts",
           "callers": [
             "wiring/brain-lead.ts"

@@ -361,10 +361,10 @@ describe("POST /hooks/brain/pr-merge", () => {
     expect(seen).toEqual([ok])
   })
 
-  test("a lead's spent budget reaches pr-close from its queue, never from its word", async () => {
+  test("the heads a lead may close come from its queue, never from the wire", async () => {
     const seen: unknown[] = []
     const LEAD = { ...BRAIN_SESSION, key: "herdr:p_lead", taskId: "lead-claude-companion", pid: "7070" } as Session
-    const lead = { spent: (_r: string, pr: number) => pr === 7 } as unknown as BrainLead
+    const lead = { spent: (_r: string, pr: number) => pr === 7 ? ["dispatch/abcd1234"] : [] } as unknown as BrainLead
     const h = route.createBrainRoute({
       wiring: harnessWiring, sessions: () => [...sessions, LEAD], enabled: () => true, lead,
       prClose: async (p) => { seen.push(p); return { status: 200, body: { ok: true } } },
@@ -375,8 +375,8 @@ describe("POST /hooks/brain/pr-merge", () => {
       return (await h(req, new URL(req.url)))!
     }
     await post(7)
-    await post(8, { leadSpent: true })
-    expect(seen).toEqual([{ repo: "jaubut/claude-companion", pr: 7, reason: "budget spent", leadSpent: true }, { repo: "jaubut/claude-companion", pr: 8, reason: "budget spent" }])
+    await post(8, { leadHeads: ["dispatch/x"] })
+    expect(seen).toEqual([{ repo: "jaubut/claude-companion", pr: 7, reason: "budget spent", leadHeads: ["dispatch/abcd1234"] }, { repo: "jaubut/claude-companion", pr: 8, reason: "budget spent" }])
   })
 
   test("404 brain_disabled when the brain is off", async () => {

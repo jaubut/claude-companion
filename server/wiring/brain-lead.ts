@@ -5,7 +5,7 @@ import { BRAIN_THREAD } from "../lib/brain"
 import { envValue } from "../lib/brain-workers"
 import { processEnvEntries } from "../lib/discover"
 import { realHerdr } from "../lib/herdr"
-import { type LeadAction, type LeadEvent, type LeadQueue, type OpenPr, LEAD_REPOS, adopt, applyEvent, budgetSpent, emptyQueue, enqueue, leadName, nextAction } from "../lib/lead-loop"
+import { type LeadAction, type LeadEvent, type LeadQueue, type OpenPr, LEAD_REPOS, adopt, applyEvent, emptyQueue, enqueue, leadName, nextAction, spentHeads } from "../lib/lead-loop"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { redactSecrets } from "../lib/secret-redact"
@@ -28,8 +28,8 @@ const TICK_MS = 60_000
 const WAKE_MS = 5 * 60_000
 const LEADS_DIR = process.env.COMPANION_LEADS_DIR?.trim() || join(homedir(), ".claude-companion", "leads")
 const LEAD_BRIEF = join(import.meta.dir, "..", "..", "brain", "LEAD.md")
-/** Nobody answers ExitPlanMode's approval in a lead's pane, and a waiting lead never reads as idle: it would stall for good. */
-export const LEAD_DISALLOWED = "--disallowedTools=EnterPlanMode,ExitPlanMode"
+/** Plan mode is off: nobody answers ExitPlanMode's approval in a lead's pane, and a waiting lead never reads as idle, so it would stall for good. */
+export const leadArgs = (name: string): string[] => ["--remote-control", name, "--permission-mode", "auto", "--disallowedTools", "EnterPlanMode", "ExitPlanMode"]
 /** claude-config tools/pr-shepherd-park.ts: what the shepherd cannot finish, and its one line for the brain. */
 const HANDOFF_ACTION = "pr:handoff"
 const BRAIN_EVENT_ACTION = "pr:brain-event"
@@ -46,6 +46,8 @@ export interface LeadDeps {
   /** Is the herdr agent up? */
   running(name: string): Promise<boolean>
   spawn(repo: string, name: string): Promise<{ ok: boolean; error?: string }>
+  /** Clears the herdr record a dead lead left behind (the spawn answered name_taken). */
+  stop(name: string): Promise<void>
   sessions(): Pick<Session, "key" | "taskId" | "sessionId" | "herdrPane" | "pid">[]
   /** The herdr pane of that agent, "" when unknown. */
   agentPane(name: string): Promise<string>
@@ -82,6 +84,7 @@ export function createBrainLead(deps: LeadDeps) {
     starting.add(repo)
     try {
       const out = await deps.spawn(repo, name)
+      if (out.error?.startsWith("name_taken")) await deps.stop(name)
       return out.ok ? { ok: true, name, state: "started" } : { ok: false, name, state: "down", error: out.error }
     } finally {
       starting.delete(repo)
@@ -113,14 +116,25 @@ export function createBrainLead(deps: LeadDeps) {
 
   const cursorFile = join(deps.dir, ".activity-cursor")
 
+  async function headOf(repo: string, pr: number): Promise<string> {
+    const r = await deps.gh(["pr", "view", String(pr), "--repo", LEAD_REPOS[repo]!, "--json", "headRefName"])
+    if (r.code !== 0) throw new Error("gh_failed")
+    try {
+      return String((JSON.parse(r.stdout) as { headRefName?: unknown }).headRefName ?? "")
+    } catch {
+      throw new Error("gh_failed")
+    }
+  }
+
   /** A `pr:handoff` to the manager lands in its repo's queue. Other handoffs have their own brain line. */
-  function handoff(meta: Record<string, unknown>): void {
+  async function handoff(meta: Record<string, unknown>): Promise<void> {
     const { repo, pr, url, reason, findings } = meta
-    if (meta.to !== "manager" || typeof repo !== "string" || !repoSlug(repo) || !Number.isInteger(pr)) return
+    if (meta.to !== "manager" || typeof repo !== "string" || !repoSlug(repo) || typeof pr !== "number" || !Number.isInteger(pr)) return
     const why = typeof reason === "string" ? reason : "handed over by the shepherd"
     const list = Array.isArray(findings) ? findings.filter((f): f is string => typeof f === "string") : []
+    const head = load(repo).tasks.some((t) => t.pr === pr) ? "" : await headOf(repo, pr)
     const q = load(repo)
-    adopt(q, pr as number, `PR #${String(pr)}: ${why}`.slice(0, 120), `Finish or replace PR #${String(pr)}`, `handoff:${String(url)}`, list.length ? list : [why], deps.now())
+    adopt(q, pr, head, `PR #${pr}: ${why}`.slice(0, 120), `Finish or replace PR #${pr}`, `handoff:${String(url)}`, list.length ? list : [why], deps.now())
     save(repo, q)
   }
 
@@ -141,7 +155,7 @@ export function createBrainLead(deps: LeadDeps) {
         else {
           let meta: Record<string, unknown> = {}
           try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → ignored */ }
-          handoff(meta)
+          await handoff(meta)
         }
         cursor = Number(row.id)
       }
@@ -167,11 +181,11 @@ export function createBrainLead(deps: LeadDeps) {
     next,
 
     /** bin/pr-close's evidence: unreadable counts as not spent, the gate then refuses. */
-    spent(repo: string, pr: number): boolean {
+    spent(repo: string, pr: number): string[] {
       try {
-        return budgetSpent(load(repo), pr)
+        return spentHeads(load(repo), pr)
       } catch {
-        return false
+        return []
       }
     },
 
@@ -179,7 +193,7 @@ export function createBrainLead(deps: LeadDeps) {
       const q = load(repo)
       const line = applyEvent(q, e, deps.now())
       save(repo, q)
-      if (line) deps.line(repo, line)
+      if (line) deps.line(repo, redactSecrets(line))
     },
 
     /** Every repo with work gets a live lead; an idle one is woken when there is news. */
@@ -218,10 +232,18 @@ export const brainLead = createBrainLead({
   now: Date.now,
   line: (repo, text) => orchEmit(appendTurn("orchestrator", `${leadName(repo)}: ${text}`, null, BRAIN_THREAD)),
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
-  running: async (name) => (await brainLiveness.agentOf(name)).kind !== "absent",
+  // alive(), not the agent record: herdr can keep the record of a claude that exited.
+  running: (name) => brainLiveness.alive(name),
   spawn: (repo, name) => spawnInHerdr(join(homedir(), repo), "claude", { COMPANION_TASK_ID: name }, realHerdr, {
-    name, args: ["--remote-control", name, "--permission-mode", "auto", LEAD_DISALLOWED],
+    name, args: leadArgs(name),
   }),
+  stop: async (name) => {
+    const a = await brainLiveness.agentOf(name)
+    if (a.kind !== "present") return
+    await realHerdr.call(["agent", "stop", name]).catch(() => undefined)
+    if (a.ref.workspaceId) await realHerdr.call(["workspace", "close", a.ref.workspaceId]).catch(() => undefined)
+    brainLiveness.forget(name)
+  },
   sessions: listSessions,
   agentPane: async (name) => {
     const a = await brainLiveness.agentOf(name)

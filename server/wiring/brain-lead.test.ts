@@ -12,7 +12,9 @@ import type { ExecFn } from "../lib/turso"
 // gh boundary, the merge goes through the real bin/pr-merge gate.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-lead-")), "test.db")
-const { LEAD_DISALLOWED, createBrainLead } = await import("./brain-lead")
+const { createBrainLead, leadArgs } = await import("./brain-lead")
+const { fakeHerdr } = await import("../lib/herdr-fake.test-util")
+const { spawnInHerdr } = await import("../lib/spawn-session")
 const { mergeAgentPr } = await import("./brain-pr-merge")
 
 const REPO = "claude-companion"
@@ -46,7 +48,7 @@ function world(over: Partial<LeadDeps> = {}) {
   const events: string[] = []
   const lead = createBrainLead({
     dir: mkdtempSync(join(tmpdir(), "cc-lead-q-")), gh, exec, now: () => 1_000, line: (_r, t) => lines.push(t), event: (t) => events.push(t),
-    running: async () => false, spawn: async (_r, n) => (spawned.push(n), { ok: true }),
+    running: async () => false, spawn: async (_r, n) => (spawned.push(n), { ok: true }), stop: async () => {},
     sessions: () => [], agentPane: async () => "", envOf: async () => null, tag: () => false, idle: async () => true, inject: async () => true,
     ...over,
   })
@@ -220,13 +222,20 @@ describe("repo lead: failure paths", () => {
     expect(await w.lead.next(REPO)).toEqual({ kind: "idle", held: 0 })
   })
 
-  test("the budget is the server's fact, and only for a PR in the queue", async () => {
+  test("a line to the brain is redacted", async () => {
+    const w = world()
+    const taskId = await onPr(w, 58)
+    w.lead.event(REPO, { type: "blocked", taskId, kind: "stuck", line: `log says ghp_${"a".repeat(36)}` })
+    expect(w.lines[0]).not.toContain("ghp_")
+  })
+
+  test("the heads a lead may close are its task's, and only for a PR in the queue", async () => {
     const w = world()
     const taskId = await onPr(w, 56)
-    expect(w.lead.spent(REPO, 56)).toBe(false)
+    expect(w.lead.spent(REPO, 56)).toEqual([])
     await spend(w, taskId)
-    expect(w.lead.spent(REPO, 56)).toBe(true)
-    expect(w.lead.spent(REPO, 57)).toBe(false)
+    expect(w.lead.spent(REPO, 56)).toEqual([`dispatch/${taskId}`, `builder/${taskId}`])
+    expect(w.lead.spent(REPO, 57)).toEqual([])
   })
 
   test("a queue PR on builder/* counts against the cap; a stranger's builder/* PR does not", async () => {
@@ -272,6 +281,18 @@ describe("repo lead: tick", () => {
     expect([tagged, injected]).toEqual([[], []])
   })
 
+  test("a dead lead's stale herdr record is cleared, and the next tick respawns it", async () => {
+    const stopped: string[] = []
+    let taken = true
+    const { w } = ticking({
+      running: async () => false, stop: async (n) => { stopped.push(n); taken = false },
+      spawn: async () => taken ? { ok: false, error: "name_taken: lead-claude-companion" } : { ok: true },
+    })
+    await w.lead.send(REPO, "T", "brief", "turn-23")
+    expect(stopped).toEqual(["lead-claude-companion"])
+    expect(await w.lead.ensure(REPO)).toMatchObject({ ok: true, state: "started" })
+  })
+
   test("only blocked work wakes nobody", async () => {
     const { w, injected } = ticking()
     const { taskId } = await w.lead.send(REPO, "T", "brief", "turn-22")
@@ -312,6 +333,8 @@ describe("repo lead: shepherd rows", () => {
     await w.lead.tick()
     await w.lead.tick()
     expect(await w.lead.next(REPO)).toMatchObject({ kind: "fix", pr: 70, findings: ["a.ts:1 — bad"], fresh: true })
+    w.lead.event(REPO, { type: "fix_started", taskId: (await w.lead.next(REPO) as { taskId: string }).taskId })
+    expect(w.lead.spent(REPO, 70)).toEqual(["dispatch/task"])
   })
 
   test("a handoff on a PR the lead tracks refreshes it, no second task", async () => {
@@ -338,6 +361,9 @@ describe("repo lead: shepherd rows", () => {
   })
 })
 
-test("a lead cannot enter plan mode: nobody is there to approve ExitPlanMode", () => {
-  expect(LEAD_DISALLOWED).toBe("--disallowedTools=EnterPlanMode,ExitPlanMode")
+test("a lead cannot enter plan mode, and its args pass the real spawn", async () => {
+  const name = "lead-claude-companion"
+  expect(leadArgs(name).slice(-3)).toEqual(["--disallowedTools", "EnterPlanMode", "ExitPlanMode"])
+  const out = await spawnInHerdr("/srv/repo", "claude", { COMPANION_TASK_ID: name }, fakeHerdr().h, { name, args: leadArgs(name) })
+  expect(out).toMatchObject({ ok: true })
 })

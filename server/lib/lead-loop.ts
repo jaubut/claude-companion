@@ -38,6 +38,8 @@ export interface LeadTask {
   blocked?: boolean
   /** The split is queued: a later `closed` or `close_refused` must not queue it again. */
   refiled?: boolean
+  /** A PR the shepherd handed over: its real head. Otherwise the head is named after the task. */
+  head?: string
 }
 
 export interface LeadQueue { tasks: LeadTask[]; updatedAt: number }
@@ -89,16 +91,23 @@ export function enqueue(q: LeadQueue, title: string, prompt: string, seed: strin
  * A PR the shepherd handed over. Tracked: its findings are refreshed. Otherwise a new
  * task, with the next fix on a fresh builder: the shepherd spent the first attempts.
  */
-export function adopt(q: LeadQueue, pr: number, title: string, prompt: string, seed: string, findings: string[], now: number): LeadTask {
-  const t = q.tasks.find((x) => x.pr === pr) ?? Object.assign(enqueue(q, title, prompt, seed, now), { state: "pr" as const, pr, fixes: FIXES_BEFORE_FRESH })
+export function adopt(q: LeadQueue, pr: number, head: string, title: string, prompt: string, seed: string, findings: string[], now: number): LeadTask {
+  const t = q.tasks.find((x) => x.pr === pr) ?? Object.assign(enqueue(q, title, prompt, seed, now), { state: "pr" as const, pr, head, fixes: FIXES_BEFORE_FRESH })
   t.findings = findings
   t.approved = false
   q.updatedAt = now
   return t
 }
 
-/** The lead's fix budget on this PR is gone: the evidence a lead's bin/pr-close counts on. */
-export const budgetSpent = (q: LeadQueue, pr: number): boolean => q.tasks.some((t) => t.pr === pr && t.fixes > FIXES_BEFORE_FRESH)
+/**
+ * The heads a lead may close as PR `pr`: its task's, once the fix budget is gone (empty = none).
+ * The lead writes `pr` and the fix count, so the gate checks the real head against these.
+ */
+export function spentHeads(q: LeadQueue, pr: number): string[] {
+  const t = q.tasks.find((x) => x.pr === pr && x.fixes > FIXES_BEFORE_FRESH)
+  if (!t) return []
+  return t.head ? [t.head] : [`dispatch/${t.id}`, `builder/${t.id}`]
+}
 
 /** Moves the queue; answers the one line for the brain, when this event deserves one. Throws on an unknown task. */
 export function applyEvent(q: LeadQueue, e: LeadEvent, now: number): string | null {

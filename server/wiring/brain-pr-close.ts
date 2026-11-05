@@ -13,8 +13,8 @@ import { orchEmit } from "./orchestrator"
 //   open · head `dispatch/*` (never deps/*, agent/chores*, a human branch) ·
 //   and dead: CONFLICTING, superseded by the task's newer PR, task done or
 //   cancelled, or parked by the PR shepherd with its fix budget spent.
-// A lead's tasks have no Turso row: for a lead, its queue saying the fix budget
-// is spent also counts, and the head may be `builder/*` (routes/brain.ts sets leadSpent).
+// A lead's tasks have no Turso row: a PR whose head is one of leadHeads (the task's
+// heads once its fix budget is spent, routes/brain.ts) also counts, on `dispatch/*` or `builder/*`.
 // The branch is kept (no --delete-branch).
 
 export const PR_CLOSE_ACTION = "brain:pr-close"
@@ -22,7 +22,7 @@ export const REASON_MAX = 300
 /** The shepherd's park reasons once a fix budget is spent (claude-config tools/pr-shepherd.ts decide()). */
 const BUDGET_SPENT = /^(dep lane: )?(CI still failing after \d+ fixes|merge conflict unresolved after \d+ attempts|review verdict CHANGES after \d+ fix runs)/
 
-export interface PrCloseInput { repo: string; pr: number; reason: string; leadSpent?: boolean }
+export interface PrCloseInput { repo: string; pr: number; reason: string; leadHeads?: string[] }
 export interface PrCloseDeps { gh: GhFn; exec: ExecFn; event(text: string): void }
 type Out = { status: number; body: Record<string, unknown> }
 
@@ -83,7 +83,8 @@ export async function closeDeadPr(p: PrCloseInput, deps: PrCloseDeps = realDeps)
   const v = await view(deps.gh, p)
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
-  if (!(p.leadSpent ? /^(dispatch|builder)\/[\w.-]+$/ : /^dispatch\/[\w.-]+$/).test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
+  const leadOwned = !!p.leadHeads?.includes(v.headRefName) && /^(dispatch|builder)\/[\w.-]+$/.test(v.headRefName)
+  if (!leadOwned && !/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
   let dead: Awaited<ReturnType<typeof deadReasons>>
   try {
     dead = await deadReasons(deps.exec, v)
@@ -91,7 +92,7 @@ export async function closeDeadPr(p: PrCloseInput, deps: PrCloseDeps = realDeps)
     companionLog(`[brain] pr-close: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")
   }
-  if (p.leadSpent) dead.reasons.push("lead fix budget spent")
+  if (leadOwned) dead.reasons.push("lead fix budget spent")
   if (!dead.reasons.length) return fail(409, "not_dead", { branch: v.headRefName, mergeable: v.mergeable })
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   let run: Awaited<ReturnType<GhFn>>

@@ -75,6 +75,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-hook.ts` | 268 | lib | 7 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/triage-pr.ts` | 258 | lib | 20 |  |
+| `wiring/brain-lead.ts` | 257 | lib | 6 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/orchestrator.ts` | 252 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
@@ -82,7 +83,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `ws.ts` | 240 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
-| `wiring/brain-lead.ts` | 235 | lib | 6 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `wiring/auto-deploy.ts` | 228 | lib | 14 | state: let live |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
@@ -120,9 +120,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `companion-server.ts` | 189 | route-host | 1 | routes: 5 |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
+| `lib/lead-loop.ts` | 186 | lib | 19 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `wiring/brain-pr-merge.ts` | 185 | lib | 3 |  |
-| `lib/lead-loop.ts` | 177 | lib | 19 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
@@ -156,8 +156,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
+| `wiring/brain-pr-close.ts` | 126 | lib | 6 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
-| `wiring/brain-pr-close.ts` | 125 | lib | 6 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/transcript-backfill.ts` | 119 | lib | 5 |  |
