@@ -116,11 +116,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
+| `wiring/brain-pr-merge.ts` | 191 | lib | 3 |  |
 | `companion-server.ts` | 189 | route-host | 1 | routes: 5 |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
-| `wiring/brain-pr-merge.ts` | 185 | lib | 3 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |

@@ -34,6 +34,9 @@ const HOLD_LABEL = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
 const RETIRED_PARK = /^(client(-origin)? PR|tainted \(|touches .+ — needs your review)/
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
+/** Files the marker's low tier may cover here: a comment is writable by any agent, so the server checks. Narrower than the shepherd's rule: agent instructions (.md) need a review. */
+const LOW_FILE = /^docs\/.+\.md$|^README\.md$|\.test\.ts$|^architecture\.(json|md)$/
+const LOW_FILE_LIMIT = 100
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
 interface PrMergeInput { repo: string; pr: number; reason: string }
@@ -47,9 +50,9 @@ interface Comment { body?: string; author?: { login?: string } | null }
 interface PrView {
   state: string; isDraft: boolean; headRefName: string; headRefOid: string; mergeable: string; mergeStateStatus: string
   reviewDecision: string; url: string; title: string; author: { login?: string } | null; labels: Array<{ name?: string }>
-  statusCheckRollup: Check[]; comments: Comment[]
+  statusCheckRollup: Check[]; comments: Comment[]; files: Array<{ path?: string }>
 }
-const FIELDS = "state,isDraft,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,url,title,author,labels,statusCheckRollup,comments"
+const FIELDS = "state,isDraft,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,url,title,author,labels,statusCheckRollup,comments,files"
 
 async function view(gh: GhFn, p: PrMergeInput): Promise<PrView | Out> {
   let r: Awaited<ReturnType<GhFn>>
@@ -66,7 +69,7 @@ async function view(gh: GhFn, p: PrMergeInput): Promise<PrView | Out> {
       mergeable: String(v.mergeable ?? ""), mergeStateStatus: String(v.mergeStateStatus ?? ""), reviewDecision: String(v.reviewDecision ?? ""),
       url: String(v.url ?? ""), title: String(v.title ?? ""), author: v.author ?? null,
       labels: Array.isArray(v.labels) ? v.labels : [], statusCheckRollup: Array.isArray(v.statusCheckRollup) ? v.statusCheckRollup : [],
-      comments: Array.isArray(v.comments) ? v.comments : [],
+      comments: Array.isArray(v.comments) ? v.comments : [], files: Array.isArray(v.files) ? v.files : [],
     }
   } catch {
     return fail(502, "gh_bad_json")
@@ -99,9 +102,12 @@ function notApproved(v: PrView): string[] {
   const claude = head.filter((b) => CLAUDE_HEADING.test(b))
   const codex = head.filter((b) => CODEX_HEADING.test(b))
   if ([...claude, ...codex].some((b) => /VERDICT:\s*CHANGES/i.test(b))) out.push("CHANGES on this head")
-  if (!claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
-  if (!codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
   if (v.reviewDecision === "CHANGES_REQUESTED") out.push("GitHub review CHANGES_REQUESTED")
+  // The shepherd's newest tier marker (claude-config PR 230); no marker counts as high.
+  const tier = v.comments.filter((c) => c.author?.login === login).map((c) => /<!-- review-tier: (\w+) -->/.exec(String(c.body))?.[1]).filter(Boolean).at(-1)
+  if (tier === "low" && v.files.length > 0 && v.files.length < LOW_FILE_LIMIT && v.files.every((f) => LOW_FILE.test(String(f.path)))) return out
+  if (!claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
+  if (tier !== "normal" && !codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
   return out
 }
 
