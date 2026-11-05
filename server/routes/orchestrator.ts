@@ -36,6 +36,7 @@ import { BODY_CHANNEL, type BodySnapshot, type BodyVitals, vitalsHeader } from "
 import { keyCommandGate } from "../lib/vault-guard"
 import { companionLog } from "../lib/log"
 import { sessionCmdArgv } from "../lib/tmux-pane"
+import { jsonObject } from "../lib/json-body"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
 // approve/reject, task cancel; plus the Turso dispatch
@@ -127,7 +128,7 @@ async function linkChannel(req: Request, id: string, dispatch: DispatchWiring): 
   }
   let raw: { noteId?: unknown }
   try {
-    raw = await req.json() as { noteId?: unknown } // ast-grep-ignore: req-json-needs-object-check
+    raw = await jsonObject<{ noteId?: unknown }>(req)
   } catch {
     return Response.json({ ok: false, error: "invalid JSON" }, { status: 400 })
   }
@@ -363,7 +364,7 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
   }
   if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
     return withIdempotency(req, "orch-send", async () => {
-      const { text, channel, voice } = await req.json() as { text?: string; channel?: string; voice?: unknown } // ast-grep-ignore: req-json-needs-object-check
+      const { text, channel, voice } = await jsonObject<{ text?: string; channel?: string; voice?: unknown }>(req)
       if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
       const ch = resolveChannel(channel)
       if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
