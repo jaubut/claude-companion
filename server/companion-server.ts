@@ -105,6 +105,8 @@ export function createCompanionServer(port: number) {
       if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
+      // bin/media downloads and decodes a video: up to ~120 s (lib/link-media.ts).
+      if (url.pathname === "/hooks/brain/media") server.timeout(req, 150)
 
       // ── Public liveness probe ──
       // Used by the hook scripts to skip the 300s wait when the server is

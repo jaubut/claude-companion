@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 188,
+          "lines": 190,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -34,6 +34,11 @@
               "method": "*",
               "path": "/api/",
               "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/media",
+              "prefix": false
             },
             {
               "method": "*",
@@ -2521,6 +2526,89 @@
           "listeners": [],
           "sheets": 0,
           "externals": []
+        },
+        {
+          "path": "lib/link-media-guard.ts",
+          "lines": 151,
+          "kind": "lib",
+          "exports": [
+            "UrlCheck",
+            "isPrivateIp",
+            "vetHost",
+            "checkUrl",
+            "startGuardProxy",
+            "guardProxy",
+            "safeFetch"
+          ],
+          "state": [
+            "let shared"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/link-media-palette.ts",
+          "lines": 65,
+          "kind": "lib",
+          "exports": [
+            "Swatch",
+            "kmeans",
+            "palette"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "sharp"
+          ]
+        },
+        {
+          "path": "lib/link-media.ts",
+          "lines": 327,
+          "kind": "lib",
+          "exports": [
+            "LinkMediaMeta",
+            "LinkMediaOut",
+            "MediaError",
+            "beforeDeadline",
+            "run",
+            "ytArgs",
+            "LOCAL_INPUT",
+            "VIDEO_FORMAT",
+            "jsonOrNull",
+            "vttText",
+            "asImage",
+            "imageTitle",
+            "analyseLink"
+          ],
+          "state": [
+            "inflight: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/link-media-guard.ts",
+            "lib/link-media-palette.ts",
+            "lib/log.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "sharp"
+          ]
         },
         {
           "path": "lib/live-repo.ts",
@@ -6135,7 +6223,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
+          "lines": 284,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6151,6 +6239,7 @@
             "lib/auth.ts",
             "lib/brain.ts",
             "lib/brain-trace.ts",
+            "lib/link-media.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
@@ -8975,6 +9064,7 @@
             "lib/inject-verified.ts",
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
+            "lib/link-media.ts",
             "lib/media.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts",
@@ -10788,6 +10878,36 @@
           "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/keyboard-inject.ts"
+          ]
+        },
+        "guardProxy": {
+          "module": "lib/link-media-guard.ts",
+          "callers": [
+            "lib/link-media.ts"
+          ]
+        },
+        "safeFetch": {
+          "module": "lib/link-media-guard.ts",
+          "callers": [
+            "lib/link-media.ts"
+          ]
+        },
+        "Swatch": {
+          "module": "lib/link-media-palette.ts",
+          "callers": [
+            "lib/link-media.ts"
+          ]
+        },
+        "palette": {
+          "module": "lib/link-media-palette.ts",
+          "callers": [
+            "lib/link-media.ts"
+          ]
+        },
+        "checkUrl": {
+          "module": "lib/link-media-guard.ts",
+          "callers": [
+            "lib/link-media.ts"
           ]
         },
         "DialogItem": {
@@ -13763,6 +13883,12 @@
             "routes/brain.ts"
           ]
         },
+        "analyseLink": {
+          "module": "lib/link-media.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -13771,6 +13897,12 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "run": {
+          "module": "lib/link-media.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -17214,6 +17346,8 @@
         "sharp": {
           "version": "0.35.5",
           "modules": [
+            "lib/link-media-palette.ts",
+            "lib/link-media.ts",
             "lib/media.ts",
             "lib/receipt-capture.ts"
           ]
