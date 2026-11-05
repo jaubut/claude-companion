@@ -82,6 +82,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `ws.ts` | 240 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
+| `routes/vault.ts` | 238 | lib | 1 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `wiring/auto-deploy.ts` | 228 | lib | 14 | state: let live |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
@@ -90,7 +91,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orphan-question.ts` | 225 | lib | 11 | state: raised: Map |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `wiring/events.ts` | 224 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
-| `routes/vault.ts` | 221 | lib | 1 |  |
 | `lib/resolver-work.ts` | 219 | lib | 5 |  |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
@@ -590,6 +590,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `listProposals()` | `lib/orchestrator-chat.ts` | `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `resolverConfig()` | `lib/resolver.ts` | `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `tasksChat()` | `wiring/tasks-agent.ts` | `companion-server.ts`, `wiring/front-door.ts` |
+| `hookCallerAllowed()` | `lib/request-gate.ts` | `companion-server.ts#* /hooks/`, `routes/vault.ts` |
 | `originLabel()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
 | `clientInfo()` | `state.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
 | `Entry()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |

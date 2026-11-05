@@ -6869,7 +6869,7 @@
         },
         {
           "path": "routes/vault.ts",
-          "lines": 221,
+          "lines": 238,
           "kind": "lib",
           "exports": [
             "handleVaultRoute"
@@ -6883,6 +6883,7 @@
             "lib/auth.ts",
             "lib/log.ts",
             "lib/secret-store.ts",
+            "lib/request-gate.ts",
             "lib/vault-guard.ts",
             "lib/secret-requests.ts",
             "lib/vault-upstream.ts"
@@ -8498,7 +8499,8 @@
         "hookCallerAllowed": {
           "module": "lib/request-gate.ts",
           "callers": [
-            "companion-server.ts#* /hooks/"
+            "companion-server.ts#* /hooks/",
+            "routes/vault.ts"
           ]
         },
         "checkBearer": {
