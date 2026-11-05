@@ -66,6 +66,7 @@ A dispatch PR stuck on stale CI: `bin/pr-update-branch --repo <owner/name> --pr 
 - 409 `not_open`: already closed or merged.
 - 409 `conflict`: the branch conflicts with its base.
 - 409 `up_to_date`: the base has nothing new, so updating won't help.
+- 502 `update_failed`: GitHub refused the update; check the PR before asking Jeremie.
 
 ## Deploys
 

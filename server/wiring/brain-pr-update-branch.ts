@@ -13,6 +13,7 @@ import { orchEmit } from "./orchestrator"
 // check is made here from GitHub, never from the brain's word:
 //   open (409 not_open) · head `dispatch/*` (403 not_agent_branch) ·
 //   no conflict with the base (409 conflict, before or from the update).
+// A failed update answers 502 update_failed, whatever the head does after.
 // `gh pr update-branch` without --rebase: a merge commit on the PR branch, never
 // a rebase, never a force. The new head is read back. It voids the reviewed-sha
 // stamps, so bin/pr-merge answers not_approved until the cascade reviews it again.
@@ -73,6 +74,8 @@ export async function updateAgentPr(p: PrUpdateInput, deps: PrUpdateDeps = realD
   const said = `${run.stderr}\n${run.stdout}`.trim()
   if (run.code !== 0 && /conflict/i.test(said)) return fail(409, "conflict")
   if (run.code === 0 && /up-to-date/i.test(said)) return fail(409, "up_to_date", { head: v.headRefOid })
+  // A failed update stops here: a head that moves now is someone else's push.
+  if (run.code !== 0) return fail(502, "update_failed", { head: v.headRefOid, detail: said.slice(0, 200) })
   const head = await newHead(deps, p, v.headRefOid)
   if (!head) return fail(502, "update_unverified", { head: v.headRefOid, detail: said.slice(0, 200) })
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)

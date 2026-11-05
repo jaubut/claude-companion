@@ -135,14 +135,25 @@ describe("bin/pr-update-branch gate", () => {
   })
 
   test("502 update_unverified when the head never moves: nothing recorded", async () => {
-    const w = world(open(), () => ({ code: 1, stdout: "", stderr: "HTTP 403" }))
+    const w = world(open(), () => ({ code: 0, stdout: "merged", stderr: "" }))
     const out = await updateAgentPr(input, w.deps)
     expect(out.status).toBe(502)
     expect(out.body.error).toBe("update_unverified")
-    expect(out.body.detail).toBe("HTTP 403")
+    expect(out.body.detail).toBe("merged")
     expect(w.events).toHaveLength(0)
     expect(activity(w.db)).toHaveLength(0)
   })
+
+  for (const [what, moved] of [["the head stays", false], ["a concurrent push moves the head", true]] as const) {
+    test(`502 update_failed when the update exits nonzero and ${what}: nothing recorded`, async () => {
+      const w = world(open(), (s) => { if (moved) s.headRefOid = NEW; return { code: 1, stdout: "", stderr: "HTTP 403" } })
+      const out = await updateAgentPr(input, w.deps)
+      expect(out.status).toBe(502)
+      expect(out.body).toMatchObject({ ok: false, error: "update_failed", head: OLD, detail: "HTTP 403" })
+      expect(w.events).toHaveLength(0)
+      expect(activity(w.db)).toHaveLength(0)
+    })
+  }
 
   test("503 gh_unreachable when gh cannot start", async () => {
     const w = world(open())
