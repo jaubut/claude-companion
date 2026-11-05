@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 188,
+          "lines": 189,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -70,6 +70,7 @@
             "routes/auto-compact.ts",
             "routes/gauge.ts",
             "routes/copy-jobs.ts",
+            "routes/builder-jobs.ts",
             "routes/my-tasks.ts",
             "routes/taste.ts",
             "routes/notes.ts",
@@ -1056,6 +1057,35 @@
           "imports": [
             "lib/auto-judge.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/builder-jobs.ts",
+          "lines": 167,
+          "kind": "lib",
+          "exports": [
+            "STALE_MS",
+            "DROP_MS",
+            "MAX_JOBS",
+            "MAX_TOMBSTONES",
+            "BuilderEvent",
+            "BuilderReport",
+            "BuilderJobItem",
+            "BuilderJobsFrame",
+            "BuilderJobsDeps",
+            "parseBuilderReport",
+            "BuilderJobStore"
+          ],
+          "state": [
+            "EVENTS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -6171,6 +6201,39 @@
           "externals": []
         },
         {
+          "path": "routes/builder-jobs.ts",
+          "lines": 28,
+          "kind": "route-host",
+          "exports": [
+            "handleBuilderJobsRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/hooks/builder-progress",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/builder-jobs",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/builder-jobs.ts",
+            "lib/vault-guard.ts",
+            "wiring/builder-jobs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/canvas.ts",
           "lines": 150,
           "kind": "lib",
@@ -7390,6 +7453,28 @@
           "externals": []
         },
         {
+          "path": "wiring/builder-jobs.ts",
+          "lines": 16,
+          "kind": "lib",
+          "exports": [
+            "builderJobs"
+          ],
+          "state": [],
+          "emits": [
+            "builder_jobs"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/builder-jobs.ts",
+            "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/canvas.ts",
           "lines": 147,
           "kind": "lib",
@@ -8229,7 +8314,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 240,
+          "lines": 244,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -8265,6 +8350,7 @@
             "wiring/dialogs.ts",
             "wiring/waiting.ts",
             "wiring/copy-jobs.ts",
+            "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
             "lib/shell-sessions.ts",
             "wiring/shell-sessions.ts",
@@ -8307,6 +8393,7 @@
             "wiring/body.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
+            "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
             "wiring/dialogs.ts",
@@ -8539,6 +8626,7 @@
             "companion-server.ts#* /ws",
             "lib/request-gate.ts",
             "routes/brain.ts",
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
@@ -8703,6 +8791,12 @@
         },
         "brainRoute": {
           "module": "routes/brain.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleBuilderJobsRoute": {
+          "module": "routes/builder-jobs.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -11097,6 +11191,7 @@
             "lib/request-gate.ts",
             "lib/terminal-bridge.ts",
             "routes/brain.ts",
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event",
@@ -11792,6 +11887,7 @@
           "module": "lib/vault-guard.ts",
           "callers": [
             "lib/request-gate.ts",
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
@@ -13857,6 +13953,20 @@
             "ws.ts"
           ]
         },
+        "parseBuilderReport": {
+          "module": "lib/builder-jobs.ts",
+          "callers": [
+            "routes/builder-jobs.ts#POST /hooks/builder-progress"
+          ]
+        },
+        "builderJobs": {
+          "module": "wiring/builder-jobs.ts",
+          "callers": [
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
+            "routes/builder-jobs.ts#GET /api/builder-jobs",
+            "ws.ts"
+          ]
+        },
         "SendResult": {
           "module": "lib/canvas.ts",
           "callers": [
@@ -15839,6 +15949,12 @@
           "module": "wiring/auto-compact.ts",
           "callers": [
             "wiring/brain.ts"
+          ]
+        },
+        "BuilderJobStore": {
+          "module": "lib/builder-jobs.ts",
+          "callers": [
+            "wiring/builder-jobs.ts"
           ]
         },
         "createCanvasStore": {
