@@ -50,6 +50,7 @@ export const canvasStore: CanvasStore = {
   edge: (id) => openStore().edge(id),
   claimEdge: (id, now) => openStore().claimEdge(id, now),
   pickNode: (id, now) => openStore().pickNode(id, now),
+  settlePick: (id, delivered) => openStore().settlePick(id, delivered),
   references: (target) => openStore().references(target),
   settleEdge: (id, result, now) => openStore().settleEdge(id, result, now),
 }
@@ -79,9 +80,15 @@ function bindKey(kind: NodeKind, n: { ref?: string; data?: Record<string, unknow
 }
 
 function rebind(id: string, patch: NodePatch): NodePatch {
-  const kind = openStore().node(id)?.kind
-  if (!kind || (kind === "preview" ? patch.data : patch.ref) === undefined) return patch
-  return { ...patch, boundSid: sidOf(bindKey(kind, patch)) }
+  const cur = openStore().node(id)
+  if (!cur || (cur.kind === "preview" ? patch.data : patch.ref) === undefined) return patch
+  if (cur.kind !== "preview") return { ...patch, boundSid: sidOf(bindKey(cur.kind, patch)) }
+  // A data edit is not a re-point: only a new sessionKey rebinds (the tty may hold another agent by now),
+  // and an edit that leaves the key out keeps it, because data is replaced wholesale.
+  const old = bindKey(cur.kind, cur)
+  const data = patch.data?.sessionKey === undefined && old ? { ...patch.data, sessionKey: old } : patch.data
+  const key = bindKey(cur.kind, { data })
+  return key === old ? { ...patch, data } : { ...patch, data, boundSid: sidOf(key) }
 }
 
 // The bound-session check before typing into `key`: a refusal, or null when it may go ahead.

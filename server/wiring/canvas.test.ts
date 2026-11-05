@@ -108,8 +108,16 @@ test("pick notify: types into the bound posting session; no session → null; an
   sessions.removeSessionByKey(s.key)
   sessions.recordSession({ cwd: "/tmp/canvas-pick", tty: "/dev/pts/79", sessionId: "sid-other" }, { sessionIdConfirmed: true })
   expect(await canvas.canvasPickNotify(bound)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
-  // A data patch on a preview rebinds it to whoever holds data.sessionKey now.
-  expect(canvas.canvasStore.patchNode(bound.id, { data: { ...bound.data } }, 2)?.boundSid).toBe("sid-other")
+  // A data edit is not a re-point: the tty's new agent stays refused, and leaving the key out keeps it.
+  const edited = canvas.canvasStore.patchNode(bound.id, { data: { ...bound.data, title: "fixed" } }, 2)!
+  expect(edited.boundSid).toBe("sid-pick")
+  expect(await canvas.canvasPickNotify(edited)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+  const noKey = canvas.canvasStore.patchNode(bound.id, { data: { direction: "bold" } }, 3)!
+  expect([noKey.boundSid, noKey.data.sessionKey]).toEqual(["sid-pick", s.key])
+  // A new sessionKey rebinds to whoever holds it now.
+  const moved = canvas.canvasStore.patchNode(bound.id, { data: { ...bound.data, sessionKey: "claude:tty:/dev/pts/none" } }, 4)!
+  expect(moved.boundSid).toBe("")
+  expect(canvas.canvasStore.patchNode(bound.id, { data: { ...bound.data, sessionKey: s.key } }, 5)?.boundSid).toBe("sid-other")
   expect(typed.length).toBe(1)
   for (const n of canvas.canvasStore.nodes()) canvas.canvasStore.removeNode(n.id)
   sessions.removeSessionByKey(s.key)

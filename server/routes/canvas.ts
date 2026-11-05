@@ -15,7 +15,8 @@ export type { SendResult }
 //          data.group, a `node` frame per changed node. If data.sessionKey is a live session (bound when the
 //          card was posted), "Picked direction: <data.direction> — <ref>" is typed into it (delivered: true);
 //          else stored only (delivered: false). 400 invalid_kind unless preview; inject refusals as /send,
-//          with the pick already stored.
+//          with the pick already stored. Picking a card already picked and sending or sent types nothing
+//          (200 { ok, node, delivered, duplicate: true }); a failed delivery can be picked again.
 //   POST   /api/canvas/edges          { from, to, kind? }                   → 201 { ok, edge }. Kind/state come from
 //          the endpoints (a posted kind is ignored): task → agent = "context"/"proposed" (Send?);
 //          note|turso_note → agent|brain = "reference"/"linked" (a live read-only link, never sent)
@@ -89,8 +90,11 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       const p = deps.store.pickNode(pickId, now())
       if (!p.ok) return bad(p.error, p.error === "not_found" ? 404 : 400)
       for (const node of p.changed) frame("node", { node })
+      // A double tap (or a second client) finds the claim held and types nothing.
+      if (!p.claimed) return Response.json({ ok: true, node: p.node, delivered: p.sent, duplicate: true })
       // The pick is stored before typing: a refused inject still leaves it for GET /api/canvas.
       const r = await deps.pickNotify(p.node).catch((): SendResult => ({ ok: false, status: 503, error: "send_failed" }))
+      deps.store.settlePick(pickId, r?.ok === true)
       if (!r || r.ok) return Response.json({ ok: true, node: p.node, delivered: r !== null })
       return Response.json({ ...r.detail, ok: false, error: r.error, node: p.node, delivered: false }, { status: r.status })
     }

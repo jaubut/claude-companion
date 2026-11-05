@@ -284,6 +284,34 @@ describe("preview pick (design-first)", () => {
     for (const id of ["safe", "bold", "wild", "other"]) await call("DELETE", `/api/canvas/nodes/${id}`)
   })
 
+  test("a double tap types once, concurrent or not; a failed delivery can be retried; a new pick re-claims", async () => {
+    await preview("dt-a", "g4")
+    await preview("dt-b", "g4")
+    picks.length = 0
+    pickResult = { ok: true }
+    const [x, y] = await Promise.all(["a", "b"].map(() => call("POST", "/api/canvas/nodes/dt-a/pick", {})))
+    expect([x!.status, y!.status]).toEqual([200, 200])
+    expect([x!.json.duplicate, y!.json.duplicate].filter(Boolean)).toEqual([true])
+    expect(picks).toEqual(["dt-a"])
+    expect(await call("POST", "/api/canvas/nodes/dt-a/pick", {})).toMatchObject({ status: 200, json: { delivered: true, duplicate: true } })
+    expect(picks).toEqual(["dt-a"])
+
+    expect(store.pickNode("dt-b", 1)).toMatchObject({ ok: true, claimed: true })
+    expect(store.pickNode("dt-b", 2)).toMatchObject({ ok: true, claimed: false, sent: false, changed: [] })
+    store.settlePick("dt-b", false)
+
+    pickResult = { ok: false, status: 409, error: "pane_not_ready" }
+    expect((await call("POST", "/api/canvas/nodes/dt-b/pick", {})).status).toBe(409)
+    pickResult = { ok: true }
+    expect(await call("POST", "/api/canvas/nodes/dt-b/pick", {})).toMatchObject({ status: 200, json: { delivered: true } })
+    expect(picks).toEqual(["dt-a", "dt-b", "dt-b"])
+
+    expect(await call("POST", "/api/canvas/nodes/dt-a/pick", {})).toMatchObject({ status: 200, json: { delivered: true } })
+    expect(picks).toEqual(["dt-a", "dt-b", "dt-b", "dt-a"])
+    pickResult = null
+    for (const id of ["dt-a", "dt-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
   test("inject refusals answer with /send's codes; the pick is still stored", async () => {
     await preview("pk-a", "g3")
     await preview("pk-b", "g3")
