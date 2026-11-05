@@ -9,6 +9,11 @@ Last updated: 2026-10-25
 **Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.
 **Rejected:** typescript-eslint (needs the TS compiler API); pattern 1, swallowed errors (8 of 16 overall, 0 of 2 here, about 400 live candidates); a `tmuxCapture` timeout rule (a call site shows nothing, the gap is inside the wrapper).
 **Revisit if:** the 34 suppressions stop shrinking, or a second repo wants the same rules.
+### Task rows carry no tmux identity (2026-11-05, herdr-only Stage 3b)
+**Choice:** `tmuxSession` / `tmuxSocket` are always null on the wire and gone from `Task`; `cancelLocal` is a status change. Columns stay. Results: `docs/herdr-only-migration.md` Stage 3b.
+**Why:** no local worker since one-stream A2, and iOS never reads them.
+**Rejected:** adding `herdrPane` to the task DTO (the plan's idea): no consumer.
+**Revisit if:** never; remove both fields after one iOS release.
 
 ### Pane mirror scrollback: opt-in history request, answered to the asking viewer only (2026-11-02, t-ios-term-input-1)
 **Choice:** phone → `{"type":"scrollback","lines":N}` (cap 2000); server → that viewer only `{"type":"history","lines":M}` + one binary frame of M plain rows (CRLF, SGR reset per row), from `pane.read --source recent --lines N` (visible screen included). One answer per viewer per 1 s, latest wins. tmux / failed read → `lines:0`, no binary frame.
