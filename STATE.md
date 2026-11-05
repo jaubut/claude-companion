@@ -9,6 +9,11 @@ Last updated: 2026-10-25
 **Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.
 **Rejected:** typescript-eslint (needs the TS compiler API); pattern 1, swallowed errors (8 of 16 overall, 0 of 2 here, about 400 live candidates); a `tmuxCapture` timeout rule (a call site shows nothing, the gap is inside the wrapper).
 **Revisit if:** the 34 suppressions stop shrinking, or a second repo wants the same rules.
+### Builder progress: relay PROGRESS → brain's relay POSTs /hooks/builder-progress → `builder_jobs` frame (2026-11-02)
+**Choice:** the brain session's relay mod (gated on `COMPANION_TASK_ID=brain`) POSTs task / progress / done / aborted to `/hooks/builder-progress` on loopback; `lib/builder-jobs.ts` keeps the active jobs in memory (pct or null = indeterminate, step, stale at 10 min, dropped at 2 h, cleared on DONE / ABORTED) and broadcasts the full list as `builder_jobs` (sent on `/ws` open only when non-empty). Plan + contract + iOS spec: `docs/builder-progress-plan.md`.
+**Why:** Jeremie wants a progress ring for long builder jobs; relay had only ACK / DONE.
+**Rejected:** progress as chat turns (noise, wakes nobody usefully); the server parsing the brain's transcript for PROGRESS lines (the relay swallows them, so they never reach it).
+**Revisit if:** a builder's progress should show on hosts other than the brain's, or jobs must survive a Companion restart.
 
 ### Pane mirror scrollback: opt-in history request, answered to the asking viewer only (2026-11-02, t-ios-term-input-1)
 **Choice:** phone → `{"type":"scrollback","lines":N}` (cap 2000); server → that viewer only `{"type":"history","lines":M}` + one binary frame of M plain rows (CRLF, SGR reset per row), from `pane.read --source recent --lines N` (visible screen included). One answer per viewer per 1 s, latest wins. tmux / failed read → `lines:0`, no binary frame.
