@@ -1,40 +1,14 @@
 #!/usr/bin/env bash
-# brain-v2 Phase 2: repo leads (POST /hooks/brain/lead, docs/brain-api.md § Repo leads).
+# brain-v2 Phase 2: ensure the persistent `lead-<repo>` session (POST /hooks/brain/lead).
 #
-#   bin/lead <repo>                                                ensure lead-<repo> is up
-#   bin/lead <repo> send --turn <id> --title "<t>" --prompt "<p>"  queue work on it
-#   bin/lead <repo> next                                           the lead's next step (JSON)
-#   bin/lead <repo> event '<json>'                                 report {"type":…,"taskId":…}
+#   bin/lead <repo>
 #
-# A repo with no lead answers 404 no_lead_for_repo: use bin/propose.
-# Auth is the caller's identity, as bin/propose: loopback, COMPANION_TASK_ID
-# (brain or lead-<repo>) and the pid of the claude process above this command.
+# A repo with no lead answers 404 no_lead_for_repo: use bin/propose. Then hand it
+# work as a plain message (docs/brain-api.md § Repo leads). Same auth as bin/propose.
 set -euo pipefail
 
 REPO="${1:-}"
-[ -n "$REPO" ] || { echo "lead: usage: bin/lead <repo> [send|next|event]" >&2; exit 2; }
-OP="${2:-ensure}"
-shift $(( $# < 2 ? $# : 2 ))
-
-TURN="" TITLE="" PROMPT="" EVENT=""
-case "$OP" in
-  ensure|next) ;;
-  event) EVENT="${1:-}"; [ -n "$EVENT" ] || { echo "lead: event needs a JSON body" >&2; exit 2; } ;;
-  send)
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --turn) TURN="$2"; shift 2 ;;
-        --title) TITLE="$2"; shift 2 ;;
-        --prompt) PROMPT="$2"; shift 2 ;;
-        *) echo "lead: unknown flag $1" >&2; exit 2 ;;
-      esac
-    done
-    if [ -z "$TURN" ] || [ -z "$PROMPT" ]; then
-      echo "lead: send needs --turn and --prompt" >&2
-      exit 2
-    fi ;;
-  *) echo "lead: unknown op $OP" >&2; exit 2 ;;
-esac
+[ -n "$REPO" ] || { echo "lead: usage: bin/lead <repo>" >&2; exit 2; }
 
 claude_pid() {
   local pid=$PPID comm
@@ -49,13 +23,7 @@ claude_pid() {
   echo "${PPID}"
 }
 
-BODY=$(REPO="$REPO" OP="$OP" TURN="$TURN" TITLE="$TITLE" PROMPT="$PROMPT" EVENT="$EVENT" python3 -c '
-import json, os
-b = json.loads(os.environ["EVENT"]) if os.environ["EVENT"] else {}
-b.update({"op": os.environ["OP"], "repo": os.environ["REPO"]})
-if os.environ["OP"] == "send":
-    b.update({"sourceTurnId": os.environ["TURN"], "title": os.environ["TITLE"], "prompt": os.environ["PROMPT"]})
-print(json.dumps(b))')
+BODY=$(REPO="$REPO" python3 -c 'import json, os; print(json.dumps({"repo": os.environ["REPO"]}))')
 
 curl -sS --max-time 40 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/lead" \
   -H "Content-Type: application/json" \

@@ -84,11 +84,9 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 
 ## Repo leads
 
-A repo with a lead (`LEAD_REPOS` in `server/lib/lead-loop.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`:
-`bin/lead <repo> send --turn <turn id> --title "<short title>" --prompt "<complete brief>"`. `bin/lead <repo>` just makes sure the lead is up. Answer 404 `no_lead_for_repo` → use `bin/propose`.
+A repo with a lead (`LEAD_REPOS` in `server/lib/brain.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md." Answer 404 `no_lead_for_repo` → use `bin/propose`.
 
-The lead owns the loop and is the first merger: at most 3 open agent PRs on its repo (the rest waits in its queue), builders, fixes, conflicts, and its own routine merges through `bin/pr-merge`, without asking. It reports one `lead-<repo>:` event line: started, PR ready, or blocked. Merges and closes show up as the usual gate events.
+The lead owns the loop and is the first merger: at most 3 open agent PRs on its repo, builders, fixes, conflicts, and its own routine merges through `bin/pr-merge`, without asking. Merges and closes show up as the usual gate events. It reaches you in one line:
 
-- `Blocked (stuck)`: a conflict, a refusal or anything the lead could not resolve after its retries. The lead skips that task until you act. **You handle it, not Jeremie**: read the PR, clear the cause, then `bin/lead <repo> event '{"type":"resume","taskId":"<id>"}'` to give it back. Or use `bin/pr-close` or `bin/pr-merge` yourself: the lead sees the PR gone and drops the task. `bin/lead <repo> send` queues new work with a new PR, it does not touch the stuck one. The refusal rules above still apply to your own calls.
-- `Blocked (product|money|client|security)`: a real decision, pass it to Jeremie in one line.
-- Anything else: `noted`.
+- Stuck (a conflict, a refusal, anything left after its retries): **you handle it, not Jeremie**: read the PR, then answer the lead, or use `bin/pr-close` or `bin/pr-merge` yourself. The refusal rules above still apply to your own calls.
+- A real product, money, client or security decision: pass it to Jeremie in one line.

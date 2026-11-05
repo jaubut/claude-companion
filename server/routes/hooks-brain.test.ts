@@ -63,7 +63,7 @@ test("SUPER off: a brain call takes the normal path — the auto-judge asks the 
   expect(await (await res)!.json()).toEqual({})
 })
 
-test("a lead's turn end sets no waiting badge: the tick wakes it, Jeremie hears nothing", async () => {
+test("a lead's turn end sets no waiting badge, Jeremie hears nothing", async () => {
   const headers = { "x-companion-task-id": "lead-claude-companion" }
   await handleHookRoute(...post("/hooks/session-start", { session_id: "sl-stop", cwd: "/tmp/lead-stop", source: "startup" }, headers))
   await handleHookRoute(...post("/hooks/stop", { session_id: "sl-stop", cwd: "/tmp/lead-stop", last_assistant_message: "lead done" }, headers))

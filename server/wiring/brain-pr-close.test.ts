@@ -42,21 +42,6 @@ const closes = (calls: string[][]) => calls.filter((c) => c[1] === "close")
 const parkMeta = (reason: string) => JSON.stringify({ reason, url: URL, repo: "r", pr: 7 }).replace(/'/g, "''")
 
 describe("bin/pr-close gate", () => {
-  test("a lead's spent budget closes its own mergeable PR with no Turso row, dispatch/* or builder/*", async () => {
-    for (const headRefName of ["dispatch/abcd1234", "builder/abcd1234"]) {
-      const w = world(open({ headRefName }))
-      expect((await closeDeadPr({ ...input, leadHeads: ["dispatch/abcd1234", "builder/abcd1234"] }, w.deps)).status).toBe(200)
-    }
-  })
-
-  test("no budget, a head that is not the task's, or a non-agent head: the usual refusals", async () => {
-    expect((await closeDeadPr(input, world(open()).deps)).body.error).toBe("not_dead")
-    expect((await closeDeadPr({ ...input, leadHeads: ["dispatch/other"] }, world(open()).deps)).body.error).toBe("not_dead")
-    expect((await closeDeadPr({ ...input, leadHeads: ["dispatch/other"] }, world(open({ headRefName: "builder/abcd1234" })).deps)).body.error).toBe("not_agent_branch")
-    expect((await closeDeadPr(input, world(open({ headRefName: "builder/abcd1234", mergeable: "CONFLICTING" })).deps)).body.error).toBe("not_agent_branch")
-    expect((await closeDeadPr({ ...input, leadHeads: ["deps/rolling"] }, world(open({ headRefName: "deps/rolling" })).deps)).body.error).toBe("not_agent_branch")
-  })
-
   test("409 not_open on a closed or merged PR", async () => {
     const w = world(open({ state: "MERGED" }))
     const out = await closeDeadPr(input, w.deps)

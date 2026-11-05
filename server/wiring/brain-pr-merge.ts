@@ -1,5 +1,4 @@
-import { BRAIN_AGENT, BRAIN_THREAD } from "../lib/brain"
-import { LEAD_REPOS } from "../lib/lead-loop"
+import { BRAIN_AGENT, BRAIN_THREAD, LEAD_REPOS } from "../lib/brain"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { redactSecrets } from "../lib/secret-redact"

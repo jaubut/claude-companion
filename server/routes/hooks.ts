@@ -49,8 +49,7 @@ import { autoCompactor, compactTargetFor } from "../wiring/auto-compact"
 import { gauge, gaugeFromTranscript } from "../wiring/gauge"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { workerHookGate } from "../lib/worker-hook-gate"
-import { isBrainHook } from "../lib/brain"
-import { LEAD_PREFIX } from "../lib/lead-loop"
+import { isBrainHook, isSupervisedTask } from "../lib/brain"
 import { brainWiring } from "../wiring/brain"
 import { checked, jsonObject } from "../lib/json-body"
 
@@ -450,8 +449,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       return Response.json({})
     }
 
-    // A repo lead's turn end is nobody's to answer: no waiting badge, no push. The tick wakes it.
-    if ((headerMeta.taskId || session?.taskId)?.startsWith(LEAD_PREFIX)) {
+    // A repo lead's turn end is nobody's to answer: no waiting badge, no push.
+    if (isSupervisedTask(headerMeta.taskId || session?.taskId)) {
       if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
       return Response.json({})
     }

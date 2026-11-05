@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 189,
+          "lines": 188,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -93,7 +93,6 @@
             "lib/tmux-pane.ts",
             "routes/brain.ts",
             "wiring/brain.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-workers.ts",
             "lib/brain.ts",
             "wiring/auto-deploy.ts"
@@ -982,7 +981,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 216,
+          "lines": 223,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -991,6 +990,9 @@
             "RESERVED_CHANNELS",
             "BRAIN_TAKE_PREFIX",
             "BrainState",
+            "LEAD_REPOS",
+            "LEAD_PREFIX",
+            "leadSlug",
             "brainEnabled",
             "isBrainHook",
             "isSupervisedTask",
@@ -2481,41 +2483,6 @@
           "kind": "lib",
           "exports": [
             "extractLastAssistantMessage"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/lead-loop.ts",
-          "lines": 199,
-          "kind": "lib",
-          "exports": [
-            "LEAD_REPOS",
-            "LEAD_PREFIX",
-            "LEAD_PR_CAP",
-            "FIXES_BEFORE_FRESH",
-            "CLOSE_RETRY_MS",
-            "DECISION_KINDS",
-            "TaskState",
-            "LeadTask",
-            "LeadQueue",
-            "LeadEvent",
-            "OpenPr",
-            "LeadAction",
-            "leadName",
-            "emptyQueue",
-            "enqueue",
-            "adopt",
-            "spentHeads",
-            "applyEvent",
-            "nextAction"
           ],
           "state": [],
           "emits": [],
@@ -6171,16 +6138,14 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 374,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
             "createBrainRoute",
             "brainRoute"
           ],
-          "state": [
-            "EVENT_TYPES: Set"
-          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -6198,7 +6163,6 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-lead.ts",
-            "lib/lead-loop.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-workers.ts"
           ],
@@ -6464,7 +6428,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 563,
+          "lines": 562,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -6553,7 +6517,6 @@
             "lib/last-assistant.ts",
             "lib/worker-hook-gate.ts",
             "lib/brain.ts",
-            "lib/lead-loop.ts",
             "wiring/brain.ts",
             "lib/json-body.ts"
           ],
@@ -7192,12 +7155,11 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 283,
+          "lines": 86,
           "kind": "lib",
           "exports": [
             "leadArgs",
             "LeadDeps",
-            "repoSlug",
             "createBrainLead",
             "BrainLead",
             "brainLead"
@@ -7208,22 +7170,9 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/brain.ts",
-            "lib/brain-workers.ts",
-            "lib/discover.ts",
             "lib/herdr.ts",
-            "lib/lead-loop.ts",
-            "lib/log.ts",
-            "lib/orchestrator-chat.ts",
-            "lib/secret-redact.ts",
-            "lib/sessions.ts",
             "lib/spawn-session.ts",
-            "lib/triage-pr.ts",
-            "lib/turso.ts",
-            "wiring/auto-compact.ts",
-            "wiring/brain-workers.ts",
-            "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
+            "wiring/brain-workers.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7231,7 +7180,7 @@
         },
         {
           "path": "wiring/brain-pr-close.ts",
-          "lines": 126,
+          "lines": 122,
           "kind": "lib",
           "exports": [
             "PR_CLOSE_ACTION",
@@ -7262,7 +7211,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 187,
+          "lines": 186,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -7276,7 +7225,6 @@
           "apiCalls": [],
           "imports": [
             "lib/brain.ts",
-            "lib/lead-loop.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/secret-redact.ts",
@@ -8489,7 +8437,6 @@
             "routes/brain.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
-            "wiring/brain-lead.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
@@ -8526,13 +8473,6 @@
           "module": "wiring/auto-deploy.ts",
           "callers": [
             "companion-server.ts"
-          ]
-        },
-        "brainLead": {
-          "module": "wiring/brain-lead.ts",
-          "callers": [
-            "companion-server.ts",
-            "routes/brain.ts"
           ]
         },
         "brainWorkers": {
@@ -8927,7 +8867,6 @@
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/auto-compact.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/dialogs.ts",
@@ -9117,7 +9056,6 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
@@ -9163,7 +9101,6 @@
             "lib/jev-route-log.ts",
             "lib/quick-look.ts",
             "wiring/auto-deploy.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts"
           ]
@@ -9575,7 +9512,6 @@
             "lib/triage-pr.ts",
             "routes/my-tasks.ts",
             "wiring/auto-deploy.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/resolver-dry-run.ts"
@@ -9794,7 +9730,6 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/auto-deploy.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
@@ -10247,7 +10182,6 @@
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start",
-            "wiring/brain-lead.ts",
             "wiring/brain.ts"
           ]
         },
@@ -12255,7 +12189,6 @@
             "lib/session-resolve.ts",
             "routes/api.ts#GET /api/sessions/history",
             "wiring/auto-compact.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain.ts",
             "wiring/events.ts",
             "wiring/waiting.ts"
@@ -13237,7 +13170,6 @@
           "module": "lib/discover.ts",
           "callers": [
             "lib/worker-hook-gate.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts"
           ]
@@ -13404,6 +13336,7 @@
           "module": "lib/spawn-session.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session",
+            "wiring/brain-lead.ts",
             "wiring/brain.ts"
           ]
         },
@@ -13868,13 +13801,18 @@
           ]
         },
         "LEAD_PREFIX": {
-          "module": "lib/lead-loop.ts",
+          "module": "lib/brain.ts",
           "callers": [
-            "routes/brain.ts",
-            "routes/hooks.ts#POST /hooks/stop"
+            "routes/brain.ts"
           ]
         },
-        "repoSlug": {
+        "leadSlug": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "brainLead": {
           "module": "wiring/brain-lead.ts",
           "callers": [
             "routes/brain.ts"
@@ -13888,19 +13826,6 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
-        "LeadEvent": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "routes/brain.ts",
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "DECISION_KINDS": {
-          "module": "lib/lead-loop.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -14449,6 +14374,13 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
+        "isSupervisedTask": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts"
+          ]
+        },
         "markWaiting": {
           "module": "wiring/waiting.ts",
           "callers": [
@@ -14483,7 +14415,6 @@
             "routes/orchestrator.ts",
             "wiring/auto-deploy.ts",
             "wiring/body-agent.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-todo.ts",
@@ -14603,7 +14534,6 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/auto-deploy.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
@@ -14629,7 +14559,6 @@
             "wiring/auto-deploy.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
@@ -15237,7 +15166,6 @@
           "module": "lib/triage-pr.ts",
           "callers": [
             "wiring/auto-compact.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/repo-view.ts",
@@ -15271,12 +15199,6 @@
         },
         "compactionStats": {
           "module": "lib/auto-compact-stats.ts",
-          "callers": [
-            "wiring/auto-compact.ts"
-          ]
-        },
-        "isSupervisedTask": {
-          "module": "lib/brain.ts",
           "callers": [
             "wiring/auto-compact.ts"
           ]
@@ -15567,98 +15489,6 @@
             "wiring/events.ts"
           ]
         },
-        "TICK_MS": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain-lead.ts",
-            "wiring/brain.ts"
-          ]
-        },
-        "GhFn": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/brain-lead.ts",
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/repo-view.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "LEAD_REPOS": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts",
-            "wiring/brain-pr-merge.ts"
-          ]
-        },
-        "LeadQueue": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "emptyQueue": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "leadName": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "OpenPr": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "LeadAction": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "nextAction": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "envValue": {
-          "module": "lib/brain-workers.ts",
-          "callers": [
-            "wiring/brain-lead.ts",
-            "wiring/brain-restore.ts"
-          ]
-        },
-        "adopt": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "enqueue": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "spentHeads": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "applyEvent": {
-          "module": "lib/lead-loop.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
         "brainLiveness": {
           "module": "wiring/brain-workers.ts",
           "callers": [
@@ -15674,15 +15504,30 @@
             "wiring/brain.ts"
           ]
         },
-        "realAutoCompactDeps": {
-          "module": "wiring/auto-compact.ts",
+        "GhFn": {
+          "module": "lib/triage-pr.ts",
           "callers": [
-            "wiring/brain-lead.ts",
-            "wiring/brain.ts"
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/repo-view.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "LEAD_REPOS": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain-pr-merge.ts"
           ]
         },
         "AgentLookup": {
           "module": "wiring/takeover-liveness.ts",
+          "callers": [
+            "wiring/brain-restore.ts"
+          ]
+        },
+        "envValue": {
+          "module": "lib/brain-workers.ts",
           "callers": [
             "wiring/brain-restore.ts"
           ]
@@ -15835,6 +15680,12 @@
             "wiring/brain.ts"
           ]
         },
+        "TICK_MS": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "BUSY_MAX_MS": {
           "module": "lib/brain.ts",
           "callers": [
@@ -15981,6 +15832,12 @@
         },
         "brainRestore": {
           "module": "wiring/brain-restore.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "realAutoCompactDeps": {
+          "module": "wiring/auto-compact.ts",
           "callers": [
             "wiring/brain.ts"
           ]

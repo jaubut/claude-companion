@@ -82,7 +82,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
-| POST | `/hooks/brain/lead` | `{op:"ensure"\|"send"\|"next"\|"event", repo, …}` | see Repo leads. brain/bin/lead. |
+| POST | `/hooks/brain/lead` | `{repo}` | `{ok, name, state}`: `running`, `starting`, `started`; 404 `no_lead_for_repo`; 502 down. Same auth as propose (brain/bin/lead). |
 | POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
@@ -123,26 +123,11 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 
 ### Repo leads (`/hooks/brain/lead`)
 
-`LEAD_REPOS` in `lib/lead-loop.ts` lists the repos with a lead, one line per repo. Each has one `lead-<repo>` herdr session (auto mode, cwd `~/<repo>`, brief `brain/LEAD.md`), and a queue in `~/.claude-companion/leads/<repo>.json`. No new table. A 60 s tick restarts the lead while its queue has work (`alive()`, since herdr can keep a dead agent's record; on `name_taken` that record is cleared and the next tick respawns) and wakes it when idle, on news or every 5 min. `wiring/brain-lead.ts` holds the side effects, `lib/lead-loop.ts` the policy.
+`LEAD_REPOS` in `lib/brain.ts` lists the repos with a lead. A lead is one persistent `lead-<repo>` herdr session (auto mode, cwd `~/<repo>`, no plan-mode tools: nobody can approve ExitPlanMode) following `brain/LEAD.md` with its own judgement. The server holds no queue: `wiring/brain-lead.ts` only starts a lead and proves who one is. Work and escalations are plain relay messages. The limit of 3 PRs lives in the lead's brief and claude-config PR 226. A lead's turn end sets no waiting badge and sends no push.
 
-| op | caller | body | answer |
-|---|---|---|---|
-| `ensure` | brain | | `{ok, name, state}`: `running`, `starting`, `started` |
-| `send` | brain | `{title?, prompt, sourceTurnId}` | `{ok, taskId, lead, state}`; same turn + prompt queues nothing while that task is queued |
-| `next` | brain, lead | | `{ok, action}`: `gone` (the PR left GitHub), `build`, `fix`, `merge_main`, `merge`, `close_refile`, `wait`, `idle` (`held` = queued behind the limit) |
-| `event` | brain, lead | `{type, taskId, …}` | `{ok}`. `blocked` takes `kind` product, money, client, security or stuck (the brain handles `stuck` itself), else 400 `bad_event`. `next` skips a blocked task until `resume`, which only the brain may send (403 `forbidden`). |
+`bin/lead <repo>` starts it when it is not alive (`alive()`, since herdr can keep a dead agent's record; on `name_taken` that record is cleared and the next call spawns).
 
-Limit: `build` is answered only while open `dispatch/*` PRs on GitHub + other open PRs in the queue + tasks being built < 3. Rework comes before new work. After 2 failed fixes comes one fresh builder, then `close_refile`. A second refused close blocks the task. Refiles are queued once per task. No wake while only blocked or held work is left.
-
-After a restart discovery registers the lead with no task id: the tick tags the session in the lead's herdr pane when its env says `COMPANION_TASK_ID=lead-<repo>`, and tagging gives back its rights.
-
-Shepherd rows: the tick reads new `agent_activity` rows from `<leads dir>/.activity-cursor`, starting at the newest on first run. `pr:handoff` with `to: manager` on a repo with a lead adopts the PR into its queue, next fix on a fresh builder (already tracked: findings refreshed). `pr:brain-event` posts the first line of its `summary` to the brain thread. The shepherd reads the same queue file to keep its hands off, but may still merge a green PR; `gone` covers that.
-
-**Merge order:** claude-config PR 225 first. Until it lands the deployed shepherd races a lead's builder on `dispatch/*` PRs and writes no `pr:handoff` rows.
-
-Lead sessions run without EnterPlanMode and ExitPlanMode: nobody answers the approval, and a waiting lead never reads as idle.
-
-Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, the pid of a session registered under that task, and that process's env naming the task and the pane herdr holds for the agent. A lead may also call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`). The gates are the same as for the brain, plus one for `pr-close`: a lead's tasks have no Turso row, so a PR whose task spent its fix budget also counts as dead, when its real head is that task's (`dispatch/<taskId>`, `builder/<taskId>`, or the head read from GitHub for a handed-over PR).
+Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, and a pid descending from the shell of the pane herdr holds for that agent (`ps` parent chain, not the session registry, which any loopback caller can write). A lead may call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`); every gate check is the same as for the brain.
 
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 
