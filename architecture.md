@@ -179,6 +179,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/taste.ts` | 95 | lib | 1 |  |
 | `lib/recent-sessions.ts` | 93 | lib | 4 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
+| `lib/super-auto.ts` | 92 | lib | 4 | state: let cached |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `state.ts` | 89 | lib | 9 |  |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
@@ -188,7 +189,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
 | `lib/tasks-agent-testdb.test-util.ts` | 82 | lib | 4 |  |
-| `lib/super-auto.ts` | 81 | lib | 4 | state: let cached |
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
