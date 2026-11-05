@@ -105,6 +105,8 @@ can't reach the session transcript. Code: `server/lib/secret-requests.ts`, route
 | Method | Path | Body | 200 response |
 |---|---|---|---|
 | POST | `/api/vault/requests` | `{name, hosts:string[], reason, session_id?}` | `{ok:true, id, status:"pending", expires_at}` |
+| POST | `/hooks/vault/requests` | same as `/api/vault/requests` | same; hook gate, no bearer on direct loopback |
+| GET | `/hooks/vault/requests/:id[?wait=<s ≤ 25>]` | none | same as `/api/vault/requests/:id`; hook gate |
 | GET | `/api/vault/requests[?status=pending\|saved\|declined\|expired]` | none | `{ok:true, requests:[{id, name, hosts, reason, session_id, expires_at, status}]}` (for reconnect) |
 | GET | `/api/vault/requests/:id[?wait=<s ≤ 25>]` | none | `{ok:true, id, name, hosts, reason, session_id, expires_at, status}`. With `wait`, the server holds the reply until the request leaves `pending` or the wait runs out |
 | POST | `/api/vault/requests/:id/fulfil` | `{value}` | `{ok:true, id, status:"saved", name, hosts, message}` |
@@ -141,7 +143,7 @@ bun scripts/ask-secret.ts NAME --host api.example.com [--host h2] --why "reason"
 ```
 
 - Uses the hooks' server URL: `COMPANION_URL`, default `http://localhost:$COMPANION_PORT|4245`.
-- Bearer: `COMPANION_AUTH_TOKEN`, else `~/.claude-companion/auth.token`.
+- Calls `POST /hooks/vault/requests` and `GET /hooks/vault/requests/:id`, which take the hook gate (direct loopback, or the bearer from a remote caller) and allow create and poll only. Sandboxed agents can't read `auth.token`. A remote `COMPANION_URL` needs `COMPANION_AUTH_TOKEN`.
 - Creates the request, then long-polls `GET /:id?wait=25` until it resolves or expires.
 - Prints exactly one line:
 

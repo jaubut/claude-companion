@@ -1,6 +1,7 @@
 import { checkBearerHeaderOnly, unauthorized } from "../lib/auth"
 import { companionLog } from "../lib/log"
 import { type AuditOrigin, REVEAL_FORBIDDEN, type RevealResult, type VaultResult, deleteSecret, listSecrets, revealSecret, setSecretHosts, upsertSecret, validName, vaultWritable } from "../lib/secret-store"
+import { hookCallerAllowed } from "../lib/request-gate"
 import { type Limiter, clientOrigin, peerOf, readLimiter, requestLimiter, revealLimiter, writeLimiter } from "../lib/vault-guard"
 import { createRequest, declineRequest, fulfilRequest, getRequest, listRequests, type Outcome } from "../lib/secret-requests"
 import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaultUpstream } from "../lib/vault-upstream"
@@ -15,6 +16,7 @@ import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaul
 //          "no response carries a value" (Jeremie, 2026-10-02: iOS shows it
 //          behind Face ID). Own 5/min budget, audited, never logged.
 //   POST   /api/vault/requests  {name, hosts, reason, session_id} → {id} (agent asks)
+//   POST   /hooks/vault/requests · GET /hooks/vault/requests/:id[?wait=s] (ask-secret, hook gate)
 //   GET    /api/vault/requests[?status=pending] · GET /api/vault/requests/:id[?wait=s]
 //   POST   /api/vault/requests/:id/fulfil {value} · POST …/:id/decline (phone answers)
 // Gates, in order: network (loopback / tailnet / tailscale serve, else 403) →
@@ -29,6 +31,7 @@ import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaul
 
 const PREFIX = "/api/vault/"
 const REQUESTS = "/api/vault/requests"
+const AGENT_REQUESTS = "/hooks/vault/requests"
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const STATUSES = ["pending", "saved", "declined", "expired"]
 const MAX_WAIT_S = 25
@@ -174,8 +177,22 @@ async function requests(req: Request, url: URL, origin: AuditOrigin, up: Upstrea
   return outcome(await fulfilRequest(id, body.value, origin), id, name)
 }
 
+// ask-secret's bearer-free door: sandboxed agents can't read auth.token, so they
+// ask over the hook gate. Create and poll only; list, fulfil and decline stay
+// on /api. An agent can ask for a secret here, never answer one.
+function agentRequests(req: Request, url: URL): Promise<Response> | Response {
+  if (!hookCallerAllowed(req)) return json({ ok: false, error: "forbidden" }, 403)
+  const rest = url.pathname.slice(AGENT_REQUESTS.length + 1)
+  const allowed = rest ? req.method === "GET" && !rest.includes("/") : req.method === "POST"
+  if (!allowed) return json({ ok: false, error: "method_not_allowed" }, 405)
+  const from = clientOrigin(req, peerOf(req))
+  const inner = new URL(`${REQUESTS}${rest ? `/${rest}` : ""}${url.search}`, url)
+  return requests(req, inner, { device_claimed: claimedDevice(req), transport: from.transport, peer: from.peer }, vaultUpstream())
+}
+
 export async function handleVaultRoute(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname
+  if (p === AGENT_REQUESTS || p.startsWith(`${AGENT_REQUESTS}/`)) return agentRequests(req, url)
   const isCollection = p === "/api/vault" || (p === "/api/secret" && req.method === "POST")
   if (!isCollection && !p.startsWith(PREFIX)) return null
 

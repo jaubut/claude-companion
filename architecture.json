@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03",
+  "generatedAt": "2026-11-05",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -6838,7 +6838,7 @@
         },
         {
           "path": "routes/vault.ts",
-          "lines": 221,
+          "lines": 238,
           "kind": "lib",
           "exports": [
             "handleVaultRoute"
@@ -6852,6 +6852,7 @@
             "lib/auth.ts",
             "lib/log.ts",
             "lib/secret-store.ts",
+            "lib/request-gate.ts",
             "lib/vault-guard.ts",
             "lib/secret-requests.ts",
             "lib/vault-upstream.ts"
@@ -8461,7 +8462,8 @@
         "hookCallerAllowed": {
           "module": "lib/request-gate.ts",
           "callers": [
-            "companion-server.ts#* /hooks/"
+            "companion-server.ts#* /hooks/",
+            "routes/vault.ts"
           ]
         },
         "checkBearer": {

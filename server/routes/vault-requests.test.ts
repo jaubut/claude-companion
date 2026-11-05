@@ -81,6 +81,20 @@ test("(a) create → pending, WS secret_request + push, no value anywhere", asyn
   expect(stderr).toContain(`vault request ${id} ${ASK.name} pending`)
 })
 
+test("agent door: loopback asks and polls with no bearer, and can't answer or list", async () => {
+  const made = await call("POST", "/hooks/vault/requests", ASK, false)
+  expect(made.status).toBe(200)
+  const id = String(made.json.id)
+  expect((await call("GET", `/hooks/vault/requests/${id}`, undefined, false)).json).toMatchObject({ ok: true, id, status: "pending" })
+  expect((await call("GET", "/hooks/vault/requests", undefined, false)).status).toBe(405)
+  expect((await call("POST", `/hooks/vault/requests/${id}/fulfil`, { value: SECRET }, false)).status).toBe(405)
+  expect((await call("POST", `/hooks/vault/requests/${id}/decline`, undefined, false)).status).toBe(405)
+  expect((await call("POST", `/hooks/vault/requests/${id}`, undefined, false)).status).toBe(405)
+  expect((await call("POST", "/hooks/vault/requests", ASK, false, "100.64.0.9")).status).toBe(403)
+  expect((await call("POST", `/api/vault/requests/${id}/fulfil`, { value: SECRET }, false)).status).toBe(401)
+  expect((await call("GET", `/api/vault/requests/${id}`)).json).toMatchObject({ status: "pending" })
+})
+
 test("create validates name / hosts / reason / session", async () => {
   for (const bad of [
     { ...ASK, name: "lower" },
@@ -254,7 +268,7 @@ test("(f) ask-secret CLI: saved line, exit 0, value never in its output or the s
   process.stderr.write = ((chunk: string | Uint8Array) => { log += String(chunk); return true }) as typeof process.stderr.write
   try {
     const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../../scripts/ask-secret.ts"), ASK.name, "--host", "us.posthog.com", "--why", "mockup views"], {
-      env: { ...process.env, COMPANION_URL: `http://127.0.0.1:${server.port}`, COMPANION_AUTH_TOKEN: TOKEN },
+      env: { ...process.env, COMPANION_URL: `http://127.0.0.1:${server.port}`, COMPANION_AUTH_TOKEN: "" },
       stdout: "pipe",
       stderr: "pipe",
     })
@@ -290,7 +304,7 @@ test("ask-secret refuses extra args (no way to pass a value) and prints declined
   })
   try {
     const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../../scripts/ask-secret.ts"), ASK.name, "--host", "us.posthog.com", "--why", "x"], {
-      env: { ...process.env, COMPANION_URL: `http://127.0.0.1:${server.port}`, COMPANION_AUTH_TOKEN: TOKEN },
+      env: { ...process.env, COMPANION_URL: `http://127.0.0.1:${server.port}`, COMPANION_AUTH_TOKEN: "" },
       stdout: "pipe",
       stderr: "pipe",
     })

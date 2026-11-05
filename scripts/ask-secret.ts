@@ -10,14 +10,11 @@
  * `declined` (2) or `expired` (3). Errors: `error <code>` on stderr (1), usage (64).
  * There is no way to pass a value: any extra argument is refused unseen.
  * Server: COMPANION_URL (default http://localhost:$COMPANION_PORT|4245) — the
- * hooks' URL. Bearer: COMPANION_AUTH_TOKEN or ~/.claude-companion/auth.token.
+ * hooks' URL. Local calls need no bearer; a remote URL needs COMPANION_AUTH_TOKEN.
  */
 
-import { existsSync, readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
-
 const USAGE = 'usage: ask-secret NAME --host h [--host h2] --why "reason" [--session ID]'
+const token = process.env.COMPANION_AUTH_TOKEN?.trim() // only a remote COMPANION_URL needs it
 const POLL_WAIT_S = 25
 
 interface Args { name: string; hosts: string[]; why: string; session: string }
@@ -37,23 +34,16 @@ function parseArgs(argv: string[]): Args | null {
   return /^[A-Z][A-Z0-9_]{1,63}$/.test(name) && out.hosts.length > 0 && out.why ? out : null
 }
 
-function bearer(): string {
-  const env = process.env.COMPANION_AUTH_TOKEN?.trim()
-  if (env && env.length >= 16) return env
-  const path = join(homedir(), ".claude-companion", "auth.token")
-  return existsSync(path) ? readFileSync(path, "utf8").trim() : ""
-}
-
 function finish(line: string, code: number): never {
   if (code === 1) process.stderr.write(`${line}\n`)
   else process.stdout.write(`${line}\n`)
   process.exit(code)
 }
 
-async function call(base: string, token: string, method: string, path: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
+async function call(base: string, method: string, path: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-companion-device": "ask-secret" },
+    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "content-type": "application/json", "x-companion-device": "ask-secret" },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout((POLL_WAIT_S + 10) * 1000),
   })
@@ -65,10 +55,8 @@ async function main(): Promise<never> {
   const args = parseArgs(process.argv.slice(2))
   if (!args) finish(USAGE, 64)
   const base = process.env.COMPANION_URL ?? `http://localhost:${Number(process.env.COMPANION_PORT) || 4245}`
-  const token = bearer()
-  if (!token) finish("error no_bearer", 1)
 
-  const created = await call(base, token, "POST", "/api/vault/requests", { name: args.name, hosts: args.hosts, reason: args.why, session_id: args.session })
+  const created = await call(base, "POST", "/hooks/vault/requests", { name: args.name, hosts: args.hosts, reason: args.why, session_id: args.session })
     .catch(() => ({ status: 0, json: { error: "unreachable" } as Record<string, unknown> }))
   if (created.status !== 200 || typeof created.json.id !== "string") finish(`error ${String(created.json.error ?? `http_${created.status}`)}`, 1)
   const id = created.json.id
@@ -76,7 +64,7 @@ async function main(): Promise<never> {
   const deadline = (Number.isFinite(expires) ? expires : Date.now() + 15 * 60_000) + 5_000
 
   while (Date.now() < deadline) {
-    const r = await call(base, token, "GET", `/api/vault/requests/${id}?wait=${POLL_WAIT_S}`).catch(() => null)
+    const r = await call(base, "GET", `/hooks/vault/requests/${id}?wait=${POLL_WAIT_S}`).catch(() => null)
     if (!r) { await Bun.sleep(2_000); continue }
     // 404 = the server restarted and lost the request: same as expired.
     if (r.status === 404) finish("expired", 3)
