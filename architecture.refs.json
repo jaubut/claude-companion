@@ -95,6 +95,9 @@
             "path": "AppState+Dispatch.swift",
             "emits": [],
             "consumes": [
+              "note_linked_elsewhere",
+              "turso_unreachable",
+              "network",
               "body_alert",
               "dispatch_task"
             ],
@@ -402,6 +405,20 @@
             "apiCalls": []
           },
           {
+            "path": "Brain/BrainChannelMenu.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Brain/BrainChatView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
             "path": "Brain/BrainHost.swift",
             "emits": [],
             "consumes": [],
@@ -437,13 +454,6 @@
             "apiCalls": []
           },
           {
-            "path": "Brain/BrainSheet.swift",
-            "emits": [],
-            "consumes": [],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
             "path": "Brain/BrainSummary.swift",
             "emits": [],
             "consumes": [
@@ -466,14 +476,7 @@
             "apiCalls": []
           },
           {
-            "path": "Brain/BrainV2Model.swift",
-            "emits": [],
-            "consumes": [],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
-            "path": "Brain/BrainVoice.swift",
+            "path": "Brain/BrainView.swift",
             "emits": [],
             "consumes": [],
             "endpoints": [],
@@ -502,20 +505,6 @@
           },
           {
             "path": "Brain/SessionRepoSheet.swift",
-            "emits": [],
-            "consumes": [],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
-            "path": "Brain/TraceModel.swift",
-            "emits": [],
-            "consumes": [],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
-            "path": "Brain/TraceView.swift",
             "emits": [],
             "consumes": [],
             "endpoints": [],
@@ -735,13 +724,6 @@
             "apiCalls": []
           },
           {
-            "path": "Capture/VoiceTranscriber.swift",
-            "emits": [],
-            "consumes": [],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
             "path": "ChannelLinkPicker.swift",
             "emits": [],
             "consumes": [],
@@ -763,13 +745,6 @@
               "target_gone",
               "network"
             ],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
-            "path": "ComposerMic.swift",
-            "emits": [],
-            "consumes": [],
             "endpoints": [],
             "apiCalls": []
           },
@@ -962,6 +937,13 @@
             "apiCalls": []
           },
           {
+            "path": "NewChannelSheet.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
             "path": "NewSessionSheet.swift",
             "emits": [],
             "consumes": [],
@@ -1029,12 +1011,13 @@
             "apiCalls": [
               "/api/orchestrator/thread",
               "/api/orchestrator/send",
-              "/api/brain/trace",
-              "/api/brain/\\(action.rawValue)",
+              "/api/orchestrator/channels",
+              "/api/orchestrator/channels/\\(pathSegment(id))/auto",
+              "/api/orchestrator/channels/\\(pathSegment(id))/link",
               "/api/orchestrator/task/\\(pathSegment(id))",
               "/api/orchestrator/triage",
               "/api/body",
-              "/api/brain/:p",
+              "/api/orchestrator/channels/:p",
               "/api/orchestrator/projects",
               "/api/orchestrator/task/:p"
             ]
@@ -1192,13 +1175,6 @@
             "apiCalls": []
           },
           {
-            "path": "Settings/BrainSettingsSection.swift",
-            "emits": [],
-            "consumes": [],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
             "path": "SettingsView.swift",
             "emits": [],
             "consumes": [],
@@ -1255,13 +1231,6 @@
             "apiCalls": []
           },
           {
-            "path": "Tabs/BrainButton.swift",
-            "emits": [],
-            "consumes": [],
-            "endpoints": [],
-            "apiCalls": []
-          },
-          {
             "path": "Tabs/FloatingTabBar.swift",
             "emits": [],
             "consumes": [],
@@ -1308,8 +1277,6 @@
             "emits": [],
             "consumes": [
               "ideas",
-              "approvals",
-              "tasks",
               "trips",
               "activity"
             ],
@@ -1332,6 +1299,38 @@
               "/api/tasks/mine",
               "/api/tasks/:p"
             ]
+          },
+          {
+            "path": "Tasks/TasksAgentAPI.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": [
+              "/api/tasks/agent/undo",
+              "/api/tasks/agent",
+              "/api/tasks/agent/proposals/:p"
+            ]
+          },
+          {
+            "path": "Tasks/TasksAgentModel.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tasks/TasksAgentModels.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
+          },
+          {
+            "path": "Tasks/TasksAgentView.swift",
+            "emits": [],
+            "consumes": [],
+            "endpoints": [],
+            "apiCalls": []
           },
           {
             "path": "Tasks/TasksModel.swift",

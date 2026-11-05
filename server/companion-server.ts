@@ -29,7 +29,7 @@ import { createCanvasRoute } from "./routes/canvas"
 import { tursoQuery } from "./lib/turso"
 import { canvasSend, canvasStatus, canvasStore, referencesFor, setCanvasDeliver } from "./wiring/canvas"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
-import { hookCallerAllowed, hostAllowed } from "./lib/request-gate"
+import { hookCallerAllowed, hostAllowed, watchTailscaleName } from "./lib/request-gate"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
@@ -73,6 +73,7 @@ export function createCompanionServer(port: number) {
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
   if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy() }
+  watchTailscaleName()
   const server = Bun.serve<WsData>({
     port,
     hostname: "0.0.0.0",
