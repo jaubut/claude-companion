@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { getAuthToken } from "../lib/auth"
-import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
+import { isSuperAuto, setSuperAutoInMemoryForTests } from "../lib/super-auto"
 
 // A JSON body that is not an object, through the real server: 400, never the
 // 500 of a field read on null, and never a handler run on an array.
@@ -35,12 +35,12 @@ for (const path of ["/api/shell/close", "/api/resolve", "/api/inject", "/api/mod
 }
 
 test("a non-object body changes nothing: SUPER stays on", async () => {
-  setSuperAuto(true)
+  setSuperAutoInMemoryForTests(true)
   try {
     expect((await post("/api/super-auto", "[]")).status).toBe(400)
     expect(isSuperAuto()).toBe(true)
   } finally {
-    setSuperAuto(false)
+    setSuperAutoInMemoryForTests(false)
   }
 })
 
