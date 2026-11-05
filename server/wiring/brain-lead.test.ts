@@ -243,6 +243,31 @@ describe("repo lead: failure paths", () => {
     expect(await w.lead.next(REPO)).toMatchObject({ kind: "fix", fresh: true })
   })
 
+  test("a builder lost outside a fix invents no finding: an approved PR still merges", async () => {
+    const w = world()
+    const taskId = await onPr(w, 64)
+    await spend(w, taskId)
+    w.lead.event(REPO, { type: "approved", taskId })
+    w.lead.event(REPO, { type: "builder_died", taskId })
+    expect(await w.lead.next(REPO)).toMatchObject({ kind: "merge" })
+  })
+
+  test("a repeated fix_started spends one attempt", async () => {
+    const w = world()
+    const taskId = await onPr(w, 65)
+    w.lead.event(REPO, { type: "findings", taskId, findings: ["wrong"] })
+    for (let i = 0; i < 4; i++) w.lead.event(REPO, { type: "fix_started", taskId })
+    expect(w.lead.spent(REPO, 65)).toEqual([])
+  })
+
+  test("approval on the head clears old findings: no fix, no close", async () => {
+    const w = world()
+    const taskId = await onPr(w, 66)
+    w.lead.event(REPO, { type: "findings", taskId, findings: ["red CI"] })
+    w.lead.event(REPO, { type: "approved", taskId })
+    expect(await w.lead.next(REPO)).toMatchObject({ kind: "merge" })
+  })
+
   test("a line to the brain is redacted", async () => {
     const w = world()
     const taskId = await onPr(w, 58)
@@ -340,6 +365,23 @@ describe("repo lead: tick", () => {
     await w.lead.send(REPO, "T", "brief", "turn-23")
     expect(stopped).toEqual(["lead-claude-companion"])
     expect(await w.lead.ensure(REPO)).toMatchObject({ ok: true, state: "started" })
+  })
+
+  test("overlapping ensures: one liveness read and spawn, and name_taken never stops a live lead", async () => {
+    const stopped: string[] = []
+    let spawns = 0
+    let up = false
+    const { w } = ticking({
+      running: async () => up, stop: async (n) => { stopped.push(n) },
+      spawn: async () => { await Bun.sleep(5); spawns++; up = true; return spawns > 1 ? { ok: false, error: "name_taken: x" } : { ok: true } },
+    })
+    const [a, b] = await Promise.all([w.lead.ensure(REPO), w.lead.ensure(REPO)])
+    expect([a.state, b.state].sort()).toEqual(["started", "starting"])
+    expect(spawns).toBe(1)
+    expect(stopped).toEqual([])
+    const { w: w2 } = ticking({ running: ((n = 0) => async () => n++ > 0)(), stop: async (x) => { stopped.push(x) }, spawn: async () => ({ ok: false, error: "name_taken: x" }) })
+    await w2.lead.ensure(REPO)
+    expect(stopped).toEqual([])
   })
 
   test("only blocked work wakes nobody", async () => {

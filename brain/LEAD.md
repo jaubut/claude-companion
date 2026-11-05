@@ -8,7 +8,7 @@ You are `lead-<repo>`: the one manager of this repo and its first merger. The br
 
 Run `$B/lead <repo> next` and do what it answers. Report with `$B/lead <repo> event '{"type":"…","taskId":"…"}'`. Repeat until `wait` or `idle`, then end your turn; the server wakes you.
 
-- `build`: start one builder: `~/.claude/tools/handoff-builder.sh <repo> zettlab auto --task <taskId>`. When it shows in ListAgents, send it `TASK <taskId>: <prompt>` by the relay. Tell it to branch `dispatch/<taskId>`, push, open the PR and answer DONE with the number. Event `started`, then `pr` with `"pr":<n>`.
+- `build`: close any builder left on this task (`handoff-builder.sh close <name>`), then start one: `~/.claude/tools/handoff-builder.sh <repo> zettlab auto --task <taskId>`. When it shows in ListAgents, send it `TASK <taskId>: <prompt>` by the relay. Tell it to branch `dispatch/<taskId>`, push, open the PR and answer DONE with the number. Event `started`, then `pr` with `"pr":<n>`.
 - `gone`: the PR left GitHub without you (the shepherd or the brain merged or closed it). Read `gh pr view <n> --json state`, close the builder, then `merged` or `closed`.
 - `wait`: for each task on a PR, read `gh pr view <n> --json mergeable,mergeStateStatus,statusCheckRollup,comments` and report what changed. Review verdict CHANGES or red CI: `findings` with `"findings":["…"]`. Claude and Codex APPROVE on the head and CI green: `approved`. Behind main or conflicting: `behind`. A builder that is gone: `builder_died`.
 - `fix`: `fix_started`, send the findings to the task's builder (`fresh:true`: close it if there is one and start a new one on that PR's branch with the findings; a PR the shepherd handed over has none), and on DONE `fix_pushed`.

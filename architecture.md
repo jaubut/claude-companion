@@ -15,8 +15,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 596 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
+| `routes/hooks.ts` | 563 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
-| `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 534 | lib | 54 |  |
@@ -63,8 +63,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `wiring/auto-compact.ts` | 285 | lib | 6 | state: let statsDb · emits: inject_error |
+| `wiring/brain-lead.ts` | 283 | lib | 6 |  |
 | `lib/ended-sessions.ts` | 282 | lib | 17 |  |
-| `wiring/brain-lead.ts` | 282 | lib | 6 |  |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
@@ -113,11 +113,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
+| `lib/lead-loop.ts` | 199 | lib | 19 |  |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
-| `lib/lead-loop.ts` | 190 | lib | 19 |  |
 | `companion-server.ts` | 189 | route-host | 1 | routes: 5 |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
@@ -728,6 +728,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `deliveryFailedHint()` | `lib/submit-confirm.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `TokensSnapshot()` | `lib/body-tokens.ts` | `routes/body.ts`, `wiring/body.ts` |
 | `bodyInvestigator()` | `wiring/body-investigate.ts` | `routes/body.ts`, `wiring/triage.ts` |
+| `LEAD_PREFIX()` | `lib/lead-loop.ts` | `routes/brain.ts`, `routes/hooks.ts#POST /hooks/stop` |
 | `LeadEvent()` | `lib/lead-loop.ts` | `routes/brain.ts`, `wiring/brain-lead.ts` |
 | `latestRows()` | `lib/brain-trace.ts` | `routes/brain.ts`, `ws.ts` |
 | `SendResult()` | `lib/canvas.ts` | `routes/canvas.ts`, `wiring/canvas.ts` |

@@ -2494,7 +2494,7 @@
         },
         {
           "path": "lib/lead-loop.ts",
-          "lines": 190,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "LEAD_REPOS",
@@ -6464,7 +6464,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 556,
+          "lines": 563,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -6553,6 +6553,7 @@
             "lib/last-assistant.ts",
             "lib/worker-hook-gate.ts",
             "lib/brain.ts",
+            "lib/lead-loop.ts",
             "wiring/brain.ts",
             "lib/json-body.ts"
           ],
@@ -7191,7 +7192,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 282,
+          "lines": 283,
           "kind": "lib",
           "exports": [
             "leadArgs",
@@ -13868,7 +13869,8 @@
         "LEAD_PREFIX": {
           "module": "lib/lead-loop.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "repoSlug": {

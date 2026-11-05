@@ -79,12 +79,13 @@ export function createBrainLead(deps: LeadDeps) {
   const starting = new Set<string>()
   async function ensure(repo: string): Promise<{ ok: boolean; name: string; state: string; error?: string }> {
     const name = leadName(repo)
-    if (await deps.running(name)) return { ok: true, name, state: "running" }
+    // Locked before the liveness read: a stale "not running" must not spawn or stop anything.
     if (starting.has(repo)) return { ok: true, name, state: "starting" }
     starting.add(repo)
     try {
+      if (await deps.running(name)) return { ok: true, name, state: "running" }
       const out = await deps.spawn(repo, name)
-      if (out.error?.startsWith("name_taken")) await deps.stop(name)
+      if (out.error?.startsWith("name_taken") && !await deps.running(name)) await deps.stop(name)
       return out.ok ? { ok: true, name, state: "started" } : { ok: false, name, state: "down", error: out.error }
     } finally {
       starting.delete(repo)

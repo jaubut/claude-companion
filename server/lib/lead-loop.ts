@@ -130,14 +130,23 @@ export function applyEvent(q: LeadQueue, e: LeadEvent, now: number): string | nu
       t.findings = e.findings
       t.approved = false
       return null
-    case "fix_started": t.state = "fixing"; t.fixes++; t.lost = false; return null
+    case "fix_started":
+      // A retried report of the same attempt spends nothing.
+      if (t.state !== "fixing") t.fixes++
+      t.state = "fixing"
+      t.lost = false
+      return null
     case "fix_pushed": t.state = "pr"; t.findings = null; return null
     case "builder_died":
-      // No PR yet: the build starts over. With one, the attempt counts as a failed fix.
+      // No PR yet: the build starts over. Mid-fix the attempt counts as failed; otherwise the PR is as good as it was.
       if (t.pr === null) t.state = "queued"
-      else { t.state = "pr"; t.lost = true; t.findings ??= ["builder died mid-fix"] }
+      else {
+        if (t.state === "fixing") t.findings ??= ["builder died mid-fix"]
+        t.state = "pr"
+        t.lost = true
+      }
       return null
-    case "approved": t.approved = true; return null
+    case "approved": t.approved = true; t.findings = null; return null
     case "merge_refused": t.approved = false; return null
     case "behind": t.behind = true; t.approved = false; return null
     case "main_merged": t.behind = false; return null
