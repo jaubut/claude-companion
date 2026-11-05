@@ -31,6 +31,9 @@ export function isShellTool(tool: string): boolean {
   return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
 }
 
+// tool_input is whatever the tool defines: an MCP tool can send `command: 5`.
+const text = (v: unknown): string => (typeof v === "string" ? v : "")
+
 export function summarize(tool: string, input: Record<string, unknown>): string {
   if (isQuestionTool(tool)) {
     // Show the first question's text so the feed row reads as
@@ -49,24 +52,23 @@ export function summarize(tool: string, input: Record<string, unknown>): string 
     case "shell":
     case "unified_exec":
     case "exec_command": {
-      const command = (input.command as string) ?? (input.cmd as string) ?? ""
-      return command.slice(0, 120)
+      return text(input.command ?? input.cmd).slice(0, 120)
     }
     case "Edit":
     case "Read":
     case "Write":
     case "MultiEdit": {
-      const p = (input.file_path as string) ?? ""
+      const p = text(input.file_path)
       return p.replace(/^\/Users\/[^/]+\//, "~/")
     }
     case "Grep":
-      return `/${(input.pattern as string) ?? ""}/`
+      return `/${text(input.pattern)}/`
     case "Glob":
-      return (input.pattern as string) ?? ""
+      return text(input.pattern)
     case "WebFetch":
-      return (input.url as string) ?? ""
+      return text(input.url)
     case "WebSearch":
-      return (input.query as string) ?? ""
+      return text(input.query)
     default:
       return ""
   }
