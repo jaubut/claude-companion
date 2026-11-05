@@ -29,8 +29,8 @@ Scope: the Companion server (Mac and Zettlab), the Zettlab systemd units, the `c
 | Read the screen (dialogs, pickers, idle check, auto-compact) | `capture-pane -p` plain / `-e` coloured, per consumer | `pane read --source visible --format text\|ansi` (#157 parity: dialog mirror, auto-compact, `/` suggestions) | ✅ exists; same plain-vs-coloured rule |
 | Phone pane mirror (#234 / pane-mirror.ts) | tmux MirrorSource (wiring/pane-mirror.ts:37): `capture-pane -e -p` + `send-keys -H` through the key gate; no resize | herdr MirrorSource (:14, the original): socket `pane.read` visible/ansi every 50 ms (`events.subscribe` has no `pane_output_changed`, so it polls), `pane.send_text`, and `HerdrPaneSizer` sizes the pane to the smallest viewer | ✅ herdr is *ahead* (resize). **Gap A:** herdr mirror keystrokes skip the key gate (STATE.md, pane-mirror plan, deviation c). Route them through `herdrGateKey` before tmux goes |
 | Plain shell from the phone (`sh-*`, shell-sessions.ts) | `tmux new-session` tagged `@companion_shell`; tmux *is* the record | none: a shell is not an agent, so nothing registers it | **Gap B:** needs a herdr record (see Stage 2) |
-| Live terminal bridge for those shells (terminal-bridge.ts, `/api/terminal`) | `tmux attach-session` under a PTY, raw byte stream | `herdr agent attach <agent>` attaches ONE agent terminal, but shells aren't agents. `herdr --session` attaches the whole multi-workspace UI, not one pane | **Gap C:** no raw single-pane attach for a plain shell. Use the pane-mirror WS instead (read + send-keys), which is screen polling, not a PTY stream |
-| Mac Canvas terminal node | `TerminalAttach.swift`: SwiftTerm running `tmux attach` / `ssh -t zettlab tmux attach` (PRJ-FL49 core call) | same gap as C | **Gap C** (consumer outside this repo; the Mac repo checkout here is stale, so not verified) |
+| Live terminal bridge for those shells (terminal-bridge.ts, `/api/terminal`) | `tmux attach-session` under a PTY, raw byte stream | `herdr terminal attach <terminal_id>` attaches ONE terminal, shells included | **Gap C: closed (Stage 2).** The 2026-10-30 read was wrong: the raw attach exists in 0.9.5. The PTY bridge stays and points at it |
+| Mac Canvas terminal node | `TerminalAttach.swift`: SwiftTerm running `tmux attach` / `ssh -t zettlab tmux attach` (PRJ-FL49 core call) | `herdr terminal attach <terminal_id>` works there too, but the wire row doesn't carry the terminal id yet | **Follow-up in the iOS repo** (Stage 2 results) |
 | Off-pane slash-command list (command-offpane*.ts) | a throwaway detached tmux session `cc-scrape-*` (220x60) runs a hidden `claude` with a temp HOME, hooks off and no MCP, scrapes `/help` by capture-pane, then is killed and confirmed dead | not ported | **Gap D:** a hidden herdr workspace would be visible in herdr's UI and detected as an agent by herdr's Claude integration, and its env must carry the temp HOME (`--env`). Port with those two checks, or drop it if #157's `/` suggestions already cover the list |
 | Orchestrator "Run live" + legacy local tasks (orchestrator-db `tmux_session`/`tmux_socket`, DTO `tmuxSession`/`tmuxSocket` → iOS side chat, `cancelLocal` kill-session at routes/orchestrator.ts:182) | "Run live" now only logs `dispatch-runner: herdr`; the external `dispatch-run` (claude-config tools) spawns and has its own tmux fallback. `createTask(…tmuxSession)` has no callers | brain workers run in herdr (wiring/brain.ts:567, herdr only, no fallback) | **partial:** the DTO tmux fields are legacy. The real remaining tmux fallback is in `dispatch-run`/`herdr-client.ts`, outside this repo |
 | Durability across reboot | resurrect + `cc-claude-resume` (`claude --resume <sid>`) | herdr keeps each pane's Claude session id (`~/.config/herdr/session.json`) and resumed all 7 Mac panes after the 0.9.5 server restart | ✅ for agents; shells are not resumed, which is the point |
@@ -49,7 +49,7 @@ Scope: the Companion server (Mac and Zettlab), the Zettlab systemd units, the `c
 - **B and C:** plain shells and the raw terminal stream that the phone Terminal view and the Mac Canvas node attach to.
 - **D:** off-pane commands.
 
-None of the three blocks retiring tmux for agents. B and C decide whether the phone and Canvas terminal views survive.
+None of the three blocks retiring tmux for agents. B and C decide whether the phone and Canvas terminal views survive. (Update 2026-11-05: C does not exist, see Stage 2 results.)
 
 ## 2. Biggest risks
 
@@ -57,7 +57,7 @@ None of the three blocks retiring tmux for agents. B and C decide whether the ph
    - The brain and every worker already run in herdr. A `systemctl --user restart herdr.service` (or a reboot without handoff) SIGKILLs them all. They come back only through herdr's own agent resume.
    - Cutting tmux makes herdr the single point of failure for every session. Stage 0 found that no unit setting keeps pane processes alive across a server stop. What it can do is refuse the routine restart and make every unavoidable stop resume cleanly (see Stage 0 results).
    - A resumed agent loses its pane env and launch args (Stage 0, finding 2). For the brain and the workers that is their identity.
-2. **Gap C (terminal stream).** If the phone Terminal view and the Mac Canvas terminal must stay real PTYs (vim, Ctrl-C, scrollback), herdr has no equivalent for plain shells. The fallback, pane-mirror polling, is good for agents and weak for a shell running vim.
+2. **Gap C (terminal stream).** Obsolete (2026-11-05): `herdr terminal attach` is a real PTY stream, vim and Ctrl-C included. The remaining difference is one attach per terminal (Stage 2 results).
 3. **The version pin.** Spawn uses herdr only when its version is in `HERDR_PINNED_VERSIONS` / `DISPATCH_HERDR_VERSIONS`. Today an unpinned version silently falls back to tmux. Once tmux is gone there is no fallback, so an unpinned upgrade breaks every spawn. The gate must become a loud error plus an upgrade checklist.
 4. **Mac differs from Zettlab.** The Mac `auto` fallback is Terminal/iTerm running tmux, and the Mac server can't hand off on a brew upgrade. Run every stage on Zettlab first, then on the Mac.
 
@@ -72,7 +72,7 @@ Each stage is shippable alone. The brain, the companion server and the running w
   - `ExecReload=herdr server reload-config`: `systemctl --user reload herdr` is the config path.
   - A deliberate restart is `herdr server stop`, then `systemctl --user start herdr`. The script's `HERDR_RESTART=1` path does exactly that.
 - Pin: `HERDR_PINNED_VERSIONS = ["0.9.5", "0.9.3"]` (claude-config `tools/herdr-client.ts`); the setup script pins 0.9.5 plus its sha256.
-- Gap C is settled by decision: a polled terminal is acceptable (Jeremie, 2026-10-30), so no raw attach is needed.
+- Gap C was settled by decision: a polled terminal is acceptable (Jeremie, 2026-10-30). Stage 2 found the raw attach, so the poll was not needed.
 - **Apply on Zettlab** (from a login shell): `bash scripts/herdr-zettlab-setup.sh`. It does a daemon-reload only; the running server and its panes are not touched.
 - **Rollback:** `cp ~/.config/systemd/user/herdr.service.bak-<date> ~/.config/systemd/user/herdr.service && systemctl --user daemon-reload` (again no restart), plus a revert of the claude-config pin PR.
 
@@ -144,6 +144,43 @@ Shipped in `server/lib/spawn-session.ts` + `server/lib/herdr.ts`:
 - Mac Canvas terminal node: the same choice, in the Mac repo (follow-up task, agent:builder).
 - **Rollback:** revert. Existing tmux shells were never touched.
 
+#### Stage 2 results (2026-11-05, Zettlab, herdr 0.9.5)
+
+**The plan was out of date on one point.** `herdr terminal attach <terminal_id>` is a raw single-terminal attach, so the plan's "if the spike finds a raw attach" branch applies: `/api/terminal` keeps its PTY bridge and its frames, and the phone needs **no iOS change**. The pane-mirror switch was not done.
+
+Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
+- A phone shell is a herdr workspace labelled `sh-<dir>` (`--no-focus`), read back from `workspace list` + `pane list` every 3 s. The label is the record: it survives a herdr restore, which `pane report-metadata` is not known to. Any workspace labelled `sh-*` counts as a shell.
+- A gate failure is `herdr_unavailable: <reason>`, never tmux. The spawn reply says `app: "herdr"`.
+- `/api/terminal` runs `herdr terminal attach <terminal_id> --takeover`. Closing the socket detaches, and the shell keeps running.
+- The `shell` wire row carries `herdrPane`, with `tmuxPane` and `tmuxSocket` empty. iOS `isLive` and `ShellSessions.pair` already handle that (read from `claude-companion-ios` main): pairing uses `panePid` + `claudeKey`, and the session row is mirrored through its `herdrPane`.
+- A Claude started in a shell needs nothing: the pane has `HERDR_ENV=1` (the `claude()` wrapper stays out of tmux) and `$HERDR_PANE_ID`, so its hooks register an ordinary herdr session. `linkClaude` matches on the herdr pane.
+- Close is `pane close` on that pane, after checking the terminal id (herdr reuses pane ids) and herdr's own `agent` field. A pane split off on the Mac survives.
+- `herdrSessionGone` counts shell panes as live, so a Claude that exits in a shell leaves no `ended` row: the row's Delete would have closed the shell.
+- A herdr blip keeps the rows (`readHerdrShells` → null, not an empty list). Spawns are serialized, because herdr allows two workspaces with one label.
+- tmux shells stay listed and attachable until Stage 5. A new name avoids theirs, since both share the `shell:` key space.
+
+**Proof.** A second Companion server from this branch (port 47245, own HOME, DB and token) on a throwaway herdr session, with the live server and live herdr untouched. A script drove the phone's real endpoints (`/api/spawn-session`, `/api/terminal`, `/api/pane-mirror`, `/api/inject`, `/api/shell/close`). The probe Claude used copies of these hooks rewritten to port 47245, because the installed hook hardcodes 4245.
+- Shell: spawn → row with `herdrPane w1:p1`, `tmuxPane ""`, `panePid` set; typed `echo`, Ctrl-C and `cd` all worked, and the row's cwd followed.
+- **The trigger case:** `claude` typed through `/api/terminal` registered as `agent: claude`, `herdrPane w1:p1`, `tmuxPane ""`. The shell row linked it (`claudeKey`). Close → 409 `claude_running`. `/api/pane-mirror` showed its TUI, `/api/inject` → `confirmed:true`, and the reply `PINEAPPLE` appeared in the mirror. `/exit` from the mirror → the Claude row left, the shell row stayed unlinked, no `ended` row.
+- Attach probes (PTY under `herdr terminal attach`): resize reaches `stty size`; ^A through ^Z (except ^S/^Q) reach the pane as bytes; SGR mouse and wheel bytes print nothing into the shell; vim opens and quits; a terminal's DA replies don't leak.
+- Failure paths: Companion restart → row back (same pid); SIGKILL of the herdr unit → row back, same key, new shell; `exit` → socket 4000 `ended`, row gone; second socket → takes over, first gets 4000, row stays; a legacy tagged tmux shell on a private tmux server is listed, attaches, closes; a full `herdr` client stays attached through a takeover.
+- Tests: `bun test --isolate` (as CI) 2596 pass, 6 fail, all 6 failing on main too in this sandbox; typecheck clean.
+
+**Behaviour change: one attach per terminal.** tmux let a phone and an iPad share a shell. herdr refuses a second attach, so ours takes over: the newest device wins and the other gets close 4000, which the app shows as "Session ended" although the shell lives; tapping the row takes it back. A shell being mirrored and attached at once is fine (the sizer's `control` exits, the mirror keeps the pane's width).
+
+**Where it can fail in production:**
+- The Mac side is unverified: same code, herdr pinned, but it was not run there, and the Mac server is 27 commits behind.
+- `herdr` not on the server's PATH (launchd): `spawnPty` throws at the WS open. `HERDR_BIN` covers it, same as spawn.
+- A pane keeps the last attach's size after detach, with no client to restore it (`pane layout` still says 220x60, `stty size` says the phone's). Cosmetic until something else sizes it.
+- A human labelling a workspace `sh-*` puts it on the phone's Terminals list.
+
+**iOS follow-ups (list for a Mac builder, none block the phone):**
+1. Canvas `TerminalAttach.swift`: `command(for:)` requires `tmuxPane`, so a herdr shell node gets no attach. Needs `terminalId` on the wire (additive, not added here) and `herdr terminal attach <id> --takeover`, locally or through `ssh -t`.
+2. `TerminalScreen`: close 4000 from a takeover reads "The shell exited". Copy only; a `taken_over` reason can be added when the app reads it.
+3. Stale comments: "tmux session", "tmux's status line".
+
+**Rollback:** revert the PR. Herdr shells created meanwhile keep running as plain workspaces and leave the phone's list (close them with `herdr workspace close`). tmux shells were never touched.
+
 ### Stage 3: off-pane commands (Gap D)
 - `command-offpane*.ts`: run the hidden capture in a hidden herdr workspace (`workspace create` + `pane run` + `pane read`), or drop off-pane commands if the herdr `/` suggestions path from #157 already covers them. Decide after measuring how often off-pane runs today.
 - **Rollback:** revert.
@@ -189,8 +226,8 @@ Only after Stage 4, plus two weeks of no tmux session on either host.
 | tmux spawn (detached / Terminal / iTerm), `tmux-spawn-confirm.ts` | delete (Stage 5) |
 | `tmux-pane.ts`, tmux branch of `keyboard-inject.ts` | delete (Stage 5); the key gate stays, herdr side only |
 | tmux `MirrorSource` (#234) | delete (Stage 5) |
-| `shell-sessions.ts` | rewrite on herdr (Stage 2) |
-| `terminal-bridge.ts` | rewrite (raw herdr attach if the spike finds one, else replaced by pane-mirror) |
+| `shell-sessions.ts` | rewritten on herdr (Stage 2); tmux read and kill deleted in Stage 5 |
+| `terminal-bridge.ts` | kept, on `herdr terminal attach` (Stage 2); tmux argv deleted in Stage 5 |
 | `command-offpane*.ts` | port to herdr or drop (Stage 3) |
 | `tmux-resurrect-boot.service`, `tmux-cc-save.{timer,service}`, `cc-claude-*`, `~/.tmux/cc.conf` | remove (Stage 4) |
 | `claude()` wrappers (bashrc/zshrc, claude-config) | rewrite to herdr (Stage 1) |
@@ -200,5 +237,5 @@ Only after Stage 4, plus two weeks of no tmux session on either host.
 
 ## 5. Open questions for Jeremie
 1. ~~Mac `terminal` / `iterm` spawn apps: drop them or keep them?~~ Dropped for `ghostty` (2026-11-01, Stage 1).
-2. If herdr has no raw attach for shells (Gap C), is a polled pane-mirror good enough for the phone Terminal view and the Canvas terminal node?
+2. ~~If herdr has no raw attach for shells (Gap C), is a polled pane-mirror good enough?~~ It has one (Stage 2).
 3. `cc-aubut-` (claude in `~`, idle since 2026-10-27): end it, or resume it in herdr?

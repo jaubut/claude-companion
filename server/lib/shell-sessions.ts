@@ -1,16 +1,21 @@
-// Plain terminal sessions spawned from the phone: a login shell in a detached
-// tmux session, no agent. Jeremie asked for Moshi-style terminals in the app
+// Plain terminal sessions spawned from the phone: a login shell in a herdr
+// workspace, no agent. Jeremie asked for Moshi-style terminals in the app
 // (2026-10-25): open a shell on a host, type `claude` himself, see the
 // `--resume` line after /exit.
 //
-// A shell has no hooks, so nothing tells lib/sessions.ts it exists. tmux is
-// the record instead: the session carries the user option `@companion_shell`
-// and every field the phone shows (pane, cwd, created) is read back from tmux.
-// So a server restart loses nothing, `exit` in the shell ends the record by
-// itself, and no store can drift from what is actually running.
+// A shell has no hooks, so nothing tells lib/sessions.ts it exists. herdr is
+// the record instead: a workspace labelled `sh-<dir>` is a shell, and every
+// field the phone shows (pane, cwd) is read back from herdr. So a server
+// restart loses nothing, `exit` in the shell ends the record by itself, and no
+// store can drift from what is actually running. A herdr restore brings the
+// workspace back with a new shell, which is the same row.
 //
-// Always tmux, never herdr: the phone's terminal view attaches the pane with
-// `tmux attach-session` under a PTY (lib/terminal-bridge.ts).
+// Herdr-only (docs/herdr-only-migration.md, Stage 2): new shells are herdr
+// panes, and the phone's terminal view attaches them with `herdr terminal
+// attach` under a PTY (lib/terminal-bridge.ts). A `claude` typed in one runs
+// with $HERDR_PANE_ID, so it is an ordinary mirrored herdr session. tmux
+// shells from before (tagged `@companion_shell`, Stage 5 deletes this) stay
+// listed and attachable, never created.
 //
 // Shells never enter the sessions Map: inject, triage, canvas status and the
 // waiting rollup only ever see agents. They are appended to the session list
@@ -18,19 +23,25 @@
 // rail, host stamping and liveness work unchanged. If Jeremie runs `claude`
 // in one, its hooks register a normal Claude session on the same pane.
 
-import { userInfo } from "node:os"
 import { endedStore, endedWire } from "./ended-sessions"
-import { DETACHED_COLS, DETACHED_ROWS, uniqueTmuxSessionName } from "./spawn-session"
-import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
-import { type DetachedDeps, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
+import { type Herdr, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
+import { uniqueTmuxSessionName } from "./spawn-session"
+import { spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
+import { type DetachedDeps, realDetachedDeps } from "./tmux-spawn-confirm"
 
 export const SHELL_OPTION = "@companion_shell"
 export const SHELL_KEY_PREFIX = "shell:"
+export const SHELL_LABEL_PREFIX = "sh-"
+
+export interface ShellDeps extends DetachedDeps { h: Herdr }
+export const realShellDeps: ShellDeps = { ...realDetachedDeps, h: realHerdr }
 
 export interface ShellSession {
-  key: string // "shell:<tmux session name>"
-  name: string // tmux session name, e.g. "sh-claude-companion"
+  key: string // "shell:<name>"
+  name: string // workspace label (tmux: session name), e.g. "sh-claude-companion"
   cwd: string // the pane's current directory, live
+  herdrPane: string // "" = a tmux shell from before Stage 2
+  terminalId: string // what `herdr terminal attach` takes
   tmuxPane: string
   tmuxSocket: string // "" = the default tmux server
   createdAt: number // ms epoch
@@ -50,6 +61,7 @@ export function shellWire(s: ShellSession): Record<string, unknown> {
     cwd: s.cwd,
     sessionId: "",
     tty: "",
+    herdrPane: s.herdrPane,
     tmuxPane: s.tmuxPane,
     tmuxSocket: s.tmuxSocket,
     panePid: s.panePid,
@@ -62,73 +74,52 @@ export function shellWire(s: ShellSession): Record<string, unknown> {
   }
 }
 
-// The login shell to start: $SHELL, else the account's shell (launchd and
-// systemd units often run without $SHELL), else /bin/sh. Absolute paths only;
-// it is an argv entry, never parsed by a shell.
-export function loginShell(env: Record<string, string | undefined> = process.env, account = () => userInfo().shell): string {
-  const candidates = [env.SHELL, (() => { try { return account() ?? "" } catch { return "" } })()]
-  for (const c of candidates) {
-    const s = (c ?? "").trim()
-    if (/^\/[A-Za-z0-9_./-]+$/.test(s)) return s
-  }
-  return "/bin/sh"
-}
-
-// new-session for a shell: sized like an agent spawn, started in `cwd` by tmux
-// (`-c`, no `cd` command line), the shell exec'd straight from argv.
-export function shellNewSessionArgv(
-  name: string,
-  cwd: string,
-  shell: string,
-  serverEnv: Record<string, string | undefined> = process.env,
-): string[] {
-  return [
-    ...tmuxArgv(), ...spawnNewSessionFlags(serverEnv),
-    "new-session", "-d",
-    "-x", String(DETACHED_COLS), "-y", String(DETACHED_ROWS),
-    "-s", name, "-c", cwd,
-    "--", shell, "-l",
-  ]
-}
-
 export type SpawnShellResult =
   | { ok: true; session: ShellSession }
   | { ok: false; error: string }
+
+// One spawn at a time: the name comes from a read of what exists, so a double
+// tap must see the first shell (herdr allows two workspaces with one label).
+let spawnTurn: Promise<unknown> = Promise.resolve()
 
 // `cwd` must already be resolved (spawn-session.ts resolveSpawnCwd).
 // `resume`: a Claude session id (recent-sessions.ts SESSION_ID_RE, checked by
 // the caller) typed into the new shell as `claude --resume <id>` — typed, so
 // the shell stays when claude exits, exactly as if Jeremie had typed it.
-export async function spawnShellSession(cwd: string, deps: DetachedDeps = realDetachedDeps, resume?: string): Promise<SpawnShellResult> {
-  if (!deps.which("tmux")) return { ok: false, error: "tmux_not_found: a terminal session needs tmux on this host" }
-  const has = async (n: string) => (await deps.run([...tmuxArgv(), ...spawnServerFlags(), "has-session", "-t", `=${n}`])).code === 0
-  const name = await uniqueTmuxSessionName(cwd, "shell", has)
-  const error = await createConfirmed(name, shellNewSessionArgv(name, cwd, loginShell()), deps)
-  if (error) return { ok: false, error }
-  // `-t name`, not `=name`: tmux 3.6 refuses the exact-match prefix here.
-  // An untagged shell would run untracked, so it is killed instead.
-  const tmux = (...args: string[]) => deps.run([...tmuxArgv(), ...spawnServerFlags(), ...args])
-  const tag = await tmux("set-option", "-t", name, SHELL_OPTION, "1")
-  if (tag.code !== 0) {
-    await tmux("kill-session", "-t", `=${name}`)
-    return { ok: false, error: `tmux set-option: ${tag.stderr.trim() || tag.code}` }
+export function spawnShellSession(cwd: string, deps: ShellDeps = realShellDeps, resume?: string): Promise<SpawnShellResult> {
+  const turn = spawnTurn.then(() => spawnShell(cwd, deps, resume))
+  spawnTurn = turn.catch(() => undefined)
+  return turn
+}
+
+async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promise<SpawnShellResult> {
+  const gate = await deps.h.gate()
+  if (gate) return { ok: false, error: `herdr_unavailable: ${gate}` }
+  const taken = new Set((await readShellSessions(deps)).map((s) => s.name))
+  const name = await uniqueTmuxSessionName(cwd, "shell", async (n) => taken.has(n))
+  let pane = ""
+  let workspace = ""
+  try {
+    const r = await deps.h.call(["workspace", "create", "--cwd", cwd, "--label", name, "--no-focus"])
+    pane = (r.root_pane as { pane_id?: string } | undefined)?.pane_id ?? ""
+    workspace = (r.workspace as { workspace_id?: string } | undefined)?.workspace_id ?? ""
+  } catch (err) {
+    return { ok: false, error: `herdr workspace create: ${(err as Error).message}` }
   }
+  if (!pane) return { ok: false, error: "herdr workspace create: no root_pane.pane_id" }
   const sessions = await readShellSessions(deps)
   const session = sessions.find((s) => s.name === name)
   if (!session) {
-    await tmux("kill-session", "-t", `=${name}`)
+    if (workspace) await deps.h.call(["workspace", "close", workspace]).catch(() => undefined)
     return { ok: false, error: "session_exited" }
   }
   replaceKeepingLinks(sessions)
-  if (resume) {
-    await tmux("send-keys", "-t", session.tmuxPane, "-l", `claude --resume ${resume}`)
-    await tmux("send-keys", "-t", session.tmuxPane, "Enter")
-  }
+  if (resume) await deps.h.call(["pane", "run", pane, `claude --resume ${resume}`]).catch(() => undefined)
   return { ok: true, session }
 }
 
-// A fresh tmux read into the store. Links stand until the next poll re-checks them.
-function replaceKeepingLinks(sessions: ShellSession[]): void {
+// A fresh read into the store. Links stand until the next poll re-checks them.
+export function replaceKeepingLinks(sessions: ShellSession[]): void {
   const linked = new Map(store.list().map((s) => [s.key, s.claudeKey]))
   store.replace(sessions.map((s) => ({ ...s, claudeKey: linked.get(s.key) ?? "" })))
 }
@@ -142,38 +133,113 @@ export type CloseShellResult =
 const closedNames: string[] = []
 
 // Close a row of the shell list (POST /api/shell/close). Only a name in the
-// list can be closed, and the list holds only `@companion_shell` sessions:
-// a Claude session's pane, a dispatch-* worker, the brain or herdr are never
-// in it. A shell with a Claude running inside (linked, or any agent on its
-// pane right now) is refused too. `detach` runs before the kill so open
-// terminal sockets end cleanly rather than on tmux's "[exited]".
+// list can be closed, and the list holds only shells: a Claude session's pane,
+// a dispatch-* worker, the brain or a human's workspace are never in it. A
+// shell with a Claude running inside (linked, or any agent on its pane right
+// now) is refused too. `detach` runs before the kill so open terminal sockets
+// end cleanly rather than on the attach dying.
 export async function closeShellSession(
   name: string,
   agents: AgentRef[],
   detach: (key: string) => void,
-  deps: Pick<DetachedDeps, "run"> = realDetachedDeps,
+  deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps,
 ): Promise<CloseShellResult> {
   const shell = store.list().find((s) => s.name === name)
   if (!shell) return closedNames.includes(name) ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
-  const inPane = agents.some((a) => a.tmuxPane === shell.tmuxPane && (a.tmuxSocket ?? "") === shell.tmuxSocket)
-  if (shell.claudeKey || inPane) return { ok: false, error: "claude_running" }
+  if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
+  // herdr knows an agent no hook reported; it also reuses pane ids, so the
+  // terminal id must still be this shell's or there is nothing to close.
+  const live = shell.herdrPane ? await herdrPaneNow(shell, deps.h) : null
+  if (live?.agent) return { ok: false, error: "claude_running" }
   detach(shell.key)
-  const kill = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])
+  const gone = shell.herdrPane ? await closeHerdrShell(shell, live, deps.h) : await killTmuxShell(name, deps)
   const after = await readShellSessions(deps)
   replaceKeepingLinks(after)
   if (after.some((s) => s.name === name)) return { ok: false, error: "kill_failed" }
   closedNames.push(name)
   if (closedNames.length > 50) closedNames.shift()
-  // kill-session failing on a name that is no longer listed: it exited first.
-  return { ok: true, gone: kill.code !== 0 }
+  // A close failing on a name that is no longer listed: it exited first.
+  return { ok: true, gone }
+}
+
+async function herdrPaneNow(shell: ShellSession, h: Herdr): Promise<{ agent: string } | null> {
+  try {
+    const p = (await h.call(["pane", "get", shell.herdrPane], 2_000)).pane as { agent?: string; terminal_id?: string } | undefined
+    return p?.terminal_id === shell.terminalId ? { agent: p.agent ?? "" } : null
+  } catch {
+    return null
+  }
+}
+
+// `pane close`, not `workspace close`: a pane split off it on the Mac stays.
+// The last pane takes its workspace with it.
+async function closeHerdrShell(shell: ShellSession, live: { agent: string } | null, h: Herdr): Promise<boolean> {
+  if (!live) return true
+  try {
+    await h.call(["pane", "close", shell.herdrPane], 5_000)
+    return false
+  } catch {
+    return true
+  }
+}
+
+async function killTmuxShell(name: string, deps: Pick<ShellDeps, "run">): Promise<boolean> {
+  return (await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])).code !== 0
+}
+
+// One row per `sh-*` workspace: its first pane. null = herdr could not say,
+// which is not "no shells" (a blip must not drop every row).
+export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
+  let workspaces: unknown, panes: unknown
+  try {
+    [workspaces, panes] = await Promise.all([
+      h.call(["workspace", "list"], 3_000).then((r) => r.workspaces),
+      h.call(["pane", "list"], 3_000).then((r) => r.panes),
+    ])
+  } catch {
+    return null
+  }
+  if (!Array.isArray(workspaces) || !Array.isArray(panes)) return null
+  const out: ShellSession[] = []
+  for (const w of workspaces as Array<{ workspace_id?: string; label?: string }>) {
+    const name = w.label ?? ""
+    if (!name.startsWith(SHELL_LABEL_PREFIX)) continue
+    const p = (panes as Array<{ pane_id?: string; workspace_id?: string; terminal_id?: string; cwd?: string; foreground_cwd?: string }>)
+      .find((x) => x.workspace_id === w.workspace_id)
+    if (!p?.pane_id || !p.terminal_id) continue
+    const was = known.find((s) => s.terminalId === p.terminal_id)
+    out.push({
+      key: `${SHELL_KEY_PREFIX}${name}`,
+      name,
+      cwd: p.foreground_cwd || p.cwd || "",
+      herdrPane: p.pane_id,
+      terminalId: p.terminal_id,
+      tmuxPane: "",
+      tmuxSocket: "",
+      // herdr keeps no creation time: first seen by this server.
+      createdAt: was?.createdAt ?? Date.now(),
+      // 0 while something else is in front: re-read until the shell is seen.
+      panePid: was?.panePid || await herdrPaneShellPid(p.pane_id, h),
+      claudeKey: "",
+    })
+  }
+  return out
 }
 
 // socket_path: the server's real socket, the same string a hook reports from
 // $TMUX — so the phone can tell a Claude session running in this shell.
 const LIST_FORMAT = ["#{session_name}", `#{${SHELL_OPTION}}`, "#{pane_id}", "#{pane_current_path}", "#{session_created}", "#{socket_path}", "#{pane_pid}"].join("\t")
 
-// Every tagged shell on the spawn server. No server running → [].
-export async function readShellSessions(deps: Pick<DetachedDeps, "run"> = realDetachedDeps): Promise<ShellSession[]> {
+// Every shell on this host: herdr's, plus tmux's tagged ones until Stage 5.
+export async function readShellSessions(deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps): Promise<ShellSession[]> {
+  const [tmux, herdr] = await Promise.all([readTmuxShells(deps), readHerdrShells(deps.h)])
+  const shells = herdr ?? store.list().filter((s) => s.herdrPane)
+  return [...tmux, ...shells].sort((a, b) => a.createdAt - b.createdAt)
+}
+
+// Every tagged shell on the spawn server. No tmux or no server running → [].
+async function readTmuxShells(deps: Pick<ShellDeps, "run" | "which">): Promise<ShellSession[]> {
+  if (!deps.which("tmux")) return []
   const r = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "list-sessions", "-F", LIST_FORMAT])
   if (r.code !== 0) return []
   return parseShellList(r.stdout, spawnSocketPath())
@@ -190,6 +256,8 @@ export function parseShellList(stdout: string, fallbackSocket: string): ShellSes
       key: `${SHELL_KEY_PREFIX}${name}`,
       name,
       cwd: cwd ?? "",
+      herdrPane: "",
+      terminalId: "",
       tmuxPane: pane,
       tmuxSocket: socket,
       createdAt: Number(created) * 1000 || 0,
@@ -208,7 +276,7 @@ function sameList(a: ShellSession[], b: ShellSession[]): boolean {
   return a.length === b.length && a.every((s, i) => {
     const o = b[i]!
     return s.key === o.key && s.cwd === o.cwd && s.tmuxPane === o.tmuxPane && s.tmuxSocket === o.tmuxSocket
-      && s.claudeKey === o.claudeKey
+      && s.herdrPane === o.herdrPane && s.terminalId === o.terminalId && s.claudeKey === o.claudeKey
   })
 }
 
@@ -252,16 +320,20 @@ export function wireSessions<T>(agents: T[]): (T | Record<string, unknown>)[] {
 // ── Which Claude runs inside a shell ─────────────────────────────────────
 //
 // Moshi ties a session to its pane by process ancestry, not by a reported
-// string, and so does this. Fast path: a Claude session on the same tmux
-// server and pane as the shell. When that session's pid and the process
+// string, and so does this. Fast path: a Claude session on the same pane as
+// the shell (herdr, or tmux server + pane). When that session's pid and the process
 // table are both known, the pid must also descend from the shell's pane
-// process (#{pane_pid}); a pane id reused after the shell died, or a stale
+// process (herdr's shell pid, #{pane_pid}); a pane id reused after the shell died, or a stale
 // hook record, then fails the check. No pid or no table → the pane match
 // alone decides.
 
 export type ProcTable = Map<number, number> // pid → ppid
 
-export interface AgentRef { key: string; pid: string; tmuxPane: string; tmuxSocket?: string }
+export interface AgentRef { key: string; pid: string; tmuxPane: string; tmuxSocket?: string; herdrPane?: string }
+
+export function inShellPane(a: AgentRef, s: ShellSession): boolean {
+  return s.herdrPane ? herdrPaneOf(a) === s.herdrPane : a.tmuxPane === s.tmuxPane && (a.tmuxSocket ?? "") === s.tmuxSocket
+}
 
 export function parseProcTable(stdout: string): ProcTable {
   const t: ProcTable = new Map()
@@ -292,7 +364,7 @@ export function descends(pid: number, ancestor: number, table: ProcTable): boole
 export function linkClaude(shells: ShellSession[], agents: AgentRef[], table: ProcTable | null): ShellSession[] {
   return shells.map((s) => {
     const match = agents.find((a) => {
-      if (a.tmuxPane !== s.tmuxPane || (a.tmuxSocket ?? "") !== s.tmuxSocket) return false
+      if (!inShellPane(a, s)) return false
       const pid = Number(a.pid)
       if (!pid || !table || !s.panePid) return true
       return descends(pid, s.panePid, table)
@@ -301,18 +373,17 @@ export function linkClaude(shells: ShellSession[], agents: AgentRef[], table: Pr
   })
 }
 
-// One tmux read every few seconds, so an `exit` (or a cd) reaches the phone,
-// and a `claude` started in a shell gets linked to it. Skipped while tmux is
-// missing; a host with no shells pays one cheap list-sessions per tick, and
-// `ps` runs only when some agent sits in a shell's pane.
+// One read every few seconds, so an `exit` (or a cd) reaches the phone, and a
+// `claude` started in a shell gets linked to it. A host with no shells pays
+// two herdr calls and one list-sessions per tick, and `ps` runs only when some
+// agent sits in a shell's pane.
 export const SHELL_POLL_MS = 3_000
 
 export function startShellPoll(
   agents: () => AgentRef[],
-  deps: DetachedDeps = realDetachedDeps,
+  deps: ShellDeps = realShellDeps,
   everyMs = SHELL_POLL_MS,
 ): () => void {
-  if (!deps.which("tmux")) return () => undefined
   let busy = false
   const tick = async () => {
     if (busy) return
@@ -320,8 +391,7 @@ export function startShellPoll(
     try {
       const shells = await readShellSessions(deps)
       const list = agents()
-      const panes = new Set(shells.map((s) => `${s.tmuxSocket}|${s.tmuxPane}`))
-      const inPane = list.some((a) => panes.has(`${a.tmuxSocket ?? ""}|${a.tmuxPane}`))
+      const inPane = list.some((a) => shells.some((s) => inShellPane(a, s)))
       store.replace(linkClaude(shells, list, inPane ? await readProcTable(deps.run) : null))
     } finally { busy = false }
   }

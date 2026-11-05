@@ -1,39 +1,21 @@
-import { test, expect } from "bun:test"
+import { test, expect, spyOn } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  SHELL_OPTION, closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, loginShell, parseShellList,
-  shellNewSessionArgv, shellWire, spawnShellSession, store, wireSessions, type ShellSession,
+  closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, parseShellList,
+  readHerdrShells, readShellSessions, shellWire, spawnShellSession, store, wireSessions, type ShellDeps, type ShellSession,
 } from "./shell-sessions"
 import { resolveSpawnCwd } from "./spawn-session"
+import { endedStore } from "./ended-sessions"
+import { fakeHerdr } from "./herdr-fake.test-util"
+import { herdrSessionGone } from "./herdr-workspace"
+import type { Session } from "./sessions"
 import type { DetachedDeps } from "./tmux-spawn-confirm"
 
-// Phone-spawned terminal sessions: a login shell in a tagged detached tmux
-// session, tmux itself as the record (2026-10-25).
-
-const NO_SOCKET: Record<string, string | undefined> = {}
-
-test("shell new-session: cwd rides -c and the shell is an argv entry after --, no command line", () => {
-  const argv = shellNewSessionArgv("sh-repo", "/Users/j/Jeremie's Films; rm -rf ~", "/bin/zsh", NO_SOCKET)
-  expect(argv).toEqual([
-    "tmux", "new-session", "-d", "-x", "220", "-y", "60",
-    "-s", "sh-repo", "-c", "/Users/j/Jeremie's Films; rm -rf ~", "--", "/bin/zsh", "-l",
-  ])
-  expect(argv).not.toContain("/bin/sh")
-})
-
-test("shell new-session: a configured spawn socket leads with -L / -f", () => {
-  const argv = shellNewSessionArgv("sh-x", "/x", "/bin/bash", { COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/c/t.conf" })
-  expect(argv.slice(0, 6)).toEqual(["tmux", "-L", "cc", "-f", "/c/t.conf", "new-session"])
-})
-
-test("loginShell: $SHELL, else the account shell, else /bin/sh; never a non-path", () => {
-  expect(loginShell({ SHELL: "/bin/zsh" }, () => "/bin/bash")).toBe("/bin/zsh")
-  expect(loginShell({}, () => "/usr/bin/fish")).toBe("/usr/bin/fish")
-  expect(loginShell({ SHELL: "zsh; curl x" }, () => "")).toBe("/bin/sh")
-  expect(loginShell({}, () => { throw new Error("no passwd entry") })).toBe("/bin/sh")
-})
+// Phone-spawned terminal sessions: a login shell in a `sh-<dir>` herdr
+// workspace, herdr itself as the record (Stage 2). tmux shells from before
+// stay listed and closable, never created.
 
 test("parseShellList keeps only tagged sessions, oldest first, times in ms", () => {
   const out = parseShellList([
@@ -43,7 +25,7 @@ test("parseShellList keeps only tagged sessions, oldest first, times in ms", () 
     "",
   ].join("\n"), "/tmp/tmux-501/cc")
   expect(out.map((s) => s.key)).toEqual(["shell:sh-a", "shell:sh-b"])
-  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000, panePid: 0, claudeKey: "" })
+  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000, panePid: 0, claudeKey: "" })
 })
 
 test("parseShellList: tmux's own socket_path wins over the fallback", () => {
@@ -51,7 +33,8 @@ test("parseShellList: tmux's own socket_path wins over the fallback", () => {
   expect(out.map((s) => s.tmuxSocket)).toEqual(["/private/tmp/tmux-501/default", "/fallback"])
 })
 
-const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", createdAt: 1, panePid: 0, claudeKey: "" }
+const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "", createdAt: 1, panePid: 0, claudeKey: "" }
+const H: ShellSession = { ...A, key: "shell:sh-h", name: "sh-h", herdrPane: "w9:p1", terminalId: "term_9", tmuxPane: "", panePid: 90 }
 
 test("store emits on a real change only: added, cd'd, removed", () => {
   const s = createShellStore()
@@ -67,7 +50,8 @@ test("store emits on a real change only: added, cd'd, removed", () => {
 })
 
 test("wire record: agent shell with its pane, the fields the phone decodes", () => {
-  expect(shellWire(A)).toMatchObject({ key: "shell:sh-a", agent: "shell", label: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", sessionId: "", firstSeenAt: 1 })
+  expect(shellWire(A)).toMatchObject({ key: "shell:sh-a", agent: "shell", label: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", herdrPane: "", sessionId: "", firstSeenAt: 1 })
+  expect(shellWire(H)).toMatchObject({ key: "shell:sh-h", agent: "shell", herdrPane: "w9:p1", tmuxPane: "", tmuxSocket: "", panePid: 90 })
 })
 
 test("wireSessions: no shells → the agent list itself; shells → appended after agents", () => {
@@ -79,80 +63,102 @@ test("wireSessions: no shells → the agent list itself; shells → appended aft
   store.replace([])
 })
 
-// A fake tmux for the spawn: names free until created, the created session
-// listed (tagged) by list-sessions once the tag is set.
-function fakeTmux(opts: { which?: string | null; alive?: boolean; tagFails?: boolean } = {}) {
-  const calls: string[][] = []
-  let created = ""
-  let tagged = false
-  const deps: DetachedDeps = {
-    which: () => (opts.which === undefined ? "/opt/homebrew/bin/tmux" : opts.which),
-    sleep: async () => {},
-    run: async (argv) => {
-      calls.push(argv)
-      const has = (a: string) => argv.includes(a)
-      if (has("new-session")) { created = argv[argv.indexOf("-s") + 1]!; return { code: 0, stdout: "", stderr: "" } }
-      if (has("has-session")) return { code: created && (opts.alive ?? true) && argv.includes(`=${created}`) ? 0 : 1, stdout: "", stderr: "" }
-      if (has("display-message")) return { code: 0, stdout: "0\n", stderr: "" }
-      if (has("set-option") && has(SHELL_OPTION)) { tagged = !opts.tagFails; return { code: opts.tagFails ? 1 : 0, stdout: "", stderr: opts.tagFails ? "no such session" : "" } }
-      if (has("list-sessions")) return { code: 0, stdout: tagged ? `${created}\t1\t%42\t/x/repo\t1700000000\t/tmp/tmux-501/default\t4242\n` : "", stderr: "" }
-      return { code: 0, stdout: "", stderr: "" }
+// A fake herdr holding `sh-*` workspaces: create adds one, pane close removes it.
+function fakeShells(opts: { gate?: string | null; dies?: boolean; down?: boolean; unclosable?: boolean; agent?: string; terminal?: string } = {}) {
+  const ws: Array<{ id: string; label: string; term: string; cwd: string }> = []
+  const f = fakeHerdr({
+    gate: opts.gate,
+    reply(args) {
+      const verb = args.slice(0, 2).join(" ")
+      if (opts.down) throw new Error("herdr down")
+      if (verb === "workspace create") {
+        const id = `w${ws.length + 1}`, label = args[args.indexOf("--label") + 1]!, cwd = args[args.indexOf("--cwd") + 1]!
+        if (!opts.dies) ws.push({ id, label, cwd, term: `term_${id}` })
+        return { workspace: { workspace_id: id }, root_pane: { pane_id: `${id}:p1`, terminal_id: `term_${id}` } }
+      }
+      if (verb === "workspace list") return { workspaces: ws.map((w) => ({ workspace_id: w.id, label: w.label })).concat({ workspace_id: "w0", label: "brain" }) }
+      if (verb === "pane list") {
+        return { panes: ws.map((w) => ({ pane_id: `${w.id}:p1`, workspace_id: w.id, terminal_id: w.term, cwd: w.cwd, foreground_cwd: `${w.cwd}/sub` })).concat({ pane_id: "w0:p1", workspace_id: "w0", terminal_id: "term_b", cwd: "/b", foreground_cwd: "" }) }
+      }
+      if (verb === "pane process-info") return { process_info: { shell_pid: 4242, foreground_process_group_id: 4242 } }
+      if (verb === "pane get") return { pane: { agent: opts.agent ?? "", terminal_id: opts.terminal ?? ws.find((w) => args[2] === `${w.id}:p1`)?.term } }
+      if (verb === "pane close") { if (opts.unclosable) throw new Error("no"); ws.splice(ws.findIndex((w) => args[2] === `${w.id}:p1`), 1) }
+      return {}
     },
-  }
-  return { deps, calls }
+  })
+  const noTmux: Pick<ShellDeps, "run" | "which" | "sleep"> = { which: () => null, sleep: async () => {}, run: async () => ({ code: 1, stdout: "", stderr: "" }) }
+  return { ...f, deps: { ...noTmux, h: f.h } as ShellDeps }
 }
 
-test("spawn shell: no tmux on the host → tmux_not_found, nothing run", async () => {
-  const f = fakeTmux({ which: null })
+test("spawn shell: herdr unavailable → herdr_unavailable, nothing created, no tmux", async () => {
+  const f = fakeShells({ gate: "version 0.9.9 not pinned" })
   const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r.ok).toBe(false)
-  if (!r.ok) expect(r.error).toStartWith("tmux_not_found")
+  expect(r).toEqual({ ok: false, error: "herdr_unavailable: version 0.9.9 not pinned" })
   expect(f.calls).toEqual([])
 })
 
-test("spawn shell: happy path → tagged sh-<dir> session, listed, in the store", async () => {
+test("spawn shell: happy path → sh-<dir> workspace, unfocused, listed, in the store", async () => {
   store.replace([])
-  const f = fakeTmux()
+  const f = fakeShells()
   const r = await spawnShellSession("/x/repo", f.deps)
   expect(r.ok).toBe(true)
   if (!r.ok) return
-  expect(r.session).toMatchObject({ key: "shell:sh-repo", name: "sh-repo", tmuxPane: "%42", cwd: "/x/repo" })
-  const create = f.calls.find((c) => c.includes("new-session"))!
-  expect(create.slice(create.indexOf("-s"), create.indexOf("--"))).toEqual(["-s", "sh-repo", "-c", "/x/repo"])
-  expect(create[create.indexOf("--") + 2]).toBe("-l")
-  expect(f.calls.some((c) => c.includes(SHELL_OPTION) && c.includes("sh-repo"))).toBe(true)
-  expect(getShellSession("shell:sh-repo")?.tmuxPane).toBe("%42")
+  expect(r.session).toMatchObject({ key: "shell:sh-repo", name: "sh-repo", herdrPane: "w1:p1", terminalId: "term_w1", cwd: "/x/repo/sub", panePid: 4242, tmuxPane: "" })
+  expect(f.calls.find((c) => c[1] === "create")).toEqual(["workspace", "create", "--cwd", "/x/repo", "--label", "sh-repo", "--no-focus"])
+  expect(getShellSession("shell:sh-repo")?.herdrPane).toBe("w1:p1")
   expect(listShellSessions().length).toBe(1)
   store.replace([])
 })
 
-test("spawn shell with resume: types `claude --resume <id>` into its pane, then Enter", async () => {
+test("spawn shell: a double tap gets two names, and a tmux shell's name is taken too", async () => {
   store.replace([])
-  const f = fakeTmux()
-  const id = "51794d7b-cf0f-4f63-9eaf-7b06cab5047e"
-  const r = await spawnShellSession("/x/repo", f.deps, id)
-  expect(r.ok).toBe(true)
-  const keys = f.calls.filter((c) => c.includes("send-keys")).map((c) => c.slice(c.indexOf("send-keys")))
-  expect(keys).toEqual([
-    ["send-keys", "-t", "%42", "-l", `claude --resume ${id}`],
-    ["send-keys", "-t", "%42", "Enter"],
-  ])
+  const f = fakeShells()
+  const deps: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => ({ code: 0, stdout: "sh-repo\t1\t%1\t/x\t1\t/s\t1\n", stderr: "" }) }
+  const [a, b] = await Promise.all([spawnShellSession("/x/repo", deps), spawnShellSession("/x/repo", deps)])
+  expect([a, b].map((r) => (r.ok ? r.session.name : r.error))).toEqual(["sh-repo-2", "sh-repo-3"])
   store.replace([])
 })
 
-test("spawn shell: the shell died at once → session_exited, no record", async () => {
+test("spawn shell with resume: `pane run` types claude --resume <id> into its pane", async () => {
   store.replace([])
-  const f = fakeTmux({ alive: false })
-  const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r).toEqual({ ok: false, error: "session_exited" })
+  const f = fakeShells()
+  const id = "51794d7b-cf0f-4f63-9eaf-7b06cab5047e"
+  expect((await spawnShellSession("/x/repo", f.deps, id)).ok).toBe(true)
+  expect(f.calls.filter((c) => c[1] === "run")).toEqual([["pane", "run", "w1:p1", `claude --resume ${id}`]])
+  store.replace([])
+})
+
+test("spawn shell: the shell died at once → session_exited, its workspace closed, no record", async () => {
+  store.replace([])
+  const f = fakeShells({ dies: true })
+  expect(await spawnShellSession("/x/repo", f.deps)).toEqual({ ok: false, error: "session_exited" })
+  expect(f.calls.at(-1)).toEqual(["workspace", "close", "w1"])
   expect(listShellSessions()).toEqual([])
 })
 
-test("spawn shell: the tag can't be set → an error, not an untracked shell reported ok", async () => {
-  const f = fakeTmux({ tagFails: true })
-  const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r.ok).toBe(false)
-  expect(f.calls.at(-1)).toContain("kill-session")
+test("herdr list: only sh-* workspaces; a blip is null and keeps the rows", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  expect((await readHerdrShells(f.h))?.map((s) => s.name)).toEqual(["sh-repo"])
+  const down = fakeShells({ down: true })
+  expect(await readHerdrShells(down.h)).toBeNull()
+  expect((await readShellSessions(down.deps)).map((s) => s.name)).toEqual(["sh-repo"])
+  store.replace([])
+})
+
+test("herdr list: the pid and first-seen time stick to the terminal id, a restored terminal is read again", async () => {
+  const f = fakeShells()
+  store.replace([])
+  await spawnShellSession("/x/repo", f.deps)
+  const was = listShellSessions()[0]!
+  const n = f.calls.length
+  const [same] = (await readHerdrShells(f.h))!
+  expect(same).toMatchObject({ createdAt: was.createdAt, panePid: was.panePid })
+  expect(f.calls.slice(n).some((c) => c[1] === "process-info")).toBe(false)
+  expect((await readHerdrShells(f.h, []))![0]!.panePid).toBe(4242)
+  expect(f.calls.at(-1)![1]).toBe("process-info")
+  store.replace([])
 })
 
 // ── Close (POST /api/shell/close) ──
@@ -161,6 +167,8 @@ const CLOSE_LIST = "sh-a\t1\t%7\t/x\t1700000000\t/tmp/tmux-501/default\t70\nsh-b
 
 // list-sessions shows sh-a and sh-b until a kill of that `=name` lands (unless `unkillable`).
 function fakeCloseTmux(opts: { unkillable?: boolean; killCode?: number } = {}) {
+  const which = () => "/usr/bin/tmux"
+  const h = fakeHerdr({ reply: () => ({ workspaces: [], panes: [] }) }).h
   const calls: string[][] = []
   const killed = new Set<string>()
   const run: DetachedDeps["run"] = async (argv) => {
@@ -174,7 +182,7 @@ function fakeCloseTmux(opts: { unkillable?: boolean; killCode?: number } = {}) {
     }
     return { code: 0, stdout: "", stderr: "" }
   }
-  return { run, calls }
+  return { run, calls, which, h }
 }
 
 test("close shell: detaches first, kills the exact name, drops the row, broadcasts once", async () => {
@@ -220,6 +228,49 @@ test("close shell: the session survives the kill → kill_failed, row kept", asy
 test("close shell: kill-session fails because it already exited → ok, gone", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
   expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ killCode: 1 }))).toEqual({ ok: true, gone: true })
+  store.replace([])
+})
+
+test("close shell (herdr): closes that pane only, drops the row; a tmux kill never runs", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  const detached: string[] = []
+  expect(await closeShellSession("sh-repo", [], (k) => detached.push(k), f.deps)).toEqual({ ok: true, gone: false })
+  expect(detached).toEqual(["shell:sh-repo"])
+  expect(f.calls.filter((c) => c[1] === "close")).toEqual([["pane", "close", "w1:p1"]])
+  expect(listShellSessions()).toEqual([])
+})
+
+test("close shell (herdr): an agent hooks don't know, or one on the pane → claude_running, pane untouched", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  const live = listShellSessions()[0]!
+  store.replace([live])
+  expect(await closeShellSession("sh-repo", [{ key: "c", pid: "", tmuxPane: "", herdrPane: "w1:p1" }], () => undefined, f.deps)).toEqual({ ok: false, error: "claude_running" })
+  const busy = fakeShells({ agent: "claude", terminal: live.terminalId })
+  expect(await closeShellSession("sh-repo", [], () => undefined, busy.deps)).toEqual({ ok: false, error: "claude_running" })
+  expect([...f.calls, ...busy.calls].some((c) => c[1] === "close")).toBe(false)
+  store.replace([])
+})
+
+test("close shell (herdr): a reused pane id (other terminal) is never closed", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  const other = fakeShells({ terminal: "term_other" })
+  expect(await closeShellSession("sh-repo", [], () => undefined, other.deps)).toEqual({ ok: true, gone: true })
+  expect(other.calls.some((c) => c[1] === "close")).toBe(false)
+  store.replace([])
+})
+
+test("close shell (herdr): the pane survives → kill_failed, row kept", async () => {
+  store.replace([])
+  const f = fakeShells({ unclosable: true })
+  await spawnShellSession("/x/repo", f.deps)
+  expect(await closeShellSession("sh-repo", [], () => undefined, f.deps)).toEqual({ ok: false, error: "kill_failed" })
+  expect(listShellSessions().map((s) => s.name)).toEqual(["sh-repo"])
   store.replace([])
 })
 
@@ -273,6 +324,24 @@ test("linkClaude: no pid, or no process table → the pane match decides", () =>
   const agent = { key: "claude:x", pid: "", tmuxPane: "%4", tmuxSocket: "/tmp/tmux-501/default" }
   expect(linkClaude([SHELL], [agent], TABLE)[0]!.claudeKey).toBe("claude:x")
   expect(linkClaude([SHELL], [{ ...agent, pid: "900" }], null)[0]!.claudeKey).toBe("claude:x")
+})
+
+test("linkClaude (herdr): same herdr pane under the shell → linked; another pane or a stale pid → not", () => {
+  const shell = { ...SHELL, tmuxPane: "", tmuxSocket: "", herdrPane: "w9:p1", terminalId: "term_9" }
+  const agent = { key: "claude:h", pid: "700", tmuxPane: "", herdrPane: "w9:p1" }
+  expect(linkClaude([shell], [agent], TABLE)[0]!.claudeKey).toBe("claude:h")
+  expect(linkClaude([shell], [{ ...agent, herdrPane: "w8:p1" }], TABLE)[0]!.claudeKey).toBe("")
+  expect(linkClaude([shell], [{ ...agent, pid: "900" }], TABLE)[0]!.claudeKey).toBe("")
+})
+
+test("a Claude ending in a shell's pane leaves no ended row: the shell counts as live on that pane", () => {
+  store.replace([H])
+  const note = spyOn(endedStore, "note").mockResolvedValue(false)
+  try {
+    herdrSessionGone({ herdrPane: "w9:p1", tmuxPane: "" } as Session, () => [], "prompt_input_exit")
+    const live = note.mock.calls[0]![1]()
+    expect(live.some((o) => o.herdrPane === "w9:p1")).toBe(true)
+  } finally { note.mockRestore(); store.replace([]) }
 })
 
 test("store: a link appearing or going is a change (re-sent to phones)", () => {
