@@ -129,12 +129,18 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 |---|---|---|---|
 | `ensure` | brain | | `{ok, name, state}`: `running`, `starting`, `started` |
 | `send` | brain | `{title?, prompt, sourceTurnId}` | `{ok, taskId, lead, state}`; same turn + prompt queues nothing |
-| `next` | brain, lead | | `{ok, action}`: `build`, `fix`, `merge_main`, `merge`, `close_refile`, `wait`, `idle` (`held` = queued behind the limit) |
-| `event` | brain, lead | `{type, taskId, …}` | `{ok}`. `blocked` takes `kind` product, money, client, security or stuck (the brain handles `stuck` itself), else 400 `bad_event`. |
+| `next` | brain, lead | | `{ok, action}`: `gone` (the PR left GitHub), `build`, `fix`, `merge_main`, `merge`, `close_refile`, `wait`, `idle` (`held` = queued behind the limit) |
+| `event` | brain, lead | `{type, taskId, …}` | `{ok}`. `blocked` takes `kind` product, money, client, security or stuck (the brain handles `stuck` itself), else 400 `bad_event`. `next` skips a blocked task until `resume`, which only the brain may send (403 `forbidden`). |
 
-Limit: `build` is answered only while open `dispatch/*` PRs on GitHub + tasks being built < 3. Rework comes before new work. After 2 failed fixes comes one fresh builder, then `close_refile`.
+Limit: `build` is answered only while open `dispatch/*` PRs on GitHub + other open PRs in the queue + tasks being built < 3. Rework comes before new work. After 2 failed fixes comes one fresh builder, then `close_refile`. A second refused close blocks the task. Refiles are queued once per task. No wake while only blocked or held work is left.
 
-Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, and the pid of a session registered under that task. A lead may also call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`); every gate check is the same as for the brain.
+After a restart discovery registers the lead with no task id: the tick tags the session in the lead's herdr pane when its env says `COMPANION_TASK_ID=lead-<repo>`, and tagging gives back its rights.
+
+Shepherd rows: the tick reads new `agent_activity` rows from `<leads dir>/.activity-cursor`, starting at the newest on first run. `pr:handoff` with `to: manager` on a repo with a lead adopts the PR into its queue, next fix on a fresh builder (already tracked: findings refreshed). `pr:brain-event` posts the first line of its `summary` to the brain thread. The shepherd reads the same queue file to keep its hands off (claude-config PR 225), but may still merge a green PR; `gone` covers that.
+
+Lead sessions run without EnterPlanMode and ExitPlanMode: nobody answers the approval, and a waiting lead never reads as idle.
+
+Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, and the pid of a session registered under that task. A lead may also call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`). The gates are the same as for the brain, plus one for `pr-close`: a lead's tasks have no Turso row, so its queue saying the fix budget is spent also counts as dead, on a `dispatch/*` or `builder/*` head.
 
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 

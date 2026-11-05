@@ -34,6 +34,10 @@ export interface LeadTask {
   approved: boolean
   behind: boolean
   closeTriedAt: number | null
+  /** Escalated: skipped by `nextAction` until the brain sends `resume`. */
+  blocked?: boolean
+  /** The split is queued: a later `closed` or `close_refused` must not queue it again. */
+  refiled?: boolean
 }
 
 export interface LeadQueue { tasks: LeadTask[]; updatedAt: number }
@@ -52,10 +56,15 @@ export type LeadEvent =
   | { type: "closed"; taskId: string; refile: Array<{ title: string; prompt: string }> }
   | { type: "close_refused"; taskId: string; refile: Array<{ title: string; prompt: string }> }
   | { type: "blocked"; taskId: string; kind: string; line: string }
+  | { type: "resume"; taskId: string }
+
+/** An open PR of the repo on GitHub. */
+export interface OpenPr { number: number; headRefName: string }
 
 export type LeadAction =
   | { kind: "idle"; held: number }
   | { kind: "wait"; taskId: string; state: TaskState }
+  | { kind: "gone"; taskId: string; pr: number }
   | { kind: "build"; taskId: string; title: string; prompt: string }
   | { kind: "fix"; taskId: string; pr: number; findings: string[]; fresh: boolean }
   | { kind: "merge_main"; taskId: string; pr: number }
@@ -76,13 +85,32 @@ export function enqueue(q: LeadQueue, title: string, prompt: string, seed: strin
   return task
 }
 
+/**
+ * A PR the shepherd handed over. Tracked: its findings are refreshed. Otherwise a new
+ * task, with the next fix on a fresh builder: the shepherd spent the first attempts.
+ */
+export function adopt(q: LeadQueue, pr: number, title: string, prompt: string, seed: string, findings: string[], now: number): LeadTask {
+  const t = q.tasks.find((x) => x.pr === pr) ?? Object.assign(enqueue(q, title, prompt, seed, now), { state: "pr" as const, pr, fixes: FIXES_BEFORE_FRESH })
+  t.findings = findings
+  t.approved = false
+  q.updatedAt = now
+  return t
+}
+
+/** The lead's fix budget on this PR is gone: the evidence a lead's bin/pr-close counts on. */
+export const budgetSpent = (q: LeadQueue, pr: number): boolean => q.tasks.some((t) => t.pr === pr && t.fixes > FIXES_BEFORE_FRESH)
+
 /** Moves the queue; answers the one line for the brain, when this event deserves one. Throws on an unknown task. */
 export function applyEvent(q: LeadQueue, e: LeadEvent, now: number): string | null {
   const t = q.tasks.find((x) => x.id === e.taskId)
   if (!t) throw new Error("unknown_task")
   q.updatedAt = now
   const drop = () => { q.tasks = q.tasks.filter((x) => x !== t) }
-  const refile = (tasks: Array<{ title: string; prompt: string }>) => { for (const r of tasks) enqueue(q, r.title, r.prompt, `refile:${t.id}`, now) }
+  const refile = (tasks: Array<{ title: string; prompt: string }>) => {
+    if (t.refiled || !tasks.length) return
+    t.refiled = true
+    for (const r of tasks) enqueue(q, r.title, r.prompt, `refile:${t.id}`, now)
+  }
   switch (e.type) {
     case "started": t.state = "building"; return `Started: ${t.title}`
     case "pr": t.state = "pr"; t.pr = e.pr; return `PR ready: ${t.title} (#${e.pr})`
@@ -103,32 +131,46 @@ export function applyEvent(q: LeadQueue, e: LeadEvent, now: number): string | nu
     // The gates post their own event turn for a merge or a close.
     case "merged": drop(); return null
     case "closed": drop(); refile(e.refile); return null
-    case "close_refused":
+    case "close_refused": {
+      const again = t.state === "closing"
       t.state = "closing"
       t.closeTriedAt = now
       refile(e.refile)
-      return null
+      if (!again) return null
+      t.blocked = true
+      return `Blocked (stuck): ${t.title}: close of #${t.pr} refused twice`
+    }
     case "blocked":
       if (!DECISION_KINDS.has(e.kind)) throw new Error("not_a_decision")
+      if (t.blocked) return null
+      t.blocked = true
       return `Blocked (${e.kind}): ${t.title}: ${e.line}`
+    case "resume": t.blocked = false; return null
   }
 }
 
-/** One step, rework first; new work only below the cap. `openPrs` = the repo's open dispatch/* PRs on GitHub. */
-export function nextAction(q: LeadQueue, openPrs: number, now: number): LeadAction {
-  for (const t of q.tasks) {
+/**
+ * One step: a PR gone from GitHub first, then rework; new work only below the cap. A blocked
+ * task waits for the brain. The cap counts open dispatch/* PRs and any other PR in the queue.
+ */
+export function nextAction(q: LeadQueue, open: OpenPr[], now: number): LeadAction {
+  const gone = q.tasks.find((t) => t.pr !== null && !open.some((p) => p.number === t.pr))
+  if (gone) return { kind: "gone", taskId: gone.id, pr: gone.pr! }
+  const tasks = q.tasks.filter((t) => !t.blocked)
+  for (const t of tasks) {
     if (t.state === "pr" && t.pr !== null && t.findings && t.fixes > FIXES_BEFORE_FRESH) return { kind: "close_refile", taskId: t.id, pr: t.pr, title: t.title, findings: t.findings }
     if (t.state === "closing" && t.pr !== null && now - (t.closeTriedAt ?? 0) >= CLOSE_RETRY_MS) return { kind: "close_refile", taskId: t.id, pr: t.pr, title: t.title, findings: t.findings ?? [] }
   }
-  for (const t of q.tasks) {
+  for (const t of tasks) {
     if (t.state === "pr" && t.pr !== null && t.findings) return { kind: "fix", taskId: t.id, pr: t.pr, findings: t.findings, fresh: t.fixes === FIXES_BEFORE_FRESH }
   }
-  for (const t of q.tasks) if (t.state === "pr" && t.pr !== null && t.behind) return { kind: "merge_main", taskId: t.id, pr: t.pr }
-  for (const t of q.tasks) if (t.state === "pr" && t.pr !== null && t.approved) return { kind: "merge", taskId: t.id, pr: t.pr, title: t.title }
+  for (const t of tasks) if (t.state === "pr" && t.pr !== null && t.behind) return { kind: "merge_main", taskId: t.id, pr: t.pr }
+  for (const t of tasks) if (t.state === "pr" && t.pr !== null && t.approved) return { kind: "merge", taskId: t.id, pr: t.pr, title: t.title }
   const building = q.tasks.filter((t) => t.state === "building").length
-  const queued = q.tasks.filter((t) => t.state === "queued")
+  const queued = tasks.filter((t) => t.state === "queued")
+  const openPrs = open.filter((p) => p.headRefName.startsWith("dispatch/") || q.tasks.some((t) => t.pr === p.number)).length
   const room = openPrs + building < LEAD_PR_CAP
   if (queued[0] && room) return { kind: "build", taskId: queued[0].id, title: queued[0].title, prompt: queued[0].prompt }
-  const busy = q.tasks.find((t) => t.state !== "queued" && t.state !== "closing")
+  const busy = tasks.find((t) => t.state !== "queued" && t.state !== "closing")
   return busy ? { kind: "wait", taskId: busy.id, state: busy.state } : { kind: "idle", held: queued.length }
 }

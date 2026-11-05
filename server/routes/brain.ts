@@ -191,13 +191,14 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
-  const run = op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prMerge ?? mergeAgentPr
-  const out = await run({ repo, pr, reason })
+  // A lead's dead PR has no Turso row: its queue, not its word, says the fix budget is gone.
+  const spent = lead !== null && op === "pr-close" && (deps.lead ?? brainLead).spent(lead, pr)
+  const out = op === "pr-close" ? await (deps.prClose ?? closeDeadPr)({ repo, pr, reason, ...(spent ? { leadSpent: true } : {}) }) : await (deps.prMerge ?? mergeAgentPr)({ repo, pr, reason })
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
 }
 
-const EVENT_TYPES: ReadonlySet<string> = new Set(["started", "pr", "findings", "fix_started", "fix_pushed", "builder_died", "approved", "behind", "main_merged", "merged", "closed", "close_refused", "blocked"])
+const EVENT_TYPES: ReadonlySet<string> = new Set(["started", "pr", "findings", "fix_started", "fix_pushed", "builder_died", "approved", "behind", "main_merged", "merged", "closed", "close_refused", "blocked", "resume"])
 const REFILE_MAX = 5
 
 function refileOf(v: unknown): Array<{ title: string; prompt: string }> | null {
@@ -253,6 +254,8 @@ async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (body.op === "event") {
     const e = leadEvent(body)
     if (!e) return fail(400, "bad_event")
+    // A lead cannot unblock itself: that would reopen the loop the block ended.
+    if (caller && e.type === "resume") return fail(403, "forbidden")
     try {
       lead.event(repo, e)
     } catch (err) {

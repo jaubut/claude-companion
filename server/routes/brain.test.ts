@@ -7,6 +7,7 @@ import { getAuthToken } from "../lib/auth"
 import { recordPeer } from "../lib/vault-guard"
 import type { Session } from "../lib/sessions"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
+import type { BrainLead } from "../wiring/brain-lead"
 
 // brain-v2 routes (routes/brain.ts): the propose hook's auth, dedupe and
 // hand-off end to end (real sqlite proposals, a fake Turso with the
@@ -360,6 +361,24 @@ describe("POST /hooks/brain/pr-merge", () => {
     expect(seen).toEqual([ok])
   })
 
+  test("a lead's spent budget reaches pr-close from its queue, never from its word", async () => {
+    const seen: unknown[] = []
+    const LEAD = { ...BRAIN_SESSION, key: "herdr:p_lead", taskId: "lead-claude-companion", pid: "7070" } as Session
+    const lead = { spent: (_r: string, pr: number) => pr === 7 } as unknown as BrainLead
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => [...sessions, LEAD], enabled: () => true, lead,
+      prClose: async (p) => { seen.push(p); return { status: 200, body: { ok: true } } },
+    })
+    const post = async (pr: number, extra = {}) => {
+      const req = new Request("http://localhost:4245/hooks/brain/pr-close", { method: "POST", headers: { "content-type": "application/json", "x-companion-task-id": "lead-claude-companion", "x-companion-pid": "7070" }, body: JSON.stringify({ repo: "jaubut/claude-companion", pr, reason: "budget spent", ...extra }) })
+      recordPeer(req, "127.0.0.1")
+      return (await h(req, new URL(req.url)))!
+    }
+    await post(7)
+    await post(8, { leadSpent: true })
+    expect(seen).toEqual([{ repo: "jaubut/claude-companion", pr: 7, reason: "budget spent", leadSpent: true }, { repo: "jaubut/claude-companion", pr: 8, reason: "budget spent" }])
+  })
+
   test("404 brain_disabled when the brain is off", async () => {
     const h = route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => false, prMerge: async () => { throw new Error("unreachable") } })
     const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: "{}" })
@@ -399,5 +418,80 @@ describe("POST /hooks/brain/deploy", () => {
     const call = post(route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => true, deploy: null }))
     const r = await call({ repo: "claude-companion", reason: "now" })
     expect([r.status, r.json.error]).toEqual([404, "deploy_disabled"])
+  })
+})
+
+describe("POST /hooks/brain/lead", () => {
+  const LEAD = { ...BRAIN_SESSION, key: "herdr:p_lead", taskId: "lead-claude-companion", pid: "7070" } as Session
+  const asLead = { "x-companion-task-id": "lead-claude-companion", "x-companion-pid": "7070" }
+  const asBrain = { "x-companion-task-id": "brain", "x-companion-pid": "5150" }
+  function harness() {
+    const calls: unknown[][] = []
+    const lead = {
+      ensure: async (r: string) => (calls.push(["ensure", r]), { ok: true, name: "lead-claude-companion", state: "running" }),
+      send: async (...a: unknown[]) => (calls.push(["send", ...a]), { ok: true, taskId: "abcd0001", lead: "lead-claude-companion", state: "running" }),
+      next: async () => ({ kind: "idle", held: 0 }),
+      event: (r: string, e: unknown) => {
+        if ((e as { taskId: string }).taskId === "abcd0002") throw new Error("unknown_task")
+        calls.push(["event", r, e])
+      },
+    } as unknown as BrainLead
+    const h = route.createBrainRoute({ wiring: harnessWiring, sessions: () => [...sessions, LEAD], enabled: () => true, lead })
+    const post = async (b: unknown, headers: Record<string, string>, peer = "127.0.0.1") => {
+      const req = new Request("http://localhost:4245/hooks/brain/lead", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) })
+      recordPeer(req, peer)
+      const r = (await h(req, new URL(req.url)))!
+      return { status: r.status, body: await r.json() as Record<string, unknown> }
+    }
+    return { post, calls }
+  }
+  const op = (o: Record<string, unknown>) => ({ repo: "claude-companion", ...o })
+
+  test("a lead reads and reports on its own repo", async () => {
+    const { post, calls } = harness()
+    expect((await post(op({ op: "next" }), asLead)).body).toEqual({ ok: true, action: { kind: "idle", held: 0 } })
+    expect((await post(op({ op: "event", type: "pr", taskId: "abcd0001", pr: 4 }), asLead)).status).toBe(200)
+    expect(calls).toEqual([["event", "claude-companion", { type: "pr", taskId: "abcd0001", pr: 4 }]])
+  })
+
+  test("only the brain hands out work or resumes a blocked task", async () => {
+    const { post, calls } = harness()
+    for (const b of [op({ op: "ensure" }), op({ op: "send", prompt: "p", sourceTurnId: "turn-1" }), op({ op: "event", type: "resume", taskId: "abcd0001" })]) {
+      expect((await post(b, asLead)).status).toBe(403)
+    }
+    expect(calls).toEqual([])
+    expect((await post(op({ op: "event", type: "resume", taskId: "abcd0001" }), asBrain)).status).toBe(200)
+    expect((await post(op({ op: "ensure" }), asBrain)).status).toBe(200)
+    expect(calls).toEqual([["event", "claude-companion", { type: "resume", taskId: "abcd0001" }], ["ensure", "claude-companion"]])
+  })
+
+  test("no session, wrong pid, remote peer or no lead for the repo: refused", async () => {
+    const { post } = harness()
+    expect((await post(op({ op: "next" }), { ...asLead, "x-companion-pid": "1" })).status).toBe(403)
+    expect((await post(op({ op: "next" }), asLead, "100.64.0.9")).status).toBe(403)
+    expect((await post({ op: "next", repo: "tls-dashboard-v2" }, asBrain)).status).toBe(404)
+    expect((await post(op({ op: "next", repo: "__proto__" }), asBrain)).status).toBe(404)
+  })
+
+  test("malformed events answer 400, an unknown task 404", async () => {
+    const { post } = harness()
+    for (const e of [{ type: "nope", taskId: "abcd0001" }, { type: "started" }, { type: "pr", taskId: "abcd0001", pr: "4" }, { type: "findings", taskId: "abcd0001", findings: "x" }, { type: "blocked", taskId: "abcd0001", kind: "bored", line: "x" }, { type: "closed", taskId: "abcd0001", refile: [{}] }]) {
+      expect((await post(op({ op: "event", ...e }), asLead)).status).toBe(400)
+    }
+    expect((await post(op({ op: "event", type: "started", taskId: "abcd0002" }), asLead)).status).toBe(404)
+  })
+})
+
+describe("bin/lead", () => {
+  test("posts the op with the caller's identity, and refuses a bad call before the network", async () => {
+    const seen: Array<{ body: unknown; task: string | null }> = []
+    const server = Bun.serve({ port: 0, fetch: async (req) => { seen.push({ body: await req.json(), task: req.headers.get("x-companion-task-id") }); return Response.json({ ok: true }) } })
+    const bin = join(import.meta.dir, "..", "..", "brain", "bin", "lead")
+    const env = { ...process.env, COMPANION_URL: `http://127.0.0.1:${server.port}`, COMPANION_TASK_ID: "lead-claude-companion" }
+    const run = (...a: string[]) => Bun.spawn([bin, ...a], { env, stdout: "ignore", stderr: "ignore" }).exited
+    expect(await run("claude-companion", "event", '{"type":"resume","taskId":"abcd0001"}')).toBe(0)
+    expect(await run("claude-companion", "send", "--title", "x")).toBe(2)
+    server.stop(true)
+    expect(seen).toEqual([{ body: { type: "resume", taskId: "abcd0001", op: "event", repo: "claude-companion" }, task: "lead-claude-companion" }])
   })
 })

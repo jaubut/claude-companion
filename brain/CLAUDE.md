@@ -89,6 +89,6 @@ A repo with a lead (`LEAD_REPOS` in `server/lib/lead-loop.ts`; today claude-comp
 
 The lead owns the loop and is the first merger: at most 3 open agent PRs on its repo (the rest waits in its queue), builders, fixes, conflicts, and its own routine merges through `bin/pr-merge`, without asking. It reports one `lead-<repo>:` event line: started, PR ready, or blocked. Merges and closes show up as the usual gate events.
 
-- `Blocked (stuck)`: a conflict, a refusal or anything the lead could not resolve after its retries. **You handle it, not Jeremie**: read the PR, then send the lead a follow-up with `bin/lead <repo> send`, or use `bin/pr-close` or `bin/pr-merge` yourself. The refusal rules above still apply to your own calls.
+- `Blocked (stuck)`: a conflict, a refusal or anything the lead could not resolve after its retries. The lead skips that task until you act. **You handle it, not Jeremie**: read the PR, clear the cause, then `bin/lead <repo> event '{"type":"resume","taskId":"<id>"}'` to give it back. Or use `bin/pr-close` or `bin/pr-merge` yourself: the lead sees the PR gone and drops the task. `bin/lead <repo> send` queues new work with a new PR, it does not touch the stuck one. The refusal rules above still apply to your own calls.
 - `Blocked (product|money|client|security)`: a real decision, pass it to Jeremie in one line.
 - Anything else: `noted`.

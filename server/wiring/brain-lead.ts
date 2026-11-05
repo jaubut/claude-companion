@@ -2,15 +2,20 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { BRAIN_THREAD } from "../lib/brain"
+import { envValue } from "../lib/brain-workers"
+import { processEnvEntries } from "../lib/discover"
 import { realHerdr } from "../lib/herdr"
-import { type LeadAction, type LeadEvent, type LeadQueue, LEAD_REPOS, applyEvent, emptyQueue, enqueue, leadName, nextAction } from "../lib/lead-loop"
+import { type LeadAction, type LeadEvent, type LeadQueue, type OpenPr, LEAD_REPOS, adopt, applyEvent, budgetSpent, emptyQueue, enqueue, leadName, nextAction } from "../lib/lead-loop"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
-import { type Session, listSessions } from "../lib/sessions"
+import { redactSecrets } from "../lib/secret-redact"
+import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
 import { spawnInHerdr } from "../lib/spawn-session"
 import { type GhFn, realGh } from "../lib/triage-pr"
+import type { ExecFn } from "../lib/turso"
 import { realAutoCompactDeps } from "./auto-compact"
 import { brainLiveness } from "./brain-workers"
+import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
 
 // Repo leads (brain-v2 P2, docs/brain-api.md § Repo leads): the queue of each
@@ -23,16 +28,29 @@ const TICK_MS = 60_000
 const WAKE_MS = 5 * 60_000
 const LEADS_DIR = process.env.COMPANION_LEADS_DIR?.trim() || join(homedir(), ".claude-companion", "leads")
 const LEAD_BRIEF = join(import.meta.dir, "..", "..", "brain", "LEAD.md")
+/** Nobody answers ExitPlanMode's approval in a lead's pane, and a waiting lead never reads as idle: it would stall for good. */
+export const LEAD_DISALLOWED = "--disallowedTools=EnterPlanMode,ExitPlanMode"
+/** claude-config tools/pr-shepherd-park.ts: what the shepherd cannot finish, and its one line for the brain. */
+const HANDOFF_ACTION = "pr:handoff"
+const BRAIN_EVENT_ACTION = "pr:brain-event"
+const ACTIVITY_BATCH = 50
 
 export interface LeadDeps {
   dir: string
   gh: GhFn
+  exec: ExecFn
   now(): number
   line(repo: string, text: string): void
+  /** One line in the brain thread, by the gates' event path. */
+  event(text: string): void
   /** Is the herdr agent up? */
   running(name: string): Promise<boolean>
   spawn(repo: string, name: string): Promise<{ ok: boolean; error?: string }>
-  sessions(): Pick<Session, "key" | "taskId">[]
+  sessions(): Pick<Session, "key" | "taskId" | "sessionId" | "herdrPane" | "pid">[]
+  /** The herdr pane of that agent, "" when unknown. */
+  agentPane(name: string): Promise<string>
+  envOf(pid: string): Promise<string[] | null>
+  tag(key: string, name: string): boolean
   idle(key: string): Promise<boolean>
   inject(key: string, text: string): Promise<boolean>
 }
@@ -70,14 +88,65 @@ export function createBrainLead(deps: LeadDeps) {
     }
   }
 
-  /** Open dispatch/* PRs on GitHub: the per-repo limit counts what is really open. */
-  async function openPrs(repo: string): Promise<number> {
-    const r = await deps.gh(["pr", "list", "--repo", LEAD_REPOS[repo]!, "--state", "open", "--limit", "100", "--json", "headRefName"])
+  /** The repo's open PRs on GitHub: the per-repo limit and `gone` read what is really there. */
+  async function openPrs(repo: string): Promise<OpenPr[]> {
+    const r = await deps.gh(["pr", "list", "--repo", LEAD_REPOS[repo]!, "--state", "open", "--limit", "100", "--json", "number,headRefName"])
     if (r.code !== 0) throw new Error("gh_failed")
     try {
-      return (JSON.parse(r.stdout) as Array<{ headRefName?: string }>).filter((p) => p.headRefName?.startsWith("dispatch/")).length
+      return JSON.parse(r.stdout) as OpenPr[]
     } catch {
       throw new Error("gh_failed")
+    }
+  }
+
+  const next = async (repo: string): Promise<LeadAction> => nextAction(load(repo), await openPrs(repo), deps.now())
+
+  /** The lead's session. Discovery re-registers it with no taskId after a restart; tagging grants the lead's rights, so its pane and its own env must both say so. */
+  async function leadKey(name: string): Promise<string | null> {
+    const hit = deps.sessions().find((s) => s.taskId === name)
+    if (hit) return hit.key
+    const pane = await deps.agentPane(name)
+    const s = pane ? deps.sessions().find((x) => !x.taskId && !!x.sessionId && x.herdrPane === pane) : null
+    if (!s || envValue(await deps.envOf(s.pid), "COMPANION_TASK_ID") !== name) return null
+    return deps.tag(s.key, name) ? s.key : null
+  }
+
+  const cursorFile = join(deps.dir, ".activity-cursor")
+
+  /** A `pr:handoff` to the manager lands in its repo's queue. Other handoffs have their own brain line. */
+  function handoff(meta: Record<string, unknown>): void {
+    const { repo, pr, url, reason, findings } = meta
+    if (meta.to !== "manager" || typeof repo !== "string" || !repoSlug(repo) || !Number.isInteger(pr)) return
+    const why = typeof reason === "string" ? reason : "handed over by the shepherd"
+    const list = Array.isArray(findings) ? findings.filter((f): f is string => typeof f === "string") : []
+    const q = load(repo)
+    adopt(q, pr as number, `PR #${String(pr)}: ${why}`.slice(0, 120), `Finish or replace PR #${String(pr)}`, `handoff:${String(url)}`, list.length ? list : [why], deps.now())
+    save(repo, q)
+  }
+
+  /** The shepherd's rows since the cursor. The first read starts at the newest row: history is not replayed. */
+  async function readActivity(): Promise<void> {
+    const actions = [HANDOFF_ACTION, BRAIN_EVENT_ACTION]
+    if (!existsSync(cursorFile)) {
+      const { rows } = await deps.exec("SELECT COALESCE(MAX(id), 0) AS n FROM agent_activity WHERE action IN (?, ?)", actions)
+      mkdirSync(deps.dir, { recursive: true })
+      writeFileSync(cursorFile, String(rows[0]?.n ?? 0))
+      return
+    }
+    let cursor = Number(readFileSync(cursorFile, "utf8")) || 0
+    const { rows } = await deps.exec("SELECT id, action, summary, meta FROM agent_activity WHERE action IN (?, ?) AND id > ? ORDER BY id LIMIT ?", [...actions, cursor, ACTIVITY_BATCH])
+    try {
+      for (const row of rows) {
+        if (row.action === BRAIN_EVENT_ACTION) deps.event(redactSecrets(String(row.summary ?? "").split("\n")[0]!))
+        else {
+          let meta: Record<string, unknown> = {}
+          try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → ignored */ }
+          handoff(meta)
+        }
+        cursor = Number(row.id)
+      }
+    } finally {
+      writeFileSync(cursorFile, String(cursor))
     }
   }
 
@@ -95,8 +164,15 @@ export function createBrainLead(deps: LeadDeps) {
       return { ok: e.ok, taskId: t.id, lead: e.name, state: e.state }
     },
 
-    async next(repo: string): Promise<LeadAction> {
-      return nextAction(load(repo), await openPrs(repo), deps.now())
+    next,
+
+    /** bin/pr-close's evidence: unreadable counts as not spent, the gate then refuses. */
+    spent(repo: string, pr: number): boolean {
+      try {
+        return budgetSpent(load(repo), pr)
+      } catch {
+        return false
+      }
     },
 
     event(repo: string, e: LeadEvent): void {
@@ -108,15 +184,18 @@ export function createBrainLead(deps: LeadDeps) {
 
     /** Every repo with work gets a live lead; an idle one is woken when there is news. */
     async tick(): Promise<void> {
+      await readActivity().catch((err: unknown) => companionLog(`[lead] activity read failed: ${(err as Error)?.message ?? String(err)}`))
       for (const repo of Object.keys(LEAD_REPOS)) {
         try {
           const q = load(repo)
           if (!q.tasks.length) continue
           const e = await ensure(repo)
           if (!e.ok) { companionLog(`[lead] ${repo}: ${e.error ?? "spawn failed"}`); continue }
-          const key = deps.sessions().find((s) => s.taskId === e.name)?.key
+          const key = await leadKey(e.name)
           const last = woken.get(repo) ?? 0
           if (!key || (q.updatedAt <= last && deps.now() - last < WAKE_MS) || !await deps.idle(key)) continue
+          // Only blocked or held work left: nothing to do, so no turn to pay for.
+          if ((await next(repo)).kind === "idle") { woken.set(repo, deps.now()); continue }
           if (await deps.inject(key, `Read ${LEAD_BRIEF} if you have not, then STATE.md, then run your loop for ${repo}.`)) woken.set(repo, deps.now())
         } catch (err) {
           companionLog(`[lead] ${repo} tick failed: ${(err as Error)?.message ?? String(err)}`)
@@ -135,13 +214,21 @@ export type BrainLead = ReturnType<typeof createBrainLead>
 export const brainLead = createBrainLead({
   dir: LEADS_DIR,
   gh: realGh,
+  exec: (sql, args) => dispatchWiring.exec(sql, args),
   now: Date.now,
   line: (repo, text) => orchEmit(appendTurn("orchestrator", `${leadName(repo)}: ${text}`, null, BRAIN_THREAD)),
+  event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
   running: async (name) => (await brainLiveness.agentOf(name)).kind !== "absent",
   spawn: (repo, name) => spawnInHerdr(join(homedir(), repo), "claude", { COMPANION_TASK_ID: name }, realHerdr, {
-    name, args: ["--remote-control", name, "--permission-mode", "auto"],
+    name, args: ["--remote-control", name, "--permission-mode", "auto", LEAD_DISALLOWED],
   }),
   sessions: listSessions,
+  agentPane: async (name) => {
+    const a = await brainLiveness.agentOf(name)
+    return a.kind === "present" ? a.ref.pane : ""
+  },
+  envOf: (pid) => processEnvEntries(pid),
+  tag: (key, name) => { const s = getSessionByKey(key); return !!s && recordSession({ ...s, taskId: name })?.key === key },
   idle: async (key) => await realAutoCompactDeps.agentStatus(key) === "idle",
   inject: async (key, text) => (await realAutoCompactDeps.inject(key, text)).ok,
 })

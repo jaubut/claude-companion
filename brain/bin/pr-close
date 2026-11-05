@@ -5,8 +5,8 @@
 #
 # The server re-checks everything on GitHub and Turso: open, head dispatch/*
 # (403 not_agent_branch otherwise) and dead — conflicting, superseded, task
-# done/cancelled, or parked by the shepherd with its fix budget spent
-# (409 not_dead otherwise). Comments "Closed by the brain: <reason>", keeps
+# done/cancelled, parked by the shepherd with its fix budget spent, or for a
+# lead, the fix budget spent in its queue (409 not_dead otherwise). Comments "Closed by the brain: <reason>", keeps
 # the branch. Same auth as bin/propose: loopback, X-Companion-Task-Id: brain
 # and the pid of the brain's claude process (found by walking up the parent chain).
 set -euo pipefail
