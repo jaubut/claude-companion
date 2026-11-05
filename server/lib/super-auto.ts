@@ -9,10 +9,14 @@
 // flag is off limits: a test run must never turn SUPER off on a real host
 // (the server would come up off at its next restart). A test that needs the
 // file sets COMPANION_SUPER_FLAG; without it the mode lives in memory only.
+//
+// Every change is a row in super-auto-changes.jsonl, next to the flag, so
+// "who turned it off?" has an answer: `tail` it on the host. A flag that
+// changed behind the server's back (a `rm`, a test) shows up at the next boot.
 
 import { companionLog } from "./log"
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { homedir, hostname } from "node:os"
 import { dirname, join } from "node:path"
 
 const underTest = process.env.NODE_ENV === "test" || /\.test\.[jt]sx?$/.test(Bun.main)
@@ -23,8 +27,35 @@ function flagPath(): string | null {
   return underTest ? null : join(homedir(), ".claude-companion", "super-auto.flag")
 }
 
+const changesPath = (flag: string): string => join(dirname(flag), "super-auto-changes.jsonl")
+
+function logChange(flag: string, old: boolean | null, next: boolean, source: string): void {
+  try {
+    mkdirSync(dirname(flag), { recursive: true })
+    const row = { time: new Date().toISOString(), server: hostname().split(".")[0], source, old, new: next }
+    appendFileSync(changesPath(flag), JSON.stringify(row) + "\n", { mode: 0o600 })
+  } catch (err) {
+    companionLog(`super-auto change log failed: ${String(err)}`)
+  }
+}
+
+/** The state the log last recorded; null = no usable row. */
+function lastLogged(flag: string): boolean | null {
+  try {
+    const last = readFileSync(changesPath(flag), "utf8").trim().split("\n").at(-1) ?? ""
+    const row = JSON.parse(last) as { new?: unknown }
+    return typeof row.new === "boolean" ? row.new : null
+  } catch {
+    return null
+  }
+}
+
 const bootFlag = flagPath()
 let cached: boolean = bootFlag !== null && existsSync(bootFlag)
+if (bootFlag) {
+  const logged = lastLogged(bootFlag)
+  if (logged !== cached) logChange(bootFlag, logged, cached, logged === null ? "first boot with this log" : "flag file changed outside the server")
+}
 
 export function isSuperAuto(): boolean {
   return cached
@@ -35,7 +66,8 @@ export function setSuperAutoInMemoryForTests(enabled: boolean): void {
   cached = enabled
 }
 
-export function setSuperAuto(enabled: boolean): boolean {
+export function setSuperAuto(enabled: boolean, source = "unknown"): boolean {
+  const old = cached
   cached = enabled
   const path = flagPath()
   if (!path) return cached
@@ -49,6 +81,7 @@ export function setSuperAuto(enabled: boolean): boolean {
   } catch (err) {
     companionLog(`super-auto persist failed: ${String(err)}`)
   }
+  if (old !== enabled) logChange(path, old, enabled, source)
   return cached
 }
 

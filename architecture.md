@@ -14,7 +14,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `routes/api.ts` | 596 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
+| `routes/api.ts` | 597 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
@@ -154,6 +154,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
+| `lib/super-auto.ts` | 125 | lib | 4 | state: let cached |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
@@ -179,7 +180,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/taste.ts` | 95 | lib | 1 |  |
 | `lib/recent-sessions.ts` | 93 | lib | 4 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
-| `lib/super-auto.ts` | 92 | lib | 4 | state: let cached |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `state.ts` | 89 | lib | 9 |  |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
@@ -458,6 +458,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `ExpenseFields()` | `lib/receipt-qa-store.ts` | `lib/receipt-capture.ts`, `lib/receipt-checks.ts`, `lib/receipt-jev.ts`, `lib/receipt-qa-worker.ts`, `lib/receipt-sonnet.ts` |
 | `itemId()` | `lib/triage.ts` | `lib/resolver-engine.ts`, `lib/resolver-store.ts`, `lib/triage-engine.ts`, `lib/triage-store.ts`, `wiring/resolver-dry-run.ts` |
 | `agentFromHeaders()` | `lib/hook-common.ts` | `lib/worker-hook-gate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop` |
+| `describeClient()` | `state.ts` | `routes/api.ts#POST /api/super-auto`, `routes/api.ts#* /api/feed`, `wiring/pane-mirror.ts`, `wiring/shell-sessions.ts`, `ws.ts` |
 | `wireSessions()` | `lib/shell-sessions.ts` | `routes/api.ts#* /api/status`, `routes/api.ts#* /api/feed`, `wiring/events.ts`, `wiring/shell-sessions.ts`, `ws.ts` |
 | `BodySnapshot()` | `lib/body.ts` | `routes/body.ts`, `routes/orchestrator.ts`, `wiring/body.ts`, `wiring/orchestrator.ts`, `wiring/triage.ts` |
 | `bodySnapshot()` | `wiring/body.ts` | `routes/body.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/body-investigate.ts`, `wiring/front-door.ts`, `wiring/triage.ts` |
@@ -495,7 +496,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `herdrGatedKey()` | `lib/herdr.ts` | `lib/session-pane.ts`, `routes/api.ts#POST /api/sessions/resume`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick` |
 | `normDate()` | `lib/my-tasks.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `TriageItem()` | `lib/triage.ts` | `lib/triage-engine.ts`, `lib/triage-repos.ts`, `wiring/repo-view.ts`, `wiring/triage-repos.ts` |
-| `describeClient()` | `state.ts` | `routes/api.ts#* /api/feed`, `wiring/pane-mirror.ts`, `wiring/shell-sessions.ts`, `ws.ts` |
 | `buildComponentDetail()` | `lib/body.ts` | `routes/body.ts#GET /api/body/component/`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/resolver.ts` |
 | `sessionPaneOf()` | `lib/session-pane.ts` | `routes/command.ts#POST /api/command/suggest`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel` |
 | `gauge()` | `wiring/gauge.ts` | `routes/gauge.ts#POST /hooks/gauge`, `routes/gauge.ts#GET /api/gauge`, `routes/hooks.ts#POST /hooks/session-end`, `wiring/brain.ts` |
@@ -507,6 +507,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `ensureChannel()` | `lib/orchestrator-channels.ts` | `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain.ts` |
 | `upsertRow()` | `lib/brain-trace.ts` | `wiring/brain-activity.ts`, `wiring/brain-todo.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts` |
 | `keyCommandGate()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed`, `routes/orchestrator.ts#POST /api/orchestrator/send` |
+| `originLabel()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#* /api/feed` |
+| `clientInfo()` | `state.ts` | `companion-server.ts#* /ws`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#* /api/feed` |
 | `getShellSession()` | `lib/shell-sessions.ts` | `companion-server.ts#* /ws`, `routes/command.ts#POST /api/command/list`, `wiring/shell-sessions.ts` |
 | `ApnsEnv()` | `lib/push-tokens.ts` | `lib/apns.ts`, `routes/api.ts`, `routes/api.ts#POST /api/register-token` |
 | `isProblemState()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `wiring/body-investigate.ts`, `wiring/triage.ts` |
@@ -591,8 +593,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `listProposals()` | `lib/orchestrator-chat.ts` | `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `resolverConfig()` | `lib/resolver.ts` | `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `tasksChat()` | `wiring/tasks-agent.ts` | `companion-server.ts`, `wiring/front-door.ts` |
-| `originLabel()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
-| `clientInfo()` | `state.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
 | `Entry()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |
 | `entryTime()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |
 | `isBoundary()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |
