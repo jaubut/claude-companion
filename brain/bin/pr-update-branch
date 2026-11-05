@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Merge the base into a stale agent PR (POST /hooks/brain/pr-update-branch), always with a reason.
+#
+#   bin/pr-update-branch --repo <owner/name> --pr <n> --reason "<why it is stale>"
+#
+# The server re-checks everything on GitHub: open (409 not_open), head dispatch/*
+# (403 not_agent_branch), no conflict (409 conflict). Merge commit on the PR
+# branch, never a rebase, never a force; answers the new head (409 up_to_date
+# when the base has nothing new). The new head needs a fresh review before
+# bin/pr-merge accepts it. Same auth as bin/propose: loopback, X-Companion-Task-Id:
+# brain and the pid of the brain's claude process (found by walking up the parent chain).
+set -euo pipefail
+
+REPO="" PR="" REASON=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --pr) PR="$2"; shift 2 ;;
+    --reason) REASON="$2"; shift 2 ;;
+    *) echo "pr-update-branch: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+case "$PR" in ''|*[!0-9]*) echo "pr-update-branch: --pr <number> is required" >&2; exit 2 ;; esac
+if [ -z "$REPO" ] || [ -z "$REASON" ]; then
+  echo "pr-update-branch: --repo, --pr and --reason are required" >&2
+  exit 2
+fi
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(REPO="$REPO" PR="$PR" REASON="$REASON" python3 -c '
+import json, os
+print(json.dumps({"repo": os.environ["REPO"], "pr": int(os.environ["PR"]), "reason": os.environ["REASON"]}))')
+
+curl -sS --max-time 90 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/pr-update-branch" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo
