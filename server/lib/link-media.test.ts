@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { LOCAL_INPUT, VIDEO_FORMAT, asImage, beforeDeadline, imageTitle, run, ytArgs } from "./link-media"
+import { LOCAL_INPUT, VIDEO_FORMAT, asImage, beforeDeadline, imageTitle, jsonOrNull, run, ytArgs } from "./link-media"
 
 describe("bin/media pipeline", () => {
   test("yt-dlp ignores host config and goes through the guard proxy", () => {
@@ -57,6 +57,13 @@ describe("bin/media pipeline", () => {
     expect(await asImage(new Response("<html>", { headers: { "content-type": "text/html" } }))).toBeNull()
     expect(await asImage(new Response("no", { status: 403, headers: { "content-type": "image/png" } }))).toBeNull()
     expect(await asImage(null)).toBeNull()
+  })
+
+  test("unreadable JSON is null, not a throw", () => {
+    expect(jsonOrNull<{ a: number }>('{"a":1}')).toEqual({ a: 1 })
+    expect(jsonOrNull("")).toBeNull()
+    expect(jsonOrNull('{"a":')).toBeNull()
+    expect(jsonOrNull('"\\u12"')).toBeNull()
   })
 
   test("a malformed %-escape in the image name doesn't fail the job", () => {

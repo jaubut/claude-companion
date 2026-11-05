@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 184,
+          "lines": 190,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -54,6 +54,7 @@
           "apiCalls": [],
           "imports": [
             "lib/auth.ts",
+            "lib/json-body.ts",
             "state.ts",
             "routes/hooks.ts",
             "routes/api.ts",
@@ -2398,6 +2399,26 @@
           "externals": []
         },
         {
+          "path": "lib/json-body.ts",
+          "lines": 31,
+          "kind": "lib",
+          "exports": [
+            "BadJsonBody",
+            "isObject",
+            "jsonObject",
+            "checked"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/key-gate.ts",
           "lines": 211,
           "kind": "lib",
@@ -2554,7 +2575,7 @@
         },
         {
           "path": "lib/link-media.ts",
-          "lines": 319,
+          "lines": 327,
           "kind": "lib",
           "exports": [
             "LinkMediaMeta",
@@ -2565,6 +2586,7 @@
             "ytArgs",
             "LOCAL_INPUT",
             "VIDEO_FORMAT",
+            "jsonOrNull",
             "vttText",
             "asImage",
             "imageTitle",
@@ -4637,7 +4659,7 @@
         },
         {
           "path": "lib/super-auto.ts",
-          "lines": 81,
+          "lines": 92,
           "kind": "lib",
           "exports": [
             "isSuperAuto",
@@ -5017,7 +5039,7 @@
         },
         {
           "path": "lib/tool-format.ts",
-          "lines": 134,
+          "lines": 136,
           "kind": "lib",
           "exports": [
             "verbFor",
@@ -5894,7 +5916,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 595,
+          "lines": 596,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -6069,6 +6091,7 @@
             "wiring/waiting.ts",
             "wiring/shell-sessions.ts",
             "lib/idempotency.ts",
+            "lib/json-body.ts",
             "lib/approval-history.ts"
           ],
           "listeners": [],
@@ -6103,7 +6126,7 @@
         },
         {
           "path": "routes/auto-compact.ts",
-          "lines": 42,
+          "lines": 43,
           "kind": "route-host",
           "exports": [
             "handleAutoCompactRoute"
@@ -6132,6 +6155,7 @@
           "imports": [
             "lib/auto-compact.ts",
             "lib/log.ts",
+            "lib/json-body.ts",
             "wiring/auto-compact.ts"
           ],
           "listeners": [],
@@ -6291,7 +6315,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 211,
+          "lines": 212,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -6321,7 +6345,8 @@
             "lib/sessions.ts",
             "lib/session-pane.ts",
             "wiring/dialogs.ts",
-            "lib/suggest-cleanup.ts"
+            "lib/suggest-cleanup.ts",
+            "lib/json-body.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6362,7 +6387,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 103,
+          "lines": 104,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -6391,7 +6416,8 @@
             "lib/sessions.ts",
             "lib/tmux-pane.ts",
             "wiring/dialogs.ts",
-            "lib/herdr.ts"
+            "lib/herdr.ts",
+            "lib/json-body.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6487,7 +6513,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 555,
+          "lines": 556,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -6576,7 +6602,8 @@
             "lib/last-assistant.ts",
             "lib/worker-hook-gate.ts",
             "lib/brain.ts",
-            "wiring/brain.ts"
+            "wiring/brain.ts",
+            "lib/json-body.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6609,7 +6636,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 206,
+          "lines": 207,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -6644,7 +6671,8 @@
             "lib/model-control.ts",
             "lib/sessions.ts",
             "lib/session-pane.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "lib/json-body.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6677,7 +6705,8 @@
             "lib/log.ts",
             "lib/my-tasks.ts",
             "lib/turso.ts",
-            "state.ts"
+            "state.ts",
+            "lib/json-body.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6704,7 +6733,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 416,
+          "lines": 417,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6791,7 +6820,8 @@
             "lib/body.ts",
             "lib/vault-guard.ts",
             "lib/log.ts",
-            "lib/tmux-pane.ts"
+            "lib/tmux-pane.ts",
+            "lib/json-body.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8840,6 +8870,12 @@
         },
         "handleVaultRoute": {
           "module": "routes/vault.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "BadJsonBody": {
+          "module": "lib/json-body.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -13273,6 +13309,67 @@
             "routes/trips.ts"
           ]
         },
+        "jsonObject": {
+          "module": "lib/json-body.ts",
+          "callers": [
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#DELETE /api/register-token",
+            "routes/api.ts#POST /api/push/test",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#DELETE /api/learned",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#POST /api/sessions/resume",
+            "routes/api.ts#POST /api/sessions/ended/delete",
+            "routes/api.ts#POST /api/shell/close",
+            "routes/api.ts#* /api/feed",
+            "routes/auto-compact.ts#POST /api/auto-compact/cancel",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel",
+            "routes/my-tasks.ts#* /api/tasks/mine",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send"
+          ]
+        },
+        "checked": {
+          "module": "lib/json-body.ts",
+          "callers": [
+            "routes/api.ts#POST /api/register-token",
+            "routes/api.ts#DELETE /api/register-token",
+            "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#DELETE /api/learned",
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#* /api/feed",
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/hooks.ts#POST /hooks/pre-tool-use",
+            "routes/hooks.ts#POST /hooks/post-tool-use",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/permission-request",
+            "routes/hooks.ts#POST /hooks/stop",
+            "routes/hooks.ts#POST /hooks/session-start",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel",
+            "routes/orchestrator.ts#POST /api/orchestrator/send"
+          ]
+        },
         "listLearned": {
           "module": "lib/learned-allow.ts",
           "callers": [
@@ -13472,6 +13569,12 @@
             "wiring/pane-mirror.ts",
             "wiring/shell-sessions.ts",
             "ws.ts"
+          ]
+        },
+        "isObject": {
+          "module": "lib/json-body.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
           ]
         },
         "resolveQuestion": {

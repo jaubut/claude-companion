@@ -1,4 +1,5 @@
 import { checkBearer, checkBearerHeaderOnly, unauthorized } from "./lib/auth"
+import { BadJsonBody } from "./lib/json-body"
 import { type WsData, HOST_INFO, broadcast, clientBuild, clientInfo } from "./state"
 import "./wiring/events"
 import { handleHookRoute } from "./routes/hooks"
@@ -161,9 +162,14 @@ export function createCompanionServer(port: number) {
 
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
-      for (const route of [handleHookRoute, brainRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
-        const handled = await route(req, url)
-        if (handled) return handled
+      try {
+        for (const route of [handleHookRoute, brainRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
+          const handled = await route(req, url)
+          if (handled) return handled
+        }
+      } catch (err) {
+        if (err instanceof BadJsonBody) return Response.json({ ok: false, error: "bad_json" }, { status: 400 })
+        throw err
       }
 
       // No browser client any more — the PWA was retired on 2026-09-24; the

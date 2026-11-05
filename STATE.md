@@ -4,6 +4,12 @@ Last updated: 2026-10-25
 
 ## Active Decisions
 
+### Anti-slop lint: ast-grep + a repo check, blocking in pre-commit and CI (2026-11-05, task 7b745d1d)
+**Choice:** `bun --bun run lint` runs ast-grep rules (`lint/rules`, fixtures in `lint/tests`) and `scripts/lint-repo.ts`, from `.githooks/pre-commit` (`bun install` sets `core.hooksPath`) and a CI step. Rules come from the review evidence in RES-U66W. Live violations carry a same-line `ast-grep-ignore`: same line because archmap's 600-line cap ratchets on line count.
+**Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.
+**Rejected:** typescript-eslint (needs the TS compiler API); pattern 1, swallowed errors (8 of 16 overall, 0 of 2 here, about 400 live candidates); a `tmuxCapture` timeout rule (a call site shows nothing, the gap is inside the wrapper).
+**Revisit if:** the 34 suppressions stop shrinking, or a second repo wants the same rules.
+
 ### Pane mirror scrollback: opt-in history request, answered to the asking viewer only (2026-11-02, t-ios-term-input-1)
 **Choice:** phone → `{"type":"scrollback","lines":N}` (cap 2000); server → that viewer only `{"type":"history","lines":M}` + one binary frame of M plain rows (CRLF, SGR reset per row), from `pane.read --source recent --lines N` (visible screen included). One answer per viewer per 1 s, latest wins. tmux / failed read → `lines:0`, no binary frame.
 **Why:** the mirror reads `--source visible`, so the phone had nothing to scroll (Jeremie: "can't scroll the terminal output"). Opt-in keeps old app builds on exactly today's frames.

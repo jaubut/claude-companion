@@ -110,10 +110,16 @@ function hasCaptions(raw: Record<string, unknown>): boolean {
   return n(raw.subtitles) + n(raw.automatic_captions) > 0
 }
 
+/** null when `s` isn't valid JSON: tool output, a scraped string or a cache file can all be cut short. */
+export function jsonOrNull<T>(s: string): T | null {
+  try { return JSON.parse(s) as T } catch { return null }
+}
+
 async function ytInfo(url: string, deadline: number): Promise<Info | { error: string }> {
   const r = await run([YTDLP, ...ytArgs(await guardProxy()), "-J", "--skip-download", url], deadline)
   if (r.code !== 0) return { error: r.stderr.trim().split("\n").pop()?.slice(0, 300) ?? "yt-dlp failed" }
-  const raw = JSON.parse(r.stdout) as Record<string, unknown>
+  const raw = jsonOrNull<Record<string, unknown>>(r.stdout)
+  if (!raw) return { error: "yt-dlp printed unreadable JSON" }
   return {
     raw, videoUrl: null,
     meta: {
@@ -136,7 +142,7 @@ async function instagramEmbed(url: URL, deadline: number): Promise<Info | null> 
   if (!res.ok) return null
   const html = (await res.text()).replace(/\\"/g, '"')
   const m = html.match(/"video_url":"((?:[^"\\]|\\.)*)"/)
-  const videoUrl = m ? JSON.parse(`"${m[1]}"`) as string : null
+  const videoUrl = m ? jsonOrNull<string>(`"${m[1]}"`) : null
   const strip = (s: string | undefined): string | null => text(s?.replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;/g, "'"))
   const caption = strip(html.match(/class="Caption"[^>]*>([\s\S]*?)<\/div>/)?.[1])
   const uploader = strip(html.match(/class="CaptionUsername"[^>]*>([\s\S]*?)<\/a>/)?.[1])
@@ -309,7 +315,9 @@ export async function analyseLink(raw: string): Promise<LinkMediaOut> {
   prune()
   const dir = join(ROOT, createHash("sha256").update(c.url.href).digest("hex").slice(0, 16))
   const done = join(dir, "result.json")
-  if (existsSync(done)) return { status: 200, body: { ...JSON.parse(readFileSync(done, "utf8")) as Record<string, unknown>, cached: true } }
+  // An unreadable cache file is a miss: the job below writes it again.
+  const cached = existsSync(done) ? jsonOrNull<Record<string, unknown>>(readFileSync(done, "utf8")) : null
+  if (cached) return { status: 200, body: { ...cached, cached: true } }
   const running = inflight.get(dir)
   if (running) return running
   const job = build(c.url, dir).finally(() => inflight.delete(dir))

@@ -1,0 +1,5 @@
+id: no-unguarded-json-parse
+valid:
+  - 'try { return JSON.parse(line) } catch { return null }'
+invalid:
+  - 'const entry = JSON.parse(line) as Entry'
