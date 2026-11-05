@@ -10,7 +10,7 @@ import { orchEmit } from "./orchestrator"
 // bin/pr-merge (POST /hooks/brain/pr-merge): the brain merges a ROUTINE agent
 // PR. The brain's word counts for nothing: every check is made here, from
 // GitHub and Turso, and any doubt refuses. In order:
-//   open, not draft · head `dispatch/*` (403 not_agent_branch)
+//   open, not draft · head `dispatch/*` or `builder/*` (403 not_agent_branch)
 //   parked (403): no do-not-merge/wip label; no live shepherd park or hold,
 //     except the client-origin / tainted / sensitive-path park (the MFA
 //     human-review policy, retired 2026-10-31: money, origin and paths no
@@ -136,7 +136,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   if (v.isDraft) return fail(409, "draft")
-  if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
+  if (!/^(dispatch|builder)\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
   let park: Awaited<ReturnType<typeof parked>>
   let recent: number
   try {

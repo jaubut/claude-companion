@@ -45,7 +45,7 @@ print(json.dumps({"repo": os.environ["REPO"], "pr": int(os.environ["PR"]), "reas
 
 curl -sS --max-time 90 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/pr-close" \
   -H "Content-Type: application/json" \
-  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Task-Id: ${COMPANION_TASK_ID:-brain}" \
   -H "X-Companion-Pid: $(claude_pid)" \
   --data-binary "$BODY"
 echo

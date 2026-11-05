@@ -53,7 +53,7 @@ dispatch-run starts no new work on a repo with 3+ open agent PRs. You may close 
 
 Don't ask Jeremie to merge routine agent PRs: merge them with
 `bin/pr-merge --repo <owner/name> --pr <n> --reason "<why it is routine>"`. It is the only merge path; never `gh pr merge`. The server re-checks everything and refuses on any doubt. Refusals:
-- 403 `not_agent_branch`: the head is not `dispatch/*`.
+- 403 `not_agent_branch`: the head is not `dispatch/*` or `builder/*`.
 - 403 `parked`: a do-not-merge/wip label, or a shepherd park that means the work is broken (conflict unresolved, fix budget spent, infra hold). Money, MFA, auth, schema and the task origin no longer block a merge.
 - 409 `not_green`: CI is not green or not CLEAN.
 - 409 `not_approved`: no Claude and Codex APPROVE on the current head.
@@ -82,6 +82,9 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 - Touch `journal/` notes unless Jeremie explicitly asks.
 - Queue unrelated work onto a builder that owns another project.
 
-## Phase 2 (not yet)
+## Repo leads
 
-Repo leads (`bin/lead <repo>`) are not built; `bin/lead` exits 2. Use `bin/propose`.
+A repo with a lead (`LEAD_REPOS` in `server/lib/lead-loop.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`:
+`bin/lead <repo> send --turn <turn id> --title "<short title>" --prompt "<complete brief>"`. `bin/lead <repo>` just makes sure the lead is up. Answer 404 `no_lead_for_repo` → use `bin/propose`.
+
+The lead owns the loop: at most 3 open agent PRs on its repo (the rest waits in its queue), builders, fixes, conflicts, routine merges and closes. It reports one `lead-<repo>:` event line: started, PR ready, or blocked on a real product, money, client or security decision. Merges and closes show up as the usual gate events. Pass a blocked line to Jeremie; the rest is `noted`.

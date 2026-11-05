@@ -337,6 +337,29 @@ describe("POST /hooks/brain/pr-merge", () => {
     expect(seen).toEqual([ok])
   })
 
+  test("a lead passes the same gate, on its own repo only; a spoofed lead does not", async () => {
+    const seen: unknown[] = []
+    const LEAD = { ...BRAIN_SESSION, key: "herdr:p_lead", taskId: "lead-claude-companion", pid: "7070" } as Session
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => [...sessions, LEAD], enabled: () => true,
+      prMerge: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "not_green" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string>, peer = "127.0.0.1") => {
+      const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) })
+      recordPeer(req, peer)
+      return (await h(req, new URL(req.url)))!
+    }
+    const me = { "x-companion-task-id": "lead-claude-companion", "x-companion-pid": "7070" }
+    const ok = { repo: "jaubut/claude-companion", pr: 7, reason: "routine" }
+    expect((await post({ ...ok, repo: "jaubut/tls-dashboard-v2" }, me)).status).toBe(403)
+    expect((await post(ok, { ...me, "x-companion-pid": "6060" })).status).toBe(403)
+    expect((await post(ok, { ...me, "x-companion-task-id": "lead-tls-dashboard-v2" })).status).toBe(403)
+    expect((await post(ok, me, "100.64.0.9")).status).toBe(403)
+    expect(seen).toHaveLength(0)
+    expect((await post(ok, me)).status).toBe(409)
+    expect(seen).toEqual([ok])
+  })
+
   test("404 brain_disabled when the brain is off", async () => {
     const h = route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => false, prMerge: async () => { throw new Error("unreachable") } })
     const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: "{}" })

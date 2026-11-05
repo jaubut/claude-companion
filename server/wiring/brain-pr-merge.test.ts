@@ -82,12 +82,19 @@ describe("bin/pr-merge gate: refusals", () => {
     expect([d.status, d.body.error]).toEqual([409, "draft"])
   })
 
-  for (const branch of ["deps/rolling", "agent/chores", "jeremie/feature", "main", "dispatch/../main", "rolling"]) {
+  for (const branch of ["deps/rolling", "agent/chores", "jeremie/feature", "main", "dispatch/../main", "builder/../main", "rolling"]) {
     test(`403 not_agent_branch on ${branch}, even when everything else is green`, async () => {
       const out = await refused(green({ headRefName: branch }))
       expect([out.status, out.body.error]).toEqual([403, "not_agent_branch"])
     })
   }
+
+  test("a builder/* head merges with both approvals, and is refused without them", async () => {
+    const w = world(green({ headRefName: "builder/repo-leads" }))
+    expect((await mergeAgentPr(input, w.deps)).status).toBe(200)
+    const out = await refused(green({ headRefName: "builder/repo-leads", comments: [review("claude", "APPROVE")] }))
+    expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+  })
 
   const held: Array<[string, Record<string, unknown>, string?]> = [
     ["a conflict park", {}, park("pr:needs-human", "merge conflict unresolved after 2 attempts")],

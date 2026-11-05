@@ -82,6 +82,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
+| POST | `/hooks/brain/lead` | `{op:"ensure"\|"send"\|"next"\|"event", repo, …}` | see Repo leads. brain/bin/lead. |
 | POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
@@ -120,6 +121,21 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 | 409 `kept` (+`reason`) | any other keep (split, settling, unreadable) |
 | 409 `changed` / `in_flight` | the workspace changed before the close / another close is running |
 
+### Repo leads (`/hooks/brain/lead`)
+
+`LEAD_REPOS` in `lib/lead-loop.ts` lists the repos with a lead, one line per repo. Each has one `lead-<repo>` herdr session (auto mode, cwd `~/<repo>`, brief `brain/LEAD.md`), and a queue in `~/.claude-companion/leads/<repo>.json`. No new table. A 60 s tick restarts the lead while its queue has work and wakes it when idle, on news or every 5 min. `wiring/brain-lead.ts` holds the side effects, `lib/lead-loop.ts` the policy.
+
+| op | caller | body | answer |
+|---|---|---|---|
+| `ensure` | brain | | `{ok, name, state}`: `running`, `starting`, `started` |
+| `send` | brain | `{title?, prompt, sourceTurnId}` | `{ok, taskId, lead, state}`; same turn + prompt queues nothing |
+| `next` | brain, lead | | `{ok, action}`: `build`, `fix`, `merge_main`, `merge`, `close_refile`, `wait`, `idle` (`held` = queued behind the limit) |
+| `event` | brain, lead | `{type, taskId, …}` | `{ok}`. `blocked` takes `kind` product, money, client or security, else 400 `bad_event`. |
+
+Limit: `build` is answered only while open `dispatch/*` PRs on GitHub + tasks being built < 3. Rework comes before new work. After 2 failed fixes comes one fresh builder, then `close_refile`.
+
+Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, and the pid of a session registered under that task. A lead may also call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`); every gate check is the same as for the brain.
+
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 
 `wiring/brain-pr-close.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word. Closed only when it is open, its head is `dispatch/*` (never `deps/*`, `agent/chores*` or a human branch) and at least one holds: `mergeable` CONFLICTING · superseded (its task's `dispatch_pr_url` is another PR) · its task done or cancelled · its newest shepherd park (`pr:needs-human`, not lifted by a later `pr:unpark`) says the fix budget is spent (`CI still failing after N fixes`, `merge conflict unresolved after N attempts`, `review verdict CHANGES after N fix runs`). Then `gh pr close --comment "Closed by the brain: <reason>"` (secrets redacted, branch kept), state read back CLOSED, an `agent_activity` row `brain:pr-close` (meta: repo, pr, url, branch, reason, evidence) and an event turn in the brain thread.
@@ -137,7 +153,7 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 ### Routine agent PRs (`/hooks/brain/pr-merge`)
 
 `wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word, and refuses on any doubt. It checks, in order:
-1. The PR is open, not a draft, and its head is `dispatch/*`.
+1. The PR is open, not a draft, and its head is `dispatch/*` or `builder/*`.
 2. **parked** refuses when any of these holds:
    - A label says do-not-merge, dnm or wip.
    - The newest shepherd `pr:hold`, or a `pr:needs-human` whose reason means the work is broken (conflict unresolved, fix budget spent, no CI…), is not lifted by a `pr:unpark`. Park rows are matched on the PR url and on the tasks linked by `dispatch_pr_url`.

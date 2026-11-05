@@ -9,6 +9,8 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { type BrainLead, brainLead, repoSlug } from "../wiring/brain-lead"
+import { DECISION_KINDS, type LeadEvent, LEAD_PREFIX } from "../lib/lead-loop"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -23,6 +25,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
+//   POST /hooks/brain/lead                → bin/lead: {op:"ensure"|"send"|"next"|"event", repo, …} (docs/brain-api.md § Repo leads)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
@@ -53,6 +56,8 @@ export interface BrainRouteDeps {
   prMerge?: typeof mergeAgentPr
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
+  /** bin/lead (default: the real one). */
+  lead?: BrainLead
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -79,6 +84,17 @@ function proposeRefusal(req: Request, deps: BrainRouteDeps): Response | null {
   const brain = deps.sessions().find((x) => x.pid === pid)
   if (!s || !brain || brain.key !== s.key || brain.sessionId !== s.sessionId || brain.taskId !== BRAIN_AGENT) return fail(403, "forbidden")
   return null
+}
+
+/** The repo of the calling `lead-<repo>` session, or null: loopback peer, its task header, its pid registered under that task. */
+function leadRepo(req: Request, deps: BrainRouteDeps): string | null {
+  if (clientOrigin(req, peerOf(req)).transport !== "loopback") return null
+  const task = req.headers.get("x-companion-task-id") ?? ""
+  const pid = req.headers.get("x-companion-pid")?.trim() ?? ""
+  if (!task.startsWith(LEAD_PREFIX) || !pid) return null
+  const repo = task.slice(LEAD_PREFIX.length)
+  if (!repoSlug(repo)) return null
+  return deps.sessions().some((s) => s.pid === pid && s.taskId === task) ? repo : null
 }
 
 async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
@@ -162,12 +178,15 @@ const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
 /** bin/pr-close and bin/pr-merge: the gate (wiring/brain-pr-close.ts, brain-pr-merge.ts) re-checks it all on GitHub and Turso. */
 async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge"): Promise<Response> {
-  const refused = proposeRefusal(req, deps)
+  const lead = leadRepo(req, deps)
+  const refused = lead ? null : proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
   if (!body) return fail(400, "bad_json")
   const repo = typeof body.repo === "string" && REPO.test(body.repo) ? body.repo : null
   if (!repo) return fail(400, "repo must be owner/name")
+  // A lead acts on its own repo only; the gates themselves are the same for everyone.
+  if (lead && repo !== repoSlug(lead)) return fail(403, "not_lead_repo")
   const pr = typeof body.pr === "number" && Number.isInteger(body.pr) && body.pr > 0 ? body.pr : null
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
@@ -176,6 +195,91 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   const out = await run({ repo, pr, reason })
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
+}
+
+const EVENT_TYPES: ReadonlySet<string> = new Set(["started", "pr", "findings", "fix_started", "fix_pushed", "builder_died", "approved", "behind", "main_merged", "merged", "closed", "close_refused", "blocked"])
+const REFILE_MAX = 5
+
+function refileOf(v: unknown): Array<{ title: string; prompt: string }> | null {
+  if (v === undefined) return []
+  if (!Array.isArray(v) || v.length > REFILE_MAX) return null
+  const out = v.map((r: unknown) => {
+    const o = (r && typeof r === "object" ? r : {}) as Record<string, unknown>
+    const title = str(o.title, TITLE_MAX), prompt = str(o.prompt, PROMPT_MAX)
+    return title && prompt ? { title, prompt } : null
+  })
+  return out.every((x) => x !== null) ? out as Array<{ title: string; prompt: string }> : null
+}
+
+/** A well-formed LeadEvent from the wire, or null. */
+function leadEvent(b: Record<string, unknown>): LeadEvent | null {
+  const type = typeof b.type === "string" && EVENT_TYPES.has(b.type) ? b.type : null
+  const taskId = typeof b.taskId === "string" && /^[0-9a-f]{8}$/.test(b.taskId) ? b.taskId : null
+  if (!type || !taskId) return null
+  if (type === "pr") return typeof b.pr === "number" && Number.isInteger(b.pr) && b.pr > 0 ? { type, taskId, pr: b.pr } : null
+  if (type === "findings") {
+    const f = Array.isArray(b.findings) ? b.findings.map((x) => str(x, REASONING_MAX)).filter((x) => x !== null) : []
+    return f.length ? { type, taskId, findings: f } : null
+  }
+  if (type === "closed" || type === "close_refused") {
+    const refile = refileOf(b.refile)
+    return refile ? { type, taskId, refile } : null
+  }
+  if (type === "blocked") {
+    const line = str(b.line, TODO_MAX)
+    return line && typeof b.kind === "string" && DECISION_KINDS.has(b.kind) ? { type, taskId, kind: b.kind, line } : null
+  }
+  return { type, taskId } as LeadEvent
+}
+
+/** bin/lead: the brain ensures a lead or sends it work; the lead (or the brain) reads the next step and reports events. */
+async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const caller = leadRepo(req, deps)
+  const refused = caller ? null : proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const repo = typeof body.repo === "string" && repoSlug(body.repo) ? body.repo : null
+  if (!repo) return fail(404, "no_lead_for_repo")
+  if (caller && caller !== repo) return fail(403, "not_lead_repo")
+  const lead = deps.lead ?? brainLead
+  if (body.op === "next") {
+    try {
+      return Response.json({ ok: true, action: await lead.next(repo) })
+    } catch (err) {
+      return fail(503, (err as Error).message === "queue_unreadable" ? "queue_unreadable" : "gh_unreachable")
+    }
+  }
+  if (body.op === "event") {
+    const e = leadEvent(body)
+    if (!e) return fail(400, "bad_event")
+    try {
+      lead.event(repo, e)
+    } catch (err) {
+      const msg = (err as Error).message
+      return msg === "unknown_task" ? fail(404, msg) : fail(503, "queue_unreadable")
+    }
+    return Response.json({ ok: true })
+  }
+  // Only the brain hands out work.
+  if (caller) return fail(403, "forbidden")
+  if (body.op === "ensure") {
+    const out = await lead.ensure(repo)
+    return Response.json(out, { status: out.ok ? 200 : 502 })
+  }
+  if (body.op === "send") {
+    const prompt = str(body.prompt, PROMPT_MAX)
+    if (!prompt) return fail(400, "prompt required")
+    const seed = typeof body.sourceTurnId === "string" && TURN_ID.test(body.sourceTurnId) ? body.sourceTurnId : null
+    if (!seed) return fail(400, "sourceTurnId required")
+    try {
+      const out = await lead.send(repo, str(body.title, TITLE_MAX) ?? prompt.split("\n")[0]!.slice(0, TITLE_MAX), prompt, seed)
+      return Response.json(out, { status: out.ok ? 200 : 502 })
+    } catch {
+      return fail(503, "queue_unreadable")
+    }
+  }
+  return fail(400, "unknown_op")
 }
 
 /** bin/deploy: the deployer (wiring/auto-deploy.ts) re-checks the repo allowlist and fast-forward itself. */
@@ -227,6 +331,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-merge")
+    }
+    if (p === "/hooks/brain/lead") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return leadOp(req, deps)
     }
     if (p === "/hooks/brain/deploy") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")
