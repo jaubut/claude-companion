@@ -4352,7 +4352,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 402,
+          "lines": 423,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -4387,7 +4387,8 @@
             "startShellPoll"
           ],
           "state": [
-            "let spawnTurn"
+            "let spawnTurn",
+            "releasedWorkspaces: Set"
           ],
           "emits": [],
           "consumes": [],

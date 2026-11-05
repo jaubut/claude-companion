@@ -65,7 +65,7 @@ test("wireSessions: no shells → the agent list itself; shells → appended aft
 
 // A fake herdr holding `sh-*` workspaces: create adds one, pane close removes it.
 function fakeShells(opts: { gate?: string | null; dies?: boolean; down?: boolean; unclosable?: boolean; agent?: string; terminal?: string } = {}) {
-  const ws: Array<{ id: string; label: string; term: string; cwd: string }> = []
+  const ws: Array<{ id: string; label: string; term: string; cwd: string; split?: boolean }> = []
   const f = fakeHerdr({
     gate: opts.gate,
     reply(args) {
@@ -78,16 +78,23 @@ function fakeShells(opts: { gate?: string | null; dies?: boolean; down?: boolean
       }
       if (verb === "workspace list") return { workspaces: ws.map((w) => ({ workspace_id: w.id, label: w.label })).concat({ workspace_id: "w0", label: "brain" }) }
       if (verb === "pane list") {
-        return { panes: ws.map((w) => ({ pane_id: `${w.id}:p1`, workspace_id: w.id, terminal_id: w.term, cwd: w.cwd, foreground_cwd: `${w.cwd}/sub` })).concat({ pane_id: "w0:p1", workspace_id: "w0", terminal_id: "term_b", cwd: "/b", foreground_cwd: "" }) }
+        const roots = ws.filter((w) => w.term).map((w) => ({ pane_id: `${w.id}:p1`, workspace_id: w.id, terminal_id: w.term, cwd: w.cwd, foreground_cwd: `${w.cwd}/sub` }))
+        const splits = ws.filter((w) => w.split).map((w) => ({ pane_id: `${w.id}:p2`, workspace_id: w.id, terminal_id: `split_${w.id}`, cwd: w.cwd, foreground_cwd: "" }))
+        return { panes: [...splits, ...roots].sort((a, b) => a.workspace_id.localeCompare(b.workspace_id)).concat({ pane_id: "w0:p1", workspace_id: "w0", terminal_id: "term_b", cwd: "/b", foreground_cwd: "" }) }
       }
       if (verb === "pane process-info") return { process_info: { shell_pid: 4242, foreground_process_group_id: 4242 } }
       if (verb === "pane get") return { pane: { agent: opts.agent ?? "", terminal_id: opts.terminal ?? ws.find((w) => args[2] === `${w.id}:p1`)?.term } }
-      if (verb === "pane close") { if (opts.unclosable) throw new Error("no"); ws.splice(ws.findIndex((w) => args[2] === `${w.id}:p1`), 1) }
+      if (verb === "pane close") {
+        if (opts.unclosable) throw new Error("no")
+        const i = ws.findIndex((w) => args[2] === `${w.id}:p1`)
+        if (ws[i]?.split) ws[i]!.term = ""
+        else ws.splice(i, 1)
+      }
       return {}
     },
   })
   const noTmux: Pick<ShellDeps, "run" | "which" | "sleep"> = { which: () => null, sleep: async () => {}, run: async () => ({ code: 1, stdout: "", stderr: "" }) }
-  return { ...f, deps: { ...noTmux, h: f.h } as ShellDeps }
+  return { ...f, ws, deps: { ...noTmux, h: f.h } as ShellDeps }
 }
 
 test("spawn shell: herdr unavailable → herdr_unavailable, nothing created, no tmux", async () => {
@@ -159,6 +166,54 @@ test("herdr list: the pid and first-seen time stick to the terminal id, a restor
   expect((await readHerdrShells(f.h, []))![0]!.panePid).toBe(4242)
   expect(f.calls.at(-1)![1]).toBe("process-info")
   store.replace([])
+})
+
+test("herdr list: a split never takes over the shell's row, a lone restored pane does", async () => {
+  const f = fakeShells()
+  store.replace([])
+  await spawnShellSession("/x/repo", f.deps)
+  const w = f.ws[0]!
+  w.split = true
+  expect(await readHerdrShells(f.h)).toMatchObject([{ herdrPane: `${w.id}:p1`, terminalId: w.term }])
+  w.split = false
+  w.term = "term_restored"
+  expect(await readHerdrShells(f.h)).toMatchObject([{ herdrPane: `${w.id}:p1`, terminalId: "term_restored" }])
+  store.replace([])
+  f.ws.length = 0
+  expect(await readHerdrShells(f.h)).toEqual([])
+})
+
+test("herdr list: two workspaces with one label give one row", async () => {
+  const f = fakeShells()
+  store.replace([])
+  f.ws.push({ id: "w1", label: "sh-dup", term: "t1", cwd: "/a" }, { id: "w2", label: "sh-dup", term: "t2", cwd: "/b" })
+  expect((await readHerdrShells(f.h))!.map((s) => s.terminalId)).toEqual(["t1"])
+  store.replace([])
+})
+
+test("spawn shell: a failed listing refuses before anything is created", async () => {
+  const f = fakeShells({ down: true })
+  store.replace([{ ...H }])
+  const r = await spawnShellSession("/x/repo", f.deps)
+  expect(r).toEqual({ ok: false, error: "herdr_unavailable: workspace list failed" })
+  expect(f.calls.some((c) => c[1] === "create")).toBe(false)
+  store.replace([])
+})
+
+test("close shell: a split survives, the close succeeds, and no later poll or retry reaches it", async () => {
+  const f = fakeShells()
+  store.replace([])
+  await spawnShellSession("/x/repo", f.deps)
+  const w = f.ws[0]!
+  w.split = true
+  const name = listShellSessions()[0]!.name
+  expect(await closeShellSession(name, [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(listShellSessions()).toEqual([])
+  expect(await readHerdrShells(f.h)).toEqual([])
+  expect(await closeShellSession(name, [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(f.calls.filter((c) => c[1] === "close").map((c) => c[2])).toEqual([`${w.id}:p1`])
+  f.ws.length = 0
+  expect(await readHerdrShells(f.h)).toEqual([])
 })
 
 // ── Close (POST /api/shell/close) ──
