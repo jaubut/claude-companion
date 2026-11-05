@@ -442,16 +442,10 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     })
 
     // brain-v2: the brain's reply goes to its thread. No waiting badge, no
-    // global auto-compact (the supervisor compacts it when idle), no push.
-    if (isBrainHook(headerMeta.taskId || session?.taskId)) {
-      if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
-      void brainWiring.onStop(body.session_id ?? "", lastMessage).catch(() => { /* logged inside */ })
-      return Response.json({})
-    }
-
-    // A repo lead's turn end is nobody's to answer: no waiting badge, no push.
+    // global auto-compact (the supervisor compacts it when idle), no push; nor for a repo lead.
     if (isSupervisedTask(headerMeta.taskId || session?.taskId)) {
       if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
+      if (isBrainHook(headerMeta.taskId || session?.taskId)) void brainWiring.onStop(body.session_id ?? "", lastMessage).catch(() => { /* logged inside */ })
       return Response.json({})
     }
 

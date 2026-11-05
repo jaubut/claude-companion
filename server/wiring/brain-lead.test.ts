@@ -11,10 +11,11 @@ const { spawnInHerdr } = await import("../lib/spawn-session")
 const NAME = "lead-claude-companion"
 
 /** A dead lead whose herdr record survived, in workspace w7. */
-function stale(label: string, panes: string[]) {
+function stale(label: string, panes: string[], info: Record<string, unknown> | null = { shell_pid: 5, foreground_process_group_id: 5 }) {
   const f = fakeHerdr({
     reply: (a) => a[0] === "workspace" && a[1] === "list" ? { workspaces: [{ workspace_id: "w7", label }] }
-      : a[0] === "pane" && a[1] === "list" ? { panes: panes.map((p) => ({ pane_id: p, workspace_id: "w7" })) } : {},
+      : a[0] === "pane" && a[1] === "list" ? { panes: panes.map((p) => ({ pane_id: p, workspace_id: "w7" })) }
+      : a[0] === "pane" && a[1] === "process-info" ? (() => { if (!info) throw new Error("timeout"); return { process_info: info } })() : {},
   })
   let taken = true
   const lead = createBrainLead({
@@ -31,6 +32,14 @@ describe("repo lead", () => {
     const { f, lead } = stale(NAME, ["w7:p1"])
     expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
     expect(f.verbs()).toContain("workspace close")
+  })
+
+  test("no positive proof of exit, nothing is stopped: a process in front or an unreadable pane", async () => {
+    for (const info of [{ shell_pid: 5, foreground_process_group_id: 9 }, {}, null]) {
+      const { f, lead } = stale(NAME, ["w7:p1"], info)
+      expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: false, state: "down" })
+      expect(f.verbs().filter((v) => v === "workspace close" || v === "agent stop")).toEqual([])
+    }
   })
 
   test("a foreign pane or label, or an unreadable workspace, is never stopped or closed", async () => {

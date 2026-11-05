@@ -22,7 +22,7 @@ export function createBrainLead(deps: LeadDeps) {
   const h = deps.herdr
   const starting = new Set<string>()
 
-  /** Clears a dead lead's leftover, only when the workspace is the lead's alone: its label, one pane, the agent's. An unreadable answer keeps it. */
+  /** Clears a dead lead's leftover, only when the workspace is the lead's alone (its label, one pane, the agent's) and its shell is back in front. Anything unreadable keeps it. */
   async function clearDead(name: string): Promise<boolean> {
     const a = await deps.agentOf(name)
     const ws = a.kind === "present" ? a.ref.workspaceId : undefined
@@ -30,6 +30,8 @@ export function createBrainLead(deps: LeadDeps) {
     const label = (await herdrWorkspaces(h)).find((w) => w.workspaceId === ws)?.label
     const panes = await herdrWorkspacePanes(ws, h)
     if (label !== name || panes.length !== 1 || panes[0]!.paneId !== a.ref.pane) return false
+    const info = (await h.call(["pane", "process-info", "--pane", a.ref.pane], 2_000).catch(() => null))?.process_info as { shell_pid?: number; foreground_process_group_id?: number } | undefined
+    if (!info?.shell_pid || info.foreground_process_group_id !== info.shell_pid) return false
     await h.call(["agent", "stop", name]).catch(() => undefined)
     await h.call(["workspace", "close", ws]).catch(() => undefined)
     return true

@@ -15,8 +15,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 596 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
-| `routes/hooks.ts` | 562 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
+| `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/dispatch-tasks.ts` | 534 | lib | 54 |  |
@@ -202,9 +202,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tmux-spawn-confirm.ts` | 66 | lib | 4 |  |
 | `lib/trip-report.ts` | 66 | lib | 5 |  |
 | `lib/waiting.ts` | 66 | lib | 6 |  |
+| `wiring/brain-lead.ts` | 65 | lib | 5 |  |
 | `lib/session-pane.ts` | 64 | lib | 4 |  |
 | `wiring/shell-sessions.ts` | 64 | lib | 5 | state: bridges: WeakMap, attaches: Map · emits: sessions · listens: onShellSessions |
-| `wiring/brain-lead.ts` | 63 | lib | 5 |  |
 | `lib/auto-compact-guard.ts` | 61 | lib | 5 |  |
 | `lib/tasks-agent-store.ts` | 61 | lib | 4 |  |
 | `lib/herdr-socket.ts` | 60 | lib | 3 | state: let seq |

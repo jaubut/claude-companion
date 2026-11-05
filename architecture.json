@@ -6428,7 +6428,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 562,
+          "lines": 556,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -7155,7 +7155,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 63,
+          "lines": 65,
           "kind": "lib",
           "exports": [
             "leadArgs",
@@ -14370,17 +14370,17 @@
             "wiring/brain.ts"
           ]
         },
-        "gaugeFromTranscript": {
-          "module": "wiring/gauge.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
-          ]
-        },
         "isSupervisedTask": {
           "module": "lib/brain.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/auto-compact.ts"
+          ]
+        },
+        "gaugeFromTranscript": {
+          "module": "wiring/gauge.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop"
           ]
         },
         "markWaiting": {

@@ -125,7 +125,7 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 
 `LEAD_REPOS` in `lib/brain.ts` lists the repos with a lead. A lead is one persistent `lead-<repo>` herdr workspace with one pane (auto mode, cwd `~/<repo>`, no plan-mode tools: nobody can approve ExitPlanMode), following `brain/LEAD.md`. The server holds no queue: `wiring/brain-lead.ts` only finds or starts it. Work, merge requests and escalations are plain relay messages. A lead has no merge or close rights: the brain runs `bin/pr-merge` and `bin/pr-close`, on dispatch branches only. The limit of 3 PRs lives in the lead's brief and claude-config PR 226. A lead's turn end sets no waiting badge and sends no push.
 
-`bin/lead <repo>` starts a fresh lead when the old one is not running (`alive()`, since herdr can keep a dead agent's record, also after a restore). On `name_taken` the leftover is cleared only when its workspace is the lead's alone: labelled `lead-<repo>`, one pane, the agent's. Anything else, or an unreadable answer, is left alone and answers 502.
+`bin/lead <repo>` starts a fresh lead when the old one is not running (`alive()`, since herdr can keep a dead agent's record, also after a restore). On `name_taken` the leftover is cleared only when its workspace is the lead's alone (labelled `lead-<repo>`, one pane, the agent's) and the pane's shell is back in front. Anything else, or an unreadable answer, is left alone and answers 502.
 
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 
