@@ -1,5 +1,6 @@
 import { scopeFromEnv, thresholdFromEnv } from "../lib/auto-compact"
 import { companionLog } from "../lib/log"
+import { jsonObject } from "../lib/json-body"
 import { autoCompactor, compactTargetForKey } from "../wiring/auto-compact"
 
 // Smart auto-compact (lib/auto-compact.ts). Bearer-gated like every /api/*.
@@ -35,7 +36,7 @@ export async function handleAutoCompactRoute(req: Request, url: URL): Promise<Re
 
 async function bodyKey(req: Request): Promise<string> {
   try {
-    const body = await req.json() as { key?: unknown }
+    const body = await jsonObject<{ key?: unknown }>(req)
     return typeof body.key === "string" ? body.key : ""
   } catch { return "" }
 }

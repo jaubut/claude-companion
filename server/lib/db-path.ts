@@ -8,6 +8,6 @@ import { join } from "node:path"
 // override, a per-process throwaway file — never the real home db.
 export function companionDbPath(): string {
   if (process.env.COMPANION_DB_PATH) return process.env.COMPANION_DB_PATH
-  if (process.env.NODE_ENV === "test") return join(tmpdir(), `companion-test-${process.pid}.db`)
+  if (process.env.NODE_ENV === "test") return join(tmpdir(), `companion-test-${process.pid}.db`) // ast-grep-ignore: no-predictable-tmp
   return join(homedir(), ".claude-companion", "companion.db")
 }

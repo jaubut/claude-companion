@@ -1,0 +1,13 @@
+id: no-unguarded-json-parse
+language: TypeScript
+severity: error
+message: JSON.parse outside try. One malformed input throws through the caller.
+note: |
+  Wrap it in try and handle the failure.
+  From the pattern 4 reviews in RES-U66W: claude-config#60, #112, tls-dashboard-v2#152.
+# tools/ are dev CLIs: crashing on a bad config file is the right behaviour there.
+ignores: ["**/*.test.ts", "**/*.test-util.ts", "tools/**"]
+rule:
+  pattern: JSON.parse($$$)
+  not:
+    inside: { kind: try_statement, stopBy: end }

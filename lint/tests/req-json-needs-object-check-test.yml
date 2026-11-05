@@ -1,0 +1,9 @@
+id: req-json-needs-object-check
+valid:
+  - 'const raw = await req.json() as unknown'
+  - 'const body = await req.json().catch(() => null) as Record<string, unknown> | null'
+  - 'const parsed = await res.json() as { ok?: boolean }'
+invalid:
+  - 'const body = await req.json().catch(() => ({})) as { name?: unknown }'
+  - 'const body = await req.json() as { token?: string }'
+  - 'try { body = (await req.json()) as Record<string, unknown> } catch { return null }'
