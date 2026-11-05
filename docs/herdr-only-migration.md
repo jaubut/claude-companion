@@ -166,7 +166,7 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 - Failure paths: Companion restart → row back (same pid); SIGKILL of the herdr unit → row back, same key, new shell; `exit` → socket 4000 `ended`, row gone; second socket → takes over, first gets 4000, row stays; a legacy tagged tmux shell on a private tmux server is listed, attaches, closes; a full `herdr` client stays attached through a takeover.
 - Tests: `bun test --isolate` (as CI) 2596 pass, 6 fail, all 6 failing on main too in this sandbox; typecheck clean.
 
-**Behaviour change: one attach per terminal.** tmux let a phone and an iPad share a shell. herdr refuses a second attach, so ours takes over: the newest device wins and the other gets close 4000, which the app shows as "Session ended" although the shell lives; tapping the row takes it back. A shell being mirrored and attached at once is fine (the sizer's `control` exits, the mirror keeps the pane's width).
+**Behaviour change: one attach per terminal (accepted by Jeremie, 2026-11-05).** tmux let a phone and an iPad share a shell. herdr refuses a second attach, so ours takes over: the newest device wins and the other gets close 4000, which the app shows as "Session ended" although the shell lives; tapping the row takes it back. A shell being mirrored and attached at once is fine (the sizer's `control` exits, the mirror keeps the pane's width).
 
 **Where it can fail in production:**
 - The Mac side is unverified: same code, herdr pinned, but it was not run there, and the Mac server is 27 commits behind.
@@ -176,7 +176,7 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 
 **iOS follow-ups (list for a Mac builder, none block the phone):**
 1. Canvas `TerminalAttach.swift`: `command(for:)` requires `tmuxPane`, so a herdr shell node gets no attach. Needs `terminalId` on the wire (additive, not added here) and `herdr terminal attach <id> --takeover`, locally or through `ssh -t`.
-2. `TerminalScreen`: close 4000 from a takeover reads "The shell exited". Copy only; a `taken_over` reason can be added when the app reads it.
+2. `TerminalScreen`: a takeover closes with 4000, which reads "Session ended / The shell exited". It needs takeover wording, e.g. "Opened on another device. Tap to take it back." The server sends the same close for both today; a `taken_over` reason is a small server change once the app reads it.
 3. Stale comments: "tmux session", "tmux's status line".
 
 **Rollback:** revert the PR. Herdr shells created meanwhile keep running as plain workspaces and leave the phone's list (close them with `herdr workspace close`). tmux shells were never touched.
