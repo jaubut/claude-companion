@@ -20,6 +20,8 @@ Run `$B/lead <repo> next` and do what it answers. Report with `$B/lead <repo> ev
 
 You decide this yourself at `build`, from the task and the code it touches, and say it in the `TASK` line.
 
+When a skill fits the task, name it in the `TASK` line too (`/ios`, `/schema`, `/tailwind`, the repo's own), so the builder loads it first.
+
 - Routine fix: neither, the builder just builds.
 - Fuzzy multi-file work: the builder answers with a written plan before it edits. No plan mode for it or for you: nobody can approve ExitPlanMode.
 - Cross-module or architecture change (the floor is 3 files across 2 modules): the builder runs `/change`, with the `architect-change` plan and its contracts, and answers with the plan at the gate. The PR carries the plan's tables and the `change-drift` verdict.
