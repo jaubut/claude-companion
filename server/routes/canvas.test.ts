@@ -27,7 +27,14 @@ const route = createCanvasRoute({
     if (sendResult instanceof Error) throw sendResult
     return sendResult
   },
+  pickNotify: async (node) => {
+    picks.push(node.id)
+    if (pickResult instanceof Error) throw pickResult
+    return pickResult
+  },
 })
+const picks: string[] = []
+let pickResult: SendResult | null | Error = null
 let server: Server<WsData>
 let base: string
 
@@ -225,6 +232,105 @@ describe("context edges (P6)", () => {
     expect(rich.json).toMatchObject({ ok: true, note: { body: "v2" }, content: [{ type: "text", text: "v2" }], omitted: 0 })
     expect((await call("GET", "/api/canvas/linked-notes")).json.error).toBe("missing_target")
     for (const id of ["ln-agent", "ln-brain", "ln-spec", "ln-sticky", "ln-other"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+})
+
+describe("preview pick (design-first)", () => {
+  const preview = (id: string, group: string, extra: Record<string, unknown> = {}) =>
+    call("POST", "/api/canvas/nodes", { id, kind: "preview", ref: `http://zettlab:3147/${id}.html`, x: 0, y: 600, w: 1, h: 1, data: { title: id, direction: id, group, ...extra } })
+  const data = (id: string): Record<string, unknown> => store.node(id)!.data
+
+  test("404 / 400 invalid_kind / 400 invalid_id, nothing typed", async () => {
+    picks.length = 0
+    expect(await call("POST", "/api/canvas/nodes/nope/pick", {})).toMatchObject({ status: 404, json: { error: "not_found" } })
+    await call("POST", "/api/canvas/nodes", { id: "pk-note", kind: "note", x: 0, y: 0, w: 1, h: 1 })
+    expect(await call("POST", "/api/canvas/nodes/pk-note/pick", {})).toMatchObject({ status: 400, json: { error: "invalid_kind" } })
+    expect(await call("POST", "/api/canvas/nodes/a%20b/pick", {})).toMatchObject({ status: 400, json: { error: "invalid_id" } })
+    expect(data("pk-note").picked).toBeUndefined()
+    expect(picks).toEqual([])
+    await call("DELETE", "/api/canvas/nodes/pk-note")
+  })
+
+  test("group exclusivity + one node frame per changed node; delivered true/false", async () => {
+    const ws = new WebSocket(`ws://localhost:${server.port}/ws`)
+    const frames: Record<string, unknown>[] = []
+    ws.onmessage = (m) => frames.push(JSON.parse(String(m.data)))
+    await new Promise((r) => { ws.onopen = r })
+    for (const id of ["safe", "bold", "wild"]) await preview(id, "g1")
+    await preview("other", "g2", { picked: true })
+    const nodeFrames = async (n: number) => {
+      for (let i = 0; i < 100 && frames.length < n; i++) await Bun.sleep(10)
+      return frames.splice(0).map((f) => (f.node as { id: string; data: Record<string, unknown> }))
+    }
+    await nodeFrames(4)
+
+    picks.length = 0
+    pickResult = null
+    const a = await call("POST", "/api/canvas/nodes/bold/pick", {})
+    expect(a).toMatchObject({ status: 200, json: { ok: true, delivered: false, node: { id: "bold", data: { picked: true, pickedAt: expect.any(Number), direction: "bold" } } } })
+    expect(data("safe").picked).toBe(false)
+    expect(data("wild").picked).toBe(false)
+    expect(data("other").picked).toBe(true) // another group is untouched
+    expect((await nodeFrames(3)).map((n) => [n.id, n.data.picked])).toEqual([["bold", true], ["safe", false], ["wild", false]])
+
+    pickResult = { ok: true }
+    const b = await call("POST", "/api/canvas/nodes/wild/pick", {})
+    expect(b).toMatchObject({ status: 200, json: { ok: true, delivered: true, node: { id: "wild", data: { picked: true } } } })
+    expect(data("bold").picked).toBe(false)
+    // safe was already false: only wild and bold change.
+    expect((await nodeFrames(2)).map((n) => [n.id, n.data.picked])).toEqual([["wild", true], ["bold", false]])
+    expect(picks).toEqual(["bold", "wild"])
+    ws.close()
+    for (const id of ["safe", "bold", "wild", "other"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("a double tap types once, concurrent or not; a failed delivery can be retried; a new pick re-claims", async () => {
+    await preview("dt-a", "g4")
+    await preview("dt-b", "g4")
+    picks.length = 0
+    pickResult = { ok: true }
+    const [x, y] = await Promise.all(["a", "b"].map(() => call("POST", "/api/canvas/nodes/dt-a/pick", {})))
+    expect([x!.status, y!.status]).toEqual([200, 200])
+    expect([x!.json.duplicate, y!.json.duplicate].filter(Boolean)).toEqual([true])
+    expect(picks).toEqual(["dt-a"])
+    expect(await call("POST", "/api/canvas/nodes/dt-a/pick", {})).toMatchObject({ status: 200, json: { delivered: true, duplicate: true } })
+    expect(picks).toEqual(["dt-a"])
+
+    expect(store.pickNode("dt-b", 1)).toMatchObject({ ok: true, claimed: true })
+    expect(store.pickNode("dt-b", 2)).toMatchObject({ ok: true, claimed: false, sent: false, changed: [] })
+    store.settlePick("dt-b", false)
+
+    pickResult = { ok: false, status: 409, error: "pane_not_ready" }
+    expect((await call("POST", "/api/canvas/nodes/dt-b/pick", {})).status).toBe(409)
+    pickResult = { ok: true }
+    expect(await call("POST", "/api/canvas/nodes/dt-b/pick", {})).toMatchObject({ status: 200, json: { delivered: true } })
+    expect(picks).toEqual(["dt-a", "dt-b", "dt-b"])
+
+    expect(await call("POST", "/api/canvas/nodes/dt-a/pick", {})).toMatchObject({ status: 200, json: { delivered: true } })
+    expect(picks).toEqual(["dt-a", "dt-b", "dt-b", "dt-a"])
+    pickResult = null
+    for (const id of ["dt-a", "dt-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("inject refusals answer with /send's codes; the pick is still stored", async () => {
+    await preview("pk-a", "g3")
+    await preview("pk-b", "g3")
+    for (const [res, status] of [
+      [{ ok: false, status: 409, error: "pane_not_ready", detail: { ok: true, reason: "busy" } }, 409],
+      [{ ok: false, status: 409, error: "dialog_open" }, 409],
+      [{ ok: false, status: 410, error: "target_gone" }, 410],
+    ] as const) {
+      pickResult = res
+      const r = await call("POST", "/api/canvas/nodes/pk-a/pick", {})
+      expect(r.status).toBe(status)
+      expect(r.json).toMatchObject({ ok: false, error: res.error, delivered: false, node: { id: "pk-a", data: { picked: true } } })
+    }
+    pickResult = new Error("boom")
+    expect(await call("POST", "/api/canvas/nodes/pk-b/pick", {})).toMatchObject({ status: 503, json: { error: "send_failed", delivered: false } })
+    expect(data("pk-b").picked).toBe(true)
+    expect(data("pk-a").picked).toBe(false)
+    pickResult = null
+    for (const id of ["pk-a", "pk-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
   })
 })
 
