@@ -86,6 +86,22 @@ describe("bin/pr-unpark gate: refusals", () => {
     expect(await refused(pr(), `${TASK} ${park("label do-not-merge")}`)).toEqual([409, "label_park"])
   })
 
+  const humanPark: Array<[string, string]> = [
+    ["client-origin park", "client-origin PR — human review required: CI failing (no fix runs on client PRs)"],
+    ["tainted park", "tainted (unknown) PR touches server/auth.ts — human merge only"],
+    ["sensitive-path park", "touches server/lib/auth.ts, .env.example — needs your review"],
+  ]
+  for (const [what, reason] of humanPark) {
+    test(`409 human_review_park: ${what}`, async () => {
+      expect(await refused(pr(), `${TASK} ${park(reason)}`)).toEqual([409, "human_review_park"])
+    })
+  }
+
+  test("409 human_review_park: any park on a client-origin PR, by label or task origin", async () => {
+    expect(await refused(pr({ labels: [{ name: "client-origin" }] }), `${TASK} ${park()}`)).toEqual([409, "human_review_park"])
+    expect(await refused(pr(), `${TASK.replace("'jeremie'", "'client:acme'")} ${park()}`)).toEqual([409, "human_review_park"])
+  })
+
   test(`429 unpark_cap after ${UNPARK_CAP} brain unparks of this PR`, async () => {
     const seed = `${TASK} ${park()} ${brainUnpark()} ${park()} ${brainUnpark()} ${park()}`
     expect(await refused(pr(), seed)).toEqual([429, "unpark_cap"])
@@ -103,7 +119,7 @@ describe("bin/pr-unpark gate: the hand-back", () => {
     expect([rows[0]!.target_kind, rows[0]!.target_id]).toEqual(["task", "abcd1234-0000"])
     const meta = JSON.parse(String(rows[0]!.meta)) as Record<string, unknown>
     expect(meta).toMatchObject({ url: URL, source: "brain", reason: input.reason, guidance: input.guidance, head_sha: SHA, unpark_no: 1 })
-    // No `by`/`category`: the shepherd's unparkResets() treats it as a hand unpark (fix budget resets).
+    // source "brain" is what the shepherd keys on; `category` would mean its own unpark (no budget reset).
     expect(meta.by).toBeUndefined()
     expect(meta.category).toBeUndefined()
     expect(w.events).toHaveLength(1)
@@ -117,6 +133,12 @@ describe("bin/pr-unpark gate: the hand-back", () => {
     const out = await unparkAgentPr(input, w.deps)
     expect([out.status, out.body.unparks]).toEqual([200, 2])
   })
+
+  for (const reason of ["stale (no activity for 9 days)", "merge conflict unresolved after 2 attempts", "superseded by #9 — close this one", "CI still failing after 3 fixes: typecheck"]) {
+    test(`lifts a routine park: ${reason}`, async () => {
+      expect((await unparkAgentPr(input, world(pr(), `${TASK} ${park(reason)}`).deps)).status).toBe(200)
+    })
+  }
 
   test("two concurrent unparks stay under the cap: one 200, one 409 ledger_changed", async () => {
     const w = world(pr(), `${TASK} ${park()} ${brainUnpark()} ${park()}`)

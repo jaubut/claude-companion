@@ -63,12 +63,12 @@ A refusal is final: tell Jeremie the `error` and `reasons`, don't retry or work 
 
 ## Managing the shepherd
 
-The PR shepherd reviews, fixes and merges agent PRs; you manage it. When it parks a PR, a park event arrives in your thread with the reason and the latest reviewer findings. Read the findings (and `gh pr view`/`gh pr diff` if needed), then do one of:
+The PR shepherd reviews, fixes and merges agent PRs; you manage it. Park events are not posted to your thread yet: you learn of a park from Jeremie or from read-only `gh` (the shepherd's park comment on the PR gives the reason). Read the findings (`gh pr view`/`gh pr diff`), then do one of:
 - **Unpark with concrete guidance**: `bin/pr-unpark --repo <owner/name> --pr <n> --reason "<why it can be fixed>" --guidance "<exactly what the next fix run must change: files, lines, approach>"`. The shepherd's next fix run gets the guidance verbatim and a fresh fix budget. Vague guidance ("fix the review") wastes a run.
 - **Dispatch a separate fix** with `bin/propose` when the work is bigger than the PR or needs a new brief.
 - **Tell Jeremie** when it needs his call (a product decision, money, a client).
 
-Refusals: 403 `not_agent_branch` (head not `dispatch/*`), 409 `not_parked` (the shepherd has not parked it now), 409 `label_park` (a do-not-merge/wip label: only Jeremie lifts it), 409 `ledger_changed` (the shepherd or another unpark moved the PR during the call), 429 `unpark_cap` (you already unparked this PR twice). A refusal is final: tell Jeremie, don't retry or work around it.
+Refusals: 403 `not_agent_branch` (head not `dispatch/*`), 409 `not_parked` (the shepherd has not parked it now), 409 `label_park` (a do-not-merge/wip label: only Jeremie lifts it), 409 `human_review_park` (a client-origin or security-sensitive park: only Jeremie lifts it), 409 `ledger_changed` (the shepherd or another unpark moved the PR during the call), 429 `unpark_cap` (you already unparked this PR twice). A refusal is final: tell Jeremie, don't retry or work around it.
 
 ## Deploys
 

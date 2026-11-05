@@ -162,7 +162,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 
 ### Shepherd unpark (`/hooks/brain/pr-unpark`)
 
-`wiring/brain-pr-unpark.ts` hands a shepherd-parked agent PR back with guidance for its next fix run. Body `{repo, pr, reason, guidance}` (reason ≤ 300, guidance ≤ 2,000). It checks, from GitHub and Turso: open, head `dispatch/*`; a `pr:needs-human` row for the PR url newer than every `pr:unpark` and every live `pr:approved-merge` (an approval older than 7 days lifts nothing); no do-not-merge/wip label on the PR or in the park reason; fewer than 2 brain unparks of this PR. It then writes one `agent_activity` row, guarded atomically (no new ledger row since the read, cap still free), the contract `claude-config tools/pr-shepherd*.ts` reads: `agent_slug brain`, `action pr:unpark`, target = the linked task (else `pr` + url), meta `{url, repo, pr, reason, guidance, source: "brain", head_sha, prior_reason, prior_park_id, unpark_no}`. No `by` and no `category`, so the shepherd treats it as a hand unpark (fix budget resets). An event turn goes to the brain thread.
+`wiring/brain-pr-unpark.ts` hands a shepherd-parked agent PR back with guidance for its next fix run. Body `{repo, pr, reason, guidance}` (reason ≤ 300, guidance ≤ 2,000). It checks, from GitHub and Turso: open, head `dispatch/*`; a `pr:needs-human` row for the PR url newer than every `pr:unpark` and every live `pr:approved-merge` (an approval older than 7 days lifts nothing); no do-not-merge/wip label on the PR or in the park reason; not a client-origin or security-sensitive park (the `client-origin PR`, `tainted (…` and `touches … — needs your review` reasons), and not a client-origin PR at all (`client-origin` label, or the linked task's origin is neither jeremie nor system); fewer than 2 brain unparks of this PR. It then writes one `agent_activity` row, guarded atomically (no new ledger row since the read, cap still free), the contract `claude-config tools/pr-shepherd*.ts` reads: `agent_slug brain`, `action pr:unpark`, target = the linked task (else `pr` + url), meta `{url, repo, pr, reason, guidance, source: "brain", head_sha, prior_reason, prior_park_id, unpark_no}`. `source: "brain"` is what the shepherd matches: up to 2 per PR it lifts the park, resets the fix budget and puts `guidance` verbatim into the fix prompts. An event turn goes to the brain thread.
 
 | answer | when |
 |---|---|
@@ -170,6 +170,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 400 | bad repo / pr / reason / guidance |
 | 403 `not_agent_branch` | head not `dispatch/*` |
 | 409 `not_open` · 409 `not_parked` · 409 `label_park` | nothing to lift, or Jeremie's label |
+| 409 `human_review_park` | a client-origin or security-sensitive park: only Jeremie lifts it |
 | 409 `ledger_changed` | a park, unpark or approval landed during the call; nothing recorded |
 | 429 `unpark_cap` | 2 brain unparks of this PR |
 | 404 `pr_not_found` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |

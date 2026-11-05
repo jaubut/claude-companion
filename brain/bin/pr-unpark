@@ -6,9 +6,10 @@
 #
 # The server re-checks on GitHub and Turso and refuses: head not dispatch/*
 # (403 not_agent_branch) · not parked by the shepherd now (409 not_parked) ·
-# a do-not-merge/wip label park, only Jeremie lifts it (409 label_park) · the
-# brain already unparked this PR twice (429 unpark_cap). Same auth as
-# bin/propose: loopback, X-Companion-Task-Id: brain and the pid of the brain's
+# a do-not-merge/wip label park, only Jeremie lifts it (409 label_park) · a
+# client-origin or security-sensitive park, same (409 human_review_park) · the
+# ledger moved during the call (409 ledger_changed) · the brain already
+# unparked this PR twice (429 unpark_cap). Same auth as bin/propose: loopback, X-Companion-Task-Id: brain and the pid of the brain's
 # claude process (found by walking up the parent chain).
 set -euo pipefail
 

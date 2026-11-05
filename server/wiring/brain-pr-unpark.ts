@@ -7,7 +7,7 @@ import { type GhFn, realGh } from "../lib/triage-pr"
 import { NEEDS_HUMAN } from "../lib/triage-sources"
 import { type ExecFn, TursoUnreachable } from "../lib/turso"
 import { REASON_MAX } from "./brain-pr-close"
-import { HOLD_LABEL } from "./brain-pr-merge"
+import { HOLD_LABEL, HUMAN_REVIEW_PARK } from "./brain-pr-merge"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
 
@@ -19,16 +19,20 @@ import { orchEmit } from "./orchestrator"
 //     pr:approved-merge for the PR url (an expired approval lifts nothing)
 //   label_park (409): a do-not-merge/wip label on the PR or in the park reason
 //     (only Jeremie lifts those)
+//   human_review_park (409): a client-origin or security-sensitive park, or any
+//     park on a client-origin PR (same: only Jeremie)
 //   unpark_cap (429): the brain already unparked this PR UNPARK_CAP times
 //   ledger_changed (409): a park, unpark or approval landed during the call
 // The row is the contract claude-config tools/pr-shepherd*.ts reads: action
-// `pr:unpark`, meta {url, reason, guidance, source: "brain"}; no `by` and no
-// `category`, so the shepherd treats it as a hand unpark (fix budget resets).
+// `pr:unpark`, meta {url, reason, guidance, source: "brain"}: `source` makes it a
+// brain unpark (fix budget resets, guidance goes into the fix prompts).
 
 export const UNPARK_ACTION = "pr:unpark"
 export const UNPARK_SOURCE = "brain"
 export const UNPARK_CAP = 2
 export const GUIDANCE_MAX = 2_000
+const CLIENT_LABEL = "client-origin"
+const OWN_ORIGINS = new Set(["jeremie", "system"])
 
 interface PrUnparkInput { repo: string; pr: number; reason: string; guidance: string }
 interface PrUnparkDeps { gh: GhFn; exec: ExecFn; event(text: string): void }
@@ -57,7 +61,7 @@ async function view(gh: GhFn, p: PrUnparkInput): Promise<PrView | Out> {
   }
 }
 
-interface Ledger { park: { id: number; reason: string } | null; headId: number; brainUnparks: number; taskId: string | null }
+interface Ledger { park: { id: number; reason: string } | null; headId: number; brainUnparks: number; taskId: string | null; taskOrigin: string | null }
 
 const LEDGER_ROWS = "action IN ('pr:needs-human', 'pr:unpark', 'pr:approved-merge') AND json_extract(meta, '$.url') = ?"
 const BRAIN_UNPARKS = "SELECT COUNT(*) AS n FROM agent_activity WHERE action = ? AND json_extract(meta, '$.url') = ? AND json_extract(meta, '$.source') = ?"
@@ -74,8 +78,8 @@ async function ledger(exec: ExecFn, url: string): Promise<Ledger> {
     park = { id: Number(row.id), reason: typeof meta.reason === "string" ? meta.reason : "" }
   }
   const c = await exec(BRAIN_UNPARKS, [UNPARK_ACTION, url, UNPARK_SOURCE])
-  const t = await exec("SELECT id FROM tasks WHERE dispatch_pr_url = ? LIMIT 1", [url])
-  return { park, headId: Number(rows[0]?.id ?? 0), brainUnparks: Number(c.rows[0]?.n ?? NaN), taskId: t.rows[0] ? String(t.rows[0].id) : null }
+  const t = await exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ? LIMIT 1", [url])
+  return { park, headId: Number(rows[0]?.id ?? 0), brainUnparks: Number(c.rows[0]?.n ?? NaN), taskId: t.rows[0] ? String(t.rows[0].id) : null, taskOrigin: t.rows[0]?.origin ? String(t.rows[0].origin) : null }
 }
 
 export async function unparkAgentPr(p: PrUnparkInput, deps: PrUnparkDeps = realDeps): Promise<Out> {
@@ -93,6 +97,8 @@ export async function unparkAgentPr(p: PrUnparkInput, deps: PrUnparkDeps = realD
   if (!l.park) return fail(409, "not_parked")
   const labels = v.labels.map((x) => String(x.name ?? "")).filter((x) => HOLD_LABEL.test(x))
   if (labels.length || HOLD_LABEL.test(l.park.reason)) return fail(409, "label_park", { labels, park: l.park.reason.slice(0, 200) })
+  const clientPr = v.labels.some((x) => x.name === CLIENT_LABEL) || (l.taskOrigin !== null && !OWN_ORIGINS.has(l.taskOrigin))
+  if (clientPr || HUMAN_REVIEW_PARK.test(l.park.reason)) return fail(409, "human_review_park", { park: l.park.reason.slice(0, 200) })
   if (!(l.brainUnparks < UNPARK_CAP)) return fail(429, "unpark_cap", { cap: UNPARK_CAP })
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   const guidance = redactSecrets(p.guidance).slice(0, GUIDANCE_MAX)
