@@ -529,6 +529,21 @@ describe("reapScrapeSessions", () => {
     expect(isScrapeTarget({ tmuxPane: "%10" })).toBe(false)
   })
 
+  test("a listing without pids keeps a pending kill's pid: its claude must exit before the HOME goes", async () => {
+    const tmux = new FakeTmux(sim(), { unkillable: { count: 3 } })
+    expect((await run(tmux, { killAttempts: 3 })).status).toBe("ok")
+    expect(pendingKills()).toHaveLength(1)
+    const noPids: typeof tmux.run = async (args) => {
+      const r = await tmux.run(args)
+      if (args[0] !== "list-panes") return r
+      return { ...r, stdout: r.stdout.split("\n").map((l) => l.split("\t").map((c, i) => (i === 3 ? "" : c)).join("\t")).join("\n") }
+    }
+    await reapScrapeSessions({ tmux: noPids, sleep: async () => {}, pidAlive: () => true, selfPid: SELF, homes: fakeHomes().homes, timing: { pidExitMs: 1, pollMs: 1 } })
+    expect(pendingKills()).toHaveLength(1)
+    await reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes: fakeHomes().homes })
+    expect(pendingKills()).toEqual([])
+  })
+
   test("a pending kill of a replaced server's session is never re-marked by its cleanup", async () => {
     const tmux = new FakeTmux(sim(), { unkillable: { count: 3 } })
     const res = await run(tmux, { killAttempts: 3 })

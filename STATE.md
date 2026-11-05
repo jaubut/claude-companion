@@ -1,6 +1,6 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-25
+Last updated: 2026-11-05
 
 ## Active Decisions
 
@@ -9,6 +9,11 @@ Last updated: 2026-10-25
 **Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.
 **Rejected:** typescript-eslint (needs the TS compiler API); pattern 1, swallowed errors (8 of 16 overall, 0 of 2 here, about 400 live candidates); a `tmuxCapture` timeout rule (a call site shows nothing, the gap is inside the wrapper).
 **Revisit if:** the 34 suppressions stop shrinking, or a second repo wants the same rules.
+### Off-pane commands on herdr, through the same TmuxRunner seam (2026-11-05, herdr-only Stage 3)
+**Choice:** `lib/command-offpane-herdr.ts` answers the tmux verbs of the enumeration and reaper from a `cc-scrape-*` herdr workspace; the launch prefers `~/.local/bin/claude`. Results and proof: `docs/herdr-only-migration.md` Stage 3.
+**Why:** the list had been dead on Zettlab since 2026-10-11 (the `~/.bun/bin/claude` shim execs `$HOME/...`, and `$HOME` is throwaway). `/` suggestions don't replace it.
+**Rejected:** dropping it; rewriting the lifecycle and its 1458-line test (kept, Stage 5 can flatten); a separate hidden herdr session (a daemon to manage for a 30 s blip).
+**Revisit if:** the blip in a herdr client annoys, or a new herdr has a hidden workspace.
 
 ### Pane mirror scrollback: opt-in history request, answered to the asking viewer only (2026-11-02, t-ios-term-input-1)
 **Choice:** phone → `{"type":"scrollback","lines":N}` (cap 2000); server → that viewer only `{"type":"history","lines":M}` + one binary frame of M plain rows (CRLF, SGR reset per row), from `pane.read --source recent --lines N` (visible screen included). One answer per viewer per 1 s, latest wins. tmux / failed read → `lines:0`, no binary frame.

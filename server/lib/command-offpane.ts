@@ -6,8 +6,8 @@
 // had to abort the scrape or be refused (seen 2026-09-28: "full list aborted
 // after 72 in 11.9s", "command scrape aborted for inject → ttys007").
 //
-// Now the server owns the pane it drives: a throwaway detached tmux session
-// (`cc-scrape-*`, 220x60) running `claude` in the SAME cwd — so project
+// Now the server owns the pane it drives: a throwaway herdr workspace
+// (`cc-scrape-*`, lib/command-offpane-herdr.ts) running `claude` in the SAME cwd — so project
 // `.claude/` skills, commands and plugins resolve exactly as they do for the
 // user — scraped with the same /help parser (lib/command-list.ts), then killed,
 // confirmed dead, and its process seen to exit. The user's pane receives zero
@@ -47,7 +47,8 @@ import {
   isScrapeSessionName, markScrapeTarget, noteTmuxServer, releaseScrapeTarget, SCRAPE_ENV, SCRAPE_ENV_CLAUDE, scrapeSessionName, scrapeSessionOwner,
 } from "./scrape-registry"
 import { detachedNewSessionArgs } from "./spawn-session"
-import { defaultTmux, tmuxNoServer, type ClaudeLaunch, type TmuxRunner } from "./command-offpane-launch"
+import { herdrScrapeRunner } from "./command-offpane-herdr"
+import { tmuxNoServer, type ClaudeLaunch, type TmuxRunner } from "./command-offpane-launch"
 import { createScrapeHome, knownHomesBase, removeScrapeHome, sweepOrphanHomes, type ScrapeHome } from "./command-offpane-home"
 
 export type { ClaudeLaunch, TmuxResult, TmuxRunner } from "./command-offpane-launch"
@@ -298,7 +299,7 @@ function parsePaneList(out: string): { recs: ScrapeRecord[]; serverPid: number |
 // killed. Failed kills are retained for the retry timer. Orphan throwaway
 // HOMEs are swept as well.
 export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Promise<string[]> {
-  const full: LifecycleDeps = { tmux: defaultTmux, sleep: realSleep, ...deps }
+  const full: LifecycleDeps = { tmux: herdrScrapeRunner(), sleep: realSleep, ...deps }
   const alive = full.pidAlive ?? pidAlive
   const selfPid = full.selfPid ?? process.pid
   const homes = full.homes ?? realHomes
@@ -335,7 +336,7 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
     if (active.has(rec.name) || !reapable(rec.name, selfPid, alive)) continue
     const pending = pendingKill.get(rec.name)
     const home = pending?.home || (await homes.pathFor?.(rec.name).catch(() => null)) || ""
-    todo.set(rec.name, { ...rec, home })
+    todo.set(rec.name, { ...rec, pid: rec.pid || (pending?.pid ?? 0), home })
   }
   const reaped: string[] = []
   for (const rec of todo.values()) {
@@ -421,7 +422,7 @@ export async function enumerateCommandsOffPane(cwd: string, deps: OffPaneDeps): 
     if (created.code === 0 && serverPid !== null) observeServer(serverPid, ticket)
     // Marked before claude has booted far enough to do anything.
     markScrapeTarget(rec)
-    if (created.code !== 0 || !/^%\d+$/.test(pane)) return result("error", [], 0, "tmux new-session failed")
+    if (created.code !== 0 || !/^(%\d+|[A-Za-z0-9]+:p\d+)$/.test(pane)) return result("error", [], 0, "tmux new-session failed")
 
     const capture = async (): Promise<string | null> => {
       const r = await tmux(["capture-pane", "-p", "-t", pane])
