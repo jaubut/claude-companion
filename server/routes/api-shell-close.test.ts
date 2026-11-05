@@ -16,6 +16,7 @@ let sessions: typeof import("../lib/sessions")
 beforeAll(async () => {
   process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "api-shell-close-")), "test.db")
   process.env.COMPANION_TMUX_SOCKET = `cc-close-test-${process.pid}-${Date.now()}`
+  process.env.HERDR_BIN = "false" // never the host's herdr
   process.env.COMPANION_AUTH_TOKEN ??= "shell-close-test-token-0123456789"
   handleApiRoute = (await import("./api")).handleApiRoute
   shells = await import("../lib/shell-sessions")
@@ -25,10 +26,11 @@ beforeAll(async () => {
 afterAll(() => {
   shells.store.replace([])
   delete process.env.COMPANION_TMUX_SOCKET
+  delete process.env.HERDR_BIN
 })
 
 const shell = (name: string, pane: string, claudeKey = ""): ShellSession => ({
-  key: `shell:${name}`, name, cwd: "/tmp", tmuxPane: pane, tmuxSocket: "/tmp/tmux-1000/cc", createdAt: 1, panePid: 0, claudeKey,
+  key: `shell:${name}`, name, cwd: "/tmp", herdrPane: "", terminalId: "", tmuxPane: pane, tmuxSocket: "/tmp/tmux-1000/cc", createdAt: 1, panePid: 0, claudeKey,
 })
 
 async function close(body: unknown, peer = "127.0.0.1"): Promise<{ status: number; json: Record<string, unknown> }> {

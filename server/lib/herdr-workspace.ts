@@ -2,13 +2,15 @@ import type { Session } from "./sessions"
 import { closeHerdrWorkspaceWhenIdle, forgetHerdrAgent, herdrOwnerFor, herdrPaneOf, type HerdrOwner } from "./herdr"
 import { companionLog } from "./log"
 import { endedStore } from "./ended-sessions"
+import { listShellSessions } from "./shell-sessions"
 
 // A session left the registry (SessionEnd, pid-dead prune): release its
 // workspace, and while its herdr pane stays open keep the chat as
-// "Ended · Resume" (lib/ended-sessions.ts).
+// "Ended · Resume" (lib/ended-sessions.ts). A phone shell's pane is not one:
+// its row is the shell, and an ended row's Delete would close that shell.
 export function herdrSessionGone(s: Session, live: () => Session[], reason: string): void {
   releaseHerdrWorkspace(s, live)
-  void endedStore.note(s, live, reason)
+  void endedStore.note(s, () => [...live(), ...listShellSessions()], reason)
 }
 
 // Opt-in (COMPANION_HERDR_AUTOCLOSE=1 exactly; read per call so tests can
