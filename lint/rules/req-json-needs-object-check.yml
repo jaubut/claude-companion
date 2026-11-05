@@ -1,0 +1,20 @@
+id: req-json-needs-object-check
+language: TypeScript
+severity: error
+message: Request body cast straight to a shape. A JSON `null` body passes the cast, then the field access throws and the route answers 500.
+note: |
+  Use jsonObject(req) from server/lib/json-body.ts, or cast `as unknown` (or add `| null`)
+  and narrow to a non-null object first.
+  From claude-companion#246 (api.ts:286, body.name on null) and #62 (secret.ts:53).
+ignores: ["**/*.test.ts", "**/*.test-util.ts"]
+rule:
+  kind: as_expression
+  has:
+    stopBy: end
+    any:
+      - pattern: req.json()
+      - pattern: request.json()
+  not:
+    any:
+      - has: { kind: predefined_type, regex: ^unknown$ }
+      - has: { kind: union_type, has: { kind: literal_type, regex: ^null$ } }

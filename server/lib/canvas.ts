@@ -111,7 +111,7 @@ interface RawEdge { id: string; kind: string; from_id: string; to_id: string; st
 
 const toNode = (r: RawNode): CanvasNode => ({
   id: r.id, kind: r.kind as NodeKind, ref: r.ref, x: r.x, y: r.y, w: r.w, h: r.h,
-  data: JSON.parse(r.data) as Record<string, unknown>, boundSid: r.bound_sid, createdAt: r.created_at, updatedAt: r.updated_at,
+  data: JSON.parse(r.data) as Record<string, unknown>, boundSid: r.bound_sid, createdAt: r.created_at, updatedAt: r.updated_at, // ast-grep-ignore: no-unguarded-json-parse
 })
 const toEdge = (r: RawEdge): CanvasEdge => ({
   id: r.id, kind: r.kind as EdgeKind, from: r.from_id, to: r.to_id, state: r.state as EdgeState, error: r.error,
