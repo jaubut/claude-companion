@@ -31,14 +31,27 @@ export interface Turn {
   card?: TurnCard
 }
 
-/** A brain-thread card: a dispatch receipt or a voice turn from the app. */
+/** A brain-thread card: a dispatch receipt, a voice turn from the app, or a blocked worker's dialog. */
 export interface TurnCard {
-  kind: "dispatch" | "voice"
+  kind: "dispatch" | "voice" | "worker_blocked"
   source: "app"
   taskId?: string
   audioId?: string
   durationMs?: number
   locale?: string
+  /** worker_blocked only (lib/worker-blocked.ts). */
+  worker?: string
+  title?: string
+  dialog?: string
+  options?: { id: string; label: string }[]
+  state?: "open" | "answered" | "expired"
+  chosen?: string
+  expiresAt?: number
+  /** The sanitized line the brain hears instead of `text`. */
+  brief?: string
+  /** Replay keys (runner's create, phone's answer): on the card so a restart keeps them. */
+  postKey?: string
+  answerKey?: string
 }
 
 export interface Task {
@@ -165,6 +178,16 @@ export function setTurnCard(id: string, patch: Partial<TurnCard>): Turn | null {
   const card: TurnCard = { ...turn.card, ...patch }
   db.query("UPDATE orchestrator_turns SET card = ? WHERE id = ?").run(JSON.stringify(card), id)
   return { ...turn, card }
+}
+
+/** worker_blocked lookups (lib/worker-blocked.ts): by the runner's replay key, and the still-open ones. */
+export function findWorkerAlert(postKey: string): Turn | null {
+  const row = db.query("SELECT * FROM orchestrator_turns WHERE json_extract(card, '$.kind') = 'worker_blocked' AND json_extract(card, '$.postKey') = ? LIMIT 1").get(postKey) as TurnRow | null
+  return row ? toTurn(row) : null
+}
+
+export function openWorkerAlertIds(): string[] {
+  return (db.query("SELECT id FROM orchestrator_turns WHERE json_extract(card, '$.kind') = 'worker_blocked' AND json_extract(card, '$.state') = 'open'").all() as { id: string }[]).map((r) => r.id)
 }
 
 // The most recent `limit` turns, oldest-first.

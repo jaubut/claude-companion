@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 188,
+          "lines": 189,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -92,6 +92,7 @@
             "wiring/pane-mirror.ts",
             "lib/tmux-pane.ts",
             "routes/brain.ts",
+            "routes/worker-blocked.ts",
             "wiring/brain.ts",
             "wiring/brain-workers.ts",
             "lib/brain.ts",
@@ -981,7 +982,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 216,
+          "lines": 219,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -995,6 +996,7 @@
             "isSupervisedTask",
             "DeliveryTurn",
             "DELIVERY_MAX",
+            "brainText",
             "deliveryText",
             "bootSeed",
             "TICK_MS",
@@ -2839,7 +2841,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 331,
+          "lines": 354,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -2853,6 +2855,8 @@
             "appendTurn",
             "getTurn",
             "setTurnCard",
+            "findWorkerAlert",
+            "openWorkerAlertIds",
             "getThread",
             "searchThread",
             "createTask",
@@ -5803,6 +5807,38 @@
           "externals": []
         },
         {
+          "path": "lib/worker-blocked.ts",
+          "lines": 185,
+          "kind": "lib",
+          "exports": [
+            "WORKER_RE",
+            "ALERT_TTL_MS",
+            "BlockedInput",
+            "alertBrief",
+            "pushWithRetry",
+            "WorkerBlockedDeps",
+            "Result",
+            "parseBlocked",
+            "createWorkerBlocked",
+            "WorkerBlocked"
+          ],
+          "state": [],
+          "emits": [
+            "orchestrator"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/apns.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-hook-gate.ts",
           "lines": 25,
           "kind": "lib",
@@ -6888,6 +6924,28 @@
             "lib/vault-guard.ts",
             "lib/secret-requests.ts",
             "lib/vault-upstream.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/worker-blocked.ts",
+          "lines": 58,
+          "kind": "lib",
+          "exports": [
+            "workerBlockedRoute",
+            "handleWorkerBlockedRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/idempotency.ts",
+            "lib/worker-blocked.ts",
+            "wiring/worker-blocked.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8198,6 +8256,32 @@
           "externals": []
         },
         {
+          "path": "wiring/worker-blocked.ts",
+          "lines": 24,
+          "kind": "lib",
+          "exports": [
+            "workerBlocked"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-db.ts",
+            "lib/push.ts",
+            "lib/worker-blocked.ts",
+            "state.ts"
+          ],
+          "listeners": [
+            "setInterval"
+          ],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "ws.ts",
           "lines": 240,
           "kind": "lib",
@@ -8290,6 +8374,7 @@
             "wiring/tasks-agent.ts",
             "wiring/triage.ts",
             "wiring/waiting.ts",
+            "wiring/worker-blocked.ts",
             "ws.ts"
           ]
         },
@@ -8437,6 +8522,7 @@
             "routes/capture.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
+            "wiring/worker-blocked.ts",
             "ws.ts"
           ]
         },
@@ -8785,6 +8871,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleWorkerBlockedRoute": {
+          "module": "routes/worker-blocked.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "BadJsonBody": {
           "module": "lib/json-body.ts",
           "callers": [
@@ -9071,6 +9163,7 @@
             "lib/body-investigator.ts",
             "lib/jev-route-log.ts",
             "lib/quick-look.ts",
+            "lib/worker-blocked.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts"
@@ -9305,6 +9398,7 @@
             "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
             "lib/push.ts",
+            "lib/worker-blocked.ts",
             "wiring/body.ts",
             "wiring/brain.ts",
             "wiring/receipt-qa.ts"
@@ -10244,6 +10338,7 @@
             "lib/dispatch-poller.ts",
             "lib/front-door.ts",
             "lib/orchestrator-brain.ts",
+            "lib/worker-blocked.ts",
             "wiring/body.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
@@ -10253,6 +10348,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "lib/worker-blocked.ts",
             "routes/orchestrator.ts"
           ]
         },
@@ -10952,7 +11048,8 @@
             "wiring/orchestrator.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-blocked.ts"
           ]
         },
         "QuestionItem": {
@@ -11692,7 +11789,8 @@
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
-            "wiring/receipt-qa.ts"
+            "wiring/receipt-qa.ts",
+            "wiring/worker-blocked.ts"
           ]
         },
         "recordsDir": {
@@ -13769,6 +13867,12 @@
             "routes/brain.ts"
           ]
         },
+        "brainText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
           "callers": [
@@ -14506,7 +14610,8 @@
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-blocked.ts"
           ]
         },
         "getTask": {
@@ -14820,7 +14925,8 @@
         "MAX_KEY_LENGTH": {
           "module": "lib/idempotency.ts",
           "callers": [
-            "routes/triage.ts"
+            "routes/triage.ts",
+            "routes/worker-blocked.ts"
           ]
         },
         "MEMBERS_MAX": {
@@ -15030,6 +15136,30 @@
           "module": "lib/secret-requests.ts",
           "callers": [
             "routes/vault.ts"
+          ]
+        },
+        "Result": {
+          "module": "lib/worker-blocked.ts",
+          "callers": [
+            "routes/worker-blocked.ts"
+          ]
+        },
+        "WorkerBlocked": {
+          "module": "lib/worker-blocked.ts",
+          "callers": [
+            "routes/worker-blocked.ts"
+          ]
+        },
+        "parseBlocked": {
+          "module": "lib/worker-blocked.ts",
+          "callers": [
+            "routes/worker-blocked.ts"
+          ]
+        },
+        "workerBlocked": {
+          "module": "wiring/worker-blocked.ts",
+          "callers": [
+            "routes/worker-blocked.ts"
           ]
         },
         "CompactTarget": {
@@ -15745,7 +15875,8 @@
         "getTurn": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "wiring/brain.ts"
+            "wiring/brain.ts",
+            "wiring/worker-blocked.ts"
           ]
         },
         "onTurnAppended": {
@@ -15757,7 +15888,8 @@
         "setTurnCard": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "wiring/brain.ts"
+            "wiring/brain.ts",
+            "wiring/worker-blocked.ts"
           ]
         },
         "brainRestore": {
@@ -17165,6 +17297,30 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/waiting.ts"
+          ]
+        },
+        "createWorkerBlocked": {
+          "module": "lib/worker-blocked.ts",
+          "callers": [
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "findWorkerAlert": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "openWorkerAlertIds": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "pushWithRetry": {
+          "module": "lib/worker-blocked.ts",
+          "callers": [
+            "wiring/worker-blocked.ts"
           ]
         },
         "terminalOpen": {

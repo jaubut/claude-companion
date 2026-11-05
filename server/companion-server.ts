@@ -43,6 +43,7 @@ import { PANE_MIRROR_PATH, paneMirrorUpgrade } from "./lib/pane-mirror"
 import { mirrorViewerCount } from "./wiring/pane-mirror"
 import { ensureUtf8Locale } from "./lib/tmux-pane"
 import { brainRoute } from "./routes/brain"
+import { handleWorkerBlockedRoute } from "./routes/worker-blocked"
 import { brainWiring, setBrainDeliver } from "./wiring/brain"
 import { brainWorkers } from "./wiring/brain-workers"
 import { brainEnabled } from "./lib/brain"
@@ -161,7 +162,7 @@ export function createCompanionServer(port: number) {
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
       try {
-        for (const route of [handleHookRoute, brainRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
+        for (const route of [handleWorkerBlockedRoute, handleHookRoute, brainRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
           const handled = await route(req, url)
           if (handled) return handled
         }
