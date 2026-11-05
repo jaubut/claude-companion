@@ -41,6 +41,24 @@ async function workspaceOf(label: string, h: Herdr): Promise<string | null | und
   return (list as WorkspaceRow[]).find((w) => w.label === label)?.workspace_id
 }
 
+async function panePid(pane: string, h: Herdr): Promise<number> {
+  const info = await h.call(["pane", "process-info", "--pane", pane], 2_000).catch(() => ({}) as Record<string, unknown>)
+  return (info.process_info as { shell_pid?: number } | undefined)?.shell_pid ?? 0
+}
+
+// herdr reuses pane ids: once a scrape's workspace is gone, its id can name a
+// human's pane. So a read or write first checks the pane still holds the
+// terminal this scrape created. ponytail: check then act, a reuse inside that
+// gap of a few ms is not covered; herdr has no compare-and-send.
+const scrapeTerminals = new Map<string, string>()
+
+async function ownedPane(pane: string, h: Herdr): Promise<boolean> {
+  const terminal = scrapeTerminals.get(pane)
+  if (!terminal) return false
+  const p = (await h.call(["pane", "get", pane], 2_000)).pane as { terminal_id?: string } | undefined
+  return p?.terminal_id === terminal
+}
+
 export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readPanePlain): TmuxRunner {
   return async (args) => {
     const name = (args[args.indexOf("-t") + 1] ?? "").replace(/^=/, "")
@@ -49,18 +67,20 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
         case "new-session": {
           const label = args[args.indexOf("-s") + 1]!
           const r = await h.call(["workspace", "create", "--cwd", "/tmp", "--label", label, "--no-focus"])
-          const pane = (r.root_pane as { pane_id?: string } | undefined)?.pane_id ?? ""
-          if (!pane) return UNKNOWN
+          const root = r.root_pane as { pane_id?: string; terminal_id?: string } | undefined
+          const pane = root?.pane_id ?? ""
+          if (!pane || !root?.terminal_id) return UNKNOWN
+          scrapeTerminals.set(pane, root.terminal_id)
           await h.call(["pane", "run", pane, ` ${args.at(-1)!}`])
-          const info = await h.call(["pane", "process-info", "--pane", pane], 2_000).catch(() => ({}) as Record<string, unknown>)
-          const pid = (info.process_info as { shell_pid?: number } | undefined)?.shell_pid ?? 0
-          return { code: 0, stdout: `${pane}||${pid}|\n` }
+          return { code: 0, stdout: `${pane}||${await panePid(pane, h)}|\n` }
         }
         case "capture-pane": {
+          if (!await ownedPane(name, h)) return MISSING
           const text = await read(name)
           return text === null ? MISSING : { code: 0, stdout: text }
         }
         case "send-keys": {
+          if (!await ownedPane(name, h)) return MISSING
           const keys = args.slice(args.indexOf("-t") + 2)
           const ok = keys[0] === "-l" ? await herdrSendText(name, keys[1]!, h) : await herdrSendKey(name, keys[0]!, h)
           return ok ? OK : MISSING
@@ -75,10 +95,11 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
         case "list-panes": {
           const [workspaces, panes] = await Promise.all([h.call(["workspace", "list"], 3_000), h.call(["pane", "list"], 3_000)])
           if (!Array.isArray(workspaces.workspaces) || !Array.isArray(panes.panes)) return UNKNOWN
-          const rows = (workspaces.workspaces as WorkspaceRow[]).filter((w) => isScrapeSessionName(w.label ?? "")).map((w) => {
-            const p = (panes.panes as Array<{ workspace_id?: string; pane_id?: string }>).find((x) => x.workspace_id === w.workspace_id)
-            return `${w.label}\t${p?.pane_id ?? ""}\t\t\t`
-          })
+          const scrapes = (workspaces.workspaces as WorkspaceRow[]).filter((w) => isScrapeSessionName(w.label ?? ""))
+          const rows = await Promise.all(scrapes.map(async (w) => {
+            const pane = (panes.panes as Array<{ workspace_id?: string; pane_id?: string }>).find((x) => x.workspace_id === w.workspace_id)?.pane_id ?? ""
+            return `${w.label}\t${pane}\t\t${pane ? await panePid(pane, h) : ""}\t`
+          }))
           return { code: 0, stdout: rows.join("\n") }
         }
         default:
