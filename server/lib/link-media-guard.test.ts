@@ -8,6 +8,11 @@ describe("bin/media URL guard", () => {
     }
   })
 
+  test("IPv6 forms that wrap a v4 address or reach the local network are private", () => {
+    for (const ip of ["::", "::1", "::7f00:1", "::ffff:7f00:1", "::ffff:127.0.0.1", "64:ff9b::a9fe:a9fe", "2002:7f00:1::", "fc00::1", "fe80::1", "fec0::1", "ff02::1"]) expect(isPrivateIp(ip)).toBe(true)
+    expect(isPrivateIp("2606:4700:4700::1111")).toBe(false)
+  })
+
   test("public IPs pass", () => {
     for (const ip of ["8.8.8.8", "157.240.1.174", "172.32.0.1", "100.128.0.1", "2a03:2880:f12f:83:face:b00c::25de"]) {
       expect(isPrivateIp(ip)).toBe(false)

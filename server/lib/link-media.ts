@@ -73,8 +73,14 @@ export async function run(cmd: string[], deadline: number): Promise<RunResult> {
   return { code, stdout, stderr }
 }
 
-/** yt-dlp flags: no host config, and every request (ffmpeg's too) through the guard proxy. */
-export const ytArgs = (proxy: string): string[] => ["--ignore-config", "--proxy", proxy, "--no-warnings", "--no-playlist", "--no-progress", "--socket-timeout", "20"]
+/**
+ * yt-dlp flags: no host config, every request (ffmpeg's too) through the guard proxy, and that ffmpeg limited to
+ * http(s). --fixup never: a fixup runs ffprobe on the download, unproxied, and the bytes are the sender's.
+ */
+export const ytArgs = (proxy: string): string[] => ["--ignore-config", "--proxy", proxy, "--fixup", "never", "--downloader-args", "ffmpeg_i:-protocol_whitelist http,https,tcp,tls,crypto,httpproxy", "--no-warnings", "--no-playlist", "--no-progress", "--socket-timeout", "20"]
+// ffmpeg picks a demuxer from the file's content and name, and both come from the sender: a playlist saved as
+// video.* would make the local ffmpeg open its segments directly, past the guard proxy. Plain containers from disk only.
+export const LOCAL_INPUT = ["-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,mpegts"]
 // Only formats fetched over http(s)/HLS/DASH: ffmpeg would open rtmp:// and
 // friends directly, past the guard proxy.
 const SAFE_PROTOCOL = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']"
@@ -169,7 +175,7 @@ async function download(url: string, info: Info, dir: string, deadline: number):
 }
 
 async function probeDuration(video: string, deadline: number): Promise<number> {
-  const r = await run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", video], deadline)
+  const r = await run(["ffprobe", "-v", "error", ...LOCAL_INPUT, "-show_entries", "format=duration", "-of", "csv=p=0", video], deadline)
   const d = Number(r.stdout.trim())
   if (!Number.isFinite(d) || d <= 0) throw new MediaError(422, "unreadable video")
   return Math.min(d, MAX_SECONDS)
@@ -180,7 +186,7 @@ async function extractFrames(video: string, duration: number, dir: string, deadl
   for (let i = 0; i < FRAMES; i++) {
     const out = join(dir, `frame_${String(i + 1).padStart(2, "0")}.jpg`)
     const t = ((i + 0.5) * duration / FRAMES).toFixed(2)
-    await run(["ffmpeg", "-v", "error", "-y", "-ss", t, "-i", video, "-frames:v", "1", "-vf", `scale='min(${FRAME_WIDTH},iw)':-2`, "-q:v", "3", out], deadline)
+    await run(["ffmpeg", "-v", "error", "-y", ...LOCAL_INPUT, "-ss", t, "-i", video, "-frames:v", "1", "-vf", `scale='min(${FRAME_WIDTH},iw)':-2`, "-q:v", "3", out], deadline)
     if (existsSync(out)) frames.push(out)
   }
   if (!frames.length) throw new MediaError(422, "no frames could be extracted")

@@ -1,14 +1,31 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { VIDEO_FORMAT, asImage, beforeDeadline, imageTitle, run, ytArgs } from "./link-media"
+import { LOCAL_INPUT, VIDEO_FORMAT, asImage, beforeDeadline, imageTitle, run, ytArgs } from "./link-media"
 
 describe("bin/media pipeline", () => {
   test("yt-dlp ignores host config and goes through the guard proxy", () => {
     const a = ytArgs("http://127.0.0.1:9")
     expect(a).toContain("--ignore-config")
     expect(a.slice(a.indexOf("--proxy"), a.indexOf("--proxy") + 2)).toEqual(["--proxy", "http://127.0.0.1:9"])
+  })
+
+  test("yt-dlp never runs ffprobe on the download, and its ffmpeg speaks http(s) only", () => {
+    const a = ytArgs("http://127.0.0.1:1")
+    expect(a[a.indexOf("--fixup") + 1]).toBe("never")
+    expect(a[a.indexOf("--downloader-args") + 1]).toStartWith("ffmpeg_i:-protocol_whitelist http,https,")
+    expect(a.join(" ")).not.toMatch(/whitelist \S*(file|rtmp)/)
+  })
+
+  test.skipIf(!Bun.which("ffprobe"))("the local ffmpeg refuses a playlist saved as video.*", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "media-local-"))
+    const list = join(dir, "video.m3u8")
+    writeFileSync(list, "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://127.0.0.1:9/x.ts\n#EXT-X-ENDLIST\n")
+    const r = await run(["ffprobe", "-v", "error", ...LOCAL_INPUT, list], Date.now() + 5_000)
+    expect(r.code).not.toBe(0)
+    expect(r.stderr).toContain("whitelist")
+    rmSync(dir, { recursive: true, force: true })
   })
 
   test("every video format alternative is limited to proxied protocols (no rtmp)", () => {

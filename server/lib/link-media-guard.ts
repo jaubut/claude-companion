@@ -29,8 +29,8 @@ export function isPrivateIp(ip: string): boolean {
   const low = ip.toLowerCase()
   const mapped = low.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
   if (mapped) return v4Private(mapped[1]!)
-  if (low === "::" || low === "::1" || low.startsWith("::ffff:")) return true
-  return /^(f[cd]|fe[89ab]|ff)/.test(low)
+  // ::/16 (loopback, mapped, v4-compatible), ULA, link- and site-local, multicast, and the NAT64 / 6to4 v4 wrappers.
+  return /^(::|f[cd]|fe[89a-f]|ff|64:ff9b:|2002:)/.test(low)
 }
 
 /** Resolve a host to one public address to connect to; throws the refusal reason. */
@@ -88,6 +88,7 @@ async function forward(client: Socket, buf: Buffer, end: number, vet: typeof vet
     client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     return
   }
+  if (client.destroyed) return
   const upstream = connect(Number(u.port || (connectMode ? 443 : 80)), ip)
   upstream.on("error", () => (upstream.readyState === "opening" ? client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") : client.destroy()))
   client.on("close", () => upstream.destroy())
