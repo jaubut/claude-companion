@@ -7,7 +7,6 @@ import { getAuthToken } from "../lib/auth"
 import { recordPeer } from "../lib/vault-guard"
 import type { Session } from "../lib/sessions"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
-import type { BrainLead } from "../wiring/brain-lead"
 
 // brain-v2 routes (routes/brain.ts): the propose hook's auth, dedupe and
 // hand-off end to end (real sqlite proposals, a fake Turso with the
@@ -335,29 +334,6 @@ describe("POST /hooks/brain/pr-merge", () => {
     const r = await post(ok)
     expect(r.status).toBe(403)
     expect(r.json).toEqual({ ok: false, error: "needs_human", reasons: ["sensitive paths: billing.ts"] })
-    expect(seen).toEqual([ok])
-  })
-
-  test("a lead passes the same gate on its own repo only; a spoofed lead does not", async () => {
-    const seen: unknown[] = []
-    const lead = { verified: async (name: string, pid: string) => name === "lead-claude-companion" && pid === "7070" } as unknown as BrainLead
-    const h = route.createBrainRoute({
-      wiring: harnessWiring, sessions: () => sessions, enabled: () => true, lead,
-      prMerge: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "not_green" } } },
-    })
-    const post = async (b: unknown, headers: Record<string, string>, peer = "127.0.0.1") => {
-      const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) })
-      recordPeer(req, peer)
-      return (await h(req, new URL(req.url)))!
-    }
-    const me = { "x-companion-task-id": "lead-claude-companion", "x-companion-pid": "7070" }
-    const ok = { repo: "jaubut/claude-companion", pr: 7, reason: "routine" }
-    expect((await post({ ...ok, repo: "jaubut/tls-dashboard-v2" }, me)).status).toBe(403)
-    expect((await post(ok, { ...me, "x-companion-pid": "6060" })).status).toBe(403)
-    expect((await post(ok, { ...me, "x-companion-task-id": "lead-tls-dashboard-v2" })).status).toBe(403)
-    expect((await post(ok, me, "100.64.0.9")).status).toBe(403)
-    expect(seen).toHaveLength(0)
-    expect((await post(ok, me)).status).toBe(409)
     expect(seen).toEqual([ok])
   })
 

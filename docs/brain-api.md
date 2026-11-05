@@ -123,11 +123,9 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 
 ### Repo leads (`/hooks/brain/lead`)
 
-`LEAD_REPOS` in `lib/brain.ts` lists the repos with a lead. A lead is one persistent `lead-<repo>` herdr session (auto mode, cwd `~/<repo>`, no plan-mode tools: nobody can approve ExitPlanMode) following `brain/LEAD.md` with its own judgement. The server holds no queue: `wiring/brain-lead.ts` only starts a lead and proves who one is. Work and escalations are plain relay messages. The limit of 3 PRs lives in the lead's brief and claude-config PR 226. A lead's turn end sets no waiting badge and sends no push.
+`LEAD_REPOS` in `lib/brain.ts` lists the repos with a lead. A lead is one persistent `lead-<repo>` herdr workspace with one pane (auto mode, cwd `~/<repo>`, no plan-mode tools: nobody can approve ExitPlanMode), following `brain/LEAD.md`. The server holds no queue: `wiring/brain-lead.ts` only finds or starts it. Work, merge requests and escalations are plain relay messages. A lead has no merge or close rights: the brain runs `bin/pr-merge` and `bin/pr-close`, on dispatch branches only. The limit of 3 PRs lives in the lead's brief and claude-config PR 226. A lead's turn end sets no waiting badge and sends no push.
 
-`bin/lead <repo>` starts it when it is not alive (`alive()`, since herdr can keep a dead agent's record; on `name_taken` that record is cleared and the next call spawns).
-
-Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, and a pid descending from the shell of the pane herdr holds for that agent (`ps` parent chain, not the session registry, which any loopback caller can write). A lead may call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`); every gate check is the same as for the brain.
+`bin/lead <repo>` starts a fresh lead when the old one is not running (`alive()`, since herdr can keep a dead agent's record, also after a restore). On `name_taken` the leftover is cleared only when its workspace is the lead's alone: labelled `lead-<repo>`, one pane, the agent's. Anything else, or an unreadable answer, is left alone and answers 502.
 
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 
@@ -146,7 +144,7 @@ Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, and a
 ### Routine agent PRs (`/hooks/brain/pr-merge`)
 
 `wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word, and refuses on any doubt. It checks, in order:
-1. The PR is open, not a draft, and its head is `dispatch/*`, or `builder/*` on a repo with a lead.
+1. The PR is open, not a draft, and its head is `dispatch/*`.
 2. **parked** refuses when any of these holds:
    - A label says do-not-merge, dnm or wip.
    - The newest shepherd `pr:hold`, or a `pr:needs-human` whose reason means the work is broken (conflict unresolved, fix budget spent, no CI…), is not lifted by a `pr:unpark`. Park rows are matched on the PR url and on the tasks linked by `dispatch_pr_url`.

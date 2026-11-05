@@ -82,25 +82,12 @@ describe("bin/pr-merge gate: refusals", () => {
     expect([d.status, d.body.error]).toEqual([409, "draft"])
   })
 
-  for (const branch of ["deps/rolling", "agent/chores", "jeremie/feature", "main", "dispatch/../main", "builder/../main", "rolling"]) {
+  for (const branch of ["deps/rolling", "agent/chores", "jeremie/feature", "main", "dispatch/../main", "rolling"]) {
     test(`403 not_agent_branch on ${branch}, even when everything else is green`, async () => {
       const out = await refused(green({ headRefName: branch }))
       expect([out.status, out.body.error]).toEqual([403, "not_agent_branch"])
     })
   }
-
-  test("a builder/* head merges with both approvals on a repo with a lead, and is refused without them", async () => {
-    const leadRepo = { ...input, repo: "jaubut/claude-companion" }
-    const w = world(green({ headRefName: "builder/repo-leads" }))
-    expect((await mergeAgentPr(leadRepo, w.deps)).status).toBe(200)
-    const out = await mergeAgentPr(leadRepo, world(green({ headRefName: "builder/repo-leads", comments: [review("claude", "APPROVE")] })).deps)
-    expect([out.status, out.body.error]).toEqual([409, "not_approved"])
-  })
-
-  test("403 not_agent_branch on builder/* in a repo with no lead", async () => {
-    const out = await refused(green({ headRefName: "builder/repo-leads" }))
-    expect([out.status, out.body.error]).toEqual([403, "not_agent_branch"])
-  })
 
   const held: Array<[string, Record<string, unknown>, string?]> = [
     ["a conflict park", {}, park("pr:needs-human", "merge conflict unresolved after 2 attempts")],

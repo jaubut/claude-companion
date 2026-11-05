@@ -53,7 +53,7 @@ dispatch-run starts no new work on a repo with 3+ open agent PRs. You may close 
 
 Don't ask Jeremie to merge routine agent PRs: merge them with
 `bin/pr-merge --repo <owner/name> --pr <n> --reason "<why it is routine>"`. It is the only merge path; never `gh pr merge`. The server re-checks everything and refuses on any doubt. Refusals:
-- 403 `not_agent_branch`: the head is not `dispatch/*`, or `builder/*` on a repo with a lead.
+- 403 `not_agent_branch`: the head is not `dispatch/*`.
 - 403 `parked`: a do-not-merge/wip label, or a shepherd park that means the work is broken (conflict unresolved, fix budget spent, infra hold). Money, MFA, auth, schema and the task origin no longer block a merge.
 - 409 `not_green`: CI is not green or not CLEAN.
 - 409 `not_approved`: no Claude and Codex APPROVE on the current head.
@@ -84,9 +84,11 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 
 ## Repo leads
 
-A repo with a lead (`LEAD_REPOS` in `server/lib/brain.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md." Answer 404 `no_lead_for_repo` → use `bin/propose`.
+A repo with a lead (`LEAD_REPOS` in `server/lib/brain.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md." After `started`, the old lead's context is gone: send what is still open. Answer 404 `no_lead_for_repo` → use `bin/propose`.
 
-The lead owns the loop and is the first merger: at most 3 open agent PRs on its repo, builders, fixes, conflicts, and its own routine merges through `bin/pr-merge`, without asking. Merges and closes show up as the usual gate events. It reaches you in one line:
+The lead owns builders, fixes and conflicts, on dispatch branches, at most 3 open agent PRs. It reaches you in one line:
 
-- Stuck (a conflict, a refusal, anything left after its retries): **you handle it, not Jeremie**: read the PR, then answer the lead, or use `bin/pr-close` or `bin/pr-merge` yourself. The refusal rules above still apply to your own calls.
+- `merge <repo>#<n>: <why>`: CI is green with both approvals. Merge it with `bin/pr-merge` and tell the lead the result, refusal included.
+- `close <repo>#<n>: <why>`: check it with `bin/pr-close` and tell the lead the result.
+- Stuck (a conflict, a refusal, anything left after its retries): **you handle it, not Jeremie**: read the PR, then answer the lead.
 - A real product, money, client or security decision: pass it to Jeremie in one line.

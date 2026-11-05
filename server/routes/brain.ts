@@ -19,12 +19,12 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /api/brain/pause|resume|restart  → {ok, brain}; restart while paused → 409 paused
 //   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId}
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
+//   POST /hooks/brain/lead                → bin/lead: {repo} → {ok, name, state} (docs/brain-api.md § Repo leads)
 //   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
-//   POST /hooks/brain/lead                → bin/lead: {repo} → {ok, name, state} (docs/brain-api.md § Repo leads)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
@@ -83,17 +83,6 @@ function proposeRefusal(req: Request, deps: BrainRouteDeps): Response | null {
   const brain = deps.sessions().find((x) => x.pid === pid)
   if (!s || !brain || brain.key !== s.key || brain.sessionId !== s.sessionId || brain.taskId !== BRAIN_AGENT) return fail(403, "forbidden")
   return null
-}
-
-/** The repo of the calling `lead-<repo>` session, or null: loopback peer, its task header, and a pid that really runs in that lead's pane. */
-async function leadRepo(req: Request, deps: BrainRouteDeps): Promise<string | null> {
-  if (clientOrigin(req, peerOf(req)).transport !== "loopback") return null
-  const task = req.headers.get("x-companion-task-id") ?? ""
-  const pid = req.headers.get("x-companion-pid")?.trim() ?? ""
-  if (!task.startsWith(LEAD_PREFIX) || !pid) return null
-  const repo = task.slice(LEAD_PREFIX.length)
-  if (!leadSlug(repo)) return null
-  return await (deps.lead ?? brainLead).verified(task, pid) ? repo : null
 }
 
 async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
@@ -177,15 +166,12 @@ const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
 /** bin/pr-close and bin/pr-merge: the gate (wiring/brain-pr-close.ts, brain-pr-merge.ts) re-checks it all on GitHub and Turso. */
 async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge"): Promise<Response> {
-  const lead = await leadRepo(req, deps)
-  const refused = lead ? null : proposeRefusal(req, deps)
+  const refused = proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
   if (!body) return fail(400, "bad_json")
   const repo = typeof body.repo === "string" && REPO.test(body.repo) ? body.repo : null
   if (!repo) return fail(400, "repo must be owner/name")
-  // A lead acts on its own repo only; the gates themselves are the same for everyone.
-  if (lead && repo !== leadSlug(lead)) return fail(403, "not_lead_repo")
   const pr = typeof body.pr === "number" && Number.isInteger(body.pr) && body.pr > 0 ? body.pr : null
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
@@ -196,7 +182,7 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   return Response.json(out.body, { status: out.status })
 }
 
-/** bin/lead: the brain makes sure a repo's lead is up. */
+/** bin/lead: the brain finds or starts a repo's lead. */
 async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const refused = proposeRefusal(req, deps)
   if (refused) return refused
