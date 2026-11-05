@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { hostname, networkInterfaces } from "node:os"
 import { getAuthToken } from "./auth"
 import { recordPeer } from "./vault-guard"
-import { hookCallerAllowed, hostAllowed } from "./request-gate"
+import { hookCallerAllowed, hostAllowed, refreshTailscaleName, tailscaleNameOf } from "./request-gate"
 
 // Every /hooks/* route the server answers (routes/hooks.ts, brain.ts, gauge.ts, copy-jobs.ts).
 const HOOK_PATHS = [
@@ -54,6 +54,28 @@ test("Host allowlist: this machine's names and IPs only", () => {
     `evil.tailfc45f2.ts.net`, `${short}.tailfc45f2.ts.net.evil.example`, `x.${short}.tailfc45f2.ts.net`,
     "evil.example@localhost", "localhost/evil", "8.8.8.8", "[2001:db8::1]", "127.0.0.1:4245 evil",
   ]) expect([h, hostAllowed(h)]).toEqual([h, false])
+})
+
+test("Host allowlist: the Tailscale name tailscaled reports, even unlike os.hostname()", async () => {
+  const name = "tailnet-name-unlike-host.tailfc45f2.ts.net"
+  expect(hostAllowed(name)).toBe(false)
+
+  await refreshTailscaleName(async () => JSON.stringify({ Self: { DNSName: `${name.toUpperCase()}.` } }))
+  expect(hostAllowed(name)).toBe(true)
+  expect(hostAllowed(`${name}:443`)).toBe(true)
+  for (const h of [`x.${name}`, `${name}.evil.example`, "other.tailfc45f2.ts.net"]) expect([h, hostAllowed(h)]).toEqual([h, false])
+
+  // A failed read keeps the last good name.
+  await refreshTailscaleName(async () => { throw new Error("no tailscale") })
+  await refreshTailscaleName(async () => "not json")
+  expect(hostAllowed(name)).toBe(true)
+})
+
+test("only a *.ts.net DNSName counts as the Tailscale name", () => {
+  expect(tailscaleNameOf(`{"Self":{"DNSName":"mac.tailfc45f2.ts.net."}}`)).toBe("mac.tailfc45f2.ts.net")
+  for (const s of ["", "not json", "null", `{"Self":{}}`, `{"Self":{"DNSName":7}}`, `{"Self":{"DNSName":"evil.example."}}`, `{"Self":{"DNSName":"a/b.ts.net."}}`]) {
+    expect([s, tailscaleNameOf(s)]).toEqual([s, ""])
+  }
 })
 
 test("Host allowlist: this machine's LAN addresses and <short>.local (pairing QR), not a foreign LAN IP", () => {
