@@ -1,0 +1,91 @@
+// The hidden `/help` session (lib/command-offpane.ts) as a herdr workspace.
+//
+// Herdr-only, Stage 3: same lifecycle, new floor. The enumeration, the reaper
+// and their tests speak the tmux verbs of a TmuxRunner, so this answers the
+// few verbs they use from herdr instead of rewriting them; Stage 5 can flatten
+// it once the tmux path is gone. A failed herdr call is code -1 ("unknown"),
+// never a real tmux exit code, so nothing is taken as proof that a session
+// is gone. "No such session" is the only code 1.
+//
+// `pane run` types the command into the workspace's login shell, whose `exec`
+// makes claude the pane's process, so its pid is the shell's and the workspace
+// goes when claude does. Leading space: a shell with ignorespace leaves it out
+// of its history.
+//
+// A cc-scrape-* workspace is visible in a herdr client for the ~30 s of a run.
+// herdr detects the claude in it as an agent; nothing here reads that. Hooks
+// are off, and ps-discovery skips it by its environment (scrape-registry.ts).
+
+import { type Herdr, herdrSendKey, herdrSendText, realHerdr } from "./herdr"
+import { herdrSocketCall } from "./herdr-socket"
+import { isScrapeSessionName } from "./scrape-registry"
+import type { TmuxResult, TmuxRunner } from "./command-offpane-launch"
+
+const OK: TmuxResult = { code: 0, stdout: "" }
+const UNKNOWN: TmuxResult = { code: -1, stdout: "" }
+const MISSING: TmuxResult = { code: 1, stdout: "" }
+
+export type PaneReader = (pane: string) => Promise<string | null>
+
+export const readPanePlain: PaneReader = async (pane) => {
+  const r = await herdrSocketCall("pane.read", { pane_id: pane, source: "visible", format: "text" }, { timeoutMs: 1_500 })
+  const text = (r.read as { text?: unknown } | undefined)?.text
+  return typeof text === "string" ? text : null
+}
+
+type WorkspaceRow = { workspace_id?: string; label?: string }
+
+async function workspaceOf(label: string, h: Herdr): Promise<string | null | undefined> {
+  const list = (await h.call(["workspace", "list"], 3_000)).workspaces
+  if (!Array.isArray(list)) throw new Error("workspace list: bad shape")
+  return (list as WorkspaceRow[]).find((w) => w.label === label)?.workspace_id
+}
+
+export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readPanePlain): TmuxRunner {
+  return async (args) => {
+    const name = (args[args.indexOf("-t") + 1] ?? "").replace(/^=/, "")
+    try {
+      switch (args[0]) {
+        case "new-session": {
+          const label = args[args.indexOf("-s") + 1]!
+          const r = await h.call(["workspace", "create", "--cwd", "/tmp", "--label", label, "--no-focus"])
+          const pane = (r.root_pane as { pane_id?: string } | undefined)?.pane_id ?? ""
+          if (!pane) return UNKNOWN
+          await h.call(["pane", "run", pane, ` ${args.at(-1)!}`])
+          const info = await h.call(["pane", "process-info", "--pane", pane], 2_000).catch(() => ({}) as Record<string, unknown>)
+          const pid = (info.process_info as { shell_pid?: number } | undefined)?.shell_pid ?? 0
+          return { code: 0, stdout: `${pane}||${pid}|\n` }
+        }
+        case "capture-pane": {
+          const text = await read(name)
+          return text === null ? MISSING : { code: 0, stdout: text }
+        }
+        case "send-keys": {
+          const keys = args.slice(args.indexOf("-t") + 2)
+          const ok = keys[0] === "-l" ? await herdrSendText(name, keys[1]!, h) : await herdrSendKey(name, keys[0]!, h)
+          return ok ? OK : MISSING
+        }
+        case "kill-session": {
+          const ws = await workspaceOf(name, h)
+          if (ws) await h.call(["workspace", "close", ws], 5_000)
+          return OK
+        }
+        case "has-session":
+          return (await workspaceOf(name, h)) ? OK : MISSING
+        case "list-panes": {
+          const [workspaces, panes] = await Promise.all([h.call(["workspace", "list"], 3_000), h.call(["pane", "list"], 3_000)])
+          if (!Array.isArray(workspaces.workspaces) || !Array.isArray(panes.panes)) return UNKNOWN
+          const rows = (workspaces.workspaces as WorkspaceRow[]).filter((w) => isScrapeSessionName(w.label ?? "")).map((w) => {
+            const p = (panes.panes as Array<{ workspace_id?: string; pane_id?: string }>).find((x) => x.workspace_id === w.workspace_id)
+            return `${w.label}\t${p?.pane_id ?? ""}\t\t\t`
+          })
+          return { code: 0, stdout: rows.join("\n") }
+        }
+        default:
+          return UNKNOWN // show-environment: nothing to ask, the process env counts
+      }
+    } catch {
+      return UNKNOWN
+    }
+  }
+}

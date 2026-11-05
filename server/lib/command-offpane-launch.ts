@@ -1,10 +1,10 @@
 // How the hidden /help enumeration (lib/command-offpane.ts) finds claude, and
 // what its cache key is made of. Split out so both are testable without tmux.
 //
-// Launch: the hidden session is a tmux session, so it starts from the tmux
-// server's global environment — the same one the user's own tmux sessions do.
-// The binary is resolved on THAT PATH once, and the same absolute path is used
-// for `--version` (the fingerprint) and for the launch.
+// Launch: the hidden session is a herdr workspace (lib/command-offpane-herdr.ts),
+// so there is no tmux server environment to ask and this process's env counts.
+// The binary is resolved once, and the same absolute path is used for
+// `--version` (the fingerprint) and for the launch.
 //
 // Fingerprint: cwd + binary + version + mtimes of every file the list is built
 // from, so the cache re-runs only when one of them changed.
@@ -12,7 +12,6 @@
 import { createHash } from "node:crypto"
 import { readdir, readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { tmuxArgv } from "./tmux-pane"
 
 export interface TmuxResult { code: number; stdout: string; stderr?: string }
 
@@ -26,25 +25,6 @@ export function tmuxNoServer(r: TmuxResult): boolean {
   return r.code === 1 && (/no server running/i.test(err) || /error connecting to .*\(No such file or directory\)/i.test(err))
 }
 export type TmuxRunner = (args: string[]) => Promise<TmuxResult>
-
-// Spawn tmux, bounded. A wedged tmux must not hold the enumeration forever; a
-// killed call reads as code -1 ("unknown"), never as a real tmux exit code.
-export const defaultTmux: TmuxRunner = async (args) => {
-  try {
-    const p = Bun.spawn([...tmuxArgv(), ...args], { stdout: "pipe", stderr: "pipe" })
-    let timedOut = false
-    const timer = setTimeout(() => { timedOut = true; try { p.kill() } catch { /* gone */ } }, 5_000)
-    try {
-      const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
-      const code = await p.exited
-      return { code: timedOut ? -1 : code, stdout, stderr }
-    } finally {
-      clearTimeout(timer)
-    }
-  } catch {
-    return { code: -1, stdout: "" }
-  }
-}
 
 // How the hidden claude is launched — resolved ONCE per enumeration and used
 // for both `--version` (the fingerprint) and the tmux launch, so the two can
@@ -83,8 +63,8 @@ export interface ResolveDeps {
   home: string
 }
 
-// The hidden session is a tmux session, so its shell starts from the tmux
-// SERVER's global environment — the same one the user's `cc-*`/`claude-*`
+// A tmux runner answers `show-environment` (herdr's doesn't): a tmux session's
+// shell starts from the tmux SERVER's global environment — the same one the user's `cc-*`/`claude-*`
 // tmux sessions start from. Resolve against that PATH and take
 // CLAUDE_CONFIG_DIR from it too: set there → the user's claudes use it; absent
 // or explicitly removed (`-CLAUDE_CONFIG_DIR`) → they don't, whatever the
@@ -95,7 +75,10 @@ export async function resolveClaudeLaunch(deps: ResolveDeps): Promise<ClaudeLaun
   const tmuxEnv = r.code === 0 ? parseTmuxEnv(r.stdout) : null
   const path = tmuxEnv?.PATH ?? deps.processEnv.PATH ?? ""
   const configDirEnv = tmuxEnv ? tmuxEnv.CLAUDE_CONFIG_DIR : deps.processEnv.CLAUDE_CONFIG_DIR
-  const bin = deps.which("claude", path) ?? deps.which("claude", fallbackDirs(deps.home).join(":"))
+  // The real binary first: a shim earlier on PATH (Zettlab's ~/.bun/bin/claude)
+  // execs $HOME/.local/bin/claude, and $HOME is the throwaway one here, so the
+  // hidden claude died at once (every run from 2026-10-11 to Stage 3).
+  const bin = deps.which("claude", join(deps.home, ".local", "bin")) ?? deps.which("claude", path) ?? deps.which("claude", fallbackDirs(deps.home).join(":"))
   if (!bin) return null
   const env: Record<string, string> = {}
   if (path) env.PATH = path

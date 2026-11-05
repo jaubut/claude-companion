@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03",
+  "generatedAt": "2026-11-05",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1242,7 +1242,7 @@
         },
         {
           "path": "lib/command-offpane-cache.ts",
-          "lines": 225,
+          "lines": 226,
           "kind": "lib",
           "exports": [
             "PreparedList",
@@ -1270,9 +1270,34 @@
           "apiCalls": [],
           "imports": [
             "lib/command-list.ts",
+            "lib/command-offpane-herdr.ts",
             "lib/command-offpane.ts",
             "lib/command-offpane-launch.ts",
             "lib/log.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/command-offpane-herdr.ts",
+          "lines": 92,
+          "kind": "lib",
+          "exports": [
+            "PaneReader",
+            "readPanePlain",
+            "herdrScrapeRunner"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/herdr.ts",
+            "lib/herdr-socket.ts",
+            "lib/scrape-registry.ts",
+            "lib/command-offpane-launch.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1315,13 +1340,12 @@
         },
         {
           "path": "lib/command-offpane-launch.ts",
-          "lines": 272,
+          "lines": 255,
           "kind": "lib",
           "exports": [
             "TmuxResult",
             "tmuxNoServer",
             "TmuxRunner",
-            "defaultTmux",
             "ClaudeLaunch",
             "parseTmuxEnv",
             "ResolveDeps",
@@ -1346,16 +1370,14 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [
-            "lib/tmux-pane.ts"
-          ],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
         },
         {
           "path": "lib/command-offpane.ts",
-          "lines": 561,
+          "lines": 562,
           "kind": "lib",
           "exports": [
             "OffPaneTiming",
@@ -1395,6 +1417,7 @@
             "lib/tmux-pane.ts",
             "lib/scrape-registry.ts",
             "lib/spawn-session.ts",
+            "lib/command-offpane-herdr.ts",
             "lib/command-offpane-launch.ts",
             "lib/command-offpane-home.ts"
           ],
@@ -9757,13 +9780,6 @@
             "wiring/dialogs.ts"
           ]
         },
-        "defaultTmux": {
-          "module": "lib/command-offpane-launch.ts",
-          "callers": [
-            "lib/command-offpane-cache.ts",
-            "lib/command-offpane.ts"
-          ]
-        },
         "ClaudeLaunch": {
           "module": "lib/command-offpane-launch.ts",
           "callers": [
@@ -9813,6 +9829,13 @@
             "lib/command-offpane-cache.ts"
           ]
         },
+        "herdrScrapeRunner": {
+          "module": "lib/command-offpane-herdr.ts",
+          "callers": [
+            "lib/command-offpane-cache.ts",
+            "lib/command-offpane.ts"
+          ]
+        },
         "enumerateCommandsOffPane": {
           "module": "lib/command-offpane.ts",
           "callers": [
@@ -9825,16 +9848,77 @@
             "lib/command-offpane-cache.ts"
           ]
         },
-        "tmuxArgv": {
-          "module": "lib/tmux-pane.ts",
+        "herdrSocketCall": {
+          "module": "lib/herdr-socket.ts",
           "callers": [
-            "lib/command-offpane-launch.ts",
-            "lib/key-gate.ts",
+            "lib/command-offpane-herdr.ts",
+            "wiring/pane-mirror.ts"
+          ]
+        },
+        "Herdr": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts",
+            "lib/ended-sessions.ts",
+            "lib/herdr-fake.test-util.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
             "lib/keyboard-inject.ts",
-            "lib/shell-sessions.ts",
+            "lib/orphan-question.ts",
+            "lib/session-pane.ts",
             "lib/spawn-session.ts",
-            "lib/terminal-bridge.ts",
-            "lib/tmux-spawn-confirm.ts"
+            "lib/submit-confirm.ts",
+            "wiring/brain-restore.ts",
+            "wiring/brain-workers.ts",
+            "wiring/takeover-liveness.ts"
+          ]
+        },
+        "TmuxRunner": {
+          "module": "lib/command-offpane-launch.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts",
+            "lib/command-offpane.ts"
+          ]
+        },
+        "realHerdr": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts",
+            "lib/ended-sessions.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
+            "lib/pane-clean.ts",
+            "lib/session-pane.ts",
+            "lib/spawn-session.ts",
+            "lib/submit-confirm.ts",
+            "wiring/brain-restore.ts",
+            "wiring/brain-workers.ts",
+            "wiring/brain.ts",
+            "wiring/dialogs.ts"
+          ]
+        },
+        "herdrSendKey": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
+        "herdrSendText": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts",
+            "lib/herdr-inject.ts",
+            "lib/inject-verified.ts"
+          ]
+        },
+        "isScrapeSessionName": {
+          "module": "lib/scrape-registry.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts",
+            "lib/command-offpane.ts"
           ]
         },
         "helpTab": {
@@ -9904,12 +9988,6 @@
             "lib/command-offpane.ts"
           ]
         },
-        "isScrapeSessionName": {
-          "module": "lib/scrape-registry.ts",
-          "callers": [
-            "lib/command-offpane.ts"
-          ]
-        },
         "scrapeSessionOwner": {
           "module": "lib/scrape-registry.ts",
           "callers": [
@@ -9930,12 +10008,6 @@
         },
         "noteTmuxServer": {
           "module": "lib/scrape-registry.ts",
-          "callers": [
-            "lib/command-offpane.ts"
-          ]
-        },
-        "TmuxRunner": {
-          "module": "lib/command-offpane-launch.ts",
           "callers": [
             "lib/command-offpane.ts"
           ]
@@ -10315,39 +10387,6 @@
             "routes/api.ts#* /api/feed"
           ]
         },
-        "Herdr": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/ended-sessions.ts",
-            "lib/herdr-fake.test-util.ts",
-            "lib/herdr-inject.ts",
-            "lib/inject-verified.ts",
-            "lib/keyboard-inject.ts",
-            "lib/orphan-question.ts",
-            "lib/session-pane.ts",
-            "lib/spawn-session.ts",
-            "lib/submit-confirm.ts",
-            "wiring/brain-restore.ts",
-            "wiring/brain-workers.ts",
-            "wiring/takeover-liveness.ts"
-          ]
-        },
-        "realHerdr": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/ended-sessions.ts",
-            "lib/herdr-inject.ts",
-            "lib/inject-verified.ts",
-            "lib/pane-clean.ts",
-            "lib/session-pane.ts",
-            "lib/spawn-session.ts",
-            "lib/submit-confirm.ts",
-            "wiring/brain-restore.ts",
-            "wiring/brain-workers.ts",
-            "wiring/brain.ts",
-            "wiring/dialogs.ts"
-          ]
-        },
         "herdrPaneAtShell": {
           "module": "lib/herdr.ts",
           "callers": [
@@ -10479,21 +10518,6 @@
           "callers": [
             "lib/herdr-inject.ts",
             "lib/keyboard-inject.ts"
-          ]
-        },
-        "herdrSendKey": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/herdr-inject.ts",
-            "lib/inject-verified.ts",
-            "lib/submit-confirm.ts"
-          ]
-        },
-        "herdrSendText": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/herdr-inject.ts",
-            "lib/inject-verified.ts"
           ]
         },
         "endedStore": {
@@ -10710,6 +10734,17 @@
             "lib/jev-router.ts",
             "wiring/triage.ts",
             "wiring/trips.ts"
+          ]
+        },
+        "tmuxArgv": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/key-gate.ts",
+            "lib/keyboard-inject.ts",
+            "lib/shell-sessions.ts",
+            "lib/spawn-session.ts",
+            "lib/terminal-bridge.ts",
+            "lib/tmux-spawn-confirm.ts"
           ]
         },
         "deliverViaHerdr": {
@@ -16199,12 +16234,6 @@
         },
         "MirrorSource": {
           "module": "lib/pane-mirror.ts",
-          "callers": [
-            "wiring/pane-mirror.ts"
-          ]
-        },
-        "herdrSocketCall": {
-          "module": "lib/herdr-socket.ts",
           "callers": [
             "wiring/pane-mirror.ts"
           ]

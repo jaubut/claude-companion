@@ -148,13 +148,38 @@ Shipped in `server/lib/spawn-session.ts` + `server/lib/herdr.ts`:
 - `command-offpane*.ts`: run the hidden capture in a hidden herdr workspace (`workspace create` + `pane run` + `pane read`), or drop off-pane commands if the herdr `/` suggestions path from #157 already covers them. Decide after measuring how often off-pane runs today.
 - **Rollback:** revert.
 
+#### Stage 3 results (2026-11-05, Zettlab, herdr 0.9.5)
+
+**Measured first.** In `companion.log` (2026-09-24 → today): 104 good off-pane lists, the last on **2026-10-10**, and 610 aborted runs, nearly all `boot: pane never came up` in 0.5 s. So the phone's full command list has been broken on Zettlab for about four weeks, unrelated to herdr.
+
+**Root cause.** The server's PATH finds the `~/.bun/bin/claude` shim first. It runs `exec "$HOME/.local/bin/claude"`, and `$HOME` is the throwaway one, so the hidden claude died at once. A run that resolved the real binary listed 264 commands in 32 s.
+
+**Decision: port, don't drop.** The `/` suggestions don't cover it: they type into the user's pane (what off-pane exists to avoid), return only the menu's rows, and a plain shell's palette has no pane to type in.
+
+Shipped:
+- `server/lib/command-offpane-launch.ts`: `~/.local/bin/claude` first, then PATH. The shim's secrets are not loaded for the hidden claude, which needs none.
+- `server/lib/command-offpane-herdr.ts`: a `TmuxRunner` answering the verbs the enumeration and the reaper use, from herdr. The lifecycle code (reap, kill confirmation, throwaway HOME) and its tests are unchanged. `defaultTmux` is deleted, so off-pane can no longer start a tmux session. Stage 5 can flatten the verbs.
+- Gap D's two checks: the workspace is `--no-focus` and visible in a herdr client for ~30 s, which is accepted. herdr detects the claude as an agent, and nothing reads that. The temp HOME travels in the typed command, not `--env`.
+
+**Proof.** A test server from this branch with the live server's PATH shape, on a throwaway herdr session: `POST /api/command/list` → 200, 264 commands in 33.0 s; mid-run the workspace was unfocused and no session row appeared; after, the workspace was gone and no tmux server had started. An orphan `cc-scrape-999999-*` workspace (dead owner) was reaped. 6 new tests in `command-offpane-herdr.test.ts`.
+
+**Side effect of that proof run.** The test server was given the real HOME for the throwaway-HOME copy, so it also loaded the real `.env` and ran the background jobs for about a minute: 8 duplicate `triage:expired` rows in Turso `agent_activity` (ids 23146–23153), and two resolver analyses started and cut off. No task, PR or proposal changed. A test server on a real HOME must not be repeated.
+
+**Where it can fail in production:**
+- It works again, so hidden claudes come back: one ~30 s run per new fingerprint, at most 2 at once.
+- A login shell other than bash or zsh: the typed `export …` line assumes a POSIX shell.
+- A Mac pane has its own size (no 220x60), and the Mac path was not run. The rows-per-page parsing is size-independent; a mid-run keychain prompt is unverified.
+- A login shell that prints a dialog on start would read as a slow boot, then `timeout`.
+
+**Rollback:** revert. Off-pane goes back to the tmux path, broken as before.
+
 ### Stage 3b: dispatch runner + legacy task rows
 - claude-config `dispatch-run` / `herdr-client.ts`: remove the tmux fallback (a gate failure becomes a loud requeue, not tmux). Same PR as the version-pin change in Stage 1 if possible.
 - companion: delete the dead legacy-tmux task paths (`createTask(…tmuxSession)` with no callers, the `cancelLocal` kill-session). The DTO `tmuxSession`/`tmuxSocket` become null, then are removed after one iOS release.
 - **Rollback:** revert.
 
 ### Stage 4: retire the tmux ops (Zettlab, then Mac)
-Only after Stages 1–3 have run for a week with zero tmux spawns (`grep "app=tmux"` in the companion log). The commands below are the exact steps.
+Only after Stages 1–3 have run for a week with zero tmux spawns. Note (2026-11-05): `grep "app=tmux"` matches nothing, at any date, because no log line has that text. Use the session creation times instead: no session newer than the last merge in `tmux list-sessions` and `tmux -L cc list-sessions`. The commands below are the exact steps.
 ```sh
 # 1. stop resurrecting and snapshotting
 systemctl --user disable --now tmux-cc-save.timer
@@ -191,7 +216,7 @@ Only after Stage 4, plus two weeks of no tmux session on either host.
 | tmux `MirrorSource` (#234) | delete (Stage 5) |
 | `shell-sessions.ts` | rewrite on herdr (Stage 2) |
 | `terminal-bridge.ts` | rewrite (raw herdr attach if the spike finds one, else replaced by pane-mirror) |
-| `command-offpane*.ts` | port to herdr or drop (Stage 3) |
+| `command-offpane*.ts` | ported to herdr (Stage 3); flatten the verbs in Stage 5 |
 | `tmux-resurrect-boot.service`, `tmux-cc-save.{timer,service}`, `cc-claude-*`, `~/.tmux/cc.conf` | remove (Stage 4) |
 | `claude()` wrappers (bashrc/zshrc, claude-config) | rewrite to herdr (Stage 1) |
 | `hooks/_lib.sh` tmux headers | delete (Stage 5) |
