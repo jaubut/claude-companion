@@ -4,6 +4,11 @@ Last updated: 2026-11-05
 
 ## Active Decisions
 
+### Anti-slop lint: ast-grep + a repo check, blocking in pre-commit and CI (2026-11-05, task 7b745d1d)
+**Choice:** `bun --bun run lint` runs ast-grep rules (`lint/rules`, fixtures in `lint/tests`) and `scripts/lint-repo.ts`, from `.githooks/pre-commit` (`bun install` sets `core.hooksPath`) and a CI step. Rules come from the review evidence in RES-U66W. Live violations carry a same-line `ast-grep-ignore`: same line because archmap's 600-line cap ratchets on line count.
+**Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.
+**Rejected:** typescript-eslint (needs the TS compiler API); pattern 1, swallowed errors (8 of 16 overall, 0 of 2 here, about 400 live candidates); a `tmuxCapture` timeout rule (a call site shows nothing, the gap is inside the wrapper).
+**Revisit if:** the 34 suppressions stop shrinking, or a second repo wants the same rules.
 ### Phone shells on herdr: `sh-*` workspaces + `herdr terminal attach` (2026-11-05, herdr-only Stage 2)
 **Choice:** a phone shell is a herdr workspace labelled `sh-<dir>`; herdr is the record (`workspace list` + `pane list`, 3 s). `/api/terminal` keeps its PTY bridge and frames, on `herdr terminal attach <terminal_id> --takeover`. Pre-existing tmux shells stay listed and attachable until Stage 5. Results and proof: `docs/herdr-only-migration.md` Stage 2.
 **Why:** Jeremie: "Everything under herdr please." A `claude` typed in a tmux shell was a session the app can't mirror; in a herdr pane it is an ordinary mirrored session. The raw attach means no iOS change.

@@ -2,6 +2,7 @@ import { companionLog } from "../lib/log"
 import { type MyTasksResponse, TASKS_TZ, buildCascade, fingerprint, listMine, localDay, normDate, setDone, setDue } from "../lib/my-tasks"
 import { type ExecFn, type QueryFn, TursoUnreachable, tursoExec, tursoQuery } from "../lib/turso"
 import { broadcast } from "../state"
+import { jsonObject } from "../lib/json-body"
 
 // Jeremie's tasks (PRJ-CT4M WP1, contract docs/tasks-api.md):
 //   GET  /api/tasks/mine            → MyTasksResponse (cached 30 s; ?fresh=1 bypasses)
@@ -73,8 +74,7 @@ export function createMyTasks(deps: MyTasksDeps = {}) {
     const id = decodeURIComponent(m[1]!)
     if (!ID.test(id)) return Response.json({ error: "bad_id" }, { status: 400 })
     let body: Record<string, unknown>
-    try { body = (await req.json()) as Record<string, unknown> } catch { return Response.json({ error: "bad_json" }, { status: 400 }) }
-    if (!body || typeof body !== "object") return Response.json({ error: "bad_json" }, { status: 400 })
+    try { body = await jsonObject(req) } catch { return Response.json({ error: "bad_json" }, { status: 400 }) }
 
     try {
       if (m[2] === "done") {
