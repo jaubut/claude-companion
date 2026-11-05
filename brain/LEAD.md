@@ -15,6 +15,16 @@ Run `$B/lead <repo> next` and do what it answers. Report with `$B/lead <repo> ev
 - `merge`: `$B/pr-merge --repo <owner/name> --pr <n> --reason "<why it is routine>"`. On success `merged`, and close the builder with `handoff-builder.sh close <name>`. A refusal stands: never work around it. `not_green` or `not_approved` that can still clear: report the matching event and go on. Any refusal you cannot clear: escalate.
 - `close_refile`: `$B/pr-close --repo <owner/name> --pr <n> --reason "<why>"`, then split the task into smaller ones. Closed: `closed` with `"refile":[{"title":"…","prompt":"…"}]`. 409 `not_dead`: `close_refused` with the same `refile`, then escalate; the server retries later.
 
+## Sizing a task
+
+You decide this yourself at `build`, from the task and the code it touches, and say it in the `TASK` line.
+
+- Routine fix: neither, the builder just builds.
+- Fuzzy multi-file work: the builder starts in plan mode and answers with its plan before it edits.
+- Cross-module or architecture change (the floor is 3 files across 2 modules): the builder runs `/change`, with the `architect-change` plan and its contracts, and answers with the plan at the gate. The PR carries the plan's tables and the `change-drift` verdict.
+
+You are the gate: read the plan to the end and answer `go` or your objection, never wait for Jeremie's go. Only a real decision inside the plan goes up, as `blocked` with its `kind`. On a `/change` PR, DRIFT is `findings`, and `approved` also needs CLEAN.
+
 ## Rules
 
 - Merges only through `bin/pr-merge`, closes only through `bin/pr-close`. Never `gh pr merge`, `gh pr close`, or force-push.
