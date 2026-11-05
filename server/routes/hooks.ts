@@ -51,6 +51,7 @@ import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { workerHookGate } from "../lib/worker-hook-gate"
 import { isBrainHook } from "../lib/brain"
 import { brainWiring } from "../wiring/brain"
+import { checked, jsonObject } from "../lib/json-body"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -89,13 +90,13 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   if (worker.early) return worker.early
   // ── Hook endpoint — PreToolUse ──
   if (url.pathname === "/hooks/pre-tool-use" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = checked(await jsonObject<{
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
       tool_use_id?: string
       cwd?: string
-    }
+    }>(req), { cwd: "string", tool_name: "string", tool_input: "object" })
 
     const tool = body.tool_name ?? "unknown"
     const input = body.tool_input ?? {}
@@ -218,7 +219,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Hook endpoint — PostToolUse ──
   if (url.pathname === "/hooks/post-tool-use" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = checked(await jsonObject<{
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
@@ -226,7 +227,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       tool_response?: unknown
       transcript_path?: string
       cwd?: string
-    }
+    }>(req), { cwd: "string", tool_name: "string", tool_input: "object" })
     const tool = body.tool_name ?? "unknown"
     const input = body.tool_input ?? {}
     const cwd = cwdFromPayload(body.cwd, req.headers)
@@ -259,12 +260,12 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Hook endpoint — UserPromptSubmit ──
   if (url.pathname === "/hooks/user-prompt-submit" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = checked(await jsonObject<{
       session_id?: string
       prompt?: string
       transcript_path?: string
       cwd?: string
-    }
+    }>(req), { session_id: "string", cwd: "string", prompt: "string" })
     const cwd = cwdFromPayload(body.cwd, req.headers)
     const headerMeta = metaFromHeaders(req.headers)
     // Diagnostic — surfaces hook fires + prompt-field shape so the
@@ -330,14 +331,14 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Permission request hook — multi-choice permission dialogs ──
   if (url.pathname === "/hooks/permission-request" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = checked(await jsonObject<{
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
       tool_use_id?: string
       hook_event_name?: string
       cwd?: string
-    }
+    }>(req), { cwd: "string", tool_name: "string", tool_input: "object" })
 
     const tool = body.tool_name ?? "permission"
     const input = body.tool_input ?? {}
@@ -403,13 +404,13 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Stop hook — Claude finished its turn, waiting for user input ──
   if (url.pathname === "/hooks/stop" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = checked(await jsonObject<{
       session_id?: string
       cwd?: string
       transcript_path?: string
       last_assistant_message?: string
       stop_hook_active?: boolean
-    }
+    }>(req), { cwd: "string", last_assistant_message: "string" })
 
     const cwd = cwdFromPayload(body.cwd, req.headers)
     const headerMeta = metaFromHeaders(req.headers)
@@ -487,7 +488,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   // so idle Claude sessions are visible to the phone picker from the moment
   // they open, without waiting for the user to trigger a tool-call hook.
   if (url.pathname === "/hooks/session-start" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; session_id?: string; source?: string }
+    const body = checked(await jsonObject<{ cwd?: string; session_id?: string; source?: string }>(req), { cwd: "string" })
     const cwd = cwdFromPayload(body.cwd, req.headers)
     // `/clear` from the phone fires no UserPromptSubmit; this is its proof.
     if (body.source === "clear") {
@@ -511,7 +512,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   // session's pane carries that pane's tty/TMUX_PANE, so ending it wiped the
   // live session (or the whole cwd) off the phone.
   if (url.pathname === "/hooks/session-end" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; session_id?: string; reason?: string }
+    const body = checked(await jsonObject<{ cwd?: string; session_id?: string; reason?: string }>(req), { session_id: "string" })
     const cwd = cwdFromPayload(body.cwd, req.headers)
     const headerMeta = metaFromHeaders(req.headers)
     const tty = headerMeta.tty ?? ""

@@ -5,35 +5,46 @@
 //
 // State lives in `~/.claude-companion/super-auto.flag` (presence = enabled)
 // so it survives server restarts. Toggle via /api/super-auto from the iOS
-// app or by `touch`/`rm`-ing the file from a shell.
+// app or by `touch`/`rm`-ing the file from a shell. Under `bun test` the real
+// flag is off limits: a test run must never turn SUPER off on a real host
+// (the server would come up off at its next restart). A test that needs the
+// file sets COMPANION_SUPER_FLAG; without it the mode lives in memory only.
 
 import { companionLog } from "./log"
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-const FLAG_PATH = join(homedir(), ".claude-companion", "super-auto.flag")
+const underTest = process.env.NODE_ENV === "test" || /\.test\.[jt]sx?$/.test(Bun.main)
 
-let cached: boolean = existsSync(FLAG_PATH)
+function flagPath(): string | null {
+  const override = process.env.COMPANION_SUPER_FLAG?.trim()
+  if (override) return override
+  return underTest ? null : join(homedir(), ".claude-companion", "super-auto.flag")
+}
+
+const bootFlag = flagPath()
+let cached: boolean = bootFlag !== null && existsSync(bootFlag)
 
 export function isSuperAuto(): boolean {
   return cached
 }
 
-// Test seam: flip the in-memory mode WITHOUT touching the host's flag file
-// (setSuperAuto would delete/create the real ~/.claude-companion flag).
+// Test seam: flip the in-memory mode, whatever COMPANION_SUPER_FLAG says.
 export function setSuperAutoInMemoryForTests(enabled: boolean): void {
   cached = enabled
 }
 
 export function setSuperAuto(enabled: boolean): boolean {
   cached = enabled
+  const path = flagPath()
+  if (!path) return cached
   try {
     if (enabled) {
-      mkdirSync(dirname(FLAG_PATH), { recursive: true })
-      writeFileSync(FLAG_PATH, String(Date.now()))
-    } else if (existsSync(FLAG_PATH)) {
-      unlinkSync(FLAG_PATH)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, String(Date.now()))
+    } else if (existsSync(path)) {
+      unlinkSync(path)
     }
   } catch (err) {
     companionLog(`super-auto persist failed: ${String(err)}`)
