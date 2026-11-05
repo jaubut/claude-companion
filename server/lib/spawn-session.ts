@@ -272,7 +272,7 @@ export const HERDR_START_TIMEOUT_MS = 20_000
 /** A fixed agent name (an identity token: taken = error, never suffixed) and plain-token agent args after `--`. */
 export interface HerdrSpawnOpts { name: string; args?: string[] }
 
-const AGENT_ARG = /^[A-Za-z0-9_.=-]+$/
+const AGENT_ARG = /^[A-Za-z0-9_.=/-]+$/
 
 export async function spawnInHerdr(
   cwd: string,

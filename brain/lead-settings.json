@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": ["Bash(~/claude-companion/brain/lead-builder *)"]
+  },
+  "sandbox": {
+    "excludedCommands": ["~/claude-companion/brain/lead-builder *"]
+  }
+}

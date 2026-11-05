@@ -8,8 +8,8 @@ import type { AgentLookup } from "./takeover-liveness"
 // Repo leads (docs/brain-api.md § Repo leads): one persistent `lead-<repo>` herdr
 // workspace per repo, one pane, following brain/LEAD.md. The server only starts it.
 
-/** Plan mode is off: nobody answers ExitPlanMode's approval in a lead's pane. */
-export const leadArgs = (name: string): string[] => ["--remote-control", name, "--permission-mode", "auto", "--disallowedTools", "EnterPlanMode", "ExitPlanMode"]
+/** Plan mode is off: nobody answers ExitPlanMode's approval in a lead's pane. The settings file adds brain/lead-builder, nothing else. */
+export const leadArgs = (name: string): string[] => ["--remote-control", name, "--name", name, "--settings", join(import.meta.dir, "..", "..", "brain", "lead-settings.json"), "--permission-mode", "auto", "--disallowedTools", "EnterPlanMode", "ExitPlanMode"]
 
 export interface LeadDeps {
   herdr: Herdr

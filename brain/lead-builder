@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# A repo lead's one way to start or close a builder, for its own repo only
+# (docs/brain-api.md § Repo leads). brain/lead-settings.json runs this outside the
+# sandbox, so host, mode and profile are fixed here and the lead names none of them.
+#
+#   lead-builder <repo> start <task-id>
+#   lead-builder <repo> close <builder-name>
+set -euo pipefail
+
+refuse() { echo "lead-builder: $1" >&2; exit 1; }
+
+[ $# -eq 3 ] || refuse "usage: lead-builder <repo> start <task-id> | close <builder-name>"
+REPO=$1 ACTION=$2 ARG=$3
+# The server stamps COMPANION_TASK_ID on the lead's pane.
+[ "${COMPANION_TASK_ID:-}" = "lead-$REPO" ] || refuse "not the lead of $REPO"
+case "$ARG" in [!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) refuse "bad id" ;; esac
+
+HANDOFF="$HOME/.claude/tools/handoff-builder.sh"
+case "$ACTION" in
+  start) exec "$HANDOFF" "$REPO" local auto --task "$ARG" ;;
+  close)
+    # handoff-builder.sh's record of the builder: workspace, worktree, repo dir.
+    RECORD="$HOME/.cache/handoff-builder/$ARG"
+    [ -f "$RECORD" ] && [ "$(basename "$(sed -n 3p "$RECORD")")" = "$REPO" ] || refuse "$ARG is not a builder of $REPO"
+    exec "$HANDOFF" close "$ARG" local ;;
+  *) refuse "unknown action $ACTION" ;;
+esac

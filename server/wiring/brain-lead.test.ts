@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -26,7 +26,62 @@ function stale(label: string, panes: string[], info: Record<string, unknown> | n
   return { f, lead }
 }
 
+const WRAPPER = join(import.meta.dir, "..", "..", "brain", "lead-builder")
+
+/** Runs the real wrapper as `taskId` against a stub handoff-builder.sh; returns what the stub was asked. */
+function wrapper(taskId: string | undefined, args: string[], builderRepoDir = "/home/x/claude-companion") {
+  const home = mkdtempSync(join(tmpdir(), "cc-lead-builder-"))
+  mkdirSync(join(home, ".claude", "tools"), { recursive: true })
+  mkdirSync(join(home, ".cache", "handoff-builder"), { recursive: true })
+  writeFileSync(join(home, ".cache", "handoff-builder", "builder-zettlab-claude-companion-t1"), `w1\n/wt\n${builderRepoDir}\n`)
+  const stub = join(home, ".claude", "tools", "handoff-builder.sh")
+  writeFileSync(stub, `#!/bin/sh\necho "$@" > "${home}/called"\n`)
+  chmodSync(stub, 0o755)
+  const { COMPANION_TASK_ID: _, ...env } = process.env
+  const r = Bun.spawnSync([WRAPPER, ...args], { env: { ...env, HOME: home, ...(taskId ? { COMPANION_TASK_ID: taskId } : {}) } })
+  let called: string | null = null
+  try { called = readFileSync(join(home, "called"), "utf8").trim() } catch {}
+  return { code: r.exitCode, called, err: r.stderr.toString() }
+}
+
+describe("lead-builder", () => {
+  test("a lead starts a local auto builder for its own repo and closes that repo's builder", () => {
+    expect(wrapper(NAME, ["claude-companion", "start", "t1"])).toMatchObject({ code: 0, called: "claude-companion local auto --task t1" })
+    expect(wrapper(NAME, ["claude-companion", "close", "builder-zettlab-claude-companion-t1"])).toMatchObject({ code: 0, called: "close builder-zettlab-claude-companion-t1 local" })
+  })
+
+  test("another repo, or no lead identity, is refused before the script runs", () => {
+    for (const [id, args] of [[NAME, ["tls-dashboard-v2", "start", "t1"]], [undefined, ["claude-companion", "start", "t1"]], ["builder-x", ["claude-companion", "start", "t1"]], ["brain", ["claude-companion", "start", "t1"]]] as Array<[string | undefined, string[]]>) {
+      const r = wrapper(id, args)
+      expect(r.code).not.toBe(0)
+      expect(r.called).toBeNull()
+    }
+  })
+
+  test("closing another repo's builder, or anything unknown, is refused", () => {
+    expect(wrapper(NAME, ["claude-companion", "close", "builder-zettlab-claude-companion-t1"], "/home/x/claude-companion-ios")).toMatchObject({ code: 1, called: null })
+    expect(wrapper(NAME, ["claude-companion", "close", "builder-zettlab-claude-companion-nope"])).toMatchObject({ code: 1, called: null })
+    expect(wrapper(NAME, ["claude-companion", "close", "../../../etc/passwd"])).toMatchObject({ code: 1, called: null })
+  })
+
+  test("nothing but a plain task id reaches the script: no host, mode, profile or extra flag", () => {
+    for (const args of [["claude-companion", "start", "t1", "mac"], ["claude-companion", "start", "--profile"], ["claude-companion", "start", "t 1"], ["claude-companion", "start"], ["claude-companion", "rm", "t1"]]) {
+      expect(wrapper(NAME, args)).toMatchObject({ code: 1, called: null })
+    }
+  })
+})
+
 describe("repo lead", () => {
+  test("a lead is named lead-<repo>, and its settings grant the wrapper and nothing else", () => {
+    const args = leadArgs(NAME)
+    expect(args.slice(args.indexOf("--name"), args.indexOf("--name") + 2)).toEqual(["--name", NAME])
+    const settings = JSON.parse(readFileSync(args[args.indexOf("--settings") + 1]!, "utf8"))
+    expect(settings).toEqual({
+      permissions: { allow: ["Bash(~/claude-companion/brain/lead-builder *)"] },
+      sandbox: { excludedCommands: ["~/claude-companion/brain/lead-builder *"] },
+    })
+  })
+
   test("spawn: its args pass the real gate, and a dead lead alone in its workspace is replaced at once", async () => {
     expect(await spawnInHerdr("/srv/repo", "claude", { COMPANION_TASK_ID: NAME }, fakeHerdr().h, { name: NAME, args: leadArgs(NAME) })).toMatchObject({ ok: true })
     const { f, lead } = stale(NAME, ["w7:p1"])
