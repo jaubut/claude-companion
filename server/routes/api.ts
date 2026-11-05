@@ -163,7 +163,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ entries: listLearned() })
   }
   if (url.pathname === "/api/learned" && req.method === "DELETE") {
-    const body = await jsonObject<{ tool?: string }>(req, {})
+    const body = checked(await jsonObject<{ tool?: string }>(req, {}), { tool: "string" })
     const removed = clearLearned(body.tool)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     companionLog(`${yellow}learned cleared${reset} ${body.tool ?? "all"} (${removed} entries)`)
@@ -180,7 +180,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ enabled: isSuperAuto() })
   }
   if (url.pathname === "/api/super-auto" && req.method === "POST") {
-    const body = await jsonObject<{ enabled?: boolean }>(req)
+    const body = checked(await jsonObject<{ enabled?: boolean }>(req), { enabled: "boolean" })
     const next = setSuperAuto(!!body.enabled)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const purple = "\x1b[35m"
     companionLog(`${purple}super-auto${reset} ${next ? "ON" : "off"}`)

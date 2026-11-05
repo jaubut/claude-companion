@@ -27,4 +27,6 @@ test("checked: an absent or null field passes, a wrong type throws", () => {
   expect(checked({} as { a?: unknown }, { a: "string" })).toEqual({})
   for (const a of [5, true, [], {}]) expect(() => checked({ a }, { a: "string" })).toThrow(BadJsonBody)
   for (const a of [5, "x", []]) expect(() => checked({ a }, { a: "object" })).toThrow(BadJsonBody)
+  expect(checked({ a: false }, { a: "boolean" })).toEqual({ a: false })
+  expect(() => checked({ a: 5 }, { a: "boolean" })).toThrow(BadJsonBody)
 })

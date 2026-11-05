@@ -13229,6 +13229,8 @@
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#DELETE /api/register-token",
             "routes/api.ts#POST /api/push/broadcast",
+            "routes/api.ts#DELETE /api/learned",
+            "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#* /api/feed",
             "routes/command.ts#POST /api/command/suggest",

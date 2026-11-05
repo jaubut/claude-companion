@@ -29,6 +29,9 @@ const WRONG: [string, string, Record<string, unknown>][] = [
   ["POST", "/api/register-token", { token: 5 }],
   ["POST", "/api/register-token", { token: "a".repeat(32), device_name: [] }],
   ["DELETE", "/api/register-token", { token: 5 }],
+  ["POST", "/api/super-auto", { enabled: 5 }],
+  ["DELETE", "/api/learned", { tool: 0 }],
+  ["DELETE", "/api/learned", { tool: false }],
   ["POST", "/api/push/broadcast", { title: 5, body: "b" }],
   ["POST", "/api/push/broadcast", { title: "t", body: {} }],
   ["POST", "/api/spawn-session", { cwd: 5 }],
@@ -94,6 +97,11 @@ test("the bodies iOS really sends still go through (a 400 would drop the row)", 
   expect(await (await send("POST", "/api/answer", { id: "no-such-id", answers: [{ selected: ["a"], otherText: "o" }, { selected: [] }] })).json())
     .toEqual({ ok: false, reason: "gone" })
   expect((await send("POST", "/api/register-token", { token: "b".repeat(32), environment: "sandbox", device_name: "iPhone" })).status).toBe(200)
+})
+
+test("the iOS SUPER toggle and an unfiltered learned wipe still work", async () => {
+  expect((await send("POST", "/api/super-auto", { enabled: false })).status).toBe(200)
+  expect((await send("DELETE", "/api/learned", {})).status).toBe(200)
 })
 
 test("null stays an absent optional field", async () => {

@@ -21,7 +21,7 @@ export async function jsonObject<T = Record<string, unknown>>(req: Request, onMa
 }
 
 /** `body`, once each listed field is absent, null or of its type. A wrong type throws BadJsonBody, for a 400 instead of a crash on first use. */
-export function checked<T extends object>(body: T, fields: Partial<Record<keyof T, "string" | "object">>): T {
+export function checked<T extends object>(body: T, fields: Partial<Record<keyof T, "string" | "boolean" | "object">>): T {
   for (const [name, type] of Object.entries(fields)) {
     const v = (body as Record<string, unknown>)[name]
     if (v !== undefined && v !== null && !(type === "object" ? isObject(v) : typeof v === type)) throw new BadJsonBody()
