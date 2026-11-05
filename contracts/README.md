@@ -75,3 +75,16 @@ the first finished report; the job drops 60 s later), `bytesPerSec` (average sin
 when unknown — and `at` (the reporter's time of the last report, ms epoch). Every key is
 always present; nullable ones are null, never missing. An unfinished job with no report
 for 120 s drops.
+
+## `builder-jobs/` — brain builder progress (`server/lib/builder-jobs.ts`)
+
+Not part of `contracts:sync`; the iOS decoder mirrors it by hand. `server/routes/builder-jobs.test.ts`
+checks the live frame carries exactly these keys. Full contract: `docs/builder-progress-plan.md`.
+
+- `frame.json` — the `builder_jobs` WS frame: every active relay job of the brain, full list
+  (replace, never merge); `jobs: []` clears. Sent on change, on a stale flip / drop, and right
+  after `init` on `/ws` open only when non-empty. `GET /api/builder-jobs` → `{ok, jobs}`.
+
+Item: `id`, `title`, `builder` (nullable), `pct` (0-100, null = indeterminate), `step`
+(nullable), `startedAt` / `updatedAt` (server ms epoch), `stale` (no update for 10 min; the
+job drops after 2 h). Every key always present.
