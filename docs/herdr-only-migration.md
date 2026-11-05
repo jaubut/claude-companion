@@ -153,6 +153,20 @@ Shipped in `server/lib/spawn-session.ts` + `server/lib/herdr.ts`:
 - companion: delete the dead legacy-tmux task paths (`createTask(…tmuxSession)` with no callers, the `cancelLocal` kill-session). The DTO `tmuxSession`/`tmuxSocket` become null, then are removed after one iOS release.
 - **Rollback:** revert.
 
+#### Stage 3b results (companion side, 2026-11-05)
+
+Checked against today's code first:
+- **The kill-session path is dead:** no local task with a `tmux_session` is active (only 4 old `error` rows have one), `createTask` has no production caller, and nothing starts a local worker since one-stream A2.
+- **The DTO fields are unread:** iOS `OrchestratorModels` decodes `tmuxSession` into a private field and never reads it, and `tmuxSocket` not at all. Side chat comes from `mode` and `sessionKey`.
+- **Obsolete: "`herdrPane` added" to the task DTO.** Nothing would read it, so it was not added.
+- **claude-config: nothing to remove from the runner.** `dispatch-run.ts` has no tmux fallback left (its one `tmux` is a comment). The real tmux left there is the `claude()` wrapper, a separate item (below).
+
+Shipped: `cancelLocal` no longer spawns tmux; `Task` no longer carries the fields; `createTask` lost the `tmuxSession` argument; `tmuxSession` and `tmuxSocket` are always null on the wire, removed after one iOS release. `orchestrator_tasks` keeps its columns, with no migration, and new rows leave them NULL.
+
+**Still blocks Stage 4:** the `claude()` wrapper in `~/.bashrc` and `~/.zshrc` (Stage 1's claude-config half) still starts `tmux -L cc` from any interactive login outside herdr. Neither file is in the claude-config repo.
+
+**Rollback:** revert. **Could fail:** an iOS build older than the checked `main` that reads `tmuxSession`; `try?` decoding tolerates null either way.
+
 ### Stage 4: retire the tmux ops (Zettlab, then Mac)
 Only after Stages 1–3 have run for a week with zero tmux spawns (`grep "app=tmux"` in the companion log). The commands below are the exact steps.
 ```sh
@@ -195,7 +209,7 @@ Only after Stage 4, plus two weeks of no tmux session on either host.
 | `tmux-resurrect-boot.service`, `tmux-cc-save.{timer,service}`, `cc-claude-*`, `~/.tmux/cc.conf` | remove (Stage 4) |
 | `claude()` wrappers (bashrc/zshrc, claude-config) | rewrite to herdr (Stage 1) |
 | `hooks/_lib.sh` tmux headers | delete (Stage 5) |
-| orchestrator live-row `tmux_session`/`tmux_socket` + DTO `tmuxSession`/`tmuxSocket` | `herdrPane` added (Stage 3b); tmux fields null, then removed after one iOS release |
+| orchestrator live-row `tmux_session`/`tmux_socket` + DTO `tmuxSession`/`tmuxSocket` | tmux fields null (Stage 3b), then removed after one iOS release; no `herdrPane` needed |
 | session JSON `tmuxPane` | empty for one iOS release, then remove |
 
 ## 5. Open questions for Jeremie

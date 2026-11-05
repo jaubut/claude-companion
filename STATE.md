@@ -4,6 +4,12 @@ Last updated: 2026-10-25
 
 ## Active Decisions
 
+### Task rows carry no tmux identity (2026-11-05, herdr-only Stage 3b)
+**Choice:** `tmuxSession` / `tmuxSocket` are always null on the wire and gone from `Task`; `cancelLocal` is a status change. Columns stay. Results: `docs/herdr-only-migration.md` Stage 3b.
+**Why:** no local worker since one-stream A2, and iOS never reads them.
+**Rejected:** adding `herdrPane` to the task DTO (the plan's idea): no consumer.
+**Revisit if:** never; remove both fields after one iOS release.
+
 ### Pane mirror scrollback: opt-in history request, answered to the asking viewer only (2026-11-02, t-ios-term-input-1)
 **Choice:** phone → `{"type":"scrollback","lines":N}` (cap 2000); server → that viewer only `{"type":"history","lines":M}` + one binary frame of M plain rows (CRLF, SGR reset per row), from `pane.read --source recent --lines N` (visible screen included). One answer per viewer per 1 s, latest wins. tmux / failed read → `lines:0`, no binary frame.
 **Why:** the mirror reads `--source visible`, so the phone had nothing to scroll (Jeremie: "can't scroll the terminal output"). Opt-in keeps old app builds on exactly today's frames.

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03",
+  "generatedAt": "2026-11-05",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1750,7 +1750,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 534,
+          "lines": 532,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -2818,7 +2818,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 331,
+          "lines": 323,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -6612,7 +6612,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 416,
+          "lines": 408,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6698,8 +6698,7 @@
             "lib/secret-store.ts",
             "lib/body.ts",
             "lib/vault-guard.ts",
-            "lib/log.ts",
-            "lib/tmux-pane.ts"
+            "lib/log.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -14558,12 +14557,6 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "sessionCmdArgv": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "routes/orchestrator.ts"
           ]
         },
         "rejectProposal": {

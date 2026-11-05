@@ -92,10 +92,10 @@ describe("DTO", () => {
 
   test("local task keeps every legacy field and adds source/mode", () => {
     const t: Task = {
-      taskId: "abcd1234", threadId: "general", prompt: "p", cwd: "/x", sessionKey: null, tmuxSession: "cc-x",
-      tmuxSocket: "/tmp/s", reasoning: "why", logTail: null, status: "proposed", createdAt: 1, updatedAt: 2,
+      taskId: "abcd1234", threadId: "general", prompt: "p", cwd: "/x", sessionKey: null,
+      reasoning: "why", logTail: null, status: "proposed", createdAt: 1, updatedAt: 2,
     }
-    expect(toTaskDto(t)).toMatchObject({ ...t, source: "proposal", dispatchStatus: null, done: false, mode: "live" })
+    expect(toTaskDto(t)).toMatchObject({ ...t, tmuxSession: null, tmuxSocket: null, source: "proposal", dispatchStatus: null, done: false, mode: "live" })
     expect(toTaskDto({ ...t, status: "done" })).toMatchObject({ source: "local", done: true })
   })
 })
@@ -181,7 +181,7 @@ describe("write helpers (P2)", () => {
 
   test("toTaskDto: a filed proposal keeps its Turso id, note and agent", () => {
     const t: Task = {
-      taskId: "abcd1234", threadId: "general", prompt: "p", cwd: "", sessionKey: null, tmuxSession: null, reasoning: "why",
+      taskId: "abcd1234", threadId: "general", prompt: "p", cwd: "", sessionKey: null, reasoning: "why",
       logTail: null, status: "filed", createdAt: 1, updatedAt: 2, noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32),
     }
     expect(toTaskDto(t)).toMatchObject({ source: "proposal", noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32), done: false })

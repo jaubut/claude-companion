@@ -232,7 +232,7 @@ describe("POST /api/body/component/:id/agent", () => {
       id: dispatchTaskId, dispatch_status: "queued", origin: "jeremie", dispatch_owner: null, requires_host: "zettlab", assignee: "agent:inbox-processor", note_id: "projects/dash",
     })
     expect(rows[0]!.description).toContain("inbox backlog 47 > 40")
-    expect(chat.getTask(taskId)).toMatchObject({ threadId: "body", dispatchTaskId, status: "filed", cwd: join(tempHome, ".claude"), tmuxSession: null })
+    expect(chat.getTask(taskId)).toMatchObject({ threadId: "body", dispatchTaskId, status: "filed", cwd: join(tempHome, ".claude") })
 
     const log = activity()
     expect(log).toHaveLength(1)
