@@ -5,7 +5,7 @@ import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } fro
 import { resolveSession } from "../lib/sessions"
 import { type SessionPane, sessionPaneOf } from "../lib/session-pane"
 import { dialogWatcher } from "../wiring/dialogs"
-import { jsonObject } from "../lib/json-body"
+import { checked, jsonObject } from "../lib/json-body"
 
 // Model control routes (PRJ-OR1T Phase 14, gap-table A1·A2·A3).
 //
@@ -69,7 +69,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
   // Body: { key }. The list is never cached and never hardcoded: it is
   // whatever Claude Code shows for this account right now (gap-table A3).
   if (url.pathname === "/api/model/open" && req.method === "POST") {
-    const body = await jsonObject<{ key?: string }>(req, {})
+    const body = checked(await jsonObject<{ key?: string }>(req, {}), { key: "string" })
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
@@ -120,7 +120,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
   // Claude Code also saves as the new-session default. That distinction is the
   // whole reason this drives the picker instead of sending `/model <id>`.
   if (url.pathname === "/api/model/set" && req.method === "POST") {
-    const body = await jsonObject<{ key?: string; index?: number; scope?: string }>(req, {})
+    const body = checked(await jsonObject<{ key?: string; index?: number; scope?: string }>(req, {}), { key: "string" })
     const key = (body.key ?? "").trim()
     const index = body.index
     const scope: ModelScope = body.scope === "session" ? "session" : "default"
@@ -181,7 +181,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
   // The phone dismissing its sheet must not leave a modal on the pane: while
   // one is up, inject refuses (Phase 13) and the session looks stuck.
   if (url.pathname === "/api/model/cancel" && req.method === "POST") {
-    const body = await jsonObject<{ key?: string }>(req, {})
+    const body = checked(await jsonObject<{ key?: string }>(req, {}), { key: "string" })
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
     const pane = sessionPaneOf(session)
