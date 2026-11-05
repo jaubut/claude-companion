@@ -10,7 +10,7 @@
     "start": "bun cli.ts",
     "typecheck": "tsc --noEmit -p .",
     "lint": "ast-grep test --skip-snapshot-tests && ast-grep scan && bun scripts/lint-repo.ts",
-    "prepare": "git config core.hooksPath .githooks",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || echo 'warning: core.hooksPath not set, pre-commit hook inactive (.git/config locked?); retry with: bun run prepare' >&2",
     "contracts:sync": "bun scripts/contracts-sync.ts"
   },
   "dependencies": {
