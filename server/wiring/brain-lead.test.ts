@@ -222,6 +222,27 @@ describe("repo lead: failure paths", () => {
     expect(await w.lead.next(REPO)).toEqual({ kind: "idle", held: 0 })
   })
 
+  test("a refused merge clears the approval, so next stops answering merge", async () => {
+    const w = world()
+    const taskId = await onPr(w, 59)
+    w.lead.event(REPO, { type: "approved", taskId })
+    w.lead.event(REPO, { type: "merge_refused", taskId })
+    expect(await w.lead.next(REPO)).toMatchObject({ kind: "wait" })
+  })
+
+  test("a builder dead before the budget's end gets a replacement on the next fix", async () => {
+    const w = world()
+    const taskId = await onPr(w, 63)
+    w.lead.event(REPO, { type: "findings", taskId, findings: ["wrong"] })
+    w.lead.event(REPO, { type: "fix_started", taskId })
+    w.lead.event(REPO, { type: "builder_died", taskId })
+    expect(await w.lead.next(REPO)).toMatchObject({ kind: "fix", fresh: true })
+    w.lead.event(REPO, { type: "fix_started", taskId })
+    w.lead.event(REPO, { type: "fix_pushed", taskId })
+    w.lead.event(REPO, { type: "findings", taskId, findings: ["wrong"] })
+    expect(await w.lead.next(REPO)).toMatchObject({ kind: "fix", fresh: true })
+  })
+
   test("a line to the brain is redacted", async () => {
     const w = world()
     const taskId = await onPr(w, 58)
@@ -260,7 +281,7 @@ describe("repo lead: tick", () => {
     const tagged: string[] = []
     const w = world({
       running: async () => true, agentPane: async () => "p9", sessions: () => [herdr],
-      envOf: async () => ["COMPANION_TASK_ID=lead-claude-companion"], tag: (k) => (tagged.push(k), true),
+      envOf: async () => ["COMPANION_TASK_ID=lead-claude-companion", "HERDR_PANE_ID=p9"], tag: (k) => (tagged.push(k), true),
       inject: async (k) => (injected.push(k), true), ...over,
     })
     return { w, injected, tagged }
@@ -279,6 +300,34 @@ describe("repo lead: tick", () => {
     await w.lead.send(REPO, "T", "brief", "turn-21")
     await w.lead.tick()
     expect([tagged, injected]).toEqual([[], []])
+  })
+
+  test("a process is the lead only with its env and herdr's pane agreeing", async () => {
+    const { w } = ticking()
+    expect(await w.lead.verified("lead-claude-companion", "99")).toBe(true)
+    expect(await ticking({ agentPane: async () => "p1" }).w.lead.verified("lead-claude-companion", "99")).toBe(false)
+    expect(await ticking({ agentPane: async () => "" }).w.lead.verified("lead-claude-companion", "99")).toBe(false)
+    expect(await ticking({ envOf: async () => ["COMPANION_TASK_ID=x", "HERDR_PANE_ID=p9"] }).w.lead.verified("lead-claude-companion", "99")).toBe(false)
+    expect(await ticking({ envOf: async () => null }).w.lead.verified("lead-claude-companion", "99")).toBe(false)
+  })
+
+  test("a slow tick is not overlapped: the cursor never runs back, a line posts once", async () => {
+    const rows: Array<Record<string, string | number | null>> = [{ id: 6, action: "pr:brain-event", summary: "one", meta: "{}" }]
+    let release = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    let held = false
+    const { w } = ticking({ exec: async (sql, args) => {
+      if (/MAX\(id\)/.test(sql)) return { rows: [{ n: 0 }], affected: 0 }
+      if (!held) { held = true; await gate }
+      return { rows: rows.filter((r) => Number(r.id) > Number(args[2])), affected: 0 }
+    } })
+    await w.lead.tick()
+    const slow = w.lead.tick()
+    await w.lead.tick()
+    release()
+    await slow
+    await w.lead.tick()
+    expect(w.events).toEqual(["one"])
   })
 
   test("a dead lead's stale herdr record is cleared, and the next tick respawns it", async () => {

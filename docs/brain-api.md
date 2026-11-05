@@ -128,7 +128,7 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 | op | caller | body | answer |
 |---|---|---|---|
 | `ensure` | brain | | `{ok, name, state}`: `running`, `starting`, `started` |
-| `send` | brain | `{title?, prompt, sourceTurnId}` | `{ok, taskId, lead, state}`; same turn + prompt queues nothing |
+| `send` | brain | `{title?, prompt, sourceTurnId}` | `{ok, taskId, lead, state}`; same turn + prompt queues nothing while that task is queued |
 | `next` | brain, lead | | `{ok, action}`: `gone` (the PR left GitHub), `build`, `fix`, `merge_main`, `merge`, `close_refile`, `wait`, `idle` (`held` = queued behind the limit) |
 | `event` | brain, lead | `{type, taskId, …}` | `{ok}`. `blocked` takes `kind` product, money, client, security or stuck (the brain handles `stuck` itself), else 400 `bad_event`. `next` skips a blocked task until `resume`, which only the brain may send (403 `forbidden`). |
 
@@ -142,7 +142,7 @@ Shepherd rows: the tick reads new `agent_activity` rows from `<leads dir>/.activ
 
 Lead sessions run without EnterPlanMode and ExitPlanMode: nobody answers the approval, and a waiting lead never reads as idle.
 
-Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, and the pid of a session registered under that task. A lead may also call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`). The gates are the same as for the brain, plus one for `pr-close`: a lead's tasks have no Turso row, so a PR whose task spent its fix budget also counts as dead, when its real head is that task's (`dispatch/<taskId>`, `builder/<taskId>`, or the head read from GitHub for a handed-over PR).
+Auth: as propose, or a lead: loopback, `X-Companion-Task-Id: lead-<repo>`, the pid of a session registered under that task, and that process's env naming the task and the pane herdr holds for the agent. A lead may also call `pr-merge` and `pr-close`, on its own repo only (403 `not_lead_repo`). The gates are the same as for the brain, plus one for `pr-close`: a lead's tasks have no Turso row, so a PR whose task spent its fix budget also counts as dead, when its real head is that task's (`dispatch/<taskId>`, `builder/<taskId>`, or the head read from GitHub for a handed-over PR).
 
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 

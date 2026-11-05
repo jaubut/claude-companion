@@ -104,13 +104,25 @@ export function createBrainLead(deps: LeadDeps) {
 
   const next = async (repo: string): Promise<LeadAction> => nextAction(load(repo), await openPrs(repo), deps.now())
 
-  /** The lead's session. Discovery re-registers it with no taskId after a restart; tagging grants the lead's rights, so its pane and its own env must both say so. */
+  /**
+   * This pid is the lead: its own env names the task and the pane herdr holds for that agent.
+   * The session registry is not proof, any loopback caller can write to it.
+   * ponytail: a same-user process can still forge its env; bind to the pane's foreground group if builders become hostile.
+   */
+  async function verified(name: string, pid: string): Promise<boolean> {
+    const pane = await deps.agentPane(name)
+    if (!pane) return false
+    const env = await deps.envOf(pid)
+    return envValue(env, "COMPANION_TASK_ID") === name && envValue(env, "HERDR_PANE_ID") === pane
+  }
+
+  /** The lead's session. Discovery re-registers it with no taskId after a restart; tagging gives back the lead's name. */
   async function leadKey(name: string): Promise<string | null> {
     const hit = deps.sessions().find((s) => s.taskId === name)
     if (hit) return hit.key
     const pane = await deps.agentPane(name)
     const s = pane ? deps.sessions().find((x) => !x.taskId && !!x.sessionId && x.herdrPane === pane) : null
-    if (!s || envValue(await deps.envOf(s.pid), "COMPANION_TASK_ID") !== name) return null
+    if (!s || !await verified(name, s.pid)) return null
     return deps.tag(s.key, name) ? s.key : null
   }
 
@@ -165,6 +177,7 @@ export function createBrainLead(deps: LeadDeps) {
   }
 
   const woken = new Map<string, number>()
+  let ticking = false
 
   return {
     ensure,
@@ -179,6 +192,7 @@ export function createBrainLead(deps: LeadDeps) {
     },
 
     next,
+    verified,
 
     /** bin/pr-close's evidence: unreadable counts as not spent, the gate then refuses. */
     spent(repo: string, pr: number): string[] {
@@ -198,6 +212,17 @@ export function createBrainLead(deps: LeadDeps) {
 
     /** Every repo with work gets a live lead; an idle one is woken when there is news. */
     async tick(): Promise<void> {
+      // One at a time: a slow tick must not read the same cursor twice.
+      if (ticking) return
+      ticking = true
+      try {
+        await this.sweep()
+      } finally {
+        ticking = false
+      }
+    },
+
+    async sweep(): Promise<void> {
       await readActivity().catch((err: unknown) => companionLog(`[lead] activity read failed: ${(err as Error)?.message ?? String(err)}`))
       for (const repo of Object.keys(LEAD_REPOS)) {
         try {

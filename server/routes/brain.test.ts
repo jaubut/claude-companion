@@ -341,8 +341,9 @@ describe("POST /hooks/brain/pr-merge", () => {
   test("a lead passes the same gate, on its own repo only; a spoofed lead does not", async () => {
     const seen: unknown[] = []
     const LEAD = { ...BRAIN_SESSION, key: "herdr:p_lead", taskId: "lead-claude-companion", pid: "7070" } as Session
+    let real = true
     const h = route.createBrainRoute({
-      wiring: harnessWiring, sessions: () => [...sessions, LEAD], enabled: () => true,
+      wiring: harnessWiring, sessions: () => [...sessions, LEAD], enabled: () => true, lead: { verified: async () => real } as unknown as BrainLead,
       prMerge: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "not_green" } } },
     })
     const post = async (b: unknown, headers: Record<string, string>, peer = "127.0.0.1") => {
@@ -356,6 +357,10 @@ describe("POST /hooks/brain/pr-merge", () => {
     expect((await post(ok, { ...me, "x-companion-pid": "6060" })).status).toBe(403)
     expect((await post(ok, { ...me, "x-companion-task-id": "lead-tls-dashboard-v2" })).status).toBe(403)
     expect((await post(ok, me, "100.64.0.9")).status).toBe(403)
+    // A session registered by hand with the lead's task and pid: the process itself is not the lead.
+    real = false
+    expect((await post(ok, me)).status).toBe(403)
+    real = true
     expect(seen).toHaveLength(0)
     expect((await post(ok, me)).status).toBe(409)
     expect(seen).toEqual([ok])
@@ -364,7 +369,7 @@ describe("POST /hooks/brain/pr-merge", () => {
   test("the heads a lead may close come from its queue, never from the wire", async () => {
     const seen: unknown[] = []
     const LEAD = { ...BRAIN_SESSION, key: "herdr:p_lead", taskId: "lead-claude-companion", pid: "7070" } as Session
-    const lead = { spent: (_r: string, pr: number) => pr === 7 ? ["dispatch/abcd1234"] : [] } as unknown as BrainLead
+    const lead = { verified: async () => true, spent: (_r: string, pr: number) => pr === 7 ? ["dispatch/abcd1234"] : [] } as unknown as BrainLead
     const h = route.createBrainRoute({
       wiring: harnessWiring, sessions: () => [...sessions, LEAD], enabled: () => true, lead,
       prClose: async (p) => { seen.push(p); return { status: 200, body: { ok: true } } },
@@ -428,6 +433,7 @@ describe("POST /hooks/brain/lead", () => {
   function harness() {
     const calls: unknown[][] = []
     const lead = {
+      verified: async () => true,
       ensure: async (r: string) => (calls.push(["ensure", r]), { ok: true, name: "lead-claude-companion", state: "running" }),
       send: async (...a: unknown[]) => (calls.push(["send", ...a]), { ok: true, taskId: "abcd0001", lead: "lead-claude-companion", state: "running" }),
       next: async () => ({ kind: "idle", held: 0 }),

@@ -2494,7 +2494,7 @@
         },
         {
           "path": "lib/lead-loop.ts",
-          "lines": 186,
+          "lines": 190,
           "kind": "lib",
           "exports": [
             "LEAD_REPOS",
@@ -6171,7 +6171,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 373,
+          "lines": 374,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -7191,7 +7191,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 257,
+          "lines": 282,
           "kind": "lib",
           "exports": [
             "leadArgs",

@@ -86,15 +86,16 @@ function proposeRefusal(req: Request, deps: BrainRouteDeps): Response | null {
   return null
 }
 
-/** The repo of the calling `lead-<repo>` session, or null: loopback peer, its task header, its pid registered under that task. */
-function leadRepo(req: Request, deps: BrainRouteDeps): string | null {
+/** The repo of the calling `lead-<repo>` session, or null: loopback peer, its task header, its pid registered under that task and proved by the process itself. */
+async function leadRepo(req: Request, deps: BrainRouteDeps): Promise<string | null> {
   if (clientOrigin(req, peerOf(req)).transport !== "loopback") return null
   const task = req.headers.get("x-companion-task-id") ?? ""
   const pid = req.headers.get("x-companion-pid")?.trim() ?? ""
   if (!task.startsWith(LEAD_PREFIX) || !pid) return null
   const repo = task.slice(LEAD_PREFIX.length)
   if (!repoSlug(repo)) return null
-  return deps.sessions().some((s) => s.pid === pid && s.taskId === task) ? repo : null
+  if (!deps.sessions().some((s) => s.pid === pid && s.taskId === task)) return null
+  return await (deps.lead ?? brainLead).verified(task, pid) ? repo : null
 }
 
 async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
@@ -178,7 +179,7 @@ const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
 /** bin/pr-close and bin/pr-merge: the gate (wiring/brain-pr-close.ts, brain-pr-merge.ts) re-checks it all on GitHub and Turso. */
 async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge"): Promise<Response> {
-  const lead = leadRepo(req, deps)
+  const lead = await leadRepo(req, deps)
   const refused = lead ? null : proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
@@ -198,7 +199,7 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   return Response.json(out.body, { status: out.status })
 }
 
-const EVENT_TYPES: ReadonlySet<string> = new Set(["started", "pr", "findings", "fix_started", "fix_pushed", "builder_died", "approved", "behind", "main_merged", "merged", "closed", "close_refused", "blocked", "resume"])
+const EVENT_TYPES: ReadonlySet<string> = new Set(["started", "pr", "findings", "fix_started", "fix_pushed", "builder_died", "approved", "merge_refused", "behind", "main_merged", "merged", "closed", "close_refused", "blocked", "resume"])
 const REFILE_MAX = 5
 
 function refileOf(v: unknown): Array<{ title: string; prompt: string }> | null {
@@ -235,7 +236,7 @@ function leadEvent(b: Record<string, unknown>): LeadEvent | null {
 
 /** bin/lead: the brain ensures a lead or sends it work; the lead (or the brain) reads the next step and reports events. */
 async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
-  const caller = leadRepo(req, deps)
+  const caller = await leadRepo(req, deps)
   const refused = caller ? null : proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)

@@ -38,6 +38,8 @@ export interface LeadTask {
   blocked?: boolean
   /** The split is queued: a later `closed` or `close_refused` must not queue it again. */
   refiled?: boolean
+  /** The builder died: the next fix starts a new one, whatever the count. */
+  lost?: boolean
   /** A PR the shepherd handed over: its real head. Otherwise the head is named after the task. */
   head?: string
 }
@@ -54,6 +56,7 @@ export type LeadEvent =
   | { type: "approved"; taskId: string }
   | { type: "behind"; taskId: string }
   | { type: "main_merged"; taskId: string }
+  | { type: "merge_refused"; taskId: string }
   | { type: "merged"; taskId: string }
   | { type: "closed"; taskId: string; refile: Array<{ title: string; prompt: string }> }
   | { type: "close_refused"; taskId: string; refile: Array<{ title: string; prompt: string }> }
@@ -76,7 +79,7 @@ export type LeadAction =
 export const leadName = (repo: string): string => `${LEAD_PREFIX}${repo}`
 export const emptyQueue = (): LeadQueue => ({ tasks: [], updatedAt: 0 })
 
-/** Same turn + same prompt = same id, so a repeated send queues nothing. */
+/** Same turn + same prompt = same id, so a repeated send queues nothing while the task is in the queue. */
 export function enqueue(q: LeadQueue, title: string, prompt: string, seed: string, now: number): LeadTask {
   const id = createHash("sha256").update(`${seed}\n${prompt}`).digest("hex").slice(0, 8)
   const hit = q.tasks.find((t) => t.id === id)
@@ -127,14 +130,15 @@ export function applyEvent(q: LeadQueue, e: LeadEvent, now: number): string | nu
       t.findings = e.findings
       t.approved = false
       return null
-    case "fix_started": t.state = "fixing"; t.fixes++; return null
+    case "fix_started": t.state = "fixing"; t.fixes++; t.lost = false; return null
     case "fix_pushed": t.state = "pr"; t.findings = null; return null
     case "builder_died":
       // No PR yet: the build starts over. With one, the attempt counts as a failed fix.
       if (t.pr === null) t.state = "queued"
-      else { t.state = "pr"; t.findings ??= ["builder died mid-fix"] }
+      else { t.state = "pr"; t.lost = true; t.findings ??= ["builder died mid-fix"] }
       return null
     case "approved": t.approved = true; return null
+    case "merge_refused": t.approved = false; return null
     case "behind": t.behind = true; t.approved = false; return null
     case "main_merged": t.behind = false; return null
     // The gates post their own event turn for a merge or a close.
@@ -171,7 +175,7 @@ export function nextAction(q: LeadQueue, open: OpenPr[], now: number): LeadActio
     if (t.state === "closing" && t.pr !== null && now - (t.closeTriedAt ?? 0) >= CLOSE_RETRY_MS) return { kind: "close_refile", taskId: t.id, pr: t.pr, title: t.title, findings: t.findings ?? [] }
   }
   for (const t of tasks) {
-    if (t.state === "pr" && t.pr !== null && t.findings) return { kind: "fix", taskId: t.id, pr: t.pr, findings: t.findings, fresh: t.fixes === FIXES_BEFORE_FRESH }
+    if (t.state === "pr" && t.pr !== null && t.findings) return { kind: "fix", taskId: t.id, pr: t.pr, findings: t.findings, fresh: t.fixes === FIXES_BEFORE_FRESH || !!t.lost }
   }
   for (const t of tasks) if (t.state === "pr" && t.pr !== null && t.behind) return { kind: "merge_main", taskId: t.id, pr: t.pr }
   for (const t of tasks) if (t.state === "pr" && t.pr !== null && t.approved) return { kind: "merge", taskId: t.id, pr: t.pr, title: t.title }

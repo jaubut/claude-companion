@@ -44,8 +44,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 382 | lib | 26 |  |
+| `routes/brain.ts` | 374 | lib | 3 | state: EVENT_TYPES: Set |
 | `lib/herdr.ts` | 373 | lib | 31 | state: let clientMod, spawnedAgents: Map |
-| `routes/brain.ts` | 373 | lib | 3 | state: EVENT_TYPES: Set |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
@@ -64,6 +64,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `wiring/auto-compact.ts` | 285 | lib | 6 | state: let statsDb · emits: inject_error |
 | `lib/ended-sessions.ts` | 282 | lib | 17 |  |
+| `wiring/brain-lead.ts` | 282 | lib | 6 |  |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
@@ -75,7 +76,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-hook.ts` | 268 | lib | 7 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/triage-pr.ts` | 258 | lib | 20 |  |
-| `wiring/brain-lead.ts` | 257 | lib | 6 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/orchestrator.ts` | 252 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
@@ -117,10 +117,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
+| `lib/lead-loop.ts` | 190 | lib | 19 |  |
 | `companion-server.ts` | 189 | route-host | 1 | routes: 5 |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
-| `lib/lead-loop.ts` | 186 | lib | 19 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `wiring/brain-pr-merge.ts` | 185 | lib | 3 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
