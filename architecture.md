@@ -203,8 +203,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-report.ts` | 66 | lib | 5 |  |
 | `lib/waiting.ts` | 66 | lib | 6 |  |
 | `lib/session-pane.ts` | 64 | lib | 4 |  |
-| `wiring/brain-lead.ts` | 64 | lib | 5 |  |
 | `wiring/shell-sessions.ts` | 64 | lib | 5 | state: bridges: WeakMap, attaches: Map · emits: sessions · listens: onShellSessions |
+| `wiring/brain-lead.ts` | 63 | lib | 5 |  |
 | `lib/auto-compact-guard.ts` | 61 | lib | 5 |  |
 | `lib/tasks-agent-store.ts` | 61 | lib | 4 |  |
 | `lib/herdr-socket.ts` | 60 | lib | 3 | state: let seq |
