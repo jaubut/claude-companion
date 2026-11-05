@@ -1,0 +1,27 @@
+id: fetch-needs-signal
+language: TypeScript
+severity: error
+message: fetch with no signal. A stalled peer hangs this call forever.
+note: |
+  Pass `signal: AbortSignal.timeout(ms)` or the caller's deadline signal.
+  Options passed as a variable or a spread are trusted, this only reads literals.
+  From claude-companion#257 (safeFetch(info.videoUrl, { headers }) left its inflight entry stuck for good) and claude-config#184.
+ignores: ["**/*.test.ts", "**/*.test-util.ts"]
+rule:
+  any:
+    - pattern: fetch($URL)
+    - pattern: safeFetch($URL)
+    - all:
+        - any:
+            - pattern: fetch($URL, $OPTS)
+            - pattern: safeFetch($URL, $OPTS)
+        - has:
+            field: arguments
+            has:
+              kind: object
+              not:
+                has:
+                  any:
+                    - { kind: pair, has: { field: key, regex: ^signal$ } }
+                    - { kind: shorthand_property_identifier, regex: ^signal$ }
+                    - { kind: spread_element }

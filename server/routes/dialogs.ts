@@ -6,6 +6,7 @@ import { resolveSession } from "../lib/sessions"
 import { paneKey, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher, endQuestionsOnEscape } from "../wiring/dialogs"
 import { herdrGateKey, herdrGatedKey, herdrPaneOf } from "../lib/herdr"
+import { checked, jsonObject } from "../lib/json-body"
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -18,7 +19,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
   // Right | Tab | Space or one literal character (a digit picks a numbered
   // row, "s" answers a hint like "s to use this session only").
   if (url.pathname === "/api/dialog/key" && req.method === "POST") {
-    const body = await req.json() as { key?: string; name?: string }
+    const body = checked(await jsonObject<{ key?: string; name?: string }>(req), { key: "string", name: "string" })
     const key = (body.key ?? "").trim()
     const name = (body.name ?? "").trim()
     const session = key ? resolveSession(key) : null
@@ -70,7 +71,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
   // (arrows work in every list; digits only in the question picker). The
   // phone confirms with Enter or a hint key.
   if (url.pathname === "/api/dialog/pick" && req.method === "POST") {
-    const body = await req.json() as { key?: string; index?: number }
+    const body = checked(await jsonObject<{ key?: string; index?: number }>(req), { key: "string" })
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
     const herdrPane = herdrPaneOf(session)
