@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
-# brain-v2 Phase 2: ensure the persistent `lead-<repo>` session (POST /hooks/brain/lead).
-# Not built yet — P1 ships the brain alone. Say so and exit 2 so the brain
-# falls back to bin/propose.
-echo "lead: Phase 2 (repo leads) is not built yet — use bin/propose" >&2
-exit 2
+# brain-v2 Phase 2: find or start the persistent `lead-<repo>` session (POST /hooks/brain/lead).
+#
+#   bin/lead <repo>
+#
+# A repo with no lead answers 404 no_lead_for_repo: use bin/propose. Then hand it
+# work as a plain message (docs/brain-api.md § Repo leads). Same auth as bin/propose.
+set -euo pipefail
+
+REPO="${1:-}"
+[ -n "$REPO" ] || { echo "lead: usage: bin/lead <repo>" >&2; exit 2; }
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(REPO="$REPO" python3 -c 'import json, os; print(json.dumps({"repo": os.environ["REPO"]}))')
+
+curl -sS --max-time 40 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/lead" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

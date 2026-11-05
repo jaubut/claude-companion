@@ -982,7 +982,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 216,
+          "lines": 223,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -991,6 +991,9 @@
             "RESERVED_CHANNELS",
             "BRAIN_TAKE_PREFIX",
             "BrainState",
+            "LEAD_REPOS",
+            "LEAD_PREFIX",
+            "leadSlug",
             "brainEnabled",
             "isBrainHook",
             "isSupervisedTask",
@@ -6165,7 +6168,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
+          "lines": 282,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6189,6 +6192,7 @@
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-lead.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-workers.ts"
           ],
@@ -7207,6 +7211,32 @@
           "imports": [
             "lib/brain.ts",
             "lib/brain-trace.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-lead.ts",
+          "lines": 65,
+          "kind": "lib",
+          "exports": [
+            "leadArgs",
+            "LeadDeps",
+            "createBrainLead",
+            "BrainLead",
+            "brainLead"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/herdr.ts",
+            "lib/spawn-session.ts",
+            "wiring/brain-workers.ts",
+            "wiring/takeover-liveness.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -10466,6 +10496,7 @@
             "lib/session-pane.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
@@ -10481,6 +10512,7 @@
             "lib/session-pane.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -13402,6 +13434,7 @@
           "module": "lib/spawn-session.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session",
+            "wiring/brain-lead.ts",
             "wiring/brain.ts"
           ]
         },
@@ -13859,6 +13892,12 @@
             "routes/brain.ts"
           ]
         },
+        "BrainLead": {
+          "module": "wiring/brain-lead.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -13867,6 +13906,24 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "leadSlug": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "LEAD_PREFIX": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "brainLead": {
+          "module": "wiring/brain-lead.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -14421,6 +14478,13 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
             "wiring/brain.ts"
+          ]
+        },
+        "isSupervisedTask": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts"
           ]
         },
         "gaugeFromTranscript": {
@@ -15251,12 +15315,6 @@
             "wiring/auto-compact.ts"
           ]
         },
-        "isSupervisedTask": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/auto-compact.ts"
-          ]
-        },
         "ShFn": {
           "module": "lib/live-repo.ts",
           "callers": [
@@ -15543,6 +15601,42 @@
             "wiring/events.ts"
           ]
         },
+        "AgentLookup": {
+          "module": "wiring/takeover-liveness.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain-restore.ts"
+          ]
+        },
+        "herdrWorkspaces": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "herdrWorkspacePanes": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "brainLiveness": {
+          "module": "wiring/brain-workers.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain-restore.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "spawnInHerdr": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain.ts"
+          ]
+        },
         "GhFn": {
           "module": "lib/triage-pr.ts",
           "callers": [
@@ -15553,23 +15647,10 @@
             "wiring/triage.ts"
           ]
         },
-        "AgentLookup": {
-          "module": "wiring/takeover-liveness.ts",
-          "callers": [
-            "wiring/brain-restore.ts"
-          ]
-        },
         "envValue": {
           "module": "lib/brain-workers.ts",
           "callers": [
             "wiring/brain-restore.ts"
-          ]
-        },
-        "brainLiveness": {
-          "module": "wiring/brain-workers.ts",
-          "callers": [
-            "wiring/brain-restore.ts",
-            "wiring/brain.ts"
           ]
         },
         "addTodo": {
@@ -15658,18 +15739,6 @@
           ]
         },
         "HerdrWorkspaceInfo": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "wiring/brain-workers.ts"
-          ]
-        },
-        "herdrWorkspacePanes": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "wiring/brain-workers.ts"
-          ]
-        },
-        "herdrWorkspaces": {
           "module": "lib/herdr.ts",
           "callers": [
             "wiring/brain-workers.ts"
@@ -15872,12 +15941,6 @@
         },
         "brainRestore": {
           "module": "wiring/brain-restore.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "spawnInHerdr": {
-          "module": "lib/spawn-session.ts",
           "callers": [
             "wiring/brain.ts"
           ]

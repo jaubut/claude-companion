@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "../lib/auth"
-import { BRAIN_AGENT, BRAIN_THREAD, brainEnabled } from "../lib/brain"
+import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, leadSlug } from "../lib/brain"
 import { latestRows, rowsSince } from "../lib/brain-trace"
 import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
@@ -9,6 +9,7 @@ import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { type BrainLead, brainLead } from "../wiring/brain-lead"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -18,6 +19,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /api/brain/pause|resume|restart  → {ok, brain}; restart while paused → 409 paused
 //   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId}
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
+//   POST /hooks/brain/lead                → bin/lead: {repo} → {ok, name, state} (docs/brain-api.md § Repo leads)
 //   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
@@ -53,6 +55,8 @@ export interface BrainRouteDeps {
   prMerge?: typeof mergeAgentPr
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
+  /** bin/lead (default: the real one). */
+  lead?: BrainLead
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -178,6 +182,18 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   return Response.json(out.body, { status: out.status })
 }
 
+/** bin/lead: the brain finds or starts a repo's lead. */
+async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const repo = typeof body.repo === "string" && leadSlug(body.repo) ? body.repo : null
+  if (!repo) return fail(404, "no_lead_for_repo")
+  const out = await (deps.lead ?? brainLead).ensure(repo, `${LEAD_PREFIX}${repo}`)
+  return Response.json(out, { status: out.ok ? 200 : 502 })
+}
+
 /** bin/deploy: the deployer (wiring/auto-deploy.ts) re-checks the repo allowlist and fast-forward itself. */
 async function deploy(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const refused = proposeRefusal(req, deps)
@@ -227,6 +243,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-merge")
+    }
+    if (p === "/hooks/brain/lead") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return leadOp(req, deps)
     }
     if (p === "/hooks/brain/deploy") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")

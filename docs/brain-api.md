@@ -82,6 +82,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
+| POST | `/hooks/brain/lead` | `{repo}` | `{ok, name, state}`: `running`, `starting`, `started`; 404 `no_lead_for_repo`; 502 down. Same auth as propose (brain/bin/lead). |
 | POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
 
@@ -119,6 +120,12 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 | 409 `observe_only` (+`verdict`, `reason`) | the reaper is not `on` |
 | 409 `kept` (+`reason`) | any other keep (split, settling, unreadable) |
 | 409 `changed` / `in_flight` | the workspace changed before the close / another close is running |
+
+### Repo leads (`/hooks/brain/lead`)
+
+`LEAD_REPOS` in `lib/brain.ts` lists the repos with a lead. A lead is one persistent `lead-<repo>` herdr workspace with one pane (auto mode, cwd `~/<repo>`, no plan-mode tools: nobody can approve ExitPlanMode), following `brain/LEAD.md`. The server holds no queue: `wiring/brain-lead.ts` only finds or starts it. Work, merge requests and escalations are plain relay messages. A lead has no merge or close rights: the brain runs `bin/pr-merge` and `bin/pr-close`, on dispatch branches only. The limit of 3 PRs lives in the lead's brief and claude-config PR 226. A lead's turn end sets no waiting badge and sends no push.
+
+`bin/lead <repo>` starts a fresh lead when the old one is not running (`alive()`, since herdr can keep a dead agent's record, also after a restore). On `name_taken` the leftover is cleared only when its workspace is the lead's alone (labelled `lead-<repo>`, one pane, the agent's) and the pane's shell is back in front. Anything else, or an unreadable answer, is left alone and answers 502.
 
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 

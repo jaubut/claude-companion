@@ -82,6 +82,13 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 - Touch `journal/` notes unless Jeremie explicitly asks.
 - Queue unrelated work onto a builder that owns another project.
 
-## Phase 2 (not yet)
+## Repo leads
 
-Repo leads (`bin/lead <repo>`) are not built; `bin/lead` exits 2. Use `bin/propose`.
+A repo with a lead (`LEAD_REPOS` in `server/lib/brain.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md." After `started`, the old lead's context is gone: send what is still open. Answer 404 `no_lead_for_repo` → use `bin/propose`.
+
+The lead owns builders, fixes and conflicts, on dispatch branches, at most 3 open agent PRs. It reaches you in one line:
+
+- `merge <repo>#<n>: <why>`: CI is green with both approvals. Merge it with `bin/pr-merge` and tell the lead the result, refusal included.
+- `close <repo>#<n>: <why>`: check it with `bin/pr-close` and tell the lead the result.
+- Stuck (a conflict, a refusal, anything left after its retries): **you handle it, not Jeremie**: read the PR, then answer the lead.
+- A real product, money, client or security decision: pass it to Jeremie in one line.

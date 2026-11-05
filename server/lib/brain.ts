@@ -25,6 +25,13 @@ export const BRAIN_TAKE_PREFIX = "brain:"
 
 export type BrainState = "up" | "starting" | "down" | "paused"
 
+/** The repos with a lead: one line per repo, GitHub slug by repo name. */
+export const LEAD_REPOS: Readonly<Record<string, string>> = {
+  "claude-companion": "jaubut/claude-companion",
+}
+export const LEAD_PREFIX = "lead-"
+export const leadSlug = (repo: string): string | null => Object.hasOwn(LEAD_REPOS, repo) ? LEAD_REPOS[repo]! : null
+
 /** The brain runs on the host that sets COMPANION_BRAIN=1 (Zettlab) and nowhere else. */
 export function brainEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return env.COMPANION_BRAIN?.trim() === "1"
@@ -37,7 +44,7 @@ export function isBrainHook(taskId: string | null | undefined): boolean {
 
 /** Brain or a repo lead (P2: `lead-<repo>`): sessions the supervisor owns, never the global auto-compact's. */
 export function isSupervisedTask(taskId: string | null | undefined): boolean {
-  return taskId === BRAIN_AGENT || !!taskId?.startsWith("lead-")
+  return taskId === BRAIN_AGENT || !!taskId?.startsWith(LEAD_PREFIX)
 }
 
 // ── Delivery text ──
