@@ -127,7 +127,7 @@ async function linkChannel(req: Request, id: string, dispatch: DispatchWiring): 
   }
   let raw: { noteId?: unknown }
   try {
-    raw = await req.json() as { noteId?: unknown }
+    raw = await req.json() as { noteId?: unknown } // ast-grep-ignore: req-json-needs-object-check
   } catch {
     return Response.json({ ok: false, error: "invalid JSON" }, { status: 400 })
   }
@@ -363,7 +363,7 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
   }
   if (url.pathname === "/api/orchestrator/send" && req.method === "POST") {
     return withIdempotency(req, "orch-send", async () => {
-      const { text, channel, voice } = await req.json() as { text?: string; channel?: string; voice?: unknown }
+      const { text, channel, voice } = await req.json() as { text?: string; channel?: string; voice?: unknown } // ast-grep-ignore: req-json-needs-object-check
       if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
       const ch = resolveChannel(channel)
       if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })

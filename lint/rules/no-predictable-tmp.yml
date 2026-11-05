@@ -1,0 +1,19 @@
+id: no-predictable-tmp
+language: TypeScript
+severity: error
+message: Fixed temp path. Another local user can pre-create it or swap it for a symlink.
+note: |
+  Use mkdtemp, or a private dir under the Companion home.
+  From claude-companion#70 (join(tmpdir(), "cc-scrape-homes"), a copy of ~/.claude.json could be redirected), #73, #110, #248.
+ignores: ["**/*.test.ts", "**/*.test-util.ts"]
+rule:
+  any:
+    - { kind: string, regex: "^['\"]/tmp/" }
+    - { kind: template_string, regex: "^`/tmp/" }
+    - pattern: join(tmpdir(), $$$)
+      not:
+        inside:
+          stopBy: end
+          any:
+            - pattern: mkdtemp($$$)
+            - pattern: mkdtempSync($$$)

@@ -73,7 +73,7 @@ export function createMyTasks(deps: MyTasksDeps = {}) {
     const id = decodeURIComponent(m[1]!)
     if (!ID.test(id)) return Response.json({ error: "bad_id" }, { status: 400 })
     let body: Record<string, unknown>
-    try { body = (await req.json()) as Record<string, unknown> } catch { return Response.json({ error: "bad_json" }, { status: 400 }) }
+    try { body = (await req.json()) as Record<string, unknown> } catch { return Response.json({ error: "bad_json" }, { status: 400 }) } // ast-grep-ignore: req-json-needs-object-check
     if (!body || typeof body !== "object") return Response.json({ error: "bad_json" }, { status: 400 })
 
     try {

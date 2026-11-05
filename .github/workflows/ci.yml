@@ -23,6 +23,10 @@ jobs:
       - name: Typecheck server (server, tools, cli, scripts)
         run: bunx tsc --noEmit -p .
 
+      # Same gate as .githooks/pre-commit: hooksPath is per clone, CI is the backstop.
+      - name: Lint (anti-slop rules, lint/rules + scripts/lint-repo.ts)
+        run: bun --bun run lint
+
       # The committed architecture map must match the code (--check) and no
       # module may cross an import boundary or grow past the 600-line cap
       # beyond what main already carries (--lint, ratcheted against main).

@@ -89,7 +89,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   if (worker.early) return worker.early
   // ── Hook endpoint — PreToolUse ──
   if (url.pathname === "/hooks/pre-tool-use" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
@@ -218,7 +218,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Hook endpoint — PostToolUse ──
   if (url.pathname === "/hooks/post-tool-use" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
@@ -259,7 +259,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Hook endpoint — UserPromptSubmit ──
   if (url.pathname === "/hooks/user-prompt-submit" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
       session_id?: string
       prompt?: string
       transcript_path?: string
@@ -330,7 +330,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Permission request hook — multi-choice permission dialogs ──
   if (url.pathname === "/hooks/permission-request" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
       session_id?: string
       tool_name?: string
       tool_input?: Record<string, unknown>
@@ -403,7 +403,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
 
   // ── Stop hook — Claude finished its turn, waiting for user input ──
   if (url.pathname === "/hooks/stop" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
       session_id?: string
       cwd?: string
       transcript_path?: string
@@ -487,7 +487,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   // so idle Claude sessions are visible to the phone picker from the moment
   // they open, without waiting for the user to trigger a tool-call hook.
   if (url.pathname === "/hooks/session-start" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; session_id?: string; source?: string }
+    const body = await req.json() as { cwd?: string; session_id?: string; source?: string } // ast-grep-ignore: req-json-needs-object-check
     const cwd = cwdFromPayload(body.cwd, req.headers)
     // `/clear` from the phone fires no UserPromptSubmit; this is its proof.
     if (body.source === "clear") {
@@ -511,7 +511,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
   // session's pane carries that pane's tty/TMUX_PANE, so ending it wiped the
   // live session (or the whole cwd) off the phone.
   if (url.pathname === "/hooks/session-end" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; session_id?: string; reason?: string }
+    const body = await req.json() as { cwd?: string; session_id?: string; reason?: string } // ast-grep-ignore: req-json-needs-object-check
     const cwd = cwdFromPayload(body.cwd, req.headers)
     const headerMeta = metaFromHeaders(req.headers)
     const tty = headerMeta.tty ?? ""

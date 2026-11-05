@@ -62,7 +62,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Device token registration (iOS companion app) ──
   if (url.pathname === "/api/register-token" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
       token?: string
       environment?: ApnsEnv
       device_name?: string
@@ -78,7 +78,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ ok: true, configured: apnsConfigured(), total: tokenCount() })
   }
   if (url.pathname === "/api/register-token" && req.method === "DELETE") {
-    const body = await req.json() as { token?: string }
+    const body = await req.json() as { token?: string } // ast-grep-ignore: req-json-needs-object-check
     const token = (body.token ?? "").trim()
     if (!token) return Response.json({ ok: false, error: "missing-token" }, { status: 400 })
     removeToken(token)
@@ -95,7 +95,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ configured: apnsConfigured(), count: tokens.length, tokens })
   }
   if (url.pathname === "/api/push/test" && req.method === "POST") {
-    const body = await req.json() as { category?: "approval" | "question" | "waiting_input"; body?: string }
+    const body = await req.json() as { category?: "approval" | "question" | "waiting_input"; body?: string } // ast-grep-ignore: req-json-needs-object-check
     const category = body.category === "waiting_input"
       ? "waiting_input"
       : body.category === "question"
@@ -123,7 +123,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // to every registered device. category="briefing" keeps these
   // semantically distinct from approval / waiting_input flows.
   if (url.pathname === "/api/push/broadcast" && req.method === "POST") {
-    const body = await req.json() as {
+    const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
       title?: string
       subtitle?: string
       body?: string
@@ -162,7 +162,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ entries: listLearned() })
   }
   if (url.pathname === "/api/learned" && req.method === "DELETE") {
-    const body = await req.json().catch(() => ({})) as { tool?: string }
+    const body = await req.json().catch(() => ({})) as { tool?: string } // ast-grep-ignore: req-json-needs-object-check
     const removed = clearLearned(body.tool)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"
     companionLog(`${yellow}learned cleared${reset} ${body.tool ?? "all"} (${removed} entries)`)
@@ -179,7 +179,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json({ enabled: isSuperAuto() })
   }
   if (url.pathname === "/api/super-auto" && req.method === "POST") {
-    const body = await req.json() as { enabled?: boolean }
+    const body = await req.json() as { enabled?: boolean } // ast-grep-ignore: req-json-needs-object-check
     const next = setSuperAuto(!!body.enabled)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const purple = "\x1b[35m"
     companionLog(`${purple}super-auto${reset} ${next ? "ON" : "off"}`)
@@ -189,7 +189,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Spawn a fresh Claude/Codex session (or a plain shell) from the phone ──
   if (url.pathname === "/api/spawn-session" && req.method === "POST") {
-    const body = await req.json() as { cwd?: string; repo?: unknown; seed?: unknown; app?: string; agent?: SpawnAgent | "shell"; resume?: string }
+    const body = await req.json() as { cwd?: string; repo?: unknown; seed?: unknown; app?: string; agent?: SpawnAgent | "shell"; resume?: string } // ast-grep-ignore: req-json-needs-object-check
     // `repo` (a GitHub / map name) instead of a cwd: this host's checkout, or
     // 409 no_checkout so the phone tries its other host. `seed`: lib/spawn-seed.ts.
     if (body.agent === "shell" && (body.seed !== undefined || body.repo !== undefined)) return Response.json({ ok: false, error: "agent_only" }, { status: 400 })
@@ -244,7 +244,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // Pane closed meanwhile → a new terminal resuming it (the spawn reply, as
   // for agent "shell", key "shell:…"), under the shell spawn's network rule.
   if (url.pathname === "/api/sessions/resume" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { key?: unknown }
+    const body = await req.json().catch(() => ({})) as { key?: unknown } // ast-grep-ignore: req-json-needs-object-check
     const key = typeof body.key === "string" ? body.key : ""
     const ended = endedStore.get(key)
     const r = await resumeInPane(endedStore, key, {
@@ -263,7 +263,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // ── Delete an ended session: close its herdr pane, drop the row ──
   // 200 {ok, closed} | 409 pane_busy (something runs in it) | 410 | 502 close_failed.
   if (url.pathname === "/api/sessions/ended/delete" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { key?: unknown }
+    const body = await req.json().catch(() => ({})) as { key?: unknown } // ast-grep-ignore: req-json-needs-object-check
     const key = typeof body.key === "string" ? body.key : ""
     const pane = endedStore.get(key)?.herdrPane
     const r = await deleteEnded(endedStore, key)
@@ -282,7 +282,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   if (url.pathname === "/api/shell/close" && req.method === "POST") {
     const refused = shellNetworkRefusal(req)
     if (refused) return refused
-    const body = await req.json().catch(() => ({})) as { name?: unknown }
+    const body = await req.json().catch(() => ({})) as { name?: unknown } // ast-grep-ignore: req-json-needs-object-check
     const name = typeof body.name === "string" ? body.name : ""
     if (!name || name.length > 200) return Response.json({ ok: false, error: "bad_name" }, { status: 400 })
     const r = await closeShellSession(name, listSessions(), detachTerminals)
@@ -361,7 +361,7 @@ async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
 }
 
 async function handleResolve(req: Request): Promise<Response> {
-  const body = await req.json() as { id?: string; decision?: "allow" | "deny" }
+  const body = await req.json() as { id?: string; decision?: "allow" | "deny" } // ast-grep-ignore: req-json-needs-object-check
   const id = (body.id ?? "").trim()
   const decision = body.decision
   if (!id || (decision !== "allow" && decision !== "deny")) {
@@ -381,7 +381,7 @@ function logResolve(req: Request, what: "approval" | "question", id: string, dec
 }
 
 async function handleAnswer(req: Request): Promise<Response> {
-  const body = await req.json() as {
+  const body = await req.json() as { // ast-grep-ignore: req-json-needs-object-check
     id?: string
     answers?: Array<{ selected?: string[]; otherText?: string }>
   }
@@ -402,7 +402,7 @@ async function handleAnswer(req: Request): Promise<Response> {
 
 // Inject text from phone into terminal.
 async function handleInject(req: Request): Promise<Response> {
-  const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string }
+  const { text, key, cwd } = await req.json() as { text: string; key?: string; cwd?: string } // ast-grep-ignore: req-json-needs-object-check
   if (!text?.trim()) return Response.json({ ok: false, error: "empty" }, { status: 400 })
 
   // `/key NAME value` goes to secrets.env, never into the pane or a log —

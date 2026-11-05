@@ -1,0 +1,4 @@
+#!/bin/sh
+# Tracked pre-commit gate. `bun install` points core.hooksPath here (package.json prepare).
+[ -e node_modules/.bin/ast-grep ] || { echo "pre-commit: lint tool missing, run bun install" >&2; exit 1; }
+exec bun --bun run lint
