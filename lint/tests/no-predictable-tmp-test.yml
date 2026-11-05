@@ -1,0 +1,9 @@
+id: no-predictable-tmp
+valid:
+  - 'const dir = await mkdtemp(join(tmpdir(), "cc-scrape-"))'
+  - 'const dir = join(companionHome(), "scrape-homes")'
+  - 'const s = "see /tmp/x in the docs"'
+invalid:
+  - 'const base = join(tmpdir(), "cc-scrape-homes")'
+  - 'const SCRATCH_ROOT = "/tmp/companion-web-read"'
+  - 'const p = `/tmp/companion-test-${process.pid}.db`'

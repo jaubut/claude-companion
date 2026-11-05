@@ -7,6 +7,7 @@ import { type Session, resolveSession } from "../lib/sessions"
 import { sessionPaneOf } from "../lib/session-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 import { clearIfOurs, finishSuggestProbe } from "../lib/suggest-cleanup"
+import { checked, jsonObject } from "../lib/json-body"
 
 // Slash-command autocomplete (PRJ-OR1T Phase 16).
 //
@@ -42,7 +43,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
   // Body: { key, prefix } where prefix is what follows "/" ("" lists the menu
   // as it opens). Returns { commands: [{name, description}] }.
   if (url.pathname === "/api/command/suggest" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { key?: string; prefix?: string }
+    const body = checked(await jsonObject<{ key?: string; prefix?: string }>(req, {}), { key: "string", prefix: "string" })
     const key = (body.key ?? "").trim()
     // Only the command token matters: everything after the first space is the
     // command's own argument, which the menu does not filter on.
@@ -161,7 +162,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
   // per fingerprint for 10 min (lib/command-offpane-cache.ts) and answered with
   // that same `aborted` shape without booting another claude.
   if (url.pathname === "/api/command/list" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { key?: string; force?: boolean }
+    const body = checked(await jsonObject<{ key?: string; force?: boolean }>(req, {}), { key: "string" })
     const key = (body.key ?? "").trim()
     // A terminal (lib/shell-sessions.ts) has no claude yet; its list is the
     // one claude would have in the shell's folder (the terminal's palette).

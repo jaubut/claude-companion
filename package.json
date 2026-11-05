@@ -9,6 +9,8 @@
   "scripts": {
     "start": "bun cli.ts",
     "typecheck": "tsc --noEmit -p .",
+    "lint": "ast-grep test --skip-snapshot-tests && ast-grep scan && bun scripts/lint-repo.ts",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || echo 'warning: core.hooksPath not set, pre-commit hook inactive (.git/config locked?); retry with: bun run prepare' >&2",
     "contracts:sync": "bun scripts/contracts-sync.ts"
   },
   "dependencies": {
@@ -16,6 +18,7 @@
     "sharp": "^0.35.5"
   },
   "devDependencies": {
+    "@ast-grep/cli": "0.51.1",
     "@types/bun": "^1.4.4",
     "@types/qrcode": "^1.5.6",
     "typescript": "~7.0.2"
