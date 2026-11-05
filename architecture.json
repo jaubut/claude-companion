@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03",
+  "generatedAt": "2026-11-05",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 181,
+          "lines": 182,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -1058,7 +1058,7 @@
         },
         {
           "path": "lib/canvas.ts",
-          "lines": 440,
+          "lines": 458,
           "kind": "lib",
           "exports": [
             "NODE_KINDS",
@@ -3781,14 +3781,18 @@
         },
         {
           "path": "lib/request-gate.ts",
-          "lines": 51,
+          "lines": 86,
           "kind": "lib",
           "exports": [
             "hostAllowed",
+            "tailscaleNameOf",
+            "refreshTailscaleName",
+            "watchTailscaleName",
             "hookCallerAllowed"
           ],
           "state": [
-            "NAMES: Set"
+            "NAMES: Set",
+            "let tailscaleName"
           ],
           "emits": [],
           "consumes": [],
@@ -6143,7 +6147,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 170,
+          "lines": 174,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",
@@ -7330,7 +7334,7 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 184,
+          "lines": 191,
           "kind": "lib",
           "exports": [
             "canvasStore",
@@ -8444,6 +8448,12 @@
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "ws.ts"
+          ]
+        },
+        "watchTailscaleName": {
+          "module": "lib/request-gate.ts",
+          "callers": [
+            "companion-server.ts"
           ]
         },
         "WsData": {
