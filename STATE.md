@@ -164,8 +164,8 @@ Last updated: 2026-10-25
 | `POST /hooks/brain/pr-update-branch` | hook endpoint | new | brain/bin/pr-update-branch | additive |
 | `BrainRouteDeps.prUpdate` | export | new optional | routes/brain.test.ts | additive |
 | `agent_activity` action `brain:pr-update-branch` | row | new | digest readers | additive |
-| brain permissions | settings | allow `bin/pr-update-branch` (deferred: added by hand after merge, agents can't write the file) | the brain session | additive |
-**Files** (one owner): `server/wiring/brain-pr-update-branch.ts` (new; no module state) · `server/wiring/brain-pr-update-branch.test.ts` (new) · `server/routes/brain.ts` · `server/routes/brain.test.ts` · `server/lib/request-gate.test.ts` · `brain/bin/pr-update-branch` (new) · `brain/.claude/settings.json` (deferred, see the permissions row) · `brain/CLAUDE.md` · `docs/brain-api.md` · `STATE.md` · `architecture.*`
+| brain permissions | settings | allow `bin/pr-update-branch` (added by hand on Zettlab, not in this PR) | the brain session | additive |
+**Files** (one owner): `server/wiring/brain-pr-update-branch.ts` (new; no module state) · `server/wiring/brain-pr-update-branch.test.ts` (new) · `server/routes/brain.ts` · `server/routes/brain.test.ts` · `server/lib/request-gate.test.ts` · `brain/bin/pr-update-branch` (new) · `brain/.claude/settings.json` (by hand, see the permissions row) · `brain/CLAUDE.md` · `docs/brain-api.md` · `STATE.md` · `architecture.*`
 **Verify:** each refusal and the happy path in brain-pr-update-branch.test.ts (gh faked, sqlite Turso); route auth/input in brain.test.ts; tsc; archmap --check --lint; full `bun test --isolate`.
 
 ### Change Plan — auto-deploy (2026-10-31)
