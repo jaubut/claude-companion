@@ -133,4 +133,12 @@ describe("repo lead loop", () => {
     expect(await w.lead.next(REPO)).toMatchObject({ kind: "build", title: "Smaller" })
     expect(w.lines).toEqual([])
   })
+
+  test("what the lead cannot resolve reaches the brain in one line", async () => {
+    const w = world()
+    const { taskId } = await w.lead.send(REPO, "Stuck", "brief", "turn-4")
+    w.lead.event(REPO, { type: "blocked", taskId, kind: "stuck", line: "conflict unresolved on #41" })
+    expect(w.lines).toEqual(["Blocked (stuck): Stuck: conflict unresolved on #41"])
+    expect(() => w.lead.event(REPO, { type: "blocked", taskId, kind: "bored", line: "x" })).toThrow("not_a_decision")
+  })
 })

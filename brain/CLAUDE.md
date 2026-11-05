@@ -87,4 +87,8 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 A repo with a lead (`LEAD_REPOS` in `server/lib/lead-loop.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`:
 `bin/lead <repo> send --turn <turn id> --title "<short title>" --prompt "<complete brief>"`. `bin/lead <repo>` just makes sure the lead is up. Answer 404 `no_lead_for_repo` → use `bin/propose`.
 
-The lead owns the loop: at most 3 open agent PRs on its repo (the rest waits in its queue), builders, fixes, conflicts, routine merges and closes. It reports one `lead-<repo>:` event line: started, PR ready, or blocked on a real product, money, client or security decision. Merges and closes show up as the usual gate events. Pass a blocked line to Jeremie; the rest is `noted`.
+The lead owns the loop and is the first merger: at most 3 open agent PRs on its repo (the rest waits in its queue), builders, fixes, conflicts, and its own routine merges through `bin/pr-merge`, without asking. It reports one `lead-<repo>:` event line: started, PR ready, or blocked. Merges and closes show up as the usual gate events.
+
+- `Blocked (stuck)`: a conflict, a refusal or anything the lead could not resolve after its retries. **You handle it, not Jeremie**: read the PR, then send the lead a follow-up with `bin/lead <repo> send`, or use `bin/pr-close` or `bin/pr-merge` yourself. The refusal rules above still apply to your own calls.
+- `Blocked (product|money|client|security)`: a real decision, pass it to Jeremie in one line.
+- Anything else: `noted`.

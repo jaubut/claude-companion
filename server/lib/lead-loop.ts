@@ -15,7 +15,8 @@ export const LEAD_PR_CAP = 3
 export const FIXES_BEFORE_FRESH = 2
 /** Between tries of a close the server refused: the PR may have become closable (a shepherd park, a conflict). */
 export const CLOSE_RETRY_MS = 60 * 60_000
-export const DECISION_KINDS: ReadonlySet<string> = new Set(["product", "money", "client", "security"])
+/** Why a task may reach the brain: a real decision, or `stuck` = a conflict, a refusal or anything left after the lead's retries. */
+export const DECISION_KINDS: ReadonlySet<string> = new Set(["product", "money", "client", "security", "stuck"])
 
 
 export type TaskState = "queued" | "building" | "pr" | "fixing" | "closing"

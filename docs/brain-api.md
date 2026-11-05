@@ -130,7 +130,7 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 | `ensure` | brain | | `{ok, name, state}`: `running`, `starting`, `started` |
 | `send` | brain | `{title?, prompt, sourceTurnId}` | `{ok, taskId, lead, state}`; same turn + prompt queues nothing |
 | `next` | brain, lead | | `{ok, action}`: `build`, `fix`, `merge_main`, `merge`, `close_refile`, `wait`, `idle` (`held` = queued behind the limit) |
-| `event` | brain, lead | `{type, taskId, …}` | `{ok}`. `blocked` takes `kind` product, money, client or security, else 400 `bad_event`. |
+| `event` | brain, lead | `{type, taskId, …}` | `{ok}`. `blocked` takes `kind` product, money, client, security or stuck (the brain handles `stuck` itself), else 400 `bad_event`. |
 
 Limit: `build` is answered only while open `dispatch/*` PRs on GitHub + tasks being built < 3. Rework comes before new work. After 2 failed fixes comes one fresh builder, then `close_refile`.
 
