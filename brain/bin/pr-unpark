@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Hand a shepherd-parked agent PR back to the shepherd (POST /hooks/brain/pr-unpark),
+# with a reason and concrete guidance for its next fix run.
+#
+#   bin/pr-unpark --repo <owner/name> --pr <n> --reason "<why>" --guidance "<what the fix must do>"
+#
+# The server re-checks on GitHub and Turso and refuses: head not dispatch/*
+# (403 not_agent_branch) · not parked by the shepherd now (409 not_parked) ·
+# a do-not-merge/wip label park, only Jeremie lifts it (409 label_park) · a
+# client-origin or security-sensitive park, same (409 human_review_park) · the
+# ledger moved during the call (409 ledger_changed) · the brain already
+# unparked this PR twice (429 unpark_cap). Same auth as bin/propose: loopback, X-Companion-Task-Id: brain and the pid of the brain's
+# claude process (found by walking up the parent chain).
+set -euo pipefail
+
+REPO="" PR="" REASON="" GUIDANCE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --pr) PR="$2"; shift 2 ;;
+    --reason) REASON="$2"; shift 2 ;;
+    --guidance) GUIDANCE="$2"; shift 2 ;;
+    *) echo "pr-unpark: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+case "$PR" in ''|*[!0-9]*) echo "pr-unpark: --pr <number> is required" >&2; exit 2 ;; esac
+if [ -z "$REPO" ] || [ -z "$REASON" ] || [ -z "$GUIDANCE" ]; then
+  echo "pr-unpark: --repo, --pr, --reason and --guidance are required" >&2
+  exit 2
+fi
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(REPO="$REPO" PR="$PR" REASON="$REASON" GUIDANCE="$GUIDANCE" python3 -c '
+import json, os
+print(json.dumps({"repo": os.environ["REPO"], "pr": int(os.environ["PR"]), "reason": os.environ["REASON"], "guidance": os.environ["GUIDANCE"]}))')
+
+curl -sS --max-time 60 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/pr-unpark" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

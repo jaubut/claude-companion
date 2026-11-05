@@ -8,7 +8,7 @@ import { hookCallerAllowed, hostAllowed, refreshTailscaleName, tailscaleNameOf }
 const HOOK_PATHS = [
   "pre-tool-use", "post-tool-use", "user-prompt-submit", "permission-request", "stop", "session-start", "session-end",
   "dispatch-event", "gauge", "copy-progress",
-  "brain/propose", "brain/thread", "brain/todo", "brain/sessions", "brain/pr-close", "brain/pr-merge", "brain/deploy",
+  "brain/propose", "brain/thread", "brain/todo", "brain/sessions", "brain/pr-close", "brain/pr-merge", "brain/pr-unpark", "brain/deploy",
 ].map((p) => `/hooks/${p}`)
 
 function hookReq(path: string, peer: string, headers: Record<string, string> = {}): Request {

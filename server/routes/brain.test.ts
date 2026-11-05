@@ -345,6 +345,39 @@ describe("POST /hooks/brain/pr-merge", () => {
   })
 })
 
+describe("POST /hooks/brain/pr-unpark", () => {
+  test("brain auth, then input checks incl. guidance; only a valid call reaches the unpark gate", async () => {
+    const seen: unknown[] = []
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      prMerge: async () => { throw new Error("pr-unpark must not reach pr-merge") },
+      prUnpark: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "not_parked" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+      const req = new Request("http://localhost:4245/hooks/brain/pr-unpark", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { repo: "o/r", pr: 7, reason: "one-line fix", guidance: "clamp the title in feed-format.ts:42" }
+    expect((await post(ok, {})).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-task-id": "worker" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    expect((await post({ ...ok, repo: "o/r; rm -rf" })).status).toBe(400)
+    expect((await post({ ...ok, pr: "7" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "" })).status).toBe(400)
+    expect((await post({ ...ok, guidance: "" })).status).toBe(400)
+    expect((await post({ ...ok, guidance: undefined })).status).toBe(400)
+    expect((await post({ ...ok, guidance: "x".repeat(2001) })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await post(ok)
+    expect([r.status, r.json.error]).toEqual([409, "not_parked"])
+    expect(seen).toEqual([ok])
+  })
+})
+
 describe("POST /hooks/brain/deploy", () => {
   const post = (h: ReturnType<typeof route.createBrainRoute>) => async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
     const req = new Request("http://localhost:4245/hooks/brain/deploy", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })

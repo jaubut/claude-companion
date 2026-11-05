@@ -28,10 +28,11 @@ export const PR_MERGE_ACTION = "brain:pr-merge"
 const REASON_MAX = 300
 export const MERGE_CAP = 10
 
-const HOLD_LABEL = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
-// The shepherd's human-review parks (pr-shepherd clientPark / taint / sensitive): retired, they no longer refuse.
-// Every other park (conflict unresolved, fix budget spent, infra hold, no CI…) means the work is broken: refuse.
-const RETIRED_PARK = /^(client(-origin)? PR|tainted \(|touches .+ — needs your review)/
+export const HOLD_LABEL = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
+// The shepherd's human-review parks (pr-shepherd clientPark / taint / sensitive): retired, they no longer refuse a
+// merge, but only Jeremie lifts them (brain-pr-unpark.ts). Every other park (conflict unresolved, fix budget spent,
+// infra hold, no CI…) means the work is broken: refuse.
+export const HUMAN_REVIEW_PARK = /^(client(-origin)? PR|tainted \(|touches .+ — needs your review)/
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
@@ -123,7 +124,7 @@ async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; tas
     try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → counts */ }
     if (meta.url !== undefined && meta.url !== v.url) continue
     const why = typeof meta.reason === "string" ? meta.reason : ""
-    if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !RETIRED_PARK.test(why))) {
+    if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !HUMAN_REVIEW_PARK.test(why))) {
       reasons.push(`${row.action === "pr:hold" ? "held" : "parked"} by the shepherd${why ? `: ${why.slice(0, 120)}` : ""}`)
     }
     break
