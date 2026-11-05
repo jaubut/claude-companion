@@ -4,6 +4,12 @@ Last updated: 2026-10-25
 
 ## Active Decisions
 
+### SUPER stays per server, each change is logged; no server-to-server sync (2026-11-05, task d689e973)
+**Choice:** `super-auto-changes.jsonl` next to the flag gets one row per change (time, server, source, old, new), plus a row at boot when the flag no longer matches the log. The phone stays the one fan-out (`CompanionClient.setSuperAuto`).
+**Why:** the 2026-11-05 log shows the toggle reached Zettlab. The 13:13 and 13:42 deploy restarts came up off with no `off` POST logged, so something outside the server removed the flag, which fits tests that wrote the real flag (#275). The `off` at 13:48:32 had no source: that gap is what the log closes.
+**Rejected:** server-to-server sync over `COMPANION_BODY_PEER` with a newest-change-wins catch-up: a second writer of an auto-approve state, for a failure the log does not show.
+**Revisit if:** the change log shows a toggle that really missed a server, or the app-side warning proves not enough.
+
 ### Anti-slop lint: ast-grep + a repo check, blocking in pre-commit and CI (2026-11-05, task 7b745d1d)
 **Choice:** `bun --bun run lint` runs ast-grep rules (`lint/rules`, fixtures in `lint/tests`) and `scripts/lint-repo.ts`, from `.githooks/pre-commit` (`bun install` sets `core.hooksPath`) and a CI step. Rules come from the review evidence in RES-U66W. Live violations carry a same-line `ast-grep-ignore`: same line because archmap's 600-line cap ratchets on line count.
 **Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.

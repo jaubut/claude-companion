@@ -181,9 +181,10 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   }
   if (url.pathname === "/api/super-auto" && req.method === "POST") {
     const body = checked(await jsonObject<{ enabled?: boolean }>(req), { enabled: "boolean" })
-    const next = setSuperAuto(!!body.enabled)
+    const source = describeClient("rest", clientInfo(req, originLabel(req)))
+    const next = setSuperAuto(!!body.enabled, source)
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const purple = "\x1b[35m"
-    companionLog(`${purple}super-auto${reset} ${next ? "ON" : "off"}`)
+    companionLog(`${purple}super-auto${reset} ${next ? "ON" : "off"} ${source}`)
     broadcast({ type: "super_auto", enabled: next })
     return Response.json({ ok: true, enabled: next })
   }

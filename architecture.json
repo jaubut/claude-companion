@@ -4571,7 +4571,7 @@
         },
         {
           "path": "lib/super-auto.ts",
-          "lines": 92,
+          "lines": 125,
           "kind": "lib",
           "exports": [
             "isSuperAuto",
@@ -5828,7 +5828,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 596,
+          "lines": 597,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -8547,6 +8547,7 @@
           "module": "lib/vault-guard.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#* /api/feed"
           ]
         },
@@ -8554,6 +8555,7 @@
           "module": "state.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#* /api/feed"
           ]
         },
@@ -13276,6 +13278,16 @@
             "ws.ts"
           ]
         },
+        "describeClient": {
+          "module": "state.ts",
+          "callers": [
+            "routes/api.ts#POST /api/super-auto",
+            "routes/api.ts#* /api/feed",
+            "wiring/pane-mirror.ts",
+            "wiring/shell-sessions.ts",
+            "ws.ts"
+          ]
+        },
         "setSuperAuto": {
           "module": "lib/super-auto.ts",
           "callers": [
@@ -13439,15 +13451,6 @@
           "module": "lib/pty-manager.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
-        "describeClient": {
-          "module": "state.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "wiring/pane-mirror.ts",
-            "wiring/shell-sessions.ts",
             "ws.ts"
           ]
         },

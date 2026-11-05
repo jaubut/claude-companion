@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { getAuthToken } from "../lib/auth"
 
 // A valid JSON object with a wrong-typed field, through the real server: 400,
@@ -99,8 +99,18 @@ test("the bodies iOS really sends still go through (a 400 would drop the row)", 
   expect((await send("POST", "/api/register-token", { token: "b".repeat(32), environment: "sandbox", device_name: "iPhone" })).status).toBe(200)
 })
 
-test("the iOS SUPER toggle and an unfiltered learned wipe still work", async () => {
-  expect((await send("POST", "/api/super-auto", { enabled: false })).status).toBe(200)
+test("the iOS SUPER toggle logs who sent it, and an unfiltered learned wipe still works", async () => {
+  const flag = join(mkdtempSync(join(tmpdir(), "wrong-type-super-")), "super-auto.flag")
+  process.env.COMPANION_SUPER_FLAG = flag
+  try {
+    expect((await send("POST", "/api/super-auto", { enabled: true })).status).toBe(200)
+    expect((await send("POST", "/api/super-auto", { enabled: false })).status).toBe(200)
+  } finally {
+    delete process.env.COMPANION_SUPER_FLAG
+  }
+  const row = JSON.parse(readFileSync(join(dirname(flag), "super-auto-changes.jsonl"), "utf8").trim().split("\n").at(-1) ?? "") as { source: string; new: boolean }
+  expect(row.new).toBe(false)
+  expect(row.source).toContain("from=127.0.0.1")
   expect((await send("DELETE", "/api/learned", {})).status).toBe(200)
 })
 
