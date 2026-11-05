@@ -9,7 +9,8 @@ import type { ExecFn, Row } from "../lib/turso"
 // cancel, Turso a real sqlite with the prod columns; worker liveness and gh faked.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-taskcancel-")), "test.db")
-const { cancelAgentTask, TASK_CANCEL_ACTION } = await import("./brain-task-cancel")
+const { cancelAgentTask, TASK_CANCEL_ACTION, workerGoneHere } = await import("./brain-task-cancel")
+const { localBodyHost } = await import("../lib/body-investigate")
 
 const ID = "abcd1234aaaa0000bbbb1111cccc2222"
 const PR = "https://github.com/o/r/pull/7"
@@ -127,6 +128,25 @@ describe("bin/task-cancel gate", () => {
     expect(w.row().dispatch_status).toBe("cancelled")
   })
 
+  test("409 already_final: a completed task (done 0) whose PR merged keeps its row", async () => {
+    const w = world([{ status: "completed", pr: PR }], { prState: "MERGED" })
+    const before = w.row()
+    const out = await cancelAgentTask(input, w.deps)
+    expect([out.status, out.body.error, out.body.prState]).toEqual([409, "already_final", "MERGED"])
+    expectUntouched(w, before)
+  })
+
+  test("503 pr_state_unknown: GitHub can't confirm the PR, the row stays", async () => {
+    const w = world([{ status: "completed", pr: PR }], { prState: "unknown" })
+    const before = w.row()
+    expect((await cancelAgentTask(input, w.deps)).status).toBe(503)
+    expectUntouched(w, before)
+    const thrown = world([{ status: "completed", pr: PR }])
+    const out = await cancelAgentTask(input, { ...thrown.deps, prState: async () => { throw new Error("gh down") } })
+    expect([out.status, out.body.error]).toEqual([503, "pr_state_unknown"])
+    expect(thrown.row().dispatch_status).toBe("completed")
+  })
+
   test("an open PR is left open and named in the reply", async () => {
     const w = world([{ status: "completed", pr: PR }], { prState: "OPEN" })
     const out = await cancelAgentTask(input, w.deps)
@@ -167,5 +187,19 @@ describe("bin/task-cancel gate", () => {
     const w = world([{}])
     const out = await cancelAgentTask(input, { ...w.deps, exec: async () => { throw new Error("down") } })
     expect(out.status).toBe(503)
+  })
+})
+
+describe.skipIf(process.platform !== "linux")("workerGoneHere fails closed", () => {
+  const task = { id: ID, dispatch_owner: localBodyHost() } as unknown as Row
+  test("gone only when every process of ours was read and none carries the task id", async () => {
+    expect(await workerGoneHere(task, async () => ["PATH=/bin"])).toBe(true)
+    expect(await workerGoneHere(task, async () => [`DISPATCH_TASK_ID=${ID}`])).toBe(false)
+  })
+  test("an unreadable environment of a live process of ours proves nothing", async () => {
+    expect(await workerGoneHere(task, async () => null)).toBe(false)
+  })
+  test("another host's task can't be proven gone", async () => {
+    expect(await workerGoneHere({ ...task, dispatch_owner: "elsewhere" } as Row, async () => [])).toBe(false)
   })
 })

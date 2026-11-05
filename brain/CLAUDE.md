@@ -51,7 +51,7 @@ dispatch-run starts no new work on a repo with 3+ open agent PRs. You may close 
 
 ## Obsolete dispatch tasks
 
-Obsolete or superseded dispatch tasks are cancelled with `bin/task-cancel --task <id or 8-char prefix> --reason "<why it is obsolete>"`; never ask Jeremie to cancel them. The server re-checks it: 404 `not_found` (no such task or an ambiguous prefix), 403 `not_agent_task` (not `agent:*`: Jeremie's own to-dos), 409 `running` (a live worker), 409 `already_final` (done, cancelled or merged). A refusal is final: tell Jeremie, don't retry. An open PR stays open: the reply names it (`pr`); close it with `bin/pr-close`.
+Obsolete or superseded dispatch tasks are cancelled with `bin/task-cancel --task <id or 8-char prefix> --reason "<why it is obsolete>"`; never ask Jeremie to cancel them. The server re-checks it: 404 `not_found` (no such task or an ambiguous prefix), 403 `not_agent_task` (not `agent:*`: Jeremie's own to-dos), 409 `running` (a live worker), 409 `already_final` (done, cancelled, or its PR merged), 503 `pr_state_unknown` (GitHub could not confirm the PR state; nothing changed). A refusal is final: tell Jeremie, don't retry. An open PR stays open: the reply names it (`pr`); close it with `bin/pr-close`.
 
 ## Routine agent PRs
 

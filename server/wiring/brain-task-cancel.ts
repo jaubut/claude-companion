@@ -1,4 +1,5 @@
-import { readdir } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { readdir, stat } from "node:fs/promises"
 import { BRAIN_AGENT, BRAIN_THREAD } from "../lib/brain"
 import { localBodyHost } from "../lib/body-investigate"
 import { processEnvEntries } from "../lib/discover"
@@ -15,7 +16,8 @@ import { orchEmit } from "./orchestrator"
 // Turso, never from the brain's word:
 //   the task exists (full id or an unambiguous 8-char prefix) · its assignee is
 //   agent:* (Jeremie's own to-dos never) · not running, unless its worker is
-//   provably gone · not already done, cancelled or merged.
+//   provably gone · not already done, cancelled or merged (a done=0 task whose
+//   PR merged counts; a PR state GitHub can't confirm refuses).
 // An open dispatch/* PR is left alone (the brain closes it with bin/pr-close).
 
 export const TASK_CANCEL_ACTION = "brain:task-cancel"
@@ -54,6 +56,10 @@ export async function cancelAgentTask(p: TaskCancelInput, deps: TaskCancelDeps =
     if (!String(t.assignee ?? "").startsWith("agent:")) return fail(403, "not_agent_task")
     if (String(t.done) === "1" || t.dispatch_status === "cancelled") return fail(409, "already_final", { dispatchStatus: t.dispatch_status ?? null, done: String(t.done) === "1" })
     if (t.dispatch_status === "running" && !(await deps.workerGone(t).catch(() => false))) return fail(409, "running", { owner: t.dispatch_owner ?? null })
+    const prUrl = typeof t.dispatch_pr_url === "string" && t.dispatch_pr_url ? t.dispatch_pr_url : null
+    const pr = prUrl ? await deps.prState(prUrl).catch(() => "unknown") : null
+    if (pr === "MERGED") return fail(409, "already_final", { prState: pr })
+    if (pr === "unknown") return fail(503, "pr_state_unknown")
     const reason = redactSecrets(p.reason).slice(0, TASK_REASON_MAX)
     // Compare-and-set on the row we checked: a runner claiming it meanwhile wins.
     const { affected } = await deps.exec(
@@ -61,8 +67,6 @@ export async function cancelAgentTask(p: TaskCancelInput, deps: TaskCancelDeps =
       [`Cancelled by the brain: ${reason}`, id, t.dispatch_status ?? null, t.updated_at ?? null],
     )
     if (affected === 0) return fail(409, "changed")
-    const prUrl = typeof t.dispatch_pr_url === "string" && t.dispatch_pr_url ? t.dispatch_pr_url : null
-    const pr = prUrl ? await deps.prState(prUrl).catch(() => "unknown") : null
     const title = String(t.text ?? "").slice(0, 80)
     try {
       await deps.exec(
@@ -75,7 +79,7 @@ export async function cancelAgentTask(p: TaskCancelInput, deps: TaskCancelDeps =
     }
     deps.event(`Brain cancelled task ${id.slice(0, 8)} (${title}): ${reason}`)
     companionLog(`[brain] task-cancel ${id.slice(0, 8)} from ${String(t.dispatch_status ?? "none")}`)
-    const openPr = prUrl && pr !== "MERGED" && pr !== "CLOSED" ? { pr: prUrl, prState: pr, note: "the PR is not closed: use bin/pr-close" } : {}
+    const openPr = prUrl && pr !== "CLOSED" ? { pr: prUrl, prState: pr, note: "the PR is not closed: use bin/pr-close" } : {}
     return { status: 200, body: { ok: true, cancelled: id, from: t.dispatch_status ?? null, ...openPr } }
   } catch (err) {
     companionLog(`[brain] task-cancel: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
@@ -84,15 +88,25 @@ export async function cancelAgentTask(p: TaskCancelInput, deps: TaskCancelDeps =
 }
 
 /**
- * A running task's worker is gone when it ran on this host and no local
- * process carries DISPATCH_TASK_ID=<id> (herdr and legacy workers alike).
- * Another host, or no /proc to read, can't be proven gone.
+ * A running task's worker is gone when it ran on this host and none of our
+ * processes carries DISPATCH_TASK_ID=<id> (herdr and legacy workers alike).
+ * Workers run as this uid, so other users' processes don't count. Another host,
+ * no /proc to read, or an environment of ours we can't read proves nothing.
  */
-async function workerGoneHere(task: Row): Promise<boolean> {
+export async function workerGoneHere(task: Row, readEnv: typeof processEnvEntries = processEnvEntries): Promise<boolean> {
   if (process.platform !== "linux" || String(task.dispatch_owner ?? "").toLowerCase() !== localBodyHost()) return false
   const marker = `DISPATCH_TASK_ID=${String(task.id)}`
-  for (const pid of (await readdir("/proc")).filter((d) => /^\d+$/.test(d))) {
-    if ((await processEnvEntries(pid))?.includes(marker)) return false
+  let pids: string[]
+  try {
+    pids = (await readdir("/proc")).filter((d) => /^\d+$/.test(d))
+  } catch {
+    return false
+  }
+  for (const pid of pids) {
+    const owner = await stat(`/proc/${pid}`).catch(() => null) // null: it exited
+    if (owner?.uid !== process.getuid!()) continue
+    const env = await readEnv(pid)
+    if (env?.includes(marker) || (!env && existsSync(`/proc/${pid}`))) return false
   }
   return true
 }

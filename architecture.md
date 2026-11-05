@@ -158,6 +158,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
+| `wiring/brain-task-cancel.ts` | 120 | lib | 7 |  |
 | `lib/transcript-backfill.ts` | 119 | lib | 5 |  |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
@@ -168,7 +169,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `lib/note-media.ts` | 109 | lib | 4 |  |
-| `wiring/brain-task-cancel.ts` | 106 | lib | 6 |  |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `routes/dialogs.ts` | 103 | route-host | 1 | routes: 2 |
 | `lib/orchestrator-db.ts` | 101 | lib | 2 |  |

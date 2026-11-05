@@ -7212,7 +7212,7 @@
         },
         {
           "path": "wiring/brain-task-cancel.ts",
-          "lines": 106,
+          "lines": 120,
           "kind": "lib",
           "exports": [
             "TASK_CANCEL_ACTION",
@@ -7220,7 +7220,8 @@
             "TASK_REF",
             "TaskCancelInput",
             "TaskCancelDeps",
-            "cancelAgentTask"
+            "cancelAgentTask",
+            "workerGoneHere"
           ],
           "state": [],
           "emits": [],
