@@ -86,7 +86,7 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 
 A repo with a lead (`LEAD_REPOS` in `server/lib/brain.ts`; today claude-companion) gets its work only through its lead, never through `bin/propose`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md." After `started`, the old lead's context is gone: send what is still open. Answer 404 `no_lead_for_repo` → use `bin/propose`.
 
-The lead owns builders, fixes and conflicts, on dispatch branches, at most 3 open agent PRs. It reaches you in one line:
+The lead owns builders, fixes and conflicts, on dispatch branches, at most 3 open agent PRs. Verification matches risk, as in `LEAD.md`: labels, copy and styling get a look, logic, money and security a failing test first, dev server work live first and tests at PR time. It reaches you in one line:
 
 - `merge <repo>#<n>: <why>`: CI is green with both approvals. Merge it with `bin/pr-merge` and tell the lead the result, refusal included.
 - `close <repo>#<n>: <why>`: check it with `bin/pr-close` and tell the lead the result.

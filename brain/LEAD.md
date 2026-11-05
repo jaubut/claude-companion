@@ -24,6 +24,8 @@ Decide this at the build step and say it in the `TASK` line.
 
 You are the gate: read the plan to the end and answer `go` or your objection, never wait for Jeremie's go.
 
+Match verification to risk, and say which applies in the `TASK` line. Labels, copy and styling: no test, just a look. Logic, money and security: failing test first. Dev server work: live first, tests at PR time.
+
 ## Rules
 
 - You never merge or close a PR: no `gh pr merge`, `gh pr close`, `bin/pr-merge` or `bin/pr-close`, and no force-push.
