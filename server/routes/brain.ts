@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "../lib/auth"
-import { BRAIN_AGENT, BRAIN_THREAD, brainEnabled } from "../lib/brain"
+import { BRAIN_AGENT, BRAIN_THREAD, brainEnabled, brainText } from "../lib/brain"
 import { latestRows, rowsSince } from "../lib/brain-trace"
 import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
@@ -111,10 +111,10 @@ async function thread(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const q = str(body.q, QUERY_MAX)
   if (!q) return fail(400, "q required")
   const limit = typeof body.limit === "number" && Number.isInteger(body.limit) ? Math.min(Math.max(body.limit, 1), SEARCH_LIMIT_MAX) : 20
-  const turns = searchThread(BRAIN_THREAD, q, limit).map((t) => ({
-    id: t.id, role: t.role, at: new Date(t.createdAt).toISOString(),
-    text: t.text.length > SEARCH_TEXT_MAX ? `${t.text.slice(0, SEARCH_TEXT_MAX - 1)}…` : t.text,
-  }))
+  const turns = searchThread(BRAIN_THREAD, q, limit).map((t) => {
+    const text = brainText(t)
+    return { id: t.id, role: t.role, at: new Date(t.createdAt).toISOString(), text: text.length > SEARCH_TEXT_MAX ? `${text.slice(0, SEARCH_TEXT_MAX - 1)}…` : text }
+  })
   return Response.json({ ok: true, turns })
 }
 

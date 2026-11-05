@@ -34,6 +34,6 @@ turn.card = {kind:"worker_blocked", source:"app", taskId, worker, title, dialog,
 
 ## The brain
 
-On the brain host the card lands in the brain thread, so the brain hears it, but only `card.brief`: task id, worker, the tool from the dialog's first line and that line (≤ 80 chars, punctuation-stripped, already redacted), plus "never answer it, type into or drive that worker's pane". The dialog text and the options never reach the brain (`deliveryText` in `lib/brain.ts`). Answering is the phone's Bearer endpoint only.
+On the brain host the card lands in the brain thread, so the brain hears it, but only `card.brief`: task id, worker, the tool from the dialog's first line and that line (≤ 80 chars, punctuation-stripped, already redacted), plus "never answer it, type into or drive that worker's pane". That first line is still pane text, bounded and filtered, not trusted. The rest of the dialog and the options never reach the brain: delivery, the boot seed and `bin/thread` all read `brainText` in `lib/brain.ts`. Answering is the phone's Bearer endpoint only.
 
 `turn.text` carries the dialog and the numbered options, so a build that does not know the card still shows them. Shipped iOS builds decode `card` with `try?` and `kind` as a `String` (claude-companion-ios `BrainTrace.swift`), so the new kind never fails a turn. Push: category `dispatch_task`, time-sensitive, `userInfo {kind:"worker_blocked", turnId, taskId, channel}`.

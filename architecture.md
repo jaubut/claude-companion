@@ -91,8 +91,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `wiring/events.ts` | 224 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `routes/vault.ts` | 221 | lib | 1 |  |
+| `lib/brain.ts` | 219 | lib | 41 |  |
 | `lib/resolver-work.ts` | 219 | lib | 5 |  |
-| `lib/brain.ts` | 217 | lib | 40 |  |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/dialogs.ts` | 216 | lib | 7 |  |
@@ -119,9 +119,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
-| `lib/worker-blocked.ts` | 185 | lib | 10 | emits: orchestrator |
+| `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |
 | `wiring/brain-pr-merge.ts` | 185 | lib | 3 |  |
-| `companion-server.ts` | 182 | route-host | 1 | routes: 5 |
+| `companion-server.ts` | 183 | route-host | 1 | routes: 5 |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |

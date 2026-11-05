@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 182,
+          "lines": 183,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -981,7 +981,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 217,
+          "lines": 219,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -995,6 +995,7 @@
             "isSupervisedTask",
             "DeliveryTurn",
             "DELIVERY_MAX",
+            "brainText",
             "deliveryText",
             "bootSeed",
             "TICK_MS",
@@ -5786,7 +5787,7 @@
         },
         {
           "path": "lib/worker-blocked.ts",
-          "lines": 185,
+          "lines": 186,
           "kind": "lib",
           "exports": [
             "WORKER_RE",
@@ -13760,6 +13761,12 @@
         },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "brainText": {
+          "module": "lib/brain.ts",
           "callers": [
             "routes/brain.ts"
           ]

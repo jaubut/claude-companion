@@ -8,8 +8,9 @@ import { redactSecrets } from "./secret-redact"
 // The phone answers once (first answer wins, Idempotency-Key replays); the
 // runner polls the alert and types the chosen key into the pane itself. The
 // card's state (open → answered | expired) and both replay keys live in the
-// turn's card (sqlite), so they survive a restart. The brain hears only `brief`
-// (lib/brain.ts deliveryText), never the dialog: it is untrusted pane text.
+// turn's card (sqlite), so they survive a restart. The brain reads only `brief`
+// (lib/brain.ts brainText: delivery, boot seed and bin/thread), never the whole
+// dialog: it is untrusted pane text.
 // Contract: docs/worker-blocked-api.md.
 
 /** Only herdr dispatch workers: never cc-*, builder-*, tko-* or anything else. */
@@ -34,7 +35,7 @@ export interface BlockedInput {
   options: { key: string; label: string }[]
 }
 
-/** What the brain hears: task, tool, a short redacted reason. No dialog text, no keys. */
+/** What the brain reads: task, tool, and the dialog's first line, redacted, filtered and cut to 80 chars. No keys. */
 export function alertBrief(input: BlockedInput): string {
   const head = input.dialog.split("\n").map((l) => l.trim()).find(Boolean) ?? ""
   const tool = /^[A-Za-z][\w-]{0,30}/.exec(head)?.[0] ?? "unknown"
