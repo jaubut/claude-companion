@@ -430,6 +430,23 @@ export async function fileTask(ctx: WriteCtx, input: FileInput): Promise<{ id: s
   return { id: input.id, inserted, status }
 }
 
+/**
+ * A brain handoff: a row for the relay to move (ACK → running, DONE → completed + the PR url the shepherd trusts), never
+ * dispatch-run's. No status and a non-agent assignee keep dispatch-run, pm-nightly and the PM off it. Not `pending`: the
+ * relay's ACK refuses that state.
+ */
+export async function fileHandoff(ctx: WriteCtx, input: Pick<FileInput, "id" | "noteId" | "title" | "description"> & { origin: "jeremie" | "unknown" }): Promise<{ id: string; inserted: boolean }> {
+  const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
+  const { affected } = await ctx.exec(
+    `INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, ${ctx.cols.origin ? "origin, " : ""}created_at, updated_at) ` +
+      `VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), 'handoff', ${ctx.cols.origin ? "?, " : ""}datetime('now'), datetime('now'))`,
+    [input.id, input.noteId, title, input.description, input.noteId, ...(ctx.cols.origin ? [input.origin] : [])],
+  )
+  const inserted = affected > 0
+  if (inserted) await ledger(ctx, { id: input.id, agent: "handoff" }, "handoff", `→handoff: ${title}`, { op: "file", note: input.noteId, origin: input.origin })
+  return { id: input.id, inserted }
+}
+
 // Requeue resets exactly what dispatch.sh's `queued` resets; the P0 columns only when present.
 function requeueSets(cols: DispatchColumns): string[] {
   return [

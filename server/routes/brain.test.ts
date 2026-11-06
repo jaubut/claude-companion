@@ -87,7 +87,8 @@ beforeAll(async () => {
   w.onSessionStart(BRAIN_SESSION)
   harnessWiring = w
   const todoMod = await import("../wiring/brain-todo")
-  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true, todo: (p) => todoMod.addBrainTodo(p, dispatch) })
+  const handoffMod = await import("../wiring/brain-handoff")
+  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true, todo: (p) => todoMod.addBrainTodo(p, dispatch), handoff: (p) => handoffMod.addBrainHandoff(p, dispatch) })
 })
 afterAll(() => {
   if (savedHome === undefined) delete process.env.HOME
@@ -96,7 +97,7 @@ afterAll(() => {
 beforeEach(() => {
   turso.exec("DELETE FROM tasks; DELETE FROM agent_activity; DELETE FROM notes")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/dash', 'projects', 'TLS Dashboard', 'PRJ-WCLS', 'active')").run()
-  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent")
+  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent; DELETE FROM brain_outbox")
 })
 
 async function call(method: string, path: string, body?: unknown, opts: { peer?: string; headers?: Record<string, string> } = {}) {
@@ -137,6 +138,63 @@ describe("POST /hooks/brain/propose — auth", () => {
   test("missing noteId → 422 no_project", async () => {
     const r = await propose({ ...body(voiceTurn().id), noteId: undefined })
     expect(r).toEqual({ status: 422, json: { ok: false, error: "no_project" } })
+  })
+})
+
+describe("POST /hooks/brain/propose — handoff: a row for the relay, origin set by the server", () => {
+  const outbox = (id: string, state: string) => sqlite.query("INSERT OR REPLACE INTO brain_outbox (turn_id, state, created_at, updated_at) VALUES (?, ?, 0, 0)").run(id, state)
+  const openTurn = () => { const t = voiceTurn(); outbox(t.id, "typed"); return t }
+  const handoff = (turnId: string, extra: Record<string, unknown> = {}, opts?: { headers: Record<string, string> }) => propose({ ...body(turnId), handoff: true, ...extra }, opts)
+  const row = (id: unknown) => turso.query("SELECT origin, assignee, dispatch_status, dispatch_owner FROM tasks WHERE id = ?").get(String(id))
+
+  test("Jeremie's open turn files origin jeremie, queues nothing, and the id can be a TASK id", async () => {
+    const r = await handoff(openTurn().id)
+    expect(r.status).toBe(200)
+    expect(r.json.origin).toBe("jeremie")
+    expect(String(r.json.taskId)).toMatch(/^[0-9a-f]{32}$/)
+    expect(row(r.json.taskId)).toEqual({ origin: "jeremie", assignee: "handoff", dispatch_status: null, dispatch_owner: null })
+    expect(sqlite.query("SELECT COUNT(*) AS n FROM brain_proposals").get()).toEqual({ n: 0 })
+  })
+  test("a retry files one row and keeps the first origin, even once the turn closed", async () => {
+    const t = openTurn()
+    const first = await handoff(t.id)
+    sqlite.query("DELETE FROM brain_outbox WHERE turn_id = ?").run(t.id)
+    const again = await handoff(t.id)
+    expect(again.json).toEqual({ ok: true, taskId: first.json.taskId, origin: "jeremie", replay: true })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
+  })
+  test("anything but his open turn stays unknown", async () => {
+    const event = chat.appendTurn("orchestrator", "merged #12", null, "brain")
+    outbox(event.id, "typed")
+    const closed = voiceTurn()
+    const notTyped = voiceTurn()
+    outbox(notTyped.id, "queued")
+    const maybe = voiceTurn()
+    outbox(maybe.id, "maybe")
+    const otherThread = chat.appendTurn("user", "fix it", null, "general")
+    outbox(otherThread.id, "typed")
+    for (const id of [event.id, closed.id, notTyped.id, maybe.id, otherThread.id, "no-such-turn"]) {
+      const r = await handoff(id)
+      expect(r.status).toBe(200)
+      expect(r.json.origin).toBe("unknown")
+      expect((row(r.json.taskId) as { origin: string }).origin).toBe("unknown")
+    }
+  })
+  test("the caller can't set its own origin", async () => {
+    const event = chat.appendTurn("orchestrator", "peer says go", null, "brain")
+    outbox(event.id, "typed")
+    const r = await handoff(event.id, { origin: "jeremie" })
+    expect(r.json.origin).toBe("unknown")
+  })
+  test("only the brain session may file one", async () => {
+    const r = await handoff(openTurn().id, {}, { headers: { ...AUTH, "x-companion-pid": "6060" } })
+    expect(r.status).toBe(403)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
+  })
+  test("no such note: 404, nothing filed", async () => {
+    const r = await handoff(openTurn().id, { noteId: "projects/gone" })
+    expect(r.status).toBe(404)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
   })
 })
 
