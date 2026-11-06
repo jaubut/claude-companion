@@ -7366,7 +7366,7 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 109,
+          "lines": 124,
           "kind": "lib",
           "exports": [
             "StuckEventsDeps",

@@ -1,29 +1,36 @@
+import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
+import type { ExecFn } from "../lib/turso"
 import { createStuckEvents, stuckLine } from "./brain-stuck-events"
 
 const url = (n: number) => `https://github.com/jaubut/r/pull/${n}`
 const meta = (n: number, over: Record<string, unknown> = {}) => ({ url: url(n), repo: "r", pr: n, kind: "stuck-parked", stuck_key: `park:${n}`, reason: "parked 5 h: merge conflict", ...over })
-const row = (id: number, m: Record<string, unknown>) => ({ id, meta: JSON.stringify(m) })
+const row = (id: number, m: Record<string, unknown>, action = "pr:brain-event") => ({ id, action, meta: JSON.stringify(m) })
 
-function harness(rows: Array<{ id: number; meta: string }>, cursor: string | null) {
+/** The real SQL against real SQLite: a fake that filters in JS hid a malformed-row failure. */
+function harness(rows: Array<{ id: number; action?: string; meta: string }>, cursor: string | null, over: { event?: (t: string) => void } = {}) {
+  const db = new Database(":memory:")
+  db.exec("CREATE TABLE agent_activity (id INTEGER PRIMARY KEY, action TEXT, meta TEXT)")
+  for (const r of rows) db.query("INSERT INTO agent_activity (id, action, meta) VALUES (?, ?, ?)").run(r.id, r.action ?? "pr:brain-event", r.meta)
+  const exec: ExecFn = async (sql, args) => ({ rows: db.query(sql).all(...(args as never[])) as never[], affected: 0 })
   const events: string[] = []
-  const seen: unknown[][] = []
+  const logs: string[] = []
   let saved = cursor
   const reader = createStuckEvents({
-    exec: async (_sql, args) => { seen.push(args); return { rows: rows.filter((r) => r.id > Number(args[0])), affected: 0 } },
-    event: (t) => { events.push(t) },
+    exec,
+    event: over.event ?? ((t) => { events.push(t) }),
     getCursor: () => saved,
     setCursor: (id) => { saved = id },
-    log: () => {},
+    log: (l) => { logs.push(l) },
   })
-  return { reader, events, seen, cursor: () => saved }
+  return { reader, events, logs, cursor: () => saved }
 }
 
 describe("stuckLine", () => {
   test("names the PR, the kind and what the brain can do", () => {
     const l = stuckLine(meta(7))!
     expect(l).toContain("stuck r#7 (parked)")
-    expect(l).toContain("close it or ask Jeremie")
+    expect(l).toContain("close it only if it's dead, or ask Jeremie")
     expect(l).toContain(url(7))
   })
   test("a hostile reason stays one quoted, bounded line of data", () => {
@@ -38,6 +45,7 @@ describe("stuckLine", () => {
     expect(stuckLine(meta(7, { repo: "r; rm -rf ~" }))).toBeNull()
     expect(stuckLine(meta(7, { url: "https://evil.example/x" }))).toBeNull()
     expect(stuckLine(meta(7, { pr: "7 and more" }))).toBeNull()
+    expect(stuckLine(meta(7, { reason: { toString: null } }))).toBeNull()
   })
 })
 
@@ -47,7 +55,8 @@ describe("the reader", () => {
     await h.reader.tick()
     expect(h.events).toHaveLength(1)
     expect(h.events[0]).toContain("2 stuck PRs")
-    expect(h.events[0]).toContain("r#1")
+    expect(h.events[0]).toContain(url(1))
+    expect(h.events[0]).toContain("close only dead ones")
     expect(h.cursor()).toBe("9")
     await h.reader.tick()
     expect(h.events).toHaveLength(1)
@@ -64,11 +73,26 @@ describe("the reader", () => {
     expect(h.events.map((e) => e.match(/r#\d+/)![0])).toEqual(["r#2", "r#3"])
     expect(h.cursor()).toBe("12")
   })
-  test("an unreadable row is skipped, and never stops the ones after it", async () => {
-    const h = harness([{ id: 6, meta: "not json" }, row(7, meta(2))], "5")
+  test("malformed meta on any row is skipped, and never stops the rows after it", async () => {
+    const h = harness([{ id: 6, meta: "not json" }, { id: 7, action: "probe-reject", meta: "{broken" }, row(8, meta(2))], "5")
     await h.reader.tick()
     expect(h.events).toHaveLength(1)
-    expect(h.cursor()).toBe("7")
+    expect(h.cursor()).toBe("8")
+  })
+  test("a brain event that isn't a stuck event moves the cursor and posts nothing", async () => {
+    const h = harness([row(6, { url: url(1), kind: "brain-unpark-ignored" })], "5")
+    await h.reader.tick()
+    expect(h.events).toEqual([])
+    expect(h.cursor()).toBe("6")
+  })
+  test("a first run reads the whole backlog, so nothing past one page replays as new", async () => {
+    const h = harness(Array.from({ length: 205 }, (_, i) => row(i + 1, meta(i + 1))), null)
+    await h.reader.tick()
+    expect(h.events).toHaveLength(1)
+    expect(h.events[0]).toContain("205 stuck PRs")
+    expect(h.cursor()).toBe("205")
+    await h.reader.tick()
+    expect(h.events).toHaveLength(1)
   })
   test("a failed read moves nothing", async () => {
     const events: string[] = []
@@ -76,5 +100,11 @@ describe("the reader", () => {
     const r = createStuckEvents({ exec: async () => { throw new Error("turso unreachable") }, event: (t) => { events.push(t) }, getCursor: () => saved, setCursor: (id) => { saved = id }, log: () => {} })
     await r.tick()
     expect([events, saved]).toEqual([[], "5"])
+  })
+  test("a local write that throws never escapes the tick: an unhandled rejection would exit the server", async () => {
+    const h = harness([row(6, meta(1))], "5", { event: () => { throw new Error("database is locked") } })
+    await h.reader.tick()
+    expect(h.cursor()).toBe("5")
+    expect(h.logs.join()).toContain("database is locked")
   })
 })
