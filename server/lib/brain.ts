@@ -78,6 +78,13 @@ export function fitDelivery<T extends DeliveryTurn>(turns: T[]): T[] {
   return fit
 }
 
+/** What goes out now: the turns that fit, plus queued ids with no turn left. The rest stays queued for the next Stop. */
+export function fitQueued<T extends DeliveryTurn>(queued: string[], found: T[]): { turns: T[]; ids: string[] } {
+  const turns = fitDelivery(found)
+  const held = new Set(found.slice(turns.length).map((t) => t.id))
+  return { turns, ids: queued.filter((id) => !held.has(id)) }
+}
+
 /** First prompt of a fresh brain: memory first, then every turn still open. */
 export function bootSeed(input: { memoryRef: string | null; open: DeliveryTurn[] }): string {
   const memory = input.memoryRef ? `Read your memory note ${input.memoryRef} first.` : `No memory note yet: create one (note_create, resources/, tag ${MEMORY_TAG}).`
