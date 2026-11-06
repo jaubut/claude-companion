@@ -6,6 +6,7 @@ import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { type BrainWiring, brainWiring } from "../wiring/brain"
+import { addBrainHandoff } from "../wiring/brain-handoff"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
@@ -17,7 +18,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
 //   GET  /api/brain/trace?since=<seq>     → {ok, rows: TraceRow[]}
 //   POST /api/brain/pause|resume|restart  → {ok, brain}; restart while paused → 409 paused
-//   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId}
+//   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId, handoff?}
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
 //   POST /hooks/brain/lead                → bin/lead: {repo} → {ok, name, state} (docs/brain-api.md § Repo leads)
 //   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
@@ -45,6 +46,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/
 export interface BrainRouteDeps {
   wiring: BrainWiring
   todo?: typeof addBrainTodo
+  handoff?: typeof addBrainHandoff
   sessions: () => Session[]
   enabled: () => boolean
   /** The brain-workers reaper (default: the real one). */
@@ -103,6 +105,10 @@ async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const agent = body.agent === undefined || body.agent === null ? null : str(body.agent, 64)
   if (body.agent !== undefined && body.agent !== null && !agent) return fail(400, "unknown_agent")
   const reasoning = str(body.reasoning, REASONING_MAX) ?? ""
+  if (body.handoff === true) {
+    const out = await (deps.handoff ?? addBrainHandoff)({ title, prompt, noteId, reasoning, sourceTurnId })
+    return Response.json(out.body, { status: out.status })
+  }
   const out = await deps.wiring.propose({ title, prompt, noteId, agent, reasoning, sourceTurnId })
   return Response.json(out.body, { status: out.status })
 }

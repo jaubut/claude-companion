@@ -229,11 +229,11 @@ function selectCols(cols: DispatchColumns): string {
 export const POLL_WINDOW_DAYS = 7
 export const POLL_LIMIT = 300
 
-/** Agent tasks touched in the last 7 days, plus every still-open one. Newest first. */
+/** Agent and handoff tasks touched in the last 7 days, plus every still-open one. Newest first. */
 export async function listDispatchTasks(query: QueryFn, cols: DispatchColumns): Promise<DispatchTask[]> {
   const rows = await query(
     `SELECT ${selectCols(cols)} FROM tasks t LEFT JOIN notes n ON n.id = t.note_id ` +
-      "WHERE t.assignee LIKE 'agent:%' AND t.dispatch_status IS NOT NULL " +
+      "WHERE (t.assignee LIKE 'agent:%' OR t.assignee = 'handoff') AND t.dispatch_status IS NOT NULL " +
       "AND (t.updated_at >= datetime('now', ?) OR (t.done = 0 AND t.dispatch_status IN ('pending', 'queued', 'running', 'blocked'))) " +
       "ORDER BY t.updated_at DESC LIMIT ?",
     [`-${POLL_WINDOW_DAYS} days`, POLL_LIMIT],
@@ -430,6 +430,23 @@ export async function fileTask(ctx: WriteCtx, input: FileInput): Promise<{ id: s
   return { id: input.id, inserted, status }
 }
 
+/**
+ * A brain handoff: a row for the relay to move (ACK → running, DONE → completed + the PR url the shepherd trusts), never
+ * dispatch-run's. No status and a non-agent assignee keep dispatch-run, pm-nightly and the PM off it. Not `pending`: the
+ * relay's ACK refuses that state.
+ */
+export async function fileHandoff(ctx: WriteCtx, input: Pick<FileInput, "id" | "noteId" | "title" | "description"> & { origin: "jeremie" | "unknown" }): Promise<{ id: string; inserted: boolean }> {
+  const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
+  const { affected } = await ctx.exec(
+    `INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, ${ctx.cols.origin ? "origin, " : ""}created_at, updated_at) ` +
+      `VALUES (?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE note_id = ?), 'handoff', ${ctx.cols.origin ? "?, " : ""}datetime('now'), datetime('now'))`,
+    [input.id, input.noteId, title, input.description, input.noteId, ...(ctx.cols.origin ? [input.origin] : [])],
+  )
+  const inserted = affected > 0
+  if (inserted) await ledger(ctx, { id: input.id, agent: "handoff" }, "handoff", `→handoff: ${title}`, { op: "file", note: input.noteId, origin: input.origin })
+  return { id: input.id, inserted }
+}
+
 // Requeue resets exactly what dispatch.sh's `queued` resets; the P0 columns only when present.
 function requeueSets(cols: DispatchColumns): string[] {
   return [
@@ -457,6 +474,8 @@ async function transition(ctx: WriteCtx, id: string, tr: Transition): Promise<Wr
   const before = await getDispatchTask(query, ctx.cols, id)
   if (!before) return { ok: false, error: "no_such_task" }
   if (before.task.status === "running") return { ok: false, error: "running", task: before.task }
+  // A handoff's builder session owns it and dispatch-run never claims it: back in `queued` it would sit forever.
+  if (tr.to === "queued" && before.task.agent === "handoff") return { ok: false, error: "conflict", task: before.task }
   if (!tr.allowed(before.task)) return { ok: false, error: "conflict", task: before.task }
   const { affected } = await ctx.exec(
     `UPDATE tasks SET ${tr.sets.join(", ")} WHERE id = ? AND (${tr.guard})`,

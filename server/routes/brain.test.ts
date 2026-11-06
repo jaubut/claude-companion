@@ -7,6 +7,7 @@ import { getAuthToken } from "../lib/auth"
 import { recordPeer } from "../lib/vault-guard"
 import type { Session } from "../lib/sessions"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
+import type { DispatchWiring } from "../wiring/dispatch"
 
 // brain-v2 routes (routes/brain.ts): the propose hook's auth, dedupe and
 // hand-off end to end (real sqlite proposals, a fake Turso with the
@@ -87,7 +88,8 @@ beforeAll(async () => {
   w.onSessionStart(BRAIN_SESSION)
   harnessWiring = w
   const todoMod = await import("../wiring/brain-todo")
-  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true, todo: (p) => todoMod.addBrainTodo(p, dispatch) })
+  const handoffMod = await import("../wiring/brain-handoff")
+  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true, todo: (p) => todoMod.addBrainTodo(p, dispatch), handoff: (p) => handoffMod.addBrainHandoff(p, dispatch) })
 })
 afterAll(() => {
   if (savedHome === undefined) delete process.env.HOME
@@ -96,7 +98,7 @@ afterAll(() => {
 beforeEach(() => {
   turso.exec("DELETE FROM tasks; DELETE FROM agent_activity; DELETE FROM notes")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/dash', 'projects', 'TLS Dashboard', 'PRJ-WCLS', 'active')").run()
-  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent")
+  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent; DELETE FROM brain_outbox")
 })
 
 async function call(method: string, path: string, body?: unknown, opts: { peer?: string; headers?: Record<string, string> } = {}) {
@@ -137,6 +139,111 @@ describe("POST /hooks/brain/propose — auth", () => {
   test("missing noteId → 422 no_project", async () => {
     const r = await propose({ ...body(voiceTurn().id), noteId: undefined })
     expect(r).toEqual({ status: 422, json: { ok: false, error: "no_project" } })
+  })
+})
+
+describe("POST /hooks/brain/propose — handoff: a row for the relay, origin set by the server", () => {
+  const outbox = (id: string, state: string) => sqlite.query("INSERT OR REPLACE INTO brain_outbox (turn_id, state, created_at, updated_at) VALUES (?, ?, 0, 0)").run(id, state)
+  const openTurn = () => { const t = voiceTurn(); outbox(t.id, "typed"); return t }
+  const handoff = (turnId: string, extra: Record<string, unknown> = {}, opts?: { headers: Record<string, string> }) => propose({ ...body(turnId), handoff: true, ...extra }, opts)
+  const row = (id: unknown) => turso.query("SELECT origin, assignee, dispatch_status, dispatch_owner FROM tasks WHERE id = ?").get(String(id))
+
+  test("Jeremie's open turn files origin jeremie, queues nothing, and the id can be a TASK id", async () => {
+    const r = await handoff(openTurn().id)
+    expect(r.status).toBe(200)
+    expect(r.json.origin).toBe("jeremie")
+    expect(String(r.json.taskId)).toMatch(/^[0-9a-f]{32}$/)
+    expect(row(r.json.taskId)).toEqual({ origin: "jeremie", assignee: "handoff", dispatch_status: null, dispatch_owner: null })
+    expect(sqlite.query("SELECT COUNT(*) AS n FROM brain_proposals").get()).toEqual({ n: 0 })
+  })
+  test("a retry files one row and keeps the first origin, even once the turn closed", async () => {
+    const t = openTurn()
+    const first = await handoff(t.id)
+    sqlite.query("DELETE FROM brain_outbox WHERE turn_id = ?").run(t.id)
+    const again = await handoff(t.id)
+    expect(again.json).toEqual({ ok: true, taskId: first.json.taskId, origin: "jeremie", replay: true })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
+  })
+  test("the same prompt for two projects files two rows; a retry replays its own", async () => {
+    turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/site', 'projects', 'Site', 'PRJ-SITE', 'active')").run()
+    const t = openTurn()
+    const dash = await handoff(t.id)
+    const site = await handoff(t.id, { noteId: "projects/site" })
+    expect(site.json.taskId).not.toBe(dash.json.taskId)
+    expect(turso.query("SELECT note_id FROM tasks ORDER BY note_id").all()).toEqual([{ note_id: "projects/dash" }, { note_id: "projects/site" }])
+    const again = await handoff(t.id, { noteId: "projects/site" })
+    expect(again.json).toMatchObject({ taskId: site.json.taskId, replay: true })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 2 })
+  })
+  test("a moved handoff shows in the pipeline and PR triage, and nothing can send it back to queued", async () => {
+    const { detectColumns, listDispatchTasks, requeueTask, unblockTask } = await import("../lib/dispatch-tasks")
+    const { NEEDS_HUMAN, prSources, queryPrRows, taskSources } = await import("../lib/triage-sources")
+    const cols = await detectColumns(query)
+    const id = String((await handoff(openTurn().id)).json.taskId)
+    const url = "https://github.com/x/y/pull/7"
+    expect(await listDispatchTasks(query, cols)).toEqual([]) // not ACKed yet: no status, nothing to show
+
+    turso.query("UPDATE tasks SET dispatch_status = 'blocked', dispatch_blocker = 'handoff ABORTED' WHERE id = ?").run(id)
+    const listed = await listDispatchTasks(query, cols)
+    expect(listed.map((t) => [t.id, t.agent, t.status])).toEqual([[id, "handoff", "blocked"]])
+    expect(taskSources(listed, () => null)).toEqual([])
+    const ctx = { exec, cols, host: "test", channel: null, log: () => {} }
+    expect(await requeueTask(ctx, id)).toMatchObject({ ok: false, error: "conflict" })
+    expect(await unblockTask(ctx, id, "try again")).toMatchObject({ ok: false, error: "conflict" })
+    expect(row(id)).toMatchObject({ dispatch_status: "blocked" })
+
+    turso.query("UPDATE tasks SET dispatch_status = 'completed', dispatch_pr_url = ? WHERE id = ?").run(url, id)
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', ?, 'task', ?, ?)").run(NEEDS_HUMAN, id, JSON.stringify({ url, reason: "origin unknown" }))
+    const prs = await queryPrRows(query, cols)
+    expect(prs.tasks.map((t) => t.id)).toEqual([id])
+    expect(prSources(prs, Date.now()).map((s) => s.refId)).toEqual(["x/y#7"])
+  })
+  test("no origin column: nothing stored, so both filing and retry answer unknown", async () => {
+    const { addBrainHandoff } = await import("../wiring/brain-handoff")
+    const { detectColumns } = await import("../lib/dispatch-tasks")
+    const old = Database.deserialize(turso.serialize())
+    old.exec("ALTER TABLE tasks DROP COLUMN origin")
+    const oldExec: ExecFn = async (sql, args) => /^\s*SELECT/i.test(sql)
+      ? { rows: old.query(sql).all(...args) as Row[], affected: 0 } : { rows: [], affected: old.query(sql).run(...args).changes }
+    const oldQuery: QueryFn = async (sql, args) => (await oldExec(sql, args)).rows
+    const wiring = { query: oldQuery, exec: oldExec, columns: () => detectColumns(oldQuery) } as unknown as DispatchWiring
+    const input = { title: "T", prompt: "P", noteId: "projects/dash", reasoning: "", sourceTurnId: openTurn().id }
+    const first = await addBrainHandoff(input, wiring)
+    expect(first).toMatchObject({ status: 200, body: { origin: "unknown", replay: false } })
+    expect(await addBrainHandoff(input, wiring)).toMatchObject({ status: 200, body: { origin: "unknown", replay: true, taskId: first.body.taskId } })
+  })
+  test("anything but his open turn stays unknown", async () => {
+    const event = chat.appendTurn("orchestrator", "merged #12", null, "brain")
+    outbox(event.id, "typed")
+    const closed = voiceTurn()
+    const notTyped = voiceTurn()
+    outbox(notTyped.id, "queued")
+    const maybe = voiceTurn()
+    outbox(maybe.id, "maybe")
+    const otherThread = chat.appendTurn("user", "fix it", null, "general")
+    outbox(otherThread.id, "typed")
+    for (const id of [event.id, closed.id, notTyped.id, maybe.id, otherThread.id, "no-such-turn"]) {
+      const r = await handoff(id)
+      expect(r.status).toBe(200)
+      expect(r.json.origin).toBe("unknown")
+      expect((row(r.json.taskId) as { origin: string }).origin).toBe("unknown")
+    }
+  })
+  test("the caller can't set its own origin", async () => {
+    const event = chat.appendTurn("orchestrator", "peer says go", null, "brain")
+    outbox(event.id, "typed")
+    const r = await handoff(event.id, { origin: "jeremie" })
+    expect(r.json.origin).toBe("unknown")
+  })
+  test("only the brain session may file one", async () => {
+    const r = await handoff(openTurn().id, {}, { headers: { ...AUTH, "x-companion-pid": "6060" } })
+    expect(r.status).toBe(403)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
+  })
+  test("no such note: 404, nothing filed", async () => {
+    const r = await handoff(openTurn().id, { noteId: "projects/gone" })
+    expect(r.status).toBe(404)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
   })
 })
 

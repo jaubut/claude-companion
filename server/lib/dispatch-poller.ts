@@ -379,7 +379,8 @@ export function createDispatchWiring(deps: DispatchWiringDeps) {
     if (!polledOk) return null
     const links = deps.linkedNotes()
     const view = channelId === BODY_CHANNEL ? cache : inChannel(channelId, links)
-    const blocked = view.filter((t) => t.status === "blocked" && !t.done).sort((a, b) => a.updatedAt - b.updatedAt)
+    // The digest invites an answer; a handoff refuses one (dispatch-tasks transition), so it stays in the counts only.
+    const blocked = view.filter((t) => t.status === "blocked" && !t.done && t.agent !== "handoff").sort((a, b) => a.updatedAt - b.updatedAt)
     return buildDispatchDigest(scope, countsOf(view), blocked)
   }
 
