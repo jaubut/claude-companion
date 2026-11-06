@@ -11,12 +11,15 @@ import { compactionStatsSince } from "../wiring/auto-compact"
 import { parseAgentBody } from "../lib/body-agent"
 import { startBodyAgent } from "../wiring/body-agent"
 import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/body-investigate"
+import type { BudgetResponse } from "../lib/token-budget"
+import { tokenBudget } from "../wiring/token-budget"
 
 // Body monitor API (living-system nervous system). Auth is the `/api/*` bearer
 // gate in companion-server.ts. Contract: docs/body-api.md.
 //   GET  /api/body                    summary + components + last 50 events (30 s cache; ?all=1, ?fresh=1)
 //   GET  /api/body/tokens             fleet token usage (token_usage rollups; ?range=today|7d|30d, 30 s cache, ?fresh=1)
 //                                     + `compactions` (this server's auto-compactions in the range)
+//   GET  /api/body/budget             this week's percent of the limit + spend by role, repo, task, model, session
 //   GET  /api/body/component/:id      one component + latest vitals + last 50 events (id URL-decoded)
 //   POST /api/body/alert              collector alert → #Body turn, `body_alert` frame, gated push
 //                                     (+ a problem state triggers an auto-investigation)
@@ -28,6 +31,7 @@ export interface BodyRouteDeps {
   query?: QueryFn
   snapshot?: BodySnapshot
   tokens?: TokensSnapshot
+  budget?: () => Promise<BudgetResponse>
   /** Auto-compactions since a ms timestamp (wiring/auto-compact.ts). */
   compactions?: (sinceMs: number) => CompactionStats
   sink?: BodyAlertSink
@@ -51,6 +55,7 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
   const query = deps.query ?? tursoQuery
   const snapshot = deps.snapshot ?? bodySnapshot
   const tokens = deps.tokens ?? tokensSnapshot
+  const budget = deps.budget ?? tokenBudget
   const compactions = deps.compactions ?? compactionStatsSince
   const sink = deps.sink ?? bodyAlertSink
   const now = deps.now ?? Date.now
@@ -77,6 +82,13 @@ export function createBodyHandler(deps: BodyRouteDeps = {}) {
         let stats: CompactionStats | null = null
         try { stats = compactions(localDayStart(body.since)) } catch { /* companion.db unreadable: card shows no line */ }
         return Response.json({ ...body, compactions: stats })
+      } catch (err) {
+        return unreachable(err)
+      }
+    }
+    if (url.pathname === "/api/body/budget" && req.method === "GET") {
+      try {
+        return Response.json(await budget())
       } catch (err) {
         return unreachable(err)
       }

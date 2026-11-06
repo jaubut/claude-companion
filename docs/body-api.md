@@ -101,6 +101,36 @@ holding the fix, or `null` (no fix, a failure, or — on the Mac — a report th
 went to Zettlab, which holds the card). `rootCause`/`confidence`/`severity` are
 `null` until `done`.
 
+## `GET /api/body/budget`
+
+Where the Claude weekly limit goes. Server: `server/lib/token-budget.ts`. Same
+collector tables as `/api/body/tokens`, plus `tasks` for task ids. Not cached.
+
+- `budget.percent_used`: Claude Code's own `seven_day` rate limit, from the
+  context-gauge mod (`/api/gauge`, `source: "claude_code_rate_limit"`). It is held
+  in memory, so it is `null` after a restart until a session reports. It is never
+  estimated. `budget.reported_at` dates the figure.
+- `budget.percent_of_budget`: `usd` against `COMPANION_WEEKLY_BUDGET_USD`, `null`
+  when unset.
+- `since`: the limit's week when Claude Code reported its reset, else the rolling
+  7 days. Top-level `sessions`, `input`, `output`, `cache_read`, `cache_creation`,
+  `usd` and `unpriced_tokens` are that week's totals.
+- `by_role`, `by_repo`, `by_task`, `by_model`, `top_sessions`: each row has the
+  same fields, with output and cache kept separate. Every session lands in exactly
+  one `by_role` and one `by_repo` row, so those sum to the totals. `by_task` holds
+  only matched sessions, so it does not. `usd` follows the `weighting` text.
+- Roles come from `token_sessions.cwd`: `brain`, `manager`, `dispatch`, `shepherd`,
+  `scheduled`, `interactive`, `unknown`. Limits: `dispatch` merges builders with
+  their reviewers, and `dispatch` and `shepherd` temp worktrees have `repo: null`,
+  because `cwd` does not name the repo. Tasks are matched only through
+  `dispatch_owner = companion:relay:<session>`.
+- `rework`: shepherd sessions, with `share` of `usd`.
+- `stale_hosts`: hosts with no `token_sessions` write for over an hour.
+
+The brain host posts one line a day to the brain thread and one alert at 50, 75
+and 90 percent per week (`server/wiring/token-budget.ts`). They use role `worker`,
+so they do not wake the brain. State: `token-budget.json` beside `companion.db`.
+
 ## `GET /api/body/tokens`
 
 Fleet token usage for the Body "Token burn" card. Server: `server/lib/body-tokens.ts`
