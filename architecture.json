@@ -7250,10 +7250,13 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 65,
+          "lines": 104,
           "kind": "lib",
           "exports": [
             "leadArgs",
+            "leadDir",
+            "LEAD_SETTINGS",
+            "prepareLeadDir",
             "LeadDeps",
             "createBrainLead",
             "BrainLead",
@@ -7265,7 +7268,10 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/brain.ts",
             "lib/herdr.ts",
+            "lib/live-repo.ts",
+            "lib/log.ts",
             "lib/spawn-session.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
@@ -9184,6 +9190,7 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/brain-handoff.ts",
+            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
@@ -13954,7 +13961,8 @@
         "leadSlug": {
           "module": "lib/brain.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "wiring/brain-lead.ts"
           ]
         },
         "LEAD_PREFIX": {
@@ -15362,6 +15370,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/auto-deploy.ts",
+            "wiring/brain-lead.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -15369,6 +15378,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/auto-deploy.ts",
+            "wiring/brain-lead.ts",
             "wiring/resolver.ts"
           ]
         },
