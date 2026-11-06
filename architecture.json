@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05",
+  "generatedAt": "2026-11-06",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1784,7 +1784,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 534,
+          "lines": 551,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -1834,6 +1834,7 @@
             "FileInput",
             "approveUrl",
             "fileTask",
+            "fileHandoff",
             "cancelDispatchTask",
             "requeueTask",
             "unblockMarker",
@@ -6168,7 +6169,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 282,
+          "lines": 288,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6189,6 +6190,7 @@
             "lib/sessions.ts",
             "lib/vault-guard.ts",
             "wiring/brain.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
@@ -7211,6 +7213,36 @@
           "imports": [
             "lib/brain.ts",
             "lib/brain-trace.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-handoff.ts",
+          "lines": 50,
+          "kind": "lib",
+          "exports": [
+            "HandoffInput",
+            "handoffOrigin",
+            "addBrainHandoff"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/brain-trace.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/turso.ts",
+            "wiring/brain.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9151,6 +9183,7 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
@@ -9825,6 +9858,7 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/auto-deploy.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
@@ -10397,6 +10431,7 @@
             "routes/my-tasks.ts",
             "routes/orchestrator.ts",
             "routes/tasks-agent.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-todo.ts",
@@ -13868,6 +13903,12 @@
             "routes/brain.ts"
           ]
         },
+        "addBrainHandoff": {
+          "module": "wiring/brain-handoff.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "BrainWorkers": {
           "module": "wiring/brain-workers.ts",
           "callers": [
@@ -14527,6 +14568,7 @@
             "routes/orchestrator.ts",
             "wiring/auto-deploy.ts",
             "wiring/body-agent.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-todo.ts",
@@ -14660,6 +14702,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/brain-handoff.ts",
             "wiring/proposals.ts",
             "wiring/triage.ts"
           ]
@@ -15580,6 +15623,7 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-activity.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
@@ -15595,9 +15639,38 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-activity.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "getTurn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/brain-handoff.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "openDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "fileHandoff": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "emitTrace": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "wiring/brain-handoff.ts",
+            "wiring/brain-todo.ts",
             "wiring/events.ts"
           ]
         },
@@ -15657,13 +15730,6 @@
           "module": "lib/my-tasks.ts",
           "callers": [
             "wiring/brain-todo.ts"
-          ]
-        },
-        "emitTrace": {
-          "module": "wiring/brain.ts",
-          "callers": [
-            "wiring/brain-todo.ts",
-            "wiring/events.ts"
           ]
         },
         "ReapMode": {
@@ -15891,12 +15957,6 @@
             "wiring/brain.ts"
           ]
         },
-        "openDeliveries": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "setKv": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -15917,12 +15977,6 @@
         },
         "createBrainActivity": {
           "module": "wiring/brain-activity.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "getTurn": {
-          "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/brain.ts"
           ]
