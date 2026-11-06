@@ -122,6 +122,10 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 | 409 `kept` (+`reason`) | any other keep (split, settling, unreadable) |
 | 409 `changed` / `in_flight` | the workspace changed before the close / another close is running |
 
+### Stuck PRs
+
+`wiring/brain-stuck-events.ts` polls `pr:brain-event` rows with a `stuck_key` every minute and posts each new one to the brain thread. The rows come from the PR shepherd in claude-config, one per PR per stuck state. The cursor is `brain_kv`'s `stuck-events-cursor`. Its first run posts one summary and replays nothing. Only checked fields are posted, and the reason is one quoted, bounded line of data.
+
 ### Repo leads (`/hooks/brain/lead`)
 
 `LEAD_REPOS` in `lib/brain.ts` lists the repos with a lead. A lead is one persistent `lead-<repo>` herdr workspace with one pane (auto mode, cwd `~/<repo>`, no plan-mode tools: nobody can approve ExitPlanMode; no file-editing tools, by `--disallowedTools`), following `brain/LEAD.md`. That flag binds the running process, not a determined lead: its Bash can write its own checkout, and `leadArgs`, `brain/CLAUDE.md` and `brain/.claude/settings.json` live in that checkout, which the default `BRAIN_DIR` and the server also use, so a write there takes effect at the next restart. Whether to give leads a cwd apart from the server's checkout is open, and Jeremie's call. The server holds no queue: `wiring/brain-lead.ts` only finds or starts it. Work, merge requests and escalations are plain relay messages. A lead has no merge or close rights: the brain runs `bin/pr-merge` and `bin/pr-close`, on dispatch branches only. It starts no builders either: it asks the brain with `builder <repo>: <task-id>`, and the brain runs `handoff-builder.sh`. The script runs unsandboxed on values a lead supplies, so `brain/CLAUDE.md` § Repo leads has the brain refuse anything but the sender's own repo, a plain id and its own builders, and defines the limit of 3 unparked PRs per repo (new tasks only; a builder with no PR yet counts). All of that is the brain's judgement: no code enforces it. A lead's turn end sets no waiting badge and sends no push.
