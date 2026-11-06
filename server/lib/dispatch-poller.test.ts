@@ -275,6 +275,20 @@ describe("buildDispatchDigest (brain context)", () => {
   })
 })
 
+describe("digestFor", () => {
+  test("a blocked handoff counts but is not offered for an answer", async () => {
+    const { w } = rig()
+    rows = [task(1, { assignee: "handoff", dispatch_status: "blocked", dispatch_blocker: "ABORTED" })]
+    await w.poll()
+    expect(w.digestFor("general", "x")).toBe("Dispatch queue (x): 0 queued · 0 running · 1 blocked · 0 PR open")
+    rows.push(task(2, { dispatch_status: "blocked", dispatch_blocker: "needs an answer" }))
+    await w.poll()
+    const d = w.digestFor("general", "x")!
+    expect(d).toContain("task 2")
+    expect(d).not.toContain("task 1")
+  })
+})
+
 describe("front-door accessors", () => {
   test("snapshot is null until the first good poll, then the polled list", async () => {
     rows = [task(1), blocked(2, "2026-10-03 11:00:00")]

@@ -94,6 +94,7 @@ Auth — all of: TCP peer loopback with no forwarded hop (`clientOrigin(...).tra
 
 - `noteId` missing → 422 `no_project`; unknown → 404; Turso down → 503; unknown agent → 400 `unknown_agent`.
 - Dedupe on (`sourceTurnId`, sha256(prompt)): a repeat answers `{ok, proposalId, replay:true}` and creates nothing.
+- `handoff: true` files a row and queues nothing, without a proposal: `{ok, taskId, origin, replay}`. `origin` is what the row stored (`jeremie` or `unknown`, always `unknown` without an origin column); `replay:true` = this turn, note and prompt were already filed.
 - **The brain hands off** (Jeremie, 2026-10-29; replaced voice = consent): every proposal is approved at once (files `queued`, origin jeremie): `{ok, proposalId, dispatchTaskId, status:"queued"}`. No proposal turn, no Approve card, no `filed […]` turn in the brain thread: the agent row ("dispatched") is the receipt. If filing fails the proposal stays `proposed` (a card he can tap): `{ok, proposalId, status:"proposed", error}`.
 
 ### Brain sessions (`/hooks/brain/sessions`, `GET /api/brain/workers`)

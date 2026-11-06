@@ -1712,7 +1712,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 412,
+          "lines": 413,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -7220,7 +7220,7 @@
         },
         {
           "path": "wiring/brain-handoff.ts",
-          "lines": 50,
+          "lines": 52,
           "kind": "lib",
           "exports": [
             "HandoffInput",

@@ -34,8 +34,10 @@ export async function addBrainHandoff(p: HandoffInput, dispatch: DispatchWiring 
     // Stable per (turn, resolved note, prompt): a retried call files one row, with the origin of the first. Namespaced so it never meets addBrainTodo's id.
     const id = createHash("sha256").update(`handoff\n${p.sourceTurnId}\n${note.noteId}\n${p.prompt}`).digest("hex").slice(0, 32)
     const description = `${p.prompt}\n\n— Handed off from Companion #Brain${p.reasoning ? `\nWhy: ${p.reasoning}` : ""}`
-    const { inserted } = await fileHandoff(await writeCtx(dispatch, BRAIN_THREAD), { id, noteId: note.noteId, title: p.title, description, origin })
-    const filed = inserted ? origin : String((await dispatch.query("SELECT origin FROM tasks WHERE id = ?", [id]))[0]?.origin ?? "unknown")
+    const ctx = await writeCtx(dispatch, BRAIN_THREAD)
+    const { inserted } = await fileHandoff(ctx, { id, noteId: note.noteId, title: p.title, description, origin })
+    // No origin column: nothing was stored, so nothing may be claimed.
+    const filed = !ctx.cols.origin ? "unknown" : inserted ? origin : String((await dispatch.query("SELECT origin FROM tasks WHERE id = ?", [id]))[0]?.origin ?? "unknown")
     const row = upsertRow({
       id: `handoff:${id}`, parentId: rowId.turn(p.sourceTurnId), turnId: p.sourceTurnId, kind: "agent", status: "done",
       title: `Handed off: ${p.title}`, detail: note.title ?? note.ref ?? note.noteId, ref: { taskId: id },

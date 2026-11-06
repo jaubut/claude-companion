@@ -35,7 +35,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/canvas.ts` | 415 | lib | 29 | state: BLOCKING: Set |
-| `lib/dispatch-poller.ts` | 412 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
+| `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
@@ -217,7 +217,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-worker.ts` | 55 | lib | 5 | state: cache: Map |
 | `lib/last-assistant.ts` | 53 | lib | 1 |  |
 | `wiring/outbound.ts` | 53 | lib | 4 | state: let live |
-| `wiring/brain-handoff.ts` | 50 | lib | 3 |  |
+| `wiring/brain-handoff.ts` | 52 | lib | 3 |  |
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |
 | `lib/log.ts` | 48 | lib | 5 |  |
 | `wiring/receipt-qa.ts` | 48 | lib | 4 | emits: receipt_qa |

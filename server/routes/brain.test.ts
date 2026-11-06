@@ -7,6 +7,7 @@ import { getAuthToken } from "../lib/auth"
 import { recordPeer } from "../lib/vault-guard"
 import type { Session } from "../lib/sessions"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
+import type { DispatchWiring } from "../wiring/dispatch"
 
 // brain-v2 routes (routes/brain.ts): the propose hook's auth, dedupe and
 // hand-off end to end (real sqlite proposals, a fake Turso with the
@@ -196,6 +197,20 @@ describe("POST /hooks/brain/propose — handoff: a row for the relay, origin set
     const prs = await queryPrRows(query, cols)
     expect(prs.tasks.map((t) => t.id)).toEqual([id])
     expect(prSources(prs, Date.now()).map((s) => s.refId)).toEqual(["x/y#7"])
+  })
+  test("no origin column: nothing stored, so both filing and retry answer unknown", async () => {
+    const { addBrainHandoff } = await import("../wiring/brain-handoff")
+    const { detectColumns } = await import("../lib/dispatch-tasks")
+    const old = Database.deserialize(turso.serialize())
+    old.exec("ALTER TABLE tasks DROP COLUMN origin")
+    const oldExec: ExecFn = async (sql, args) => /^\s*SELECT/i.test(sql)
+      ? { rows: old.query(sql).all(...args) as Row[], affected: 0 } : { rows: [], affected: old.query(sql).run(...args).changes }
+    const oldQuery: QueryFn = async (sql, args) => (await oldExec(sql, args)).rows
+    const wiring = { query: oldQuery, exec: oldExec, columns: () => detectColumns(oldQuery) } as unknown as DispatchWiring
+    const input = { title: "T", prompt: "P", noteId: "projects/dash", reasoning: "", sourceTurnId: openTurn().id }
+    const first = await addBrainHandoff(input, wiring)
+    expect(first).toMatchObject({ status: 200, body: { origin: "unknown", replay: false } })
+    expect(await addBrainHandoff(input, wiring)).toMatchObject({ status: 200, body: { origin: "unknown", replay: true, taskId: first.body.taskId } })
   })
   test("anything but his open turn stays unknown", async () => {
     const event = chat.appendTurn("orchestrator", "merged #12", null, "brain")
