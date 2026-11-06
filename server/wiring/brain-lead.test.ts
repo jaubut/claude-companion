@@ -26,6 +26,11 @@ function stale(label: string, panes: string[], info: Record<string, unknown> | n
   return { f, lead }
 }
 
+test("a lead has no file-editing tools: LEAD.md's \"you never edit code\" is enforced where the CLI can", () => {
+  const off = leadArgs("lead-x").slice(leadArgs("lead-x").indexOf("--disallowedTools") + 1)
+  expect(off).toEqual(expect.arrayContaining(["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]))
+})
+
 describe("repo lead", () => {
   test("spawn: its args pass the real gate, and a dead lead alone in its workspace is replaced at once", async () => {
     expect(await spawnInHerdr("/srv/repo", "claude", { COMPANION_TASK_ID: NAME }, fakeHerdr().h, { name: NAME, args: leadArgs(NAME) })).toMatchObject({ ok: true })
