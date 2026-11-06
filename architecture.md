@@ -153,9 +153,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
+| `wiring/brain-stuck-events.ts` | 132 | lib | 4 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
-| `wiring/brain-stuck-events.ts` | 127 | lib | 4 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
@@ -170,10 +170,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `lib/note-media.ts` | 109 | lib | 4 |  |
+| `lib/brain-store.ts` | 105 | lib | 14 |  |
 | `routes/dialogs.ts` | 104 | route-host | 1 | routes: 2 |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `lib/orchestrator-db.ts` | 101 | lib | 2 |  |
-| `lib/brain-store.ts` | 100 | lib | 13 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `wiring/brain-restore.ts` | 100 | lib | 6 |  |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |

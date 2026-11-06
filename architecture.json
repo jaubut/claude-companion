@@ -880,7 +880,7 @@
         },
         {
           "path": "lib/brain-store.ts",
-          "lines": 100,
+          "lines": 105,
           "kind": "lib",
           "exports": [
             "OutboxState",
@@ -889,6 +889,7 @@
             "takeDeliveries",
             "openDeliveries",
             "markDelivered",
+            "requeueDeliveries",
             "markMaybe",
             "clearTyped",
             "getKv",
@@ -7368,7 +7369,7 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 127,
+          "lines": 132,
           "kind": "lib",
           "exports": [
             "StuckEventsDeps",
@@ -15993,6 +15994,12 @@
           ]
         },
         "markDelivered": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "requeueDeliveries": {
           "module": "lib/brain-store.ts",
           "callers": [
             "wiring/brain.ts"

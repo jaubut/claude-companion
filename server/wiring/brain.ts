@@ -9,7 +9,7 @@ import {
   BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import {
-  clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe,
+  clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
   openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
@@ -240,7 +240,7 @@ export function createBrainWiring(deps: BrainDeps) {
       setBusy(false)
       return
     }
-    if (seed) pendingSeed = false
+    if (seed) { pendingSeed = false; requeueDeliveries(queued.filter((id) => !ids.includes(id))) }
     lastActivity = deps.now()
     if (out === "maybe") {
       markMaybe(ids)

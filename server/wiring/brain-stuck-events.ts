@@ -16,7 +16,8 @@ import { orchEmit } from "./orchestrator"
 const POLL_MS = 60_000
 const CURSOR_KEY = "stuck-events-cursor"
 const REASON_MAX = 200
-const NAMES_MAX = 40
+/** Below the brain's 4,000-character delivery, with room for the first line's framing. */
+const SUMMARY_CHARS = 3_500
 const KINDS: Readonly<Record<string, string>> = {
   "stuck-parked": "parked",
   "stuck-no-review": "no review",
@@ -77,10 +78,14 @@ export function createStuckEvents(deps: StuckEventsDeps) {
       after = page.at(-1)!.id
     }
     const urls = [...new Set(rows.flatMap((r) => (r.meta?.stuck_key && ref(r.meta) ? [String(r.meta.url)] : [])))]
-    for (let i = 0; i < urls.length; i += NAMES_MAX) {
-      const head = i === 0 ? `${urls.length} stuck PRs before this reader started. Check each, close only dead ones, or ask Jeremie:` : "More stuck PRs:"
-      deps.event(`${head} ${urls.slice(i, i + NAMES_MAX).join(" ")}`)
+    const parts: string[][] = []
+    let used = Infinity
+    for (const u of urls) {
+      if (used + u.length + 1 > SUMMARY_CHARS) { parts.push([]); used = 0 }
+      parts.at(-1)!.push(u)
+      used += u.length + 1
     }
+    parts.forEach((p, i) => deps.event(`${i === 0 ? `${urls.length} stuck PRs before this reader started. Check each, close only dead ones, or ask Jeremie:` : "More stuck PRs:"} ${p.join(" ")}`))
     deps.setCursor(rows.at(-1)?.id ?? "0")
   }
 

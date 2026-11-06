@@ -313,6 +313,24 @@ describe("delivery is strict", () => {
     expect(store.takeDeliveries()).toEqual([])
   })
 
+  test("a boot seed over the cap: turns that didn't fit go out later, whatever state they were in", async () => {
+    const h = harness()
+    const open = ["a", "b", "c"].map((c) => userTurn(c.repeat(1_800)))
+    for (const t of open) store.enqueueDelivery(t.id)
+    store.markMaybe([open[1]!.id])
+    store.markDelivered([open[2]!.id])
+    await h.w.tick() // spawn → boot seed pending
+    h.set.alive = true
+    h.set.sessions = [session()]
+    h.w.onSessionStart(session())
+    await Bun.sleep(1)
+    await h.w.onStop("sid-brain", "more")
+    await h.w.onStop("sid-brain", "done")
+    const sent = h.delivered.map((d) => d.text).join("\n")
+    for (const t of open) expect(sent).toContain(`[turn ${t.id}]`)
+    expect(store.openDeliveries()).toEqual([])
+  })
+
   test("no key / wrong taskId / session id mismatch → nothing typed, the turn stays queued", async () => {
     for (const bad of [{ taskId: "" }, { sessionId: "sid-other" }]) {
       const h = harness()

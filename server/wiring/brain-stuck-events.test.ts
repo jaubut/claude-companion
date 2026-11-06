@@ -89,6 +89,7 @@ describe("the reader", () => {
   test("a first run reads the whole backlog, names every PR, and replays nothing", async () => {
     const h = harness(Array.from({ length: 205 }, (_, i) => row(i + 1, meta(i + 1))), null)
     await h.reader.tick()
+    expect(h.events.length).toBeGreaterThan(1)
     expect(h.events.every((e) => e.length < 3_900)).toBe(true)
     expect(h.events[0]).toContain("205 stuck PRs")
     for (const n of [1, 41, 205]) expect(h.events.join(" ")).toContain(url(n))
@@ -96,6 +97,13 @@ describe("the reader", () => {
     const posted = h.events.length
     await h.reader.tick()
     expect(h.events).toHaveLength(posted)
+  })
+  test("long URLs can't push a summary past the delivery cap", async () => {
+    const long = "x".repeat(80)
+    const h = harness(Array.from({ length: 60 }, (_, i) => row(i + 1, meta(i + 1, { url: `https://github.com/jaubut/${long}/pull/${i + 1}` }))), null)
+    await h.reader.tick()
+    expect(h.events.every((e) => e.length < 3_900)).toBe(true)
+    for (const n of [1, 60]) expect(h.events.join(" ")).toContain(`/pull/${n}`)
   })
   test("only the shepherd's rows count", async () => {
     const h = harness([{ id: 6, agent_slug: "someone-else", meta: JSON.stringify(meta(1)) }], "5")
