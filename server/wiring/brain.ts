@@ -6,7 +6,7 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainActivity, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
+  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitDelivery, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import {
   clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe,
@@ -229,9 +229,10 @@ export function createBrainWiring(deps: BrainDeps) {
     if (compacting && deps.now() - compactedAt > BUSY_MAX_MS) compacting = false
     if (deps.paused.read() || busy || compacting || state !== "up" || !target()) return
     const seed = pendingSeed
-    const ids = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
-    if (!seed && ids.length === 0) return
-    const turns = turnsOf(ids)
+    const queued = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
+    if (!seed && queued.length === 0) return
+    const turns = fitDelivery(turnsOf(queued)), kept = new Set(turns.map((t) => t.id))
+    const ids = queued.filter((id) => kept.has(id) || !getTurn(id)) // the rest stays queued for the next Stop
     const text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
     if (busy || !target()) return
     setBusy(true)

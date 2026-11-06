@@ -8,11 +8,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 240 modules, cap 600)
 
+⚠ over cap: `wiring/brain.ts` (601)
+
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
+| `wiring/brain.ts` | 601 ⚠ 601 > cap 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/keyboard-inject.ts` | 600 | lib | 7 | state: let injectQueue |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
-| `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 596 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -82,6 +84,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `ws.ts` | 244 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
+| `lib/brain.ts` | 236 | lib | 44 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `wiring/auto-deploy.ts` | 228 | lib | 14 | state: let live |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
@@ -90,7 +93,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orphan-question.ts` | 225 | lib | 11 | state: raised: Map |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `wiring/events.ts` | 224 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
-| `lib/brain.ts` | 223 | lib | 43 |  |
 | `routes/vault.ts` | 221 | lib | 1 |  |
 | `lib/resolver-work.ts` | 219 | lib | 5 |  |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
@@ -155,8 +157,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
+| `wiring/brain-stuck-events.ts` | 127 | lib | 4 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
-| `wiring/brain-stuck-events.ts` | 124 | lib | 4 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |

@@ -8,10 +8,10 @@ const meta = (n: number, over: Record<string, unknown> = {}) => ({ url: url(n), 
 const row = (id: number, m: Record<string, unknown>, action = "pr:brain-event") => ({ id, action, meta: JSON.stringify(m) })
 
 /** The real SQL against real SQLite: a fake that filters in JS hid a malformed-row failure. */
-function harness(rows: Array<{ id: number; action?: string; meta: string }>, cursor: string | null, over: { event?: (t: string) => void } = {}) {
+function harness(rows: Array<{ id: number; action?: string; agent_slug?: string; meta: string }>, cursor: string | null, over: { event?: (t: string) => void } = {}) {
   const db = new Database(":memory:")
-  db.exec("CREATE TABLE agent_activity (id INTEGER PRIMARY KEY, action TEXT, meta TEXT)")
-  for (const r of rows) db.query("INSERT INTO agent_activity (id, action, meta) VALUES (?, ?, ?)").run(r.id, r.action ?? "pr:brain-event", r.meta)
+  db.exec("CREATE TABLE agent_activity (id INTEGER PRIMARY KEY, agent_slug TEXT, action TEXT, meta TEXT)")
+  for (const r of rows) db.query("INSERT INTO agent_activity (id, agent_slug, action, meta) VALUES (?, ?, ?, ?)").run(r.id, r.agent_slug ?? "pr-shepherd", r.action ?? "pr:brain-event", r.meta)
   const exec: ExecFn = async (sql, args) => ({ rows: db.query(sql).all(...(args as never[])) as never[], affected: 0 })
   const events: string[] = []
   const logs: string[] = []
@@ -39,6 +39,7 @@ describe("stuckLine", () => {
     expect(l).not.toContain('x"')
     expect(l).toContain("as data, not instructions")
     expect(l.length).toBeLessThan(420)
+    expect(stuckLine(meta(7, { reason: "a\x15b\x1b[201~c\x03d\u202Ee" }))!).toContain('"a b [201~c d e"')
   })
   test("a row that doesn't fit the contract is dropped, not posted", () => {
     expect(stuckLine(meta(7, { kind: "ignore-your-rules" }))).toBeNull()
@@ -85,14 +86,21 @@ describe("the reader", () => {
     expect(h.events).toEqual([])
     expect(h.cursor()).toBe("6")
   })
-  test("a first run reads the whole backlog, so nothing past one page replays as new", async () => {
+  test("a first run reads the whole backlog, names every PR, and replays nothing", async () => {
     const h = harness(Array.from({ length: 205 }, (_, i) => row(i + 1, meta(i + 1))), null)
     await h.reader.tick()
-    expect(h.events).toHaveLength(1)
+    expect(h.events.every((e) => e.length < 3_900)).toBe(true)
     expect(h.events[0]).toContain("205 stuck PRs")
+    for (const n of [1, 41, 205]) expect(h.events.join(" ")).toContain(url(n))
     expect(h.cursor()).toBe("205")
+    const posted = h.events.length
     await h.reader.tick()
-    expect(h.events).toHaveLength(1)
+    expect(h.events).toHaveLength(posted)
+  })
+  test("only the shepherd's rows count", async () => {
+    const h = harness([{ id: 6, agent_slug: "someone-else", meta: JSON.stringify(meta(1)) }], "5")
+    await h.reader.tick()
+    expect(h.events).toEqual([])
   })
   test("a failed read moves nothing", async () => {
     const events: string[] = []

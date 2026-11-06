@@ -292,6 +292,27 @@ describe("delivery is strict", () => {
     expect(h.delivered.map((d) => d.text)).toEqual([`[turn ${a.id}] first`, `[turn ${b.id}] second`])
   })
 
+  test("a burst over the delivery cap: nothing is lost, and every turn arrives once, in order", async () => {
+    const h = harness()
+    await upBrain(h)
+    const first = userTurn("first")
+    h.w.enqueue(first) // goes alone and makes the brain busy
+    await Bun.sleep(1)
+    const burst = ["a", "b", "c", "d"].map((c) => userTurn(c.repeat(1_800)))
+    for (const t of burst) h.w.enqueue(t)
+    await h.w.onStop("sid-brain", "one")
+    await h.w.onStop("sid-brain", "two")
+    await h.w.onStop("sid-brain", "three")
+    const sent = h.delivered.map((d) => d.text)
+    const typed = sent.join("\n")
+    const at = burst.map((t) => typed.indexOf(`[turn ${t.id}]`))
+    expect(at.every((n) => n >= 0)).toBe(true)
+    expect(at).toEqual([...at].sort((x, y) => x - y))
+    for (const t of burst) expect(typed.split(`[turn ${t.id}]`)).toHaveLength(2)
+    expect(sent.every((t) => t.length <= 4_000)).toBe(true)
+    expect(store.takeDeliveries()).toEqual([])
+  })
+
   test("no key / wrong taskId / session id mismatch → nothing typed, the turn stays queued", async () => {
     for (const bad of [{ taskId: "" }, { sessionId: "sid-other" }]) {
       const h = harness()

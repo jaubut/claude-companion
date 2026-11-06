@@ -983,7 +983,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 223,
+          "lines": 236,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -1001,6 +1001,7 @@
             "DeliveryTurn",
             "DELIVERY_MAX",
             "deliveryText",
+            "fitDelivery",
             "bootSeed",
             "TICK_MS",
             "RESTART_WINDOW_MS",
@@ -7366,7 +7367,7 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 124,
+          "lines": 127,
           "kind": "lib",
           "exports": [
             "StuckEventsDeps",
@@ -7461,7 +7462,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 600,
+          "lines": 601,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -15901,6 +15902,12 @@
           ]
         },
         "deliveryText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "fitDelivery": {
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain.ts"
