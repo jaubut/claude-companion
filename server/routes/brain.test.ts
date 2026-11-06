@@ -163,6 +163,40 @@ describe("POST /hooks/brain/propose — handoff: a row for the relay, origin set
     expect(again.json).toEqual({ ok: true, taskId: first.json.taskId, origin: "jeremie", replay: true })
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
   })
+  test("the same prompt for two projects files two rows; a retry replays its own", async () => {
+    turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/site', 'projects', 'Site', 'PRJ-SITE', 'active')").run()
+    const t = openTurn()
+    const dash = await handoff(t.id)
+    const site = await handoff(t.id, { noteId: "projects/site" })
+    expect(site.json.taskId).not.toBe(dash.json.taskId)
+    expect(turso.query("SELECT note_id FROM tasks ORDER BY note_id").all()).toEqual([{ note_id: "projects/dash" }, { note_id: "projects/site" }])
+    const again = await handoff(t.id, { noteId: "projects/site" })
+    expect(again.json).toMatchObject({ taskId: site.json.taskId, replay: true })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 2 })
+  })
+  test("a moved handoff shows in the pipeline and PR triage, and nothing can send it back to queued", async () => {
+    const { detectColumns, listDispatchTasks, requeueTask, unblockTask } = await import("../lib/dispatch-tasks")
+    const { NEEDS_HUMAN, prSources, queryPrRows, taskSources } = await import("../lib/triage-sources")
+    const cols = await detectColumns(query)
+    const id = String((await handoff(openTurn().id)).json.taskId)
+    const url = "https://github.com/x/y/pull/7"
+    expect(await listDispatchTasks(query, cols)).toEqual([]) // not ACKed yet: no status, nothing to show
+
+    turso.query("UPDATE tasks SET dispatch_status = 'blocked', dispatch_blocker = 'handoff ABORTED' WHERE id = ?").run(id)
+    const listed = await listDispatchTasks(query, cols)
+    expect(listed.map((t) => [t.id, t.agent, t.status])).toEqual([[id, "handoff", "blocked"]])
+    expect(taskSources(listed, () => null)).toEqual([])
+    const ctx = { exec, cols, host: "test", channel: null, log: () => {} }
+    expect(await requeueTask(ctx, id)).toMatchObject({ ok: false, error: "conflict" })
+    expect(await unblockTask(ctx, id, "try again")).toMatchObject({ ok: false, error: "conflict" })
+    expect(row(id)).toMatchObject({ dispatch_status: "blocked" })
+
+    turso.query("UPDATE tasks SET dispatch_status = 'completed', dispatch_pr_url = ? WHERE id = ?").run(url, id)
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', ?, 'task', ?, ?)").run(NEEDS_HUMAN, id, JSON.stringify({ url, reason: "origin unknown" }))
+    const prs = await queryPrRows(query, cols)
+    expect(prs.tasks.map((t) => t.id)).toEqual([id])
+    expect(prSources(prs, Date.now()).map((s) => s.refId)).toEqual(["x/y#7"])
+  })
   test("anything but his open turn stays unknown", async () => {
     const event = chat.appendTurn("orchestrator", "merged #12", null, "brain")
     outbox(event.id, "typed")

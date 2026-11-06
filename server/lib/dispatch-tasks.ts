@@ -229,11 +229,11 @@ function selectCols(cols: DispatchColumns): string {
 export const POLL_WINDOW_DAYS = 7
 export const POLL_LIMIT = 300
 
-/** Agent tasks touched in the last 7 days, plus every still-open one. Newest first. */
+/** Agent and handoff tasks touched in the last 7 days, plus every still-open one. Newest first. */
 export async function listDispatchTasks(query: QueryFn, cols: DispatchColumns): Promise<DispatchTask[]> {
   const rows = await query(
     `SELECT ${selectCols(cols)} FROM tasks t LEFT JOIN notes n ON n.id = t.note_id ` +
-      "WHERE t.assignee LIKE 'agent:%' AND t.dispatch_status IS NOT NULL " +
+      "WHERE (t.assignee LIKE 'agent:%' OR t.assignee = 'handoff') AND t.dispatch_status IS NOT NULL " +
       "AND (t.updated_at >= datetime('now', ?) OR (t.done = 0 AND t.dispatch_status IN ('pending', 'queued', 'running', 'blocked'))) " +
       "ORDER BY t.updated_at DESC LIMIT ?",
     [`-${POLL_WINDOW_DAYS} days`, POLL_LIMIT],
@@ -474,6 +474,8 @@ async function transition(ctx: WriteCtx, id: string, tr: Transition): Promise<Wr
   const before = await getDispatchTask(query, ctx.cols, id)
   if (!before) return { ok: false, error: "no_such_task" }
   if (before.task.status === "running") return { ok: false, error: "running", task: before.task }
+  // A handoff's builder session owns it and dispatch-run never claims it: back in `queued` it would sit forever.
+  if (tr.to === "queued" && before.task.agent === "handoff") return { ok: false, error: "conflict", task: before.task }
   if (!tr.allowed(before.task)) return { ok: false, error: "conflict", task: before.task }
   const { affected } = await ctx.exec(
     `UPDATE tasks SET ${tr.sets.join(", ")} WHERE id = ? AND (${tr.guard})`,

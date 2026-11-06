@@ -67,7 +67,7 @@ type TriageAction =
 - WS frame `{ type: "orchestrator_triage", items: TriageItem[], resolving: ResolvingItem[], generatedAt }` on any change.
 
 ## Sources
-- `task`: dispatch tasks in `blocked` (and `failed` with a retryable cause).
+- `task`: dispatch tasks in `blocked` (and `failed` with a retryable cause). Never a handoff row (`assignee = 'handoff'`): no answer or retry reaches its builder session, so requeue and unblock refuse it (409 `conflict`). It still shows in the pipeline, the blocked announce and PR triage.
 - `proposal`: pending proposals in every channel (incl. Body fix cards — keep their
   host routing, approve goes through the existing approve path).
 - `pr`: PRs the PR shepherd parked as "needs Jeremie" (sensitive paths, repeated

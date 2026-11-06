@@ -27,12 +27,12 @@ export function handoffOrigin(turnId: string): "jeremie" | "unknown" {
 }
 
 export async function addBrainHandoff(p: HandoffInput, dispatch: DispatchWiring = dispatchWiring): Promise<{ status: number; body: Record<string, unknown> }> {
-  // Stable per (turn, prompt): a retried call files one row, with the origin of the first.
-  const id = createHash("sha256").update(`${p.sourceTurnId}\n${p.prompt}`).digest("hex").slice(0, 32)
   const origin = handoffOrigin(p.sourceTurnId)
   try {
     const note = await getNote(dispatch.query, p.noteId)
     if (!note) return { status: 404, body: { ok: false, error: "no such note" } }
+    // Stable per (turn, resolved note, prompt): a retried call files one row, with the origin of the first. Namespaced so it never meets addBrainTodo's id.
+    const id = createHash("sha256").update(`handoff\n${p.sourceTurnId}\n${note.noteId}\n${p.prompt}`).digest("hex").slice(0, 32)
     const description = `${p.prompt}\n\n— Handed off from Companion #Brain${p.reasoning ? `\nWhy: ${p.reasoning}` : ""}`
     const { inserted } = await fileHandoff(await writeCtx(dispatch, BRAIN_THREAD), { id, noteId: note.noteId, title: p.title, description, origin })
     const filed = inserted ? origin : String((await dispatch.query("SELECT origin FROM tasks WHERE id = ?", [id]))[0]?.origin ?? "unknown")
