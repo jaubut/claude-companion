@@ -204,7 +204,10 @@ export function closeShellSession(
   detach: (key: string) => void,
   deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps,
 ): Promise<CloseShellResult> {
-  return inTurn(() => closeShell(name, agents, detach, deps))
+  // The row as the phone saw it, taken before the turn: a Close queued behind
+  // another one must not adopt the terminal that one wrote to the store.
+  const seen = store.list().find((s) => s.name === name)
+  return inTurn(() => closeShell(name, seen, agents, detach, deps))
 }
 
 // Worst case about 8 s, under the phone's 10 s timeout: the fresh read 4 s
@@ -212,11 +215,11 @@ export function closeShellSession(
 // 1.5 s, the close 2.5 s.
 async function closeShell(
   name: string,
+  shell: ShellSession | undefined,
   agents: AgentRef[],
   detach: (key: string) => void,
   deps: Pick<ShellDeps, "run" | "which" | "h">,
 ): Promise<CloseShellResult> {
-  const shell = store.list().find((s) => s.name === name)
   const tomb = closedShells.findLast((c) => c.name === name)
   if (!shell) return closedNames.includes(name) || tomb ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
   if (tomb && tomb.terminalId !== shell.terminalId) return { ok: false, error: "name_reused" }
@@ -231,7 +234,8 @@ async function closeShell(
   const fresh = herdr.find((s) => s.name === name)
   if (!fresh) return tomb ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
   // A restore gives the same pane a new terminal. The store has it now, so a
-  // second Close reaches it; after a close of this name it is someone else.
+  // new Close reaches it (never one already queued); after a close of this
+  // name it is someone else.
   if (fresh.terminalId !== shell.terminalId) return { ok: false, error: tomb ? "name_reused" : "terminal_changed" }
   const verdict = await closeShellPane(fresh, deps.h)
   if (verdict === "agent") return { ok: false, error: "claude_running" }
@@ -276,13 +280,14 @@ async function closeShellPane(ref: Pick<ShellSession, "herdrPane" | "terminalId"
 }
 
 // `detach` runs before the kill so open terminal sockets end cleanly rather
-// than on the attach dying. Where herdr is installed, a workspace under this
-// name means two terminals with one name: refused, and refused when herdr
-// can't say. A host without herdr (a Mac) closes as before.
+// than on the attach dying. With herdr running (its gate passes), a workspace
+// under this name means two terminals with one name: refused, and refused when
+// herdr can't list. herdr not running or not installed: closes as before.
+// The gate and the list run side by side: the gate alone can take 5 s.
 async function closeTmuxShell(shell: ShellSession, detach: (key: string) => void, deps: Pick<ShellDeps, "run" | "which" | "h">): Promise<CloseShellResult> {
   const name = shell.name
-  if (deps.which(process.env.HERDR_BIN || "herdr")) {
-    const labels = await herdrLabels(deps.h, 2_000)
+  const [gate, labels] = await Promise.all([deps.h.gate(), herdrLabels(deps.h, 2_000)])
+  if (!gate) {
     if (!labels) return { ok: false, error: "herdr_unreadable" }
     if (labels.includes(name)) return { ok: false, error: "name_ambiguous" }
   }
