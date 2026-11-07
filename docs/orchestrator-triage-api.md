@@ -227,10 +227,22 @@ text, options = answer_custom / requeue / cancel).
   merge's `{state:"MERGED"}`). A replay also sets the header `Idempotent-Replayed: true`.
   Errors are `{ ok: false, error, id, ... }`:
   `400` `optionId required` · `unknown_option` · `text_too_long` (> 4000) · `idempotency-key-too-long`;
+  `403` a merge-gate stop, `human-merge-path` · `tainted-sensitive` · `prod-schema` · `hold-label` (with `action`,
+  `reason`, `head`; the card stays);
   `404` `no_such_item`; `409` `stale` with `next: TriageItem | null` (the refreshed item, null when it is gone),
+  `gate_unavailable` (with `detail`: the merge gate can't answer on this host) · `head_moved` (a read after the gate
+  names another head, before or after `gh pr merge`; the card stays, a new tap checks the new head) ·
+  `base_moved` (the same for the base branch, by name: a retarget changes the diff, not the head, and GitHub has no pin
+  for it, so a retarget after the last read before the merge isn't caught; the read before the merge failing is
+  `gate_unavailable`, `couldn't read the PR base`) ·
+  `client_gone` (the request's connection closed before the merge: nothing merged, no approval recorded; a re-send
+  under the same key joins a run still in flight and gets this answer) ·
+  `merge_unverified` (with `detail`: gh ran but GitHub does not read MERGED, with `state`, or gh or Turso failed after
+  the gate; nothing recorded), all without `next` and 409 on purpose (iOS
+  queues a 5xx with the card hidden, so a re-send would gate and land whatever the head is by then),
   or `investigation_<status>` for a Body requeue the investigator refused (with `reason`);
-  `422` `text_required`; `502` `merge_unverified` / `close_unverified` (gh ran but GitHub
-  does not read MERGED / CLOSED; nothing recorded) or an approve error passed through
+  `422` `text_required`; `502` `close_unverified` (gh ran but GitHub
+  does not read CLOSED; nothing recorded; iOS treats it as final) or an approve error passed through
   (e.g. `host_refused`); `503` `turso_unreachable` · `gh_unreachable` · `host_unreachable` (Mac fix card).
   Only a success is remembered under an Idempotency-Key (7 days); a refusal retries for real.
 - **`open_url` / `snooze` on the server.** `open_url` is a no-op `done` (the phone opens the
@@ -260,8 +272,10 @@ text, options = answer_custom / requeue / cancel).
   `body`: the component's latest investigation `failed`, ≥ 2 consecutive failures, no
   proposal, nothing open, and the component not healthy again.
 - **merge / close_pr.** `gh pr view <url> --json state` must read `OPEN` first (else 409
-  stale); merge then reads GitHub's readiness (see "Merge intent": not mergeable now → 202
-  `queued`, no `gh pr merge`); `gh pr merge <url> --squash` / `gh pr close <url>`; then the state must read
+  stale); merge then asks the merge gate (`lib/merge-gate.ts`: a stop or a gate failure is the answer, and no
+  approval row is written, so the shepherd can't lift it), then reads GitHub's readiness (see "Merge intent": not
+  mergeable now → 202 `queued`, no `gh pr merge`); `gh pr merge <url> --squash --match-head-commit <gated head>` /
+  `gh pr close <url>`; then the state must read
   `MERGED` / `CLOSED`. Merge then sets the task `done=1` (guarded) and ledgers
   `outcome:merged "PR #n merged"`; close ledgers `outcome:rejected "PR #n closed unmerged"`
   (dispatch-reconcile's wording).
@@ -294,7 +308,8 @@ stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land T
   ```
 
   A `gh pr merge` that GitHub refuses and that is followed by one of those reasons is also answered `202
-  queued` (the approval recorded); any other refusal is still `502 merge_unverified`. Stored under the
+  queued` (the approval recorded) while the head and base are still the gated ones; on another head it is `409 head_moved`, on another base `409 base_moved`, no
+  approval; any other refusal is `409 merge_unverified`. Stored under the
   Idempotency-Key like a success (a replay answers `200 result: "replay"` with the same `detail`).
 - **The approval row** (the PR shepherd honours it — claude-config `tools/pr-shepherd-approval.ts`):
   `agent_activity` `action = 'pr:approved-merge'`, `target_kind = 'task'`, `target_id` = the dispatch task id
@@ -316,7 +331,7 @@ stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land T
   problem starts "GitHub reports a merge conflict with the base branch now.", and the merge option reads
   **"Approve — merge after the conflict fix"** (it may exceed the 32-char label cap).
 - **Logs.** Every choose writes one line, success or not:
-  `[triage] choose <item id> option=<id> → <action kind> · <HTTP status> result=<done|queued|replay>|error=<code> [reason=<hold>]`.
+  `[triage] choose <item id> option=<id> → <action kind> · <HTTP status> result=<done|queued|replay>|error=<code> [reason=<hold, stop reason or gate detail>]`.
 - **iOS.** A 202 with `ok: true` is already a success (`OrchestratorActionPolicy.classify`: any 2xx without
   `ok: false` → `.done`): the card is removed and the next frame shows the row. Nice to have (separate PR): toast
   from `result == "queued"` + `detail.reason` ("Approved · merges once the conflict clears") instead of the

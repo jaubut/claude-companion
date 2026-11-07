@@ -107,6 +107,8 @@ export function createCompanionServer(port: number) {
       if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
       // bin/lead waits for the lead's clone and start.
       if (url.pathname === "/hooks/brain/lead") server.timeout(req, 180)
+      // A merge: the gate's 20 s, then readiness, `gh pr merge` and its read-back at 60 s each (GH_TIMEOUT_MS).
+      if (url.pathname === "/hooks/brain/pr-merge" || /^\/api\/orchestrator\/triage\/[^/]+\/choose$/.test(url.pathname)) server.timeout(req, 200)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
 
