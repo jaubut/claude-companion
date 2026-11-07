@@ -28,7 +28,8 @@ export class GhUnreachable extends Error {
 
 export interface PrTarget { taskId: string; prUrl: string; number: number }
 export interface PrActionDeps { gh: GhFn; exec: ExecFn; host: string }
-export interface MergeDeps extends PrActionDeps { gate: MergeGateFn }
+/** `signal`: the request's. A client that left gets no merge, whatever it was waiting for. */
+export interface MergeDeps extends PrActionDeps { gate: MergeGateFn; signal?: AbortSignal }
 
 export type PrState = "OPEN" | "MERGED" | "CLOSED" | "unknown"
 
@@ -202,6 +203,7 @@ async function settle(deps: PrActionDeps, t: PrTarget, r: PrReadiness | null, g:
 /** Past the gate, on the head and base it checked. Jeremie's approval of a PR GitHub cannot merge now: the shepherd lands it once the reason clears. */
 async function approveOrLand(deps: MergeDeps, t: PrTarget, g: GatePass): Promise<ExecOutcome> {
   const ready = await readiness(deps.gh, t.prUrl)
+  if (deps.signal?.aborted) return { kind: "error", status: 409, error: "client_gone" }
   const early = await settle(deps, t, ready, g)
   if (early) return early
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.

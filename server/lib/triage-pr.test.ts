@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import type { MergeGateFn } from "./merge-gate"
 import { passGate } from "./merge-gate.test-util"
 import { type GhFn, GhUnreachable, approvalRow, closePr, holdReason, mergePr, rollupState } from "./triage-pr"
 import type { ExecFn, Row, SqlArg } from "./turso"
@@ -210,6 +211,26 @@ describe("merge intent", () => {
     mergeEffect = "OPEN"
     expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "base_moved" })
     expect(approvals()).toEqual([])
+  })
+
+  test("the client left during the gate: 409 client_gone, no merge, no row", async () => {
+    const left = new AbortController()
+    const gate: MergeGateFn = async () => { left.abort(); return { ok: true, head: "abc123", base: "main" } }
+    readiness = green
+    expect(await mergePr({ ...deps, gate, signal: left.signal }, target)).toEqual({ kind: "error", status: 409, error: "client_gone" })
+    expect(calls.some((c) => c[1] === "merge")).toBe(false)
+    expect(ledger()).toEqual([])
+  })
+
+  test("the client left on a held PR: no approval either, the re-send records it", async () => {
+    readiness = { ...green, mergeable: "CONFLICTING" }
+    expect(await mergePr({ ...deps, signal: AbortSignal.abort() }, target)).toEqual({ kind: "error", status: 409, error: "client_gone" })
+    expect(approvals()).toEqual([])
+  })
+
+  test("a live signal changes nothing", async () => {
+    readiness = green
+    expect(await mergePr({ ...deps, signal: new AbortController().signal }, target)).toMatchObject({ kind: "done" })
   })
 
   // No pin exists for the base, so this read is the only check: no answer means no merge, unlike the head.

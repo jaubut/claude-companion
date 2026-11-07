@@ -49,7 +49,7 @@ export interface TriageEngineDeps {
   /** Re-read one source now; null = it no longer needs Jeremie. May throw TursoUnreachable. */
   current: (src: SourceItem) => Promise<SourceItem | null>
   /** `by` names the actor in turns ("triage" when absent: Jeremie's tap). */
-  execute: (src: SourceItem, option: TriageOption, text: string | null, by?: string) => Promise<ExecOutcome>
+  execute: (src: SourceItem, option: TriageOption, text: string | null, by?: string, signal?: AbortSignal) => Promise<ExecOutcome>
   store: TriageStore
   broadcast: (frame: Record<string, unknown>) => void
   now?: () => number
@@ -63,7 +63,7 @@ export interface TriageEngineDeps {
 }
 
 /** `version` = the card version the client saw (required to approve an `outbound` card). */
-export interface ChooseInput { id: string; optionId: string; text?: string | null; idemKey?: string | null; version?: string | null }
+export interface ChooseInput { id: string; optionId: string; text?: string | null; idemKey?: string | null; version?: string | null; signal?: AbortSignal }
 export interface ChooseResult { status: number; body: Record<string, unknown> }
 
 export const HOUR_MS = 60 * 60_000
@@ -280,7 +280,7 @@ export function createTriageEngine(deps: TriageEngineDeps) {
     }
     let out: ExecOutcome
     try {
-      out = await actOn(input.id, option, text, src.version)
+      out = await actOn(input.id, option, text, src.version, undefined, input.signal)
     } catch (err) {
       return unavailable(err)
     }
@@ -296,13 +296,13 @@ export function createTriageEngine(deps: TriageEngineDeps) {
    * version is not the one the caller saw (stale), else run the option through the executor. Throws
    * when a source is unreachable (TursoUnreachable, gh down).
    */
-  async function actOn(id: string, option: TriageOption, text: string | null, expectVersion: string | null, by?: string): Promise<ExecOutcome> {
+  async function actOn(id: string, option: TriageOption, text: string | null, expectVersion: string | null, by?: string, signal?: AbortSignal): Promise<ExecOutcome> {
     const src = sources.get(id)
     if (!src) return { kind: "stale", reason: "gone" }
     if (expectVersion !== null && src.version !== expectVersion) return { kind: "stale", reason: "changed" }
     const cur = await deps.current(src)
     if (!cur || cur.version !== src.version) return { kind: "stale", reason: "changed" }
-    return by === undefined ? deps.execute(src, option, text) : deps.execute(src, option, text, by)
+    return deps.execute(src, option, text, by, signal)
   }
 
   /** Hand one item to the resolver at this autonomy (the repo runner's Yes / No). */

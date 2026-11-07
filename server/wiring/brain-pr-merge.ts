@@ -26,6 +26,7 @@ import { orchEmit } from "./orchestrator"
 //     dispatch account); none with CHANGES on that head; no CHANGES_REQUESTED
 //   merge_cap (429): ≤ MERGE_CAP brain merges in 24 h
 //   base read again (409 base_moved / gate_unavailable): the gate's reads are behind all of the above
+//   caller still there (409 client_gone): nobody would hear the answer, so nothing merges
 // Then `gh pr merge --squash --match-head-commit <checked sha>`: a head pushed
 // after the checks makes GitHub refuse. Each merge is a `brain:pr-merge`
 // agent_activity row (the machine digest lists them) and a brain-thread event.
@@ -46,7 +47,7 @@ const LOW_FILE = /^docs\/.+\.md$|^README\.md$|\.test\.ts$|^architecture\.(json|m
 const LOW_FILE_LIMIT = 100
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
-interface PrMergeInput { repo: string; pr: number; reason: string }
+interface PrMergeInput { repo: string; pr: number; reason: string; signal?: AbortSignal }
 interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void; gate: MergeGateFn }
 type Out = { status: number; body: Record<string, unknown> }
 
@@ -172,6 +173,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   const last = await prReadiness(deps.gh, v.url).catch(() => null)
   if (!last?.base) return fail(409, "gate_unavailable", { detail: "couldn't read the PR base" })
   if (last.base !== g.base) return fail(409, "base_moved")
+  if (p.signal?.aborted) return fail(409, "client_gone")
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   let run: Awaited<ReturnType<GhFn>>
   try {

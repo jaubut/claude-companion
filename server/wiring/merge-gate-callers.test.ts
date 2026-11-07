@@ -22,7 +22,7 @@ const OTHER = "2222222222222222222222222222222222222222"
 const BOT = "jaubut"
 const TASK = "abcd1234-0000"
 
-interface PrShape { files?: Array<string | [string, string]>; labels?: string[]; head?: string; draft?: boolean; state?: string; mergeable?: string; mergeState?: string; afterMerge?: { mergeable: string; head: string } | null; moved?: string; retarget?: "during-gate" | "after-gate" | "blind" }
+interface PrShape { files?: Array<string | [string, string]>; labels?: string[]; head?: string; draft?: boolean; state?: string; mergeable?: string; mergeState?: string; afterMerge?: { mergeable: string; head: string } | null; moved?: string; retarget?: "during-gate" | "after-gate" | "blind"; leaves?: boolean }
 const review = (who: "claude" | "codex") => ({
   author: { login: BOT },
   body: `${who === "claude" ? "🤖 **Auto-review**" : "🧠 **Codex review**"} (sonnet)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->`,
@@ -45,6 +45,7 @@ function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoD
   let base = "main"
   let merged = false
   const reads = { head: 0 }
+  const client = new AbortController()
   const calls: string[][] = []
   const rollup = [{ __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS" }]
   const ready = () => {
@@ -65,7 +66,10 @@ function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoD
     }
     const fields = String(args[args.indexOf("--json") + 1])
     if (fields === "state") return out({ state })
-    if (fields.startsWith("mergeable")) return out(ready())
+    if (fields.startsWith("mergeable")) {
+      if (shape.leaves) client.abort()
+      return out(ready())
+    }
     if (fields === "url,headRefOid,baseRefName,labels") {
       reads.head += 1
       if (reads.head === 2 && shape.moved) head = shape.moved
@@ -80,18 +84,18 @@ function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoD
       comments: [review("claude"), review("codex")], files: files.map(([path]) => ({ path })),
     })
   }
-  return { db, gh, exec, calls, approvals: () => db.query("SELECT target_id, meta FROM agent_activity WHERE action = 'pr:approved-merge'").all() as Array<{ meta: string }> }
+  return { db, gh, exec, calls, signal: client.signal, approvals: () => db.query("SELECT target_id, meta FROM agent_activity WHERE action = 'pr:approved-merge'").all() as Array<{ meta: string }> }
 }
 type World = ReturnType<typeof world>
 
 interface Outcome { status: number; error?: string; [k: string]: unknown }
 const CALLERS: Array<[string, (w: World, gate: MergeGateFn) => Promise<Outcome>]> = [
   ["bin/pr-merge", async (w, gate) => {
-    const out = await mergeAgentPr({ repo: "o/r", pr: 7, reason: "routine" }, { gh: w.gh, exec: w.exec, event: () => {}, gate })
+    const out = await mergeAgentPr({ repo: "o/r", pr: 7, reason: "routine", signal: w.signal }, { gh: w.gh, exec: w.exec, event: () => {}, gate })
     return { status: out.status, ...out.body } as Outcome
   }],
   ["the tap", async (w, gate) => {
-    const out = await mergePr({ gh: w.gh, exec: w.exec, host: "zettlab", gate }, { taskId: TASK, prUrl: URL, number: 7 })
+    const out = await mergePr({ gh: w.gh, exec: w.exec, host: "zettlab", gate, signal: w.signal }, { taskId: TASK, prUrl: URL, number: 7 })
     if (out.kind === "done") return { status: 200 }
     if (out.kind === "queued") return { status: 202, ...out.detail }
     if (out.kind === "error") return { status: out.status, error: out.error, ...out.extra }
@@ -181,6 +185,17 @@ function matrix(toolsFor: () => string): void {
         const w = world({ retarget: "blind" })
         expect(await run(w, gate)).toMatchObject({ status: 409, error: "gate_unavailable", detail: "couldn't read the PR base" })
         expect(merges(w)).toEqual([])
+      })
+    }
+  })
+
+  describe("an abandoned request never merges", () => {
+    for (const [name, run] of CALLERS) {
+      test(`${name}: the client left by the last read is 409 client_gone, no merge, no row`, async () => {
+        const w = world({ leaves: true })
+        expect(await run(w, gate)).toMatchObject({ status: 409, error: "client_gone" })
+        expect(merges(w)).toEqual([])
+        expect(rows(w)).toEqual({ n: 0 })
       })
     }
   })

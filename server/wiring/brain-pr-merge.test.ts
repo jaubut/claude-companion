@@ -161,6 +161,14 @@ describe("bin/pr-merge gate: refusals", () => {
     expect(merges(w.calls)).toHaveLength(0)
   })
 
+  test("409 client_gone: the caller left, so nothing merges and nothing is recorded", async () => {
+    const w = world(green())
+    const out = await mergeAgentPr({ ...input, signal: AbortSignal.abort() }, w.deps)
+    expect([out.status, out.body.error]).toEqual([409, "client_gone"])
+    expect(merges(w.calls)).toHaveLength(0)
+    expect(w.db.query("SELECT COUNT(*) AS n FROM agent_activity").get()).toEqual({ n: 0 })
+  })
+
   test("the base is read again last, after every other check, right before the merge", async () => {
     const w = world(green())
     expect((await mergeAgentPr(input, w.deps)).status).toBe(200)

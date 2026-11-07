@@ -362,6 +362,32 @@ describe("choose → the existing guarded paths", () => {
       expect((await choose(item.id, { optionId: opt(item, "merge") }, "k-31")).json.result).not.toBe("replay")
     })
 
+    test("a client that hangs up on a real socket during the gate merges nothing", async () => {
+      const entered = Promise.withResolvers<void>()
+      const leave = Promise.withResolvers<void>()
+      gate = async () => { entered.resolve(); await leave.promise; return { ok: true, head: "feed164", base: "main" } }
+      harness = makeHarness()
+      const item = await parked(33)
+      let answer: Promise<{ status: number; json: unknown }> | undefined
+      const server = Bun.serve({ port: 0, fetch: (req) => {
+        const run = harness.handler(req, new URL(req.url)) as Promise<Response>
+        answer = run.then(async (r) => ({ status: r.status, json: await r.clone().json() }))
+        return run
+      } })
+      const client = new AbortController()
+      const url = `http://127.0.0.1:${server.port}/api/orchestrator/triage/${encodeURIComponent(item.id)}/choose`
+      const sent = fetch(url, { method: "POST", body: JSON.stringify({ optionId: opt(item, "merge") }), signal: client.signal }).catch(() => null)
+      await entered.promise
+      client.abort()
+      await sent
+      await Bun.sleep(50)
+      leave.resolve()
+      const res = await answer!
+      server.stop(true)
+      expect(res).toMatchObject({ status: 409, json: { ok: false, error: "client_gone" } })
+      expect(ghCalls.some((c) => c[1] === "merge")).toBe(false)
+    })
+
     test("gh that can't start, inside the gate, answers 409: iOS would queue a 503 with the card hidden", async () => {
       const tools = writeStubTools()
       gate = (d, p) => mergeGate({ ...d, gh: async () => { throw new GhUnreachable("ENOENT") } }, p, { tools })

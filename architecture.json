@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 192,
+          "lines": 194,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -38,6 +38,11 @@
             {
               "method": "*",
               "path": "/hooks/brain/lead",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/pr-merge",
               "prefix": false
             },
             {
@@ -5242,7 +5247,7 @@
         },
         {
           "path": "lib/triage-pr.ts",
-          "lines": 292,
+          "lines": 294,
           "kind": "lib",
           "exports": [
             "GhResult",
@@ -6242,7 +6247,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 312,
+          "lines": 311,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -7387,7 +7392,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 205,
+          "lines": 207,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",

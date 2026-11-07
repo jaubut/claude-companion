@@ -300,11 +300,11 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     return { kind: "error", status: 409, error: `investigation_${out.status}`, extra: out.reason ? { reason: out.reason } : {} }
   }
 
-  async function prAction(src: SourceItem, kind: "merge" | "close_pr", by: string): Promise<ExecOutcome> {
+  async function prAction(src: SourceItem, kind: "merge" | "close_pr", by: string, signal?: AbortSignal): Promise<ExecOutcome> {
     if (src.ref.source !== "pr") return { kind: "error", status: 400, error: "wrong_source" }
     const target = { taskId: src.ref.taskId, prUrl: src.ref.prUrl, number: src.ref.number }
     const deps = { gh, exec: dispatch.exec, host: HOST_INFO.name }
-    const out = kind === "merge" ? await mergePr({ ...deps, gate }, target) : await closePr(deps, target)
+    const out = kind === "merge" ? await mergePr({ ...deps, gate, signal }, target) : await closePr(deps, target)
     if (out.kind === "queued") {
       prCache = null
       readyCache.delete(target.prUrl)
@@ -324,7 +324,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     return out
   }
 
-  async function execute(src: SourceItem, option: TriageOption, text: string | null, by = "triage"): Promise<ExecOutcome> {
+  async function execute(src: SourceItem, option: TriageOption, text: string | null, by = "triage", signal?: AbortSignal): Promise<ExecOutcome> {
     const a = option.action
     if (src.ref.source === "outbound") {
       if (a.kind === "snooze") return { kind: "done" }
@@ -340,7 +340,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
         return proposalAction(src, option)
       case "reject": return proposalAction(src, option)
       case "merge":
-      case "close_pr": return prAction(src, a.kind, by)
+      case "close_pr": return prAction(src, a.kind, by, signal)
       case "open_url": return { kind: "done", detail: { url: a.url } }
       case "snooze": return { kind: "done" }
       case "ask_opus": return { kind: "error", status: 409, error: "resolver_disabled" } // the engine handles it before execute

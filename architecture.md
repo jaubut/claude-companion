@@ -54,11 +54,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 331 | lib | 25 | state: appendedListeners: Set |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
-| `routes/brain.ts` | 312 | lib | 3 |  |
+| `routes/brain.ts` | 311 | lib | 3 |  |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
-| `lib/triage-pr.ts` | 292 | lib | 21 |  |
+| `lib/triage-pr.ts` | 294 | lib | 21 |  |
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
@@ -107,15 +107,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
 | `routes/model.ts` | 207 | route-host | 1 | state: inFlight: Set · routes: 3 |
+| `wiring/brain-pr-merge.ts` | 207 | lib | 4 |  |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
-| `wiring/brain-pr-merge.ts` | 205 | lib | 4 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
-| `companion-server.ts` | 192 | route-host | 1 | routes: 6 |
+| `companion-server.ts` | 194 | route-host | 1 | routes: 7 |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
@@ -376,6 +376,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `* /hooks/…` | server/companion-server.ts | — |
 | `* /hooks/…` | server/routes/hooks.ts | — |
 | `* /hooks/brain/lead` | server/companion-server.ts | — |
+| `* /hooks/brain/pr-merge` | server/companion-server.ts | — |
 | `POST /hooks/builder-progress` | server/routes/builder-jobs.ts | — |
 | `POST /hooks/copy-progress` | server/routes/copy-jobs.ts | — |
 | `POST /hooks/dispatch-event` | server/routes/hooks.ts | — |

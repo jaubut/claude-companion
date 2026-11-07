@@ -235,6 +235,8 @@ text, options = answer_custom / requeue / cancel).
   `base_moved` (the same for the base branch, by name: a retarget changes the diff, not the head, and GitHub has no pin
   for it, so a retarget after the last read before the merge isn't caught; the read before the merge failing is
   `gate_unavailable`, `couldn't read the PR base`) ·
+  `client_gone` (the request's connection closed before the merge: nothing merged, no approval recorded; a re-send
+  under the same key joins a run still in flight and gets this answer) ·
   `merge_unverified` (with `detail`: gh ran but GitHub does not read MERGED, with `state`, or gh or Turso failed after
   the gate; nothing recorded), all without `next` and 409 on purpose (iOS
   queues a 5xx with the card hidden, so a re-send would gate and land whatever the head is by then),
