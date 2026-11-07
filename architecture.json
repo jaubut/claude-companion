@@ -1798,7 +1798,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 558,
+          "lines": 556,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -2951,7 +2951,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 331,
+          "lines": 323,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -6862,7 +6862,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 417,
+          "lines": 409,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -6949,7 +6949,6 @@
             "lib/body.ts",
             "lib/vault-guard.ts",
             "lib/log.ts",
-            "lib/tmux-pane.ts",
             "lib/json-body.ts"
           ],
           "listeners": [],
@@ -15215,12 +15214,6 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "sessionCmdArgv": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "routes/orchestrator.ts"
           ]
         },
         "rejectProposal": {

@@ -16,7 +16,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 599 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
-| `lib/dispatch-tasks.ts` | 558 | lib | 55 |  |
+| `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
@@ -34,10 +34,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
-| `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/canvas.ts` | 415 | lib | 29 | state: BLOCKING: Set |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
+| `routes/orchestrator.ts` | 409 | route-host | 3 | routes: 11 |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/triage-engine.ts` | 402 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
@@ -51,8 +51,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/resolver.ts` | 339 | lib | 13 |  |
 | `lib/outbound.ts` | 335 | lib | 27 |  |
-| `lib/orchestrator-chat.ts` | 331 | lib | 25 | state: appendedListeners: Set |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
+| `lib/orchestrator-chat.ts` | 323 | lib | 25 | state: appendedListeners: Set |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `routes/brain.ts` | 311 | lib | 3 |  |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |

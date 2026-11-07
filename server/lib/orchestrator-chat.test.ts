@@ -47,7 +47,7 @@ test("turns and tasks are isolated per channel", () => {
   const y = chat.createChannel("Chan Y")
   chat.appendTurn("user", "in x", null, x.id)
   chat.appendTurn("user", "in y", null, y.id)
-  chat.createTask("do x", "/proj/x", null, x.id)
+  chat.createTask("do x", "/proj/x", x.id)
 
   expect(chat.getThread(x.id).map((t) => t.text)).toEqual(["in x"])
   expect(chat.getThread(y.id).map((t) => t.text)).toEqual(["in y"])
@@ -67,7 +67,7 @@ test("proposals carry their channel through createProposal", () => {
 test("log_tail migrates onto a legacy db", () => {
   // The legacy seed had no log_tail column — module init must have ALTERed it in.
   expect(chat.getTask("k1")?.logTail).toBeNull()
-  expect(chat.createTask("tail me", "/y", "cc-y", "general").logTail).toBeNull()
+  expect(chat.createTask("tail me", "/y", "general").logTail).toBeNull()
   expect(chat.createProposal("p", "/y", "why", "general").logTail).toBeNull()
 })
 
@@ -79,7 +79,7 @@ test("channelTrust counts judged proposals only and tracks the approval streak",
   }
   expect(chat.channelTrust(ch.id)).toEqual({ approved: 0, rejected: 0, streak: 0, eligible: false })
   chat.createProposal("pending", "/s", "why", ch.id) // unjudged → ignored
-  chat.createTask("manual", "/s", "cc-s", ch.id) // no reasoning → ignored
+  chat.createTask("manual", "/s", ch.id) // no reasoning → ignored
   judge("done"); judge("dispatched"); judge("cancelled")
   expect(chat.channelTrust(ch.id)).toEqual({ approved: 3, rejected: 0, streak: 3, eligible: false })
   judge("rejected")
@@ -96,7 +96,6 @@ test("createQueuedTask parks a task with no tmux session; listQueued is FIFO", (
   const a = chat.createQueuedTask("first", "/z", "general")
   const b = chat.createQueuedTask("second", "/z", "general")
   expect(a.status).toBe("queued")
-  expect(a.tmuxSession).toBeNull()
   const ids = chat.listQueued().map((t) => t.taskId)
   expect(ids.indexOf(a.taskId)).toBeLessThan(ids.indexOf(b.taskId))
 })
@@ -106,14 +105,14 @@ test("createQueuedTask parks a task with no tmux session; listQueued is FIFO", (
 // ignored or steal the binding from this file's legacy seed. Keep every test
 // that touches orchestrator-chat in this one file.
 
-test("legacy rows (pre tmux_socket column) read as the default server", () => {
-  expect(chat.getTask("k1")?.tmuxSocket).toBeNull()
+test("legacy rows (pre tmux_socket column) still read", () => {
+  expect(chat.getTask("k1")).toBeTruthy()
 })
 
 test("countLiveTasks counts only legacy dispatched + running rows", () => {
   for (const t of chat.listTasks()) chat.setTaskStatus(t.taskId, "done")
-  const t1 = chat.createTask("x", "/q", "cc-x", "general") // dispatched
-  const t2 = chat.createTask("y", "/q", "cc-y", "general")
+  const t1 = chat.createTask("x", "/q", "general") // dispatched
+  const t2 = chat.createTask("y", "/q", "general")
   chat.setTaskStatus(t2.taskId, "running")
   chat.createProposal("p", "/q", "why", "general") // proposed
   chat.createQueuedTask("qd", "/q", "general") // queued
