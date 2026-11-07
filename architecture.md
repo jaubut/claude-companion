@@ -133,6 +133,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/triage.ts` | 165 | lib | 2 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
+| `wiring/brain-lead.ts` | 155 | lib | 9 |  |
 | `lib/terminal-bridge.ts` | 153 | lib | 17 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
@@ -150,7 +151,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
-| `wiring/brain-lead.ts` | 138 | lib | 9 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 136 | lib | 6 |  |

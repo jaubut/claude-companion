@@ -19,8 +19,9 @@ function stale(label: string, panes: string[], info: Record<string, unknown> | n
   })
   const spawned: string[] = []
   const lead = createBrainLead({
-    herdr: f.h, running: async () => live && !f.verbs().includes("agent stop"), isolated: () => isolated,
-    agentOf: async () => ({ kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
+    // The registry lags: a closed lead's session stays listed, as `alive()` does in production. Herdr is the truth.
+    herdr: f.h, running: async () => live, isolated: () => isolated, settleMs: 0,
+    agentOf: async () => (f.verbs().includes("workspace close") ? { kind: "absent" } : { kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
     spawn: async (repo) => { spawned.push(repo); return { ok: true } },
   })
   return { f, lead, spawned }
@@ -153,11 +154,24 @@ describe("the last round's three checks", () => {
     writeFileSync(file, JSON.stringify(leadSettings([], dir), null, 2))
     expect(leadIsolated("r", h, none)).toBe(true)
   })
+  test("a stale registry entry can't leave a closed lead unreplaced: first call or a retry", async () => {
+    const { lead, spawned } = stale(NAME, ["w7:p1"], { shell_pid: 5, foreground_process_group_id: 9 }, true, false)
+    expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
+    expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
+    expect(spawned).toHaveLength(2)
+  })
+  test("a user settings read that fails doesn't tear down a working lead", () => {
+    const h = mkdtempSync(join(tmpdir(), "lead-iso-")), dir = leadDir("r", h)
+    mkdirSync(join(dir, ".claude"), { recursive: true })
+    writeFileSync(join(dir, ".claude/settings.local.json"), "{}")
+    expect(leadIsolated("r", h, () => { throw new Error("unreadable") })).toBe(true)
+    expect(leadIsolated("gone", h, () => { throw new Error("unreadable") })).toBe(false)
+  })
   test("a lead that won't stop keeps its clone: nothing is spawned or deleted under it", async () => {
     let spawned = 0
     const f = fakeHerdr({ reply: (a) => a[0] === "workspace" && a[1] === "list" ? { workspaces: [{ workspace_id: "w7", label: NAME }] } : a[0] === "pane" && a[1] === "list" ? { panes: [{ pane_id: "w7:p1", workspace_id: "w7" }] } : {} })
     const lead = createBrainLead({
-      herdr: f.h, running: async () => true, isolated: () => false,
+      herdr: f.h, running: async () => true, isolated: () => false, settleMs: 0,
       agentOf: async () => ({ kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
       spawn: async () => { spawned++; return { ok: true } },
     })
