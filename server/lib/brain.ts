@@ -56,13 +56,33 @@ export const DELIVERY_MAX = 4_000
 
 /** Queued turns as one prompt, oldest first: Jeremie's `[turn <id>] (voice) text`, system `[event <id>] text`. */
 export function deliveryText(turns: DeliveryTurn[]): string {
-  const lines = turns.map((t) => {
-    const text = t.text.replace(/\s+/g, " ").trim()
-    if (t.role === "orchestrator") return `[event ${t.id}] ${text}`
-    return `[turn ${t.id}]${t.card?.kind === "voice" ? " (voice)" : ""} ${text}`
-  })
-  const text = lines.join("\n")
+  const text = turns.map(deliveryLine).join("\n")
   return text.length > DELIVERY_MAX ? `${text.slice(0, DELIVERY_MAX - 1)}…` : text
+}
+
+function deliveryLine(t: DeliveryTurn): string {
+  const text = t.text.replace(/\s+/g, " ").trim()
+  if (t.role === "orchestrator") return `[event ${t.id}] ${text}`
+  return `[turn ${t.id}]${t.card?.kind === "voice" ? " (voice)" : ""} ${text}`
+}
+
+/** The oldest turns that fit one delivery; the rest stay queued. A single turn over the cap still goes, cut. */
+export function fitDelivery<T extends DeliveryTurn>(turns: T[]): T[] {
+  let used = 0
+  const fit: T[] = []
+  for (const t of turns) {
+    used += deliveryLine(t).length + 1
+    if (fit.length && used - 1 > DELIVERY_MAX) break
+    fit.push(t)
+  }
+  return fit
+}
+
+/** What goes out now: the turns that fit, plus queued ids with no turn left. The rest stays queued for the next Stop. */
+export function fitQueued<T extends DeliveryTurn>(queued: string[], found: T[]): { turns: T[]; ids: string[] } {
+  const turns = fitDelivery(found)
+  const held = new Set(found.slice(turns.length).map((t) => t.id))
+  return { turns, ids: queued.filter((id) => !held.has(id)) }
 }
 
 /** First prompt of a fresh brain: memory first, then every turn still open. */
