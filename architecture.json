@@ -5241,7 +5241,7 @@
         },
         {
           "path": "lib/triage-pr.ts",
-          "lines": 266,
+          "lines": 276,
           "kind": "lib",
           "exports": [
             "GhResult",

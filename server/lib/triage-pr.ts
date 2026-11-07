@@ -184,22 +184,32 @@ async function readiness(gh: GhFn, url: string): Promise<PrReadiness | null> {
   }
 }
 
+/**
+ * What one readiness read decides: head_moved off the gated head (never a 5xx: iOS would re-send it and land
+ * a head Jeremie never tapped), the approval on a hold, else null (go on). A read with no head says nothing,
+ * but an approval still needs one.
+ */
+async function settle(deps: PrActionDeps, t: PrTarget, r: PrReadiness | null, head: string): Promise<ExecOutcome | null> {
+  if (!r) return null
+  const hold = holdReason(r)
+  if (r.headSha !== head && (r.headSha || hold)) return { kind: "error", status: 409, error: "head_moved" }
+  return hold ? recordApproval(deps, t, r, hold) : null
+}
+
 /** Jeremie's approval of a PR GitHub cannot merge now: the shepherd lands it once the reason clears. */
 async function approveOrMerge(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome> {
   const closed = await mustBeOpen(deps.gh, t.prUrl)
   if (closed) return closed
   const g = await deps.gate(deps, { url: t.prUrl })
   if (!g.ok) return { kind: "error", status: g.status, error: g.error, extra: g.extra }
-  const ready = await readiness(deps.gh, t.prUrl)
-  const hold = ready ? holdReason(ready) : null
-  if (ready && hold) return ready.headSha === g.head ? recordApproval(deps, t, ready, hold) : { kind: "error", status: 409, error: "head_moved" }
+  const early = await settle(deps, t, await readiness(deps.gh, t.prUrl), g.head)
+  if (early) return early
   const run = await deps.gh(["pr", "merge", t.prUrl, "--squash", "--match-head-commit", g.head])
   const after = await prState(deps.gh, t.prUrl)
   if (after === "MERGED") return { kind: "done", detail: { state: after } }
   // GitHub refused: if it now says why (conflict, CI…), the tap still counts as the approval.
-  const late = after === "OPEN" ? await readiness(deps.gh, t.prUrl) : null
-  const lateHold = late ? holdReason(late) : null
-  if (late && lateHold && late.headSha === g.head) return recordApproval(deps, t, late, lateHold)
+  const late = after === "OPEN" ? await settle(deps, t, await readiness(deps.gh, t.prUrl), g.head) : null
+  if (late) return late
   const detail = (run.stderr || run.stdout).trim().slice(0, 200)
   return { kind: "error", status: 502, error: "merge_unverified", extra: { state: after, detail } }
 }

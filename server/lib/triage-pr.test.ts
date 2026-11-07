@@ -137,6 +137,27 @@ describe("merge intent", () => {
     expect(calls.some((c) => c[1] === "merge")).toBe(false)
   })
 
+  test("a green readiness at a head the gate didn't check: 409 head_moved, no merge", async () => {
+    readiness = { ...green, headRefOid: "def456" }
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(calls.some((c) => c[1] === "merge")).toBe(false)
+  })
+
+  test("a hold with no head reported can't be approved: 409 head_moved, no row, no merge", async () => {
+    readiness = { mergeable: "CONFLICTING" }
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(approvals()).toEqual([])
+    expect(calls.some((c) => c[1] === "merge")).toBe(false)
+  })
+
+  test("a refused merge on a head that moved after the gate: 409 head_moved, never a 502 iOS re-sends", async () => {
+    readiness = green
+    readinessAfter = { ...green, headRefOid: "def456" }
+    mergeEffect = "OPEN"
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(approvals()).toEqual([])
+  })
+
   test("behind / checks pending / checks failing → queued with that reason", async () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ ...green, mergeStateStatus: "BEHIND" }, "behind"],

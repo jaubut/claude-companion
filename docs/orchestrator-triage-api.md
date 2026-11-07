@@ -231,7 +231,8 @@ text, options = answer_custom / requeue / cancel).
   `reason`, `head`; the card stays);
   `404` `no_such_item`; `409` `stale` with `next: TriageItem | null` (the refreshed item, null when it is gone),
   `gate_unavailable` (with `detail`: the merge gate can't answer on this host) · `head_moved` (a push during the
-  merge check; the card stays, a new tap checks the new head), both without `next` and never 5xx (iOS queues a 5xx
+  merge check or right after it, before or after a refused `gh pr merge`, hold or not; the card stays, a new tap
+  checks the new head), both without `next` and never 5xx (iOS queues a 5xx
   with the card hidden, which would turn a refusal into a merge that fires later),
   or `investigation_<status>` for a Body requeue the investigator refused (with `reason`);
   `422` `text_required`; `502` `merge_unverified` / `close_unverified` (gh ran but GitHub
@@ -301,7 +302,8 @@ stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land T
   ```
 
   A `gh pr merge` that GitHub refuses and that is followed by one of those reasons is also answered `202
-  queued` (the approval recorded); any other refusal is still `502 merge_unverified`. Stored under the
+  queued` (the approval recorded); a head other than the gated one is `409 head_moved`, nothing recorded; any
+  other refusal is still `502 merge_unverified`. Stored under the
   Idempotency-Key like a success (a replay answers `200 result: "replay"` with the same `detail`).
 - **The approval row** (the PR shepherd honours it — claude-config `tools/pr-shepherd-approval.ts`):
   `agent_activity` `action = 'pr:approved-merge'`, `target_kind = 'task'`, `target_id` = the dispatch task id

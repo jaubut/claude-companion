@@ -66,6 +66,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/ended-sessions.ts` | 282 | lib | 17 |  |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
+| `lib/triage-pr.ts` | 276 | lib | 21 |  |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
 | `lib/command-offpane-launch.ts` | 272 | lib | 20 | state: versionMemo: Map |
@@ -74,7 +75,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/question-hook.ts` | 268 | lib | 7 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
-| `lib/triage-pr.ts` | 266 | lib | 21 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/orchestrator.ts` | 252 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
