@@ -67,7 +67,7 @@ test("wireSessions: no shells → the agent list itself; shells → appended aft
 // Like the real one, workspace ids only go up and a split keeps its pane id.
 function fakeShells(opts: {
   gate?: string | null; dies?: boolean; down?: boolean; unclosable?: boolean; agent?: string; terminal?: string
-  listDown?: () => boolean; onCreate?: () => void; renameDown?: () => boolean
+  listDown?: () => boolean; onCreate?: () => void; renameDown?: () => boolean; runDown?: boolean
 } = {}) {
   const ws: Array<{ id: string; label: string; term: string; cwd: string; split?: boolean }> = []
   let created = 0
@@ -94,6 +94,7 @@ function fakeShells(opts: {
         if (opts.renameDown?.()) throw new Error("rename failed")
         ws.find((w) => w.id === args[2])!.label = args[3]!
       }
+      if (verb === "pane run" && opts.runDown) throw new Error("rejected")
       if (verb === "pane process-info") return { process_info: { shell_pid: 4242, foreground_process_group_id: 4242 } }
       if (verb === "pane get") return { pane: { agent: opts.agent ?? "", terminal_id: opts.terminal ?? ws.find((w) => args[2] === `${w.id}:p1`)?.term } }
       if (verb === "pane close") {
@@ -326,6 +327,64 @@ test("herdr list: a fresh start never picks among panes, a split listed first ge
   f.ws[0]!.split = false // back to one pane: that pane is the shell
   expect(await readHerdrShells(f.h, [])).toMatchObject([{ herdrPane: "w5:p1", terminalId: "t5" }])
   store.replace([])
+})
+
+test("herdr list: a row follows its workspace across a rename, and a split it leaves is never adopted", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/renamed", f.deps)
+  const w = f.ws[0]!
+  w.split = true
+  w.label = "sh-human"
+  store.replace((await readHerdrShells(f.h))!)
+  expect(listShellSessions()).toMatchObject([{ name: "sh-human", herdrPane: "w1:p1", terminalId: "term_w1" }])
+  w.term = "" // the shell exits, the human's split stays
+  store.replace((await readHerdrShells(f.h))!)
+  expect(listShellSessions()).toEqual([])
+  expect(await closeShellSession("sh-human", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(f.calls.some((c) => c[0] === "pane" && c[1] === "close")).toBe(false)
+  expect(w.label).toBe("split-human")
+  f.ws.length = 0
+  await readHerdrShells(f.h)
+})
+
+test("herdr list: a workspace that leaves the sh- labels, or was released, stays released if the label comes back", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/away", f.deps)
+  const w = f.ws[0]!
+  w.split = true
+  w.label = "notes"
+  store.replace((await readHerdrShells(f.h))!)
+  expect(listShellSessions()).toEqual([])
+  w.term = ""
+  w.label = "sh-away"
+  expect(await readHerdrShells(f.h)).toEqual([])
+  expect(w.label).toBe("split-away")
+  w.label = "sh-away" // a human puts it back on a lone survivor
+  expect(await readHerdrShells(f.h, [])).toEqual([])
+  expect(w.label).toBe("split-away")
+  f.ws.length = 0
+  await readHerdrShells(f.h)
+})
+
+test("spawn shell: a name held by a workspace with no row is taken", async () => {
+  store.replace([])
+  const f = fakeShells()
+  f.ws.push({ id: "w8", label: "sh-repo", term: "t8", cwd: "/x", split: true })
+  f.ws.push({ id: "w9", label: "sh-repo-2", term: "t9", cwd: "/x", split: true })
+  expect(await spawnShellSession("/x/repo", f.deps)).toMatchObject({ ok: true, session: { name: "sh-repo-3" } })
+  store.replace([])
+})
+
+test("spawn shell: a resume that herdr refuses fails the spawn, closes the workspace, no record", async () => {
+  store.replace([])
+  const f = fakeShells({ runDown: true })
+  const id = "51794d7b-cf0f-4f63-9eaf-7b06cab5047e"
+  expect(await spawnShellSession("/x/repo", f.deps, id)).toEqual({ ok: false, error: "herdr pane run: rejected" })
+  expect(f.calls.at(-1)).toEqual(["workspace", "close", "w1"])
+  expect(f.ws).toEqual([])
+  expect(listShellSessions()).toEqual([])
 })
 
 test("herdr list: a failed rename still keeps the split off the list, and is retried", async () => {
