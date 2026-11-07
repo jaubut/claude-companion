@@ -106,7 +106,7 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   // name too: Close takes only a name, so a retry can't be told from a new close.
   const labels = await herdrLabels(deps.h)
   if (!labels) return { ok: false, error: "herdr_unavailable: workspace list failed" }
-  const taken = new Set([...labels, ...closedNames, ...closedShells.map((c) => c.name), ...(await readTmuxShells(deps)).map((s) => s.name)])
+  const taken = new Set([...labels, ...closedShells.map((c) => c.name), ...(await readTmuxShells(deps)).map((s) => s.name)])
   const name = await uniqueTmuxSessionName(cwd, "shell", async (n) => taken.has(n))
   let pane = ""
   let terminal = ""
@@ -184,14 +184,16 @@ export function closeRefusal(code: CloseError): Record<string, unknown> {
   return sentence ? { ok: false, error: sentence, code } : { ok: false, error: code }
 }
 
-// tmux shells closed through closeShellSession, so a retry answers gone:true
-// instead of unknown_shell. ponytail: last 50 only, a later retry gets 404.
-const closedNames: string[] = []
-// herdr shells closed (or tried) here, by name and terminal, recorded before
-// anything is read again: a retry answers gone:true, never reaches another
-// terminal under the name, and spawn never reuses it.
+// Every shell closed (or tried) here, either backend, by name and terminal
+// ("" for tmux), recorded before anything is read again: a retry answers
+// gone:true, never reaches another shell under the name, tmux or herdr, and
+// spawn never reuses it.
 // ponytail: in memory, last 50; a Companion restart forgets them.
 const closedShells: Array<{ name: string; terminalId: string }> = []
+const recordClose = (name: string, terminalId: string) => {
+  closedShells.push({ name, terminalId })
+  if (closedShells.length > 50) closedShells.shift()
+}
 
 // Close a row of the shell list (POST /api/shell/close). Only a name in the
 // list can be closed, and the list holds only shells: a Claude session's pane,
@@ -221,7 +223,9 @@ async function closeShell(
   deps: Pick<ShellDeps, "run" | "which" | "h">,
 ): Promise<CloseShellResult> {
   const tomb = closedShells.findLast((c) => c.name === name)
-  if (!shell) return closedNames.includes(name) || tomb ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
+  if (!shell) return tomb ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
+  // The one check across backends: a close under this name was of another
+  // shell (a tmux one has no terminal).
   if (tomb && tomb.terminalId !== shell.terminalId) return { ok: false, error: "name_reused" }
   if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
   if (!shell.herdrPane) return closeTmuxShell(shell, detach, deps)
@@ -244,8 +248,7 @@ async function closeShell(
   // Closed, gone by itself, or a close herdr didn't confirm: either way only
   // this terminal may be closed under the name from now on, and a retry
   // answers gone:true.
-  closedShells.push({ name, terminalId: fresh.terminalId })
-  if (closedShells.length > 50) closedShells.shift()
+  recordClose(name, fresh.terminalId)
   if (verdict === "failed") return { ok: false, error: "kill_failed" }
   replaceKeepingLinks(store.list().filter((s) => s.terminalId !== fresh.terminalId))
   // After the close, so a refusal never ends an open terminal; the attach ends
@@ -279,25 +282,17 @@ async function closeShellPane(ref: Pick<ShellSession, "herdrPane" | "terminalId"
   }
 }
 
-// `detach` runs before the kill so open terminal sockets end cleanly rather
-// than on the attach dying. With herdr running (its gate passes), a workspace
-// under this name means two terminals with one name: refused, and refused when
-// herdr can't list. herdr not running or not installed: closes as before.
-// The gate and the list run side by side: the gate alone can take 5 s.
+// main's tmux Close: `kill-session -t =name` can only reach tmux, and the store
+// holds one row per name (mergeShells). `detach` runs before the kill so open
+// terminal sockets end cleanly rather than on the attach dying.
 async function closeTmuxShell(shell: ShellSession, detach: (key: string) => void, deps: Pick<ShellDeps, "run" | "which" | "h">): Promise<CloseShellResult> {
   const name = shell.name
-  const [gate, labels] = await Promise.all([deps.h.gate(), herdrLabels(deps.h, 2_000)])
-  if (!gate) {
-    if (!labels) return { ok: false, error: "herdr_unreadable" }
-    if (labels.includes(name)) return { ok: false, error: "name_ambiguous" }
-  }
   detach(shell.key)
   const kill = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])
-  const after = mergeShells(await readTmuxShells(deps), store.list().filter((s) => s.herdrPane))
+  const after = await readShellSessions(deps)
   replaceKeepingLinks(after)
   if (after.some((s) => s.name === name)) return { ok: false, error: "kill_failed" }
-  closedNames.push(name)
-  if (closedNames.length > 50) closedNames.shift()
+  recordClose(name, "")
   // kill-session failing on a name that is no longer listed: it exited first.
   return { ok: true, gone: kill.code !== 0 }
 }

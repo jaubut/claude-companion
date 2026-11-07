@@ -212,7 +212,7 @@ Close came back in its own task, rebuilt on the mark from `b7ceda1`'s design (#2
 
 **`POST /api/shell/close` on a herdr shell**, inside the spawn turn:
 1. The store row by name. None: `gone:true` for a name closed here, else 404 `unknown_shell`.
-2. A name closed here on another terminal: refused, `name_reused`.
+2. A name closed here, through either backend, on another shell: refused, `name_reused`. One record for both: a closed tmux name is never a herdr shell's, and the other way round.
 3. A Claude linked or on the pane: `claude_running`.
 4. A fresh read of tmux and herdr (herdr unreadable: refused, `herdr_unreadable`), written to the store.
 5. The name is also a tmux shell: refused, `name_ambiguous`.
@@ -220,9 +220,9 @@ Close came back in its own task, rebuilt on the mark from `b7ceda1`'s design (#2
 7. The fresh row holds another terminal: after a close of this name here, that is someone else (`name_reused`); otherwise it is a restore in the last 3 s, refused as `terminal_changed`, and the store now has the new terminal, so a new Close reaches it (never one already queued).
 8. `closeShellPane`: its last read refuses an agent (`claude_running`), another terminal or no mark (`terminal_changed`), and no answer (`herdr_unreadable`). On a close, a pane already gone (`gone:true`) or a close herdr didn't confirm (`kill_failed`), the name and terminal are recorded first; except after `kill_failed`, the row drops by terminal and the terminal detaches.
 
-Every refusal is a 409 (404 for `unknown_shell`), never a 5xx: nothing a client might replay later. `error` is a sentence for the new codes (the phone shows it inside "Couldn't close the terminal (…)"); `claude_running` and `unknown_shell` keep their codes, which the phone words itself. A tmux shell closes as before, plus the same clash check while herdr is running (its gate passes): a herdr workspace under its name is `name_ambiguous`, and herdr running but unable to list is `herdr_unreadable`. With herdr not running or not installed (a Mac, possibly) tmux shells close exactly as before. A Close compares against the row as it was when the request arrived, so one queued behind another never adopts a terminal the other wrote to the store.
+Every refusal is a 409 (404 for `unknown_shell`), never a 5xx: nothing a client might replay later. `error` is a sentence for the new codes (the phone shows it inside "Couldn't close the terminal (…)"); `claude_running` and `unknown_shell` keep their codes, which the phone words itself. A tmux shell closes with main's code: `kill-session -t =name` can only reach tmux, and the store holds one row per name (`mergeShells` drops a herdr row that clashes with a tmux one). Steps 1-3 run before it, and it records its close in the same list. A Close compares against the row as it was when the request arrived, so one queued behind another never adopts a terminal the other wrote to the store.
 
-**Time:** about 8 s at worst, under the phone's 10 s timeout. The fresh read takes 4 s (tmux 1.5 s beside herdr's lists at 2 s, then pid reads side by side, 2 s), the last read 1.5 s and the close 2.5 s. A tmux Close: the gate (up to 5 s) beside the label list (2 s), then the kill and a tmux list (1.5 s each), so 8 s.
+**Time:** about 8 s at worst, under the phone's 10 s timeout. The fresh read takes 4 s (tmux 1.5 s beside herdr's lists at 2 s, then pid reads side by side, 2 s), the last read 1.5 s and the close 2.5 s. A tmux Close: the kill (1.5 s), then main's refresh (tmux 1.5 s beside herdr's lists at 3 s and pid reads at 2 s), so 6.5 s.
 
 **Failed spawns** close nothing, still. A marked leftover is a row that `exit` ends, and `closeShellPane` would refuse an unmarked one.
 
@@ -267,7 +267,7 @@ teardown: scratch herdr down, nothing left under scratch
 - The closed-name record is in memory, last 50: a Companion restart forgets it. A shell restored under a closed name refuses Close (`name_reused`) until 50 more closes or a restart; `exit` still ends it.
 - A Close queued behind a slow spawn in the same turn can pass the phone's 10 s; the phone then shows "network" while the close may land, and a retry answers `gone:true`.
 - A `pane close` herdr didn't confirm in 2.5 s is `kill_failed` though it may have closed; the retry answers `gone:true` or closes that same terminal.
-- The tmux clash check refuses any herdr workspace under the name, shell or not: stricter than needed, never wrong.
+- An attach ending refreshes the list outside the turn (`wiring/shell-sessions.ts`), so during a spawn or a Close a closed row can come back, or a new one vanish, for up to 3 s. A retry against such a row still answers `gone:true`; it can't close anything.
 
 **iOS follow-ups (none block the phone):**
 - tmux-era wording: `ShellSessions.swift` lines 4-5, 28, 70 ("The tmux session name /api/shell/close takes"), 160, 198; `CompanionClient+Shell.swift` 27-28 ("kills the tmux session").
