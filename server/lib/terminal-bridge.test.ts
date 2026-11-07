@@ -5,7 +5,7 @@ import { recordPeer } from "./vault-guard"
 
 // The /api/terminal bridge: phone socket ↔ `tmux attach-session` under a PTY.
 
-const SHELL: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", tmuxSessionId: "$7", createdAt: 1, panePid: 0, claudeKey: "" }
+const SHELL: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1, panePid: 0, claudeKey: "" }
 
 test("attach argv: exact-match session on the shell's own tmux server", () => {
   expect(terminalAttachArgv(SHELL)).toEqual(["tmux", "-S", "/tmp/tmux-501/cc", "attach-session", "-t", "=sh-a"])

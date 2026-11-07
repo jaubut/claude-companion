@@ -4463,7 +4463,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 467,
+          "lines": 443,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -4497,7 +4497,7 @@
             "startShellPoll"
           ],
           "state": [
-            "let turn",
+            "let spawnTurn",
             "let storeGen"
           ],
           "emits": [],
@@ -6010,7 +6010,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 600,
+          "lines": 599,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",

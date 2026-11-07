@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, parseShellList,
-  readHerdrShells, readShellSessions, shellWire, spawnShellSession, startShellPoll, store, wireSessions, type AgentRef, type ShellDeps, type ShellSession,
+  readHerdrShells, readShellSessions, shellWire, spawnShellSession, startShellPoll, store, wireSessions, type ShellDeps, type ShellSession,
 } from "./shell-sessions"
 import { resolveSpawnCwd } from "./spawn-session"
 import { endedStore } from "./ended-sessions"
@@ -26,7 +26,7 @@ test("parseShellList keeps only tagged sessions, oldest first, times in ms", () 
     "",
   ].join("\n"), "/tmp/tmux-501/cc")
   expect(out.map((s) => s.key)).toEqual(["shell:sh-a", "shell:sh-b"])
-  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", tmuxSessionId: "", createdAt: 1700000050000, panePid: 0, claudeKey: "" })
+  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000, panePid: 0, claudeKey: "" })
 })
 
 test("parseShellList: tmux's own socket_path wins over the fallback", () => {
@@ -34,7 +34,7 @@ test("parseShellList: tmux's own socket_path wins over the fallback", () => {
   expect(out.map((s) => s.tmuxSocket)).toEqual(["/private/tmp/tmux-501/default", "/fallback"])
 })
 
-const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "", tmuxSessionId: "$7", createdAt: 1, panePid: 0, claudeKey: "" }
+const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "", createdAt: 1, panePid: 0, claudeKey: "" }
 const H: ShellSession = { ...A, key: "shell:sh-h", name: "sh-h", herdrPane: "w9:p1", terminalId: "term_9", tmuxPane: "", panePid: 90 }
 
 test("store emits on a real change only: added, cd'd, removed", () => {
@@ -196,7 +196,7 @@ test("herdr list: an `sh-*` workspace with no marked pane is not a shell, whatev
   f.ws.push({ id: "w1", label: "sh-old", term: "t1", cwd: "/a" }, { id: "w2", label: "sh-human", term: "t2", cwd: "/b", split: true })
   expect(await readHerdrShells(f.h)).toEqual([])
   expect(await readHerdrShells(f.h, [])).toEqual([])
-  expect(await closeShellSession("sh-old", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-old", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls.some((c) => c[1] === "close")).toBe(false)
 })
 
@@ -214,7 +214,7 @@ test("herdr list: a shell that exits while Companion is down leaves no row: its 
   store.replace([])
   f.ws.push({ id: "w1", label: "sh-gone", term: "", cwd: "/a", split: true }) // only the split's pane is left
   expect(await readHerdrShells(f.h, [])).toEqual([])
-  expect(await closeShellSession("sh-gone", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-gone", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls.some((c) => c[1] === "close")).toBe(false)
 })
 
@@ -262,7 +262,7 @@ test("herdr list: two marked panes under one label give no row, nothing is guess
   const rows = await readHerdrShells(f.h)
   expect(rows!.map((s) => s.terminalId)).toEqual(["t3"])
   store.replace(rows!)
-  expect(await closeShellSession("sh-dup", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-dup", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls.some((c) => c[1] === "close")).toBe(false)
   f.ws[1]!.label = "sh-dup-b" // unique again: both come back
   expect((await readHerdrShells(f.h))!.map((s) => s.terminalId)).toEqual(["t1", "t2", "t3"])
@@ -334,7 +334,7 @@ const TMUX_ROW = "sh-repo\t1\t%1\t/x\t1\t/s\t1\n"
 const tmuxAnswers = (deps: ShellDeps, code: number, stderr: string): ShellDeps => ({ ...deps, which: () => "/usr/bin/tmux", run: async () => ({ code, stdout: "", stderr }) })
 
 test("spawn shell: tmux not answering keeps a live tmux shell's name taken", async () => {
-  store.replace(parseShellList("sh-tmuxdown\t1\t%1\t/x\t1\t/s\t1\t$1\n", "/s"))
+  store.replace(parseShellList("sh-tmuxdown\t1\t%1\t/x\t1\t/s\t1\n", "/s"))
   const r = await spawnShellSession("/x/tmuxdown", tmuxAnswers(fakeShells().deps, -1, "timed out"))
   expect(r).toMatchObject({ ok: true, session: { name: "sh-tmuxdown-2" } })
   store.replace([])
@@ -414,10 +414,10 @@ test("close shell (herdr): refused before anything else, nothing detached, the r
   const n = f.calls.length
   const agent = { key: "c", pid: "", tmuxPane: "", herdrPane: "w1:p1" }
   const detached: string[] = []
-  expect(await closeShellSession("sh-noclose", () => [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
-  expect(await closeShellSession("sh-noclose", () => [agent], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
+  expect(await closeShellSession("sh-noclose", [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
+  expect(await closeShellSession("sh-noclose", [agent], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
   store.replace(listShellSessions().map((s) => ({ ...s, claudeKey: "c" })))
-  expect(await closeShellSession("sh-noclose", () => [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
+  expect(await closeShellSession("sh-noclose", [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
   expect(detached).toEqual([])
   expect(f.calls.length).toBe(n)
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-noclose"])
@@ -426,9 +426,9 @@ test("close shell (herdr): refused before anything else, nothing detached, the r
 
 // ── Close (POST /api/shell/close) ──
 
-const CLOSE_LIST = "sh-a\t1\t%7\t/x\t1700000000\t/tmp/tmux-501/default\t70\t$1\nsh-b\t1\t%8\t/y\t1700000001\t/tmp/tmux-501/default\t80\t$2\n"
+const CLOSE_LIST = "sh-a\t1\t%7\t/x\t1700000000\t/tmp/tmux-501/default\t70\nsh-b\t1\t%8\t/y\t1700000001\t/tmp/tmux-501/default\t80\n"
 
-// list-sessions shows sh-a ($1) and sh-b ($2) until a kill of that session id lands (unless `unkillable`).
+// list-sessions shows sh-a and sh-b until a kill of that `=name` lands (unless `unkillable`).
 function fakeCloseTmux(opts: { unkillable?: boolean; killCode?: number } = {}) {
   const which = () => "/usr/bin/tmux"
   const h = fakeHerdr({ reply: () => ({ workspaces: [], panes: [] }) }).h
@@ -437,64 +437,64 @@ function fakeCloseTmux(opts: { unkillable?: boolean; killCode?: number } = {}) {
   const run: DetachedDeps["run"] = async (argv) => {
     calls.push(argv)
     if (argv.includes("kill-session")) {
-      if (!opts.unkillable) killed.add(argv.at(-1)!)
+      if (!opts.unkillable) killed.add(argv.at(-1)!.slice(1))
       return { code: opts.killCode ?? 0, stdout: "", stderr: "" }
     }
     if (argv.includes("list-sessions")) {
-      return { code: 0, stdout: CLOSE_LIST.split("\n").filter((l) => !killed.has(l.split("\t")[7]!)).join("\n"), stderr: "" }
+      return { code: 0, stdout: CLOSE_LIST.split("\n").filter((l) => !killed.has(l.split("\t")[0]!)).join("\n"), stderr: "" }
     }
     return { code: 0, stdout: "", stderr: "" }
   }
   return { run, calls, which, h }
 }
 
-test("close shell: detaches first, kills that session, drops the row, broadcasts once", async () => {
+test("close shell: detaches first, kills the exact name, drops the row, broadcasts once", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
   const f = fakeCloseTmux()
   const order: string[] = []
   const seen: string[][] = []
   const off = store.on((l) => seen.push(l.map((s) => s.name)))
-  const r = await closeShellSession("sh-a", () => [], (key) => { order.push(`detach ${key}`); order.push(`kills so far ${f.calls.length}`) }, f)
+  const r = await closeShellSession("sh-a", [], (key) => { order.push(`detach ${key}`); order.push(`kills so far ${f.calls.length}`) }, f)
   off()
   expect(r).toEqual({ ok: true, gone: false })
   expect(order).toEqual(["detach shell:sh-a", "kills so far 0"])
-  expect(f.calls[0]!.slice(-3)).toEqual(["kill-session", "-t", "$1"])
+  expect(f.calls[0]!.slice(-3)).toEqual(["kill-session", "-t", "=sh-a"])
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-b"])
   expect(seen).toEqual([["sh-b"]])
   // A retry after the row left: ok, gone.
-  expect(await closeShellSession("sh-a", () => [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: true })
 })
 
 test("close shell: not in the list → unknown_shell, nothing run", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
   const f = fakeCloseTmux()
-  expect(await closeShellSession("dispatch-x", () => [], () => undefined, f)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("dispatch-x", [], () => undefined, f)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls).toEqual([])
 })
 
 test("close shell: a Claude in the shell (linked or on its pane) → claude_running, nothing run", async () => {
   const f = fakeCloseTmux()
   store.replace(parseShellList(CLOSE_LIST, "").map((s) => (s.name === "sh-a" ? { ...s, claudeKey: "claude:1" } : s)))
-  expect(await closeShellSession("sh-a", () => [], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
   const agent = { key: "claude:2", pid: "", tmuxPane: "%8", tmuxSocket: "/tmp/tmux-501/default" }
-  expect(await closeShellSession("sh-b", () => [agent], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
-  expect(await closeShellSession("sh-b", () => [{ ...agent, tmuxSocket: "/other" }], () => undefined, f)).toMatchObject({ ok: true })
-  expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.at(-1))).toEqual(["$2"])
+  expect(await closeShellSession("sh-b", [agent], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-b", [{ ...agent, tmuxSocket: "/other" }], () => undefined, f)).toMatchObject({ ok: true })
+  expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.at(-1))).toEqual(["=sh-b"])
 })
 
 test("close shell: the session survives the kill → kill_failed, row kept", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
-  expect(await closeShellSession("sh-a", () => [], () => undefined, fakeCloseTmux({ unkillable: true }))).toEqual({ ok: false, error: "kill_failed" })
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ unkillable: true }))).toEqual({ ok: false, error: "kill_failed" })
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-a", "sh-b"])
 })
 
 test("close shell: kill-session fails because it already exited → ok, gone", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
-  expect(await closeShellSession("sh-a", () => [], () => undefined, fakeCloseTmux({ killCode: 1 }))).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ killCode: 1 }))).toEqual({ ok: true, gone: true })
   store.replace([])
 })
 
-// ── Salvaged from #294: names, the poll race, tmux Close by session id ──
+// ── Salvaged from #294: 24 h names, the poll race ──
 
 const poll = async (f: { h: ShellDeps["h"] }) => store.replace((await readHerdrShells(f.h))!)
 
@@ -506,7 +506,7 @@ test("spawn never reuses a name seen in the last 24 h: exit, poll, respawn → a
   await poll(f)
   expect(listShellSessions()).toEqual([])
   expect(await spawnShellSession("/x/c-seen", f.deps)).toMatchObject({ ok: true, session: { name: "sh-c-seen-2" } })
-  expect(await closeShellSession("sh-c-seen", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-c-seen", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   store.replace([])
 })
 
@@ -537,62 +537,11 @@ test("poll: a read from before a spawn or a tmux Close never writes over it", as
   expect(listShellSessions().map((s) => s.name)).toContain("sh-c-race")
   store.replace(parseShellList(CLOSE_LIST, ""))
   stop = startShellPoll(() => [], held, 60_000) // reads sh-a and sh-b, held
-  expect(await closeShellSession("sh-a", () => [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: false })
   release()
   await Bun.sleep(5)
   stop()
   expect(listShellSessions().map((s) => s.name)).not.toContain("sh-a")
-  store.replace([])
-})
-
-test("close shell (tmux): kills by the session id, never the name", async () => {
-  store.replace(parseShellList(CLOSE_LIST, ""))
-  const f = fakeCloseTmux()
-  expect(await closeShellSession("sh-a", () => [], () => undefined, f)).toEqual({ ok: true, gone: false })
-  expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.slice(-2))).toEqual([["-t", "$1"]])
-  store.replace([])
-})
-
-test("close shell (tmux): queued behind a spawn, a Claude that starts or gets linked while it waits is seen → claude_running, 0 kills", async () => {
-  store.replace(parseShellList(CLOSE_LIST, ""))
-  const f = fakeShells()
-  let release = () => {}
-  const held = new Promise<void>((r) => { release = r })
-  const slow: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => { await held; return { code: 0, stdout: CLOSE_LIST, stderr: "" } } }
-  const spawned = spawnShellSession("/x/c-wait", slow) // holds the turn until released
-  const live: AgentRef[] = []
-  const t = fakeCloseTmux()
-  const closeA = closeShellSession("sh-a", () => live, () => undefined, t)
-  const closeB = closeShellSession("sh-b", () => live, () => undefined, t)
-  live.push({ key: "claude:late", pid: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/default" }) // a hook registers it on sh-a
-  store.replace(listShellSessions().map((s) => (s.name === "sh-b" ? { ...s, claudeKey: "claude:linked" } : s))) // the poll links one on sh-b
-  release()
-  await spawned
-  expect(await closeA).toEqual({ ok: false, error: "claude_running" })
-  expect(await closeB).toEqual({ ok: false, error: "claude_running" })
-  expect(t.calls.filter((c) => c.includes("kill-session"))).toEqual([])
-  store.replace([])
-})
-
-test("close shell (tmux): the row at execution must be the one seen on arrival, or nothing happens", async () => {
-  for (const moved of [
-    "sh-a\t1\t%9\t/x\t1\t/tmp/tmux-501/default\t90\t$9\n", // another tmux session under the name
-    "", // the name left tmux; a herdr shell takes it below
-  ]) {
-    store.replace(parseShellList(CLOSE_LIST, ""))
-    const f = fakeShells()
-    if (!moved) f.ws.push({ id: "w8", label: "sh-a", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK })
-    let release = () => {}
-    const held = new Promise<void>((r) => { release = r })
-    const slow: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => { await held; return { code: moved ? 0 : 1, stdout: moved, stderr: "" } } }
-    const spawned = spawnShellSession("/x/c-moved", slow) // its write moves the name while the Close waits
-    const t = fakeCloseTmux()
-    const closing = closeShellSession("sh-a", () => [], () => undefined, t)
-    release()
-    await spawned
-    expect(await closing).toEqual({ ok: false, error: "terminal_changed" })
-    expect(t.calls.filter((c) => c.includes("kill-session"))).toEqual([])
-  }
   store.replace([])
 })
 

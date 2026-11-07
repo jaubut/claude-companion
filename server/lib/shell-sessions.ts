@@ -44,7 +44,6 @@ export interface ShellSession {
   terminalId: string // what `herdr terminal attach` takes
   tmuxPane: string
   tmuxSocket: string // "" = the default tmux server
-  tmuxSessionId: string // "$N": what Close kills, never reused by its server
   createdAt: number // ms epoch
   panePid: number // the pane's process: the login shell
   // The Claude session running inside this shell, "" for none (linkClaude).
@@ -81,22 +80,18 @@ export type SpawnShellResult =
   | { ok: true; session: ShellSession }
   | { ok: false; error: string; session?: ShellSession }
 
-// Spawns and closes take turns: the name comes from a read of what exists, so
-// a double tap must see the first shell (herdr allows two workspaces with one
-// label), and a Close decides on what is true once its turn runs.
-let turn: Promise<unknown> = Promise.resolve()
-function inTurn<T>(fn: () => Promise<T>): Promise<T> {
-  const next = turn.then(fn)
-  turn = next.catch(() => undefined)
-  return next
-}
+// One spawn at a time: the name comes from a read of what exists, so a double
+// tap must see the first shell (herdr allows two workspaces with one label).
+let spawnTurn: Promise<unknown> = Promise.resolve()
 
 // `cwd` must already be resolved (spawn-session.ts resolveSpawnCwd).
 // `resume`: a Claude session id (recent-sessions.ts SESSION_ID_RE, checked by
 // the caller) typed into the new shell as `claude --resume <id>` — typed, so
 // the shell stays when claude exits, exactly as if Jeremie had typed it.
 export function spawnShellSession(cwd: string, deps: ShellDeps = realShellDeps, resume?: string): Promise<SpawnShellResult> {
-  return inTurn(() => spawnShell(cwd, deps, resume))
+  const turn = spawnTurn.then(() => spawnShell(cwd, deps, resume))
+  spawnTurn = turn.catch(() => undefined)
+  return turn
 }
 
 async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promise<SpawnShellResult> {
@@ -166,7 +161,7 @@ export function replaceKeepingLinks(sessions: ShellSession[]): void {
 
 export type CloseShellResult =
   | { ok: true; gone: boolean }
-  | { ok: false; error: "unknown_shell" | "claude_running" | "kill_failed" | "close_unavailable" | "terminal_changed" }
+  | { ok: false; error: "unknown_shell" | "claude_running" | "kill_failed" | "close_unavailable" }
 
 // Closed through closeShellSession, so a retry answers gone:true instead of
 // unknown_shell. ponytail: last 50 only, a later retry gets 404.
@@ -175,46 +170,29 @@ const closedNames: string[] = []
 // Close a row of the shell list (POST /api/shell/close). Only a name in the
 // list can be closed, and the list holds only shells: a Claude session's pane,
 // a dispatch-* worker, the brain or a human's workspace are never in it. A
-// herdr shell is refused before anything else: `exit` in the shell ends it
-// (docs/herdr-only-migration.md, Close follow-up). A tmux shell is killed by
-// its session id, never its name, in the spawn turn: a Claude running inside
-// (linked, or on its pane), read once the turn runs, refuses it, and so does a
-// name that moved to another shell while it waited. `detach` runs before the
-// kill so open terminal sockets end cleanly rather than on the attach dying.
-export function closeShellSession(
+// herdr shell is refused before anything else: `exit` in the shell ends it, and
+// Close comes back in its own task (docs/herdr-only-migration.md, Close
+// follow-up). A tmux shell with a Claude running inside (linked, or on its pane
+// right now) is refused too. `detach` runs before the kill so open terminal
+// sockets end cleanly rather than on the attach dying.
+export async function closeShellSession(
   name: string,
-  agents: () => AgentRef[],
+  agents: AgentRef[],
   detach: (key: string) => void,
   deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps,
 ): Promise<CloseShellResult> {
-  // The row as the phone saw it, taken before the turn.
-  const seen = store.list().find((s) => s.name === name)
-  return inTurn(() => closeShell(name, seen, agents, detach, deps))
-}
-
-async function closeShell(
-  name: string,
-  shell: ShellSession | undefined,
-  agents: () => AgentRef[],
-  detach: (key: string) => void,
-  deps: Pick<ShellDeps, "run" | "which" | "h">,
-): Promise<CloseShellResult> {
+  const shell = store.list().find((s) => s.name === name)
   if (!shell) return closedNames.includes(name) ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
   if (shell.herdrPane) return { ok: false, error: "close_unavailable" }
-  // The row under the name now must still be the one seen on arrival.
-  const now = store.list().find((s) => s.name === name)
-  if (now && (now.herdrPane || now.tmuxSessionId !== shell.tmuxSessionId)) return { ok: false, error: "terminal_changed" }
-  // Read now, never from before the turn: a Claude started or linked while
-  // this Close waited behind a spawn counts.
-  if (now?.claudeKey || agents().some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
+  if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
   detach(shell.key)
-  const kill = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", shell.tmuxSessionId])
+  const kill = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])
   const after = await readShellSessions(deps)
   replaceKeepingLinks(after)
-  if (after.some((s) => s.tmuxPane && s.tmuxSessionId === shell.tmuxSessionId)) return { ok: false, error: "kill_failed" }
+  if (after.some((s) => s.name === name)) return { ok: false, error: "kill_failed" }
   closedNames.push(name)
   if (closedNames.length > 50) closedNames.shift()
-  // kill-session failing on a session that is no longer listed: it exited first.
+  // kill-session failing on a name that is no longer listed: it exited first.
   return { ok: true, gone: kill.code !== 0 }
 }
 
@@ -252,7 +230,6 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
       terminalId: p.terminal_id,
       tmuxPane: "",
       tmuxSocket: "",
-      tmuxSessionId: "",
       // herdr keeps no creation time: first seen by this server.
       createdAt: was?.createdAt ?? Date.now(),
       // 0 while something else is in front: re-read until the shell is seen.
@@ -265,7 +242,7 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
 
 // socket_path: the server's real socket, the same string a hook reports from
 // $TMUX — so the phone can tell a Claude session running in this shell.
-const LIST_FORMAT = ["#{session_name}", `#{${SHELL_OPTION}}`, "#{pane_id}", "#{pane_current_path}", "#{session_created}", "#{socket_path}", "#{pane_pid}", "#{session_id}"].join("\t")
+const LIST_FORMAT = ["#{session_name}", `#{${SHELL_OPTION}}`, "#{pane_id}", "#{pane_current_path}", "#{session_created}", "#{socket_path}", "#{pane_pid}"].join("\t")
 
 // Every shell on this host: herdr's, plus tmux's tagged ones until Stage 5.
 export async function readShellSessions(deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps): Promise<ShellSession[]> {
@@ -295,7 +272,7 @@ async function readTmuxShells(deps: Pick<ShellDeps, "run" | "which">): Promise<S
 export function parseShellList(stdout: string, fallbackSocket: string): ShellSession[] {
   const out: ShellSession[] = []
   for (const line of stdout.split("\n")) {
-    const [name, tag, pane, cwd, created, socketPath, panePid, sessionId] = line.split("\t")
+    const [name, tag, pane, cwd, created, socketPath, panePid] = line.split("\t")
     const socket = socketPath?.startsWith("/") ? socketPath : fallbackSocket
     if (tag !== "1" || !name || !pane) continue
     out.push({
@@ -306,7 +283,6 @@ export function parseShellList(stdout: string, fallbackSocket: string): ShellSes
       terminalId: "",
       tmuxPane: pane,
       tmuxSocket: socket,
-      tmuxSessionId: sessionId ?? "",
       createdAt: Number(created) * 1000 || 0,
       panePid: Number(panePid) || 0,
       claudeKey: "",
@@ -322,7 +298,7 @@ type Listener = (shells: ShellSession[]) => void
 function sameList(a: ShellSession[], b: ShellSession[]): boolean {
   return a.length === b.length && a.every((s, i) => {
     const o = b[i]!
-    return s.key === o.key && s.cwd === o.cwd && s.tmuxPane === o.tmuxPane && s.tmuxSocket === o.tmuxSocket && s.tmuxSessionId === o.tmuxSessionId
+    return s.key === o.key && s.cwd === o.cwd && s.tmuxPane === o.tmuxPane && s.tmuxSocket === o.tmuxSocket
       && s.herdrPane === o.herdrPane && s.terminalId === o.terminalId && s.claudeKey === o.claudeKey && s.panePid === o.panePid
   })
 }
