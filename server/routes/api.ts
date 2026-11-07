@@ -358,7 +358,7 @@ async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
     companionLog(`\x1b[31mspawn failed\x1b[0m — ${r.error}`)
     return Response.json({ ok: false, error: r.error }, { status: 400 })
   }
-  return Response.json({ ok: true, app: "tmux", cwd: cwd.dir, agent: "shell", key: r.session.key, sessionName: r.session.name })
+  return Response.json({ ok: true, app: "herdr", cwd: cwd.dir, agent: "shell", key: r.session.key, sessionName: r.session.name })
 }
 
 async function handleResolve(req: Request): Promise<Response> {

@@ -2113,7 +2113,7 @@
         },
         {
           "path": "lib/herdr-workspace.ts",
-          "lines": 59,
+          "lines": 61,
           "kind": "lib",
           "exports": [
             "herdrSessionGone",
@@ -2131,7 +2131,8 @@
             "lib/sessions.ts",
             "lib/herdr.ts",
             "lib/log.ts",
-            "lib/ended-sessions.ts"
+            "lib/ended-sessions.ts",
+            "lib/shell-sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4394,19 +4395,22 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 332,
+          "lines": 423,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
             "SHELL_KEY_PREFIX",
+            "SHELL_LABEL_PREFIX",
+            "ShellDeps",
+            "realShellDeps",
             "ShellSession",
             "shellWire",
-            "loginShell",
-            "shellNewSessionArgv",
             "SpawnShellResult",
             "spawnShellSession",
+            "replaceKeepingLinks",
             "CloseShellResult",
             "closeShellSession",
+            "readHerdrShells",
             "readShellSessions",
             "parseShellList",
             "createShellStore",
@@ -4417,6 +4421,7 @@
             "wireSessions",
             "ProcTable",
             "AgentRef",
+            "inShellPane",
             "parseProcTable",
             "readProcTable",
             "descends",
@@ -4424,13 +4429,17 @@
             "SHELL_POLL_MS",
             "startShellPoll"
           ],
-          "state": [],
+          "state": [
+            "let spawnTurn",
+            "releasedWorkspaces: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
             "lib/ended-sessions.ts",
+            "lib/herdr.ts",
             "lib/spawn-session.ts",
             "lib/tmux-pane.ts",
             "lib/tmux-spawn-confirm.ts"
@@ -4895,7 +4904,7 @@
         },
         {
           "path": "lib/terminal-bridge.ts",
-          "lines": 153,
+          "lines": 159,
           "kind": "lib",
           "exports": [
             "TERMINAL_PATH",
@@ -10008,6 +10017,7 @@
             "lib/pane-clean.ts",
             "lib/pane-mirror.ts",
             "lib/session-pane.ts",
+            "lib/shell-sessions.ts",
             "lib/submit-confirm.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
@@ -10584,6 +10594,7 @@
             "lib/keyboard-inject.ts",
             "lib/orphan-question.ts",
             "lib/session-pane.ts",
+            "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
             "wiring/brain-lead.ts",
@@ -10600,6 +10611,7 @@
             "lib/inject-verified.ts",
             "lib/pane-clean.ts",
             "lib/session-pane.ts",
+            "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
             "wiring/brain-lead.ts",
@@ -10618,7 +10630,8 @@
         "herdrPaneShellPid": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/ended-sessions.ts"
+            "lib/ended-sessions.ts",
+            "lib/shell-sessions.ts"
           ]
         },
         "Catalog": {
@@ -10765,6 +10778,12 @@
             "routes/api.ts#POST /api/sessions/resume",
             "routes/api.ts#POST /api/sessions/ended/delete",
             "wiring/shell-sessions.ts"
+          ]
+        },
+        "listShellSessions": {
+          "module": "lib/shell-sessions.ts",
+          "callers": [
+            "lib/herdr-workspace.ts"
           ]
         },
         "closeHerdrWorkspaceWhenIdle": {
@@ -12468,25 +12487,6 @@
             "lib/sessions.ts"
           ]
         },
-        "spawnNewSessionFlags": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/shell-sessions.ts",
-            "lib/spawn-session.ts"
-          ]
-        },
-        "DETACHED_COLS": {
-          "module": "lib/spawn-session.ts",
-          "callers": [
-            "lib/shell-sessions.ts"
-          ]
-        },
-        "DETACHED_ROWS": {
-          "module": "lib/spawn-session.ts",
-          "callers": [
-            "lib/shell-sessions.ts"
-          ]
-        },
         "DetachedDeps": {
           "module": "lib/tmux-spawn-confirm.ts",
           "callers": [
@@ -12501,25 +12501,18 @@
             "lib/spawn-session.ts"
           ]
         },
-        "spawnServerFlags": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/shell-sessions.ts",
-            "lib/spawn-session.ts",
-            "lib/tmux-spawn-confirm.ts"
-          ]
-        },
         "uniqueTmuxSessionName": {
           "module": "lib/spawn-session.ts",
           "callers": [
             "lib/shell-sessions.ts"
           ]
         },
-        "createConfirmed": {
-          "module": "lib/tmux-spawn-confirm.ts",
+        "spawnServerFlags": {
+          "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/shell-sessions.ts",
-            "lib/spawn-session.ts"
+            "lib/spawn-session.ts",
+            "lib/tmux-spawn-confirm.ts"
           ]
         },
         "spawnSocketPath": {
@@ -12556,6 +12549,18 @@
         },
         "applyMcpChoices": {
           "module": "lib/claude-mcp-trust.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "spawnNewSessionFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "createConfirmed": {
+          "module": "lib/tmux-spawn-confirm.ts",
           "callers": [
             "lib/spawn-session.ts"
           ]
@@ -16988,13 +16993,13 @@
             "wiring/shell-sessions.ts"
           ]
         },
-        "readShellSessions": {
+        "replaceKeepingLinks": {
           "module": "lib/shell-sessions.ts",
           "callers": [
             "wiring/shell-sessions.ts"
           ]
         },
-        "store": {
+        "readShellSessions": {
           "module": "lib/shell-sessions.ts",
           "callers": [
             "wiring/shell-sessions.ts"
