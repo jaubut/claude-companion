@@ -150,11 +150,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
+| `wiring/brain-lead.ts` | 138 | lib | 9 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
-| `wiring/brain-lead.ts` | 129 | lib | 9 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |

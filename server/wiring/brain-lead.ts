@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { leadSlug } from "../lib/brain"
@@ -20,7 +20,6 @@ export const leadDir = (repo: string, home = homedir()): string => join(home, "l
 const settingsFile = (dir: string): string => join(dir, ".claude", "settings.local.json")
 
 /** No settings in the clone: the running lead predates clones, or lost its deny. */
-export const leadIsolated = (repo: string, home = homedir()): boolean => existsSync(settingsFile(leadDir(repo, home)))
 
 const NO_FILE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]
 
@@ -29,9 +28,9 @@ const NO_FILE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanM
  * refuses a lead's Bash writing or moving them. No way out of the sandbox: no unsandboxed Bash, no running without one,
  * and every user-level `excludedCommands` entry is denied, since those run unsandboxed and project settings can't remove them.
  */
-export function leadSettings(excluded: string[]): { permissions: { deny: string[] }; sandbox: Record<string, boolean> } {
+export function leadSettings(excluded: string[], dir: string) {
   const commands = excluded.flatMap((c) => [`Bash(${c})`, `Bash(${c.replace(/ \*$/, ":*")})`])
-  return { permissions: { deny: [...NO_FILE_TOOLS, ...new Set(commands)] }, sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true } }
+  return { permissions: { deny: [...NO_FILE_TOOLS, ...new Set(commands)] }, sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true, filesystem: { denyWrite: [join(dir, ".claude"), join(dir, ".git")] } } }
 }
 
 /** The user's `sandbox.excludedCommands`. Thrown on an unreadable file: a lead without the full deny list doesn't start. */
@@ -44,6 +43,16 @@ function excludedCommands(home: string): string[] {
   }
 }
 
+/** Running from its clone, with exactly the settings the server wrote: a swapped file doesn't count. */
+export function leadIsolated(repo: string, home = homedir(), excluded: (home: string) => string[] = excludedCommands): boolean {
+  const dir = leadDir(repo, home)
+  try {
+    return readFileSync(settingsFile(dir), "utf8") === JSON.stringify(leadSettings(excluded(home), dir), null, 2)
+  } catch {
+    return false
+  }
+}
+
 const CLONE_MS = 120_000
 
 /** A fresh shallow clone each spawn: the server never runs git in a tree a lead could write, and a tampered tree doesn't survive. */
@@ -52,7 +61,7 @@ export async function prepareLeadDir(repo: string, home: string, sh: ShFn, trust
   if (!slug) return { ok: false, error: `no lead for ${repo}` }
   const dir = leadDir(repo, home)
   try {
-    const settings = leadSettings(excluded(home))
+    const settings = leadSettings(excluded(home), dir)
     rmSync(dir, { recursive: true, force: true })
     mkdirSync(dirname(dir), { recursive: true })
     const clone = await sh("git", ["clone", "-q", "--depth", "1", `https://github.com/${slug}.git`, dir], { cwd: home, timeoutMs: CLONE_MS })
@@ -91,7 +100,7 @@ export function createBrainLead(deps: LeadDeps) {
     }
     await h.call(["agent", "stop", name]).catch(() => undefined)
     await h.call(["workspace", "close", ws]).catch(() => undefined)
-    return true
+    return !await deps.running(name) // a lead that didn't stop keeps its clone
   }
 
   return {
