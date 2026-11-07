@@ -192,6 +192,20 @@ describe("dispatch poller", () => {
     expect(r.w.tasksFor("general").map((t) => [t.status, t.dispatchStatus, t.done])).toEqual([["cancelled", "cancelled", true], ["error", "failed", false]])
   })
 
+  test("a brain cancel of a blocked or failed row: no turn, no push, the reason stays off the wire", async () => {
+    rows = [task(11, { dispatch_status: "blocked", dispatch_blocker: "Which repo?" }), task(12, { dispatch_status: "failed", dispatch_blocker: "not found" })]
+    const r = rig()
+    await r.w.poll()
+    const turnsBefore = turns.length
+    const pushesBefore = r.pushes.length
+    const cancelled = { dispatch_status: "cancelled", done: 1, dispatch_blocker: "Cancelled by the brain: obsolete", updated_at: "2026-10-03 15:00:00" }
+    rows = [task(11, cancelled), task(12, cancelled)]
+    await r.w.poll()
+    expect(turns).toHaveLength(turnsBefore)
+    expect(r.pushes).toHaveLength(pushesBefore)
+    expect(r.w.tasksFor("general").map((t) => [t.dispatchStatus, t.done, t.blocker])).toEqual([["cancelled", true, null], ["cancelled", true, null]])
+  })
+
   test("routing: a linked channel owns its note's tasks; #Body lists blocked everywhere", async () => {
     links = new Map([["projects/linked", "dash"]])
     rows = [task(8, { note_id: "projects/linked" }), blocked(9, "2026-10-03 10:00:00")]

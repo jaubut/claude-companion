@@ -254,6 +254,15 @@ describe("choose → the existing guarded paths", () => {
     expect(row(f)).toMatchObject({ dispatch_status: "queued", dispatch_blocker: null })
   })
 
+  test("a card still showing a row that was cancelled meanwhile: stale, row untouched", async () => {
+    const id = turTask("blocked", "Stuck")
+    await sync()
+    const item = await itemOf(`task:${id}`)
+    turso.query("UPDATE tasks SET dispatch_status = 'cancelled', done = 1, updated_at = '2030-01-01 00:00:00' WHERE id = ?").run(id)
+    expect((await choose(item.id, { optionId: opt(item, "requeue") })).status).toBe(409)
+    expect(row(id)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
+  })
+
   test("409 stale when the Turso row moved after the item was shown; the item comes back refreshed", async () => {
     const id = turTask("blocked", "Old question?")
     await sync()
