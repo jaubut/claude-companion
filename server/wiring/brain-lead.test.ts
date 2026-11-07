@@ -32,6 +32,12 @@ test("a lead has no file-editing tools: LEAD.md's \"you never edit code\" is enf
   expect(off).toEqual(expect.arrayContaining(["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]))
 })
 
+test("a lead registers as its name: --remote-control only titles the bridge, --name is what ListAgents and SendMessage see", () => {
+  const args = leadArgs(NAME)
+  expect(args[args.indexOf("--name") + 1]).toBe(NAME)
+  expect(args[args.indexOf("--remote-control") + 1]).toBe(NAME)
+})
+
 describe("a lead's own clone", () => {
   const home = () => mkdtempSync(join(tmpdir(), "lead-home-"))
   const excluded = () => ["docker *", "systemctl --user restart claude-companion.service"]
