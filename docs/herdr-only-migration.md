@@ -194,7 +194,7 @@ split alive after retry: true
 - Two workspaces with one label take both shells off the phone until one is renamed.
 - A closed name isn't reused for 50 closes, so reopening gives `sh-repo-2`. A human relabelling a shell onto a closed name gets `gone:true` from Close, and no close.
 - `abandon` closes by workspace id, as `spawn-session.ts` does, so it can't confirm that id is still the one it created.
-- Close within 3 s of a herdr restore can read the row's old terminal: it closes nothing and answers `gone:true`, and the row returns at the next poll.
+- Close within 3 s of a herdr restore can read the row's old terminal: it closes nothing and answers `gone:true`, the row stays on its new terminal, and a second Close works.
 - `herdr` not on the server's PATH (launchd): `spawnPty` throws at the WS open. `HERDR_BIN` covers it, same as spawn.
 - A pane keeps the last attach's size after detach, with no client to restore it (`pane layout` still says 220x60, `stty size` says the phone's). Cosmetic until something else sizes it.
 

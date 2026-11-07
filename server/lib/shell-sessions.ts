@@ -193,7 +193,9 @@ export async function closeShellSession(
   replaceKeepingLinks(after)
   // By terminal, not name: a pane split off keeps the workspace and its label.
   if (after.some((s) => (shell.herdrPane ? s.terminalId === shell.terminalId : s.name === name))) return { ok: false, error: "kill_failed" }
-  closedShells.push({ name, terminalId: shell.terminalId })
+  // Still listed: a restore gave it a new terminal under us. Nothing closed, so
+  // nothing to remember, and the next Close reaches it.
+  if (!after.some((s) => s.name === name)) closedShells.push({ name, terminalId: shell.terminalId })
   if (closedShells.length > 50) closedShells.shift()
   // A close failing on a name that is no longer listed: it exited first.
   return { ok: true, gone }

@@ -285,6 +285,18 @@ test("close shell: a closed name stays taken, and a retry never reaches a pane t
   store.replace([])
 })
 
+test("close shell: a Close that lost the race with a restore doesn't count, the next one closes", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/window", f.deps)
+  f.ws[0]!.term = "term_restored" // the store still holds the old terminal
+  expect(await closeShellSession("sh-window", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(listShellSessions()).toMatchObject([{ name: "sh-window", terminalId: "term_restored" }])
+  expect(await closeShellSession("sh-window", [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(f.calls.filter((c) => c[1] === "close")).toEqual([["pane", "close", "w1:p1"]])
+  store.replace([])
+})
+
 test("spawn shell: after pane id reuse a failed listing never hands out the cached row", async () => {
   let reads = 0
   const f = fakeShells({ listDown: () => reads++ >= 1 }) // the label read passes, every later list fails
