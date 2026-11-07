@@ -17,7 +17,7 @@
 // in the pane (the resume landed, or someone started claude there) also ends
 // the record.
 
-import { type Herdr, herdrPaneAtShell, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
+import { type Herdr, SHELL_PANE_MARK, herdrPaneAtShell, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
 import { SESSION_ID_RE } from "./recent-sessions"
 
 export const ENDED_KEY_PREFIX = "ended:"
@@ -91,11 +91,16 @@ export function resumable(s: EndedSource): boolean {
 
 interface PaneInfo { terminalId: string; workspaceId: string; tabId: string }
 
-// What herdr says about the pane, or null when the pane is gone.
+// What herdr says about the pane, or null when the pane is gone. A phone shell's
+// pane reads as gone too: it is never an ended row, so nothing records it, the
+// sweep drops it, and Delete's last read before `pane close` refuses it. This
+// holds before the shell list has seen it (first read after boot, a herdr blip,
+// a label two shells share).
 async function paneInfo(pane: string, h: Herdr): Promise<PaneInfo | null> {
   try {
     const r = await h.call(["pane", "get", pane], 2_000)
-    const p = (r.pane ?? {}) as { terminal_id?: unknown; workspace_id?: unknown; tab_id?: unknown }
+    const p = (r.pane ?? {}) as { terminal_id?: unknown; workspace_id?: unknown; tab_id?: unknown; label?: unknown }
+    if (p.label === SHELL_PANE_MARK) return null
     const str = (v: unknown) => (typeof v === "string" ? v : "")
     return { terminalId: str(p.terminal_id), workspaceId: str(p.workspace_id), tabId: str(p.tab_id) }
   } catch {
