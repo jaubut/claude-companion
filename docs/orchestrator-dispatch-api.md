@@ -36,7 +36,7 @@ and in `GET /api/orchestrator/task/<id>`.
   "owner": "zettlab | companion:<host>",
   "mode": "headless|live",
   "localTaskId": "live only: the 8-char local worker id",
-  "tmuxSocket": "live only",
+  "tmuxSocket": null,
   "stage": "queue|dispatch|builder|shepherd|merged|blocked|failed|cancelled|null",
   "shepherd": { "ci": "pending|passing|failing|none", "review": "pending|approved|changes|none", "parked": true, "parkedReason": "touches migrations" },
   "mergedAt": 1759496400000,
@@ -53,12 +53,13 @@ on local tasks and from older servers) — see [Pipeline stage](#pipeline-stage)
 - `prUrl` / `resultRef` need the P0 Turso columns; until then they are null
   (the detail route falls back to the result note whose banner names the task).
 - Takeover tasks (`owner` = `companion:takeover:<name>`; slice B removes them) are listed once, as their Turso row, with
-  `mode:"live"` plus the session's `tmuxSession`, `tmuxSocket`, `sessionKey` and `localTaskId`
+  `mode:"live"` plus the session's `sessionKey` and `localTaskId`
   (null until the spawn is recorded). `orchestrator_worker_output` frames and the worker's reply
   turn are tagged with `localTaskId`. `logTail` falls back to the worker's final pane snapshot.
   The local worker row is never listed on its own, and on the wire it reads `status:"filed"`
   (the proposal card leaves).
-- Local tasks keep every field they had (`tmuxSocket` included); `source` is
+- Local tasks keep every field they had, except `tmuxSession` and `tmuxSocket`, which are always
+  null since herdr Stage 3b (shipped apps decode them; removed after one iOS release); `source` is
   `proposal` for proposed/rejected/filed, else `local`; `mode` is `live` (tmux worker).
 - Proposals (P2) also carry `noteId` / `agent` (the brain's validated pick, else null),
   `title`, and `dispatchTaskId` (the Turso id once approve started; set on `filed`).

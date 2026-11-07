@@ -62,7 +62,7 @@ export interface TaskDto extends Partial<import("./dispatch-stage").StageFields>
   done: boolean
   owner: string | null
   mode: TaskMode
-  /** Local tasks only: the tmux server holding tmuxSession. */
+  /** Always null (Stage 3b): shipped apps decode both; removed after one iOS release. */
   tmuxSocket?: string | null
   /** Local proposals only: the Turso id it was filed as (status "filed"). */
   dispatchTaskId?: string | null
@@ -159,11 +159,9 @@ function prSummary(t: DispatchTask): string | null {
   return `PR ${t.prUrl}${verdict}`
 }
 
-/** The local tmux worker behind a live Turso row (P4): what iOS needs to open its side chat. */
+/** The local worker behind a live Turso row (P4): what iOS needs to open its side chat. */
 export interface LiveIdentity {
   localTaskId: string
-  tmuxSession: string | null
-  tmuxSocket: string | null
   sessionKey: string | null
   logTail: string | null
 }
@@ -173,7 +171,7 @@ export function dispatchToDto(t: DispatchTask, threadId: string, live: LiveIdent
   const dto = dispatchDto(t, threadId, ds)
   if (!live) return dto
   return {
-    ...dto, tmuxSession: live.tmuxSession, tmuxSocket: live.tmuxSocket, sessionKey: live.sessionKey,
+    ...dto, tmuxSocket: null, sessionKey: live.sessionKey,
     localTaskId: live.localTaskId, logTail: dto.logTail ?? live.logTail,
   }
 }
@@ -190,13 +188,13 @@ function dispatchDto(t: DispatchTask, threadId: string, ds: DispatchStatus | nul
   }
 }
 
-/** A local sqlite task (proposal or legacy tmux worker) in the shared DTO. */
+/** A local sqlite task (proposal or legacy worker) in the shared DTO. */
 export function toTaskDto(t: Task): TaskDto {
   const proposal = t.status === "proposed" || t.status === "rejected" || t.status === "filed"
   const status = t.status
   // Spread first: every field the local frame carried before stays (additive).
   return {
-    ...t, status,
+    ...t, status, tmuxSession: null, tmuxSocket: null,
     source: proposal || status === "filed" ? "proposal" : "local", dispatchStatus: null, agent: t.agent ?? null, noteId: t.noteId ?? null,
     projectTitle: null, prUrl: null, resultRef: null, blocker: null, dispatchTaskId: t.dispatchTaskId ?? null,
     done: t.status === "done" || t.status === "cancelled", owner: null, mode: "live",

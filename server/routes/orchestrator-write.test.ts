@@ -203,7 +203,7 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
         expect(res).toMatchObject({ status: 200, json: { ok: true, status: "pending_approval" } })
         expect((turso.query("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n).toBe(before + 1)
         expect(tursoTask(res.json.dispatchTaskId)).toMatchObject({ dispatch_status: "pending", dispatch_owner: null, dispatch_started_at: null })
-        expect(chat.getTask(p.taskId)).toMatchObject({ status: "filed", tmuxSession: null })
+        expect(chat.getTask(p.taskId)).toMatchObject({ status: "filed" })
       }
       expect(turso.query("SELECT COUNT(*) AS n FROM tasks WHERE dispatch_status IN ('queued', 'running')").get()).toEqual({ n: 0 })
       expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action IN ('dispatch:queued', 'dispatch:running')").get()).toEqual({ n: 0 })
