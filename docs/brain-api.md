@@ -149,15 +149,15 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 ### Routine agent PRs (`/hooks/brain/pr-merge`)
 
 `wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word, and refuses on any doubt. It checks, in order:
-1. The PR is open, not a draft, and its head is `dispatch/*`.
-2. **parked** refuses when any of these holds:
-   - A label says do-not-merge, dnm or wip.
-   - The newest shepherd `pr:hold`, or a `pr:needs-human` whose reason means the work is broken (conflict unresolved, fix budget spent, no CI…), is not lifted by a `pr:unpark`. Park rows are matched on the PR url and on the tasks linked by `dispatch_pr_url`.
+1. The PR is open.
+2. **The merge gate** (`lib/merge-gate.ts`, the same call the tap makes) reads the PR live and asks claude-config's `tools/pr-gate.ts`, with `approved: false`. It takes no branch, so no head is exempt: a `sync/*` PR gets a named stop before `not_agent_branch`. A stop outranks `draft`. If the gate can't load or read, or fails its self-check, the merge is refused with 409 `gate_unavailable`; there is no fallback.
+3. The PR is not a draft, and its head is `dispatch/*`.
+4. **parked** refuses when the newest shepherd `pr:hold`, or a `pr:needs-human` whose reason means the work is broken (conflict unresolved, fix budget spent, no CI…), is not lifted by a `pr:unpark`. Park rows are matched on the PR url and on the tasks linked by `dispatch_pr_url`.
 
-   The MFA / human-review gate was retired on 2026-10-31. Money, billing, MFA, auth, schema or config paths, title, body or labels no longer refuse. A web, client, internal or unset task origin no longer refuses. The shepherd's human-review park no longer refuses either (`client-origin PR`, `tainted (…)`, `touches … — needs your review`).
-3. **not_green** refuses unless `mergeable` is MERGEABLE, `mergeStateStatus` is CLEAN, and every check passed, with at least one SUCCESS.
-4. **not_approved** refuses unless both a Claude (`🤖 **Auto-review**`) and a Codex (`🧠 **Codex review**`) comment say `VERDICT: APPROVE`, stamped `<!-- reviewed-sha: <head> -->` and posted by the PR's author. It also refuses on any CHANGES on that head, or a GitHub CHANGES_REQUESTED. The newest `<!-- review-tier: x -->` comment by the PR's author lowers the bar: `normal` needs only the Claude APPROVE; `low` needs no review when every file is `docs/*.md`, `README.md`, `*.test.ts` or `architecture.{json,md}`, checked here because anyone can post the marker. `high`, no marker, or `low` on other files needs both.
-5. **merge_cap** refuses after 10 brain merges in 24 h.
+   The MFA / human-review gate was retired on 2026-10-31. Money, billing, MFA or config paths, title, body or labels no longer refuse here; the hard stops are the merge gate's (step 2). A web, client, internal or unset task origin no longer refuses on its own. The shepherd's human-review park no longer refuses either (`client-origin PR`, `tainted (…)`, `touches … — needs your review`). A park whose reason says `human merge` is a hard stop and is never retired, whatever prefix it carries.
+5. **not_green** refuses unless `mergeable` is MERGEABLE, `mergeStateStatus` is CLEAN, and every check passed, with at least one SUCCESS.
+6. **not_approved** refuses unless both a Claude (`🤖 **Auto-review**`) and a Codex (`🧠 **Codex review**`) comment say `VERDICT: APPROVE`, stamped `<!-- reviewed-sha: <head> -->` and posted by the PR's author. It also refuses on any CHANGES on that head, or a GitHub CHANGES_REQUESTED. The newest `<!-- review-tier: x -->` comment by the PR's author lowers the bar: `normal` needs only the Claude APPROVE; `low` needs no review when every file is `docs/*.md`, `README.md`, `*.test.ts` or `architecture.{json,md}`, checked here because anyone can post the marker. `high`, no marker, or `low` on other files needs both.
+7. **merge_cap** refuses after 10 brain merges in 24 h.
 
 The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <checked head>`. The state is read back as MERGED, then an `agent_activity` row `brain:pr-merge` is written (meta: repo, pr, url, branch, head, title, reason, tasks; the machine digest lists these) and an event turn goes to the brain thread.
 
@@ -165,8 +165,11 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 |---|---|
 | 200 `{ok, merged, url, head}` | merged |
 | 400 | bad repo / pr / reason |
+| 403 `human-merge-path` / `tainted-sensitive` / `prod-schema` / `hold-label` (+`action`, `reason`, `head`) | the merge gate's hard stops; a human merges on GitHub, or removes the label |
 | 403 `not_agent_branch` (+`branch`) · 403 `parked` (+`reasons`) | broken or held |
 | 404 `pr_not_found` | gh cannot read it |
+| 409 `gate_unavailable` (+`detail`) | the gate can't answer here (missing, broken, gh or Turso failing): a host fault, not the PR's |
+| 409 `head_moved` | the head changed during the check; ask again |
 | 409 `not_open` / `draft` · 409 `not_green` / `not_approved` (+`reasons`) | not now |
 | 429 `merge_cap` | 10 brain merges in 24 h |
 | 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |

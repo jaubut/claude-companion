@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
+import { passGate } from "../lib/merge-gate.test-util"
 import type { GhFn } from "../lib/triage-pr"
 import type { ResolverConfig } from "../lib/resolver"
 
@@ -109,7 +110,7 @@ function makeHarness() {
     liveIdentity: () => null, log: () => {}, mirror, generalChannel: "general",
   })
   const engine = triageWiring.createLiveTriage({
-    dispatch: w, gh, model: async () => null, severity: async () => null,
+    dispatch: w, gh, gate: passGate("feed21"), model: async () => null, severity: async () => null,
     investigations: () => invLib.createInvestigationStore(new Database(":memory:")),
     body: { get: async () => ({ components: [] }) } as never, broadcast: () => {},
     resolverLive: {

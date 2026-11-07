@@ -221,6 +221,12 @@ describe("choose", () => {
     execOut = { kind: "done" }
     expect((await e.choose({ id: "task:t1", optionId: "a", idemKey: "k2" })).body.result).toBe("done")
     expect(executed).toHaveLength(3)
+    // A merge-gate stop is the same: never stored, so a fixed gate or head gets a real run under the same key.
+    execOut = { kind: "error", status: 403, error: "human-merge-path", extra: { action: "park", reason: "touches hooks/x.py — human merge only", head: "abc" } }
+    expect(await e.choose({ id: "task:t1", optionId: "a", idemKey: "k3" })).toMatchObject({ status: 403, body: { ok: false, error: "human-merge-path", reason: "touches hooks/x.py — human merge only" } })
+    execOut = { kind: "done" }
+    expect((await e.choose({ id: "task:t1", optionId: "a", idemKey: "k3" })).body.result).toBe("done")
+    expect(executed).toHaveLength(5)
   })
 
   test("snooze is local: hidden (one frame), never executed, back after it expires", async () => {
@@ -277,6 +283,12 @@ describe("merge intent: queued outcome, pending rows, one log line per choose", 
     const merge = item.options.find((o) => o.action.kind === "merge")!
     expect((await e.choose({ id: item.id, optionId: merge.id })).status).toBe(502)
     expect(logs).toContain(`[triage] choose ${item.id} option=${merge.id} → merge · 502 error=merge_unverified`)
+    execOut = { kind: "error", status: 403, error: "human-merge-path", extra: { reason: "touches hooks/x.py — human merge only" } }
+    await e.choose({ id: item.id, optionId: merge.id })
+    expect(logs.at(-1)).toBe(`[triage] choose ${item.id} option=${merge.id} → merge · 403 error=human-merge-path reason=touches hooks/x.py — human merge only`)
+    execOut = { kind: "error", status: 409, error: "gate_unavailable", extra: { detail: "pr-gate.ts missing on this host" } }
+    await e.choose({ id: item.id, optionId: merge.id })
+    expect(logs.at(-1)).toBe(`[triage] choose ${item.id} option=${merge.id} → merge · 409 error=gate_unavailable reason=pr-gate.ts missing on this host`)
     await e.choose({ id: "pr:nope", optionId: "a" })
     expect(logs.at(-1)).toBe("[triage] choose pr:nope option=a → ? · 404 error=no_such_item")
   })

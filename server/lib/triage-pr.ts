@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs"
+import type { MergeGateFn } from "./merge-gate"
 import type { ExecOutcome } from "./triage-engine"
 import type { ExecFn } from "./turso"
 
@@ -10,6 +11,9 @@ import type { ExecFn } from "./turso"
 // Merge intent (2026-10-05): a Merge tap on a PR GitHub cannot merge yet
 // (conflict / behind / checks pending or failing) records Jeremie's approval
 // (`pr:approved-merge`) for the PR shepherd instead of failing.
+// Merge gate (2026-11-07, lib/merge-gate.ts): every merge asks the gate first,
+// before any approval can be written, and lands only on the head it checked.
+// A stop writes nothing: a row would let the shepherd lift the stop.
 
 export interface GhResult { code: number; stdout: string; stderr: string }
 /** Runs `gh <args>`; throws when gh cannot be started at all. */
@@ -24,6 +28,7 @@ export class GhUnreachable extends Error {
 
 export interface PrTarget { taskId: string; prUrl: string; number: number }
 export interface PrActionDeps { gh: GhFn; exec: ExecFn; host: string }
+export interface MergeDeps extends PrActionDeps { gate: MergeGateFn }
 
 export type PrState = "OPEN" | "MERGED" | "CLOSED" | "unknown"
 
@@ -180,19 +185,21 @@ async function readiness(gh: GhFn, url: string): Promise<PrReadiness | null> {
 }
 
 /** Jeremie's approval of a PR GitHub cannot merge now: the shepherd lands it once the reason clears. */
-async function approveOrMerge(deps: PrActionDeps, t: PrTarget): Promise<ExecOutcome> {
+async function approveOrMerge(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome> {
   const closed = await mustBeOpen(deps.gh, t.prUrl)
   if (closed) return closed
+  const g = await deps.gate(deps, { url: t.prUrl })
+  if (!g.ok) return { kind: "error", status: g.status, error: g.error, extra: g.extra }
   const ready = await readiness(deps.gh, t.prUrl)
   const hold = ready ? holdReason(ready) : null
-  if (ready && hold) return recordApproval(deps, t, ready, hold)
-  const run = await deps.gh(["pr", "merge", t.prUrl, "--squash"])
+  if (ready && hold) return ready.headSha === g.head ? recordApproval(deps, t, ready, hold) : { kind: "error", status: 409, error: "head_moved" }
+  const run = await deps.gh(["pr", "merge", t.prUrl, "--squash", "--match-head-commit", g.head])
   const after = await prState(deps.gh, t.prUrl)
   if (after === "MERGED") return { kind: "done", detail: { state: after } }
   // GitHub refused: if it now says why (conflict, CI…), the tap still counts as the approval.
   const late = after === "OPEN" ? await readiness(deps.gh, t.prUrl) : null
   const lateHold = late ? holdReason(late) : null
-  if (late && lateHold) return recordApproval(deps, t, late, lateHold)
+  if (late && lateHold && late.headSha === g.head) return recordApproval(deps, t, late, lateHold)
   const detail = (run.stderr || run.stdout).trim().slice(0, 200)
   return { kind: "error", status: 502, error: "merge_unverified", extra: { state: after, detail } }
 }
@@ -210,11 +217,12 @@ async function closeIt(deps: PrActionDeps, t: PrTarget): Promise<ExecOutcome> {
 }
 
 /**
- * Merge tap: mergeable + checks green → gh pr merge --squash, verified MERGED, then the task is done
- * (guarded) and outcome:merged recorded. Conflicting / behind / checks pending or failing → the
+ * Merge tap: the merge gate first (a stop or a gate failure is the outcome, nothing written), then
+ * mergeable + checks green → gh pr merge --squash on the gated head, verified MERGED, then the task is
+ * done (guarded) and outcome:merged recorded. Conflicting / behind / checks pending or failing → the
  * approval is recorded (`pr:approved-merge`) and the outcome is `queued`: the PR shepherd merges it.
  */
-export async function mergePr(deps: PrActionDeps, t: PrTarget): Promise<ExecOutcome> {
+export async function mergePr(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome> {
   const out = await approveOrMerge(deps, t)
   if (out.kind !== "done") return out
   await deps.exec(

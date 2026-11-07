@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { passGate } from "./merge-gate.test-util"
 import { type GhFn, GhUnreachable, approvalRow, closePr, holdReason, mergePr, rollupState } from "./triage-pr"
 import type { ExecFn, Row, SqlArg } from "./turso"
 
@@ -37,7 +38,7 @@ const gh: GhFn = async (args) => {
   if (args[1] === "close") { state = "CLOSED"; return { code: 0, stdout: "", stderr: "" } }
   return { code: 1, stdout: "", stderr: "unknown" }
 }
-const deps = { gh, exec, host: "mac" }
+const deps = { gh, exec, host: "mac", gate: passGate("abc123") }
 const target = { taskId: "t1", prUrl: URL, number: 4 }
 const task = () => turso.query("SELECT * FROM tasks WHERE id = 't1'").get() as Record<string, unknown>
 const ledger = () => turso.query("SELECT agent_slug, action, target_id, summary FROM agent_activity").all()
@@ -54,10 +55,23 @@ beforeEach(() => {
 })
 
 describe("merge", () => {
+  test("a gate refusal returns before readiness: one state read, no merge, no row", async () => {
+    const out = await mergePr({ ...deps, gate: async () => ({ ok: false, status: 403, error: "human-merge-path", extra: { action: "park", reason: "touches hooks/x.py — human merge only", head: "abc123" } }) }, target)
+    expect(out).toEqual({ kind: "error", status: 403, error: "human-merge-path", extra: { action: "park", reason: "touches hooks/x.py — human merge only", head: "abc123" } })
+    expect(calls).toEqual([["pr", "view", URL, "--json", "state"]])
+    expect(ledger()).toEqual([])
+  })
+
+  test("a closed PR is stale before the gate runs", async () => {
+    state = "MERGED"
+    const out = await mergePr({ ...deps, gate: async () => { throw new Error("must not run") } }, target)
+    expect(out.kind).toBe("stale")
+  })
+
   test("squash-merges by full URL, verifies MERGED, then marks the task done and ledgers outcome:merged", async () => {
     const out = await mergePr(deps, target)
     expect(out).toEqual({ kind: "done", detail: { state: "MERGED" } })
-    expect(calls).toEqual([["pr", "view", URL, "--json", "state"], ["pr", "view", URL, "--json", READY], ["pr", "merge", URL, "--squash"], ["pr", "view", URL, "--json", "state"]])
+    expect(calls).toEqual([["pr", "view", URL, "--json", "state"], ["pr", "view", URL, "--json", READY], ["pr", "merge", URL, "--squash", "--match-head-commit", "abc123"], ["pr", "view", URL, "--json", "state"]])
     expect(task().done).toBe(1)
     expect(ledger()).toEqual([{ agent_slug: "builder", action: "outcome:merged", target_id: "t1", summary: "PR #4 merged" }])
   })
@@ -114,6 +128,13 @@ describe("merge intent", () => {
     const meta = JSON.parse(String(rows[0]?.meta))
     expect(meta).toMatchObject({ repo: "tls-review", pr: 4, url: URL, approvedHeadSha: "abc123", by: "jeremie", via: "triage", reason: "conflict" })
     expect(Number.isFinite(Date.parse(meta.approvedAt))).toBe(true)
+  })
+
+  test("readiness at a head the gate didn't check: 409 head_moved, no row, no merge", async () => {
+    readiness = { ...green, headRefOid: "def456", mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" }
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(approvals()).toEqual([])
+    expect(calls.some((c) => c[1] === "merge")).toBe(false)
   })
 
   test("behind / checks pending / checks failing → queued with that reason", async () => {

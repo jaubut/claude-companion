@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { MergeGateFn } from "../lib/merge-gate"
 import type { GhFn, GhResult } from "../lib/triage-pr"
 import type { ExecFn, Row } from "../lib/turso"
 
@@ -59,7 +60,9 @@ function world(pr: Record<string, unknown>, seed = TASK, opts: { mergeSticks?: b
     }
     return { code: 1, stdout: "", stderr: "unexpected" }
   }
-  return { db, calls, events, deps: { gh, exec, event: (t: string) => events.push(t) } }
+  // The gate has its own matrix (merge-gate-callers.test.ts): here it passes at the head GitHub reports.
+  const gate: MergeGateFn = async () => ({ ok: true, head: String(state.headRefOid) })
+  return { db, calls, events, deps: { gh, exec, event: (t: string) => events.push(t), gate } }
 }
 
 const park = (action: string, reason: string) =>
@@ -130,8 +133,10 @@ describe("bin/pr-merge gate: refusals", () => {
     ["a spent review fix budget", {}, park("pr:needs-human", "review verdict CHANGES after 2 fix runs — see the reviewer summary")],
     ["a park with no reason", {}, `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}"}');`],
     ["a cascade hold", {}, `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:hold', 'pr', '${URL}', '{"url":"${URL}"}');`],
-    ["a do-not-merge label", { labels: [{ name: "do-not-merge" }] }],
-    ["a wip label", { labels: [{ name: "WIP" }] }],
+    ["a tainted human-merge-only park", {}, park("pr:needs-human", "tainted (web) PR touches server/lib/auth.ts — human merge only")],
+    ["a C-017 park with clientPark's prefix", {}, park("pr:needs-human", "client-origin PR — human review required: tainted (client) PR touches server/lib/auth.ts — human merge only")],
+    ["a truncated-list park (no `only`)", {}, park("pr:needs-human", "tainted (web) PR: file list may be truncated — human merge")],
+    ["a human-merge path park", {}, park("pr:needs-human", "touches hooks/guard.py — human merge only")],
   ]
   for (const [what, over, seed] of held) {
     test(`403 parked: ${what}`, async () => {
@@ -214,18 +219,17 @@ describe("bin/pr-merge gate: the merge", () => {
     expect((await mergeAgentPr(input, w.deps)).status).toBe(200)
   })
 
-  // The MFA / human-review gate is retired (2026-10-31): money, schema, origin and the shepherd's human-review park
-  // no longer refuse a green, twice-approved dispatch PR.
+  // The MFA / human-review gate is retired (2026-10-31): money, origin and the shepherd's human-review park no longer
+  // refuse a green, twice-approved dispatch PR. Hard stops are the merge gate's: its stub here passes.
   const routine: Array<[string, Record<string, unknown>, string?]> = [
     ["an invoice / billing path", { title: "invoices: Stripe checkout retry", body: "Changes the invoice footer and payment webhook.", files: [{ path: "server/lib/billing/invoice.ts" }], changedFiles: 1 }],
-    ["a migration / schema.sql", { files: [{ path: "db/migrations/0042_add.sql" }, { path: "schema.sql" }], changedFiles: 2 }],
     ["an MFA path and a needs-mfa label", { files: [{ path: "client/src/mfa/Totp.tsx" }], changedFiles: 1, labels: [{ name: "needs-mfa" }, { name: "billing" }] }],
     ["a web-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'web', '${URL}');`],
     ["a client-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'client', '${URL}');`],
     ["an unset-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', NULL, '${URL}');`],
     ["no task linked by url", {}, ""],
     ["a client-origin park", {}, park("pr:needs-human", "client-origin PR — human review required: touches server/lib/pay.ts")],
-    ["a tainted human-merge-only park", {}, park("pr:needs-human", "tainted (web) PR touches server/lib/auth.ts — human merge only")],
+    ["a tainted review park", {}, park("pr:needs-human", "tainted (web) PR: external link added — needs your review")],
     ["a sensitive-path park", {}, park("pr:needs-human", "touches server/lib/invoice.ts — needs your review · Opus: escalate")],
   ]
   for (const [what, over, seed] of routine) {

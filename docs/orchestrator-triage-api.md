@@ -227,7 +227,12 @@ text, options = answer_custom / requeue / cancel).
   merge's `{state:"MERGED"}`). A replay also sets the header `Idempotent-Replayed: true`.
   Errors are `{ ok: false, error, id, ... }`:
   `400` `optionId required` · `unknown_option` · `text_too_long` (> 4000) · `idempotency-key-too-long`;
+  `403` a merge-gate stop, `human-merge-path` · `tainted-sensitive` · `prod-schema` · `hold-label` (with `action`,
+  `reason`, `head`; the card stays);
   `404` `no_such_item`; `409` `stale` with `next: TriageItem | null` (the refreshed item, null when it is gone),
+  `gate_unavailable` (with `detail`: the merge gate can't answer on this host) · `head_moved` (a push during the
+  merge check; the card stays, a new tap checks the new head), both without `next` and never 5xx (iOS queues a 5xx
+  with the card hidden, which would turn a refusal into a merge that fires later),
   or `investigation_<status>` for a Body requeue the investigator refused (with `reason`);
   `422` `text_required`; `502` `merge_unverified` / `close_unverified` (gh ran but GitHub
   does not read MERGED / CLOSED; nothing recorded) or an approve error passed through
@@ -260,8 +265,10 @@ text, options = answer_custom / requeue / cancel).
   `body`: the component's latest investigation `failed`, ≥ 2 consecutive failures, no
   proposal, nothing open, and the component not healthy again.
 - **merge / close_pr.** `gh pr view <url> --json state` must read `OPEN` first (else 409
-  stale); merge then reads GitHub's readiness (see "Merge intent": not mergeable now → 202
-  `queued`, no `gh pr merge`); `gh pr merge <url> --squash` / `gh pr close <url>`; then the state must read
+  stale); merge then asks the merge gate (`lib/merge-gate.ts`: a stop or a gate failure is the answer, and no
+  approval row is written, so the shepherd can't lift it), then reads GitHub's readiness (see "Merge intent": not
+  mergeable now → 202 `queued`, no `gh pr merge`); `gh pr merge <url> --squash --match-head-commit <gated head>` /
+  `gh pr close <url>`; then the state must read
   `MERGED` / `CLOSED`. Merge then sets the task `done=1` (guarded) and ledgers
   `outcome:merged "PR #n merged"`; close ledgers `outcome:rejected "PR #n closed unmerged"`
   (dispatch-reconcile's wording).
@@ -316,7 +323,7 @@ stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land T
   problem starts "GitHub reports a merge conflict with the base branch now.", and the merge option reads
   **"Approve — merge after the conflict fix"** (it may exceed the 32-char label cap).
 - **Logs.** Every choose writes one line, success or not:
-  `[triage] choose <item id> option=<id> → <action kind> · <HTTP status> result=<done|queued|replay>|error=<code> [reason=<hold>]`.
+  `[triage] choose <item id> option=<id> → <action kind> · <HTTP status> result=<done|queued|replay>|error=<code> [reason=<hold, stop reason or gate detail>]`.
 - **iOS.** A 202 with `ok: true` is already a success (`OrchestratorActionPolicy.classify`: any 2xx without
   `ok: false` → `.done`): the card is removed and the next frame shows the row. Nice to have (separate PR): toast
   from `result == "queued"` + `detail.reason` ("Approved · merges once the conflict clears") instead of the

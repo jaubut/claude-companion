@@ -1,5 +1,6 @@
 import { BRAIN_AGENT, BRAIN_THREAD } from "../lib/brain"
 import { companionLog } from "../lib/log"
+import { type MergeGateFn, mergeGate } from "../lib/merge-gate"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { redactSecrets } from "../lib/secret-redact"
 import { type GhFn, prState, realGh } from "../lib/triage-pr"
@@ -10,11 +11,15 @@ import { orchEmit } from "./orchestrator"
 // bin/pr-merge (POST /hooks/brain/pr-merge): the brain merges a ROUTINE agent
 // PR. The brain's word counts for nothing: every check is made here, from
 // GitHub and Turso, and any doubt refuses. In order:
-//   open, not draft · head `dispatch/*` (403 not_agent_branch)
-//   parked (403): no do-not-merge/wip label; no live shepherd park or hold,
-//     except the client-origin / tainted / sensitive-path park (the MFA
-//     human-review policy, retired 2026-10-31: money, origin and paths no
-//     longer gate a green, twice-approved agent PR)
+//   open
+//   merge gate (403 <stop>, 409 gate_unavailable / head_moved, lib/merge-gate.ts):
+//     before draft and the branch check, so no head is exempt, sync/* included
+//   not draft · head `dispatch/*` (403 not_agent_branch)
+//   parked (403): no live shepherd park or hold, except the client-origin /
+//     tainted / sensitive-path park (the MFA human-review policy, retired
+//     2026-10-31: money, origin and paths alone no longer gate a green,
+//     twice-approved agent PR). A park that says `human merge` is a hard stop,
+//     never retired.
 //   not_green (409): MERGEABLE + mergeStateStatus CLEAN + every check passed (≥ 1)
 //   not_approved (409): Claude AND Codex auto-review comments with VERDICT:
 //     APPROVE stamped with the current head sha, from the PR's author (the
@@ -28,10 +33,11 @@ export const PR_MERGE_ACTION = "brain:pr-merge"
 const REASON_MAX = 300
 export const MERGE_CAP = 10
 
-const HOLD_LABEL = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
 // The shepherd's human-review parks (pr-shepherd clientPark / taint / sensitive): retired, they no longer refuse.
 // Every other park (conflict unresolved, fix budget spent, infra hold, no CI…) means the work is broken: refuse.
+// `human merge` marks pr-gate.ts's hard stops, C-017 among them, whatever prefix clientPark puts on them.
 const RETIRED_PARK = /^(client(-origin)? PR|tainted \(|touches .+ — needs your review)/
+export const retiredPark = (why: string): boolean => RETIRED_PARK.test(why) && !/human merge/i.test(why)
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
 /** Files the marker's low tier may cover here: a comment is writable by any agent, so the server checks. Narrower than the shepherd's rule: agent instructions (.md) need a review. */
@@ -40,7 +46,7 @@ const LOW_FILE_LIMIT = 100
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
 interface PrMergeInput { repo: string; pr: number; reason: string }
-interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void }
+interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void; gate: MergeGateFn }
 type Out = { status: number; body: Record<string, unknown> }
 
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}): Out => ({ status, body: { ok: false, error, ...extra } })
@@ -114,8 +120,6 @@ function notApproved(v: PrView): string[] {
 /** Why this PR is parked as broken or held (empty = mergeable). Turso errors propagate. */
 async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[] }> {
   const reasons: string[] = []
-  const labels = v.labels.map((l) => String(l.name ?? "")).filter((l) => HOLD_LABEL.test(l))
-  if (labels.length) reasons.push(`label ${labels.join(", ")}`)
   // Tasks linked by the PR url (a branch-name match is guessable): park rows and the digest row key on them.
   const { rows } = await exec("SELECT id FROM tasks WHERE dispatch_pr_url = ?", [v.url])
   const taskIds = rows.map((r) => String(r.id))
@@ -129,7 +133,7 @@ async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; tas
     try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → counts */ }
     if (meta.url !== undefined && meta.url !== v.url) continue
     const why = typeof meta.reason === "string" ? meta.reason : ""
-    if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !RETIRED_PARK.test(why))) {
+    if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !retiredPark(why))) {
       reasons.push(`${row.action === "pr:hold" ? "held" : "parked"} by the shepherd${why ? `: ${why.slice(0, 120)}` : ""}`)
     }
     break
@@ -141,6 +145,9 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   const v = await view(deps.gh, p)
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
+  const g = await deps.gate(deps, { url: v.url })
+  if (!g.ok) return fail(g.status, g.error, g.extra)
+  if (g.head !== v.headRefOid) return fail(409, "head_moved")
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
   let park: Awaited<ReturnType<typeof parked>>
@@ -187,4 +194,5 @@ const realDeps: PrMergeDeps = {
   gh: realGh,
   exec: (sql, args) => dispatchWiring.exec(sql, args),
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
+  gate: mergeGate,
 }

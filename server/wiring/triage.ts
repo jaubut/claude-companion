@@ -5,6 +5,7 @@ import { type InvestigationStore, isProblemState } from "../lib/body-investigate
 import type { ConsiderInput, RequestOutcome } from "../lib/body-investigate-engine"
 import { systemOne } from "../lib/jev"
 import { companionLog } from "../lib/log"
+import { type MergeGateFn, mergeGate } from "../lib/merge-gate"
 import { runBrainCall } from "../lib/orchestrator-brain"
 import { appendTurn, getTask, listProposals } from "../lib/orchestrator-chat"
 import { getChannel } from "../lib/orchestrator-channels"
@@ -46,6 +47,8 @@ export interface LiveTriageOpts {
   db?: Database
   store?: TriageStore
   gh?: GhFn
+  /** The merge gate; default = the real one (no env switch: a host without it refuses every merge). */
+  gate?: MergeGateFn
   /** Raw model text for a prompt; default = the lean `claude -p` (never under `bun test`). */
   model?: (prompt: string) => Promise<string | null>
   /** Severity pre-classifier; default = Jev, off with COMPANION_TRIAGE_JEV=0. */
@@ -125,6 +128,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
   const dispatch = opts.dispatch ?? dispatchWiring
   const store = opts.store ?? createTriageStore(opts.db ?? db)
   const gh = opts.gh ?? realGh
+  const gate = opts.gate ?? mergeGate
   const model = opts.model ?? defaultModel
   const investigations = opts.investigations ?? investigationStore
   const consider = opts.consider ?? ((input: ConsiderInput) => bodyInvestigator().consider(input))
@@ -300,7 +304,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     if (src.ref.source !== "pr") return { kind: "error", status: 400, error: "wrong_source" }
     const target = { taskId: src.ref.taskId, prUrl: src.ref.prUrl, number: src.ref.number }
     const deps = { gh, exec: dispatch.exec, host: HOST_INFO.name }
-    const out = kind === "merge" ? await mergePr(deps, target) : await closePr(deps, target)
+    const out = kind === "merge" ? await mergePr({ ...deps, gate }, target) : await closePr(deps, target)
     if (out.kind === "queued") {
       prCache = null
       readyCache.delete(target.prUrl)

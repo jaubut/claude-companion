@@ -1,11 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
 import type { SourceItem } from "../lib/triage"
-import type { GhFn } from "../lib/triage-pr"
+import { type MergeGateFn, mergeGate } from "../lib/merge-gate"
+import { passGate, writeStubTools } from "../lib/merge-gate.test-util"
+import { type GhFn, GhUnreachable } from "../lib/triage-pr"
 import type { ConsiderInput } from "../lib/body-investigate-engine"
 
 // Triage, route level: the real wiring (guarded Turso writes, the proposal
@@ -107,6 +109,9 @@ const mytasks = {
   },
 }
 
+/** What a merge tap meets; the matrix on the real loader is wiring/merge-gate-callers.test.ts. undefined = the production default. */
+let gate: MergeGateFn | undefined = passGate("feed164")
+
 function makeHarness() {
   const w = poller.createDispatchWiring({
     query, exec, broadcast: () => {},
@@ -117,7 +122,7 @@ function makeHarness() {
     liveIdentity: () => null, log: () => {}, mirror, generalChannel: "general",
   })
   const engine = triageWiring.createLiveTriage({
-    dispatch: w, gh,
+    dispatch: w, gh, gate,
     model: async (prompt) => {
       const hit = [...modelFor].find((id) => prompt.includes(`Task ${id.slice(-4)}`))
       if (!hit) return null
@@ -314,13 +319,59 @@ describe("choose → the existing guarded paths", () => {
     const mi = await itemOf("pr:jaubut/x#3")
     expect(mi).toMatchObject({ source: "pr", refId: "jaubut/x#3", problem: "touches auth" })
     expect((await choose(mi.id, { optionId: opt(mi, "merge") })).status).toBe(200)
-    expect(ghCalls).toContainEqual(["pr", "merge", "https://github.com/jaubut/x/pull/3", "--squash"])
+    expect(ghCalls).toContainEqual(["pr", "merge", "https://github.com/jaubut/x/pull/3", "--squash", "--match-head-commit", "feed164"])
     expect(row(m).done).toBe(1)
     ghState = "OPEN"
     const ci = await itemOf("pr:jaubut/x#4")
     expect((await choose(ci.id, { optionId: opt(ci, "close_pr") })).status).toBe(200)
     expect(turso.query("SELECT action FROM agent_activity WHERE target_id = ? AND action LIKE 'outcome:%'").all(c)).toEqual([{ action: "outcome:rejected" }])
     expect(await itemOf("pr:jaubut/x#4")).toBeUndefined()
+  })
+
+  describe("a merge the gate refuses", () => {
+    const parked = async (n: number) => {
+      const url = `https://github.com/jaubut/x/pull/${n}`
+      const id = turTask("completed", null, { pr: url })
+      turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('shepherd', 'pr:needs-human', 'task', ?, ?)")
+        .run(id, JSON.stringify({ reason: "touches hooks/x.py — human merge only", repo: "x", pr: n, url }))
+      await sync()
+      return await itemOf(`pr:jaubut/x#${n}`)
+    }
+    afterEach(() => { gate = passGate("feed164"); harness = makeHarness() })
+
+    test("403 with the stop's name and reason; the card stays and the same key re-gates", async () => {
+      const stop = { action: "park", reason: "touches hooks/x.py — human merge only", head: "abc" }
+      gate = async () => ({ ok: false, status: 403, error: "human-merge-path", extra: stop })
+      harness = makeHarness()
+      const item = await parked(31)
+      const res = await choose(item.id, { optionId: opt(item, "merge") }, "k-31")
+      expect(res.status).toBe(403)
+      expect(res.json).toEqual({ ok: false, error: "human-merge-path", id: item.id, ...stop })
+      expect(ghCalls.some((c) => c[1] === "merge")).toBe(false)
+      expect(turso.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action = 'pr:approved-merge'").get()).toEqual({ n: 0 })
+      expect(await itemOf(item.id)).toBeDefined()
+      expect((await choose(item.id, { optionId: opt(item, "merge") }, "k-31")).json.result).not.toBe("replay")
+    })
+
+    test("gh that can't start, inside the gate, answers 409: iOS would queue a 503 with the card hidden", async () => {
+      const tools = writeStubTools()
+      gate = (d, p) => mergeGate({ ...d, gh: async () => { throw new GhUnreachable("ENOENT") } }, p, { tools })
+      harness = makeHarness()
+      const item = await parked(32)
+      const res = await choose(item.id, { optionId: opt(item, "merge") })
+      expect(res.status).toBe(409)
+      expect(res.json).toEqual({ ok: false, error: "gate_unavailable", id: item.id, detail: "gate error" })
+    })
+
+    test("the production default is the real gate: a host with no tools dir refuses the tap", async () => {
+      gate = undefined
+      harness = makeHarness()
+      const item = await parked(33)
+      const res = await choose(item.id, { optionId: opt(item, "merge") })
+      expect(res.status).toBe(409)
+      expect(res.json).toMatchObject({ ok: false, error: "gate_unavailable", detail: "pr-gate.ts missing on this host" })
+      expect(ghCalls.some((c) => c[1] === "merge")).toBe(false)
+    })
   })
 
   test("merge intent (#164): a conflicting PR's card says so; Merge → 202 queued, approval row, card moves to the queued row", async () => {

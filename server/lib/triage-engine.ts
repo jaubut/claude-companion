@@ -347,7 +347,8 @@ export function createTriageEngine(deps: TriageEngineDeps) {
   function logChoice(input: ChooseInput, kind: string, res: ChooseResult): void {
     const b = res.body
     const what = b.ok === false ? `error=${String(b.error ?? "?")}` : `result=${String(b.result ?? "?")}`
-    const reason = b.detail && typeof b.detail === "object" ? (b.detail as Record<string, unknown>).reason : undefined
+    // A merge-gate stop carries `reason`, gate_unavailable a string `detail`.
+    const reason = b.detail && typeof b.detail === "object" ? (b.detail as Record<string, unknown>).reason : b.reason ?? b.detail
     log(`[triage] choose ${input.id} option=${input.optionId} → ${kind} · ${res.status} ${what}${reason ? ` reason=${String(reason)}` : ""}`)
   }
 
