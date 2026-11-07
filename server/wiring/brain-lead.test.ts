@@ -48,8 +48,14 @@ describe("a lead's own clone", () => {
     expect(calls[0]).toContain("https://github.com/jaubut/claude-companion.git")
     const written = JSON.parse(readFileSync(join(leadDir("claude-companion", h), ".claude/settings.local.json"), "utf8"))
     expect(written).toEqual(LEAD_SETTINGS)
-    expect(written.permissions.deny).toEqual(expect.arrayContaining(["Edit", "Write", "MultiEdit", "NotebookEdit"]))
-    expect(written.sandbox.failIfUnavailable).toBe(true)
+    expect(written.permissions.deny).toEqual(expect.arrayContaining(["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode", "Bash(docker *)", "Bash(systemctl *)"]))
+    expect(written.sandbox).toEqual({ enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true })
+  })
+  test("the clone is trusted before the spawn, or a new lead stalls at the trust dialog", async () => {
+    const h = home(), trusted: string[] = []
+    mkdirSync(join(leadDir("claude-companion", h), ".git"), { recursive: true })
+    await prepareLeadDir("claude-companion", h, async () => ({ ok: true, code: 0, out: "", err: "" }), (d) => { trusted.push(d) })
+    expect(trusted).toEqual([leadDir("claude-companion", h)])
   })
   test("a later spawn fast-forwards the clone and rewrites the settings", async () => {
     const h = home(), dir = leadDir("claude-companion", h), calls: string[][] = []

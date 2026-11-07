@@ -5,7 +5,7 @@ import { leadSlug } from "../lib/brain"
 import { type Herdr, herdrWorkspacePanes, herdrWorkspaces, realHerdr } from "../lib/herdr"
 import { type ShFn, realSh } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
-import { type SpawnResult, spawnInHerdr } from "../lib/spawn-session"
+import { type SpawnResult, ensureFolderTrusted, spawnInHerdr } from "../lib/spawn-session"
 import { brainLiveness } from "./brain-workers"
 import type { AgentLookup } from "./takeover-liveness"
 
@@ -20,17 +20,24 @@ export const leadDir = (repo: string, home = homedir()): string => join(home, "l
 
 /**
  * Project settings, unlike launch args, survive a herdr restore (`claude --resume` with no args), and the sandbox
- * refuses a lead's Bash writing this file. failIfUnavailable: no sandbox means no lead, never an unconfined one.
+ * refuses a lead's Bash writing this file. No way out of the sandbox: no unsandboxed Bash, no running without one,
+ * and the user-level `excludedCommands` are denied, since those run unsandboxed and project settings can't remove them.
  */
 export const LEAD_SETTINGS = {
-  permissions: { deny: ["Edit", "Write", "MultiEdit", "NotebookEdit"] },
-  sandbox: { failIfUnavailable: true },
+  permissions: {
+    deny: [
+      "Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode",
+      "Bash(docker *)", "Bash(docker:*)", "Bash(bun --bun node_modules/astro/bin/astro.mjs *)", "Bash(bun --bun node_modules/astro/bin/astro.mjs:*)",
+      "Bash(bun ~/.claude/tools/dispatch-run.ts *)", "Bash(bun /home/aubut/.claude/tools/dispatch-run.ts *)", "Bash(systemctl *)", "Bash(systemctl:*)", "Bash(journalctl *)", "Bash(journalctl:*)",
+    ],
+  },
+  sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true },
 }
 
 const GIT_MS = 120_000
 
 /** The clone, created or fast-forwarded, with its settings written. A clone that can't be made refuses the spawn. */
-export async function prepareLeadDir(repo: string, home = homedir(), sh: ShFn = realSh): Promise<{ ok: true; dir: string } | { ok: false; error: string }> {
+export async function prepareLeadDir(repo: string, home = homedir(), sh: ShFn = realSh, trust: (dir: string) => void = ensureFolderTrusted): Promise<{ ok: true; dir: string } | { ok: false; error: string }> {
   const slug = leadSlug(repo)
   if (!slug) return { ok: false, error: `no lead for ${repo}` }
   const dir = leadDir(repo, home)
@@ -44,6 +51,7 @@ export async function prepareLeadDir(repo: string, home = homedir(), sh: ShFn = 
   }
   mkdirSync(join(dir, ".claude"), { recursive: true })
   writeFileSync(join(dir, ".claude", "settings.local.json"), JSON.stringify(LEAD_SETTINGS, null, 2))
+  trust(dir)
   return { ok: true, dir }
 }
 
