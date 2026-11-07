@@ -1,10 +1,9 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { leadSlug } from "../lib/brain"
 import { type Herdr, herdrWorkspacePanes, herdrWorkspaces, realHerdr } from "../lib/herdr"
 import { type ShFn, realSh } from "../lib/live-repo"
-import { companionLog } from "../lib/log"
 import { type SpawnResult, ensureFolderTrusted, spawnInHerdr } from "../lib/spawn-session"
 import { brainLiveness } from "./brain-workers"
 import type { AgentLookup } from "./takeover-liveness"
@@ -18,39 +17,42 @@ export const leadArgs = (name: string): string[] => ["--remote-control", name, "
 /** A lead works in its own clone: the sandbox limits its Bash to this tree, so the live checkout and brain/ stay out of reach. */
 export const leadDir = (repo: string, home = homedir()): string => join(home, "leads", repo)
 
+const NO_FILE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]
+
 /**
  * Project settings, unlike launch args, survive a herdr restore (`claude --resume` with no args), and the sandbox
- * refuses a lead's Bash writing this file. No way out of the sandbox: no unsandboxed Bash, no running without one,
- * and the user-level `excludedCommands` are denied, since those run unsandboxed and project settings can't remove them.
+ * refuses a lead's Bash writing or moving them. No way out of the sandbox: no unsandboxed Bash, no running without one,
+ * and every user-level `excludedCommands` entry is denied, since those run unsandboxed and project settings can't remove them.
  */
-export const LEAD_SETTINGS = {
-  permissions: {
-    deny: [
-      "Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode",
-      "Bash(docker *)", "Bash(docker:*)", "Bash(bun --bun node_modules/astro/bin/astro.mjs *)", "Bash(bun --bun node_modules/astro/bin/astro.mjs:*)",
-      "Bash(bun ~/.claude/tools/dispatch-run.ts *)", "Bash(bun /home/aubut/.claude/tools/dispatch-run.ts *)", "Bash(systemctl *)", "Bash(systemctl:*)", "Bash(journalctl *)", "Bash(journalctl:*)",
-    ],
-  },
-  sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true },
+export function leadSettings(excluded: string[]): { permissions: { deny: string[] }; sandbox: Record<string, boolean> } {
+  const commands = excluded.flatMap((c) => [`Bash(${c})`, `Bash(${c.replace(/ \*$/, ":*")})`])
+  return { permissions: { deny: [...NO_FILE_TOOLS, ...new Set(commands)] }, sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true } }
 }
 
-const GIT_MS = 120_000
+/** The user's `sandbox.excludedCommands`. Thrown on an unreadable file: a lead without the full deny list doesn't start. */
+function excludedCommands(home: string): string[] {
+  const s = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")) as { sandbox?: { excludedCommands?: string[] } }
+  return s.sandbox?.excludedCommands ?? []
+}
 
-/** The clone, created or fast-forwarded, with its settings written. A clone that can't be made refuses the spawn. */
-export async function prepareLeadDir(repo: string, home = homedir(), sh: ShFn = realSh, trust: (dir: string) => void = ensureFolderTrusted): Promise<{ ok: true; dir: string } | { ok: false; error: string }> {
+const CLONE_MS = 120_000
+
+/** A fresh shallow clone each spawn: the server never runs git in a tree a lead could write, and a tampered tree doesn't survive. */
+export async function prepareLeadDir(repo: string, home: string, sh: ShFn, trust: (dir: string) => void, excluded: (home: string) => string[] = excludedCommands): Promise<{ ok: true; dir: string } | { ok: false; error: string }> {
   const slug = leadSlug(repo)
   if (!slug) return { ok: false, error: `no lead for ${repo}` }
   const dir = leadDir(repo, home)
-  if (existsSync(join(dir, ".git"))) {
-    const pull = await sh("git", ["-C", dir, "pull", "-q", "--ff-only"], { cwd: home, timeoutMs: GIT_MS })
-    if (!pull.ok) companionLog(`[lead] ${repo} clone not updated: ${pull.err.trim().slice(0, 120)}`)
-  } else {
+  try {
+    const settings = leadSettings(excluded(home))
+    rmSync(dir, { recursive: true, force: true })
     mkdirSync(dirname(dir), { recursive: true })
-    const clone = await sh("git", ["clone", "-q", `https://github.com/${slug}.git`, dir], { cwd: home, timeoutMs: GIT_MS })
+    const clone = await sh("git", ["clone", "-q", "--depth", "1", `https://github.com/${slug}.git`, dir], { cwd: home, timeoutMs: CLONE_MS })
     if (!clone.ok) return { ok: false, error: `lead clone failed: ${clone.err.trim().slice(0, 160)}` }
+    mkdirSync(join(dir, ".claude"), { recursive: true })
+    writeFileSync(join(dir, ".claude", "settings.local.json"), JSON.stringify(settings, null, 2))
+  } catch (err) {
+    return { ok: false, error: `lead setup failed: ${(err as Error)?.message ?? err}`.slice(0, 200) }
   }
-  mkdirSync(join(dir, ".claude"), { recursive: true })
-  writeFileSync(join(dir, ".claude", "settings.local.json"), JSON.stringify(LEAD_SETTINGS, null, 2))
   trust(dir)
   return { ok: true, dir }
 }
@@ -105,7 +107,7 @@ export const brainLead = createBrainLead({
   running: (name) => brainLiveness.alive(name),
   agentOf: (name) => brainLiveness.agentOf(name),
   spawn: async (repo, name) => {
-    const out = await prepareLeadDir(repo)
+    const out = await prepareLeadDir(repo, homedir(), realSh, ensureFolderTrusted)
     return out.ok ? spawnInHerdr(out.dir, "claude", { COMPANION_TASK_ID: name }, realHerdr, { name, args: leadArgs(name) }) : { ok: false, error: out.error }
   },
 })

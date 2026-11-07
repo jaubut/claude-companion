@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 189,
+          "lines": 191,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -34,6 +34,11 @@
               "method": "*",
               "path": "/api/",
               "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/lead",
+              "prefix": false
             },
             {
               "method": "*",
@@ -7250,12 +7255,12 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 112,
+          "lines": 114,
           "kind": "lib",
           "exports": [
             "leadArgs",
             "leadDir",
-            "LEAD_SETTINGS",
+            "leadSettings",
             "prepareLeadDir",
             "LeadDeps",
             "createBrainLead",
@@ -7271,7 +7276,6 @@
             "lib/brain.ts",
             "lib/herdr.ts",
             "lib/live-repo.ts",
-            "lib/log.ts",
             "lib/spawn-session.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
@@ -9190,7 +9194,6 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/brain-handoff.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",

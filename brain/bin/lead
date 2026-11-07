@@ -25,7 +25,7 @@ claude_pid() {
 
 BODY=$(REPO="$REPO" python3 -c 'import json, os; print(json.dumps({"repo": os.environ["REPO"]}))')
 
-curl -sS --max-time 40 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/lead" \
+curl -sS --max-time 170 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/lead" \
   -H "Content-Type: application/json" \
   -H "X-Companion-Task-Id: brain" \
   -H "X-Companion-Pid: $(claude_pid)" \

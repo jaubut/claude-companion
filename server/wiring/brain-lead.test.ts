@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-lead-")), "test.db")
-const { LEAD_SETTINGS, createBrainLead, leadArgs, leadDir, prepareLeadDir } = await import("./brain-lead")
+const { createBrainLead, leadArgs, leadDir, leadSettings, prepareLeadDir } = await import("./brain-lead")
 const { fakeHerdr } = await import("../lib/herdr-fake.test-util")
 const { spawnInHerdr } = await import("../lib/spawn-session")
 
@@ -33,46 +33,49 @@ test("a lead has no file-editing tools: LEAD.md's \"you never edit code\" is enf
 
 describe("a lead's own clone", () => {
   const home = () => mkdtempSync(join(tmpdir(), "lead-home-"))
+  const excluded = () => ["docker *", "systemctl --user restart claude-companion.service"]
+  const noTrust = () => {}
+  const cloned = (calls: string[][], h: string) => async (cmd: string, args: string[]) => {
+    calls.push([cmd, ...args])
+    mkdirSync(leadDir("claude-companion", h), { recursive: true })
+    return { ok: true, code: 0, out: "", err: "" }
+  }
   test("is outside the live checkout, so the sandbox keeps its Bash out of brain/", () => {
     expect(leadDir("claude-companion", "/h")).toBe("/h/leads/claude-companion")
   })
-  test("first spawn clones the repo from GitHub, then writes the settings that survive a restore", async () => {
+  test("each spawn clones shallow from GitHub and writes settings that survive a restore", async () => {
     const h = home(), calls: string[][] = []
-    const out = await prepareLeadDir("claude-companion", h, async (cmd, args) => {
-      calls.push([cmd, ...args])
-      mkdirSync(join(leadDir("claude-companion", h), ".git"), { recursive: true })
-      return { ok: true, code: 0, out: "", err: "" }
-    })
+    const out = await prepareLeadDir("claude-companion", h, cloned(calls, h), noTrust, excluded)
     expect(out).toEqual({ ok: true, dir: leadDir("claude-companion", h) })
-    expect(calls[0]!.slice(0, 2)).toEqual(["git", "clone"])
-    expect(calls[0]).toContain("https://github.com/jaubut/claude-companion.git")
+    expect(calls).toEqual([["git", "clone", "-q", "--depth", "1", "https://github.com/jaubut/claude-companion.git", leadDir("claude-companion", h)]])
     const written = JSON.parse(readFileSync(join(leadDir("claude-companion", h), ".claude/settings.local.json"), "utf8"))
-    expect(written).toEqual(LEAD_SETTINGS)
-    expect(written.permissions.deny).toEqual(expect.arrayContaining(["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode", "Bash(docker *)", "Bash(systemctl *)"]))
     expect(written.sandbox).toEqual({ enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true })
+    expect(written.permissions.deny).toEqual(expect.arrayContaining(["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]))
+  })
+  test("a tampered tree doesn't survive the next spawn", async () => {
+    const h = home(), dir = leadDir("claude-companion", h)
+    mkdirSync(join(dir, ".git/hooks"), { recursive: true })
+    writeFileSync(join(dir, ".git/hooks/post-merge"), "planted")
+    await prepareLeadDir("claude-companion", h, cloned([], h), noTrust, excluded)
+    expect(existsSync(join(dir, ".git/hooks/post-merge"))).toBe(false)
+  })
+  test("the deny list follows the user's excludedCommands, in both rule forms", () => {
+    const deny = leadSettings(["docker *", "systemctl --user restart claude-companion.service"]).permissions.deny
+    expect(deny).toEqual(expect.arrayContaining(["Bash(docker *)", "Bash(docker:*)", "Bash(systemctl --user restart claude-companion.service)"]))
+  })
+  test("an unreadable settings file or a failed clone refuses the spawn", async () => {
+    const h = home()
+    expect(await prepareLeadDir("claude-companion", h, cloned([], h), noTrust)).toMatchObject({ ok: false, error: expect.stringContaining("lead setup failed") })
+    const fail = async () => ({ ok: false, code: 1, out: "", err: "no network" })
+    expect(await prepareLeadDir("claude-companion", home(), fail, noTrust, excluded)).toMatchObject({ ok: false, error: expect.stringContaining("no network") })
   })
   test("the clone is trusted before the spawn, or a new lead stalls at the trust dialog", async () => {
     const h = home(), trusted: string[] = []
-    mkdirSync(join(leadDir("claude-companion", h), ".git"), { recursive: true })
-    await prepareLeadDir("claude-companion", h, async () => ({ ok: true, code: 0, out: "", err: "" }), (d) => { trusted.push(d) })
+    await prepareLeadDir("claude-companion", h, cloned([], h), (d) => { trusted.push(d) }, excluded)
     expect(trusted).toEqual([leadDir("claude-companion", h)])
   })
-  test("a later spawn fast-forwards the clone and rewrites the settings", async () => {
-    const h = home(), dir = leadDir("claude-companion", h), calls: string[][] = []
-    mkdirSync(join(dir, ".git"), { recursive: true })
-    await prepareLeadDir("claude-companion", h, async (cmd, args) => { calls.push([cmd, ...args]); return { ok: true, code: 0, out: "", err: "" } })
-    expect(calls).toEqual([["git", "-C", dir, "pull", "-q", "--ff-only"]])
-    expect(existsSync(join(dir, ".claude/settings.local.json"))).toBe(true)
-  })
-  test("a failed clone refuses the spawn, and a stale clone still starts", async () => {
-    const fail = async () => ({ ok: false, code: 1, out: "", err: "no network" })
-    expect(await prepareLeadDir("claude-companion", home(), fail)).toMatchObject({ ok: false, error: expect.stringContaining("no network") })
-    const h = home()
-    mkdirSync(join(leadDir("claude-companion", h), ".git"), { recursive: true })
-    expect(await prepareLeadDir("claude-companion", h, fail)).toMatchObject({ ok: true })
-  })
   test("a repo with no lead gets nothing", async () => {
-    expect(await prepareLeadDir("other", home(), async () => ({ ok: true, code: 0, out: "", err: "" }))).toMatchObject({ ok: false })
+    expect(await prepareLeadDir("other", home(), cloned([], "/x"), noTrust, excluded)).toMatchObject({ ok: false })
   })
 })
 

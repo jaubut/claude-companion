@@ -104,6 +104,8 @@ export function createCompanionServer(port: number) {
       // dashboard before replying — far past Bun's 10 s idle default. After the
       // gate: unauthenticated callers keep the default.
       if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
+      // bin/lead waits for the lead's clone and start.
+      if (url.pathname === "/hooks/brain/lead") server.timeout(req, 180)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
 
