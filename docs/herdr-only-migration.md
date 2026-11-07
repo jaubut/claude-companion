@@ -193,8 +193,11 @@ split alive after retry: true
 - A human relabelling a shell's pane takes it off the phone; giving another pane the `phone-shell` label puts that pane on it.
 - Two workspaces with one label take both shells off the phone until one is renamed.
 - A closed name isn't reused for 50 closes, so reopening gives `sh-repo-2`. A human relabelling a shell onto a closed name gets `gone:true` from Close, and no close.
-- `abandon` closes by workspace id, as `spawn-session.ts` does, so it can't confirm that id is still the one it created.
-- Close within 3 s of a herdr restore can read the row's old terminal: it closes nothing and answers `gone:true`, the row stays on its new terminal, and a second Close works.
+- Every herdr close in `shell-sessions.ts` goes through `closeTerminal`, which reads the pane's terminal id first. herdr has no conditional close, so a reissue between that read and the close would still land. The gap is one call.
+- A failed spawn that can't prove its terminal closes nothing, so its workspace leaks and its label stays taken. A marked one is a row Close can reach; an unmarked one needs `herdr workspace close`.
+- Close within 3 s of a herdr restore can read the row's old terminal: it closes nothing and answers `gone:true`, the row stays on its new terminal, and a second Close works. Once the old terminal is gone, another pane taking the name looks the same, so that second Close would reach it. The phone would be showing that row by then.
+- Close after a crash restore: a closed shell that a restore brings back on a new terminal answers `gone:true` and closes nothing, until 50 more closes or a Companion restart. Close takes only a name and the phone has no terminal id, so this can't be told from a retry, and a retry must never close another terminal.
+- A workspace renamed under a Close answers 404 until the next poll shows the new name.
 - `herdr` not on the server's PATH (launchd): `spawnPty` throws at the WS open. `HERDR_BIN` covers it, same as spawn.
 - A pane keeps the last attach's size after detach, with no client to restore it (`pane layout` still says 220x60, `stty size` says the phone's). Cosmetic until something else sizes it.
 

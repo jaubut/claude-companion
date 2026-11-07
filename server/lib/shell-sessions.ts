@@ -105,18 +105,18 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   const name = await uniqueTmuxSessionName(cwd, "shell", async (n) => taken.has(n))
   let pane = ""
   let terminal = ""
-  let workspace = ""
   try {
     const r = await deps.h.call(["workspace", "create", "--cwd", cwd, "--label", name, "--no-focus"])
     const root = r.root_pane as { pane_id?: string; terminal_id?: string } | undefined
     pane = root?.pane_id ?? ""
     terminal = root?.terminal_id ?? ""
-    workspace = (r.workspace as { workspace_id?: string } | undefined)?.workspace_id ?? ""
   } catch (err) {
     return { ok: false, error: `herdr workspace create: ${(err as Error).message}` }
   }
+  // Only what this create made, proven by its terminal. Unproven stays: a leaked
+  // workspace is a label to tidy, a destroyed one is someone else's work.
   const abandon = async (error: string): Promise<SpawnShellResult> => {
-    if (workspace) await deps.h.call(["workspace", "close", workspace]).catch(() => undefined)
+    if (pane && terminal) await closeTerminal({ herdrPane: pane, terminalId: terminal }, deps.h)
     return { ok: false, error }
   }
   if (!pane || !terminal) return abandon("herdr workspace create: no root_pane")
@@ -181,27 +181,38 @@ export async function closeShellSession(
   if (!shell) return closed ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
   if (closed && closed.terminalId !== shell.terminalId) return { ok: true, gone: true }
   if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
-  // herdr knows an agent no hook reported, a suspended Claude too. It can also
-  // reissue a pane id after a restore that lost it (a workspace newer than its
-  // last snapshot), so the terminal id must still be this shell's or there is
-  // nothing to close.
+  // herdr knows an agent no hook reported, a suspended Claude too.
   const live = shell.herdrPane ? await herdrPaneNow(shell, deps.h) : null
   if (live?.agent) return { ok: false, error: "claude_running" }
+  let current = false
+  if (shell.herdrPane) {
+    // The store can be 3 s old. A terminal still alive that a fresh read doesn't
+    // give this name (a second marked pane took the label, or its workspace was
+    // renamed) isn't the row the phone asked to close, and the poll drops it.
+    const fresh = await readHerdrShells(deps.h)
+    if (!fresh) return { ok: false, error: "kill_failed" }
+    current = fresh.find((s) => s.name === name)?.terminalId === shell.terminalId
+    if (live && !current) return { ok: false, error: "unknown_shell" }
+  }
   detach(shell.key)
-  const gone = shell.herdrPane ? await closeHerdrShell(shell, live, deps.h) : await killTmuxShell(name, deps)
+  const gone = shell.herdrPane ? !(current && await closeTerminal(shell, deps.h)) : await killTmuxShell(name, deps)
   const after = await readShellSessions(deps)
   replaceKeepingLinks(after)
   // By terminal, not name: a pane split off keeps the workspace and its label.
   if (after.some((s) => (shell.herdrPane ? s.terminalId === shell.terminalId : s.name === name))) return { ok: false, error: "kill_failed" }
-  // Still listed: a restore gave it a new terminal under us. Nothing closed, so
-  // nothing to remember, and the next Close reaches it.
-  if (!after.some((s) => s.name === name)) closedShells.push({ name, terminalId: shell.terminalId })
+  // Closed and another terminal holds the name: remembered, or the retry closes
+  // that one. Nothing closed and the name still listed: a restore gave it a new
+  // terminal under us, so nothing to remember and the next Close reaches it.
+  if (!gone || !after.some((s) => s.name === name)) closedShells.push({ name, terminalId: shell.terminalId })
   if (closedShells.length > 50) closedShells.shift()
   // A close failing on a name that is no longer listed: it exited first.
   return { ok: true, gone }
 }
 
-async function herdrPaneNow(shell: ShellSession, h: Herdr): Promise<{ agent: string } | null> {
+type TerminalRef = Pick<ShellSession, "herdrPane" | "terminalId">
+
+// null: the pane doesn't hold this terminal, or herdr can't say.
+async function herdrPaneNow(shell: TerminalRef, h: Herdr): Promise<{ agent: string } | null> {
   try {
     const p = (await h.call(["pane", "get", shell.herdrPane], 2_000)).pane as { agent?: string; terminal_id?: string } | undefined
     return p?.terminal_id === shell.terminalId ? { agent: p.agent ?? "" } : null
@@ -210,15 +221,20 @@ async function herdrPaneNow(shell: ShellSession, h: Herdr): Promise<{ agent: str
   }
 }
 
-// `pane close`, not `workspace close`: a pane split off it on the Mac stays.
-// The last pane takes its workspace with it.
-async function closeHerdrShell(shell: ShellSession, live: { agent: string } | null, h: Herdr): Promise<boolean> {
-  if (!live) return true
+// The only herdr close in this module. A pane id proves nothing: a restore
+// reissues the ids it lost (a workspace newer than its last snapshot), so the
+// pane must still hold this terminal. true = closed. `pane close`, not
+// `workspace close`: a pane split off it on the Mac stays, and the last pane
+// takes its workspace with it.
+// ponytail: herdr has no conditional close, so a reissue between this read and
+// the close still lands. The gap is one call; herdr would have to close it.
+async function closeTerminal(shell: TerminalRef, h: Herdr): Promise<boolean> {
+  if (!await herdrPaneNow(shell, h)) return false
   try {
     await h.call(["pane", "close", shell.herdrPane], 5_000)
-    return false
-  } catch {
     return true
+  } catch {
+    return false
   }
 }
 

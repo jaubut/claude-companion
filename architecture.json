@@ -4395,7 +4395,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 449,
+          "lines": 465,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -4903,7 +4903,7 @@
         },
         {
           "path": "lib/terminal-bridge.ts",
-          "lines": 159,
+          "lines": 160,
           "kind": "lib",
           "exports": [
             "TERMINAL_PATH",

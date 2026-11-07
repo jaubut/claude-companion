@@ -18,7 +18,8 @@
 // (companion-server.ts, before the upgrade). Only shell sessions this server
 // tracks can be attached: the key is looked up, never parsed into a target,
 // and the argv carries nothing the phone typed. At most MAX_ATTACHES_PER_KEY
-// sockets per shell (a phone and an iPad, plus one reconnect in flight).
+// sockets per shell: tmux shares a shell between them, while a herdr terminal
+// takes one attach, so there a newer socket ends the older one.
 
 import { tmuxArgv } from "./tmux-pane"
 import type { ShellSession } from "./shell-sessions"

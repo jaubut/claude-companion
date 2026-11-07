@@ -28,9 +28,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
+| `lib/shell-sessions.ts` | 465 | lib | 30 | state: let spawnTurn |
 | `wiring/triage.ts` | 463 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `lib/shell-sessions.ts` | 449 | lib | 30 | state: let spawnTurn |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
@@ -131,7 +131,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/builder-jobs.ts` | 167 | lib | 11 | state: EVENTS: Set |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `routes/triage.ts` | 165 | lib | 2 |  |
-| `lib/terminal-bridge.ts` | 159 | lib | 17 |  |
+| `lib/terminal-bridge.ts` | 160 | lib | 17 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `wiring/brain-lead.ts` | 152 | lib | 9 |  |
