@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 192,
+          "lines": 194,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -38,6 +38,11 @@
             {
               "method": "*",
               "path": "/hooks/brain/lead",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/pr-merge",
               "prefix": false
             },
             {
@@ -2574,6 +2579,7 @@
             "ShFn",
             "realSh",
             "RepoEntry",
+            "toolsDir",
             "repoMapCandidates",
             "locateRepoMap",
             "readRepoMapSource",
@@ -2664,6 +2670,66 @@
           "externals": [
             "sharp"
           ]
+        },
+        {
+          "path": "lib/merge-gate.test-util.ts",
+          "lines": 65,
+          "kind": "lib",
+          "exports": [
+            "passGate",
+            "HUMAN_MERGE_RE",
+            "gateVerdict",
+            "parseGatePaths",
+            "liveGateInput",
+            "policy",
+            "leastTrusted",
+            "taintedSensitive",
+            "normalizeOrigin",
+            "isTainted",
+            "ToolFile",
+            "STUB_GATE",
+            "writeStubTools"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/merge-gate.ts",
+            "lib/client-origin.ts.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/merge-gate.ts",
+          "lines": 153,
+          "kind": "lib",
+          "exports": [
+            "GATE_BUDGET_MS",
+            "GateDeps",
+            "GatePr",
+            "GatePass",
+            "GateResult",
+            "MergeGateFn",
+            "mergeGate"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/live-repo.ts",
+            "lib/log.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
         },
         {
           "path": "lib/model-control.ts",
@@ -5144,7 +5210,7 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 401,
+          "lines": 402,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
@@ -5181,7 +5247,7 @@
         },
         {
           "path": "lib/triage-pr.ts",
-          "lines": 258,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "GhResult",
@@ -5189,6 +5255,7 @@
             "GhUnreachable",
             "PrTarget",
             "PrActionDeps",
+            "MergeDeps",
             "PrState",
             "prState",
             "HoldReason",
@@ -5211,6 +5278,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/merge-gate.ts",
             "lib/triage-engine.ts",
             "lib/turso.ts"
           ],
@@ -6179,7 +6247,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 312,
+          "lines": 311,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -7324,11 +7392,12 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 191,
+          "lines": 207,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
+            "retiredPark",
             "mergeAgentPr"
           ],
           "state": [],
@@ -7339,6 +7408,7 @@
           "imports": [
             "lib/brain.ts",
             "lib/log.ts",
+            "lib/merge-gate.ts",
             "lib/orchestrator-chat.ts",
             "lib/secret-redact.ts",
             "lib/triage-pr.ts",
@@ -8298,7 +8368,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 463,
+          "lines": 467,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -8329,6 +8399,7 @@
             "lib/body-investigate-engine.ts",
             "lib/jev.ts",
             "lib/log.ts",
+            "lib/merge-gate.ts",
             "lib/orchestrator-brain.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
@@ -9215,6 +9286,7 @@
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
             "lib/media.ts",
+            "lib/merge-gate.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts",
             "lib/receipt-capture.ts",
@@ -9617,7 +9689,8 @@
         "gate": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "wiring/triage.ts"
           ]
         },
         "investigationDigest": {
@@ -9719,6 +9792,7 @@
             "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
+            "lib/merge-gate.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
             "lib/tasks-agent-chat.ts",
@@ -9843,6 +9917,7 @@
             "lib/dispatch-poller.ts",
             "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
+            "lib/merge-gate.ts",
             "lib/my-tasks.ts",
             "lib/pipeline.ts",
             "lib/tasks-agent-row.ts",
@@ -11044,6 +11119,32 @@
           "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/keyboard-inject.ts"
+          ]
+        },
+        "MergeGateFn": {
+          "module": "lib/merge-gate.ts",
+          "callers": [
+            "lib/merge-gate.test-util.ts",
+            "lib/triage-pr.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "GhFn": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "lib/merge-gate.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/repo-view.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "toolsDir": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/merge-gate.ts"
           ]
         },
         "DialogItem": {
@@ -13088,6 +13189,12 @@
           "callers": [
             "lib/triage-engine.ts",
             "routes/orchestrator.ts"
+          ]
+        },
+        "GatePass": {
+          "module": "lib/merge-gate.ts",
+          "callers": [
+            "lib/triage-pr.ts"
           ]
         },
         "MergeHold": {
@@ -15837,13 +15944,17 @@
             "wiring/brain.ts"
           ]
         },
-        "GhFn": {
+        "prReadiness": {
           "module": "lib/triage-pr.ts",
           "callers": [
-            "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
-            "wiring/repo-view.ts",
-            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "mergeGate": {
+          "module": "lib/merge-gate.ts",
+          "callers": [
+            "wiring/brain-pr-merge.ts",
             "wiring/triage.ts"
           ]
         },
@@ -17244,12 +17355,6 @@
           ]
         },
         "PrReadiness": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "prReadiness": {
           "module": "lib/triage-pr.ts",
           "callers": [
             "wiring/triage.ts"
