@@ -4,6 +4,12 @@ Last updated: 2026-11-05
 
 ## Active Decisions
 
+### bin/task-cancel: the brain cancels tasks it proposed, never a running one (2026-11-07, task 40c8a551)
+**Choice:** `POST /hooks/brain/task-cancel` cancels `queued`, `blocked` or `failed` rows only, by one compare-and-set on status, assignee, owner and PR URL, in one `tursoTx` with its `agent_activity` row. "The brain proposed it" = the local proposal row for the Turso id has thread `brain` and status `filed`. A card or the resolver can only requeue a row still at the status it read (`requeueTask` `from`); Jeremie's direct Retry stays the undo.
+**Why:** PR #260 judged whether a running task's worker was alive, and no lease exists to prove it. `tasks` has no proposer column and brain filings carry origin `jeremie`, so the Turso row can't say who proposed it.
+**Rejected:** a liveness check on running tasks; `updated_at` in the compare-and-set (second resolution); the description marker or ledger `channel` as proof (forgeable); reusing `cancelDispatchTask` (accepts `pending`, split ledger); refusing Jeremie's Retry (a wrong cancel could only be undone from a shell).
+**Revisit if:** workers get a lease (running becomes cancellable), `tasks` gets a proposer column, or `dispatch.sh <id> queued` starts refusing cancelled rows.
+
 ### Anti-slop lint: ast-grep + a repo check, blocking in pre-commit and CI (2026-11-05, task 7b745d1d)
 **Choice:** `bun --bun run lint` runs ast-grep rules (`lint/rules`, fixtures in `lint/tests`) and `scripts/lint-repo.ts`, from `.githooks/pre-commit` (`bun install` sets `core.hooksPath`) and a CI step. Rules come from the review evidence in RES-U66W. Live violations carry a same-line `ast-grep-ignore`: same line because archmap's 600-line cap ratchets on line count.
 **Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.
