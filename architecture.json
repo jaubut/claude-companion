@@ -2190,6 +2190,7 @@
             "WorkspaceCloseOpts",
             "SHELL_PANE_MARK",
             "SCRAPE_PANE_MARK",
+            "closableWorkspace",
             "closeHerdrWorkspaceWhenIdle",
             "validHerdrPane",
             "herdrPaneOf",
@@ -4489,7 +4490,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 418,
+          "lines": 443,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -4523,7 +4524,8 @@
             "startShellPoll"
           ],
           "state": [
-            "let spawnTurn"
+            "let spawnTurn",
+            "let storeGen"
           ],
           "emits": [],
           "consumes": [],
@@ -4571,7 +4573,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 503,
+          "lines": 506,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
@@ -12823,6 +12825,12 @@
           ]
         },
         "noteHerdrAgent": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "closableWorkspace": {
           "module": "lib/herdr.ts",
           "callers": [
             "lib/spawn-session.ts"

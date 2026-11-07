@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
-import { type Herdr, HERDR_VERSIONS_ENV, forgetHerdrAgent, herdrErrorCode, herdrOwnerFor, noteHerdrAgent, realHerdr } from "./herdr"
+import { type Herdr, HERDR_VERSIONS_ENV, closableWorkspace, forgetHerdrAgent, herdrErrorCode, herdrOwnerFor, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
 import { applyMcpChoices } from "./claude-mcp-trust"
 import { type DetachedDeps, type TmuxArgvRunner, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
@@ -329,7 +329,10 @@ export async function spawnInHerdr(
     // register it — the phone can answer from there.
     if (herdrErrorCode(err) !== "agent_not_ready") {
       forgetHerdrAgent(paneId)
-      if (workspaceId) await h.call(["workspace", "close", workspaceId]).catch(() => undefined)
+      // Only the workspace this create made, still alone and still ours (label,
+      // ids, no shell mark): a restore can reissue the id to someone else's.
+      const ws = await closableWorkspace(paneId, h, { name, workspaceId, terminalId }).catch(() => "")
+      if (ws) await h.call(["workspace", "close", ws]).catch(() => undefined)
       return { ok: false, app: "herdr", error: `herdr agent start: ${(err as Error).message}` }
     }
   }

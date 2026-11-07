@@ -193,7 +193,7 @@ export const SCRAPE_PANE_MARK = "companion-scrape"
 
 // The workspace to close, or "" when it is not (or no longer) ours, is split,
 // or herdr can't say.
-async function closableWorkspace(pane: string, h: Herdr, owner: HerdrOwner | undefined): Promise<string> {
+export async function closableWorkspace(pane: string, h: Herdr, owner: HerdrOwner | undefined): Promise<string> {
   const got = await h.call(["pane", "get", pane], 2_000)
   const p = got.pane as { workspace_id?: string; terminal_id?: string; label?: string } | undefined
   const ws = p?.workspace_id ?? ""
