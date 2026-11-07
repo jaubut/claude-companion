@@ -187,6 +187,8 @@ describe("POST /api/tasks/agent/undo", () => {
     s.t.task({ id: A, due_date: "2026-10-25" })
     const noFrom = s.t.activity({ agent: "pm", action: "status_changed", target: A, meta: { to: "done" } })
     expect((await s.post("/api/tasks/agent/undo", { activityId: noFrom })).body.error).toBe("not_undoable")
+    const brainCancel = s.t.activity({ agent: "brain", action: "brain:task-cancel", target: A, meta: { from: "blocked", reason: "obsolete" } })
+    expect((await s.post("/api/tasks/agent/undo", { activityId: brainCancel })).body.error).toBe("not_undoable")
     const stale = s.t.activity({ agent: "pm", action: "due_changed", target: A, meta: { from: "2026-10-08", to: "2026-10-20" } })
     const before = s.t.activities().length
     expect((await s.post("/api/tasks/agent/undo", { activityId: stale }))).toEqual({ status: 409, body: { error: "changed_since" } })
