@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05",
+  "generatedAt": "2026-11-07",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 188,
+          "lines": 194,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -34,6 +34,16 @@
               "method": "*",
               "path": "/api/",
               "prefix": true
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/lead",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/pr-merge",
+              "prefix": false
             },
             {
               "method": "*",
@@ -70,6 +80,7 @@
             "routes/auto-compact.ts",
             "routes/gauge.ts",
             "routes/copy-jobs.ts",
+            "routes/builder-jobs.ts",
             "routes/my-tasks.ts",
             "routes/taste.ts",
             "routes/notes.ts",
@@ -94,6 +105,7 @@
             "routes/brain.ts",
             "wiring/brain.ts",
             "wiring/brain-workers.ts",
+            "wiring/brain-stuck-events.ts",
             "lib/brain.ts",
             "wiring/auto-deploy.ts"
           ],
@@ -878,7 +890,7 @@
         },
         {
           "path": "lib/brain-store.ts",
-          "lines": 100,
+          "lines": 105,
           "kind": "lib",
           "exports": [
             "OutboxState",
@@ -887,6 +899,7 @@
             "takeDeliveries",
             "openDeliveries",
             "markDelivered",
+            "requeueDeliveries",
             "markMaybe",
             "clearTyped",
             "getKv",
@@ -981,7 +994,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 216,
+          "lines": 243,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -990,12 +1003,17 @@
             "RESERVED_CHANNELS",
             "BRAIN_TAKE_PREFIX",
             "BrainState",
+            "LEAD_REPOS",
+            "LEAD_PREFIX",
+            "leadSlug",
             "brainEnabled",
             "isBrainHook",
             "isSupervisedTask",
             "DeliveryTurn",
             "DELIVERY_MAX",
             "deliveryText",
+            "fitDelivery",
+            "fitQueued",
             "bootSeed",
             "TICK_MS",
             "RESTART_WINDOW_MS",
@@ -1053,6 +1071,35 @@
           "imports": [
             "lib/auto-judge.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/builder-jobs.ts",
+          "lines": 167,
+          "kind": "lib",
+          "exports": [
+            "STALE_MS",
+            "DROP_MS",
+            "MAX_JOBS",
+            "MAX_TOMBSTONES",
+            "BuilderEvent",
+            "BuilderReport",
+            "BuilderJobItem",
+            "BuilderJobsFrame",
+            "BuilderJobsDeps",
+            "parseBuilderReport",
+            "BuilderJobStore"
+          ],
+          "state": [
+            "EVENTS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -1704,7 +1751,7 @@
         },
         {
           "path": "lib/dispatch-poller.ts",
-          "lines": 412,
+          "lines": 413,
           "kind": "lib",
           "exports": [
             "DispatchCounts",
@@ -1776,7 +1823,7 @@
         },
         {
           "path": "lib/dispatch-tasks.ts",
-          "lines": 534,
+          "lines": 558,
           "kind": "lib",
           "exports": [
             "DispatchStatus",
@@ -1826,6 +1873,7 @@
             "FileInput",
             "approveUrl",
             "fileTask",
+            "fileHandoff",
             "cancelDispatchTask",
             "requeueTask",
             "unblockMarker",
@@ -1891,7 +1939,7 @@
         },
         {
           "path": "lib/ended-sessions.ts",
-          "lines": 282,
+          "lines": 287,
           "kind": "lib",
           "exports": [
             "ENDED_KEY_PREFIX",
@@ -2095,7 +2143,7 @@
         },
         {
           "path": "lib/herdr-workspace.ts",
-          "lines": 59,
+          "lines": 61,
           "kind": "lib",
           "exports": [
             "herdrSessionGone",
@@ -2113,7 +2161,8 @@
             "lib/sessions.ts",
             "lib/herdr.ts",
             "lib/log.ts",
-            "lib/ended-sessions.ts"
+            "lib/ended-sessions.ts",
+            "lib/shell-sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2121,7 +2170,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 373,
+          "lines": 376,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -2138,6 +2187,7 @@
             "herdrPaneAtShell",
             "HerdrOwner",
             "WorkspaceCloseOpts",
+            "SHELL_PANE_MARK",
             "closeHerdrWorkspaceWhenIdle",
             "validHerdrPane",
             "herdrPaneOf",
@@ -2556,6 +2606,7 @@
             "ShFn",
             "realSh",
             "RepoEntry",
+            "toolsDir",
             "repoMapCandidates",
             "locateRepoMap",
             "readRepoMapSource",
@@ -2646,6 +2697,66 @@
           "externals": [
             "sharp"
           ]
+        },
+        {
+          "path": "lib/merge-gate.test-util.ts",
+          "lines": 65,
+          "kind": "lib",
+          "exports": [
+            "passGate",
+            "HUMAN_MERGE_RE",
+            "gateVerdict",
+            "parseGatePaths",
+            "liveGateInput",
+            "policy",
+            "leastTrusted",
+            "taintedSensitive",
+            "normalizeOrigin",
+            "isTainted",
+            "ToolFile",
+            "STUB_GATE",
+            "writeStubTools"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/merge-gate.ts",
+            "lib/client-origin.ts.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/merge-gate.ts",
+          "lines": 153,
+          "kind": "lib",
+          "exports": [
+            "GATE_BUDGET_MS",
+            "GateDeps",
+            "GatePr",
+            "GatePass",
+            "GateResult",
+            "MergeGateFn",
+            "mergeGate"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/live-repo.ts",
+            "lib/log.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
         },
         {
           "path": "lib/model-control.ts",
@@ -4376,19 +4487,21 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 332,
+          "lines": 418,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
             "SHELL_KEY_PREFIX",
+            "ShellDeps",
+            "realShellDeps",
             "ShellSession",
             "shellWire",
-            "loginShell",
-            "shellNewSessionArgv",
             "SpawnShellResult",
             "spawnShellSession",
+            "replaceKeepingLinks",
             "CloseShellResult",
             "closeShellSession",
+            "readHerdrShells",
             "readShellSessions",
             "parseShellList",
             "createShellStore",
@@ -4399,6 +4512,7 @@
             "wireSessions",
             "ProcTable",
             "AgentRef",
+            "inShellPane",
             "parseProcTable",
             "readProcTable",
             "descends",
@@ -4406,13 +4520,16 @@
             "SHELL_POLL_MS",
             "startShellPoll"
           ],
-          "state": [],
+          "state": [
+            "let spawnTurn"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
             "lib/ended-sessions.ts",
+            "lib/herdr.ts",
             "lib/spawn-session.ts",
             "lib/tmux-pane.ts",
             "lib/tmux-spawn-confirm.ts"
@@ -4452,10 +4569,11 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 493,
+          "lines": 503,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
+            "folderTrusted",
             "TMUX_RETIRED",
             "APP_RETIRED",
             "APP_RETIRED_HINT",
@@ -4876,7 +4994,7 @@
         },
         {
           "path": "lib/terminal-bridge.ts",
-          "lines": 153,
+          "lines": 160,
           "kind": "lib",
           "exports": [
             "TERMINAL_PATH",
@@ -5125,7 +5243,7 @@
         },
         {
           "path": "lib/triage-engine.ts",
-          "lines": 401,
+          "lines": 402,
           "kind": "lib",
           "exports": [
             "ExecOutcome",
@@ -5162,7 +5280,7 @@
         },
         {
           "path": "lib/triage-pr.ts",
-          "lines": 258,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "GhResult",
@@ -5170,6 +5288,7 @@
             "GhUnreachable",
             "PrTarget",
             "PrActionDeps",
+            "MergeDeps",
             "PrState",
             "prState",
             "HoldReason",
@@ -5192,6 +5311,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/merge-gate.ts",
             "lib/triage-engine.ts",
             "lib/turso.ts"
           ],
@@ -5656,6 +5776,66 @@
           "externals": []
         },
         {
+          "path": "lib/turso-test-db.test-util.ts",
+          "lines": 93,
+          "kind": "lib",
+          "exports": [
+            "schemaDb",
+            "Shape",
+            "schemaGaps",
+            "testDbConfigured",
+            "openTestDb"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso.ts",
+            "lib/turso-test-guard.test-util.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/turso-test-guard.test-util.ts",
+          "lines": 26,
+          "kind": "lib",
+          "exports": [
+            "TEST_HOST",
+            "testDbUrl",
+            "guardFetch"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/turso-test-preload.test-util.ts",
+          "lines": 16,
+          "kind": "lib",
+          "exports": [],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso-test-guard.test-util.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/turso.ts",
           "lines": 168,
           "kind": "lib",
@@ -5853,7 +6033,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 596,
+          "lines": 599,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -6160,7 +6340,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 261,
+          "lines": 311,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6181,11 +6361,47 @@
             "lib/sessions.ts",
             "lib/vault-guard.ts",
             "wiring/brain.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/brain-lead.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-workers.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/builder-jobs.ts",
+          "lines": 28,
+          "kind": "route-host",
+          "exports": [
+            "handleBuilderJobsRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/hooks/builder-progress",
+              "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/builder-jobs",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/builder-jobs.ts",
+            "lib/vault-guard.ts",
+            "wiring/builder-jobs.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7175,6 +7391,68 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-handoff.ts",
+          "lines": 52,
+          "kind": "lib",
+          "exports": [
+            "HandoffInput",
+            "handoffOrigin",
+            "addBrainHandoff"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/brain-trace.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/turso.ts",
+            "wiring/brain.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-lead.ts",
+          "lines": 152,
+          "kind": "lib",
+          "exports": [
+            "leadArgs",
+            "leadDir",
+            "leadSettings",
+            "leadIsolated",
+            "prepareLeadDir",
+            "LeadDeps",
+            "createBrainLead",
+            "BrainLead",
+            "brainLead"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/herdr.ts",
+            "lib/live-repo.ts",
+            "lib/spawn-session.ts",
+            "wiring/brain-workers.ts",
+            "wiring/takeover-liveness.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain-pr-close.ts",
           "lines": 122,
           "kind": "lib",
@@ -7207,11 +7485,12 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 185,
+          "lines": 207,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
+            "retiredPark",
             "mergeAgentPr"
           ],
           "state": [],
@@ -7222,6 +7501,7 @@
           "imports": [
             "lib/brain.ts",
             "lib/log.ts",
+            "lib/merge-gate.ts",
             "lib/orchestrator-chat.ts",
             "lib/secret-redact.ts",
             "lib/triage-pr.ts",
@@ -7258,6 +7538,66 @@
             "lib/log.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-stuck-events.ts",
+          "lines": 132,
+          "kind": "lib",
+          "exports": [
+            "StuckEventsDeps",
+            "stuckLine",
+            "createStuckEvents",
+            "startStuckEvents"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-task-cancel.ts",
+          "lines": 110,
+          "kind": "lib",
+          "exports": [
+            "TASK_CANCEL_ACTION",
+            "TASK_REF",
+            "TaskCancelInput",
+            "TaskCancelDeps",
+            "cancelAgentTask"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7379,6 +7719,28 @@
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/dispatch.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/builder-jobs.ts",
+          "lines": 16,
+          "kind": "lib",
+          "exports": [
+            "builderJobs"
+          ],
+          "state": [],
+          "emits": [
+            "builder_jobs"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/builder-jobs.ts",
+            "state.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8099,7 +8461,7 @@
         },
         {
           "path": "wiring/triage.ts",
-          "lines": 463,
+          "lines": 467,
           "kind": "lib",
           "exports": [
             "PR_ROWS_TTL_MS",
@@ -8130,6 +8492,7 @@
             "lib/body-investigate-engine.ts",
             "lib/jev.ts",
             "lib/log.ts",
+            "lib/merge-gate.ts",
             "lib/orchestrator-brain.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
@@ -8224,7 +8587,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 240,
+          "lines": 244,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -8260,6 +8623,7 @@
             "wiring/dialogs.ts",
             "wiring/waiting.ts",
             "wiring/copy-jobs.ts",
+            "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
             "lib/shell-sessions.ts",
             "wiring/shell-sessions.ts",
@@ -8302,6 +8666,7 @@
             "wiring/body.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
+            "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
             "wiring/dialogs.ts",
@@ -8354,6 +8719,7 @@
           "callers": [
             "companion-server.ts",
             "lib/receipt-qa-worker.ts",
+            "lib/turso-test-db.test-util.ts",
             "routes/body.ts",
             "routes/goals.ts",
             "routes/my-tasks.ts",
@@ -8471,6 +8837,12 @@
             "companion-server.ts"
           ]
         },
+        "startStuckEvents": {
+          "module": "wiring/brain-stuck-events.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "brainWorkers": {
           "module": "wiring/brain-workers.ts",
           "callers": [
@@ -8534,6 +8906,7 @@
             "companion-server.ts#* /ws",
             "lib/request-gate.ts",
             "routes/brain.ts",
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
@@ -8698,6 +9071,12 @@
         },
         "brainRoute": {
           "module": "routes/brain.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleBuilderJobsRoute": {
+          "module": "routes/builder-jobs.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -9001,6 +9380,7 @@
             "lib/key-gate.ts",
             "lib/keyboard-inject.ts",
             "lib/media.ts",
+            "lib/merge-gate.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts",
             "lib/receipt-capture.ts",
@@ -9052,9 +9432,12 @@
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -9098,7 +9481,9 @@
             "lib/quick-look.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "ApprovalRequest": {
@@ -9398,7 +9783,8 @@
         "gate": {
           "module": "lib/body-investigate.ts",
           "callers": [
-            "lib/body-investigate-engine.ts"
+            "lib/body-investigate-engine.ts",
+            "wiring/triage.ts"
           ]
         },
         "investigationDigest": {
@@ -9453,6 +9839,7 @@
             "lib/dispatch-tasks.ts",
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts"
@@ -9499,6 +9886,7 @@
             "lib/body-investigate-engine.ts",
             "lib/dispatch-poller.ts",
             "lib/dispatch-tasks.ts",
+            "lib/merge-gate.ts",
             "lib/my-tasks.ts",
             "lib/mytask-triage.ts",
             "lib/tasks-agent-chat.ts",
@@ -9510,6 +9898,8 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -9621,6 +10011,7 @@
             "lib/dispatch-poller.ts",
             "lib/dispatch-stage.ts",
             "lib/dispatch-tasks.ts",
+            "lib/merge-gate.ts",
             "lib/my-tasks.ts",
             "lib/pipeline.ts",
             "lib/tasks-agent-row.ts",
@@ -9628,8 +10019,10 @@
             "lib/tasks-agent.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
+            "lib/turso-test-db.test-util.ts",
             "routes/goals.ts",
-            "wiring/auto-compact.ts"
+            "wiring/auto-compact.ts",
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "QueryFn": {
@@ -9714,6 +10107,7 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
@@ -9726,8 +10120,11 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/auto-deploy.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
@@ -9820,6 +10217,7 @@
             "lib/pane-clean.ts",
             "lib/pane-mirror.ts",
             "lib/session-pane.ts",
+            "lib/shell-sessions.ts",
             "lib/submit-confirm.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
@@ -9913,8 +10311,10 @@
             "lib/keyboard-inject.ts",
             "lib/orphan-question.ts",
             "lib/session-pane.ts",
+            "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
@@ -9936,8 +10336,10 @@
             "lib/inject-verified.ts",
             "lib/pane-clean.ts",
             "lib/session-pane.ts",
+            "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
+            "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -10342,13 +10744,16 @@
             "lib/dispatch-poller.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/triage-engine.ts",
+            "lib/turso-test-db.test-util.ts",
             "routes/body.ts",
             "routes/goals.ts#GET /api/goals",
             "routes/my-tasks.ts",
             "routes/orchestrator.ts",
             "routes/tasks-agent.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-todo.ts",
             "wiring/orchestrator.ts",
             "wiring/triage-repos.ts"
@@ -10434,6 +10839,13 @@
             "routes/api.ts#* /api/feed"
           ]
         },
+        "SHELL_PANE_MARK": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/ended-sessions.ts",
+            "lib/shell-sessions.ts"
+          ]
+        },
         "herdrPaneAtShell": {
           "module": "lib/herdr.ts",
           "callers": [
@@ -10443,7 +10855,8 @@
         "herdrPaneShellPid": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/ended-sessions.ts"
+            "lib/ended-sessions.ts",
+            "lib/shell-sessions.ts"
           ]
         },
         "Catalog": {
@@ -10555,6 +10968,7 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
@@ -10575,6 +10989,12 @@
             "routes/api.ts#POST /api/sessions/resume",
             "routes/api.ts#POST /api/sessions/ended/delete",
             "wiring/shell-sessions.ts"
+          ]
+        },
+        "listShellSessions": {
+          "module": "lib/shell-sessions.ts",
+          "callers": [
+            "lib/herdr-workspace.ts"
           ]
         },
         "closeHerdrWorkspaceWhenIdle": {
@@ -10825,6 +11245,32 @@
           "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/keyboard-inject.ts"
+          ]
+        },
+        "MergeGateFn": {
+          "module": "lib/merge-gate.ts",
+          "callers": [
+            "lib/merge-gate.test-util.ts",
+            "lib/triage-pr.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "GhFn": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "lib/merge-gate.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/repo-view.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "toolsDir": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/merge-gate.ts"
           ]
         },
         "DialogItem": {
@@ -11102,6 +11548,7 @@
             "lib/request-gate.ts",
             "lib/terminal-bridge.ts",
             "routes/brain.ts",
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event",
@@ -11797,6 +12244,7 @@
           "module": "lib/vault-guard.ts",
           "callers": [
             "lib/request-gate.ts",
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event"
@@ -12287,25 +12735,6 @@
             "lib/sessions.ts"
           ]
         },
-        "spawnNewSessionFlags": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/shell-sessions.ts",
-            "lib/spawn-session.ts"
-          ]
-        },
-        "DETACHED_COLS": {
-          "module": "lib/spawn-session.ts",
-          "callers": [
-            "lib/shell-sessions.ts"
-          ]
-        },
-        "DETACHED_ROWS": {
-          "module": "lib/spawn-session.ts",
-          "callers": [
-            "lib/shell-sessions.ts"
-          ]
-        },
         "DetachedDeps": {
           "module": "lib/tmux-spawn-confirm.ts",
           "callers": [
@@ -12320,25 +12749,18 @@
             "lib/spawn-session.ts"
           ]
         },
-        "spawnServerFlags": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/shell-sessions.ts",
-            "lib/spawn-session.ts",
-            "lib/tmux-spawn-confirm.ts"
-          ]
-        },
         "uniqueTmuxSessionName": {
           "module": "lib/spawn-session.ts",
           "callers": [
             "lib/shell-sessions.ts"
           ]
         },
-        "createConfirmed": {
-          "module": "lib/tmux-spawn-confirm.ts",
+        "spawnServerFlags": {
+          "module": "lib/tmux-pane.ts",
           "callers": [
             "lib/shell-sessions.ts",
-            "lib/spawn-session.ts"
+            "lib/spawn-session.ts",
+            "lib/tmux-spawn-confirm.ts"
           ]
         },
         "spawnSocketPath": {
@@ -12375,6 +12797,18 @@
         },
         "applyMcpChoices": {
           "module": "lib/claude-mcp-trust.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "spawnNewSessionFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/spawn-session.ts"
+          ]
+        },
+        "createConfirmed": {
+          "module": "lib/tmux-spawn-confirm.ts",
           "callers": [
             "lib/spawn-session.ts"
           ]
@@ -12468,7 +12902,8 @@
           "callers": [
             "lib/tasks-agent-chat.ts",
             "lib/tasks-agent-testdb.test-util.ts",
-            "lib/tasks-agent.ts"
+            "lib/tasks-agent.ts",
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "guardedWrite": {
@@ -12868,6 +13303,12 @@
             "routes/orchestrator.ts"
           ]
         },
+        "GatePass": {
+          "module": "lib/merge-gate.ts",
+          "callers": [
+            "lib/triage-pr.ts"
+          ]
+        },
         "MergeHold": {
           "module": "lib/triage.ts",
           "callers": [
@@ -13102,6 +13543,27 @@
           "module": "lib/trip-store.ts",
           "callers": [
             "lib/trip-service.ts"
+          ]
+        },
+        "testDbUrl": {
+          "module": "lib/turso-test-guard.test-util.ts",
+          "callers": [
+            "lib/turso-test-db.test-util.ts",
+            "lib/turso-test-preload.test-util.ts"
+          ]
+        },
+        "tursoTx": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/turso-test-db.test-util.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "guardFetch": {
+          "module": "lib/turso-test-guard.test-util.ts",
+          "callers": [
+            "lib/turso-test-preload.test-util.ts"
           ]
         },
         "finalizeRecording": {
@@ -13343,6 +13805,7 @@
           "module": "lib/spawn-session.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session",
+            "wiring/brain-lead.ts",
             "wiring/brain.ts"
           ]
         },
@@ -13463,7 +13926,8 @@
         "ensureFolderTrusted": {
           "module": "lib/spawn-session.ts",
           "callers": [
-            "routes/api.ts#* /api/feed"
+            "routes/api.ts#* /api/feed",
+            "wiring/brain-lead.ts"
           ]
         },
         "spawnShellSession": {
@@ -13776,6 +14240,12 @@
             "routes/brain.ts"
           ]
         },
+        "addBrainHandoff": {
+          "module": "wiring/brain-handoff.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "BrainWorkers": {
           "module": "wiring/brain-workers.ts",
           "callers": [
@@ -13794,8 +14264,20 @@
             "routes/brain.ts"
           ]
         },
+        "cancelAgentTask": {
+          "module": "wiring/brain-task-cancel.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "DeployResult": {
           "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "BrainLead": {
+          "module": "wiring/brain-lead.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -13808,6 +14290,32 @@
         },
         "REASON_MAX": {
           "module": "wiring/brain-pr-close.ts",
+          "callers": [
+            "routes/brain.ts",
+            "wiring/brain-task-cancel.ts"
+          ]
+        },
+        "TASK_REF": {
+          "module": "wiring/brain-task-cancel.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "leadSlug": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts",
+            "wiring/brain-lead.ts"
+          ]
+        },
+        "LEAD_PREFIX": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "brainLead": {
+          "module": "wiring/brain-lead.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -13834,6 +14342,20 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "routes/brain.ts",
+            "ws.ts"
+          ]
+        },
+        "parseBuilderReport": {
+          "module": "lib/builder-jobs.ts",
+          "callers": [
+            "routes/builder-jobs.ts#POST /hooks/builder-progress"
+          ]
+        },
+        "builderJobs": {
+          "module": "wiring/builder-jobs.ts",
+          "callers": [
+            "routes/builder-jobs.ts#POST /hooks/builder-progress",
+            "routes/builder-jobs.ts#GET /api/builder-jobs",
             "ws.ts"
           ]
         },
@@ -14350,6 +14872,13 @@
             "wiring/brain.ts"
           ]
         },
+        "isSupervisedTask": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/hooks.ts#POST /hooks/stop",
+            "wiring/auto-compact.ts"
+          ]
+        },
         "gaugeFromTranscript": {
           "module": "wiring/gauge.ts",
           "callers": [
@@ -14390,8 +14919,11 @@
             "routes/orchestrator.ts",
             "wiring/auto-deploy.ts",
             "wiring/body-agent.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -14511,6 +15043,8 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/proposals.ts",
@@ -14523,6 +15057,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/brain-handoff.ts",
             "wiring/proposals.ts",
             "wiring/triage.ts"
           ]
@@ -14536,6 +15071,8 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
@@ -15134,7 +15671,8 @@
           "callers": [
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "realGh": {
@@ -15143,6 +15681,7 @@
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-task-cancel.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts"
@@ -15178,16 +15717,11 @@
             "wiring/auto-compact.ts"
           ]
         },
-        "isSupervisedTask": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/auto-compact.ts"
-          ]
-        },
         "ShFn": {
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/auto-deploy.ts",
+            "wiring/brain-lead.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -15195,6 +15729,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/auto-deploy.ts",
+            "wiring/brain-lead.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -15449,6 +15984,7 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-activity.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
@@ -15464,26 +16000,95 @@
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-activity.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/events.ts"
           ]
         },
-        "GhFn": {
-          "module": "lib/triage-pr.ts",
+        "getTurn": {
+          "module": "lib/orchestrator-chat.ts",
           "callers": [
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/repo-view.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts"
+            "wiring/brain-handoff.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "openDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "fileHandoff": {
+          "module": "lib/dispatch-tasks.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "emitTrace": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "wiring/brain-handoff.ts",
+            "wiring/brain-todo.ts",
+            "wiring/events.ts"
           ]
         },
         "AgentLookup": {
           "module": "wiring/takeover-liveness.ts",
           "callers": [
+            "wiring/brain-lead.ts",
             "wiring/brain-restore.ts"
+          ]
+        },
+        "herdrWorkspaces": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "herdrWorkspacePanes": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain-workers.ts"
+          ]
+        },
+        "brainLiveness": {
+          "module": "wiring/brain-workers.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain-restore.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "folderTrusted": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "wiring/brain-lead.ts"
+          ]
+        },
+        "spawnInHerdr": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "wiring/brain-lead.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "prReadiness": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/brain-pr-merge.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "mergeGate": {
+          "module": "lib/merge-gate.ts",
+          "callers": [
+            "wiring/brain-pr-merge.ts",
+            "wiring/triage.ts"
           ]
         },
         "envValue": {
@@ -15492,24 +16097,33 @@
             "wiring/brain-restore.ts"
           ]
         },
-        "brainLiveness": {
-          "module": "wiring/brain-workers.ts",
+        "getKv": {
+          "module": "lib/brain-store.ts",
           "callers": [
-            "wiring/brain-restore.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "setKv": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "getTaskByDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/brain-task-cancel.ts",
+            "wiring/brain-workers.ts",
+            "wiring/dispatch.ts",
+            "wiring/events.ts"
           ]
         },
         "addTodo": {
           "module": "lib/my-tasks.ts",
           "callers": [
             "wiring/brain-todo.ts"
-          ]
-        },
-        "emitTrace": {
-          "module": "wiring/brain.ts",
-          "callers": [
-            "wiring/brain-todo.ts",
-            "wiring/events.ts"
           ]
         },
         "ReapMode": {
@@ -15590,30 +16204,10 @@
             "wiring/brain-workers.ts"
           ]
         },
-        "herdrWorkspacePanes": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "wiring/brain-workers.ts"
-          ]
-        },
-        "herdrWorkspaces": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "wiring/brain-workers.ts"
-          ]
-        },
         "getRow": {
           "module": "lib/brain-trace.ts",
           "callers": [
             "wiring/brain-workers.ts",
-            "wiring/events.ts"
-          ]
-        },
-        "getTaskByDispatchId": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/brain-workers.ts",
-            "wiring/dispatch.ts",
             "wiring/events.ts"
           ]
         },
@@ -15636,6 +16230,12 @@
           ]
         },
         "deliveryText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "fitQueued": {
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain.ts"
@@ -15725,6 +16325,12 @@
             "wiring/brain.ts"
           ]
         },
+        "requeueDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "markMaybe": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -15737,25 +16343,7 @@
             "wiring/brain.ts"
           ]
         },
-        "getKv": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "takeDeliveries": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "openDeliveries": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "setKv": {
           "module": "lib/brain-store.ts",
           "callers": [
             "wiring/brain.ts"
@@ -15779,12 +16367,6 @@
             "wiring/brain.ts"
           ]
         },
-        "getTurn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "onTurnAppended": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -15803,16 +16385,16 @@
             "wiring/brain.ts"
           ]
         },
-        "spawnInHerdr": {
-          "module": "lib/spawn-session.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "realAutoCompactDeps": {
           "module": "wiring/auto-compact.ts",
           "callers": [
             "wiring/brain.ts"
+          ]
+        },
+        "BuilderJobStore": {
+          "module": "lib/builder-jobs.ts",
+          "callers": [
+            "wiring/builder-jobs.ts"
           ]
         },
         "createCanvasStore": {
@@ -16704,13 +17286,13 @@
             "wiring/shell-sessions.ts"
           ]
         },
-        "readShellSessions": {
+        "replaceKeepingLinks": {
           "module": "lib/shell-sessions.ts",
           "callers": [
             "wiring/shell-sessions.ts"
           ]
         },
-        "store": {
+        "readShellSessions": {
           "module": "lib/shell-sessions.ts",
           "callers": [
             "wiring/shell-sessions.ts"
@@ -16724,12 +17306,6 @@
         },
         "createTasksAgent": {
           "module": "lib/tasks-agent.ts",
-          "callers": [
-            "wiring/tasks-agent.ts"
-          ]
-        },
-        "tursoTx": {
-          "module": "lib/turso.ts",
           "callers": [
             "wiring/tasks-agent.ts"
           ]
@@ -16899,12 +17475,6 @@
           ]
         },
         "PrReadiness": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "prReadiness": {
           "module": "lib/triage-pr.ts",
           "callers": [
             "wiring/triage.ts"

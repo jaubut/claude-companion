@@ -81,3 +81,14 @@ test("contracts/brain fixtures parse and every trace row has the contract's keys
   const row = trace.upsertRow({ id: "turn:k", kind: "turn", status: "pending", title: "k" })!
   expect(Object.keys(row).sort()).toEqual(keys)
 })
+
+test("a blocked task the brain cancelled ends its agent row as cancelled", () => {
+  trace.upsertRow({ id: trace.rowId.agent("cafe0001"), turnId: "t10", kind: "agent", status: "pending", title: "builder — old" })
+  const t: DispatchTask = {
+    id: "e".repeat(32), noteId: "projects/dash", title: "old", agent: "builder", status: "blocked", done: false, blocker: "Which repo?", owner: "zettlab",
+    prUrl: null, resultRef: null, projectTitle: null, projectRef: null, createdAt: 0, updatedAt: 0, updatedAtRaw: "",
+  }
+  trace.traceForDispatch(t, "cafe0001")
+  const rows = trace.traceForDispatch({ ...t, status: "cancelled", done: true, blocker: "Cancelled by the brain: obsolete" }, "cafe0001")
+  expect(rows.map((r) => [r.id, r.status, r.detail])).toEqual([["agent:cafe0001", "error", "cancelled"]])
+})

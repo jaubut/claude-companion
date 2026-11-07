@@ -142,7 +142,7 @@ Errors: any Turso failure → 503 `{ok:false, error:"turso_unreachable"}`; never
 
 ## Pipeline list
 
-`GET /api/orchestrator/pipeline` (one work stream, slice D; `server/lib/pipeline.ts`) is one list of agent tasks with ONE state each. It reads Turso on every call, not the poller cache. It returns the same rows as the poller: `assignee LIKE 'agent:%'`, open, or touched in the last 7 days, newest first, at most 300. The PR shepherd verdict comes from the `pr:*` / `outcome:merged` ledger, the same one the [pipeline stage](#pipeline-stage) uses.
+`GET /api/orchestrator/pipeline` (one work stream, slice D; `server/lib/pipeline.ts`) is one list of agent tasks with ONE state each. It reads Turso on every call, not the poller cache. It returns the same rows as the poller: `assignee LIKE 'agent:%'` or `'handoff'` with a status (a handoff row has none until the relay's ACK), open, or touched in the last 7 days, newest first, at most 300. The PR shepherd verdict comes from the `pr:*` / `outcome:merged` ledger, the same one the [pipeline stage](#pipeline-stage) uses.
 
 `PipelineItem = {id, title, agent, noteId, state, prUrl, shepherd, updatedAt, approveUrl?}`
 

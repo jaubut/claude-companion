@@ -1,39 +1,22 @@
-import { test, expect } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { afterEach, test, expect, spyOn } from "bun:test"
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  SHELL_OPTION, closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, loginShell, parseShellList,
-  shellNewSessionArgv, shellWire, spawnShellSession, store, wireSessions, type ShellSession,
+  closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, parseShellList,
+  readHerdrShells, readShellSessions, shellWire, spawnShellSession, startShellPoll, store, wireSessions, type ShellDeps, type ShellSession,
 } from "./shell-sessions"
 import { resolveSpawnCwd } from "./spawn-session"
+import { endedStore } from "./ended-sessions"
+import { SHELL_PANE_MARK } from "./herdr"
+import { fakeHerdr } from "./herdr-fake.test-util"
+import { herdrSessionGone } from "./herdr-workspace"
+import type { Session } from "./sessions"
 import type { DetachedDeps } from "./tmux-spawn-confirm"
 
-// Phone-spawned terminal sessions: a login shell in a tagged detached tmux
-// session, tmux itself as the record (2026-10-25).
-
-const NO_SOCKET: Record<string, string | undefined> = {}
-
-test("shell new-session: cwd rides -c and the shell is an argv entry after --, no command line", () => {
-  const argv = shellNewSessionArgv("sh-repo", "/Users/j/Jeremie's Films; rm -rf ~", "/bin/zsh", NO_SOCKET)
-  expect(argv).toEqual([
-    "tmux", "new-session", "-d", "-x", "220", "-y", "60",
-    "-s", "sh-repo", "-c", "/Users/j/Jeremie's Films; rm -rf ~", "--", "/bin/zsh", "-l",
-  ])
-  expect(argv).not.toContain("/bin/sh")
-})
-
-test("shell new-session: a configured spawn socket leads with -L / -f", () => {
-  const argv = shellNewSessionArgv("sh-x", "/x", "/bin/bash", { COMPANION_TMUX_SOCKET: "cc", COMPANION_TMUX_CONF: "/c/t.conf" })
-  expect(argv.slice(0, 6)).toEqual(["tmux", "-L", "cc", "-f", "/c/t.conf", "new-session"])
-})
-
-test("loginShell: $SHELL, else the account shell, else /bin/sh; never a non-path", () => {
-  expect(loginShell({ SHELL: "/bin/zsh" }, () => "/bin/bash")).toBe("/bin/zsh")
-  expect(loginShell({}, () => "/usr/bin/fish")).toBe("/usr/bin/fish")
-  expect(loginShell({ SHELL: "zsh; curl x" }, () => "")).toBe("/bin/sh")
-  expect(loginShell({}, () => { throw new Error("no passwd entry") })).toBe("/bin/sh")
-})
+// Phone-spawned terminal sessions: a login shell in a marked herdr pane, herdr
+// itself as the record (Stage 2). tmux shells from before
+// stay listed and closable, never created. A herdr shell is never closed here.
 
 test("parseShellList keeps only tagged sessions, oldest first, times in ms", () => {
   const out = parseShellList([
@@ -43,7 +26,7 @@ test("parseShellList keeps only tagged sessions, oldest first, times in ms", () 
     "",
   ].join("\n"), "/tmp/tmux-501/cc")
   expect(out.map((s) => s.key)).toEqual(["shell:sh-a", "shell:sh-b"])
-  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000, panePid: 0, claudeKey: "" })
+  expect(out[0]).toEqual({ key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1700000050000, panePid: 0, claudeKey: "" })
 })
 
 test("parseShellList: tmux's own socket_path wins over the fallback", () => {
@@ -51,7 +34,8 @@ test("parseShellList: tmux's own socket_path wins over the fallback", () => {
   expect(out.map((s) => s.tmuxSocket)).toEqual(["/private/tmp/tmux-501/default", "/fallback"])
 })
 
-const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", createdAt: 1, panePid: 0, claudeKey: "" }
+const A: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x/a", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "", createdAt: 1, panePid: 0, claudeKey: "" }
+const H: ShellSession = { ...A, key: "shell:sh-h", name: "sh-h", herdrPane: "w9:p1", terminalId: "term_9", tmuxPane: "", panePid: 90 }
 
 test("store emits on a real change only: added, cd'd, removed", () => {
   const s = createShellStore()
@@ -67,7 +51,8 @@ test("store emits on a real change only: added, cd'd, removed", () => {
 })
 
 test("wire record: agent shell with its pane, the fields the phone decodes", () => {
-  expect(shellWire(A)).toMatchObject({ key: "shell:sh-a", agent: "shell", label: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", sessionId: "", firstSeenAt: 1 })
+  expect(shellWire(A)).toMatchObject({ key: "shell:sh-a", agent: "shell", label: "sh-a", cwd: "/x/a", tmuxPane: "%7", tmuxSocket: "", herdrPane: "", sessionId: "", firstSeenAt: 1 })
+  expect(shellWire(H)).toMatchObject({ key: "shell:sh-h", agent: "shell", herdrPane: "w9:p1", tmuxPane: "", tmuxSocket: "", panePid: 90 })
 })
 
 test("wireSessions: no shells → the agent list itself; shells → appended after agents", () => {
@@ -79,80 +64,364 @@ test("wireSessions: no shells → the agent list itself; shells → appended aft
   store.replace([])
 })
 
-// A fake tmux for the spawn: names free until created, the created session
-// listed (tagged) by list-sessions once the tag is set.
-function fakeTmux(opts: { which?: string | null; alive?: boolean; tagFails?: boolean } = {}) {
-  const calls: string[][] = []
-  let created = ""
-  let tagged = false
-  const deps: DetachedDeps = {
-    which: () => (opts.which === undefined ? "/opt/homebrew/bin/tmux" : opts.which),
-    sleep: async () => {},
-    run: async (argv) => {
-      calls.push(argv)
-      const has = (a: string) => argv.includes(a)
-      if (has("new-session")) { created = argv[argv.indexOf("-s") + 1]!; return { code: 0, stdout: "", stderr: "" } }
-      if (has("has-session")) return { code: created && (opts.alive ?? true) && argv.includes(`=${created}`) ? 0 : 1, stdout: "", stderr: "" }
-      if (has("display-message")) return { code: 0, stdout: "0\n", stderr: "" }
-      if (has("set-option") && has(SHELL_OPTION)) { tagged = !opts.tagFails; return { code: opts.tagFails ? 1 : 0, stdout: "", stderr: opts.tagFails ? "no such session" : "" } }
-      if (has("list-sessions")) return { code: 0, stdout: tagged ? `${created}\t1\t%42\t/x/repo\t1700000000\t/tmp/tmux-501/default\t4242\n` : "", stderr: "" }
-      return { code: 0, stdout: "", stderr: "" }
+// The invariant of this module: it never closes anything in herdr. Every test
+// here runs against the fake below, so this holds for every path.
+const destructive: string[][] = []
+afterEach(() => {
+  expect(destructive).toEqual([])
+  destructive.length = 0
+})
+
+test("shell-sessions.ts has no destructive herdr call", () => {
+  expect(readFileSync(new URL("./shell-sessions.ts", import.meta.url), "utf8")).not.toMatch(/"(pane|workspace|tab)", "close"/)
+})
+
+// A fake herdr holding `sh-*` workspaces: create adds one.
+// Like the real one, workspace ids only go up and a split keeps its pane id.
+function fakeShells(opts: {
+  gate?: string | null; dies?: boolean; down?: boolean
+  listDown?: () => boolean; onCreate?: () => void; markDown?: boolean; runDown?: boolean; noRoot?: boolean
+  onMark?: (w: { term: string; split?: boolean }) => void
+} = {}) {
+  const ws: Array<{ id: string; label: string; term: string; cwd: string; mark?: string; split?: boolean }> = []
+  let created = 0
+  const f = fakeHerdr({
+    gate: opts.gate,
+    reply(args) {
+      const verb = args.slice(0, 2).join(" ")
+      if (opts.down) throw new Error("herdr down")
+      if ((verb === "workspace list" || verb === "pane list") && opts.listDown?.()) throw new Error("herdr blip")
+      if (verb === "workspace create") {
+        opts.onCreate?.()
+        const id = `w${++created}`, label = args[args.indexOf("--label") + 1]!, cwd = args[args.indexOf("--cwd") + 1]!
+        if (!opts.dies) ws.push({ id, label, cwd, term: `term_${id}` })
+        return { workspace: { workspace_id: id }, ...(opts.noRoot ? {} : { root_pane: { pane_id: `${id}:p1`, terminal_id: `term_${id}` } }) }
+      }
+      if (verb === "workspace list") return { workspaces: ws.map((w) => ({ workspace_id: w.id, label: w.label })).concat({ workspace_id: "w0", label: "brain" }) }
+      if (verb === "pane list") {
+        const roots = ws.filter((w) => w.term).map((w) => ({ pane_id: `${w.id}:p1`, workspace_id: w.id, terminal_id: w.term, label: w.mark, cwd: w.cwd, foreground_cwd: `${w.cwd}/sub` }))
+        const splits = ws.filter((w) => w.split).map((w) => ({ pane_id: `${w.id}:p2`, workspace_id: w.id, terminal_id: `split_${w.id}`, cwd: w.cwd, foreground_cwd: "" }))
+        return { panes: [...splits, ...roots].sort((a, b) => a.workspace_id.localeCompare(b.workspace_id)).concat({ pane_id: "w0:p1", workspace_id: "w0", terminal_id: "term_b", cwd: "/b", foreground_cwd: "" }) }
+      }
+      if (verb === "workspace close" || verb === "pane close") destructive.push(args)
+      if (verb === "pane rename") {
+        if (opts.markDown) throw new Error("no such command")
+        const w = ws.find((x) => args[2] === `${x.id}:p1`)
+        if (!w) throw Object.assign(new Error("pane not found"), { code: "pane_not_found" })
+        w.mark = args[3]!
+        opts.onMark?.(w)
+      }
+      if (verb === "pane run" && opts.runDown) throw new Error("rejected")
+      if (verb === "pane process-info") return { process_info: { shell_pid: 4242, foreground_process_group_id: 4242 } }
+      return {}
     },
-  }
-  return { deps, calls }
+  })
+  const noTmux: Pick<ShellDeps, "run" | "which" | "sleep"> = { which: () => null, sleep: async () => {}, run: async () => ({ code: 1, stdout: "", stderr: "" }) }
+  return { ...f, ws, deps: { ...noTmux, h: f.h } as ShellDeps }
 }
 
-test("spawn shell: no tmux on the host → tmux_not_found, nothing run", async () => {
-  const f = fakeTmux({ which: null })
+test("spawn shell: herdr unavailable → herdr_unavailable, nothing created, no tmux", async () => {
+  const f = fakeShells({ gate: "version 0.9.9 not pinned" })
   const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r.ok).toBe(false)
-  if (!r.ok) expect(r.error).toStartWith("tmux_not_found")
+  expect(r).toEqual({ ok: false, error: "herdr_unavailable: version 0.9.9 not pinned" })
   expect(f.calls).toEqual([])
 })
 
-test("spawn shell: happy path → tagged sh-<dir> session, listed, in the store", async () => {
+test("spawn shell: happy path → sh-<dir> workspace, unfocused, listed, in the store", async () => {
   store.replace([])
-  const f = fakeTmux()
+  const f = fakeShells()
   const r = await spawnShellSession("/x/repo", f.deps)
   expect(r.ok).toBe(true)
   if (!r.ok) return
-  expect(r.session).toMatchObject({ key: "shell:sh-repo", name: "sh-repo", tmuxPane: "%42", cwd: "/x/repo" })
-  const create = f.calls.find((c) => c.includes("new-session"))!
-  expect(create.slice(create.indexOf("-s"), create.indexOf("--"))).toEqual(["-s", "sh-repo", "-c", "/x/repo"])
-  expect(create[create.indexOf("--") + 2]).toBe("-l")
-  expect(f.calls.some((c) => c.includes(SHELL_OPTION) && c.includes("sh-repo"))).toBe(true)
-  expect(getShellSession("shell:sh-repo")?.tmuxPane).toBe("%42")
+  expect(r.session).toMatchObject({ key: "shell:sh-repo", name: "sh-repo", herdrPane: "w1:p1", terminalId: "term_w1", cwd: "/x/repo/sub", panePid: 4242, tmuxPane: "" })
+  expect(f.calls.find((c) => c[1] === "create")).toEqual(["workspace", "create", "--cwd", "/x/repo", "--label", "sh-repo", "--no-focus"])
+  expect(getShellSession("shell:sh-repo")?.herdrPane).toBe("w1:p1")
   expect(listShellSessions().length).toBe(1)
   store.replace([])
 })
 
-test("spawn shell with resume: types `claude --resume <id>` into its pane, then Enter", async () => {
+test("spawn shell: a double tap gets two names, and a tmux shell's name is taken too", async () => {
   store.replace([])
-  const f = fakeTmux()
+  const f = fakeShells()
+  const deps: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => ({ code: 0, stdout: "sh-repo\t1\t%1\t/x\t1\t/s\t1\n", stderr: "" }) }
+  const [a, b] = await Promise.all([spawnShellSession("/x/repo", deps), spawnShellSession("/x/repo", deps)])
+  expect([a, b].map((r) => (r.ok ? r.session.name : r.error))).toEqual(["sh-repo-2", "sh-repo-3"])
+  store.replace([])
+})
+
+test("spawn shell with resume: `pane run` types claude --resume <id> into its pane", async () => {
+  store.replace([])
+  const f = fakeShells()
   const id = "51794d7b-cf0f-4f63-9eaf-7b06cab5047e"
-  const r = await spawnShellSession("/x/repo", f.deps, id)
-  expect(r.ok).toBe(true)
-  const keys = f.calls.filter((c) => c.includes("send-keys")).map((c) => c.slice(c.indexOf("send-keys")))
-  expect(keys).toEqual([
-    ["send-keys", "-t", "%42", "-l", `claude --resume ${id}`],
-    ["send-keys", "-t", "%42", "Enter"],
-  ])
+  expect((await spawnShellSession("/x/repo", f.deps, id)).ok).toBe(true)
+  expect(f.calls.filter((c) => c[1] === "run")).toEqual([["pane", "run", "w1:p1", `claude --resume ${id}`]])
   store.replace([])
 })
 
 test("spawn shell: the shell died at once → session_exited, no record", async () => {
   store.replace([])
-  const f = fakeTmux({ alive: false })
-  const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r).toEqual({ ok: false, error: "session_exited" })
+  const f = fakeShells({ dies: true })
+  expect(await spawnShellSession("/x/repo", f.deps)).toEqual({ ok: false, error: "session_exited" })
   expect(listShellSessions()).toEqual([])
 })
 
-test("spawn shell: the tag can't be set → an error, not an untracked shell reported ok", async () => {
-  const f = fakeTmux({ tagFails: true })
+test("herdr list: only a marked pane is a shell; a blip is null and keeps the rows", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  expect((await readHerdrShells(f.h))?.map((s) => s.name)).toEqual(["sh-repo"])
+  const down = fakeShells({ down: true })
+  expect(await readHerdrShells(down.h)).toBeNull()
+  expect((await readShellSessions(down.deps)).map((s) => s.name)).toEqual(["sh-repo"])
+  store.replace([])
+})
+
+test("herdr list: the pid and first-seen time stick to the terminal id, a restored terminal is read again", async () => {
+  const f = fakeShells()
+  store.replace([])
+  await spawnShellSession("/x/repo", f.deps)
+  const was = listShellSessions()[0]!
+  const n = f.calls.length
+  const [same] = (await readHerdrShells(f.h))!
+  expect(same).toMatchObject({ createdAt: was.createdAt, panePid: was.panePid })
+  expect(f.calls.slice(n).some((c) => c[1] === "process-info")).toBe(false)
+  expect((await readHerdrShells(f.h, []))![0]!.panePid).toBe(4242)
+  expect(f.calls.at(-1)![1]).toBe("process-info")
+  store.replace([])
+})
+
+test("herdr list: an `sh-*` workspace with no marked pane is not a shell, whatever the count", async () => {
+  const f = fakeShells()
+  store.replace([])
+  f.ws.push({ id: "w1", label: "sh-old", term: "t1", cwd: "/a" }, { id: "w2", label: "sh-human", term: "t2", cwd: "/b", split: true })
+  expect(await readHerdrShells(f.h)).toEqual([])
+  expect(await readHerdrShells(f.h, [])).toEqual([])
+  expect(await closeShellSession("sh-old", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+})
+
+test("herdr list: a restart finds the marked pane among splits; the split is never a row", async () => {
+  const f = fakeShells()
+  store.replace([])
+  f.ws.push({ id: "w1", label: "sh-kept", term: "t1", cwd: "/a", mark: SHELL_PANE_MARK, split: true })
+  const rows = await readHerdrShells(f.h, []) // the fake lists a split first
+  expect(rows).toMatchObject([{ name: "sh-kept", herdrPane: "w1:p1", terminalId: "t1" }])
+  store.replace([])
+})
+
+test("herdr list: a shell that exits while Companion is down leaves no row: its split has no mark", async () => {
+  const f = fakeShells()
+  store.replace([])
+  f.ws.push({ id: "w1", label: "sh-gone", term: "", cwd: "/a", split: true }) // only the split's pane is left
+  expect(await readHerdrShells(f.h, [])).toEqual([])
+  expect(await closeShellSession("sh-gone", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+})
+
+test("herdr list: a restore keeps the row: same marked pane, new terminal, a split changes nothing", async () => {
+  const f = fakeShells()
+  store.replace([])
+  await spawnShellSession("/x/repo", f.deps)
+  const w = f.ws[0]!
+  w.split = true
+  w.term = "term_restored"
+  expect(await readHerdrShells(f.h)).toMatchObject([{ name: "sh-repo", herdrPane: "w1:p1", terminalId: "term_restored" }])
+  store.replace([])
+})
+
+test("herdr list: a renamed workspace keeps its shell under the new name, and the split stays out when the shell exits", async () => {
+  const f = fakeShells()
+  store.replace([])
+  await spawnShellSession("/x/repo", f.deps)
+  const w = f.ws[0]!
+  w.split = true
+  w.label = "notes"
+  expect(await readHerdrShells(f.h)).toMatchObject([{ name: "notes", herdrPane: "w1:p1" }])
+  w.term = ""
+  expect(await readHerdrShells(f.h)).toEqual([])
+  store.replace([])
+})
+
+test("spawn shell: its root pane carries the mark; a mark herdr refuses fails the spawn, no record", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  expect(f.calls.filter((c) => c[1] === "rename")).toEqual([["pane", "rename", "w1:p1", SHELL_PANE_MARK]])
+  store.replace([])
+  const refused = fakeShells({ markDown: true })
+  expect(await spawnShellSession("/x/repo", refused.deps)).toEqual({ ok: false, error: "herdr pane rename: no such command" })
+  expect(refused.ws.length).toBe(1) // left, a ceiling
+  expect(listShellSessions()).toEqual([])
+})
+
+test("herdr list: two marked panes under one label give no row, nothing is guessed", async () => {
+  const f = fakeShells()
+  store.replace([])
+  f.ws.push({ id: "w1", label: "sh-dup", term: "t1", cwd: "/a", mark: SHELL_PANE_MARK }, { id: "w2", label: "sh-dup", term: "t2", cwd: "/b", mark: SHELL_PANE_MARK })
+  f.ws.push({ id: "w3", label: "sh-one", term: "t3", cwd: "/c", mark: SHELL_PANE_MARK })
+  const rows = await readHerdrShells(f.h)
+  expect(rows!.map((s) => s.terminalId)).toEqual(["t3"])
+  store.replace(rows!)
+  expect(await closeShellSession("sh-dup", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+  f.ws[1]!.label = "sh-dup-b" // unique again: both come back
+  expect((await readHerdrShells(f.h))!.map((s) => s.terminalId)).toEqual(["t1", "t2", "t3"])
+  store.replace([])
+})
+
+test("spawn shell: after pane id reuse a failed listing never hands out the cached row", async () => {
+  let reads = 0
+  const f = fakeShells({ listDown: () => reads++ >= 1 }) // the label read passes, every later list fails
+  store.replace([{ ...H, key: "shell:sh-old", name: "sh-old", herdrPane: "w1:p1", terminalId: "term_old" }])
+  expect(await spawnShellSession("/x/reuse", f.deps)).toEqual({ ok: false, error: "session_exited" })
+  store.replace([])
+})
+
+test("spawn shell: another terminal on its ids is no match", async () => {
+  store.replace([])
+  const f = fakeShells({ onMark: (w) => { w.term = "term_other" } })
+  expect(await spawnShellSession("/x/other", f.deps)).toEqual({ ok: false, error: "session_exited" })
+  expect(f.ws.map((w) => w.term)).toEqual(["term_other"])
+  store.replace([])
+})
+
+test("spawn shell: a create reply with no root pane fails, and the workspace stays", async () => {
+  store.replace([])
+  const f = fakeShells({ noRoot: true })
+  expect(await spawnShellSession("/x/noroot", f.deps)).toEqual({ ok: false, error: "herdr workspace create: no root_pane" })
+  expect(f.ws.length).toBe(1)
+})
+
+test("spawn shell: a failed listing never reuses a live label, nothing is created", async () => {
+  store.replace([])
+  const f = fakeShells({ listDown: () => true })
+  f.ws.push({ id: "w9", label: "sh-repo", term: "t9", cwd: "/x" })
   const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r.ok).toBe(false)
-  expect(f.calls.at(-1)).toContain("kill-session")
+  expect(r).toEqual({ ok: false, error: "herdr_unavailable: workspace list failed" })
+  expect(f.calls.some((c) => c[1] === "create")).toBe(false)
+  expect(f.ws.length).toBe(1)
+})
+
+test("spawn shell: resolves its own pane, never a shell that took the label in the gap", async () => {
+  store.replace([])
+  const f = fakeShells({ onCreate: () => f.ws.push({ id: "w0b", label: "sh-repo", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK }) })
+  const r = await spawnShellSession("/x/repo", f.deps)
+  expect(r).toEqual({ ok: false, error: "session_exited" })
+  expect(f.ws.map((w) => w.id)).toEqual(["w0b", "w1"])
+  store.replace([])
+})
+
+test("spawn shell: a listing that fails after create fails the spawn, no record", async () => {
+  store.replace([])
+  let reads = 0
+  const f = fakeShells({ listDown: () => reads++ >= 2 })
+  expect(await spawnShellSession("/x/repo", f.deps)).toEqual({ ok: false, error: "session_exited" })
+  expect(listShellSessions()).toEqual([])
+})
+
+test("spawn shell: a stale row under that name is never handed out when the listing fails", async () => {
+  store.replace([])
+  let reads = 0, down = false
+  const f = fakeShells({ listDown: () => down && reads++ >= 2 })
+  await spawnShellSession("/x/repo", f.deps)
+  f.ws.length = 0
+  down = true
+  expect(await spawnShellSession("/x/repo", f.deps)).toEqual({ ok: false, error: "session_exited" })
+  store.replace([])
+})
+
+const TMUX_ROW = "sh-repo\t1\t%1\t/x\t1\t/s\t1\n"
+const tmuxAnswers = (deps: ShellDeps, code: number, stderr: string): ShellDeps => ({ ...deps, which: () => "/usr/bin/tmux", run: async () => ({ code, stdout: "", stderr }) })
+
+test("spawn shell: tmux not answering keeps a live tmux shell's name taken", async () => {
+  store.replace(parseShellList(TMUX_ROW, "/s"))
+  const r = await spawnShellSession("/x/repo", tmuxAnswers(fakeShells().deps, -1, "timed out"))
+  expect(r).toMatchObject({ ok: true, session: { name: "sh-repo-2" } })
+  store.replace([])
+})
+
+test("tmux list: no answer keeps the rows, a server that isn't running has none", async () => {
+  store.replace(parseShellList(TMUX_ROW, "/s"))
+  const f = fakeShells()
+  expect((await readShellSessions(tmuxAnswers(f.deps, -1, "timed out"))).map((s) => s.name)).toEqual(["sh-repo"])
+  expect(await readShellSessions(tmuxAnswers(f.deps, 1, "no server running on /tmp/tmux-1000/default\n"))).toEqual([])
+  store.replace([])
+})
+
+test("shell list: a herdr workspace renamed onto a tmux shell's name gives no row, on every refresh", async () => {
+  store.replace([])
+  const f = fakeShells()
+  f.ws.push({ id: "w8", label: "sh-repo", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK })
+  const deps: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => ({ code: 0, stdout: TMUX_ROW, stderr: "" }) }
+  expect((await readShellSessions(deps)).map((s) => s.tmuxPane)).toEqual(["%1"])
+  await spawnShellSession("/x/other", deps)
+  expect(listShellSessions().map((s) => s.name).sort()).toEqual(["sh-other", "sh-repo"])
+  expect(listShellSessions().find((s) => s.name === "sh-repo")?.tmuxPane).toBe("%1")
+  store.replace([])
+})
+
+test("spawn shell: a shell exits and its name is reused before the poll → a working new shell", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  f.ws.length = 0 // `exit`: the workspace is gone, the store still holds w1:p1
+  const r = await spawnShellSession("/x/repo", f.deps)
+  expect(r).toMatchObject({ ok: true, session: { name: "sh-repo", herdrPane: "w2:p1", terminalId: "term_w2" } })
+  expect((await readHerdrShells(f.h))?.map((s) => s.terminalId)).toEqual(["term_w2"])
+  store.replace([])
+})
+
+test("spawn shell: every workspace label is taken, shell or not", async () => {
+  store.replace([])
+  const f = fakeShells()
+  f.ws.push({ id: "w8", label: "sh-repo", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK, split: true })
+  f.ws.push({ id: "w9", label: "sh-repo-2", term: "t9", cwd: "/x" })
+  expect(await spawnShellSession("/x/repo", f.deps)).toMatchObject({ ok: true, session: { name: "sh-repo-3" } })
+  store.replace([])
+})
+
+test("spawn shell: a resume that herdr refuses keeps the shell, and the error says it is open", async () => {
+  store.replace([])
+  const f = fakeShells({ runDown: true })
+  const id = "51794d7b-cf0f-4f63-9eaf-7b06cab5047e"
+  const r = await spawnShellSession("/x/kept", f.deps, id)
+  expect(r).toMatchObject({ ok: false, error: "The terminal is open, but claude --resume didn't start: rejected", session: { name: "sh-kept", terminalId: "term_w1" } })
+  expect(listShellSessions().map((s) => s.name)).toEqual(["sh-kept"])
+  expect(f.ws.length).toBe(1)
+  store.replace([])
+})
+
+test("exit: the row drops on the next poll, with no error, a split or not", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/alone", f.deps)
+  await spawnShellSession("/x/beside", f.deps)
+  f.ws[1]!.split = true
+  const stop = startShellPoll(() => [], f.deps, 5)
+  await Bun.sleep(15)
+  expect(listShellSessions().length).toBe(2)
+  f.ws.shift() // `exit` in the only pane: its workspace goes with it
+  f.ws[0]!.term = "" // `exit` beside a split: the split stays
+  await Bun.sleep(20)
+  stop()
+  expect(listShellSessions()).toEqual([])
+})
+
+test("close shell (herdr): refused before anything else, nothing detached, the row stays, however it looks", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/noclose", f.deps)
+  const n = f.calls.length
+  const agent = { key: "c", pid: "", tmuxPane: "", herdrPane: "w1:p1" }
+  const detached: string[] = []
+  expect(await closeShellSession("sh-noclose", [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
+  expect(await closeShellSession("sh-noclose", [agent], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
+  store.replace(listShellSessions().map((s) => ({ ...s, claudeKey: "c" })))
+  expect(await closeShellSession("sh-noclose", [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "close_unavailable" })
+  expect(detached).toEqual([])
+  expect(f.calls.length).toBe(n)
+  expect(listShellSessions().map((s) => s.name)).toEqual(["sh-noclose"])
+  store.replace([])
 })
 
 // ── Close (POST /api/shell/close) ──
@@ -161,6 +430,8 @@ const CLOSE_LIST = "sh-a\t1\t%7\t/x\t1700000000\t/tmp/tmux-501/default\t70\nsh-b
 
 // list-sessions shows sh-a and sh-b until a kill of that `=name` lands (unless `unkillable`).
 function fakeCloseTmux(opts: { unkillable?: boolean; killCode?: number } = {}) {
+  const which = () => "/usr/bin/tmux"
+  const h = fakeHerdr({ reply: () => ({ workspaces: [], panes: [] }) }).h
   const calls: string[][] = []
   const killed = new Set<string>()
   const run: DetachedDeps["run"] = async (argv) => {
@@ -174,7 +445,7 @@ function fakeCloseTmux(opts: { unkillable?: boolean; killCode?: number } = {}) {
     }
     return { code: 0, stdout: "", stderr: "" }
   }
-  return { run, calls }
+  return { run, calls, which, h }
 }
 
 test("close shell: detaches first, kills the exact name, drops the row, broadcasts once", async () => {
@@ -273,6 +544,24 @@ test("linkClaude: no pid, or no process table → the pane match decides", () =>
   const agent = { key: "claude:x", pid: "", tmuxPane: "%4", tmuxSocket: "/tmp/tmux-501/default" }
   expect(linkClaude([SHELL], [agent], TABLE)[0]!.claudeKey).toBe("claude:x")
   expect(linkClaude([SHELL], [{ ...agent, pid: "900" }], null)[0]!.claudeKey).toBe("claude:x")
+})
+
+test("linkClaude (herdr): same herdr pane under the shell → linked; another pane or a stale pid → not", () => {
+  const shell = { ...SHELL, tmuxPane: "", tmuxSocket: "", herdrPane: "w9:p1", terminalId: "term_9" }
+  const agent = { key: "claude:h", pid: "700", tmuxPane: "", herdrPane: "w9:p1" }
+  expect(linkClaude([shell], [agent], TABLE)[0]!.claudeKey).toBe("claude:h")
+  expect(linkClaude([shell], [{ ...agent, herdrPane: "w8:p1" }], TABLE)[0]!.claudeKey).toBe("")
+  expect(linkClaude([shell], [{ ...agent, pid: "900" }], TABLE)[0]!.claudeKey).toBe("")
+})
+
+test("a Claude ending in a shell's pane leaves no ended row: the shell counts as live on that pane", () => {
+  store.replace([H])
+  const note = spyOn(endedStore, "note").mockResolvedValue(false)
+  try {
+    herdrSessionGone({ herdrPane: "w9:p1", tmuxPane: "" } as Session, () => [], "prompt_input_exit")
+    const live = note.mock.calls[0]![1]()
+    expect(live.some((o) => o.herdrPane === "w9:p1")).toBe(true)
+  } finally { note.mockRestore(); store.replace([]) }
 })
 
 test("store: a link appearing or going is a change (re-sent to phones)", () => {

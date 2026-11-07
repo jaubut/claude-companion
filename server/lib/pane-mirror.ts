@@ -1,6 +1,6 @@
 // The phone's "Terminal" view of a herdr or tmux Claude session — the real
 // Claude TUI, mirrored off its pane instead of a PTY this server owns
-// (lib/terminal-bridge.ts is the tmux-shell twin). One loop (PaneMirror) over
+// (lib/terminal-bridge.ts is the plain-shell twin). One loop (PaneMirror) over
 // a source per backend (wiring/pane-mirror.ts): herdr's socket below, or tmux
 // `capture-pane -e -p` + `send-keys -H` (2026-10-30). A tmux pane has no
 // sizer: `resize-pane` would move the Mac's own layout with nothing to give
