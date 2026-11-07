@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, parseShellList,
-  readHerdrShells, readShellSessions, shellWire, spawnShellSession, startShellPoll, store, wireSessions, type ShellDeps, type ShellSession,
+  readHerdrShells, readShellSessions, shellWire, spawnShellSession, startShellPoll, store, wireSessions, type AgentRef, type ShellDeps, type ShellSession,
 } from "./shell-sessions"
 import { resolveSpawnCwd } from "./spawn-session"
 import { endedStore } from "./ended-sessions"
@@ -740,6 +740,53 @@ test("close shell (tmux): as on main, herdr's state and labels never stop it", a
     expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: true, gone: false })
     expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.at(-1))).toEqual(["=sh-a"])
   }
+  store.replace([])
+})
+
+test("spawn never reuses a name seen in the last 24 h: exit, poll, respawn → a new name; a late Close on the old one closes nothing", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/c-seen", f.deps)
+  f.ws.length = 0 // `exit`: the workspace goes with its only pane
+  await poll(f)
+  expect(listShellSessions()).toEqual([])
+  expect(await spawnShellSession("/x/c-seen", f.deps)).toMatchObject({ ok: true, session: { name: "sh-c-seen-2" } })
+  expect(await closeShellSession("sh-c-seen", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  store.replace([])
+})
+
+test("seen names: free again after 24 h", async () => {
+  store.replace([])
+  const f = fakeShells()
+  const now = Date.now()
+  const clock = spyOn(Date, "now").mockReturnValue(now)
+  try {
+    await spawnShellSession("/x/c-day", f.deps)
+    f.ws.length = 0
+    await poll(f)
+    clock.mockReturnValue(now + 24 * 3_600_000 + 1)
+    expect(await spawnShellSession("/x/c-day", f.deps)).toMatchObject({ ok: true, session: { name: "sh-c-day" } })
+  } finally { clock.mockRestore(); store.replace([]) }
+})
+
+test("close shell (tmux): queued behind a spawn, a Claude that starts or gets linked while it waits is seen → claude_running, 0 kills", async () => {
+  store.replace(parseShellList(CLOSE_LIST, ""))
+  const f = fakeShells()
+  let release = () => {}
+  const held = new Promise<void>((r) => { release = r })
+  const slow: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => { await held; return { code: 0, stdout: CLOSE_LIST, stderr: "" } } }
+  const spawned = spawnShellSession("/x/c-wait", slow) // holds the turn until released
+  const live: AgentRef[] = []
+  const t = fakeCloseTmux()
+  const closeA = closeShellSession("sh-a", () => live, () => undefined, t)
+  const closeB = closeShellSession("sh-b", () => live, () => undefined, t)
+  live.push({ key: "claude:late", pid: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/default" }) // a hook registers it on sh-a
+  store.replace(listShellSessions().map((s) => (s.name === "sh-b" ? { ...s, claudeKey: "claude:linked" } : s))) // the poll links one on sh-b
+  release()
+  await spawned
+  expect(await closeA).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeB).toEqual({ ok: false, error: "claude_running" })
+  expect(t.calls.filter((c) => c.includes("kill-session"))).toEqual([])
   store.replace([])
 })
 
