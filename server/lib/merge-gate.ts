@@ -66,13 +66,15 @@ async function loadTools(dir: string): Promise<GateTools | string> {
 function selfCheck(t: GateTools): boolean {
   try {
     const none = { holdLabels: [], approved: false }
-    const human = (p: string): boolean => t.gateVerdict({ ...none, paths: [p] })?.stop === "human-merge-path"
+    const stops = (stop: string, g: Partial<GateInput>): boolean => t.gateVerdict({ ...none, paths: ["server/lib/a.ts"], ...g })?.stop === stop
+    const human = (p: string): boolean => stops("human-merge-path", { paths: [p] })
     const auth = "server/lib/auth.ts"
     const tainted = t.gateVerdict({ ...none, paths: [auth], approved: true, taint: { origin: "web", sensitive: [auth], stamped: false } })
     return human("memory/x.md") && human("skills/x.md") && t.gateVerdict({ ...none, paths: ["server/lib/a.ts"] }) === null
+      && stops("hold-label", { holdLabels: ["wip"] }) && stops("prod-schema", { paths: ["db/migrations/1.sql"] })
       && tainted?.stop === "tainted-sensitive" && /human merge/i.test(tainted.reason)
       && t.policy("unknown", "merge-sensitive") === "DENY" && t.leastTrusted([]) === "unknown" && t.isTainted("unknown")
-      && t.taintedSensitive([], null, t.SENSITIVE_RE).truncated && t.SENSITIVE_RE.test("memory/x.md")
+      && t.taintedSensitive([], null, t.SENSITIVE_RE).truncated && ["memory/x.md", "src/auth.ts", "src/token.ts"].every((p) => t.SENSITIVE_RE.test(p))
       && t.parseGatePaths("a\tb\n").length === 2 && t.liveGateInput({ ...none, paths: [] }, ["a"], [], t.SENSITIVE_RE).paths.length === 1
   } catch {
     return false

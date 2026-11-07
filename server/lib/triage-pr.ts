@@ -184,24 +184,42 @@ async function readiness(gh: GhFn, url: string): Promise<PrReadiness | null> {
   }
 }
 
-/** Jeremie's approval of a PR GitHub cannot merge now: the shepherd lands it once the reason clears. */
-async function approveOrMerge(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome> {
-  const closed = await mustBeOpen(deps.gh, t.prUrl)
-  if (closed) return closed
-  const g = await deps.gate(deps, { url: t.prUrl })
-  if (!g.ok) return { kind: "error", status: g.status, error: g.error, extra: g.extra }
+const HEAD_MOVED: ExecOutcome = { kind: "error", status: 409, error: "head_moved" }
+
+/** This read names another head than the gated one. No head reported: a merge is still pinned, an approval needs one. */
+const headMoved = (r: PrReadiness | null, hold: HoldReason | null, head: string): boolean =>
+  !!r && (r.headSha ? r.headSha !== head : hold !== null)
+
+/** Past the gate, on the head it checked. Jeremie's approval of a PR GitHub cannot merge now: the shepherd lands it once the reason clears. */
+async function approveOrLand(deps: MergeDeps, t: PrTarget, head: string): Promise<ExecOutcome> {
   const ready = await readiness(deps.gh, t.prUrl)
   const hold = ready ? holdReason(ready) : null
-  if (ready && hold) return ready.headSha === g.head ? recordApproval(deps, t, ready, hold) : { kind: "error", status: 409, error: "head_moved" }
-  const run = await deps.gh(["pr", "merge", t.prUrl, "--squash", "--match-head-commit", g.head])
+  if (headMoved(ready, hold, head)) return HEAD_MOVED
+  if (ready && hold) return recordApproval(deps, t, ready, hold)
+  const run = await deps.gh(["pr", "merge", t.prUrl, "--squash", "--match-head-commit", head])
   const after = await prState(deps.gh, t.prUrl)
   if (after === "MERGED") return { kind: "done", detail: { state: after } }
   // GitHub refused: if it now says why (conflict, CI…), the tap still counts as the approval.
   const late = after === "OPEN" ? await readiness(deps.gh, t.prUrl) : null
   const lateHold = late ? holdReason(late) : null
-  if (late && lateHold && late.headSha === g.head) return recordApproval(deps, t, late, lateHold)
+  if (headMoved(late, lateHold, head)) return HEAD_MOVED
+  if (late && lateHold) return recordApproval(deps, t, late, lateHold)
   const detail = (run.stderr || run.stdout).trim().slice(0, 200)
   return { kind: "error", status: 502, error: "merge_unverified", extra: { state: after, detail } }
+}
+
+async function approveOrMerge(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome> {
+  const closed = await mustBeOpen(deps.gh, t.prUrl)
+  if (closed) return closed
+  const g = await deps.gate(deps, { url: t.prUrl })
+  if (!g.ok) return { kind: "error", status: g.status, error: g.error, extra: g.extra }
+  try {
+    return await approveOrLand(deps, t, g.head)
+  } catch {
+    // A throw here would reach iOS as a 503, which it queues and re-sends with the card hidden: the re-send would gate
+    // and land whatever the head is by then. A 409 is final, and iOS reads this code as "check GitHub".
+    return { kind: "error", status: 409, error: "merge_unverified", extra: { detail: "gh or Turso failed after the gate" } }
+  }
 }
 
 async function closeIt(deps: PrActionDeps, t: PrTarget): Promise<ExecOutcome> {

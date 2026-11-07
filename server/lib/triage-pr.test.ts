@@ -159,6 +159,63 @@ describe("merge intent", () => {
     expect(approvals()).toHaveLength(1)
   })
 
+  test("a push after the gate, seen by the first read with nothing holding the PR: 409 head_moved, no merge", async () => {
+    readiness = { ...green, headRefOid: "def456" }
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(calls.some((c) => c[1] === "merge")).toBe(false)
+    expect(approvals()).toEqual([])
+    expect(ledger()).toEqual([])
+  })
+
+  test("a push between the gate and gh pr merge: the pin refuses it, and the answer is 409 head_moved, not a 5xx", async () => {
+    readiness = green
+    readinessAfter = { ...green, headRefOid: "def456" }
+    mergeEffect = "OPEN"
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(approvals()).toEqual([])
+  })
+
+  test("the same, with a hold on the new head: 409 head_moved, no approval for a head nothing checked", async () => {
+    readiness = green
+    readinessAfter = { ...green, headRefOid: "def456", mergeable: "CONFLICTING" }
+    mergeEffect = "OPEN"
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(approvals()).toEqual([])
+  })
+
+  test("GitHub refuses on the gated head for another reason: still 502 merge_unverified, which iOS treats as final", async () => {
+    readiness = green
+    readinessAfter = green
+    mergeEffect = "OPEN"
+    expect(await mergePr(deps, target)).toMatchObject({ kind: "error", status: 502, error: "merge_unverified" })
+  })
+
+  // A throw past the gate would reach iOS as a 503, which it queues and re-sends with the card hidden.
+  const unverified = { kind: "error" as const, status: 409, error: "merge_unverified", extra: { detail: "gh or Turso failed after the gate" } }
+  test("gh pr merge can't start: 409, it never escapes as a throw", async () => {
+    const down: GhFn = async (args) => { if (args[1] === "merge") throw new GhUnreachable("ENOENT"); return gh(args) }
+    readiness = green
+    expect(await mergePr({ ...deps, gh: down }, target)).toEqual(unverified)
+  })
+
+  test("gh dies on the read back after the merge: 409, never a throw", async () => {
+    let merged = false
+    const down: GhFn = async (args) => {
+      if (merged) throw new GhUnreachable("ENOENT")
+      if (args[1] === "merge") merged = true
+      return gh(args)
+    }
+    readiness = green
+    expect(await mergePr({ ...deps, gh: down }, target)).toEqual(unverified)
+  })
+
+  test("Turso down while recording the approval: 409, no row, never a throw", async () => {
+    const down: ExecFn = async () => { throw new Error("turso down") }
+    readiness = { ...green, mergeable: "CONFLICTING" }
+    expect(await mergePr({ ...deps, exec: down }, target)).toEqual(unverified)
+    expect(approvals()).toEqual([])
+  })
+
   test("a closed PR is stale (no approval recorded)", async () => {
     state = "CLOSED"
     readiness = { ...green, mergeable: "CONFLICTING" }

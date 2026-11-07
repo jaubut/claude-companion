@@ -193,9 +193,14 @@ function matrix(toolsFor: () => string): void {
       expect(w.approvals()).toHaveLength(1)
       expect(JSON.parse(w.approvals()[0]!.meta)).toMatchObject({ approvedHeadSha: SHA })
     })
-    test("late: a refused merge on a head the gate never saw records nothing", async () => {
+    test("late: a refused merge on a head the gate never saw is head_moved and records nothing", async () => {
       const w = world({ afterMerge: { mergeable: "CONFLICTING", head: OTHER } })
-      expect(await tap(w, gate)).toMatchObject({ status: 502, error: "merge_unverified" })
+      expect(await tap(w, gate)).toMatchObject({ status: 409, error: "head_moved" })
+      expect(w.approvals()).toEqual([])
+    })
+    test("late: a refused merge on a moved head with no hold is head_moved too", async () => {
+      const w = world({ afterMerge: { mergeable: "MERGEABLE", head: OTHER } })
+      expect(await tap(w, gate)).toMatchObject({ status: 409, error: "head_moved" })
       expect(w.approvals()).toEqual([])
     })
     test("late: a refused merge on the gated head still counts as the approval", async () => {

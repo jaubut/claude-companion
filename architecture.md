@@ -63,6 +63,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/brain.ts` | 288 | lib | 3 |  |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `wiring/auto-compact.ts` | 285 | lib | 6 | state: let statsDb · emits: inject_error |
+| `lib/triage-pr.ts` | 284 | lib | 21 |  |
 | `lib/ended-sessions.ts` | 282 | lib | 17 |  |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
@@ -74,7 +75,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/question-hook.ts` | 268 | lib | 7 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
-| `lib/triage-pr.ts` | 266 | lib | 21 |  |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/orchestrator.ts` | 252 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
@@ -141,10 +141,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `routes/body.ts` | 149 | route-host | 3 | routes: 5 |
+| `lib/merge-gate.ts` | 147 | lib | 6 |  |
 | `wiring/canvas.ts` | 147 | lib | 7 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `wiring/pane-mirror.ts` | 147 | lib | 7 | state: mirrors: Map, viewers: WeakMap |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
-| `lib/merge-gate.ts` | 145 | lib | 6 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
 | `lib/hook-common.ts` | 143 | lib | 10 |  |
 | `lib/jev.ts` | 143 | lib | 16 |  |

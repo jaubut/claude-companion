@@ -107,11 +107,19 @@ describe("mergeGate: fails closed", () => {
     ["an older gate with no human list", STUB_GATE.replace('if (human.length) return', 'if (false) return')],
     ["a gate that passes tainted PRs", STUB_GATE.replace('if (g.taint?.sensitive.length) return', 'if (false) return')],
     ["a gate that lifts taint on approval", STUB_GATE.replace('if (g.taint?.truncated)', 'if (g.approved) return null;\n  if (g.taint?.truncated)')],
+    ["a gate that dropped the label stop", STUB_GATE.replace('if (g.holdLabels?.length) return', 'if (false) return')],
+    ["a gate that dropped the prod-schema stop", STUB_GATE.replace('if (schema.length) return', 'if (false) return')],
     ["a gate that stops everything", STUB_GATE.replace('const human = g.paths.filter((p) => HUMAN_MERGE_RE.test(p));', 'const human = g.paths;')],
     ["a reworded reason bin/pr-merge would retire", STUB_GATE.replaceAll("human merge", "needs your review")],
   ] as const) {
     test(`self-check: ${what}`, async () => {
       expect(await run(world(), writeStubTools({ "pr-gate.ts": gate }))).toEqual(unavailable("gate self-check failed"))
+    })
+  }
+  for (const word of ["auth", "token"]) {
+    test(`self-check: a SENSITIVE_RE that lost ${word}`, async () => {
+      const lane = `export const SENSITIVE_RE = /${word === "auth" ? "token" : "auth"}|^memory\\//i;\n`
+      expect(await run(world(), writeStubTools({ "dep-lane.ts": lane }))).toEqual(unavailable("gate self-check failed"))
     })
   }
   test("a gateVerdict that throws on the real input, after passing the self-check", async () => {
