@@ -733,39 +733,39 @@ test("close shell: kill-session fails because it already exited → ok, gone", a
   store.replace([])
 })
 
-test("close shell (tmux): a herdr workspace under the same name → name_ambiguous, nothing killed or detached", async () => {
-  store.replace(parseShellList(CLOSE_LIST, ""))
-  const f = fakeCloseTmux({ labels: ["sh-a"] })
-  const detached: string[] = []
-  expect(await closeShellSession("sh-a", [], (k) => detached.push(k), f)).toEqual({ ok: false, error: "name_ambiguous" })
-  expect(detached).toEqual([])
-  expect(f.calls.some((c) => c.includes("kill-session"))).toBe(false)
-  store.replace([])
-})
-
-test("close shell (tmux): herdr installed but not answering → herdr_unreadable, nothing killed", async () => {
-  store.replace(parseShellList(CLOSE_LIST, ""))
-  const f = fakeCloseTmux({ labels: null })
-  expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: false, error: "herdr_unreadable" })
-  expect(f.calls.some((c) => c.includes("kill-session"))).toBe(false)
-  store.replace([])
-})
-
-test("close shell (tmux): herdr not running, or not on this host → closes as on main", async () => {
-  for (const gate of ["herdr-down: connection refused", "herdr-client-missing (/nowhere)"]) {
+test("close shell (tmux): as on main, herdr's state and labels never stop it", async () => {
+  for (const opts of [{ labels: ["sh-a"] }, { labels: null }, { gate: "herdr-down: connection refused", labels: null }]) {
     store.replace(parseShellList(CLOSE_LIST, ""))
-    const f = fakeCloseTmux({ gate, labels: null })
+    const f = fakeCloseTmux(opts)
     expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: true, gone: false })
     expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.at(-1))).toEqual(["=sh-a"])
-    expect(listShellSessions().map((s) => s.name)).toEqual(["sh-b"])
   }
   store.replace([])
 })
 
-test("close shell (tmux): herdr running with no workspace under the name → closes", async () => {
+test("closed names span both backends: a herdr shell renamed onto a closed tmux name is never closed by the retry", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
-  const f = fakeCloseTmux({ labels: ["sh-b", "brain"] })
-  expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-b", [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: false })
+  const f = fakeShells()
+  await spawnShellSession("/x/c-cross", f.deps)
+  f.ws[0]!.label = "sh-b"
+  await poll(f)
+  expect(listShellSessions().map((s) => s.name)).toEqual(["sh-b"])
+  expect(await closeShellSession("sh-b", [], () => undefined, f.deps)).toEqual({ ok: false, error: "name_reused" })
+  expect(f.ws.map((w) => w.label)).toEqual(["sh-b"])
+  store.replace([])
+})
+
+test("closed names span both backends: a tmux shell under a closed herdr name is never killed by the retry", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/c-cross2", f.deps)
+  expect((await closeShellSession("sh-c-cross2", [], () => undefined, f.deps)).ok).toBe(true)
+  expectClosed(["w1:p1"])
+  store.replace(parseShellList("sh-c-cross2\t1\t%9\t/x\t1\t/s\t9\n", ""))
+  const t = fakeCloseTmux()
+  expect(await closeShellSession("sh-c-cross2", [], () => undefined, t)).toEqual({ ok: false, error: "name_reused" })
+  expect(t.calls).toEqual([])
   store.replace([])
 })
 
