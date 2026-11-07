@@ -80,18 +80,22 @@ export type SpawnShellResult =
   | { ok: true; session: ShellSession }
   | { ok: false; error: string; session?: ShellSession }
 
-// One spawn at a time: the name comes from a read of what exists, so a double
-// tap must see the first shell (herdr allows two workspaces with one label).
-let spawnTurn: Promise<unknown> = Promise.resolve()
+// Spawns and closes take turns: a name comes from a read of what exists, so a
+// double tap must see the first shell (herdr allows two workspaces with one
+// label), and a Close must not race a spawn onto its name or a second Close.
+let turn: Promise<unknown> = Promise.resolve()
+function inTurn<T>(fn: () => Promise<T>): Promise<T> {
+  const next = turn.then(fn)
+  turn = next.catch(() => undefined)
+  return next
+}
 
 // `cwd` must already be resolved (spawn-session.ts resolveSpawnCwd).
 // `resume`: a Claude session id (recent-sessions.ts SESSION_ID_RE, checked by
 // the caller) typed into the new shell as `claude --resume <id>` — typed, so
 // the shell stays when claude exits, exactly as if Jeremie had typed it.
 export function spawnShellSession(cwd: string, deps: ShellDeps = realShellDeps, resume?: string): Promise<SpawnShellResult> {
-  const turn = spawnTurn.then(() => spawnShell(cwd, deps, resume))
-  spawnTurn = turn.catch(() => undefined)
-  return turn
+  return inTurn(() => spawnShell(cwd, deps, resume))
 }
 
 async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promise<SpawnShellResult> {
@@ -99,10 +103,10 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   if (gate) return { ok: false, error: `herdr_unavailable: ${gate}` }
   // The name must come from herdr, not the store: a stale read would reuse a
   // live label. Every label, shell or not: no two workspaces share one. A closed
-  // tmux name too: Close takes only a name, so a retry can't be told from a new close.
+  // name too: Close takes only a name, so a retry can't be told from a new close.
   const labels = await herdrLabels(deps.h)
   if (!labels) return { ok: false, error: "herdr_unavailable: workspace list failed" }
-  const taken = new Set([...labels, ...closedNames, ...(await readTmuxShells(deps)).map((s) => s.name)])
+  const taken = new Set([...labels, ...closedNames, ...closedShells.map((c) => c.name), ...(await readTmuxShells(deps)).map((s) => s.name)])
   const name = await uniqueTmuxSessionName(cwd, "shell", async (n) => taken.has(n))
   let pane = ""
   let terminal = ""
@@ -114,8 +118,8 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   } catch (err) {
     return { ok: false, error: `herdr workspace create: ${(err as Error).message}` }
   }
-  // A failed spawn closes nothing, whatever it leaves: this module never issues
-  // a destructive herdr call (docs/herdr-only-migration.md, Close follow-up).
+  // A failed spawn closes nothing, whatever it leaves: a marked pane is a row
+  // that `exit` ends, and closeShellPane refuses an unmarked one anyway.
   if (!pane || !terminal) return { ok: false, error: "herdr workspace create: no root_pane" }
   try {
     await deps.h.call(["pane", "rename", pane, SHELL_PANE_MARK])
@@ -137,50 +141,154 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   return { ok: true, session }
 }
 
-async function herdrLabels(h: Herdr): Promise<string[] | null> {
+async function herdrLabels(h: Herdr, ms = 3_000): Promise<string[] | null> {
   try {
-    const { workspaces } = await h.call(["workspace", "list"], 3_000)
+    const { workspaces } = await h.call(["workspace", "list"], ms)
     return Array.isArray(workspaces) ? (workspaces as Array<{ label?: string }>).map((w) => w.label ?? "") : null
   } catch {
     return null
   }
 }
 
+// Bumped by every store write but the poll's, so a poll that read before a
+// spawn or a close can't write back what it read: a closed row, or a list
+// missing the new shell.
+let storeGen = 0
+
 // A fresh read into the store. Links stand until the next poll re-checks them.
 export function replaceKeepingLinks(sessions: ShellSession[]): void {
+  storeGen++
   const linked = new Map(store.list().map((s) => [s.key, s.claudeKey]))
   store.replace(sessions.map((s) => ({ ...s, claudeKey: linked.get(s.key) ?? "" })))
 }
 
 export type CloseShellResult =
   | { ok: true; gone: boolean }
-  | { ok: false; error: "unknown_shell" | "claude_running" | "kill_failed" | "close_unavailable" }
+  | { ok: false; error: "unknown_shell" | "claude_running" | "kill_failed" | "herdr_unreadable" | "name_ambiguous" | "terminal_changed" | "name_reused" }
 
-// Closed through closeShellSession, so a retry answers gone:true instead of
-// unknown_shell. ponytail: last 50 only, a later retry gets 404.
+type CloseError = Extract<CloseShellResult, { ok: false }>["error"]
+
+// What POST /api/shell/close answers for a refusal. The phone shows `error`
+// (inside "Couldn't close the terminal (…)"), and has its own sentences for
+// unknown_shell and claude_running.
+const CLOSE_SENTENCES: Partial<Record<CloseError, string>> = {
+  herdr_unreadable: "herdr didn't answer, nothing was closed. Try again",
+  name_ambiguous: "Two terminals share this name, nothing was closed. Type exit in the one to close",
+  terminal_changed: "This terminal restarted, nothing was closed. Close it again",
+  name_reused: "This name was closed a moment ago and another terminal has it now. Type exit in it to close it",
+  kill_failed: "The terminal didn't close. Try again",
+}
+
+export function closeRefusal(code: CloseError): Record<string, unknown> {
+  const sentence = CLOSE_SENTENCES[code]
+  return sentence ? { ok: false, error: sentence, code } : { ok: false, error: code }
+}
+
+// tmux shells closed through closeShellSession, so a retry answers gone:true
+// instead of unknown_shell. ponytail: last 50 only, a later retry gets 404.
 const closedNames: string[] = []
+// herdr shells closed (or tried) here, by name and terminal, recorded before
+// anything is read again: a retry answers gone:true, never reaches another
+// terminal under the name, and spawn never reuses it.
+// ponytail: in memory, last 50; a Companion restart forgets them.
+const closedShells: Array<{ name: string; terminalId: string }> = []
 
 // Close a row of the shell list (POST /api/shell/close). Only a name in the
 // list can be closed, and the list holds only shells: a Claude session's pane,
 // a dispatch-* worker, the brain or a human's workspace are never in it. A
-// herdr shell is refused before anything else: `exit` in the shell ends it, and
-// Close comes back in its own task (docs/herdr-only-migration.md, Close
-// follow-up). A tmux shell with a Claude running inside (linked, or on its pane
-// right now) is refused too. `detach` runs before the kill so open terminal
-// sockets end cleanly rather than on the attach dying.
-export async function closeShellSession(
+// shell with a Claude running inside (linked, or on its pane right now) is
+// refused. Two terminals under one name are refused, never guessed between.
+export function closeShellSession(
   name: string,
   agents: AgentRef[],
   detach: (key: string) => void,
   deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps,
 ): Promise<CloseShellResult> {
+  return inTurn(() => closeShell(name, agents, detach, deps))
+}
+
+// Worst case about 8 s, under the phone's 10 s timeout: the fresh read 4 s
+// (tmux 1.5 s beside herdr's lists 2 s, then pid reads 2 s), the last read
+// 1.5 s, the close 2.5 s.
+async function closeShell(
+  name: string,
+  agents: AgentRef[],
+  detach: (key: string) => void,
+  deps: Pick<ShellDeps, "run" | "which" | "h">,
+): Promise<CloseShellResult> {
   const shell = store.list().find((s) => s.name === name)
-  if (!shell) return closedNames.includes(name) ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
-  if (shell.herdrPane) return { ok: false, error: "close_unavailable" }
+  const tomb = closedShells.findLast((c) => c.name === name)
+  if (!shell) return closedNames.includes(name) || tomb ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
+  if (tomb && tomb.terminalId !== shell.terminalId) return { ok: false, error: "name_reused" }
   if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
+  if (!shell.herdrPane) return closeTmuxShell(shell, detach, deps)
+  // The store can be 3 s old: only a fresh read says which terminal holds the name.
+  const [tmux, herdr] = await Promise.all([readTmuxShells(deps), readHerdrShells(deps.h, store.list(), 2_000)])
+  if (!herdr) return { ok: false, error: "herdr_unreadable" }
+  replaceKeepingLinks(mergeShells(tmux, herdr))
+  if (tmux.some((s) => s.name === name)) return { ok: false, error: "name_ambiguous" }
+  // None: it exited, or a second marked pane shares the label (no row then).
+  const fresh = herdr.find((s) => s.name === name)
+  if (!fresh) return tomb ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
+  // A restore gives the same pane a new terminal. The store has it now, so a
+  // second Close reaches it; after a close of this name it is someone else.
+  if (fresh.terminalId !== shell.terminalId) return { ok: false, error: tomb ? "name_reused" : "terminal_changed" }
+  const verdict = await closeShellPane(fresh, deps.h)
+  if (verdict === "gone") return { ok: true, gone: true }
+  if (verdict === "agent") return { ok: false, error: "claude_running" }
+  if (verdict === "unreadable") return { ok: false, error: "herdr_unreadable" }
+  if (verdict === "refused") return { ok: false, error: "terminal_changed" }
+  // Closed, or a close herdr didn't confirm: either way only this terminal may
+  // be closed under the name from now on.
+  closedShells.push({ name, terminalId: fresh.terminalId })
+  if (closedShells.length > 50) closedShells.shift()
+  if (verdict === "failed") return { ok: false, error: "kill_failed" }
+  replaceKeepingLinks(store.list().filter((s) => s.terminalId !== fresh.terminalId))
+  // After the close, so a refusal never ends an open terminal; the attach ends
+  // with the pane either way.
+  detach(shell.key)
+  return { ok: true, gone: false }
+}
+
+// The only herdr close in this module, and the only way anything here closes
+// a shell. One read right before it: the pane must carry the mark, hold this
+// terminal (a restore reissues pane ids) and have no agent on it (herdr sees a
+// Claude no hook reported, a suspended one too). Anything else, or no answer,
+// closes nothing. `pane close`, not `workspace close`: a split stays, and the
+// last pane takes its workspace with it.
+// ponytail: herdr has no conditional close, so an agent starting in the one
+// round trip between the read and the close still loses its pane.
+async function closeShellPane(ref: Pick<ShellSession, "herdrPane" | "terminalId">, h: Herdr): Promise<"closed" | "gone" | "agent" | "refused" | "unreadable" | "failed"> {
+  let p: { label?: unknown; terminal_id?: unknown; agent?: unknown } | undefined
+  try {
+    p = (await h.call(["pane", "get", ref.herdrPane], 1_500)).pane as typeof p
+  } catch (err) {
+    return herdrErrorCode(err) === "pane_not_found" ? "gone" : "unreadable"
+  }
+  if (p?.label !== SHELL_PANE_MARK || p.terminal_id !== ref.terminalId) return "refused"
+  if (p.agent) return "agent"
+  try {
+    await h.call(["pane", "close", ref.herdrPane], 2_500)
+    return "closed"
+  } catch {
+    return "failed"
+  }
+}
+
+// `detach` runs before the kill so open terminal sockets end cleanly rather
+// than on the attach dying. Where herdr is installed, a workspace under this
+// name means two terminals with one name: refused, and refused when herdr
+// can't say. A host without herdr (a Mac) closes as before.
+async function closeTmuxShell(shell: ShellSession, detach: (key: string) => void, deps: Pick<ShellDeps, "run" | "which" | "h">): Promise<CloseShellResult> {
+  const name = shell.name
+  if (deps.which(process.env.HERDR_BIN || "herdr")) {
+    const labels = await herdrLabels(deps.h, 2_000)
+    if (!labels) return { ok: false, error: "herdr_unreadable" }
+    if (labels.includes(name)) return { ok: false, error: "name_ambiguous" }
+  }
   detach(shell.key)
   const kill = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])
-  const after = await readShellSessions(deps)
+  const after = mergeShells(await readTmuxShells(deps), store.list().filter((s) => s.herdrPane))
   replaceKeepingLinks(after)
   if (after.some((s) => s.name === name)) return { ok: false, error: "kill_failed" }
   closedNames.push(name)
@@ -195,12 +303,14 @@ export async function closeShellSession(
 // until it is unique again, and so does none at all.
 // null = herdr could not say, which is not "no shells" (a blip must not drop
 // every row).
-export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
+// `ms` bounds each list; the pid reads run side by side, so a read takes at
+// most `ms` plus one pid read (2 s).
+export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list(), ms = 3_000): Promise<ShellSession[] | null> {
   let workspaces: unknown, panes: unknown
   try {
     [workspaces, panes] = await Promise.all([
-      h.call(["workspace", "list"], 3_000).then((r) => r.workspaces),
-      h.call(["pane", "list"], 3_000).then((r) => r.panes),
+      h.call(["workspace", "list"], ms).then((r) => r.workspaces),
+      h.call(["pane", "list"], ms).then((r) => r.panes),
     ])
   } catch {
     return null
@@ -210,27 +320,25 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
   const marked = (panes as Array<{ pane_id?: string; workspace_id?: string; terminal_id?: string; label?: string; cwd?: string; foreground_cwd?: string }>)
     .filter((p) => p.label === SHELL_PANE_MARK)
   const nameOf = (p: { workspace_id?: string }) => labels.get(p.workspace_id) ?? ""
-  const out: ShellSession[] = []
-  for (const p of marked) {
+  const rows = marked.filter((p) => nameOf(p) && p.pane_id && p.terminal_id && marked.filter((x) => nameOf(x) === nameOf(p)).length === 1)
+  return Promise.all(rows.map(async (p): Promise<ShellSession> => {
     const name = nameOf(p)
-    if (!name || !p.pane_id || !p.terminal_id || marked.filter((x) => nameOf(x) === name).length > 1) continue
     const was = known.find((s) => s.terminalId === p.terminal_id)
-    out.push({
+    return {
       key: `${SHELL_KEY_PREFIX}${name}`,
       name,
       cwd: p.foreground_cwd || p.cwd || "",
-      herdrPane: p.pane_id,
-      terminalId: p.terminal_id,
+      herdrPane: p.pane_id!,
+      terminalId: p.terminal_id!,
       tmuxPane: "",
       tmuxSocket: "",
       // herdr keeps no creation time: first seen by this server.
       createdAt: was?.createdAt ?? Date.now(),
       // 0 while something else is in front: re-read until the shell is seen.
-      panePid: was?.panePid || await herdrPaneShellPid(p.pane_id, h),
+      panePid: was?.panePid || await herdrPaneShellPid(p.pane_id!, h),
       claudeKey: "",
-    })
-  }
-  return out
+    }
+  }))
 }
 
 // socket_path: the server's real socket, the same string a hook reports from
@@ -405,10 +513,12 @@ export function startShellPoll(
     if (busy) return
     busy = true
     try {
+      const gen = storeGen
       const shells = await readShellSessions(deps)
       const list = agents()
       const inPane = list.some((a) => shells.some((s) => inShellPane(a, s)))
-      store.replace(linkClaude(shells, list, inPane ? await readProcTable(deps.run) : null))
+      const linked = linkClaude(shells, list, inPane ? await readProcTable(deps.run) : null)
+      if (gen === storeGen) store.replace(linked)
     } finally { busy = false }
   }
   void tick()

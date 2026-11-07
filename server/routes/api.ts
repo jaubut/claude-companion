@@ -14,7 +14,7 @@ import { repoEntriesSafe } from "../lib/live-repo"
 import { deleteEnded, endedStore, resumeInPane } from "../lib/ended-sessions"
 import { herdrGatedKey, herdrGatedText } from "../lib/herdr"
 import { keyGate } from "../lib/key-gate"
-import { closeShellSession, spawnShellSession, wireSessions } from "../lib/shell-sessions"
+import { closeRefusal, closeShellSession, spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
 import { clearWaitingForTarget, getSessionByKey, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
@@ -279,8 +279,8 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   // ── Close a terminal row (lib/shell-sessions.ts closeShellSession) ──
   // {name} → 200 {ok, gone} (gone: it had already exited) | 400 bad_name |
   // 404 unknown_shell (not in the shell list) | 409 claude_running |
-  // 409 {code: close_unavailable} (a herdr shell; `error` is the sentence the
-  // phone shows, as it shows any code) | 502 kill_failed.
+  // 409 {error: sentence, code} for every other refusal (closeRefusal).
+  // Never a 5xx: nothing a client might queue and replay later.
   // The row leaves every client through the shell store's `sessions` broadcast.
   if (url.pathname === "/api/shell/close" && req.method === "POST") {
     const refused = shellNetworkRefusal(req)
@@ -293,9 +293,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       companionLog(`\x1b[35mshell closed\x1b[0m ${name}${r.gone ? " (already gone)" : ""}`)
       return Response.json(r)
     }
-    if (r.error === "close_unavailable") return Response.json({ ok: false, error: "Type exit in the shell to close it", code: r.error }, { status: 409 })
-    const status = { unknown_shell: 404, claude_running: 409, kill_failed: 502 }[r.error]
-    return Response.json(r, { status })
+    return Response.json(closeRefusal(r.error), { status: r.error === "unknown_shell" ? 404 : 409 })
   }
 
   // ── Recent interactive Claude sessions (terminal: Recent sessions, Resume chip) ──
