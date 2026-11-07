@@ -4395,12 +4395,12 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 474,
+          "lines": 435,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
             "SHELL_KEY_PREFIX",
-            "SHELL_LABEL_PREFIX",
+            "SHELL_PANE_MARK",
             "ShellDeps",
             "realShellDeps",
             "ShellSession",
@@ -4430,8 +4430,7 @@
             "startShellPoll"
           ],
           "state": [
-            "let spawnTurn",
-            "releasedWorkspaces: Set"
+            "let spawnTurn"
           ],
           "emits": [],
           "consumes": [],
@@ -10743,6 +10742,7 @@
           "module": "lib/herdr.ts",
           "callers": [
             "lib/herdr-inject.ts",
+            "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"

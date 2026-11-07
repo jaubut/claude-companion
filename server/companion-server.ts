@@ -68,8 +68,8 @@ export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
   // happy-eyeballs path is a known process crash — see lib/apns.ts.
   disableAutoSelectFamily()
-  // Shell sessions are read from tmux (lib/shell-sessions.ts): first read now,
-  // then every few seconds so an `exit` reaches the phone.
+  // Shell sessions are read from herdr (lib/shell-sessions.ts; tmux's old ones
+  // too): first read now, then every few seconds so an `exit` reaches the phone.
   startShellPoll(listSessions)
   startEndedSweep(listSessions)
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).

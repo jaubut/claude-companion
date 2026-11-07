@@ -149,7 +149,7 @@ Shipped in `server/lib/spawn-session.ts` + `server/lib/herdr.ts`:
 **The plan was out of date on one point.** `herdr terminal attach <terminal_id>` is a raw single-terminal attach, so the plan's "if the spike finds a raw attach" branch applies: `/api/terminal` keeps its PTY bridge and its frames, and the phone needs **no iOS change**. The pane-mirror switch was not done.
 
 Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
-- A phone shell is a herdr workspace labelled `sh-<dir>` (`--no-focus`), read back from `workspace list` + `pane list` every 3 s. The label is the record: it survives a herdr restore, which `pane report-metadata` is not known to. Any workspace labelled `sh-*` counts as a shell.
+- A phone shell is a pane marked `phone-shell` (`pane rename`) in a herdr workspace labelled `sh-<dir>` (`--no-focus`), read back from `workspace list` + `pane list` every 3 s. The mark is what makes it a shell: it survives a restore, and a split never inherits it. The label is the record: it survives a herdr restore, which `pane report-metadata` is not known to. Any workspace labelled `sh-*` counts as a shell.
 - A gate failure is `herdr_unavailable: <reason>`, never tmux. The spawn reply says `app: "herdr"`.
 - `/api/terminal` runs `herdr terminal attach <terminal_id> --takeover`. Closing the socket detaches, and the shell keeps running.
 - The `shell` wire row carries `herdrPane`, with `tmuxPane` and `tmuxSocket` empty. iOS `isLive` and `ShellSessions.pair` already handle that (read from `claude-companion-ios` main): pairing uses `panePid` + `claudeKey`, and the session row is mirrored through its `herdrPane`.
@@ -170,10 +170,9 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 
 **Where it can fail in production:**
 - The Mac side is unverified: same code, herdr pinned, but it was not run there, and the Mac server is 27 commits behind.
+- A human relabelling a shell's pane takes it off the phone; giving another pane the `phone-shell` label puts that pane on it.
 - `herdr` not on the server's PATH (launchd): `spawnPty` throws at the WS open. `HERDR_BIN` covers it, same as spawn.
 - A pane keeps the last attach's size after detach, with no client to restore it (`pane layout` still says 220x60, `stty size` says the phone's). Cosmetic until something else sizes it.
-- A human labelling a workspace `sh-*` puts it on the phone's Terminals list.
-- A Companion restart hides a shell that has a split until only one pane is left, because nothing says which pane is the shell's. The shell keeps running.
 
 **iOS follow-ups (list for a Mac builder, none block the phone):**
 1. Canvas `TerminalAttach.swift`: `command(for:)` requires `tmuxPane`, so a herdr shell node gets no attach. Needs `terminalId` on the wire (additive, not added here) and `herdr terminal attach <id> --takeover`, locally or through `ssh -t`.

@@ -25,7 +25,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 503 | lib | 26 | state: RETIRED_APPS: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
-| `lib/shell-sessions.ts` | 474 | lib | 30 | state: let spawnTurn, releasedWorkspaces: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
@@ -34,6 +33,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
+| `lib/shell-sessions.ts` | 435 | lib | 30 | state: let spawnTurn |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/canvas.ts` | 415 | lib | 29 | state: BLOCKING: Set |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
@@ -461,6 +461,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `BodyComponentDetail()` | `lib/body.ts` | `lib/body-agent.ts`, `lib/body-investigate-engine.ts`, `lib/body-investigator.ts`, `lib/resolver-prompt.ts`, `wiring/body-agent.ts` |
 | `addDays()` | `lib/my-tasks.ts` | `lib/body-tokens.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-load.ts`, `lib/tasks-agent-rules.ts`, `lib/tasks-agent.ts` |
 | `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `lib/suggest-cleanup.ts`, `routes/command.ts#POST /api/command/suggest` |
+| `herdrErrorCode()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `wiring/brain-workers.ts`, `wiring/takeover-liveness.ts` |
 | `endedStore()` | `lib/ended-sessions.ts` | `lib/herdr-workspace.ts`, `lib/shell-sessions.ts`, `routes/api.ts#POST /api/sessions/resume`, `routes/api.ts#POST /api/sessions/ended/delete`, `wiring/shell-sessions.ts` |
 | `TASKS_TZ()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `isQuestionTool()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/tool-format.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use` |
@@ -493,7 +494,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `FeedEvent()` | `lib/feed.ts` | `lib/codex-feed.ts`, `lib/transcript-artifacts.ts`, `lib/transcript-backfill.ts`, `wiring/events.ts` |
 | `ESC_SETTLE_MS()` | `lib/command-list.ts` | `lib/command-scrape.ts`, `lib/key-gate.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/model.ts#POST /api/model/cancel` |
 | `Channel()` | `lib/orchestrator-channels.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `routes/orchestrator.ts`, `wiring/body.ts` |
-| `herdrErrorCode()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/spawn-session.ts`, `wiring/brain-workers.ts`, `wiring/takeover-liveness.ts` |
 | `approveUrl()` | `lib/dispatch-tasks.ts` | `lib/pipeline.ts`, `wiring/body-agent.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts` |
 | `RepoEntry()` | `lib/live-repo.ts` | `lib/project-catalog.ts`, `lib/spawn-seed.ts`, `wiring/repo-view.ts`, `wiring/triage.ts` |
 | `isDir()` | `lib/live-repo.ts` | `lib/project-catalog.ts`, `lib/spawn-seed.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts` |

@@ -4,12 +4,12 @@
 // `--resume` line after /exit.
 //
 // A shell has no hooks, so nothing tells lib/sessions.ts it exists. herdr is
-// the record instead: a workspace labelled `sh-<dir>` is a shell, and every
+// the record instead: a pane carrying SHELL_PANE_MARK is a shell, and every
 // field the phone shows (pane, cwd) is read back from herdr. So a server
-// restart loses nothing (but see readHerdrShells: a shell with a split), `exit`
-// in the shell ends the record by itself, and no store can drift from what is
-// actually running. A herdr restore brings the workspace back with a new shell,
-// which is the same row.
+// restart loses nothing, `exit` in the shell ends the record by itself, and no
+// store can drift from what is actually running. A herdr restore brings the
+// pane back with its mark and a new shell, which is the same row. A split or a
+// new tab carries no mark, so a human's pane is never a row, whatever is left.
 //
 // Herdr-only (docs/herdr-only-migration.md, Stage 2): new shells are herdr
 // panes, and the phone's terminal view attaches them with `herdr terminal
@@ -25,14 +25,14 @@
 // in one, its hooks register a normal Claude session on the same pane.
 
 import { endedStore, endedWire } from "./ended-sessions"
-import { type Herdr, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
+import { type Herdr, herdrErrorCode, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
 import { uniqueTmuxSessionName } from "./spawn-session"
 import { spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 import { type DetachedDeps, realDetachedDeps } from "./tmux-spawn-confirm"
 
 export const SHELL_OPTION = "@companion_shell"
 export const SHELL_KEY_PREFIX = "shell:"
-export const SHELL_LABEL_PREFIX = "sh-"
+export const SHELL_PANE_MARK = "phone-shell"
 
 export interface ShellDeps extends DetachedDeps { h: Herdr }
 export const realShellDeps: ShellDeps = { ...realDetachedDeps, h: realHerdr }
@@ -41,7 +41,6 @@ export interface ShellSession {
   key: string // "shell:<name>"
   name: string // workspace label (tmux: session name), e.g. "sh-claude-companion"
   cwd: string // the pane's current directory, live
-  workspaceId: string // survives a herdr restore, unlike terminalId
   herdrPane: string // "" = a tmux shell from before Stage 2
   terminalId: string // what `herdr terminal attach` takes
   tmuxPane: string
@@ -97,8 +96,8 @@ export function spawnShellSession(cwd: string, deps: ShellDeps = realShellDeps, 
 async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promise<SpawnShellResult> {
   const gate = await deps.h.gate()
   if (gate) return { ok: false, error: `herdr_unavailable: ${gate}` }
-  // The name must come from herdr, not the store: a stale read would reuse a live
-  // label. Every label, not just the rows: a shell with a split has none after a restart.
+  // The name must come from herdr, not the store: a stale read would reuse a
+  // live label. Every label, shell or not: no two workspaces share one.
   const labels = await herdrLabels(deps.h)
   if (!labels) return { ok: false, error: "herdr_unavailable: workspace list failed" }
   const taken = new Set([...labels, ...(await readTmuxShells(deps)).map((s) => s.name)])
@@ -116,6 +115,11 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   const abandon = async (error: string): Promise<SpawnShellResult> => {
     if (workspace) await deps.h.call(["workspace", "close", workspace]).catch(() => undefined)
     return { ok: false, error }
+  }
+  try {
+    await deps.h.call(["pane", "rename", pane, SHELL_PANE_MARK])
+  } catch (err) {
+    return abandon(herdrErrorCode(err) === "pane_not_found" ? "session_exited" : `herdr pane rename: ${(err as Error).message}`)
   }
   const sessions = await readShellSessions(deps)
   const session = sessions.find((s) => s.herdrPane === pane)
@@ -212,28 +216,11 @@ async function killTmuxShell(name: string, deps: Pick<ShellDeps, "run">): Promis
   return (await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])).code !== 0
 }
 
-// Workspaces whose shell is gone but a pane split off it remains: that pane is
-// a human's, never a shell row. herdr holds the record: the `sh-` label comes
-// off, so a Companion restart can't list it. The Set covers a failed rename,
-// retried on every read. ponytail: a shell exiting while Companion is down is
-// never released, so a lone survivor is listed after that restart. A mark on
-// the shell's pane would end this.
-const releasedWorkspaces = new Set<string>()
-
-async function releaseWorkspace(id: string, name: string, h: Herdr): Promise<void> {
-  releasedWorkspaces.add(id)
-  await h.call(["workspace", "rename", id, `split-${name.slice(SHELL_LABEL_PREFIX.length)}`], 3_000).catch(() => undefined)
-}
-
-// One row per `sh-*` label: the pane holding the row's terminal, or the row's
-// own pane after a herdr restore, which keeps pane ids and changes terminals.
-// A closed pane's id is not reused in its workspace, so a split can't claim it.
-// A row is its workspace's, whatever the label says; a gone workspace's label is
-// free to reuse, a live one's is not. No row (a Companion restart): only a lone pane is
-// certain, `pane list` is layout order, so a shell with a split stays off the
-// list until it is back to one pane. ponytail: needs a root-pane record herdr
-// keeps. null = herdr could not say, which is not "no shells" (a blip must not
-// drop every row).
+// One row per marked pane, named by its workspace's label. herdr keeps the mark
+// through a restore and a split never inherits it, so a row needs no name, count
+// or order logic. Unlabelled, or a second under one label: no row, a row key must
+// stay unique. null = herdr could not say, which is not "no shells" (a blip must
+// not drop every row).
 export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
   let workspaces: unknown, panes: unknown
   try {
@@ -245,41 +232,16 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
     return null
   }
   if (!Array.isArray(workspaces) || !Array.isArray(panes)) return null
-  const listed = workspaces as Array<{ workspace_id?: string; label?: string }>
-  for (const id of releasedWorkspaces) if (!listed.some((w) => w.workspace_id === id)) releasedWorkspaces.delete(id)
+  const labels = new Map((workspaces as Array<{ workspace_id?: string; label?: string }>).map((w) => [w.workspace_id, w.label ?? ""]))
   const out: ShellSession[] = []
-  for (const w of listed) {
-    const name = w.label ?? ""
-    const id = w.workspace_id ?? ""
-    // By workspace, not label: a human can rename it, and a row never follows a name.
-    const row = known.find((s) => s.herdrPane && s.workspaceId === id)
-    if (!name.startsWith(SHELL_LABEL_PREFIX)) {
-      // Taken off the list by hand: a label put back later can't bring it back.
-      if (row) releasedWorkspaces.add(id)
-      continue
-    }
-    if (releasedWorkspaces.has(id)) {
-      await releaseWorkspace(id, name, h)
-      continue
-    }
-    const mine = (panes as Array<{ pane_id?: string; workspace_id?: string; terminal_id?: string; cwd?: string; foreground_cwd?: string }>)
-      .filter((x) => x.workspace_id === id)
-    if (!row && known.some((s) => s.name === name && listed.some((x) => x.workspace_id === s.workspaceId))) continue
-    const lone = mine.length === 1 ? mine[0] : undefined
-    const p = row ? mine.find((x) => x.terminal_id === row.terminalId) ?? mine.find((x) => x.pane_id === row.herdrPane) : lone
-    if (!p) {
-      // A row's pane is gone from a workspace that still has panes: those are a human's.
-      if (row && mine.length) await releaseWorkspace(id, name, h)
-      continue
-    }
-    // herdr allows two workspaces with one label; a row key must stay unique.
-    if (!p.pane_id || !p.terminal_id || out.some((s) => s.name === name)) continue
+  for (const p of panes as Array<{ pane_id?: string; workspace_id?: string; terminal_id?: string; label?: string; cwd?: string; foreground_cwd?: string }>) {
+    const name = labels.get(p.workspace_id) ?? ""
+    if (p.label !== SHELL_PANE_MARK || !name || !p.pane_id || !p.terminal_id || out.some((s) => s.name === name)) continue
     const was = known.find((s) => s.terminalId === p.terminal_id)
     out.push({
       key: `${SHELL_KEY_PREFIX}${name}`,
       name,
       cwd: p.foreground_cwd || p.cwd || "",
-      workspaceId: id,
       herdrPane: p.pane_id,
       terminalId: p.terminal_id,
       tmuxPane: "",
@@ -327,7 +289,6 @@ export function parseShellList(stdout: string, fallbackSocket: string): ShellSes
       key: `${SHELL_KEY_PREFIX}${name}`,
       name,
       cwd: cwd ?? "",
-      workspaceId: "",
       herdrPane: "",
       terminalId: "",
       tmuxPane: pane,
@@ -348,7 +309,7 @@ function sameList(a: ShellSession[], b: ShellSession[]): boolean {
   return a.length === b.length && a.every((s, i) => {
     const o = b[i]!
     return s.key === o.key && s.cwd === o.cwd && s.tmuxPane === o.tmuxPane && s.tmuxSocket === o.tmuxSocket
-      && s.workspaceId === o.workspaceId && s.herdrPane === o.herdrPane && s.terminalId === o.terminalId && s.claudeKey === o.claudeKey && s.panePid === o.panePid
+      && s.herdrPane === o.herdrPane && s.terminalId === o.terminalId && s.claudeKey === o.claudeKey && s.panePid === o.panePid
   })
 }
 

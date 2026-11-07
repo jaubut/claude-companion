@@ -340,8 +340,8 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   return null
 }
 
-// A login shell in a detached tmux session (lib/shell-sessions.ts). Always
-// tmux, whatever `app` says: the phone attaches it through /api/terminal.
+// A login shell in a marked herdr pane (lib/shell-sessions.ts). Always herdr,
+// whatever `app` says: the phone attaches it through /api/terminal.
 // Replies with the session's wire record so the phone can open it at once.
 // `resume` (a Claude session id) types `claude --resume <id>` into it.
 async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
