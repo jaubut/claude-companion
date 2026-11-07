@@ -154,7 +154,7 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 - `/api/terminal` runs `herdr terminal attach <terminal_id> --takeover`. Closing the socket detaches, and the shell keeps running.
 - The `shell` wire row carries `herdrPane`, with `tmuxPane` and `tmuxSocket` empty. iOS `isLive` and `ShellSessions.pair` already handle that (read from `claude-companion-ios` main): pairing uses `panePid` + `claudeKey`, and the session row is mirrored through its `herdrPane`.
 - A Claude started in a shell needs nothing: the pane has `HERDR_ENV=1` (the `claude()` wrapper stays out of tmux) and `$HERDR_PANE_ID`, so its hooks register an ordinary herdr session. `linkClaude` matches on the herdr pane.
-- Close is `pane close` on that pane, after checking the terminal id (a restore can reissue a pane id it lost) and herdr's own `agent` field, which a suspended Claude keeps too. A pane split off on the Mac survives.
+- Close on a herdr shell is refused before anything else: 409, `code: close_unavailable`, `error: "Type exit in the shell to close it"`, nothing detached, the row stays. `shell-sessions.ts` issues no `pane close` and no `workspace close` on any path. `exit` ends a shell, and the row drops on the next poll. See Close follow-up below.
 - `herdrSessionGone` counts shell panes as live, so a Claude that exits in a shell leaves no `ended` row: the row's Delete would have closed the shell.
 - A herdr blip keeps the rows (`readHerdrShells` → null, not an empty list). Spawns are serialized, because herdr allows two workspaces with one label.
 - tmux shells stay listed and attachable until Stage 5. A new name avoids theirs, since both share the `shell:` key space.
@@ -165,6 +165,8 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 - Attach probes (PTY under `herdr terminal attach`): resize reaches `stty size`; ^A through ^Z (except ^S/^Q) reach the pane as bytes; SGR mouse and wheel bytes print nothing into the shell; vim opens and quits; a terminal's DA replies don't leak.
 - Failure paths: Companion restart → row back (same pid); SIGKILL of the herdr unit → row back, same key, new shell; `exit` → socket 4000 `ended`, row gone; second socket → takes over, first gets 4000, row stays; a legacy tagged tmux shell on a private tmux server is listed, attaches, closes; a full `herdr` client stays attached through a takeover.
 - Tests: `bun test --isolate` (as CI) 2596 pass, 6 fail, all 6 failing on main too in this sandbox; typecheck clean.
+
+**Proof after Close was removed (2026-11-07, Zettlab, herdr 0.9.5).** Same setup as below, unsandboxed because herdr needs unix sockets: spawn, mark visible, attach, typed output, Close refused with the row intact and the shell still typing, `exit` removes the row with no error, Companion restart with a split lists the shell and never the split. Output is in #289. The Close results in the proofs below are history: they ran on code this PR removed.
 
 **Proof against the mark (2026-11-07, Zettlab, herdr 0.9.5).** The proof above predates the mark. This one ran on the merged code, same setup: a Companion from the branch on port 47245 (own HOME, DB and token, brain off) on a throwaway herdr with its own HOME and socket, unsandboxed because herdr needs unix sockets. Not on the live server, live herdr or the Mac. Claude was the real CLI with a dummy key; "session hooks" are scratch copies of SessionStart and SessionEnd pointed at 47245. Full output is in #289.
 ```
@@ -192,12 +194,9 @@ split alive after retry: true
 - The Mac side is unverified: same code, herdr pinned, but it was not run there, and the Mac server is 27 commits behind.
 - A human relabelling a shell's pane takes it off the phone; giving another pane the `phone-shell` label puts that pane on it.
 - Two workspaces with one label take both shells off the phone until one is renamed.
-- A closed name isn't reused for 50 closes, so reopening gives `sh-repo-2`. A human relabelling a shell onto a closed name gets `gone:true` from Close, and no close.
-- Every herdr close in `shell-sessions.ts` goes through `closeTerminal`, which reads the pane's terminal id first. herdr has no conditional close, so a reissue between that read and the close would still land. The gap is one call.
-- A failed spawn that can't prove its terminal closes nothing, so its workspace leaks and its label stays taken. A marked one is a row Close can reach; an unmarked one needs `herdr workspace close`.
-- Close within 3 s of a herdr restore can read the row's old terminal: it closes nothing and answers `gone:true`, the row stays on its new terminal, and a second Close works. Once the old terminal is gone, another pane taking the name looks the same, so that second Close would reach it. The phone would be showing that row by then.
-- Close after a crash restore: a closed shell that a restore brings back on a new terminal answers `gone:true` and closes nothing, until 50 more closes or a Companion restart. Close takes only a name and the phone has no terminal id, so this can't be told from a retry, and a retry must never close another terminal.
-- A workspace renamed under a Close answers 404 until the next poll shows the new name.
+- **The phone's Close doesn't work on herdr shells until the follow-up below.** `exit` in the shell ends one. tmux shells are unaffected. Accepted by Jeremie, relayed by the brain, 2026-11-07. The phone shows "Couldn't close the terminal (Type exit in the shell to close it)" and the row comes back.
+- A failed spawn closes nothing, so it can leave a workspace behind, and its label stays taken: the next spawn there gets `sh-<dir>-2`. A marked one is a row that `exit` ends. An unmarked one needs `herdr workspace close`.
+- A refused resume keeps the shell. The phone reads it as a failed launch whose text says the terminal is open, and the row appears; it doesn't open the terminal by itself.
 - `herdr` not on the server's PATH (launchd): `spawnPty` throws at the WS open. `HERDR_BIN` covers it, same as spawn.
 - A pane keeps the last attach's size after detach, with no client to restore it (`pane layout` still says 220x60, `stty size` says the phone's). Cosmetic until something else sizes it.
 
@@ -205,6 +204,19 @@ split alive after retry: true
 1. Canvas `TerminalAttach.swift`: `command(for:)` requires `tmuxPane`, so a herdr shell node gets no attach. Needs `terminalId` on the wire (additive, not added here) and `herdr terminal attach <id> --takeover`, locally or through `ssh -t`.
 2. `TerminalScreen`: a takeover closes with 4000, which reads "Session ended / The shell exited". It needs takeover wording, e.g. "Opened on another device. Tap to take it back." The server sends the same close for both today; a `taken_over` reason is a small server change once the app reads it.
 3. Stale comments: "tmux session", "tmux's status line".
+
+### Close follow-up
+
+Every P1 from round 1 on was in a destructive path, so #289 ships spawn, attach and list, and Close gets its own task. Everything below restores on top of this.
+
+- **What to restore:** commit `b7ceda1` holds the working Close: `closeTerminal`, `herdrPaneNow`, the `closedShells` tombstones keyed by name and terminal, the fresh read in `closeShellSession`, and their tests in `shell-sessions.test.ts`. It is in #289's commits; read it with `git show b7ceda1:server/lib/shell-sessions.ts`. Keep the `closedNames` tmux path until Stage 5.
+- **The rule:** the final read before `pane close` checks terminal and agent, and refuses on an unreadable pane. At b7ceda1 that read checks only the terminal.
+- **Tombstone before refresh:** record a successful close before awaiting the listing that follows it.
+- **Open P1, final read ignores `agent` (b7ceda1 `:232`):** Close kills a running Claude if the first read failed or Claude started during validation. Claude's auto-review reproduced the failed read too.
+- **Open P1, refresh failure loses the close (b7ceda1 `:202`):** a close followed by a listing failure returns `kill_failed` before recording the name. A new spawn reuses it and the retry destroys the new shell. Also tell cached fallback rows from verified survivors.
+- **`abandon`:** restore cleanup only through that same verified close. Until then a failed spawn leaks, as above.
+- **`spawn-session.ts:332`:** the same bare-workspace-id cleanup `abandon` had, on the agent spawn path. Outside #289, unverified.
+- **Phone:** none needed for the server to work, but the notice can drop its wrapper. Swipe-to-close on a herdr row stays misleading until Close returns.
 
 **Rollback:** revert the PR. Herdr shells created meanwhile keep running as plain workspaces and leave the phone's list (close them with `herdr workspace close`). tmux shells were never touched.
 

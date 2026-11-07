@@ -14,7 +14,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `routes/api.ts` | 596 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
+| `routes/api.ts` | 599 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/dispatch-tasks.ts` | 553 | lib | 55 |  |
@@ -28,7 +28,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
-| `lib/shell-sessions.ts` | 465 | lib | 30 | state: let spawnTurn |
 | `wiring/triage.ts` | 463 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
@@ -37,6 +36,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/canvas.ts` | 415 | lib | 29 | state: BLOCKING: Set |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
+| `lib/shell-sessions.ts` | 413 | lib | 30 | state: let spawnTurn |
 | `routes/capture.ts` | 411 | lib | 7 |  |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |

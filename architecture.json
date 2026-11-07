@@ -4395,7 +4395,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 465,
+          "lines": 413,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -5880,7 +5880,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 596,
+          "lines": 599,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",

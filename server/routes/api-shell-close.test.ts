@@ -52,6 +52,13 @@ test("close: refused from the LAN like a shell spawn", async () => {
   expect(await close({ name: "sh-x" }, "192.168.2.40")).toEqual({ status: 403, json: { ok: false, error: "network_refused" } })
 })
 
+test("close: a herdr shell is refused with the sentence the phone shows, the row stays", async () => {
+  shells.store.replace([{ ...shell("sh-herdr", ""), herdrPane: "w1:p1", terminalId: "t1" }])
+  expect(await close({ name: "sh-herdr" })).toEqual({ status: 409, json: { ok: false, error: "Type exit in the shell to close it", code: "close_unavailable" } })
+  expect(shells.listShellSessions().map((s) => s.name)).toEqual(["sh-herdr"])
+  shells.store.replace([])
+})
+
 test("close: a name not in the shell list is a 404", async () => {
   shells.store.replace([shell("sh-work", "%1")])
   expect(await close({ name: "no-such-shell" })).toEqual({ status: 404, json: { ok: false, error: "unknown_shell" } })
