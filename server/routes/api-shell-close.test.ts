@@ -30,7 +30,7 @@ afterAll(() => {
 })
 
 const shell = (name: string, pane: string, claudeKey = ""): ShellSession => ({
-  key: `shell:${name}`, name, cwd: "/tmp", herdrPane: "", terminalId: "", tmuxPane: pane, tmuxSocket: "/tmp/tmux-1000/cc", createdAt: 1, panePid: 0, claudeKey,
+  key: `shell:${name}`, name, cwd: "/tmp", workspaceId: "", herdrPane: "", terminalId: "", tmuxPane: pane, tmuxSocket: "/tmp/tmux-1000/cc", createdAt: 1, panePid: 0, claudeKey,
 })
 
 async function close(body: unknown, peer = "127.0.0.1"): Promise<{ status: number; json: Record<string, unknown> }> {

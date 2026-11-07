@@ -40,6 +40,7 @@ export interface ShellSession {
   key: string // "shell:<name>"
   name: string // workspace label (tmux: session name), e.g. "sh-claude-companion"
   cwd: string // the pane's current directory, live
+  workspaceId: string // survives a herdr restore, unlike terminalId
   herdrPane: string // "" = a tmux shell from before Stage 2
   terminalId: string // what `herdr terminal attach` takes
   tmuxPane: string
@@ -192,12 +193,20 @@ async function killTmuxShell(name: string, deps: Pick<ShellDeps, "run">): Promis
 }
 
 // Workspaces whose shell is gone but a pane split off it remains: that pane is
-// a human's, never a shell row. ponytail: in memory, so a restart lists the
-// survivor again; persist it if that ever closes the wrong pane.
+// a human's, never a shell row. herdr holds the record: the `sh-` label comes
+// off, so a Companion restart can't list it. The Set covers a failed rename,
+// retried on every read. ponytail: a shell exiting while Companion is down is
+// never released; a restart lists the survivor. Needs a record herdr can't lose.
 const releasedWorkspaces = new Set<string>()
 
+async function releaseWorkspace(id: string, name: string, h: Herdr): Promise<void> {
+  releasedWorkspaces.add(id)
+  await h.call(["workspace", "rename", id, `split-${name.slice(SHELL_LABEL_PREFIX.length)}`], 3_000).catch(() => undefined)
+}
+
 // One row per `sh-*` label: the pane holding the row's terminal, the first pane
-// for a new row. A lone pane with the row's pane id and a new terminal is the
+// for a new row. The row must be this workspace's: a gone workspace's label is
+// free to reuse, a live one's is not. A lone pane with the row's pane id and a new terminal is the
 // same shell after a herdr restore. null = herdr could not say, which is not
 // "no shells" (a blip must not drop every row).
 export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
@@ -216,14 +225,20 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
   const out: ShellSession[] = []
   for (const w of listed) {
     const name = w.label ?? ""
-    if (!name.startsWith(SHELL_LABEL_PREFIX) || releasedWorkspaces.has(w.workspace_id ?? "")) continue
+    const id = w.workspace_id ?? ""
+    if (!name.startsWith(SHELL_LABEL_PREFIX)) continue
+    if (releasedWorkspaces.has(id)) {
+      await releaseWorkspace(id, name, h)
+      continue
+    }
     const mine = (panes as Array<{ pane_id?: string; workspace_id?: string; terminal_id?: string; cwd?: string; foreground_cwd?: string }>)
-      .filter((x) => x.workspace_id === w.workspace_id)
-    const row = known.find((s) => s.name === name && s.herdrPane)
+      .filter((x) => x.workspace_id === id)
+    const row = known.find((s) => s.name === name && listed.some((x) => x.workspace_id === s.workspaceId))
+    if (row && row.workspaceId !== id) continue
     const restored = mine.length === 1 && mine[0]!.pane_id === row?.herdrPane
     const p = row ? mine.find((x) => x.terminal_id === row.terminalId) ?? (restored ? mine[0] : undefined) : mine[0]
     if (!p) {
-      if (row && mine.length && w.workspace_id) releasedWorkspaces.add(w.workspace_id)
+      if (row && mine.length) await releaseWorkspace(id, name, h)
       continue
     }
     // herdr allows two workspaces with one label; a row key must stay unique.
@@ -233,6 +248,7 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
       key: `${SHELL_KEY_PREFIX}${name}`,
       name,
       cwd: p.foreground_cwd || p.cwd || "",
+      workspaceId: id,
       herdrPane: p.pane_id,
       terminalId: p.terminal_id,
       tmuxPane: "",
@@ -259,9 +275,12 @@ export async function readShellSessions(deps: Pick<ShellDeps, "run" | "which" | 
 }
 
 // Every tagged shell on the spawn server. No tmux or no server running → [].
+// ponytail: a tmux that answers code 1 for a real fault reads as no server too.
 async function readTmuxShells(deps: Pick<ShellDeps, "run" | "which">): Promise<ShellSession[]> {
   if (!deps.which("tmux")) return []
   const r = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "list-sessions", "-F", LIST_FORMAT])
+  // -1: tmux never answered, which is not "no shells". Names stay taken, rows stay.
+  if (r.code === -1) return store.list().filter((s) => s.tmuxPane)
   if (r.code !== 0) return []
   return parseShellList(r.stdout, spawnSocketPath())
 }
@@ -277,6 +296,7 @@ export function parseShellList(stdout: string, fallbackSocket: string): ShellSes
       key: `${SHELL_KEY_PREFIX}${name}`,
       name,
       cwd: cwd ?? "",
+      workspaceId: "",
       herdrPane: "",
       terminalId: "",
       tmuxPane: pane,
@@ -297,7 +317,7 @@ function sameList(a: ShellSession[], b: ShellSession[]): boolean {
   return a.length === b.length && a.every((s, i) => {
     const o = b[i]!
     return s.key === o.key && s.cwd === o.cwd && s.tmuxPane === o.tmuxPane && s.tmuxSocket === o.tmuxSocket
-      && s.herdrPane === o.herdrPane && s.terminalId === o.terminalId && s.claudeKey === o.claudeKey && s.panePid === o.panePid
+      && s.workspaceId === o.workspaceId && s.herdrPane === o.herdrPane && s.terminalId === o.terminalId && s.claudeKey === o.claudeKey && s.panePid === o.panePid
   })
 }
 
