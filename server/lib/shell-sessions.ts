@@ -282,17 +282,20 @@ async function closeShellPane(ref: Pick<ShellSession, "herdrPane" | "terminalId"
   }
 }
 
-// main's tmux Close: `kill-session -t =name` can only reach tmux, and the store
-// holds one row per name (mergeShells). `detach` runs before the kill so open
+// main's tmux Close, recording first: `kill-session -t =name` can only reach
+// tmux, and the store holds one row per name (mergeShells). `detach` runs before the kill so open
 // terminal sockets end cleanly rather than on the attach dying.
 async function closeTmuxShell(shell: ShellSession, detach: (key: string) => void, deps: Pick<ShellDeps, "run" | "which" | "h">): Promise<CloseShellResult> {
   const name = shell.name
   detach(shell.key)
   const kill = await deps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`])
+  // Before the refresh, as on the herdr path: a herdr shell under the same
+  // name shows once the tmux row is gone, and a retry must not reach it.
+  recordClose(name, "")
   const after = await readShellSessions(deps)
   replaceKeepingLinks(after)
-  if (after.some((s) => s.name === name)) return { ok: false, error: "kill_failed" }
-  recordClose(name, "")
+  // Judged by tmux alone: the herdr row that shows now is someone else.
+  if (after.some((s) => s.name === name && s.tmuxPane)) return { ok: false, error: "kill_failed" }
   // kill-session failing on a name that is no longer listed: it exited first.
   return { ok: true, gone: kill.code !== 0 }
 }
