@@ -288,12 +288,13 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const body = await jsonObject<{ name?: unknown }>(req, {})
     const name = typeof body.name === "string" ? body.name : ""
     if (!name || name.length > 200) return Response.json({ ok: false, error: "bad_name" }, { status: 400 })
-    const r = await closeShellSession(name, listSessions(), detachTerminals)
+    const r = await closeShellSession(name, listSessions, detachTerminals)
     if (r.ok) {
       companionLog(`\x1b[35mshell closed\x1b[0m ${name}${r.gone ? " (already gone)" : ""}`)
       return Response.json(r)
     }
     if (r.error === "close_unavailable") return Response.json({ ok: false, error: "Type exit in the shell to close it", code: r.error }, { status: 409 })
+    if (r.error === "terminal_changed") return Response.json({ ok: false, error: "This terminal changed, nothing was closed. Close it again in a few seconds", code: r.error }, { status: 409 })
     const status = { unknown_shell: 404, claude_running: 409, kill_failed: 502 }[r.error]
     return Response.json(r, { status })
   }
