@@ -196,7 +196,7 @@ split alive after retry: true
 - The Mac side is unverified: same code, herdr pinned, but it was not run there, and the Mac server is 27 commits behind.
 - A human relabelling a shell's pane takes it off the phone; giving another pane the `phone-shell` label puts that pane on it.
 - Two workspaces with one label take both shells off the phone until one is renamed.
-- **The phone's Close doesn't work on herdr shells until the follow-up below.** `exit` in the shell ends one. tmux shells are unaffected. Accepted by Jeremie, relayed by the brain, 2026-11-07. The phone shows "Couldn't close the terminal (Type exit in the shell to close it)" and the row comes back.
+- **The phone's Close doesn't work on herdr shells** (kept off: herdr has no checked close; see Close follow-up, Outcome). `exit` in the shell ends one. tmux shells are unaffected. Accepted by Jeremie, relayed by the brain, 2026-11-07. The phone shows "Couldn't close the terminal (Type exit in the shell to close it)" and the row comes back.
 - A failed spawn closes nothing, so it can leave a workspace behind, and its label stays taken: the next spawn there gets `sh-<dir>-2`. A marked one is a row that `exit` ends. An unmarked one needs `herdr workspace close`.
 - A herdr workspace renamed onto a tmux shell's name gives no row until it moves: one name can't be two rows, and attach looks a key up. The tmux shell keeps the name.
 - An attach ending refreshes the list outside the spawn/Close turn (`wiring/shell-sessions.ts`), so a new row can vanish, or a closed one come back, for up to 3 s. The poll itself no longer can (`storeGen`).
@@ -224,7 +224,7 @@ Every P1 from round 1 on was in a destructive path, so #289 ships spawn, attach 
 - **`abandon`:** restore cleanup only through that same verified close. Until then a failed spawn leaks, as above.
 - **`spawn-session.ts:332`** (fixed, 2026-11-07: a failed `agent start` closes its workspace only through `closableWorkspace` with the owner recorded at create)**:** the same bare-workspace-id cleanup `abandon` had, on the agent spawn path. It reaches a marked pane only if herdr reissues that id between create and a failed start. No pane is read there, so a mark check isn't one line.
 - **Other closes outside `shell-sessions.ts`, checked in #289:** `ended-sessions.ts` and `herdr.ts:245` now refuse the mark. `brain-lead.ts:109` needs its label, one pane and the lead's agent. `brain-workers.ts:187` needs a `brain` or `dispatch-*` label and one pane. `brain-workers.ts:247` closes the `brain` agent's own workspace. A human relabelling or marking could still put a marked pane under these three. Checking there isn't one line: `herdrWorkspacePanes` doesn't return the label.
-- **Phone:** none needed for the server to work, but the notice can drop its wrapper. Swipe-to-close on a herdr row stays misleading until Close returns.
+- **Phone:** none needed for the server to work, but the notice can drop its wrapper. Swipe-to-close on a herdr row stays misleading while herdr Close is off (a Close naming its terminal is the iOS + server follow-up).
 
 **Rollback:** revert the PR. Herdr shells created meanwhile keep running as plain workspaces and leave the phone's list (close them with `herdr workspace close`). tmux shells were never touched.
 
