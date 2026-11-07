@@ -4395,7 +4395,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 443,
+          "lines": 450,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
@@ -10624,7 +10624,8 @@
         "herdrPaneAtShell": {
           "module": "lib/herdr.ts",
           "callers": [
-            "lib/ended-sessions.ts"
+            "lib/ended-sessions.ts",
+            "lib/shell-sessions.ts"
           ]
         },
         "herdrPaneShellPid": {

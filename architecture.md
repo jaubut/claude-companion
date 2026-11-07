@@ -30,7 +30,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 463 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `lib/shell-sessions.ts` | 443 | lib | 30 | state: let spawnTurn, releasedWorkspaces: Set |
+| `lib/shell-sessions.ts` | 450 | lib | 30 | state: let spawnTurn, releasedWorkspaces: Set |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
@@ -644,6 +644,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `NEEDS_HUMAN()` | `lib/triage-sources.ts` | `lib/dispatch-stage.ts`, `wiring/triage.ts` |
 | `parseTs()` | `lib/dispatch-tasks.ts` | `lib/dispatch-stage.ts`, `lib/triage-sources.ts` |
 | `TaskStatus()` | `lib/orchestrator-chat.ts` | `lib/dispatch-tasks.ts`, `lib/orchestrator-channels.ts` |
+| `herdrPaneAtShell()` | `lib/herdr.ts` | `lib/ended-sessions.ts`, `lib/shell-sessions.ts` |
 | `herdrPaneShellPid()` | `lib/herdr.ts` | `lib/ended-sessions.ts`, `lib/shell-sessions.ts` |
 | `BrainDecision()` | `lib/orchestrator-brain.ts` | `lib/front-door.ts`, `wiring/orchestrator.ts` |
 | `PickerIO()` | `lib/question-driver.ts` | `lib/herdr-inject.ts`, `lib/keyboard-inject.ts` |
