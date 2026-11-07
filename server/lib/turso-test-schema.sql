@@ -17,7 +17,7 @@ CREATE TABLE notes (
   content_hash  TEXT DEFAULT '',
   updated_at    TEXT DEFAULT (datetime('now')),
   dirty         INTEGER DEFAULT 0
-, ref_code TEXT DEFAULT NULL, body_html TEXT DEFAULT NULL, canvas TEXT DEFAULT NULL, canvas_preview TEXT DEFAULT NULL, canvas_room_secret TEXT DEFAULT NULL, author TEXT DEFAULT NULL);
+, ref_code TEXT DEFAULT NULL, body_html TEXT DEFAULT NULL, canvas TEXT DEFAULT NULL, canvas_preview TEXT DEFAULT NULL, author TEXT DEFAULT NULL);
 
 CREATE TABLE task_stamps (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

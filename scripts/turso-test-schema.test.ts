@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { join } from "node:path"
-import { type Obj, PROD_READ, keepObjects, parseTable, subsetSql, syncPlan, testDbWriter } from "./turso-test-schema"
+import { type Obj, PROD_READ, keepObjects, parseTable, readTest, subsetSql, syncPlan, testDbExec } from "./turso-test-schema"
 import { TEST_HOST } from "../server/lib/turso-test-guard.test-util"
 
 const obj = (type: string, name: string, tbl: string, sql: string): Obj => ({ type, name, tbl, sql })
@@ -62,15 +62,21 @@ test("subsetSql: the four tables and guards, no FTS, nothing else", () => {
   expect(sql).not.toContain("notes_fts")
 })
 
+test("subsetSql: canvas_room_secret stays out of the public repo, the columns around it stay in", () => {
+  const n = obj("table", "notes", "notes", "CREATE TABLE notes (id TEXT\n, canvas_preview TEXT DEFAULT NULL, canvas_room_secret TEXT DEFAULT NULL, author TEXT DEFAULT NULL)")
+  expect(subsetSql([n])).toContain("CREATE TABLE notes (id TEXT\n, canvas_preview TEXT DEFAULT NULL, author TEXT DEFAULT NULL);")
+})
+
 describe("the write path", () => {
   const realFetch = globalThis.fetch
   afterEach(() => { globalThis.fetch = realFetch })
 
-  test("every write goes through the allowlist: no statement leaves for any other target", async () => {
+  test("every read and write goes through the allowlist: no statement leaves for any other target", async () => {
     let calls = 0
     globalThis.fetch = (async () => { calls += 1; return new Response("{}") }) as unknown as typeof fetch
     for (const url of ["libsql://tls-dashboard-jaubut.aws-us-east-1.turso.io", `https://${TEST_HOST}.evil.example`, "", undefined]) {
-      await expect(testDbWriter(url, "dummy")("DELETE FROM tasks")).rejects.toThrow("refused")
+      await expect(testDbExec(url, "dummy")("DELETE FROM tasks")).rejects.toThrow("refused")
+      await expect(readTest(testDbExec(url, "dummy"))).rejects.toThrow("refused")
     }
     expect(calls).toBe(0)
   })
@@ -81,8 +87,11 @@ describe("the write path", () => {
       seen.push(`${u} ${new Headers(init.headers).get("authorization")}`)
       return new Response(JSON.stringify({ results: [{ type: "ok", response: { result: { cols: [], rows: [] } } }] }))
     }) as unknown as typeof fetch
-    await testDbWriter(`libsql://${TEST_HOST}`, "tok")("SELECT 1")
-    expect(seen).toEqual([`https://${TEST_HOST}/v2/pipeline Bearer tok`])
+    await testDbExec(`libsql://${TEST_HOST}`, "tok")("SELECT 1")
+    // An ambient production URL is overwritten, not inherited: the read's host comes from the allowlist too.
+    process.env.TURSO_DATABASE_URL = "https://tls-dashboard-jaubut.aws-us-east-1.turso.io"
+    expect(await readTest(testDbExec(`libsql://${TEST_HOST}`, "tok"))).toEqual([])
+    expect(seen).toEqual([`https://${TEST_HOST}/v2/pipeline Bearer tok`, `https://${TEST_HOST}/v2/pipeline Bearer tok`])
   })
 
   test("production appears once in the script, as the fixed read; it can't take a second statement", async () => {
