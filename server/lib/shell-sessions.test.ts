@@ -594,6 +594,8 @@ test("close shell (herdr): the pane went between the listing and the close → g
   await spawnShellSession("/x/c-exit", f.deps)
   exits = true
   expect(await closeShellSession("sh-c-exit", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(listShellSessions()).toEqual([])
+  expect(await closeShellSession("sh-c-exit", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
   store.replace([])
 })
 

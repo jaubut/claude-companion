@@ -234,12 +234,12 @@ async function closeShell(
   // second Close reaches it; after a close of this name it is someone else.
   if (fresh.terminalId !== shell.terminalId) return { ok: false, error: tomb ? "name_reused" : "terminal_changed" }
   const verdict = await closeShellPane(fresh, deps.h)
-  if (verdict === "gone") return { ok: true, gone: true }
   if (verdict === "agent") return { ok: false, error: "claude_running" }
   if (verdict === "unreadable") return { ok: false, error: "herdr_unreadable" }
   if (verdict === "refused") return { ok: false, error: "terminal_changed" }
-  // Closed, or a close herdr didn't confirm: either way only this terminal may
-  // be closed under the name from now on.
+  // Closed, gone by itself, or a close herdr didn't confirm: either way only
+  // this terminal may be closed under the name from now on, and a retry
+  // answers gone:true.
   closedShells.push({ name, terminalId: fresh.terminalId })
   if (closedShells.length > 50) closedShells.shift()
   if (verdict === "failed") return { ok: false, error: "kill_failed" }
@@ -247,7 +247,7 @@ async function closeShell(
   // After the close, so a refusal never ends an open terminal; the attach ends
   // with the pane either way.
   detach(shell.key)
-  return { ok: true, gone: false }
+  return { ok: true, gone: verdict === "gone" }
 }
 
 // The only herdr close in this module, and the only way anything here closes

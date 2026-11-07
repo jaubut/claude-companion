@@ -217,8 +217,8 @@ Close came back in its own task, rebuilt on the mark from `b7ceda1`'s design (#2
 4. A fresh read of tmux and herdr (herdr unreadable: refused, `herdr_unreadable`), written to the store.
 5. The name is also a tmux shell: refused, `name_ambiguous`.
 6. No fresh row (it exited, or two marked panes share the label): 404 `unknown_shell`, or `gone:true` after a close here.
-7. The fresh row holds another terminal (a restore in the last 3 s): refused, `terminal_changed`. The store now has the new one, so a second Close reaches it.
-8. `closeShellPane`: its last read refuses an agent (`claude_running`), another terminal or no mark (`terminal_changed`), and no answer (`herdr_unreadable`); a pane already gone is `gone:true`. On a close, or a close herdr didn't confirm (`kill_failed`), the name and terminal are recorded first; the row drops by terminal and the terminal detaches.
+7. The fresh row holds another terminal: after a close of this name here, that is someone else (`name_reused`); otherwise it is a restore in the last 3 s, refused as `terminal_changed`, and the store now has the new terminal, so a second Close reaches it.
+8. `closeShellPane`: its last read refuses an agent (`claude_running`), another terminal or no mark (`terminal_changed`), and no answer (`herdr_unreadable`). On a close, a pane already gone (`gone:true`) or a close herdr didn't confirm (`kill_failed`), the name and terminal are recorded first; except after `kill_failed`, the row drops by terminal and the terminal detaches.
 
 Every refusal is a 409 (404 for `unknown_shell`), never a 5xx: nothing a client might replay later. `error` is a sentence for the new codes (the phone shows it inside "Couldn't close the terminal (…)"); `claude_running` and `unknown_shell` keep their codes, which the phone words itself. A tmux shell closes as before, plus the same clash check where herdr is installed (`herdr` on PATH or `HERDR_BIN`): a herdr workspace under its name is `name_ambiguous`, herdr not answering is `herdr_unreadable`. A host without herdr (a Mac) closes tmux shells exactly as before.
 
