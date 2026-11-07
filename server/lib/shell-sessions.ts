@@ -6,9 +6,10 @@
 // A shell has no hooks, so nothing tells lib/sessions.ts it exists. herdr is
 // the record instead: a workspace labelled `sh-<dir>` is a shell, and every
 // field the phone shows (pane, cwd) is read back from herdr. So a server
-// restart loses nothing, `exit` in the shell ends the record by itself, and no
-// store can drift from what is actually running. A herdr restore brings the
-// workspace back with a new shell, which is the same row.
+// restart loses nothing (but see readHerdrShells: a shell with a split), `exit`
+// in the shell ends the record by itself, and no store can drift from what is
+// actually running. A herdr restore brings the workspace back with a new shell,
+// which is the same row.
 //
 // Herdr-only (docs/herdr-only-migration.md, Stage 2): new shells are herdr
 // panes, and the phone's terminal view attaches them with `herdr terminal
@@ -24,7 +25,7 @@
 // in one, its hooks register a normal Claude session on the same pane.
 
 import { endedStore, endedWire } from "./ended-sessions"
-import { type Herdr, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
+import { type Herdr, herdrPaneAtShell, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
 import { uniqueTmuxSessionName } from "./spawn-session"
 import { spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 import { type DetachedDeps, realDetachedDeps } from "./tmux-spawn-confirm"
@@ -154,7 +155,8 @@ export async function closeShellSession(
   // herdr knows an agent no hook reported; it also reuses pane ids, so the
   // terminal id must still be this shell's or there is nothing to close.
   const live = shell.herdrPane ? await herdrPaneNow(shell, deps.h) : null
-  if (live?.agent) return { ok: false, error: "claude_running" }
+  // herdr may keep an exited agent's record, so the shell must not be in front too.
+  if (live?.agent && !await herdrPaneAtShell(shell.herdrPane, deps.h)) return { ok: false, error: "claude_running" }
   detach(shell.key)
   const gone = shell.herdrPane ? await closeHerdrShell(shell, live, deps.h) : await killTmuxShell(name, deps)
   const after = await readShellSessions(deps)
@@ -204,11 +206,15 @@ async function releaseWorkspace(id: string, name: string, h: Herdr): Promise<voi
   await h.call(["workspace", "rename", id, `split-${name.slice(SHELL_LABEL_PREFIX.length)}`], 3_000).catch(() => undefined)
 }
 
-// One row per `sh-*` label: the pane holding the row's terminal, the first pane
-// for a new row. The row must be this workspace's: a gone workspace's label is
-// free to reuse, a live one's is not. A lone pane with the row's pane id and a new terminal is the
-// same shell after a herdr restore. null = herdr could not say, which is not
-// "no shells" (a blip must not drop every row).
+// One row per `sh-*` label: the pane holding the row's terminal, or the row's
+// pane id with a new terminal (a herdr restore keeps pane ids, and closed ones
+// aren't reused, so a split can't claim it). The row must be this workspace's: a
+// gone workspace's label is free to reuse, a live one's is not. A new row needs
+// a lone pane: nothing says which of several is the shell, and a guess would
+// attach and close a human's split. ponytail: a Companion restart hides a shell
+// that has a split until the split closes. Needs a root-pane record herdr keeps.
+// null = herdr could not say, which is not "no shells" (a blip must not drop
+// every row).
 export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
   let workspaces: unknown, panes: unknown
   try {
@@ -235,8 +241,9 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
       .filter((x) => x.workspace_id === id)
     const row = known.find((s) => s.name === name && listed.some((x) => x.workspace_id === s.workspaceId))
     if (row && row.workspaceId !== id) continue
-    const restored = mine.length === 1 && mine[0]!.pane_id === row?.herdrPane
-    const p = row ? mine.find((x) => x.terminal_id === row.terminalId) ?? (restored ? mine[0] : undefined) : mine[0]
+    const p = row
+      ? mine.find((x) => x.terminal_id === row.terminalId) ?? mine.find((x) => x.pane_id === row.herdrPane)
+      : mine.length === 1 ? mine[0] : undefined
     if (!p) {
       if (row && mine.length) await releaseWorkspace(id, name, h)
       continue
