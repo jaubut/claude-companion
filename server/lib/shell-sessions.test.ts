@@ -302,6 +302,32 @@ test("herdr list: a split left by a shell that exited loses the label, so a fres
   await readHerdrShells(f.h)
 })
 
+test("herdr list: a restore with a split keeps the row on the shell's pane, nothing released", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/repo", f.deps)
+  const w = f.ws[0]!
+  w.split = true
+  w.term = "term_restored" // workspace and pane ids survive a restore, terminal ids don't
+  expect(await readHerdrShells(f.h)).toMatchObject([{ name: "sh-repo", herdrPane: "w1:p1", terminalId: "term_restored" }])
+  expect(f.calls.some((c) => c[1] === "rename")).toBe(false)
+  expect(w.label).toBe("sh-repo")
+  store.replace([])
+})
+
+test("herdr list: a fresh start never picks among panes, a split listed first gets no row and no release", async () => {
+  store.replace([])
+  const f = fakeShells()
+  f.ws.push({ id: "w5", label: "sh-fresh", term: "t5", cwd: "/x", split: true })
+  expect(await readHerdrShells(f.h, [])).toEqual([])
+  expect(await closeShellSession("sh-fresh", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(f.calls.some((c) => c[1] === "close" || c[1] === "rename")).toBe(false)
+  expect(f.ws[0]!.label).toBe("sh-fresh")
+  f.ws[0]!.split = false // back to one pane: that pane is the shell
+  expect(await readHerdrShells(f.h, [])).toMatchObject([{ herdrPane: "w5:p1", terminalId: "t5" }])
+  store.replace([])
+})
+
 test("herdr list: a failed rename still keeps the split off the list, and is retried", async () => {
   store.replace([])
   let down = true

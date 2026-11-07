@@ -151,8 +151,10 @@ export async function closeShellSession(
   const shell = store.list().find((s) => s.name === name)
   if (!shell) return closedNames.includes(name) ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
   if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
-  // herdr knows an agent no hook reported; it also reuses pane ids, so the
-  // terminal id must still be this shell's or there is nothing to close.
+  // herdr knows an agent no hook reported, a suspended Claude too. It can also
+  // reissue a pane id after a restore that lost it (a workspace newer than its
+  // last snapshot), so the terminal id must still be this shell's or there is
+  // nothing to close.
   const live = shell.herdrPane ? await herdrPaneNow(shell, deps.h) : null
   if (live?.agent) return { ok: false, error: "claude_running" }
   detach(shell.key)
@@ -196,7 +198,8 @@ async function killTmuxShell(name: string, deps: Pick<ShellDeps, "run">): Promis
 // a human's, never a shell row. herdr holds the record: the `sh-` label comes
 // off, so a Companion restart can't list it. The Set covers a failed rename,
 // retried on every read. ponytail: a shell exiting while Companion is down is
-// never released; a restart lists the survivor. Needs a record herdr can't lose.
+// never released, so a lone survivor is listed after that restart. A mark on
+// the shell's pane would end this.
 const releasedWorkspaces = new Set<string>()
 
 async function releaseWorkspace(id: string, name: string, h: Herdr): Promise<void> {
@@ -204,10 +207,13 @@ async function releaseWorkspace(id: string, name: string, h: Herdr): Promise<voi
   await h.call(["workspace", "rename", id, `split-${name.slice(SHELL_LABEL_PREFIX.length)}`], 3_000).catch(() => undefined)
 }
 
-// One row per `sh-*` label: the pane holding the row's terminal, the first pane
-// for a new row. The row must be this workspace's: a gone workspace's label is
-// free to reuse, a live one's is not. A lone pane with the row's pane id and a new terminal is the
-// same shell after a herdr restore. null = herdr could not say, which is not
+// One row per `sh-*` label: the pane holding the row's terminal, or the row's
+// own pane after a herdr restore, which keeps pane ids and changes terminals.
+// A closed pane's id is not reused in its workspace, so a split can't claim it.
+// The row must be this workspace's: a gone workspace's label is free to reuse,
+// a live one's is not. No row (a Companion restart): only a lone pane is
+// certain, `pane list` is layout order, so a shell with a split stays off the
+// list until it is back to one pane. null = herdr could not say, which is not
 // "no shells" (a blip must not drop every row).
 export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
   let workspaces: unknown, panes: unknown
@@ -235,9 +241,10 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
       .filter((x) => x.workspace_id === id)
     const row = known.find((s) => s.name === name && listed.some((x) => x.workspace_id === s.workspaceId))
     if (row && row.workspaceId !== id) continue
-    const restored = mine.length === 1 && mine[0]!.pane_id === row?.herdrPane
-    const p = row ? mine.find((x) => x.terminal_id === row.terminalId) ?? (restored ? mine[0] : undefined) : mine[0]
+    const lone = mine.length === 1 ? mine[0] : undefined
+    const p = row ? mine.find((x) => x.terminal_id === row.terminalId) ?? mine.find((x) => x.pane_id === row.herdrPane) : lone
     if (!p) {
+      // A row's pane is gone from a workspace that still has panes: those are a human's.
       if (row && mine.length) await releaseWorkspace(id, name, h)
       continue
     }
