@@ -28,7 +28,7 @@ export class GhUnreachable extends Error {
 
 export interface PrTarget { taskId: string; prUrl: string; number: number }
 export interface PrActionDeps { gh: GhFn; exec: ExecFn; host: string }
-/** `signal`: the request's. A client that left gets no merge, whatever it was waiting for. */
+/** `signal`: the request's. A client that left gets no merge and no approval, whatever it was waiting for. */
 export interface MergeDeps extends PrActionDeps { gate: MergeGateFn; signal?: AbortSignal }
 
 export type PrState = "OPEN" | "MERGED" | "CLOSED" | "unknown"
@@ -143,9 +143,11 @@ export function approvalRow(a: ApprovalInput): { agentSlug: string; targetKind: 
   }
 }
 
-async function recordApproval(deps: PrActionDeps, t: PrTarget, ready: PrReadiness, reason: HoldReason): Promise<ExecOutcome> {
+async function recordApproval(deps: MergeDeps, t: PrTarget, ready: PrReadiness, reason: HoldReason): Promise<ExecOutcome> {
   const repo = /github\.com\/[^/]+\/([^/]+)\/pull\//.exec(t.prUrl)?.[1] ?? "repo"
-  const row = approvalRow({ taskId: t.taskId, url: t.prUrl, repo, number: t.number, headSha: ready.headSha, reason, agent: await agentOf(deps.exec, t.taskId), via: "triage", host: deps.host })
+  const agent = await agentOf(deps.exec, t.taskId)
+  if (deps.signal?.aborted) return { kind: "error", status: 409, error: "client_gone" }
+  const row = approvalRow({ taskId: t.taskId, url: t.prUrl, repo, number: t.number, headSha: ready.headSha, reason, agent, via: "triage", host: deps.host })
   await deps.exec(
     "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",
     [row.agentSlug, APPROVED_MERGE, row.targetKind, row.targetId, row.summary, row.meta],
@@ -192,7 +194,7 @@ async function readiness(gh: GhFn, url: string): Promise<PrReadiness | null> {
  * it and land a diff Jeremie never tapped), the approval on a hold, else null (go on). A read with no head or base
  * says nothing, but an approval still needs both.
  */
-async function settle(deps: PrActionDeps, t: PrTarget, r: PrReadiness | null, g: GatePass): Promise<ExecOutcome | null> {
+async function settle(deps: MergeDeps, t: PrTarget, r: PrReadiness | null, g: GatePass): Promise<ExecOutcome | null> {
   if (!r) return null
   const hold = holdReason(r)
   if (r.headSha !== g.head && (r.headSha || hold)) return { kind: "error", status: 409, error: "head_moved" }

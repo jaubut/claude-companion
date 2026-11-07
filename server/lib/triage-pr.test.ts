@@ -228,6 +228,29 @@ describe("merge intent", () => {
     expect(approvals()).toEqual([])
   })
 
+  describe("the client left during the assignee lookup: 409 client_gone, no approval", () => {
+    const leaves = () => {
+      const left = new AbortController()
+      const lookup: ExecFn = async (sql, args) => {
+        if (sql.includes("SELECT assignee")) left.abort()
+        return exec(sql, args)
+      }
+      return { exec: lookup, signal: left.signal }
+    }
+    test("a hold seen before the merge", async () => {
+      readiness = { ...green, mergeable: "CONFLICTING" }
+      expect(await mergePr({ ...deps, ...leaves() }, target)).toEqual({ kind: "error", status: 409, error: "client_gone" })
+      expect(approvals()).toEqual([])
+    })
+    test("a hold seen after GitHub refused the merge", async () => {
+      readiness = green
+      readinessAfter = { ...green, mergeable: "CONFLICTING" }
+      mergeEffect = "OPEN"
+      expect(await mergePr({ ...deps, ...leaves() }, target)).toEqual({ kind: "error", status: 409, error: "client_gone" })
+      expect(approvals()).toEqual([])
+    })
+  })
+
   test("a live signal changes nothing", async () => {
     readiness = green
     expect(await mergePr({ ...deps, signal: new AbortController().signal }, target)).toMatchObject({ kind: "done" })
