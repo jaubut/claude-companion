@@ -97,33 +97,38 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   const gate = await deps.h.gate()
   if (gate) return { ok: false, error: `herdr_unavailable: ${gate}` }
   // The name must come from herdr, not the store: a stale read would reuse a
-  // live label. Every label, shell or not: no two workspaces share one.
+  // live label. Every label, shell or not: no two workspaces share one. A closed
+  // name too: Close takes only a name, so a retry can't be told from a new close.
   const labels = await herdrLabels(deps.h)
   if (!labels) return { ok: false, error: "herdr_unavailable: workspace list failed" }
-  const taken = new Set([...labels, ...(await readTmuxShells(deps)).map((s) => s.name)])
+  const taken = new Set([...labels, ...closedShells.map((c) => c.name), ...(await readTmuxShells(deps)).map((s) => s.name)])
   const name = await uniqueTmuxSessionName(cwd, "shell", async (n) => taken.has(n))
   let pane = ""
+  let terminal = ""
   let workspace = ""
   try {
     const r = await deps.h.call(["workspace", "create", "--cwd", cwd, "--label", name, "--no-focus"])
-    pane = (r.root_pane as { pane_id?: string } | undefined)?.pane_id ?? ""
+    const root = r.root_pane as { pane_id?: string; terminal_id?: string } | undefined
+    pane = root?.pane_id ?? ""
+    terminal = root?.terminal_id ?? ""
     workspace = (r.workspace as { workspace_id?: string } | undefined)?.workspace_id ?? ""
   } catch (err) {
     return { ok: false, error: `herdr workspace create: ${(err as Error).message}` }
   }
-  if (!pane) return { ok: false, error: "herdr workspace create: no root_pane.pane_id" }
   const abandon = async (error: string): Promise<SpawnShellResult> => {
     if (workspace) await deps.h.call(["workspace", "close", workspace]).catch(() => undefined)
     return { ok: false, error }
   }
+  if (!pane || !terminal) return abandon("herdr workspace create: no root_pane")
   try {
     await deps.h.call(["pane", "rename", pane, SHELL_PANE_MARK])
   } catch (err) {
     return abandon(herdrErrorCode(err) === "pane_not_found" ? "session_exited" : `herdr pane rename: ${(err as Error).message}`)
   }
-  const sessions = await readShellSessions(deps)
-  const session = sessions.find((s) => s.herdrPane === pane)
-  if (!session) return abandon("session_exited")
+  // Never the cached rows, and by terminal: a pane id can be reissued.
+  const shells = await readHerdrShells(deps.h)
+  const session = shells?.find((s) => s.terminalId === terminal)
+  if (!shells || !session) return abandon("session_exited")
   if (resume) {
     try {
       await deps.h.call(["pane", "run", pane, `claude --resume ${resume}`])
@@ -131,7 +136,7 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
       return abandon(`herdr pane run: ${(err as Error).message}`)
     }
   }
-  replaceKeepingLinks(sessions)
+  replaceKeepingLinks([...await readTmuxShells(deps), ...shells].sort((a, b) => a.createdAt - b.createdAt))
   return { ok: true, session }
 }
 
@@ -154,9 +159,10 @@ export type CloseShellResult =
   | { ok: true; gone: boolean }
   | { ok: false; error: "unknown_shell" | "claude_running" | "kill_failed" }
 
-// Names closed through closeShellSession, so a retry answers gone:true
-// instead of unknown_shell. ponytail: last 50 only, a later retry gets 404.
-const closedNames: string[] = []
+// Closed through closeShellSession, so a retry answers gone:true instead of
+// unknown_shell, and never reaches a pane that came back under the name.
+// ponytail: last 50 only, a later retry gets 404.
+const closedShells: Array<{ name: string; terminalId: string }> = []
 
 // Close a row of the shell list (POST /api/shell/close). Only a name in the
 // list can be closed, and the list holds only shells: a Claude session's pane,
@@ -171,7 +177,9 @@ export async function closeShellSession(
   deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps,
 ): Promise<CloseShellResult> {
   const shell = store.list().find((s) => s.name === name)
-  if (!shell) return closedNames.includes(name) ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
+  const closed = closedShells.find((c) => c.name === name)
+  if (!shell) return closed ? { ok: true, gone: true } : { ok: false, error: "unknown_shell" }
+  if (closed && closed.terminalId !== shell.terminalId) return { ok: true, gone: true }
   if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
   // herdr knows an agent no hook reported, a suspended Claude too. It can also
   // reissue a pane id after a restore that lost it (a workspace newer than its
@@ -185,8 +193,8 @@ export async function closeShellSession(
   replaceKeepingLinks(after)
   // By terminal, not name: a pane split off keeps the workspace and its label.
   if (after.some((s) => (shell.herdrPane ? s.terminalId === shell.terminalId : s.name === name))) return { ok: false, error: "kill_failed" }
-  closedNames.push(name)
-  if (closedNames.length > 50) closedNames.shift()
+  closedShells.push({ name, terminalId: shell.terminalId })
+  if (closedShells.length > 50) closedShells.shift()
   // A close failing on a name that is no longer listed: it exited first.
   return { ok: true, gone }
 }
@@ -217,10 +225,11 @@ async function killTmuxShell(name: string, deps: Pick<ShellDeps, "run">): Promis
 }
 
 // One row per marked pane, named by its workspace's label. herdr keeps the mark
-// through a restore and a split never inherits it, so a row needs no name, count
-// or order logic. Unlabelled, or a second under one label: no row, a row key must
-// stay unique. null = herdr could not say, which is not "no shells" (a blip must
-// not drop every row).
+// through a restore and a split never inherits it, so a row needs no count or
+// order logic. A key is a label and Close takes a name, so a label with two
+// marked panes gives no row until it is unique again, and so does none at all.
+// null = herdr could not say, which is not "no shells" (a blip must not drop
+// every row).
 export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
   let workspaces: unknown, panes: unknown
   try {
@@ -233,10 +242,13 @@ export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.li
   }
   if (!Array.isArray(workspaces) || !Array.isArray(panes)) return null
   const labels = new Map((workspaces as Array<{ workspace_id?: string; label?: string }>).map((w) => [w.workspace_id, w.label ?? ""]))
+  const marked = (panes as Array<{ pane_id?: string; workspace_id?: string; terminal_id?: string; label?: string; cwd?: string; foreground_cwd?: string }>)
+    .filter((p) => p.label === SHELL_PANE_MARK)
+  const nameOf = (p: { workspace_id?: string }) => labels.get(p.workspace_id) ?? ""
   const out: ShellSession[] = []
-  for (const p of panes as Array<{ pane_id?: string; workspace_id?: string; terminal_id?: string; label?: string; cwd?: string; foreground_cwd?: string }>) {
-    const name = labels.get(p.workspace_id) ?? ""
-    if (p.label !== SHELL_PANE_MARK || !name || !p.pane_id || !p.terminal_id || out.some((s) => s.name === name)) continue
+  for (const p of marked) {
+    const name = nameOf(p)
+    if (!name || !p.pane_id || !p.terminal_id || marked.filter((x) => nameOf(x) === name).length > 1) continue
     const was = known.find((s) => s.terminalId === p.terminal_id)
     out.push({
       key: `${SHELL_KEY_PREFIX}${name}`,

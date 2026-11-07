@@ -4395,7 +4395,7 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 435,
+          "lines": 447,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
