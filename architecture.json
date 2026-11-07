@@ -4466,10 +4466,11 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 493,
+          "lines": 503,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
+            "folderTrusted",
             "TMUX_RETIRED",
             "APP_RETIRED",
             "APP_RETIRED_HINT",
@@ -7255,11 +7256,12 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 114,
+          "lines": 129,
           "kind": "lib",
           "exports": [
             "leadArgs",
             "leadDir",
+            "leadIsolated",
             "leadSettings",
             "prepareLeadDir",
             "LeadDeps",
@@ -15715,6 +15717,12 @@
             "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "folderTrusted": {
+          "module": "lib/spawn-session.ts",
+          "callers": [
+            "wiring/brain-lead.ts"
           ]
         },
         "spawnInHerdr": {

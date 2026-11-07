@@ -4,26 +4,26 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-lead-")), "test.db")
-const { createBrainLead, leadArgs, leadDir, leadSettings, prepareLeadDir } = await import("./brain-lead")
+const { createBrainLead, leadArgs, leadDir, leadIsolated, leadSettings, prepareLeadDir } = await import("./brain-lead")
 const { fakeHerdr } = await import("../lib/herdr-fake.test-util")
-const { spawnInHerdr } = await import("../lib/spawn-session")
+const { folderTrusted, spawnInHerdr } = await import("../lib/spawn-session")
 
 const NAME = "lead-claude-companion"
 
-/** A dead lead whose herdr record survived, in workspace w7. */
-function stale(label: string, panes: string[], info: Record<string, unknown> | null = { shell_pid: 5, foreground_process_group_id: 5 }) {
+/** A lead whose herdr record survived, in workspace w7: dead unless `live`, then in or out of its clone. */
+function stale(label: string, panes: string[], info: Record<string, unknown> | null = { shell_pid: 5, foreground_process_group_id: 5 }, live = false, isolated = true) {
   const f = fakeHerdr({
     reply: (a) => a[0] === "workspace" && a[1] === "list" ? { workspaces: [{ workspace_id: "w7", label }] }
       : a[0] === "pane" && a[1] === "list" ? { panes: panes.map((p) => ({ pane_id: p, workspace_id: "w7" })) }
       : a[0] === "pane" && a[1] === "process-info" ? (() => { if (!info) throw new Error("timeout"); return { process_info: info } })() : {},
   })
-  let taken = true
+  const spawned: string[] = []
   const lead = createBrainLead({
-    herdr: f.h, running: async () => false,
+    herdr: f.h, running: async () => live, isolated: () => isolated,
     agentOf: async () => ({ kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
-    spawn: async () => (taken ? (taken = false, { ok: false, error: `name_taken: ${NAME}` }) : { ok: true }),
+    spawn: async (repo) => { spawned.push(repo); return { ok: true } },
   })
-  return { f, lead }
+  return { f, lead, spawned }
 }
 
 test("a lead has no file-editing tools: LEAD.md's \"you never edit code\" is enforced where the CLI can", () => {
@@ -34,7 +34,7 @@ test("a lead has no file-editing tools: LEAD.md's \"you never edit code\" is enf
 describe("a lead's own clone", () => {
   const home = () => mkdtempSync(join(tmpdir(), "lead-home-"))
   const excluded = () => ["docker *", "systemctl --user restart claude-companion.service"]
-  const noTrust = () => {}
+  const noTrust = () => true
   const cloned = (calls: string[][], h: string) => async (cmd: string, args: string[]) => {
     calls.push([cmd, ...args])
     mkdirSync(leadDir("claude-companion", h), { recursive: true })
@@ -71,8 +71,25 @@ describe("a lead's own clone", () => {
   })
   test("the clone is trusted before the spawn, or a new lead stalls at the trust dialog", async () => {
     const h = home(), trusted: string[] = []
-    await prepareLeadDir("claude-companion", h, cloned([], h), (d) => { trusted.push(d) }, excluded)
+    await prepareLeadDir("claude-companion", h, cloned([], h), (d) => { trusted.push(d); return true }, excluded)
     expect(trusted).toEqual([leadDir("claude-companion", h)])
+  })
+  test("a clone that couldn't be trusted refuses the spawn", async () => {
+    const h = home()
+    expect(await prepareLeadDir("claude-companion", h, cloned([], h), () => false, excluded)).toMatchObject({ ok: false, error: expect.stringContaining("not trusted") })
+  })
+  test("a trust write that never landed reads as untrusted", () => {
+    const cfg = join(home(), ".claude.json")
+    expect(folderTrusted("/d", cfg)).toBe(false)
+    writeFileSync(cfg, JSON.stringify({ projects: { "/d": { hasTrustDialogAccepted: true } } }))
+    expect(folderTrusted("/d", cfg)).toBe(true)
+    expect(folderTrusted("/other", cfg)).toBe(false)
+  })
+  test("is isolated only once the settings are in the clone", async () => {
+    const h = home()
+    expect(leadIsolated("claude-companion", h)).toBe(false)
+    await prepareLeadDir("claude-companion", h, cloned([], h), noTrust, excluded)
+    expect(leadIsolated("claude-companion", h)).toBe(true)
   })
   test("a repo with no lead gets nothing", async () => {
     expect(await prepareLeadDir("other", home(), cloned([], "/x"), noTrust, excluded)).toMatchObject({ ok: false })
@@ -87,19 +104,37 @@ describe("repo lead", () => {
     expect(f.verbs()).toContain("workspace close")
   })
 
-  test("no positive proof of exit, nothing is stopped: a process in front or an unreadable pane", async () => {
+  test("no positive proof of exit, nothing is stopped and the clone is left alone: a process in front or an unreadable pane", async () => {
     for (const info of [{ shell_pid: 5, foreground_process_group_id: 9 }, {}, null]) {
-      const { f, lead } = stale(NAME, ["w7:p1"], info)
+      const { f, lead, spawned } = stale(NAME, ["w7:p1"], info)
       expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: false, state: "down" })
       expect(f.verbs().filter((v) => v === "workspace close" || v === "agent stop")).toEqual([])
+      expect(spawned).toEqual([])
     }
   })
 
   test("a foreign pane or label, or an unreadable workspace, is never stopped or closed", async () => {
     for (const [label, panes] of [[NAME, ["w7:p1", "w7:p2"]], [NAME, ["w7:p2"]], ["jeremie", ["w7:p1"]], [NAME, []]] as Array<[string, string[]]>) {
-      const { f, lead } = stale(label, panes)
-      expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: false, state: "down" })
-      expect(f.verbs().filter((v) => v === "workspace close" || v === "agent stop")).toEqual([])
+      for (const live of [false, true]) {
+        const { f, lead, spawned } = stale(label, panes, undefined, live, false)
+        expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: false, state: "down" })
+        expect(f.verbs().filter((v) => v === "workspace close" || v === "agent stop")).toEqual([])
+        expect(spawned).toEqual([])
+      }
     }
+  })
+
+  test("a running lead in its clone is left running", async () => {
+    const { f, lead, spawned } = stale(NAME, ["w7:p1"], undefined, true, true)
+    expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "running" })
+    expect(f.verbs().filter((v) => v === "workspace close" || v === "agent stop")).toEqual([])
+    expect(spawned).toEqual([])
+  })
+
+  test("a running lead outside its clone is replaced, so a restore can't keep it in the live checkout", async () => {
+    const { f, lead, spawned } = stale(NAME, ["w7:p1"], { shell_pid: 5, foreground_process_group_id: 9 }, true, false)
+    expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
+    expect(f.verbs()).toEqual(expect.arrayContaining(["agent stop", "workspace close"]))
+    expect(spawned).toEqual(["claude-companion"])
   })
 })

@@ -23,7 +23,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/transcript.ts` | 532 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
-| `lib/spawn-session.ts` | 493 | lib | 25 | state: RETIRED_APPS: Set |
+| `lib/spawn-session.ts` | 503 | lib | 26 | state: RETIRED_APPS: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/discover.ts` | 469 | lib | 18 | state: let firstDone, let firstExpected, let resolveFirst |
@@ -154,6 +154,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
+| `wiring/brain-lead.ts` | 129 | lib | 9 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
@@ -164,7 +165,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/model-control.ts` | 116 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
-| `wiring/brain-lead.ts` | 114 | lib | 8 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |

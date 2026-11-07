@@ -45,6 +45,16 @@ export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${
   } catch { /* best-effort — worst case the trust dialog still appears */ }
 }
 
+/** For a caller nobody can rescue from the trust dialog: did the best-effort write above land? */
+export function folderTrusted(cwd: string, cfgPath = `${process.env.HOME ?? ""}/.claude.json`): boolean {
+  try {
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as { projects?: Record<string, { hasTrustDialogAccepted?: unknown }> }
+    return cfg.projects?.[cwd]?.hasTrustDialogAccepted === true
+  } catch {
+    return false
+  }
+}
+
 export const TMUX_RETIRED = "tmux_retired"
 
 export const APP_RETIRED = "app_retired"
