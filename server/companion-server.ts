@@ -46,6 +46,7 @@ import { ensureUtf8Locale } from "./lib/tmux-pane"
 import { brainRoute } from "./routes/brain"
 import { brainWiring, setBrainDeliver } from "./wiring/brain"
 import { brainWorkers } from "./wiring/brain-workers"
+import { startStuckEvents } from "./wiring/brain-stuck-events"
 import { brainEnabled } from "./lib/brain"
 import { startAutoDeploy } from "./wiring/auto-deploy"
 
@@ -73,7 +74,7 @@ export function createCompanionServer(port: number) {
   startEndedSweep(listSessions)
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
-  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy() }
+  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy(); startStuckEvents() }
   watchTailscaleName()
   const server = Bun.serve<WsData>({
     port,

@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 191,
+          "lines": 192,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -100,6 +100,7 @@
             "routes/brain.ts",
             "wiring/brain.ts",
             "wiring/brain-workers.ts",
+            "wiring/brain-stuck-events.ts",
             "lib/brain.ts",
             "wiring/auto-deploy.ts"
           ],
@@ -884,7 +885,7 @@
         },
         {
           "path": "lib/brain-store.ts",
-          "lines": 100,
+          "lines": 105,
           "kind": "lib",
           "exports": [
             "OutboxState",
@@ -893,6 +894,7 @@
             "takeDeliveries",
             "openDeliveries",
             "markDelivered",
+            "requeueDeliveries",
             "markMaybe",
             "clearTyped",
             "getKv",
@@ -987,7 +989,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 223,
+          "lines": 243,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -1005,6 +1007,8 @@
             "DeliveryTurn",
             "DELIVERY_MAX",
             "deliveryText",
+            "fitDelivery",
+            "fitQueued",
             "bootSeed",
             "TICK_MS",
             "RESTART_WINDOW_MS",
@@ -7376,6 +7380,35 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-stuck-events.ts",
+          "lines": 132,
+          "kind": "lib",
+          "exports": [
+            "StuckEventsDeps",
+            "stuckLine",
+            "createStuckEvents",
+            "startStuckEvents"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/turso.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain-todo.ts",
           "lines": 40,
           "kind": "lib",
@@ -8607,6 +8640,12 @@
             "companion-server.ts"
           ]
         },
+        "startStuckEvents": {
+          "module": "wiring/brain-stuck-events.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "brainWorkers": {
           "module": "wiring/brain-workers.ts",
           "callers": [
@@ -9199,6 +9238,7 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-restore.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -9242,7 +9282,8 @@
             "lib/quick-look.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts"
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "ApprovalRequest": {
@@ -9654,6 +9695,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -9873,6 +9915,7 @@
             "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
@@ -14585,6 +14628,7 @@
             "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -14704,6 +14748,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
             "wiring/proposals.ts",
@@ -14730,6 +14775,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
@@ -15748,6 +15794,20 @@
             "wiring/brain-restore.ts"
           ]
         },
+        "getKv": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "setKv": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain.ts"
+          ]
+        },
         "addTodo": {
           "module": "lib/my-tasks.ts",
           "callers": [
@@ -15871,6 +15931,12 @@
             "wiring/brain.ts"
           ]
         },
+        "fitQueued": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "bootSeed": {
           "module": "lib/brain.ts",
           "callers": [
@@ -15955,6 +16021,12 @@
             "wiring/brain.ts"
           ]
         },
+        "requeueDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "markMaybe": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -15967,19 +16039,7 @@
             "wiring/brain.ts"
           ]
         },
-        "getKv": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "takeDeliveries": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "setKv": {
           "module": "lib/brain-store.ts",
           "callers": [
             "wiring/brain.ts"
