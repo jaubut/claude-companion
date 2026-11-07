@@ -232,11 +232,11 @@ text, options = answer_custom / requeue / cancel).
   `404` `no_such_item`; `409` `stale` with `next: TriageItem | null` (the refreshed item, null when it is gone),
   `gate_unavailable` (with `detail`: the merge gate can't answer on this host) · `head_moved` (a read after the gate
   names another head, before or after `gh pr merge`; the card stays, a new tap checks the new head) ·
-  `merge_unverified` (with `detail`: gh or Turso failed after the gate), all without `next` and never 5xx (iOS queues
-  a 5xx with the card hidden, so a re-send would gate and land whatever the head is by then),
+  `merge_unverified` (with `detail`: gh or Turso failed after the gate), all without `next` and 409 on purpose (iOS
+  queues a 5xx with the card hidden, so a re-send would gate and land whatever the head is by then),
   or `investigation_<status>` for a Body requeue the investigator refused (with `reason`);
   `422` `text_required`; `502` `merge_unverified` / `close_unverified` (gh ran but GitHub
-  does not read MERGED / CLOSED; nothing recorded) or an approve error passed through
+  does not read MERGED / CLOSED, on the gated head for a merge; nothing recorded; iOS treats both as final) or an approve error passed through
   (e.g. `host_refused`); `503` `turso_unreachable` · `gh_unreachable` · `host_unreachable` (Mac fix card).
   Only a success is remembered under an Idempotency-Key (7 days); a refusal retries for real.
 - **`open_url` / `snooze` on the server.** `open_url` is a no-op `done` (the phone opens the
