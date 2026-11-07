@@ -99,10 +99,11 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   if (gate) return { ok: false, error: `herdr_unavailable: ${gate}` }
   // The name must come from herdr, not the store: a stale read would reuse a
   // live label. Every label, shell or not: no two workspaces share one. A closed
-  // tmux name too: Close takes only a name, so a retry can't be told from a new close.
+  // tmux name too, and any shell name listed in the last 24 h, exited or not:
+  // Close takes only a name, so a late or retried Close finds no row.
   const labels = await herdrLabels(deps.h)
   if (!labels) return { ok: false, error: "herdr_unavailable: workspace list failed" }
-  const taken = new Set([...labels, ...closedNames, ...(await readTmuxShells(deps)).map((s) => s.name)])
+  const taken = new Set([...labels, ...closedNames, ...store.recent(), ...(await readTmuxShells(deps)).map((s) => s.name)])
   const name = await uniqueTmuxSessionName(cwd, "shell", async (n) => taken.has(n))
   let pane = ""
   let terminal = ""
@@ -146,8 +147,14 @@ async function herdrLabels(h: Herdr): Promise<string[] | null> {
   }
 }
 
+// Bumped by every store write but the poll's, so a poll that read before a
+// spawn or a close can't write back what it read: a closed row, or a list
+// missing the new shell.
+let storeGen = 0
+
 // A fresh read into the store. Links stand until the next poll re-checks them.
 export function replaceKeepingLinks(sessions: ShellSession[]): void {
+  storeGen++
   const linked = new Map(store.list().map((s) => [s.key, s.claudeKey]))
   store.replace(sessions.map((s) => ({ ...s, claudeKey: linked.get(s.key) ?? "" })))
 }
@@ -296,14 +303,30 @@ function sameList(a: ShellSession[], b: ShellSession[]): boolean {
   })
 }
 
+// How long a listed name stays taken after it was last seen.
+const SEEN_NAME_MS = 24 * 3_600_000
+
 export function createShellStore() {
   let shells: ShellSession[] = []
   const listeners = new Set<Listener>()
+  // name → last seen. ponytail: in memory, last 2000 names; a restart forgets them.
+  const seen = new Map<string, number>()
   return {
     list: (): ShellSession[] => shells,
     get: (key: string): ShellSession | undefined => shells.find((s) => s.key === key),
+    // Every name listed in the last 24 h, exited or not.
+    recent(): string[] {
+      const since = Date.now() - SEEN_NAME_MS
+      for (const [name, at] of seen) if (at <= since) seen.delete(name)
+      return [...seen.keys()]
+    },
     // Emits only on a real change (a shell came, went, or cd'd).
     replace(next: ShellSession[]): boolean {
+      for (const s of next) {
+        seen.delete(s.name)
+        seen.set(s.name, Date.now())
+      }
+      while (seen.size > 2000) seen.delete(seen.keys().next().value!)
       if (sameList(shells, next)) return false
       shells = next
       for (const fn of listeners) {
@@ -405,10 +428,12 @@ export function startShellPoll(
     if (busy) return
     busy = true
     try {
+      const gen = storeGen
       const shells = await readShellSessions(deps)
       const list = agents()
       const inPane = list.some((a) => shells.some((s) => inShellPane(a, s)))
-      store.replace(linkClaude(shells, list, inPane ? await readProcTable(deps.run) : null))
+      const linked = linkClaude(shells, list, inPane ? await readProcTable(deps.run) : null)
+      if (gen === storeGen) store.replace(linked)
     } finally { busy = false }
   }
   void tick()

@@ -168,11 +168,11 @@ test("spawn shell: the shell died at once → session_exited, no record", async 
 test("herdr list: only a marked pane is a shell; a blip is null and keeps the rows", async () => {
   store.replace([])
   const f = fakeShells()
-  await spawnShellSession("/x/repo", f.deps)
-  expect((await readHerdrShells(f.h))?.map((s) => s.name)).toEqual(["sh-repo"])
+  await spawnShellSession("/x/marked", f.deps)
+  expect((await readHerdrShells(f.h))?.map((s) => s.name)).toEqual(["sh-marked"])
   const down = fakeShells({ down: true })
   expect(await readHerdrShells(down.h)).toBeNull()
-  expect((await readShellSessions(down.deps)).map((s) => s.name)).toEqual(["sh-repo"])
+  expect((await readShellSessions(down.deps)).map((s) => s.name)).toEqual(["sh-marked"])
   store.replace([])
 })
 
@@ -221,11 +221,11 @@ test("herdr list: a shell that exits while Companion is down leaves no row: its 
 test("herdr list: a restore keeps the row: same marked pane, new terminal, a split changes nothing", async () => {
   const f = fakeShells()
   store.replace([])
-  await spawnShellSession("/x/repo", f.deps)
+  await spawnShellSession("/x/restore", f.deps)
   const w = f.ws[0]!
   w.split = true
   w.term = "term_restored"
-  expect(await readHerdrShells(f.h)).toMatchObject([{ name: "sh-repo", herdrPane: "w1:p1", terminalId: "term_restored" }])
+  expect(await readHerdrShells(f.h)).toMatchObject([{ name: "sh-restore", herdrPane: "w1:p1", terminalId: "term_restored" }])
   store.replace([])
 })
 
@@ -304,8 +304,8 @@ test("spawn shell: a failed listing never reuses a live label, nothing is create
 
 test("spawn shell: resolves its own pane, never a shell that took the label in the gap", async () => {
   store.replace([])
-  const f = fakeShells({ onCreate: () => f.ws.push({ id: "w0b", label: "sh-repo", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK }) })
-  const r = await spawnShellSession("/x/repo", f.deps)
+  const f = fakeShells({ onCreate: () => f.ws.push({ id: "w0b", label: "sh-gap", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK }) })
+  const r = await spawnShellSession("/x/gap", f.deps)
   expect(r).toEqual({ ok: false, error: "session_exited" })
   expect(f.ws.map((w) => w.id)).toEqual(["w0b", "w1"])
   store.replace([])
@@ -334,9 +334,9 @@ const TMUX_ROW = "sh-repo\t1\t%1\t/x\t1\t/s\t1\n"
 const tmuxAnswers = (deps: ShellDeps, code: number, stderr: string): ShellDeps => ({ ...deps, which: () => "/usr/bin/tmux", run: async () => ({ code, stdout: "", stderr }) })
 
 test("spawn shell: tmux not answering keeps a live tmux shell's name taken", async () => {
-  store.replace(parseShellList(TMUX_ROW, "/s"))
-  const r = await spawnShellSession("/x/repo", tmuxAnswers(fakeShells().deps, -1, "timed out"))
-  expect(r).toMatchObject({ ok: true, session: { name: "sh-repo-2" } })
+  store.replace(parseShellList("sh-tmuxdown\t1\t%1\t/x\t1\t/s\t1\n", "/s"))
+  const r = await spawnShellSession("/x/tmuxdown", tmuxAnswers(fakeShells().deps, -1, "timed out"))
+  expect(r).toMatchObject({ ok: true, session: { name: "sh-tmuxdown-2" } })
   store.replace([])
 })
 
@@ -360,13 +360,13 @@ test("shell list: a herdr workspace renamed onto a tmux shell's name gives no ro
   store.replace([])
 })
 
-test("spawn shell: a shell exits and its name is reused before the poll → a working new shell", async () => {
+test("spawn shell: a shell exits before the poll → the respawn gets a new name and a working shell", async () => {
   store.replace([])
   const f = fakeShells()
-  await spawnShellSession("/x/repo", f.deps)
+  await spawnShellSession("/x/reuse", f.deps)
   f.ws.length = 0 // `exit`: the workspace is gone, the store still holds w1:p1
-  const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r).toMatchObject({ ok: true, session: { name: "sh-repo", herdrPane: "w2:p1", terminalId: "term_w2" } })
+  const r = await spawnShellSession("/x/reuse", f.deps)
+  expect(r).toMatchObject({ ok: true, session: { name: "sh-reuse-2", herdrPane: "w2:p1", terminalId: "term_w2" } })
   expect((await readHerdrShells(f.h))?.map((s) => s.terminalId)).toEqual(["term_w2"])
   store.replace([])
 })
@@ -374,9 +374,9 @@ test("spawn shell: a shell exits and its name is reused before the poll → a wo
 test("spawn shell: every workspace label is taken, shell or not", async () => {
   store.replace([])
   const f = fakeShells()
-  f.ws.push({ id: "w8", label: "sh-repo", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK, split: true })
-  f.ws.push({ id: "w9", label: "sh-repo-2", term: "t9", cwd: "/x" })
-  expect(await spawnShellSession("/x/repo", f.deps)).toMatchObject({ ok: true, session: { name: "sh-repo-3" } })
+  f.ws.push({ id: "w8", label: "sh-labels", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK, split: true })
+  f.ws.push({ id: "w9", label: "sh-labels-2", term: "t9", cwd: "/x" })
+  expect(await spawnShellSession("/x/labels", f.deps)).toMatchObject({ ok: true, session: { name: "sh-labels-3" } })
   store.replace([])
 })
 
@@ -491,6 +491,57 @@ test("close shell: the session survives the kill → kill_failed, row kept", asy
 test("close shell: kill-session fails because it already exited → ok, gone", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
   expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ killCode: 1 }))).toEqual({ ok: true, gone: true })
+  store.replace([])
+})
+
+// ── Salvaged from #294: 24 h names, the poll race ──
+
+const poll = async (f: { h: ShellDeps["h"] }) => store.replace((await readHerdrShells(f.h))!)
+
+test("spawn never reuses a name seen in the last 24 h: exit, poll, respawn → a new name; a late Close on the old one is unknown_shell", async () => {
+  store.replace([])
+  const f = fakeShells()
+  await spawnShellSession("/x/c-seen", f.deps)
+  f.ws.length = 0 // `exit`: the workspace goes with its only pane
+  await poll(f)
+  expect(listShellSessions()).toEqual([])
+  expect(await spawnShellSession("/x/c-seen", f.deps)).toMatchObject({ ok: true, session: { name: "sh-c-seen-2" } })
+  expect(await closeShellSession("sh-c-seen", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  store.replace([])
+})
+
+test("seen names: free again after 24 h", async () => {
+  store.replace([])
+  const f = fakeShells()
+  const now = Date.now()
+  const clock = spyOn(Date, "now").mockReturnValue(now)
+  try {
+    await spawnShellSession("/x/c-day", f.deps)
+    f.ws.length = 0
+    await poll(f)
+    clock.mockReturnValue(now + 24 * 3_600_000 + 1)
+    expect(await spawnShellSession("/x/c-day", f.deps)).toMatchObject({ ok: true, session: { name: "sh-c-day" } })
+  } finally { clock.mockRestore(); store.replace([]) }
+})
+
+test("poll: a read from before a spawn or a tmux Close never writes over it", async () => {
+  store.replace([])
+  const f = fakeShells()
+  let release = () => {}
+  const held: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => { await new Promise<void>((r) => { release = r }); return { code: 0, stdout: CLOSE_LIST, stderr: "" } } }
+  let stop = startShellPoll(() => [], held, 60_000) // its herdr read is taken now, the tmux read hangs
+  expect((await spawnShellSession("/x/c-race", f.deps)).ok).toBe(true)
+  release()
+  await Bun.sleep(5)
+  stop()
+  expect(listShellSessions().map((s) => s.name)).toContain("sh-c-race")
+  store.replace(parseShellList(CLOSE_LIST, ""))
+  stop = startShellPoll(() => [], held, 60_000) // reads sh-a and sh-b, held
+  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: false })
+  release()
+  await Bun.sleep(5)
+  stop()
+  expect(listShellSessions().map((s) => s.name)).not.toContain("sh-a")
   store.replace([])
 })
 
