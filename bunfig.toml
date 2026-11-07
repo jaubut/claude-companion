@@ -1,0 +1,2 @@
+[test]
+preload = ["./server/lib/turso-test-preload.test-util.ts"]
