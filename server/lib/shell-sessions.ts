@@ -282,9 +282,10 @@ async function closeShellPane(ref: Pick<ShellSession, "herdrPane" | "terminalId"
   }
 }
 
-// main's tmux Close, recording first: `kill-session -t =name` can only reach
-// tmux, and the store holds one row per name (mergeShells). `detach` runs before the kill so open
-// terminal sockets end cleanly rather than on the attach dying.
+// main's tmux Close, plus the shared record and a tmux-only success test.
+// `kill-session -t =name` can only reach tmux, and the store holds one row per
+// name (mergeShells). `detach` runs before the kill so open terminal sockets
+// end cleanly rather than on the attach dying.
 async function closeTmuxShell(shell: ShellSession, detach: (key: string) => void, deps: Pick<ShellDeps, "run" | "which" | "h">): Promise<CloseShellResult> {
   const name = shell.name
   detach(shell.key)
