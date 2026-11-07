@@ -103,10 +103,11 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   if (gate) return { ok: false, error: `herdr_unavailable: ${gate}` }
   // The name must come from herdr, not the store: a stale read would reuse a
   // live label. Every label, shell or not: no two workspaces share one. A closed
-  // name too: Close takes only a name, so a retry can't be told from a new close.
+  // name too, and any shell name listed in the last 24 h, exited or not: Close
+  // takes only a name, so a late or retried Close can't be told from a new one.
   const labels = await herdrLabels(deps.h)
   if (!labels) return { ok: false, error: "herdr_unavailable: workspace list failed" }
-  const taken = new Set([...labels, ...closedShells.map((c) => c.name), ...(await readTmuxShells(deps)).map((s) => s.name)])
+  const taken = new Set([...labels, ...closedShells.map((c) => c.name), ...store.recent(), ...(await readTmuxShells(deps)).map((s) => s.name)])
   const name = await uniqueTmuxSessionName(cwd, "shell", async (n) => taken.has(n))
   let pane = ""
   let terminal = ""
@@ -202,7 +203,7 @@ const recordClose = (name: string, terminalId: string) => {
 // refused. Two terminals under one name are refused, never guessed between.
 export function closeShellSession(
   name: string,
-  agents: AgentRef[],
+  agents: () => AgentRef[],
   detach: (key: string) => void,
   deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps,
 ): Promise<CloseShellResult> {
@@ -218,7 +219,7 @@ export function closeShellSession(
 async function closeShell(
   name: string,
   shell: ShellSession | undefined,
-  agents: AgentRef[],
+  agents: () => AgentRef[],
   detach: (key: string) => void,
   deps: Pick<ShellDeps, "run" | "which" | "h">,
 ): Promise<CloseShellResult> {
@@ -227,7 +228,10 @@ async function closeShell(
   // The one check across backends: a close under this name was of another
   // shell (a tmux one has no terminal).
   if (tomb && tomb.terminalId !== shell.terminalId) return { ok: false, error: "name_reused" }
-  if (shell.claudeKey || agents.some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
+  // Read now, in the turn, never from before it: a Claude started or linked
+  // while this Close waited behind a spawn counts.
+  const linked = store.list().find((s) => s.key === shell.key && s.terminalId === shell.terminalId && s.tmuxPane === shell.tmuxPane)?.claudeKey
+  if (linked || agents().some((a) => inShellPane(a, shell))) return { ok: false, error: "claude_running" }
   if (!shell.herdrPane) return closeTmuxShell(shell, detach, deps)
   // The store can be 3 s old: only a fresh read says which terminal holds the name.
   const [tmux, herdr] = await Promise.all([readTmuxShells(deps), readHerdrShells(deps.h, store.list(), 2_000)])
@@ -408,14 +412,30 @@ function sameList(a: ShellSession[], b: ShellSession[]): boolean {
   })
 }
 
+// How long a listed name stays taken after it was last seen.
+export const SEEN_NAME_MS = 24 * 3_600_000
+
 export function createShellStore() {
   let shells: ShellSession[] = []
   const listeners = new Set<Listener>()
+  // name → last seen. ponytail: in memory, last 2000 names; a restart forgets them.
+  const seen = new Map<string, number>()
   return {
     list: (): ShellSession[] => shells,
     get: (key: string): ShellSession | undefined => shells.find((s) => s.key === key),
+    // Every name listed in the last 24 h, exited or not.
+    recent(): string[] {
+      const since = Date.now() - SEEN_NAME_MS
+      for (const [name, at] of seen) if (at <= since) seen.delete(name)
+      return [...seen.keys()]
+    },
     // Emits only on a real change (a shell came, went, or cd'd).
     replace(next: ShellSession[]): boolean {
+      for (const s of next) {
+        seen.delete(s.name)
+        seen.set(s.name, Date.now())
+      }
+      while (seen.size > 2000) seen.delete(seen.keys().next().value!)
       if (sameList(shells, next)) return false
       shells = next
       for (const fn of listeners) {

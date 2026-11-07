@@ -288,7 +288,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const body = await jsonObject<{ name?: unknown }>(req, {})
     const name = typeof body.name === "string" ? body.name : ""
     if (!name || name.length > 200) return Response.json({ ok: false, error: "bad_name" }, { status: 400 })
-    const r = await closeShellSession(name, listSessions(), detachTerminals)
+    const r = await closeShellSession(name, listSessions, detachTerminals)
     if (r.ok) {
       companionLog(`\x1b[35mshell closed\x1b[0m ${name}${r.gone ? " (already gone)" : ""}`)
       return Response.json(r)

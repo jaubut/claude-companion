@@ -194,11 +194,11 @@ test("spawn shell: the shell died at once → session_exited, no record", async 
 test("herdr list: only a marked pane is a shell; a blip is null and keeps the rows", async () => {
   store.replace([])
   const f = fakeShells()
-  await spawnShellSession("/x/repo", f.deps)
-  expect((await readHerdrShells(f.h))?.map((s) => s.name)).toEqual(["sh-repo"])
+  await spawnShellSession("/x/marked", f.deps)
+  expect((await readHerdrShells(f.h))?.map((s) => s.name)).toEqual(["sh-marked"])
   const down = fakeShells({ down: true })
   expect(await readHerdrShells(down.h)).toBeNull()
-  expect((await readShellSessions(down.deps)).map((s) => s.name)).toEqual(["sh-repo"])
+  expect((await readShellSessions(down.deps)).map((s) => s.name)).toEqual(["sh-marked"])
   store.replace([])
 })
 
@@ -222,7 +222,7 @@ test("herdr list: an `sh-*` workspace with no marked pane is not a shell, whatev
   f.ws.push({ id: "w1", label: "sh-unmarked", term: "t1", cwd: "/a" }, { id: "w2", label: "sh-human", term: "t2", cwd: "/b", split: true })
   expect(await readHerdrShells(f.h)).toEqual([])
   expect(await readHerdrShells(f.h, [])).toEqual([])
-  expect(await closeShellSession("sh-unmarked", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-unmarked", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls.some((c) => c[1] === "close")).toBe(false)
 })
 
@@ -240,18 +240,18 @@ test("herdr list: a shell that exits while Companion is down leaves no row: its 
   store.replace([])
   f.ws.push({ id: "w1", label: "sh-gone", term: "", cwd: "/a", split: true }) // only the split's pane is left
   expect(await readHerdrShells(f.h, [])).toEqual([])
-  expect(await closeShellSession("sh-gone", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-gone", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls.some((c) => c[1] === "close")).toBe(false)
 })
 
 test("herdr list: a restore keeps the row: same marked pane, new terminal, a split changes nothing", async () => {
   const f = fakeShells()
   store.replace([])
-  await spawnShellSession("/x/repo", f.deps)
+  await spawnShellSession("/x/restore", f.deps)
   const w = f.ws[0]!
   w.split = true
   w.term = "term_restored"
-  expect(await readHerdrShells(f.h)).toMatchObject([{ name: "sh-repo", herdrPane: "w1:p1", terminalId: "term_restored" }])
+  expect(await readHerdrShells(f.h)).toMatchObject([{ name: "sh-restore", herdrPane: "w1:p1", terminalId: "term_restored" }])
   store.replace([])
 })
 
@@ -288,7 +288,7 @@ test("herdr list: two marked panes under one label give no row, nothing is guess
   const rows = await readHerdrShells(f.h)
   expect(rows!.map((s) => s.terminalId)).toEqual(["t3"])
   store.replace(rows!)
-  expect(await closeShellSession("sh-dup", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-dup", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls.some((c) => c[1] === "close")).toBe(false)
   f.ws[1]!.label = "sh-dup-b" // unique again: both come back
   expect((await readHerdrShells(f.h))!.map((s) => s.terminalId)).toEqual(["t1", "t2", "t3"])
@@ -330,8 +330,8 @@ test("spawn shell: a failed listing never reuses a live label, nothing is create
 
 test("spawn shell: resolves its own pane, never a shell that took the label in the gap", async () => {
   store.replace([])
-  const f = fakeShells({ onCreate: () => f.ws.push({ id: "w0b", label: "sh-repo", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK }) })
-  const r = await spawnShellSession("/x/repo", f.deps)
+  const f = fakeShells({ onCreate: () => f.ws.push({ id: "w0b", label: "sh-gap", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK }) })
+  const r = await spawnShellSession("/x/gap", f.deps)
   expect(r).toEqual({ ok: false, error: "session_exited" })
   expect(f.ws.map((w) => w.id)).toEqual(["w0b", "w1"])
   store.replace([])
@@ -362,7 +362,7 @@ const tmuxAnswers = (deps: ShellDeps, code: number, stderr: string): ShellDeps =
 test("spawn shell: tmux not answering keeps a live tmux shell's name taken", async () => {
   store.replace(parseShellList(TMUX_ROW, "/s"))
   const r = await spawnShellSession("/x/repo", tmuxAnswers(fakeShells().deps, -1, "timed out"))
-  expect(r).toMatchObject({ ok: true, session: { name: "sh-repo-2" } })
+  expect(r.ok && r.session.name).not.toBe("sh-repo")
   store.replace([])
 })
 
@@ -386,13 +386,13 @@ test("shell list: a herdr workspace renamed onto a tmux shell's name gives no ro
   store.replace([])
 })
 
-test("spawn shell: a shell exits and its name is reused before the poll → a working new shell", async () => {
+test("spawn shell: a shell exits before the poll → the respawn gets a new name and a working shell", async () => {
   store.replace([])
   const f = fakeShells()
-  await spawnShellSession("/x/repo", f.deps)
+  await spawnShellSession("/x/reuse", f.deps)
   f.ws.length = 0 // `exit`: the workspace is gone, the store still holds w1:p1
-  const r = await spawnShellSession("/x/repo", f.deps)
-  expect(r).toMatchObject({ ok: true, session: { name: "sh-repo", herdrPane: "w2:p1", terminalId: "term_w2" } })
+  const r = await spawnShellSession("/x/reuse", f.deps)
+  expect(r).toMatchObject({ ok: true, session: { name: "sh-reuse-2", herdrPane: "w2:p1", terminalId: "term_w2" } })
   expect((await readHerdrShells(f.h))?.map((s) => s.terminalId)).toEqual(["term_w2"])
   store.replace([])
 })
@@ -400,9 +400,9 @@ test("spawn shell: a shell exits and its name is reused before the poll → a wo
 test("spawn shell: every workspace label is taken, shell or not", async () => {
   store.replace([])
   const f = fakeShells()
-  f.ws.push({ id: "w8", label: "sh-repo", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK, split: true })
-  f.ws.push({ id: "w9", label: "sh-repo-2", term: "t9", cwd: "/x" })
-  expect(await spawnShellSession("/x/repo", f.deps)).toMatchObject({ ok: true, session: { name: "sh-repo-3" } })
+  f.ws.push({ id: "w8", label: "sh-labels", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK, split: true })
+  f.ws.push({ id: "w9", label: "sh-labels-2", term: "t9", cwd: "/x" })
+  expect(await spawnShellSession("/x/labels", f.deps)).toMatchObject({ ok: true, session: { name: "sh-labels-3" } })
   store.replace([])
 })
 
@@ -444,9 +444,9 @@ test("close shell (herdr): a Claude linked or on its pane → claude_running bef
   const n = f.calls.length
   const detached: string[] = []
   const agent = { key: "c", pid: "", tmuxPane: "", herdrPane: "w1:p1" }
-  expect(await closeShellSession("sh-c-linked", [agent], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-c-linked", () => [agent], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "claude_running" })
   store.replace(listShellSessions().map((s) => ({ ...s, claudeKey: "c" })))
-  expect(await closeShellSession("sh-c-linked", [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-c-linked", () => [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "claude_running" })
   expect(detached).toEqual([])
   expect(f.calls.length).toBe(n)
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-c-linked"])
@@ -458,13 +458,13 @@ test("close shell (herdr): closes that pane only, drops the row, detaches after 
   const f = fakeShells()
   await spawnShellSession("/x/c-one", f.deps)
   const order: string[] = []
-  const r = await closeShellSession("sh-c-one", [], (k) => order.push(`detach ${k} after ${destructive.length} close`), f.deps)
+  const r = await closeShellSession("sh-c-one", () => [], (k) => order.push(`detach ${k} after ${destructive.length} close`), f.deps)
   expect(r).toEqual({ ok: true, gone: false })
   expect(order).toEqual(["detach shell:sh-c-one after 1 close"])
   expect(f.calls.filter((c) => c[1] === "get")).toEqual([["pane", "get", "w1:p1"]])
   expectClosed(["w1:p1"])
   expect(listShellSessions()).toEqual([])
-  expect(await closeShellSession("sh-c-one", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-c-one", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
 })
 
 test("close shell (herdr): a split survives, and no later poll or retry reaches it", async () => {
@@ -472,12 +472,12 @@ test("close shell (herdr): a split survives, and no later poll or retry reaches 
   const f = fakeShells()
   await spawnShellSession("/x/c-split", f.deps)
   f.ws[0]!.split = true
-  expect(await closeShellSession("sh-c-split", [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-c-split", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
   expectClosed(["w1:p1"])
   expect(f.ws).toMatchObject([{ id: "w1", label: "sh-c-split", term: "", split: true }])
   await poll(f)
   expect(listShellSessions()).toEqual([])
-  expect(await closeShellSession("sh-c-split", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-c-split", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
 })
 
 test("close shell (herdr): the last read sees an agent no hook reported → claude_running, pane untouched", async () => {
@@ -486,7 +486,7 @@ test("close shell (herdr): the last read sees an agent no hook reported → clau
   await spawnShellSession("/x/c-agent", f.deps)
   f.ws[0]!.agent = "claude"
   const detached: string[] = []
-  expect(await closeShellSession("sh-c-agent", [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-c-agent", () => [], (k) => detached.push(k), f.deps)).toEqual({ ok: false, error: "claude_running" })
   expect(detached).toEqual([])
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-c-agent"])
   store.replace([])
@@ -498,7 +498,7 @@ test("close shell (herdr): Claude starting during validation is seen by the last
   const f = fakeShells({ onList: () => { if (starts) f.ws[0]!.agent = "claude" } })
   await spawnShellSession("/x/c-starts", f.deps)
   starts = true
-  expect(await closeShellSession("sh-c-starts", [], () => undefined, f.deps)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-c-starts", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "claude_running" })
   store.replace([])
 })
 
@@ -508,10 +508,10 @@ test("close shell (herdr): an unreadable listing or last read closes nothing →
   const f = fakeShells({ listDown: () => listDown, getDown: () => getDown })
   await spawnShellSession("/x/c-blip", f.deps)
   listDown = true
-  expect(await closeShellSession("sh-c-blip", [], () => undefined, f.deps)).toEqual({ ok: false, error: "herdr_unreadable" })
+  expect(await closeShellSession("sh-c-blip", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "herdr_unreadable" })
   listDown = false
   getDown = true
-  expect(await closeShellSession("sh-c-blip", [], () => undefined, f.deps)).toEqual({ ok: false, error: "herdr_unreadable" })
+  expect(await closeShellSession("sh-c-blip", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "herdr_unreadable" })
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-c-blip"])
   store.replace([])
 })
@@ -521,11 +521,11 @@ test("close shell (herdr): a close then a failed listing is still recorded; a re
   let down = false
   const f = fakeShells({ listDown: () => down, onClose: () => { down = true } })
   await spawnShellSession("/x/c-lost", f.deps)
-  expect(await closeShellSession("sh-c-lost", [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-c-lost", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
   expectClosed(["w1:p1"])
   down = false
   expect(await spawnShellSession("/x/c-lost", f.deps)).toMatchObject({ ok: true, session: { name: "sh-c-lost-2" } })
-  expect(await closeShellSession("sh-c-lost", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-c-lost", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
   expect(f.ws.map((w) => w.label)).toEqual(["sh-c-lost-2"])
   store.replace([])
 })
@@ -534,11 +534,11 @@ test("close shell (herdr): a marked pane relabelled onto a closed name is never 
   store.replace([])
   const f = fakeShells()
   await spawnShellSession("/x/c-reuse", f.deps)
-  expect((await closeShellSession("sh-c-reuse", [], () => undefined, f.deps)).ok).toBe(true)
+  expect((await closeShellSession("sh-c-reuse", () => [], () => undefined, f.deps)).ok).toBe(true)
   expectClosed(["w1:p1"])
   f.ws.push({ id: "w9", label: "sh-c-reuse", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK })
   await poll(f)
-  expect(await closeShellSession("sh-c-reuse", [], () => undefined, f.deps)).toEqual({ ok: false, error: "name_reused" })
+  expect(await closeShellSession("sh-c-reuse", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "name_reused" })
   expect(f.ws.map((w) => w.term)).toEqual(["t9"])
   store.replace([])
 })
@@ -548,7 +548,7 @@ test("close shell (herdr): a second marked pane under the label before Close →
   const f = fakeShells()
   await spawnShellSession("/x/c-dup", f.deps)
   f.ws.push({ id: "w9", label: "sh-c-dup", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK })
-  expect(await closeShellSession("sh-c-dup", [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("sh-c-dup", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.ws.map((w) => w.term)).toEqual(["term_w1", "t9"])
   expect(listShellSessions()).toEqual([])
 })
@@ -557,11 +557,11 @@ test("close shell (herdr): a second marked pane appearing during the close is ex
   store.replace([])
   const f = fakeShells({ onClose: () => f.ws.push({ id: "w9", label: "sh-c-dup2", term: "t9", cwd: "/x", mark: SHELL_PANE_MARK }) })
   await spawnShellSession("/x/c-dup2", f.deps)
-  expect(await closeShellSession("sh-c-dup2", [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-c-dup2", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
   expectClosed(["w1:p1"])
   await poll(f)
   expect(listShellSessions().map((s) => s.terminalId)).toEqual(["t9"])
-  expect(await closeShellSession("sh-c-dup2", [], () => undefined, f.deps)).toEqual({ ok: false, error: "name_reused" })
+  expect(await closeShellSession("sh-c-dup2", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "name_reused" })
   expect(f.ws.map((w) => w.term)).toEqual(["t9"])
   store.replace([])
 })
@@ -571,9 +571,9 @@ test("close shell (herdr): within 3 s of a restore the terminal changed → refu
   const f = fakeShells()
   await spawnShellSession("/x/c-restore", f.deps)
   f.ws[0]!.term = "term_restored" // the store still holds term_w1
-  expect(await closeShellSession("sh-c-restore", [], () => undefined, f.deps)).toEqual({ ok: false, error: "terminal_changed" })
+  expect(await closeShellSession("sh-c-restore", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "terminal_changed" })
   expect(listShellSessions().map((s) => s.terminalId)).toEqual(["term_restored"])
-  expect(await closeShellSession("sh-c-restore", [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-c-restore", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
   expectClosed(["w1:p1"])
 })
 
@@ -582,10 +582,10 @@ test("close shell (herdr): Closes queued across a restore only ever close the te
   const f = fakeShells()
   await spawnShellSession("/x/c-queued", f.deps)
   f.ws[0]!.term = "term_restored" // the store still holds term_w1
-  const both = await Promise.all([1, 2].map(() => closeShellSession("sh-c-queued", [], () => undefined, f.deps)))
+  const both = await Promise.all([1, 2].map(() => closeShellSession("sh-c-queued", () => [], () => undefined, f.deps)))
   expect(both).toEqual([{ ok: false, error: "terminal_changed" }, { ok: false, error: "terminal_changed" }])
   expect(destructive).toEqual([])
-  expect(await closeShellSession("sh-c-queued", [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-c-queued", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
   expectClosed(["w1:p1"])
 })
 
@@ -595,7 +595,7 @@ test("close shell (herdr): the last read is by terminal: the pane holding anothe
   const f = fakeShells({ onList: () => { if (swap) queueMicrotask(() => { f.ws[0]!.term = "term_other" }) } })
   await spawnShellSession("/x/c-swap", f.deps)
   swap = true // the listing still shows term_w1, the last read sees term_other
-  expect(await closeShellSession("sh-c-swap", [], () => undefined, f.deps)).toEqual({ ok: false, error: "terminal_changed" })
+  expect(await closeShellSession("sh-c-swap", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "terminal_changed" })
   store.replace([])
 })
 
@@ -605,9 +605,9 @@ test("close shell (herdr): the pane went between the listing and the close → g
   const f = fakeShells({ onList: () => { if (exits) queueMicrotask(() => f.ws.splice(0, 1)) } })
   await spawnShellSession("/x/c-exit", f.deps)
   exits = true
-  expect(await closeShellSession("sh-c-exit", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-c-exit", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
   expect(listShellSessions()).toEqual([])
-  expect(await closeShellSession("sh-c-exit", [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-c-exit", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: true })
   store.replace([])
 })
 
@@ -615,10 +615,10 @@ test("close shell (herdr): `pane close` failing → kill_failed, recorded, and t
   store.replace([])
   const f = fakeShells({ closeDown: true })
   await spawnShellSession("/x/c-fail", f.deps)
-  expect(await closeShellSession("sh-c-fail", [], () => undefined, f.deps)).toEqual({ ok: false, error: "kill_failed" })
+  expect(await closeShellSession("sh-c-fail", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "kill_failed" })
   expectClosed(["w1:p1"])
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-c-fail"])
-  expect(await closeShellSession("sh-c-fail", [], () => undefined, f.deps)).toEqual({ ok: false, error: "kill_failed" })
+  expect(await closeShellSession("sh-c-fail", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "kill_failed" })
   expectClosed(["w1:p1"])
   store.replace([])
 })
@@ -629,7 +629,7 @@ test("close shell (herdr): a tmux shell under the same name → name_ambiguous, 
   await spawnShellSession("/x/c-clash", f.deps)
   const runs: string[][] = []
   const deps: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async (argv) => { runs.push(argv); return { code: 0, stdout: "sh-c-clash\t1\t%1\t/x\t1\t/s\t1\n", stderr: "" } } }
-  expect(await closeShellSession("sh-c-clash", [], () => undefined, deps)).toEqual({ ok: false, error: "name_ambiguous" })
+  expect(await closeShellSession("sh-c-clash", () => [], () => undefined, deps)).toEqual({ ok: false, error: "name_ambiguous" })
   expect(runs.some((a) => a.includes("kill-session"))).toBe(false)
   store.replace([])
 })
@@ -641,7 +641,7 @@ test("poll: a read from before a close or a spawn never writes over it", async (
   let release = () => {}
   const held: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => { await new Promise<void>((r) => { release = r }); return { code: 1, stdout: "", stderr: "" } } }
   let stop = startShellPoll(() => [], held, 60_000) // its herdr read is taken now, the tmux read hangs
-  expect(await closeShellSession("sh-c-race", [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-c-race", () => [], () => undefined, f.deps)).toEqual({ ok: true, gone: false })
   expectClosed(["w1:p1"])
   release()
   await Bun.sleep(5)
@@ -693,7 +693,7 @@ test("close shell: detaches first, kills the exact name, drops the row, broadcas
   const order: string[] = []
   const seen: string[][] = []
   const off = store.on((l) => seen.push(l.map((s) => s.name)))
-  const r = await closeShellSession("sh-a", [], (key) => { order.push(`detach ${key}`); order.push(`kills so far ${f.calls.length}`) }, f)
+  const r = await closeShellSession("sh-a", () => [], (key) => { order.push(`detach ${key}`); order.push(`kills so far ${f.calls.length}`) }, f)
   off()
   expect(r).toEqual({ ok: true, gone: false })
   expect(order).toEqual(["detach shell:sh-a", "kills so far 0"])
@@ -701,35 +701,35 @@ test("close shell: detaches first, kills the exact name, drops the row, broadcas
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-b"])
   expect(seen).toEqual([["sh-b"]])
   // A retry after the row left: ok, gone.
-  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-a", () => [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: true })
 })
 
 test("close shell: not in the list → unknown_shell, nothing run", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
   const f = fakeCloseTmux()
-  expect(await closeShellSession("dispatch-x", [], () => undefined, f)).toEqual({ ok: false, error: "unknown_shell" })
+  expect(await closeShellSession("dispatch-x", () => [], () => undefined, f)).toEqual({ ok: false, error: "unknown_shell" })
   expect(f.calls).toEqual([])
 })
 
 test("close shell: a Claude in the shell (linked or on its pane) → claude_running, nothing run", async () => {
   const f = fakeCloseTmux()
   store.replace(parseShellList(CLOSE_LIST, "").map((s) => (s.name === "sh-a" ? { ...s, claudeKey: "claude:1" } : s)))
-  expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-a", () => [], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
   const agent = { key: "claude:2", pid: "", tmuxPane: "%8", tmuxSocket: "/tmp/tmux-501/default" }
-  expect(await closeShellSession("sh-b", [agent], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
-  expect(await closeShellSession("sh-b", [{ ...agent, tmuxSocket: "/other" }], () => undefined, f)).toMatchObject({ ok: true })
+  expect(await closeShellSession("sh-b", () => [agent], () => undefined, f)).toEqual({ ok: false, error: "claude_running" })
+  expect(await closeShellSession("sh-b", () => [{ ...agent, tmuxSocket: "/other" }], () => undefined, f)).toMatchObject({ ok: true })
   expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.at(-1))).toEqual(["=sh-b"])
 })
 
 test("close shell: the session survives the kill → kill_failed, row kept", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
-  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ unkillable: true }))).toEqual({ ok: false, error: "kill_failed" })
+  expect(await closeShellSession("sh-a", () => [], () => undefined, fakeCloseTmux({ unkillable: true }))).toEqual({ ok: false, error: "kill_failed" })
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-a", "sh-b"])
 })
 
 test("close shell: kill-session fails because it already exited → ok, gone", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
-  expect(await closeShellSession("sh-a", [], () => undefined, fakeCloseTmux({ killCode: 1 }))).toEqual({ ok: true, gone: true })
+  expect(await closeShellSession("sh-a", () => [], () => undefined, fakeCloseTmux({ killCode: 1 }))).toEqual({ ok: true, gone: true })
   store.replace([])
 })
 
@@ -737,7 +737,7 @@ test("close shell (tmux): as on main, herdr's state and labels never stop it", a
   for (const opts of [{ labels: ["sh-a"] }, { labels: null }, { gate: "herdr-down: connection refused", labels: null }]) {
     store.replace(parseShellList(CLOSE_LIST, ""))
     const f = fakeCloseTmux(opts)
-    expect(await closeShellSession("sh-a", [], () => undefined, f)).toEqual({ ok: true, gone: false })
+    expect(await closeShellSession("sh-a", () => [], () => undefined, f)).toEqual({ ok: true, gone: false })
     expect(f.calls.filter((c) => c.includes("kill-session")).map((c) => c.at(-1))).toEqual(["=sh-a"])
   }
   store.replace([])
@@ -792,13 +792,13 @@ test("close shell (tmux): queued behind a spawn, a Claude that starts or gets li
 
 test("closed names span both backends: a herdr shell renamed onto a closed tmux name is never closed by the retry", async () => {
   store.replace(parseShellList(CLOSE_LIST, ""))
-  expect(await closeShellSession("sh-b", [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-b", () => [], () => undefined, fakeCloseTmux())).toEqual({ ok: true, gone: false })
   const f = fakeShells()
   await spawnShellSession("/x/c-cross", f.deps)
   f.ws[0]!.label = "sh-b"
   await poll(f)
   expect(listShellSessions().map((s) => s.name)).toEqual(["sh-b"])
-  expect(await closeShellSession("sh-b", [], () => undefined, f.deps)).toEqual({ ok: false, error: "name_reused" })
+  expect(await closeShellSession("sh-b", () => [], () => undefined, f.deps)).toEqual({ ok: false, error: "name_reused" })
   expect(f.ws.map((w) => w.label)).toEqual(["sh-b"])
   store.replace([])
 })
@@ -814,9 +814,9 @@ test("closed names span both backends: a tmux shell sharing a name with a herdr 
   } }
   store.replace(await readShellSessions(deps)) // one row per name: the tmux one
   expect(listShellSessions().map((s) => s.tmuxPane)).toEqual(["%1"])
-  expect(await closeShellSession("sh-shared", [], () => undefined, deps)).toEqual({ ok: true, gone: false })
+  expect(await closeShellSession("sh-shared", () => [], () => undefined, deps)).toEqual({ ok: true, gone: false })
   expect(listShellSessions().map((s) => s.terminalId)).toEqual(["t8"]) // the herdr row shows now
-  expect(await closeShellSession("sh-shared", [], () => undefined, deps)).toEqual({ ok: false, error: "name_reused" })
+  expect(await closeShellSession("sh-shared", () => [], () => undefined, deps)).toEqual({ ok: false, error: "name_reused" })
   expect(f.ws.map((w) => w.term)).toEqual(["t8"])
   store.replace([])
 })
@@ -825,11 +825,11 @@ test("closed names span both backends: a tmux shell under a closed herdr name is
   store.replace([])
   const f = fakeShells()
   await spawnShellSession("/x/c-cross2", f.deps)
-  expect((await closeShellSession("sh-c-cross2", [], () => undefined, f.deps)).ok).toBe(true)
+  expect((await closeShellSession("sh-c-cross2", () => [], () => undefined, f.deps)).ok).toBe(true)
   expectClosed(["w1:p1"])
   store.replace(parseShellList("sh-c-cross2\t1\t%9\t/x\t1\t/s\t9\n", ""))
   const t = fakeCloseTmux()
-  expect(await closeShellSession("sh-c-cross2", [], () => undefined, t)).toEqual({ ok: false, error: "name_reused" })
+  expect(await closeShellSession("sh-c-cross2", () => [], () => undefined, t)).toEqual({ ok: false, error: "name_reused" })
   expect(t.calls).toEqual([])
   store.replace([])
 })

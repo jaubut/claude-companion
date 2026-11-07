@@ -154,7 +154,7 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 - `/api/terminal` runs `herdr terminal attach <terminal_id> --takeover`. Closing the socket detaches, and the shell keeps running.
 - The `shell` wire row carries `herdrPane`, with `tmuxPane` and `tmuxSocket` empty. iOS `isLive` and `ShellSessions.pair` already handle that (read from `claude-companion-ios` main): pairing uses `panePid` + `claudeKey`, and the session row is mirrored through its `herdrPane`.
 - A Claude started in a shell needs nothing: the pane has `HERDR_ENV=1` (the `claude()` wrapper stays out of tmux) and `$HERDR_PANE_ID`, so its hooks register an ordinary herdr session. `linkClaude` matches on the herdr pane.
-- Close on a herdr shell goes through `closeShellPane`, the module's only `pane close`: one `pane get` right before it, refusing unless the pane carries the mark, holds the row's terminal and has no agent (an unreadable pane is refused too). Before that, Close re-reads tmux and herdr: the name must still belong to that terminal, alone. Every close is recorded by name and terminal before anything is read again, so a retry never reaches another terminal and spawn never reuses the name. The open terminal is detached after the close, never on a refusal. `exit` still ends a shell. See Close (2026-11-07) below.
+- Close on a herdr shell goes through `closeShellPane`, the module's only `pane close`: one `pane get` right before it, refusing unless the pane carries the mark, holds the row's terminal and has no agent (an unreadable pane is refused too). Before that, Close re-reads tmux and herdr: the name must still belong to that terminal, alone. Every close is recorded by name and terminal before anything is read again, so a retry never reaches another terminal. Spawn never reuses a closed name, nor any shell name listed in the last 24 h, live or exited, so a late Close finds no row (`unknown_shell`). The open terminal is detached after the close, never on a refusal. `exit` still ends a shell. See Close (2026-11-07) below.
 - A Claude that exits in a shell leaves no `ended` row, because the row's Delete would close the shell. `herdrSessionGone` counts listed shells as live, and `paneInfo` in `ended-sessions.ts` reads a pane carrying the mark as gone, which also covers a shell the list hasn't seen yet: nothing records it, the sweep drops it, and Delete's last read before `pane close` refuses it. `closableWorkspace` in `herdr.ts` refuses the mark too.
 - A herdr blip keeps the rows (`readHerdrShells` → null, not an empty list). Spawns and closes are serialized, because herdr allows two workspaces with one label. A poll that read before a spawn or a close drops its write (`storeGen`).
 - tmux shells stay listed and attachable until Stage 5. A new name avoids theirs, since both share the `shell:` key space.
@@ -213,7 +213,7 @@ Close came back in its own task, rebuilt on the mark from `b7ceda1`'s design (#2
 **`POST /api/shell/close` on a herdr shell**, inside the spawn turn:
 1. The store row by name. None: `gone:true` for a name closed here, else 404 `unknown_shell`.
 2. A name closed here, through either backend, on another shell: refused, `name_reused`. One record for both: a closed tmux name is never a herdr shell's, and the other way round.
-3. A Claude linked or on the pane: `claude_running`.
+3. A Claude linked or on the pane, read when the Close's turn runs (the store's link and the live agents), never from before it: `claude_running`. A Claude started while the Close waited behind a spawn counts.
 4. A fresh read of tmux and herdr (herdr unreadable: refused, `herdr_unreadable`), written to the store.
 5. The name is also a tmux shell: refused, `name_ambiguous`.
 6. No fresh row (it exited, or two marked panes share the label): 404 `unknown_shell`, or `gone:true` after a close here.
@@ -264,6 +264,8 @@ teardown: scratch herdr down, nothing left under scratch
 
 **Where it can still fail in production:**
 - herdr has no conditional close, so an agent starting in the one round trip between the last read and `pane close` still loses its pane.
+- **A Close still acts by name.** Spawn keeps every name listed in the last 24 h taken, so a Close sent late finds no row; but a Close delayed past 24 h, or across a Companion restart, reaches whatever shell then holds the name. The fix is the phone sending the terminal id with Close, an iOS + server contract: a follow-up.
+- The seen-name record is in memory, last 2000 names, 24 h: a restart forgets it.
 - The closed-name record is in memory, last 50: a Companion restart forgets it. A shell restored under a closed name refuses Close (`name_reused`) until 50 more closes or a restart; `exit` still ends it.
 - A Close queued behind a slow spawn in the same turn can pass the phone's 10 s; the phone then shows "network" while the close may land, and a retry answers `gone:true`.
 - A `pane close` herdr didn't confirm in 2.5 s is `kill_failed` though it may have closed; the retry answers `gone:true` or closes that same terminal.

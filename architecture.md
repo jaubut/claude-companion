@@ -18,10 +18,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane.ts` | 561 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/dispatch-tasks.ts` | 558 | lib | 55 |  |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
+| `lib/shell-sessions.ts` | 552 | lib | 31 | state: let turn, let storeGen |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
-| `lib/shell-sessions.ts` | 532 | lib | 30 | state: let turn, let storeGen |
 | `lib/transcript.ts` | 532 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 506 | lib | 26 | state: RETIRED_APPS: Set |
