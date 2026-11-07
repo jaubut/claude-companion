@@ -4,10 +4,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   closeShellSession, createShellStore, descends, linkClaude, parseProcTable, getShellSession, listShellSessions, parseShellList,
-  readHerdrShells, readShellSessions, SHELL_PANE_MARK, shellWire, spawnShellSession, startShellPoll, store, wireSessions, type ShellDeps, type ShellSession,
+  readHerdrShells, readShellSessions, shellWire, spawnShellSession, startShellPoll, store, wireSessions, type ShellDeps, type ShellSession,
 } from "./shell-sessions"
 import { resolveSpawnCwd } from "./spawn-session"
 import { endedStore } from "./ended-sessions"
+import { SHELL_PANE_MARK } from "./herdr"
 import { fakeHerdr } from "./herdr-fake.test-util"
 import { herdrSessionGone } from "./herdr-workspace"
 import type { Session } from "./sessions"
@@ -344,6 +345,18 @@ test("tmux list: no answer keeps the rows, a server that isn't running has none"
   const f = fakeShells()
   expect((await readShellSessions(tmuxAnswers(f.deps, -1, "timed out"))).map((s) => s.name)).toEqual(["sh-repo"])
   expect(await readShellSessions(tmuxAnswers(f.deps, 1, "no server running on /tmp/tmux-1000/default\n"))).toEqual([])
+  store.replace([])
+})
+
+test("shell list: a herdr workspace renamed onto a tmux shell's name gives no row, on every refresh", async () => {
+  store.replace([])
+  const f = fakeShells()
+  f.ws.push({ id: "w8", label: "sh-repo", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK })
+  const deps: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async () => ({ code: 0, stdout: TMUX_ROW, stderr: "" }) }
+  expect((await readShellSessions(deps)).map((s) => s.tmuxPane)).toEqual(["%1"])
+  await spawnShellSession("/x/other", deps)
+  expect(listShellSessions().map((s) => s.name).sort()).toEqual(["sh-other", "sh-repo"])
+  expect(listShellSessions().find((s) => s.name === "sh-repo")?.tmuxPane).toBe("%1")
   store.replace([])
 })
 

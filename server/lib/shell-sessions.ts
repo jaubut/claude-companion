@@ -25,14 +25,13 @@
 // in one, its hooks register a normal Claude session on the same pane.
 
 import { endedStore, endedWire } from "./ended-sessions"
-import { type Herdr, herdrErrorCode, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
+import { type Herdr, SHELL_PANE_MARK, herdrErrorCode, herdrPaneOf, herdrPaneShellPid, realHerdr } from "./herdr"
 import { uniqueTmuxSessionName } from "./spawn-session"
 import { spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
 import { type DetachedDeps, realDetachedDeps } from "./tmux-spawn-confirm"
 
 export const SHELL_OPTION = "@companion_shell"
 export const SHELL_KEY_PREFIX = "shell:"
-export const SHELL_PANE_MARK = "phone-shell"
 
 export interface ShellDeps extends DetachedDeps { h: Herdr }
 export const realShellDeps: ShellDeps = { ...realDetachedDeps, h: realHerdr }
@@ -127,7 +126,7 @@ async function spawnShell(cwd: string, deps: ShellDeps, resume?: string): Promis
   const shells = await readHerdrShells(deps.h)
   const session = shells?.find((s) => s.terminalId === terminal)
   if (!shells || !session) return { ok: false, error: "session_exited" }
-  replaceKeepingLinks([...await readTmuxShells(deps), ...shells].sort((a, b) => a.createdAt - b.createdAt))
+  replaceKeepingLinks(mergeShells(await readTmuxShells(deps), shells))
   if (resume) {
     try {
       await deps.h.call(["pane", "run", pane, `claude --resume ${resume}`])
@@ -241,8 +240,14 @@ const LIST_FORMAT = ["#{session_name}", `#{${SHELL_OPTION}}`, "#{pane_id}", "#{p
 // Every shell on this host: herdr's, plus tmux's tagged ones until Stage 5.
 export async function readShellSessions(deps: Pick<ShellDeps, "run" | "which" | "h"> = realShellDeps): Promise<ShellSession[]> {
   const [tmux, herdr] = await Promise.all([readTmuxShells(deps), readHerdrShells(deps.h)])
-  const shells = herdr ?? store.list().filter((s) => s.herdrPane)
-  return [...tmux, ...shells].sort((a, b) => a.createdAt - b.createdAt)
+  return mergeShells(tmux, herdr ?? store.list().filter((s) => s.herdrPane))
+}
+
+// A key is a name and attach looks a key up, so one name can't be two rows: a
+// herdr workspace renamed onto a tmux shell's name gives no row until it moves.
+function mergeShells(tmux: ShellSession[], herdr: ShellSession[]): ShellSession[] {
+  const taken = new Set(tmux.map((s) => s.name))
+  return [...tmux, ...herdr.filter((s) => !taken.has(s.name))].sort((a, b) => a.createdAt - b.createdAt)
 }
 
 // Every tagged shell on the spawn server. No tmux or no server running → [].

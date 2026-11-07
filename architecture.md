@@ -33,10 +33,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
+| `lib/shell-sessions.ts` | 418 | lib | 29 | state: let spawnTurn |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/canvas.ts` | 415 | lib | 29 | state: BLOCKING: Set |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
-| `lib/shell-sessions.ts` | 413 | lib | 30 | state: let spawnTurn |
 | `routes/capture.ts` | 411 | lib | 7 |  |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
@@ -45,7 +45,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 382 | lib | 26 |  |
-| `lib/herdr.ts` | 373 | lib | 31 | state: let clientMod, spawnedAgents: Map |
+| `lib/herdr.ts` | 376 | lib | 32 | state: let clientMod, spawnedAgents: Map |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
@@ -62,9 +62,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
+| `lib/ended-sessions.ts` | 287 | lib | 17 |  |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `wiring/auto-compact.ts` | 285 | lib | 6 | state: let statsDb · emits: inject_error |
-| `lib/ended-sessions.ts` | 282 | lib | 17 |  |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
@@ -650,6 +650,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `NEEDS_HUMAN()` | `lib/triage-sources.ts` | `lib/dispatch-stage.ts`, `wiring/triage.ts` |
 | `parseTs()` | `lib/dispatch-tasks.ts` | `lib/dispatch-stage.ts`, `lib/triage-sources.ts` |
 | `TaskStatus()` | `lib/orchestrator-chat.ts` | `lib/dispatch-tasks.ts`, `lib/orchestrator-channels.ts` |
+| `SHELL_PANE_MARK()` | `lib/herdr.ts` | `lib/ended-sessions.ts`, `lib/shell-sessions.ts` |
 | `herdrPaneShellPid()` | `lib/herdr.ts` | `lib/ended-sessions.ts`, `lib/shell-sessions.ts` |
 | `BrainDecision()` | `lib/orchestrator-brain.ts` | `lib/front-door.ts`, `wiring/orchestrator.ts` |
 | `PickerIO()` | `lib/question-driver.ts` | `lib/herdr-inject.ts`, `lib/keyboard-inject.ts` |

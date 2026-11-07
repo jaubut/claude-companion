@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import type { Herdr } from "./herdr"
+import { type Herdr, SHELL_PANE_MARK } from "./herdr"
 import { createEndedStore, deleteEnded, endStatus, endedWire, resumable, resumeCommand, resumeInPane, type EndedSource } from "./ended-sessions"
 
 // "Ended · Resume": an ended claude whose herdr pane is still open.
@@ -7,7 +7,7 @@ import { createEndedStore, deleteEnded, endStatus, endedWire, resumable, resumeC
 const SID = "51794d7b-cf0f-4f63-9eaf-7b06cab5047e"
 
 // A fake herdr: panes by id → terminal id; `shellFront` = shell in front.
-function fakeHerdr(panes: Record<string, string>, opts: { shellFront?: boolean } = {}) {
+function fakeHerdr(panes: Record<string, string>, opts: { shellFront?: boolean; marked?: Set<string> } = {}) {
   const calls: string[][] = []
   const h: Herdr = {
     async call(args) {
@@ -15,7 +15,7 @@ function fakeHerdr(panes: Record<string, string>, opts: { shellFront?: boolean }
       const pane = args[2] ?? args[3] ?? ""
       if (args[0] === "pane" && args[1] === "get") {
         if (!(pane in panes)) throw Object.assign(new Error("pane_not_found"), { code: "pane_not_found" })
-        return { pane: { pane_id: pane, terminal_id: panes[pane], workspace_id: "w3", tab_id: "w3:t1" } }
+        return { pane: { pane_id: pane, terminal_id: panes[pane], workspace_id: "w3", tab_id: "w3:t1", label: opts.marked?.has(pane) ? SHELL_PANE_MARK : undefined } }
       }
       if (args[0] === "workspace" && args[1] === "get") return { workspace: { workspace_id: "w3", label: "cc-repo" } }
       if (args[0] === "tab" && args[1] === "get") return { tab: { tab_id: "w3:t1", label: "1" } }
@@ -165,6 +165,47 @@ test("delete: our pane with its shell in front → the pane is closed and the ro
   expect(await deleteEnded(store, `ended:${SID}`, { herdr: f.h, ...noWait })).toEqual({ ok: true, closed: true })
   expect(f.calls.some((c) => c.join(" ") === "pane close w3:p1")).toBe(true)
   expect(store.list()).toEqual([])
+})
+
+test("a phone shell's pane is never an ended row, whether or not the shell list knows it yet", async () => {
+  const marked = new Set(["w3:p1"])
+  const f = fakeHerdr({ "w3:p1": "t-9" }, { marked })
+  const store = createEndedStore({ herdr: f.h })
+  expect(await store.note(ended(), () => [])).toBe(false)
+  expect(store.list()).toEqual([])
+})
+
+test("a row recorded before the mark was seen drops on the sweep", async () => {
+  const marked = new Set<string>()
+  const f = fakeHerdr({ "w3:p1": "t-9" }, { marked })
+  const store = createEndedStore({ herdr: f.h })
+  await store.note(ended(), () => [])
+  marked.add("w3:p1")
+  expect(await store.sweep(() => [])).toBe(true)
+  expect(store.list()).toEqual([])
+})
+
+test("delete: a marked pane is never closed, only the row goes", async () => {
+  const marked = new Set<string>()
+  const f = fakeHerdr({ "w3:p1": "t-9" }, { marked })
+  const store = createEndedStore({ herdr: f.h })
+  await store.note(ended(), () => [])
+  marked.add("w3:p1")
+  expect(await deleteEnded(store, `ended:${SID}`, { herdr: f.h, ...noWait })).toEqual({ ok: true, closed: false })
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+  expect(store.list()).toEqual([])
+})
+
+test("delete: the last read before the close refuses a pane that was marked, or can't be read, since the first", async () => {
+  for (const change of [(m: Set<string>) => m.add("w3:p1"), (_: Set<string>, p: Record<string, string>) => delete p["w3:p1"]]) {
+    const marked = new Set<string>(), panes = { "w3:p1": "t-9" }
+    const f = fakeHerdr(panes, { marked })
+    const store = createEndedStore({ herdr: f.h })
+    await store.note(ended(), () => [])
+    const sleep = async () => { change(marked, panes) }
+    expect(await deleteEnded(store, `ended:${SID}`, { herdr: f.h, sleep })).toEqual({ ok: false, error: "pane_busy" })
+    expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+  }
 })
 
 test("delete: something running in the pane → refused, nothing closed, row kept", async () => {

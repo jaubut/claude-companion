@@ -185,13 +185,16 @@ export interface WorkspaceCloseOpts {
 
 const HERDR_WORKSPACE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 
+// The pane label that makes a pane a phone shell (lib/shell-sessions.ts).
+export const SHELL_PANE_MARK = "phone-shell"
+
 // The workspace to close, or "" when it is not (or no longer) ours, is split,
 // or herdr can't say.
 async function closableWorkspace(pane: string, h: Herdr, owner: HerdrOwner | undefined): Promise<string> {
   const got = await h.call(["pane", "get", pane], 2_000)
-  const p = got.pane as { workspace_id?: string; terminal_id?: string } | undefined
+  const p = got.pane as { workspace_id?: string; terminal_id?: string; label?: string } | undefined
   const ws = p?.workspace_id ?? ""
-  if (!HERDR_WORKSPACE_RE.test(ws)) return ""
+  if (!HERDR_WORKSPACE_RE.test(ws) || p?.label === SHELL_PANE_MARK) return ""
   // A label alone never proves ownership: an owner must carry an id to match.
   if (owner && !owner.workspaceId && !owner.terminalId) return ""
   if (owner?.workspaceId && owner.workspaceId !== ws) return ""

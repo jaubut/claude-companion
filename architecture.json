@@ -1914,7 +1914,7 @@
         },
         {
           "path": "lib/ended-sessions.ts",
-          "lines": 282,
+          "lines": 287,
           "kind": "lib",
           "exports": [
             "ENDED_KEY_PREFIX",
@@ -2145,7 +2145,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 373,
+          "lines": 376,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -2162,6 +2162,7 @@
             "herdrPaneAtShell",
             "HerdrOwner",
             "WorkspaceCloseOpts",
+            "SHELL_PANE_MARK",
             "closeHerdrWorkspaceWhenIdle",
             "validHerdrPane",
             "herdrPaneOf",
@@ -4461,12 +4462,11 @@
         },
         {
           "path": "lib/shell-sessions.ts",
-          "lines": 413,
+          "lines": 418,
           "kind": "lib",
           "exports": [
             "SHELL_OPTION",
             "SHELL_KEY_PREFIX",
-            "SHELL_PANE_MARK",
             "ShellDeps",
             "realShellDeps",
             "ShellSession",
@@ -10715,6 +10715,13 @@
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
+          ]
+        },
+        "SHELL_PANE_MARK": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/ended-sessions.ts",
+            "lib/shell-sessions.ts"
           ]
         },
         "realHerdr": {
