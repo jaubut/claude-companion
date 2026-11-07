@@ -170,6 +170,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 404 `pr_not_found` | gh cannot read it |
 | 409 `gate_unavailable` (+`detail`) | the gate can't answer here (missing, broken, gh or Turso failing): a host fault, not the PR's |
 | 409 `head_moved` | the head changed during the check; ask again |
+| 409 `base_moved` | the base branch changed during the check, or by the last read before the merge (a retarget changes the diff, not the head); `gate_unavailable` if that read fails; ask again |
 | 409 `not_open` / `draft` · 409 `not_green` / `not_approved` (+`reasons`) | not now |
 | 429 `merge_cap` | 10 brain merges in 24 h |
 | 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |

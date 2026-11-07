@@ -13,8 +13,9 @@ const URL = "https://github.com/o/r/pull/7"
 const SHA = "1111111111111111111111111111111111111111"
 const ok = (stdout: string) => ({ code: 0, stdout, stderr: "" })
 
-function world(over: { heads?: string[]; files?: string; origin?: string | null; labels?: string[]; failOn?: string; hang?: string; turso?: "down"; diff?: string } = {}): GateDeps {
+function world(over: { heads?: string[]; bases?: string[]; files?: string; origin?: string | null; labels?: string[]; failOn?: string; hang?: string; turso?: "down"; diff?: string } = {}): GateDeps {
   const heads = [...(over.heads ?? [SHA])]
+  const bases = [...(over.bases ?? ["main"])]
   const gh: GhFn = async (args) => {
     const what = args[0] === "api" ? "files" : args[1] === "diff" ? "diff" : "view"
     if (over.hang === what) return new Promise(() => {})
@@ -22,7 +23,8 @@ function world(over: { heads?: string[]; files?: string; origin?: string | null;
     if (what === "files") return ok(over.files ?? "server/lib/a.ts\t\n")
     if (what === "diff") return ok(over.diff ?? "diff --git a/server/lib/a.ts b/server/lib/a.ts\n")
     const head = heads.length > 1 ? heads.shift() : heads[0]
-    return ok(JSON.stringify({ url: URL, headRefOid: head, labels: (over.labels ?? []).map((name) => ({ name })) }))
+    const base = bases.length > 1 ? bases.shift() : bases[0]
+    return ok(JSON.stringify({ url: URL, headRefOid: head, baseRefName: base, labels: (over.labels ?? []).map((name) => ({ name })) }))
   }
   const exec: ExecFn = async () => {
     if (over.turso) throw new Error("turso down")
@@ -37,7 +39,7 @@ const run = (deps: GateDeps, tools: string, budgetMs?: number) => mergeGate(deps
 describe("mergeGate: the verdict", () => {
   const tools = writeStubTools()
   test("a routine PR passes at the head it read", async () => {
-    expect(await run(world(), tools)).toEqual({ ok: true, head: SHA })
+    expect(await run(world(), tools)).toEqual({ ok: true, head: SHA, base: "main" })
   })
   test("a stop is a 403 named after it, carrying action, reason and head", async () => {
     expect(await run(world({ files: "hooks/guard.py\t\n" }), tools)).toEqual({
@@ -53,17 +55,23 @@ describe("mergeGate: the verdict", () => {
     expect(await run(world({ origin: null, files: "memory/x.md\t\n", diff }), tools)).toMatchObject({ status: 403, error: "tainted-sensitive" })
   })
   test("a tainted PR on plain paths passes", async () => {
-    expect(await run(world({ origin: "web" }), tools)).toEqual({ ok: true, head: SHA })
+    expect(await run(world({ origin: "web" }), tools)).toEqual({ ok: true, head: SHA, base: "main" })
   })
   test("a doc about a migration passes for a trusted origin", async () => {
-    expect(await run(world({ files: "docs/herdr-only-migration.md\t\n" }), tools)).toEqual({ ok: true, head: SHA })
+    expect(await run(world({ files: "docs/herdr-only-migration.md\t\n" }), tools)).toEqual({ ok: true, head: SHA, base: "main" })
   })
   test("a failed diff on a tainted PR stops it; a trusted PR never reads the diff", async () => {
     expect(await run(world({ origin: "web", failOn: "diff" }), tools)).toMatchObject({ status: 403, error: "tainted-sensitive" })
-    expect(await run(world({ failOn: "diff" }), tools)).toEqual({ ok: true, head: SHA })
+    expect(await run(world({ failOn: "diff" }), tools)).toEqual({ ok: true, head: SHA, base: "main" })
   })
   test("the head read twice: a push during the gate is 409 head_moved, even on a stopped PR", async () => {
     expect(await run(world({ heads: [SHA, "2222"], files: "hooks/guard.py\t\n" }), tools)).toEqual({ ok: false, status: 409, error: "head_moved", extra: {} })
+  })
+  test("the base read twice: a retarget during the gate is 409 base_moved, even on a stopped PR", async () => {
+    expect(await run(world({ bases: ["main", "release"], files: "hooks/guard.py\t\n" }), tools)).toEqual({ ok: false, status: 409, error: "base_moved", extra: {} })
+  })
+  test("a moved head outranks a moved base: one answer, the head's", async () => {
+    expect(await run(world({ heads: [SHA, "2222"], bases: ["main", "release"] }), tools)).toMatchObject({ error: "head_moved" })
   })
 })
 
@@ -71,7 +79,7 @@ describe("mergeGate: loading", () => {
   test("a newer mtime loads the new gate with no restart", async () => {
     const tools = writeStubTools()
     const pr = world({ files: "tools/new.ts\t\n" })
-    expect(await run(pr, tools)).toEqual({ ok: true, head: SHA })
+    expect(await run(pr, tools)).toEqual({ ok: true, head: SHA, base: "main" })
     const file = join(tools, "pr-gate.ts")
     writeFileSync(file, STUB_GATE.replace('const human = g.paths.filter((p) => HUMAN_MERGE_RE.test(p));', 'const human = g.paths.filter((p) => HUMAN_MERGE_RE.test(p) || p === "tools/new.ts");'))
     utimesSync(file, new Date(), new Date(Date.now() + 60_000))
@@ -140,12 +148,16 @@ describe("mergeGate: fails closed", () => {
     const deps = { ...world(), gh: (async () => { throw new GhUnreachable("ENOENT") }) as GhFn }
     expect(await run(deps, writeStubTools())).toEqual(unavailable("gate error"))
   })
+  test("a read with no base refuses: the diff means nothing without it", async () => {
+    const deps = { ...world(), gh: (async () => ok(JSON.stringify({ url: URL, headRefOid: SHA, labels: [] }))) as GhFn }
+    expect(await run(deps, writeStubTools())).toEqual(unavailable("couldn't read the PR head"))
+  })
   test("bad JSON from gh", async () => {
     const deps = { ...world(), gh: (async () => ok("not json")) as GhFn }
     expect(await run(deps, writeStubTools())).toEqual(unavailable("couldn't read the PR head"))
   })
   test("an answer that isn't a GitHub PR url", async () => {
-    const deps = { ...world(), gh: (async () => ok(JSON.stringify({ url: "https://evil.test/o/r/pull/7", headRefOid: SHA, labels: [] }))) as GhFn }
+    const deps = { ...world(), gh: (async () => ok(JSON.stringify({ url: "https://evil.test/o/r/pull/7", headRefOid: SHA, baseRefName: "main", labels: [] }))) as GhFn }
     expect(await run(deps, writeStubTools())).toEqual(unavailable("not a GitHub PR url"))
   })
   test("an empty file list", async () => {

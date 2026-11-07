@@ -7,8 +7,8 @@ import type { MergeGateFn } from "./merge-gate"
 // imports them. merge-gate-callers.test.ts runs the same matrix on the real files on any host that has them, so a
 // stub that drifts from claude-config fails there.
 
-/** For tests about something else: a gate that passes at `head` and never calls gh. */
-export const passGate = (head: string): MergeGateFn => async () => ({ ok: true, head })
+/** For tests about something else: a gate that passes at `head` and `base` and never calls gh. */
+export const passGate = (head: string, base = "main"): MergeGateFn => async () => ({ ok: true, head, base })
 
 const GATE = `
 export const HUMAN_MERGE_RE = /^(rules|agents|hooks|skills|commands|workflows|mods|output-styles|memory)\\/|(^|\\/)CLAUDE\\.md$/;

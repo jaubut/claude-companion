@@ -25,7 +25,7 @@ let ghDown: boolean
 /** What `gh pr view --json mergeable,…` answers (merge intent); {} = GitHub reports nothing. */
 let readiness: Record<string, unknown>
 let readinessAfter: Record<string, unknown> | null
-const READY = "mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+const READY = "mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup"
 const gh: GhFn = async (args) => {
   if (ghDown) throw new GhUnreachable("ENOENT")
   calls.push(args)
@@ -50,7 +50,7 @@ beforeEach(() => {
   calls = []
   mergeEffect = "MERGED"
   ghDown = false
-  readiness = {}
+  readiness = { baseRefName: "main" }
   readinessAfter = null
 })
 
@@ -107,7 +107,7 @@ describe("close", () => {
 
 // Merge intent (2026-10-05): a Merge tap is Jeremie's approval to land THIS PR.
 describe("merge intent", () => {
-  const green = { mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", headRefOid: "abc123", statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }] }
+  const green = { mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", headRefOid: "abc123", baseRefName: "main", statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }] }
   const approvals = () => turso.query("SELECT agent_slug, action, target_kind, target_id, meta FROM agent_activity WHERE action = 'pr:approved-merge'").all() as Record<string, string>[]
 
   test("mergeable + checks green → merged now, no approval row", async () => {
@@ -190,6 +190,42 @@ describe("merge intent", () => {
     expect(approvals()).toEqual([])
   })
 
+  test("a retarget after the gate, seen before the merge: 409 base_moved, no merge, no row", async () => {
+    readiness = { ...green, baseRefName: "release" }
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "base_moved" })
+    expect(calls.some((c) => c[1] === "merge")).toBe(false)
+    expect(approvals()).toEqual([])
+    expect(ledger()).toEqual([])
+  })
+
+  test("the same with a hold: 409 base_moved, no approval for a diff the gate never read", async () => {
+    readiness = { ...green, baseRefName: "release", mergeable: "CONFLICTING" }
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "base_moved" })
+    expect(approvals()).toEqual([])
+  })
+
+  test("a retarget seen only after GitHub refused the merge: 409 base_moved, no approval", async () => {
+    readiness = green
+    readinessAfter = { ...green, baseRefName: "release", mergeable: "CONFLICTING" }
+    mergeEffect = "OPEN"
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "base_moved" })
+    expect(approvals()).toEqual([])
+  })
+
+  // No pin exists for the base, so this read is the only check: no answer means no merge, unlike the head.
+  for (const [what, down] of [
+    ["fails", (async () => ({ code: 1, stdout: "", stderr: "HTTP 502" })) as GhFn],
+    ["can't start", (async () => { throw new GhUnreachable("ENOENT") }) as GhFn],
+    ["reports no base", (async () => ({ code: 0, stdout: JSON.stringify({ mergeable: "MERGEABLE", headRefOid: "abc123" }), stderr: "" })) as GhFn],
+  ] as const) {
+    test(`the read before the merge ${what}: 409 gate_unavailable, no merge, no row`, async () => {
+      const blind: GhFn = async (args) => (args[4] === READY ? down(args) : gh(args))
+      expect(await mergePr({ ...deps, gh: blind }, target)).toEqual({ kind: "error", status: 409, error: "gate_unavailable", extra: { detail: "couldn't read the PR base" } })
+      expect(calls.some((c) => c[1] === "merge")).toBe(false)
+      expect(ledger()).toEqual([])
+    })
+  }
+
   test("GitHub refuses on the gated head for another reason: 409 merge_unverified", async () => {
     readiness = green
     readinessAfter = green
@@ -262,7 +298,7 @@ describe("merge intent", () => {
   })
 
   test("holdReason / rollupState", () => {
-    const r = (o: Partial<{ mergeable: string; mergeState: string; checks: "pass" | "fail" | "pending" | "none" }>) => ({ mergeable: "MERGEABLE", mergeState: "CLEAN", headSha: "x", checks: "pass" as const, ...o })
+    const r = (o: Partial<{ mergeable: string; mergeState: string; checks: "pass" | "fail" | "pending" | "none" }>) => ({ mergeable: "MERGEABLE", mergeState: "CLEAN", headSha: "x", base: "main", checks: "pass" as const, ...o })
     expect(holdReason(r({}))).toBeNull()
     expect(holdReason(r({ mergeable: "UNKNOWN", mergeState: "UNKNOWN" }))).toBeNull()
     expect(holdReason(r({ mergeable: "CONFLICTING", checks: "fail" }))).toBe("conflict")

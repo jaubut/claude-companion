@@ -57,11 +57,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
+| `lib/triage-pr.ts` | 292 | lib | 21 |  |
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
 | `routes/brain.ts` | 288 | lib | 3 |  |
-| `lib/triage-pr.ts` | 286 | lib | 21 |  |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `wiring/auto-compact.ts` | 285 | lib | 6 | state: let statsDb · emits: inject_error |
 | `lib/ended-sessions.ts` | 282 | lib | 17 |  |
@@ -109,11 +109,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/model.ts` | 207 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
+| `wiring/brain-pr-merge.ts` | 205 | lib | 4 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
-| `wiring/brain-pr-merge.ts` | 199 | lib | 4 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `companion-server.ts` | 192 | route-host | 1 | routes: 6 |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
@@ -133,6 +133,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/triage.ts` | 165 | lib | 2 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
+| `lib/merge-gate.ts` | 153 | lib | 7 |  |
 | `lib/terminal-bridge.ts` | 153 | lib | 17 |  |
 | `wiring/brain-lead.ts` | 152 | lib | 9 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
@@ -141,7 +142,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `routes/body.ts` | 149 | route-host | 3 | routes: 5 |
-| `lib/merge-gate.ts` | 147 | lib | 6 |  |
 | `wiring/canvas.ts` | 147 | lib | 7 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `wiring/pane-mirror.ts` | 147 | lib | 7 | state: mirrors: Map, viewers: WeakMap |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
@@ -787,6 +787,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `herdrWorkspaces()` | `lib/herdr.ts` | `wiring/brain-lead.ts`, `wiring/brain-workers.ts` |
 | `herdrWorkspacePanes()` | `lib/herdr.ts` | `wiring/brain-lead.ts`, `wiring/brain-workers.ts` |
 | `spawnInHerdr()` | `lib/spawn-session.ts` | `wiring/brain-lead.ts`, `wiring/brain.ts` |
+| `prReadiness()` | `lib/triage-pr.ts` | `wiring/brain-pr-merge.ts`, `wiring/triage.ts` |
 | `mergeGate()` | `lib/merge-gate.ts` | `wiring/brain-pr-merge.ts`, `wiring/triage.ts` |
 | `getKv()` | `lib/brain-store.ts` | `wiring/brain-stuck-events.ts`, `wiring/brain.ts` |
 | `setKv()` | `lib/brain-store.ts` | `wiring/brain-stuck-events.ts`, `wiring/brain.ts` |

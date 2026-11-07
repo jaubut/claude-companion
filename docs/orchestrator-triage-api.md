@@ -232,6 +232,9 @@ text, options = answer_custom / requeue / cancel).
   `404` `no_such_item`; `409` `stale` with `next: TriageItem | null` (the refreshed item, null when it is gone),
   `gate_unavailable` (with `detail`: the merge gate can't answer on this host) · `head_moved` (a read after the gate
   names another head, before or after `gh pr merge`; the card stays, a new tap checks the new head) ·
+  `base_moved` (the same for the base branch, by name: a retarget changes the diff, not the head, and GitHub has no pin
+  for it, so a retarget after the last read before the merge isn't caught; the read before the merge failing is
+  `gate_unavailable`, `couldn't read the PR base`) ·
   `merge_unverified` (with `detail`: gh ran but GitHub does not read MERGED, with `state`, or gh or Turso failed after
   the gate; nothing recorded), all without `next` and 409 on purpose (iOS
   queues a 5xx with the card hidden, so a re-send would gate and land whatever the head is by then),
@@ -303,7 +306,7 @@ stayed and nothing was logged. Now **a Merge tap is Jeremie's approval to land T
   ```
 
   A `gh pr merge` that GitHub refuses and that is followed by one of those reasons is also answered `202
-  queued` (the approval recorded) while the head is still the gated one; on another head it is `409 head_moved`, no
+  queued` (the approval recorded) while the head and base are still the gated ones; on another head it is `409 head_moved`, on another base `409 base_moved`, no
   approval; any other refusal is `409 merge_unverified`. Stored under the
   Idempotency-Key like a success (a replay answers `200 result: "replay"` with the same `detail`).
 - **The approval row** (the PR shepherd honours it — claude-config `tools/pr-shepherd-approval.ts`):

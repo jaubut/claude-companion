@@ -17,6 +17,10 @@ import type { ExecFn, Row } from "./turso"
 // a 503: iOS queues every 5xx with the card hidden and re-sends it, which would
 // turn a refusal into a merge that fires when the gate comes back. A stop is a
 // 403 named after it, because iOS shows `Refused: <error>` and nothing else.
+//
+// A retarget changes the diff without changing the head, so --match-head-commit can't see it. The gate answers the base
+// it read, by name (main moving is normal), and each caller compares it at its last read before `gh pr merge`.
+// ponytail: GitHub has no pin for the base, so a retarget after that last read still lands. Add one if GitHub ever does.
 
 export const GATE_BUDGET_MS = 20_000
 /** GitHub's REST file list stops here without saying so. */
@@ -43,7 +47,8 @@ interface GateTools {
 
 export interface GateDeps { gh: GhFn; exec: ExecFn }
 export interface GatePr { url: string }
-export type GateResult = { ok: true; head: string } | { ok: false; status: number; error: string; extra: Record<string, unknown> }
+export interface GatePass { ok: true; head: string; base: string }
+export type GateResult = GatePass | { ok: false; status: number; error: string; extra: Record<string, unknown> }
 export type MergeGateFn = (deps: GateDeps, pr: GatePr) => Promise<GateResult>
 interface GateOpts { tools?: string; budgetMs?: number }
 
@@ -81,14 +86,14 @@ function selfCheck(t: GateTools): boolean {
   }
 }
 
-interface Head { url: string; sha: string; labels: string[] }
+interface Head { url: string; sha: string; base: string; labels: string[] }
 async function readHead(gh: GhFn, url: string): Promise<Head | null> {
-  const r = await gh(["pr", "view", url, "--json", "url,headRefOid,labels"])
+  const r = await gh(["pr", "view", url, "--json", "url,headRefOid,baseRefName,labels"])
   if (r.code !== 0) return null
   try {
-    const v = JSON.parse(r.stdout) as { url?: unknown; headRefOid?: unknown; labels?: unknown }
-    if (typeof v.url !== "string" || typeof v.headRefOid !== "string" || !v.headRefOid || !Array.isArray(v.labels)) return null
-    return { url: v.url, sha: v.headRefOid, labels: (v.labels as Array<{ name?: unknown }>).map((l) => String(l.name ?? "")) }
+    const v = JSON.parse(r.stdout) as { url?: unknown; headRefOid?: unknown; baseRefName?: unknown; labels?: unknown }
+    if (typeof v.url !== "string" || typeof v.headRefOid !== "string" || !v.headRefOid || typeof v.baseRefName !== "string" || !v.baseRefName || !Array.isArray(v.labels)) return null
+    return { url: v.url, sha: v.headRefOid, base: v.baseRefName, labels: (v.labels as Array<{ name?: unknown }>).map((l) => String(l.name ?? "")) }
   } catch {
     return null
   }
@@ -120,15 +125,16 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
     if (t.truncated || tools.policy(origin, "merge-sensitive") === "DENY") taint = t
   }
 
-  // Read again: the files above may belong to a newer head than the one the caller would pin.
+  // Read again: the files above may belong to a newer head than the one the caller would pin, or to another base.
   const again = await readHead(deps.gh, pr.url)
   if (!again) return unavailable("couldn't read the PR head")
   if (again.sha !== head.sha) return { ok: false, status: 409, error: "head_moved", extra: {} }
+  if (again.base !== head.base) return { ok: false, status: 409, error: "base_moved", extra: {} }
 
   const holdLabels = again.labels.filter((l) => HOLD_LABEL.test(l))
   const stop = tools.gateVerdict(tools.liveGateInput({ paths, holdLabels, approved: false, taint }, paths, holdLabels, tools.SENSITIVE_RE))
   if (stop) return { ok: false, status: 403, error: stop.stop, extra: { action: stop.action, reason: stop.reason.slice(0, REASON_MAX), head: head.sha } }
-  return { ok: true, head: head.sha }
+  return { ok: true, head: head.sha, base: head.base }
 }
 
 /** Never throws: a throw reaches iOS as a 503 (triage-engine `unavailable`), which it queues. */

@@ -5,7 +5,7 @@
 #
 # The server re-checks everything on GitHub and Turso and refuses on any doubt:
 # the merge gate (403 <stop>: human-merge-path, tainted-sensitive, prod-schema,
-# hold-label; 409 gate_unavailable, head_moved) · head dispatch/* (403
+# hold-label; 409 gate_unavailable, head_moved, base_moved) · head dispatch/* (403
 # not_agent_branch) · no broken shepherd park or hold (403 parked) · CI green +
 # CLEAN (409 not_green) · Claude AND Codex APPROVE on the current head (409
 # not_approved) · ≤ 10 brain merges a day (429 merge_cap). Squash-merges the

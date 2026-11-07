@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import type { MergeGateFn } from "./merge-gate"
+import type { GatePass, MergeGateFn } from "./merge-gate"
 import type { ExecOutcome } from "./triage-engine"
 import type { ExecFn } from "./turso"
 
@@ -12,7 +12,7 @@ import type { ExecFn } from "./turso"
 // (conflict / behind / checks pending or failing) records Jeremie's approval
 // (`pr:approved-merge`) for the PR shepherd instead of failing.
 // Merge gate (2026-11-07, lib/merge-gate.ts): every merge asks the gate first,
-// before any approval can be written, and lands only on the head it checked.
+// before any approval can be written, and lands only on the head and base it checked.
 // A stop writes nothing: a row would let the shepherd lift the stop.
 
 export interface GhResult { code: number; stdout: string; stderr: string }
@@ -55,12 +55,14 @@ export interface PrReadiness {
   mergeable: string // MERGEABLE | CONFLICTING | UNKNOWN | "" (not reported)
   mergeState: string // CLEAN | DIRTY | BEHIND | BLOCKED | UNSTABLE | UNKNOWN | ""
   headSha: string
+  /** "" = not reported */
+  base: string
   checks: ChecksState
   /** OPEN | MERGED | CLOSED | "" (not reported) */
   state?: string
 }
 
-const READINESS_FIELDS = "mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+const READINESS_FIELDS = "mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup"
 
 /** One rollup entry: a CheckRun (status + conclusion) or a StatusContext (state). */
 function checkOutcome(c: Record<string, unknown>): ChecksState {
@@ -101,7 +103,7 @@ export async function prReadiness(gh: GhFn, url: string, withState = false): Pro
   try {
     const o = JSON.parse(r.stdout) as Record<string, unknown>
     const s = (v: unknown) => (typeof v === "string" ? v : "")
-    return { mergeable: s(o.mergeable), mergeState: s(o.mergeStateStatus), headSha: s(o.headRefOid), checks: rollupState(o.statusCheckRollup), ...(withState ? { state: s(o.state) } : {}) }
+    return { mergeable: s(o.mergeable), mergeState: s(o.mergeStateStatus), headSha: s(o.headRefOid), base: s(o.baseRefName), checks: rollupState(o.statusCheckRollup), ...(withState ? { state: s(o.state) } : {}) }
   } catch {
     return null
   }
@@ -175,7 +177,7 @@ async function mustBeOpen(gh: GhFn, url: string): Promise<ExecOutcome | null> {
   return before === "OPEN" ? null : { kind: "stale", reason: `PR is ${before.toLowerCase()}` }
 }
 
-/** Readiness, or null when gh cannot say (the merge is then simply tried, as before). */
+/** Readiness, or null when gh cannot say. */
 async function readiness(gh: GhFn, url: string): Promise<PrReadiness | null> {
   try {
     return await prReadiness(gh, url)
@@ -185,26 +187,30 @@ async function readiness(gh: GhFn, url: string): Promise<PrReadiness | null> {
 }
 
 /**
- * What one readiness read decides: head_moved off the gated head (never a 5xx: iOS would re-send it and land
- * a head Jeremie never tapped), the approval on a hold, else null (go on). A read with no head says nothing,
- * but an approval still needs one.
+ * What one readiness read decides: head_moved or base_moved off what the gate checked (never a 5xx: iOS would re-send
+ * it and land a diff Jeremie never tapped), the approval on a hold, else null (go on). A read with no head or base
+ * says nothing, but an approval still needs both.
  */
-async function settle(deps: PrActionDeps, t: PrTarget, r: PrReadiness | null, head: string): Promise<ExecOutcome | null> {
+async function settle(deps: PrActionDeps, t: PrTarget, r: PrReadiness | null, g: GatePass): Promise<ExecOutcome | null> {
   if (!r) return null
   const hold = holdReason(r)
-  if (r.headSha !== head && (r.headSha || hold)) return { kind: "error", status: 409, error: "head_moved" }
+  if (r.headSha !== g.head && (r.headSha || hold)) return { kind: "error", status: 409, error: "head_moved" }
+  if (r.base !== g.base && (r.base || hold)) return { kind: "error", status: 409, error: "base_moved" }
   return hold ? recordApproval(deps, t, r, hold) : null
 }
 
-/** Past the gate, on the head it checked. Jeremie's approval of a PR GitHub cannot merge now: the shepherd lands it once the reason clears. */
-async function approveOrLand(deps: MergeDeps, t: PrTarget, head: string): Promise<ExecOutcome> {
-  const early = await settle(deps, t, await readiness(deps.gh, t.prUrl), head)
+/** Past the gate, on the head and base it checked. Jeremie's approval of a PR GitHub cannot merge now: the shepherd lands it once the reason clears. */
+async function approveOrLand(deps: MergeDeps, t: PrTarget, g: GatePass): Promise<ExecOutcome> {
+  const ready = await readiness(deps.gh, t.prUrl)
+  const early = await settle(deps, t, ready, g)
   if (early) return early
-  const run = await deps.gh(["pr", "merge", t.prUrl, "--squash", "--match-head-commit", head])
+  // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.
+  if (ready?.base !== g.base) return { kind: "error", status: 409, error: "gate_unavailable", extra: { detail: "couldn't read the PR base" } }
+  const run = await deps.gh(["pr", "merge", t.prUrl, "--squash", "--match-head-commit", g.head])
   const after = await prState(deps.gh, t.prUrl)
   if (after === "MERGED") return { kind: "done", detail: { state: after } }
   // GitHub refused: if it now says why (conflict, CI…), the tap still counts as the approval.
-  const late = after === "OPEN" ? await settle(deps, t, await readiness(deps.gh, t.prUrl), head) : null
+  const late = after === "OPEN" ? await settle(deps, t, await readiness(deps.gh, t.prUrl), g) : null
   if (late) return late
   const detail = (run.stderr || run.stdout).trim().slice(0, 200)
   return { kind: "error", status: 409, error: "merge_unverified", extra: { state: after, detail } }
@@ -216,7 +222,7 @@ async function approveOrMerge(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome
   const g = await deps.gate(deps, { url: t.prUrl })
   if (!g.ok) return { kind: "error", status: g.status, error: g.error, extra: g.extra }
   try {
-    return await approveOrLand(deps, t, g.head)
+    return await approveOrLand(deps, t, g)
   } catch {
     // A throw here would reach iOS as a 503, which it queues and re-sends with the card hidden: the re-send would gate
     // and land whatever the head is by then. A 409 is final, and iOS reads this code as "check GitHub".
@@ -238,7 +244,7 @@ async function closeIt(deps: PrActionDeps, t: PrTarget): Promise<ExecOutcome> {
 
 /**
  * Merge tap: the merge gate first (a stop or a gate failure is the outcome, nothing written), then
- * mergeable + checks green → gh pr merge --squash on the gated head, verified MERGED, then the task is
+ * mergeable + checks green on the gated base → gh pr merge --squash on the gated head, verified MERGED, then the task is
  * done (guarded) and outcome:merged recorded. Conflicting / behind / checks pending or failing → the
  * approval is recorded (`pr:approved-merge`) and the outcome is `queued`: the PR shepherd merges it.
  */

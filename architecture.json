@@ -2700,12 +2700,13 @@
         },
         {
           "path": "lib/merge-gate.ts",
-          "lines": 147,
+          "lines": 153,
           "kind": "lib",
           "exports": [
             "GATE_BUDGET_MS",
             "GateDeps",
             "GatePr",
+            "GatePass",
             "GateResult",
             "MergeGateFn",
             "mergeGate"
@@ -5241,7 +5242,7 @@
         },
         {
           "path": "lib/triage-pr.ts",
-          "lines": 286,
+          "lines": 292,
           "kind": "lib",
           "exports": [
             "GhResult",
@@ -7385,7 +7386,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 199,
+          "lines": 205,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -13144,6 +13145,12 @@
             "routes/orchestrator.ts"
           ]
         },
+        "GatePass": {
+          "module": "lib/merge-gate.ts",
+          "callers": [
+            "lib/triage-pr.ts"
+          ]
+        },
         "MergeHold": {
           "module": "lib/triage.ts",
           "callers": [
@@ -15873,6 +15880,13 @@
             "wiring/brain.ts"
           ]
         },
+        "prReadiness": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "wiring/brain-pr-merge.ts",
+            "wiring/triage.ts"
+          ]
+        },
         "mergeGate": {
           "module": "lib/merge-gate.ts",
           "callers": [
@@ -17275,12 +17289,6 @@
           ]
         },
         "PrReadiness": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "prReadiness": {
           "module": "lib/triage-pr.ts",
           "callers": [
             "wiring/triage.ts"

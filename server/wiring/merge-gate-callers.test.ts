@@ -22,7 +22,7 @@ const OTHER = "2222222222222222222222222222222222222222"
 const BOT = "jaubut"
 const TASK = "abcd1234-0000"
 
-interface PrShape { files?: Array<string | [string, string]>; labels?: string[]; head?: string; draft?: boolean; state?: string; mergeable?: string; mergeState?: string; afterMerge?: { mergeable: string; head: string } | null; moved?: string }
+interface PrShape { files?: Array<string | [string, string]>; labels?: string[]; head?: string; draft?: boolean; state?: string; mergeable?: string; mergeState?: string; afterMerge?: { mergeable: string; head: string } | null; moved?: string; retarget?: "during-gate" | "after-gate" | "blind" }
 const review = (who: "claude" | "codex") => ({
   author: { login: BOT },
   body: `${who === "claude" ? "🤖 **Auto-review**" : "🧠 **Codex review**"} (sonnet)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->`,
@@ -42,13 +42,14 @@ function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoD
   const files = (shape.files ?? ["server/lib/feed.ts"]).map((f) => (typeof f === "string" ? [f, ""] as const : f))
   let state = shape.state ?? "OPEN"
   let head = shape.head ?? SHA
+  let base = "main"
   let merged = false
   const reads = { head: 0 }
   const calls: string[][] = []
   const rollup = [{ __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS" }]
   const ready = () => {
     const after = merged ? shape.afterMerge : null
-    return { mergeable: after?.mergeable ?? shape.mergeable ?? "MERGEABLE", mergeStateStatus: shape.mergeState ?? "CLEAN", headRefOid: after?.head ?? head, statusCheckRollup: rollup }
+    return { mergeable: after?.mergeable ?? shape.mergeable ?? "MERGEABLE", mergeStateStatus: shape.mergeState ?? "CLEAN", headRefOid: after?.head ?? head, baseRefName: shape.retarget === "blind" ? "" : base, statusCheckRollup: rollup }
   }
   const gh: GhFn = async (args) => {
     if (opts.ghThrows) throw new GhUnreachable("ENOENT")
@@ -65,13 +66,16 @@ function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoD
     const fields = String(args[args.indexOf("--json") + 1])
     if (fields === "state") return out({ state })
     if (fields.startsWith("mergeable")) return out(ready())
-    if (fields === "url,headRefOid,labels") {
+    if (fields === "url,headRefOid,baseRefName,labels") {
       reads.head += 1
       if (reads.head === 2 && shape.moved) head = shape.moved
-      return out({ url: URL, headRefOid: head, labels: (shape.labels ?? []).map((name) => ({ name })) })
+      if (reads.head === 2 && shape.retarget === "during-gate") base = "release"
+      const seen = { url: URL, headRefOid: head, baseRefName: base, labels: (shape.labels ?? []).map((name) => ({ name })) }
+      if (reads.head === 2 && shape.retarget === "after-gate") base = "release"
+      return out(seen)
     }
     return out({
-      state, isDraft: shape.draft ?? false, headRefName: "dispatch/abcd1234", headRefOid: head, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "",
+      state, isDraft: shape.draft ?? false, headRefName: "dispatch/abcd1234", headRefOid: head, baseRefName: base, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "",
       url: URL, title: "t", author: { login: BOT }, labels: (shape.labels ?? []).map((name) => ({ name })), statusCheckRollup: rollup,
       comments: [review("claude"), review("codex")], files: files.map(([path]) => ({ path })),
     })
@@ -158,6 +162,28 @@ function matrix(toolsFor: () => string): void {
       })
     })
   }
+
+  describe("a retarget changes the diff, not the head", () => {
+    for (const [name, run] of CALLERS) {
+      test(`${name}: during the gate is 409 base_moved, no merge, no row`, async () => {
+        const w = world({ retarget: "during-gate" })
+        expect(await run(w, gate)).toMatchObject({ status: 409, error: "base_moved" })
+        expect(merges(w)).toEqual([])
+        expect(rows(w)).toEqual({ n: 0 })
+      })
+      test(`${name}: between the gate and the merge is 409 base_moved, no merge, no row`, async () => {
+        const w = world({ retarget: "after-gate" })
+        expect(await run(w, gate)).toMatchObject({ status: 409, error: "base_moved" })
+        expect(merges(w)).toEqual([])
+        expect(rows(w)).toEqual({ n: 0 })
+      })
+      test(`${name}: a last read that can't say the base refuses, no pin stands behind it`, async () => {
+        const w = world({ retarget: "blind" })
+        expect(await run(w, gate)).toMatchObject({ status: 409, error: "gate_unavailable", detail: "couldn't read the PR base" })
+        expect(merges(w)).toEqual([])
+      })
+    }
+  })
 
   describe("bin/pr-merge order", () => {
     const run = CALLERS[0]![1]

@@ -27,7 +27,7 @@ const review = (who: "claude" | "codex", verdict: "APPROVE" | "CHANGES", sha = S
 
 function green(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    state: "OPEN", isDraft: false, headRefName: "dispatch/abcd1234", headRefOid: SHA, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+    state: "OPEN", isDraft: false, headRefName: "dispatch/abcd1234", headRefOid: SHA, baseRefName: "main", mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
     reviewDecision: "", url: URL, title: "feed: wrap long titles", body: "Fixes the card overflow.", author: { login: BOT },
     files: [{ path: "server/lib/feed-format.ts" }, { path: "server/lib/feed-format.test.ts" }], changedFiles: 2, labels: [],
     statusCheckRollup: [{ __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS" }],
@@ -62,7 +62,7 @@ function world(pr: Record<string, unknown>, seed = TASK, opts: { mergeSticks?: b
     return { code: 1, stdout: "", stderr: "unexpected" }
   }
   // The gate has its own matrix (merge-gate-callers.test.ts): here it passes at the head GitHub reports.
-  const gate: MergeGateFn = async () => ({ ok: true, head: String(state.headRefOid) })
+  const gate: MergeGateFn = async () => ({ ok: true, head: String(state.headRefOid), base: String(state.baseRefName) })
   return { db, calls, events, deps: { gh, exec, event: (t: string) => events.push(t), gate } }
 }
 
@@ -152,6 +152,20 @@ describe("bin/pr-merge gate: refusals", () => {
     const out = await mergeAgentPr(input, { ...w.deps, gate: passGate(OLD) })
     expect([out.status, out.body.error]).toEqual([409, "head_moved"])
     expect(merges(w.calls)).toHaveLength(0)
+  })
+
+  test("409 base_moved: the gate read a base other than the one this view checked", async () => {
+    const w = world(green())
+    const out = await mergeAgentPr(input, { ...w.deps, gate: passGate(SHA, "release") })
+    expect([out.status, out.body.error]).toEqual([409, "base_moved"])
+    expect(merges(w.calls)).toHaveLength(0)
+  })
+
+  test("the base is read again last, after every other check, right before the merge", async () => {
+    const w = world(green())
+    expect((await mergeAgentPr(input, w.deps)).status).toBe(200)
+    expect(w.calls.slice(-3).map((c) => c[1])).toEqual(["view", "merge", "view"])
+    expect(w.calls.at(-3)!.join(" ")).toContain("baseRefName")
   })
 
   const red: Array<[string, Record<string, unknown>]> = [

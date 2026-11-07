@@ -3,7 +3,7 @@ import { companionLog } from "../lib/log"
 import { type MergeGateFn, mergeGate } from "../lib/merge-gate"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { redactSecrets } from "../lib/secret-redact"
-import { type GhFn, prState, realGh } from "../lib/triage-pr"
+import { type GhFn, prReadiness, prState, realGh } from "../lib/triage-pr"
 import { type ExecFn, TursoUnreachable } from "../lib/turso"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
@@ -12,7 +12,7 @@ import { orchEmit } from "./orchestrator"
 // PR. The brain's word counts for nothing: every check is made here, from
 // GitHub and Turso, and any doubt refuses. In order:
 //   open
-//   merge gate (403 <stop>, 409 gate_unavailable / head_moved, lib/merge-gate.ts):
+//   merge gate (403 <stop>, 409 gate_unavailable / head_moved / base_moved, lib/merge-gate.ts):
 //     before draft and the branch check, so no head is exempt, sync/* included
 //   not draft · head `dispatch/*` (403 not_agent_branch)
 //   parked (403): no live shepherd park or hold, except the client-origin /
@@ -25,6 +25,7 @@ import { orchEmit } from "./orchestrator"
 //     APPROVE stamped with the current head sha, from the PR's author (the
 //     dispatch account); none with CHANGES on that head; no CHANGES_REQUESTED
 //   merge_cap (429): ≤ MERGE_CAP brain merges in 24 h
+//   base read again (409 base_moved / gate_unavailable): the gate's reads are behind all of the above
 // Then `gh pr merge --squash --match-head-commit <checked sha>`: a head pushed
 // after the checks makes GitHub refuse. Each merge is a `brain:pr-merge`
 // agent_activity row (the machine digest lists them) and a brain-thread event.
@@ -54,11 +55,11 @@ const fail = (status: number, error: string, extra: Record<string, unknown> = {}
 interface Check { __typename?: string; name?: string; context?: string; status?: string; conclusion?: string; state?: string }
 interface Comment { body?: string; author?: { login?: string } | null }
 interface PrView {
-  state: string; isDraft: boolean; headRefName: string; headRefOid: string; mergeable: string; mergeStateStatus: string
+  state: string; isDraft: boolean; headRefName: string; headRefOid: string; baseRefName: string; mergeable: string; mergeStateStatus: string
   reviewDecision: string; url: string; title: string; author: { login?: string } | null; labels: Array<{ name?: string }>
   statusCheckRollup: Check[]; comments: Comment[]; files: Array<{ path?: string }>
 }
-const FIELDS = "state,isDraft,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,url,title,author,labels,statusCheckRollup,comments,files"
+const FIELDS = "state,isDraft,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,url,title,author,labels,statusCheckRollup,comments,files"
 
 async function view(gh: GhFn, p: PrMergeInput): Promise<PrView | Out> {
   let r: Awaited<ReturnType<GhFn>>
@@ -71,7 +72,7 @@ async function view(gh: GhFn, p: PrMergeInput): Promise<PrView | Out> {
   try {
     const v = JSON.parse(r.stdout) as Partial<PrView>
     return {
-      state: String(v.state ?? ""), isDraft: v.isDraft !== false, headRefName: String(v.headRefName ?? ""), headRefOid: String(v.headRefOid ?? ""),
+      state: String(v.state ?? ""), isDraft: v.isDraft !== false, headRefName: String(v.headRefName ?? ""), headRefOid: String(v.headRefOid ?? ""), baseRefName: String(v.baseRefName ?? ""),
       mergeable: String(v.mergeable ?? ""), mergeStateStatus: String(v.mergeStateStatus ?? ""), reviewDecision: String(v.reviewDecision ?? ""),
       url: String(v.url ?? ""), title: String(v.title ?? ""), author: v.author ?? null,
       labels: Array.isArray(v.labels) ? v.labels : [], statusCheckRollup: Array.isArray(v.statusCheckRollup) ? v.statusCheckRollup : [],
@@ -148,6 +149,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   const g = await deps.gate(deps, { url: v.url })
   if (!g.ok) return fail(g.status, g.error, g.extra)
   if (g.head !== v.headRefOid) return fail(409, "head_moved")
+  if (g.base !== v.baseRefName) return fail(409, "base_moved")
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
   let park: Awaited<ReturnType<typeof parked>>
@@ -166,6 +168,10 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   const unapproved = notApproved(v)
   if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
   if (!(recent < MERGE_CAP)) return fail(429, "merge_cap", { cap: MERGE_CAP })
+  // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.
+  const last = await prReadiness(deps.gh, v.url).catch(() => null)
+  if (!last?.base) return fail(409, "gate_unavailable", { detail: "couldn't read the PR base" })
+  if (last.base !== g.base) return fail(409, "base_moved")
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   let run: Awaited<ReturnType<GhFn>>
   try {

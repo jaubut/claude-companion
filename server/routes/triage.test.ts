@@ -79,7 +79,7 @@ function turTask(status: string, blocker: string | null, over: Record<string, un
 
 let ghState = "OPEN"
 /** `gh pr view --json mergeable,…` (merge intent); {} = GitHub reports nothing. */
-let ghReady: Record<string, unknown> = {}
+let ghReady: Record<string, unknown> = { baseRefName: "main" }
 let ghDown = false
 const ghCalls: string[][] = []
 const gh: GhFn = async (args) => {
@@ -198,7 +198,7 @@ beforeEach(() => {
   considered.length = 0
   frames.length = 0
   ghState = "OPEN"
-  ghReady = {}
+  ghReady = { baseRefName: "main" }
   ghDown = false
   modelFor = new Set()
   invStore = invLib.createInvestigationStore(new Database(":memory:"))
@@ -383,7 +383,7 @@ describe("choose → the existing guarded paths", () => {
     const park = () => turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
       .run(id, JSON.stringify({ reason: "touches src/lib/books — needs your review", repo: "dash", pr: 164, url }))
     park()
-    ghReady = { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", headRefOid: "feed164", statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }] }
+    ghReady = { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", headRefOid: "feed164", baseRefName: "main", statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }] }
     await sync()
     const item = await itemOf("pr:jaubut/dash#164")
     expect(item.title).toBe("Quotes out of the books: merge after the conflict fix")
