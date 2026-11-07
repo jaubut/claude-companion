@@ -46,15 +46,10 @@ function excludedCommands(home: string): string[] {
   }
 }
 
-/** Running with exactly the settings the server wrote: a swapped file doesn't count. A user settings file that can't be read proves nothing, so it never tears down a lead. */
+/** Running with exactly the settings the server wrote: a swapped file doesn't count. Thrown when the user settings can't be read: that proves nothing either way, so the caller stops nothing and starts nothing. */
 export function leadIsolated(repo: string, home = homedir(), excluded: (home: string) => string[] = excludedCommands): boolean {
   const dir = leadDir(repo, home)
-  let want: string
-  try {
-    want = JSON.stringify(leadSettings(excluded(home), dir), null, 2)
-  } catch {
-    return existsSync(settingsFile(dir))
-  }
+  const want = JSON.stringify(leadSettings(excluded(home), dir), null, 2)
   try {
     return readFileSync(settingsFile(dir), "utf8") === want
   } catch {
@@ -132,6 +127,8 @@ export function createBrainLead(deps: LeadDeps) {
         if (!free && !await clearLead(name, live)) return { ok: false, name, state: "down", error: `name_taken: ${name}` }
         const out = await deps.spawn(repo, name)
         return out.ok ? { ok: true, name, state: "started" } : { ok: false, name, state: "down", error: out.error }
+      } catch (err) {
+        return { ok: false, name, state: "down", error: (err as Error)?.message ?? String(err) }
       } finally {
         starting.delete(repo)
       }

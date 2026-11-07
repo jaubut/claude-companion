@@ -7256,7 +7256,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 155,
+          "lines": 152,
           "kind": "lib",
           "exports": [
             "leadArgs",

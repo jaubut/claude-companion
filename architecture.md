@@ -133,8 +133,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/triage.ts` | 165 | lib | 2 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
-| `wiring/brain-lead.ts` | 155 | lib | 9 |  |
 | `lib/terminal-bridge.ts` | 153 | lib | 17 |  |
+| `wiring/brain-lead.ts` | 152 | lib | 9 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
 | `routes/canvas.ts` | 150 | lib | 2 |  |

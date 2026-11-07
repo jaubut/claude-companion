@@ -11,7 +11,7 @@ const { folderTrusted, spawnInHerdr } = await import("../lib/spawn-session")
 const NAME = "lead-claude-companion"
 
 /** A lead whose herdr record survived, in workspace w7: dead unless `live`, then in or out of its clone. */
-function stale(label: string, panes: string[], info: Record<string, unknown> | null = { shell_pid: 5, foreground_process_group_id: 5 }, live = false, isolated = true) {
+function stale(label: string, panes: string[], info: Record<string, unknown> | null = { shell_pid: 5, foreground_process_group_id: 5 }, live = false, isolated: boolean | Error = true) {
   const f = fakeHerdr({
     reply: (a) => a[0] === "workspace" && a[1] === "list" ? { workspaces: [{ workspace_id: "w7", label }] }
       : a[0] === "pane" && a[1] === "list" ? { panes: panes.map((p) => ({ pane_id: p, workspace_id: "w7" })) }
@@ -20,7 +20,7 @@ function stale(label: string, panes: string[], info: Record<string, unknown> | n
   const spawned: string[] = []
   const lead = createBrainLead({
     // The registry lags: a closed lead's session stays listed, as `alive()` does in production. Herdr is the truth.
-    herdr: f.h, running: async () => live, isolated: () => isolated, settleMs: 0,
+    herdr: f.h, running: async () => live, isolated: () => { if (isolated instanceof Error) throw isolated; return isolated }, settleMs: 0,
     agentOf: async () => (f.verbs().includes("workspace close") ? { kind: "absent" } : { kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
     spawn: async (repo) => { spawned.push(repo); return { ok: true } },
   })
@@ -160,12 +160,17 @@ describe("the last round's three checks", () => {
     expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
     expect(spawned).toHaveLength(2)
   })
-  test("a user settings read that fails doesn't tear down a working lead", () => {
+  test("a user settings read that fails proves nothing: the lead counts as neither safe nor unsafe, whatever its clone holds", () => {
     const h = mkdtempSync(join(tmpdir(), "lead-iso-")), dir = leadDir("r", h)
     mkdirSync(join(dir, ".claude"), { recursive: true })
     writeFileSync(join(dir, ".claude/settings.local.json"), "{}")
-    expect(leadIsolated("r", h, () => { throw new Error("unreadable") })).toBe(true)
-    expect(leadIsolated("gone", h, () => { throw new Error("unreadable") })).toBe(false)
+    expect(() => leadIsolated("r", h, () => { throw new Error("user settings unreadable: x") })).toThrow("user settings unreadable")
+  })
+  test("a lead that can't be verified answers down: nothing is stopped, spawned or deleted under it", async () => {
+    const { f, lead, spawned } = stale(NAME, ["w7:p1"], undefined, true, new Error("user settings unreadable: x"))
+    expect(await lead.ensure("claude-companion", NAME)).toEqual({ ok: false, name: NAME, state: "down", error: "user settings unreadable: x" })
+    expect(spawned).toEqual([])
+    expect(f.verbs()).toEqual([])
   })
   test("a lead that won't stop keeps its clone: nothing is spawned or deleted under it", async () => {
     let spawned = 0
