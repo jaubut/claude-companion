@@ -6,10 +6,10 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainActivity, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
+  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import {
-  clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe,
+  clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
   openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
@@ -229,9 +229,9 @@ export function createBrainWiring(deps: BrainDeps) {
     if (compacting && deps.now() - compactedAt > BUSY_MAX_MS) compacting = false
     if (deps.paused.read() || busy || compacting || state !== "up" || !target()) return
     const seed = pendingSeed
-    const ids = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
-    if (!seed && ids.length === 0) return
-    const turns = turnsOf(ids)
+    const queued = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
+    if (!seed && queued.length === 0) return
+    const { turns, ids } = fitQueued(queued, turnsOf(queued))
     const text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
     if (busy || !target()) return
     setBusy(true)
@@ -240,7 +240,7 @@ export function createBrainWiring(deps: BrainDeps) {
       setBusy(false)
       return
     }
-    if (seed) pendingSeed = false
+    if (seed) { pendingSeed = false; requeueDeliveries(queued.filter((id) => !ids.includes(id))) }
     lastActivity = deps.now()
     if (out === "maybe") {
       markMaybe(ids)

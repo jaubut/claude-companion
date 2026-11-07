@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import {
   ANSWER_MAX,
   type DispatchTask,
@@ -14,13 +15,14 @@ import {
   listProjects,
   parseTs,
   phaseOf,
+  requeueTask,
   resolveAgent,
   toTaskDto,
   unblockMarker,
 } from "./dispatch-tasks"
 import type { Task } from "./orchestrator-chat"
 import { ANSWER_TEXT_MAX } from "./triage"
-import type { QueryFn, Row, SqlArg } from "./turso"
+import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
 
 // Pure mapping + the read queries against a fake QueryFn (no network).
 
@@ -185,5 +187,52 @@ describe("write helpers (P2)", () => {
       logTail: null, status: "filed", createdAt: 1, updatedAt: 2, noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32),
     }
     expect(toTaskDto(t)).toMatchObject({ source: "proposal", noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32), done: false })
+  })
+})
+
+describe("requeueTask: the card's status bound", () => {
+  function world(status: string, before?: (db: Database) => void) {
+    const db = new Database(":memory:")
+    db.exec(`
+      CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT, ref_code TEXT);
+      CREATE TABLE tasks (id TEXT PRIMARY KEY, note_id TEXT, text TEXT, description TEXT DEFAULT '', assignee TEXT, done INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT,
+        dispatch_status TEXT, dispatch_blocker TEXT, dispatch_owner TEXT, dispatch_run_id TEXT, dispatch_started_at TEXT, dispatch_completed_at TEXT);
+      CREATE TABLE agent_activity (agent_slug TEXT, action TEXT, target_kind TEXT, target_id TEXT, summary TEXT, meta TEXT);
+    `)
+    db.query("INSERT INTO tasks (id, note_id, text, assignee, dispatch_status) VALUES ('t1', 'n', 'x', 'agent:builder', ?)").run(status)
+    const exec: ExecFn = async (sql, args) => {
+      if (/^\s*SELECT/i.test(sql)) return { rows: db.query(sql).all(...args) as Row[], affected: 0 }
+      if (/^\s*UPDATE/i.test(sql)) before?.(db)
+      return { rows: [], affected: db.query(sql).run(...args).changes }
+    }
+    const now = () => (db.query("SELECT dispatch_status AS s FROM tasks").get() as { s: string }).s
+    return { ctx: { exec, cols: { prUrl: false, resultRef: false }, host: "t", channel: null }, now }
+  }
+
+  test("the row still at the card's status requeues", async () => {
+    const w = world("blocked")
+    expect(await requeueTask(w.ctx, "t1", "blocked")).toMatchObject({ ok: true })
+    expect(w.now()).toBe("queued")
+  })
+
+  test("a row that moved since the card was read refuses, cancelled above all", async () => {
+    for (const [now, from] of [["cancelled", "blocked"], ["cancelled", "failed"], ["failed", "blocked"], ["blocked", "failed"]] as const) {
+      const w = world(now)
+      expect(await requeueTask(w.ctx, "t1", from)).toMatchObject({ ok: false, error: "conflict" })
+      expect(w.now()).toBe(now)
+    }
+  })
+
+  // The pre-check passes, then the row moves: only the SQL guard stands. REQUEUE_GUARD has a top-level OR, so a bound appended to it would let this through.
+  test("the SQL guard holds when the row moves after the pre-check", async () => {
+    const w = world("blocked", (db) => db.exec("UPDATE tasks SET dispatch_status = 'cancelled', done = 1"))
+    expect(await requeueTask(w.ctx, "t1", "blocked")).toMatchObject({ ok: false, error: "conflict" })
+    expect(w.now()).toBe("cancelled")
+  })
+
+  test("no bound keeps Jeremie's Retry: a cancelled row requeues", async () => {
+    const w = world("cancelled")
+    expect(await requeueTask(w.ctx, "t1")).toMatchObject({ ok: true })
+    expect(w.now()).toBe("queued")
   })
 })
