@@ -6,9 +6,10 @@
 // A shell has no hooks, so nothing tells lib/sessions.ts it exists. herdr is
 // the record instead: a workspace labelled `sh-<dir>` is a shell, and every
 // field the phone shows (pane, cwd) is read back from herdr. So a server
-// restart loses nothing, `exit` in the shell ends the record by itself, and no
-// store can drift from what is actually running. A herdr restore brings the
-// workspace back with a new shell, which is the same row.
+// restart loses nothing (but see readHerdrShells: a shell with a split), `exit`
+// in the shell ends the record by itself, and no store can drift from what is
+// actually running. A herdr restore brings the workspace back with a new shell,
+// which is the same row.
 //
 // Herdr-only (docs/herdr-only-migration.md, Stage 2): new shells are herdr
 // panes, and the phone's terminal view attaches them with `herdr terminal
@@ -213,8 +214,9 @@ async function releaseWorkspace(id: string, name: string, h: Herdr): Promise<voi
 // The row must be this workspace's: a gone workspace's label is free to reuse,
 // a live one's is not. No row (a Companion restart): only a lone pane is
 // certain, `pane list` is layout order, so a shell with a split stays off the
-// list until it is back to one pane. null = herdr could not say, which is not
-// "no shells" (a blip must not drop every row).
+// list until it is back to one pane. ponytail: needs a root-pane record herdr
+// keeps. null = herdr could not say, which is not "no shells" (a blip must not
+// drop every row).
 export async function readHerdrShells(h: Herdr, known: ShellSession[] = store.list()): Promise<ShellSession[] | null> {
   let workspaces: unknown, panes: unknown
   try {

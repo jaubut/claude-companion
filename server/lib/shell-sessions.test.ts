@@ -457,6 +457,15 @@ test("close shell (herdr): an agent hooks don't know, or one on the pane → cla
   store.replace([])
 })
 
+test("close shell (herdr): a suspended Claude reads as agent + shell in front, and is refused", async () => {
+  store.replace([])
+  const f = fakeShells({ agent: "claude" }) // the fake's foreground is the shell, as real herdr shows after Ctrl-Z
+  await spawnShellSession("/x/repo", f.deps)
+  expect(await closeShellSession("sh-repo", [], () => undefined, f.deps)).toEqual({ ok: false, error: "claude_running" })
+  expect(f.calls.some((c) => c[1] === "close")).toBe(false)
+  store.replace([])
+})
+
 test("close shell (herdr): a reused pane id (other terminal) is never closed", async () => {
   store.replace([])
   const f = fakeShells()

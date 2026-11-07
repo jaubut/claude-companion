@@ -154,7 +154,7 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 - `/api/terminal` runs `herdr terminal attach <terminal_id> --takeover`. Closing the socket detaches, and the shell keeps running.
 - The `shell` wire row carries `herdrPane`, with `tmuxPane` and `tmuxSocket` empty. iOS `isLive` and `ShellSessions.pair` already handle that (read from `claude-companion-ios` main): pairing uses `panePid` + `claudeKey`, and the session row is mirrored through its `herdrPane`.
 - A Claude started in a shell needs nothing: the pane has `HERDR_ENV=1` (the `claude()` wrapper stays out of tmux) and `$HERDR_PANE_ID`, so its hooks register an ordinary herdr session. `linkClaude` matches on the herdr pane.
-- Close is `pane close` on that pane, after checking the terminal id (herdr reuses pane ids) and herdr's own `agent` field. A pane split off on the Mac survives.
+- Close is `pane close` on that pane, after checking the terminal id (a restore can reissue a pane id it lost) and herdr's own `agent` field, which a suspended Claude keeps too. A pane split off on the Mac survives.
 - `herdrSessionGone` counts shell panes as live, so a Claude that exits in a shell leaves no `ended` row: the row's Delete would have closed the shell.
 - A herdr blip keeps the rows (`readHerdrShells` → null, not an empty list). Spawns are serialized, because herdr allows two workspaces with one label.
 - tmux shells stay listed and attachable until Stage 5. A new name avoids theirs, since both share the `shell:` key space.
@@ -173,6 +173,7 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 - `herdr` not on the server's PATH (launchd): `spawnPty` throws at the WS open. `HERDR_BIN` covers it, same as spawn.
 - A pane keeps the last attach's size after detach, with no client to restore it (`pane layout` still says 220x60, `stty size` says the phone's). Cosmetic until something else sizes it.
 - A human labelling a workspace `sh-*` puts it on the phone's Terminals list.
+- A Companion restart hides a shell that has a split until only one pane is left, because nothing says which pane is the shell's. The shell keeps running.
 
 **iOS follow-ups (list for a Mac builder, none block the phone):**
 1. Canvas `TerminalAttach.swift`: `command(for:)` requires `tmuxPane`, so a herdr shell node gets no attach. Needs `terminalId` on the wire (additive, not added here) and `herdr terminal attach <id> --takeover`, locally or through `ssh -t`.
