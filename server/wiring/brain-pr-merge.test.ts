@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { MergeGateFn } from "../lib/merge-gate"
+import { passGate } from "../lib/merge-gate.test-util"
 import type { GhFn, GhResult } from "../lib/triage-pr"
 import type { ExecFn, Row } from "../lib/turso"
 
@@ -145,6 +146,13 @@ describe("bin/pr-merge gate: refusals", () => {
       expect((out.body.reasons as string[]).length).toBeGreaterThan(0)
     })
   }
+
+  test("409 head_moved: the gate checked a head other than the one this view would merge", async () => {
+    const w = world(green())
+    const out = await mergeAgentPr(input, { ...w.deps, gate: passGate(OLD) })
+    expect([out.status, out.body.error]).toEqual([409, "head_moved"])
+    expect(merges(w.calls)).toHaveLength(0)
+  })
 
   const red: Array<[string, Record<string, unknown>]> = [
     ["conflicting", { mergeable: "CONFLICTING" }],
