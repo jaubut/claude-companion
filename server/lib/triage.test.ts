@@ -27,6 +27,10 @@ function dtask(over: Partial<DispatchTask> = {}): DispatchTask {
 const blockedSrc = (): SourceItem => taskSources([dtask()], () => "general")[0]!
 
 describe("collection per source", () => {
+  test("tasks: a cancelled row is no card, whatever it says", () => {
+    expect(taskSources([dtask({ status: "cancelled", done: true, blocker: "Cancelled by the brain: obsolete" })], () => "general")).toEqual([])
+  })
+
   test("tasks: blocked and retryable failures only; done, running and hopeless failures stay out", () => {
     const list = taskSources([
       dtask({ id: "b1" }),

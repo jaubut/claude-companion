@@ -268,7 +268,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     if (src.ref.source !== "task") return { kind: "error", status: 400, error: "wrong_source" }
     const ctx = await writeCtx(dispatch, src.ref.channel)
     const out: WriteOutcome = kind === "cancel" ? await cancelDispatchTask(ctx, src.ref.taskId)
-      : kind === "requeue" ? await requeueTask(ctx, src.ref.taskId)
+      : kind === "requeue" ? await requeueTask(ctx, src.ref.taskId, src.ref.status)
       : await unblockTask(ctx, src.ref.taskId, withHowTo(text ?? "", src.facts.blocker))
     if (!out.ok) {
       if (out.error !== "no_such_task") dispatch.applyLocal(out.task)

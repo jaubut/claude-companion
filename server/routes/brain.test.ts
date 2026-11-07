@@ -412,6 +412,45 @@ describe("POST /hooks/brain/pr-close", () => {
   })
 })
 
+describe("POST /hooks/brain/task-cancel", () => {
+  test("brain auth, then input checks; only a valid call reaches the gate", async () => {
+    const seen: unknown[] = []
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      taskCancel: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "running", owner: "zettlab" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+      const req = new Request("http://localhost:4245/hooks/brain/task-cancel", { method, headers: { "content-type": "application/json", ...headers }, ...(method === "POST" ? { body: JSON.stringify(b) } : {}) })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { task: "task_tlsrv_7", reason: "superseded by #300" }
+    expect((await post(ok, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-task-id": "builder" })).status).toBe(403)
+    expect((await post(ok, { "content-type": "application/json" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    expect((await post({ ...ok, task: "bad ref!" })).status).toBe(400)
+    expect((await post({ ...ok, task: 7 })).status).toBe(400)
+    expect((await post({ task: ok.task })).status).toBe(400)
+    expect((await post({ ...ok, reason: "   " })).status).toBe(400)
+    expect((await post({ ...ok, reason: "x".repeat(301) })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await post(ok)
+    expect(r.status).toBe(409)
+    expect(r.json).toEqual({ ok: false, error: "running", owner: "zettlab" })
+    expect(seen).toEqual([ok])
+  })
+
+  test("404 brain_disabled off the brain host", async () => {
+    const h = route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => false })
+    const req = new Request("http://localhost:4245/hooks/brain/task-cancel", { method: "POST", headers: AUTH, body: "{}" })
+    recordPeer(req, "127.0.0.1")
+    expect((await h(req, new URL(req.url)))!.status).toBe(404)
+  })
+})
+
 describe("POST /hooks/brain/pr-merge", () => {
   test("brain auth, then input checks; only a valid call reaches the merge gate, never the close gate", async () => {
     const seen: unknown[] = []

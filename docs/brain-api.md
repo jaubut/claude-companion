@@ -82,6 +82,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
+| POST | `/hooks/brain/task-cancel` | `{task, reason}` (task = id or 8-char prefix, `^[\w-]{8,64}$`; reason ≤ 300) | see below. Same auth as propose (brain/bin/task-cancel). |
 | POST | `/hooks/brain/lead` | `{repo}` | `{ok, name, state}`: `running`, `starting`, `started`; 404 `no_lead_for_repo`; 502 down. Same auth as propose (brain/bin/lead). |
 | POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
 | POST | `/hooks/brain/todo` | `{text, noteId, due?, sourceTurnId}` (text ≤ 300; noteId = note id or ref code; due YYYY-MM-DD) | `{ok, taskId, replay}`: a to-do for Jeremie (assignee human:jeremie, never queued) + a `todo` trace row under the turn. Same auth as propose (brain/bin/todo). |
@@ -175,6 +176,30 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 429 `merge_cap` | 10 brain merges in 24 h |
 | 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
 
+### Obsolete tasks (`/hooks/brain/task-cancel`)
+
+`wiring/brain-task-cancel.ts` cancels a task the brain proposed. It decides from Turso and the server's own proposal row, never from the brain's word.
+
+- **The brain's own:** `getTaskByDispatchId(<id read from Turso>)` must give `threadId` `brain` and status `filed`. That row is written only behind `bin/propose`, or by an Opus rescope of such a proposal. `tasks` has no proposer column and brain filings carry origin `jeremie`, so the Turso row can't tell; the description marker can be forged by a prompt. The store is host-local: a task from another host or a rebuilt store refuses.
+- **Only `queued`, `blocked` and `failed`.** A running task is refused outright: no lease exists, so nothing can prove its worker is gone.
+- **One transaction:** a compare-and-set on status, assignee, owner and PR URL, plus its `agent_activity` row (`brain:task-cancel`, meta: from, reason, priorBlocker, prUrl, prState). Both or neither; a row that moved answers `changed` with nothing written. The row ends `cancelled`, done=1, with `Cancelled by the brain: <reason>` in `dispatch_blocker`.
+- **After the commit:** an event turn in the brain thread, its title and reason sanitised and quoted as data. A failed turn is logged and still answers 200. The phone shows no reason: the task DTO carries a blocker only for blocked and failed rows.
+- **Never retried by a runner.** dispatch-run, its sweeps, pm-nightly and the shepherd don't match a cancelled row, and a card or the resolver can only requeue a row still at the status it read (`requeueTask`'s `from`). Jeremie's direct Retry stays the undo: it revives a cancelled row and logs `dispatch:queued`. `dispatch.sh <id> queued` without `DISPATCH_FROM` is unguarded (claude-config).
+- A cancel's `POST` may time out after the commit: the answer is 503 and a retry answers `already_final`.
+
+bin/task-cancel prints the JSON: exit 0 cancelled, 22 refused, 2 usage, any other curl code = no answer.
+
+| answer | when |
+|---|---|
+| 200 `{ok, cancelled, from, pr?, prState?, note?}` | cancelled; an OPEN PR is named, close it with `bin/pr-close` |
+| 400 | bad task / reason |
+| 403 `not_agent_task` · 403 `not_brain_task` | not an agent task · no filed brain proposal for it |
+| 404 `not_found` | no such task, or an ambiguous prefix |
+| 409 `already_final` (+`prState`) | done, cancelled, or its PR merged |
+| 409 `running` (+`owner`) · 409 `not_cancellable` (+`status`) | running · pending, pr, completed or no status |
+| 409 `changed` | the row moved mid-cancel, nothing written |
+| 503 `pr_state_unknown` / `turso_unreachable` | not cancelled, or see the time-out above |
+
 ### Deploys (`wiring/auto-deploy.ts`, `/hooks/brain/deploy`)
 
 The brain host (`COMPANION_BRAIN=1`, Linux) polls every 60 s. It fetches origin/main for two fixed checkouts: `~/claude-companion` and `~/.claude` (claude-config). A new origin/main deploys once it has stayed put for 2 min, so a burst of merges is one deploy. A refused head is retried only when origin/main moves. `bin/deploy` deploys now, with the same checks.
@@ -190,7 +215,7 @@ Every step writes an `agent_activity` row (`agent_slug` auto-deploy, action `dep
 
 ## Hooks (no hook-script change)
 
-The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|task-cancel|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
 - PreToolUse: the brain takes the normal path like any session (SUPER, then auto-judge → phone; Jeremie, 2026-10-29). Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
 - Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).

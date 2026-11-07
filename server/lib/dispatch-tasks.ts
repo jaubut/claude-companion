@@ -507,10 +507,15 @@ export function cancelDispatchTask(ctx: WriteCtx, id: string): Promise<WriteOutc
 const requeueAllowed = (t: DispatchTask) => (!!t.status && REQUEUEABLE.includes(t.status)) || (t.status === "completed" && !t.done)
 const REQUEUE_GUARD = "dispatch_status IN ('blocked', 'failed', 'cancelled') OR (dispatch_status = 'completed' AND done = 0)"
 
-/** blocked | failed | cancelled | completed-not-done → queued, done=0, run fields cleared. */
-export function requeueTask(ctx: WriteCtx, id: string): Promise<WriteOutcome> {
+/**
+ * blocked | failed | cancelled | completed-not-done → queued, done=0, run fields cleared.
+ * `from` binds it to the status a card was read at, so a row that moved since (cancelled above all) stays put.
+ * It replaces the guard: REQUEUE_GUARD has a top-level OR, an appended AND would bind to its last arm only.
+ */
+export function requeueTask(ctx: WriteCtx, id: string, from?: "blocked" | "failed"): Promise<WriteOutcome> {
   return transition(ctx, id, {
-    to: "queued", allowed: requeueAllowed, guard: REQUEUE_GUARD, guardArgs: [],
+    to: "queued", allowed: (t) => requeueAllowed(t) && (!from || t.status === from),
+    guard: from ? "dispatch_status = ?" : REQUEUE_GUARD, guardArgs: from ? [from] : [],
     sets: requeueSets(ctx.cols), setArgs: [],
     summary: (t) => `→queued: ${t.title}`, meta: { op: "requeue" },
   })
