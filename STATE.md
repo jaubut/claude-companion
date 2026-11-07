@@ -1,6 +1,6 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-10-25
+Last updated: 2026-11-05
 
 ## Active Decisions
 
@@ -33,6 +33,16 @@ Last updated: 2026-10-25
 **Why:** Jeremie wants a progress ring for long builder jobs; relay had only ACK / DONE.
 **Rejected:** progress as chat turns (noise, wakes nobody usefully); the server parsing the brain's transcript for PROGRESS lines (the relay swallows them, so they never reach it).
 **Revisit if:** a builder's progress should show on hosts other than the brain's, or jobs must survive a Companion restart.
+### Phone shells on herdr: `sh-*` workspaces + `herdr terminal attach` (2026-11-05, herdr-only Stage 2)
+**Choice:** a phone shell is a marked pane in a herdr workspace labelled `sh-<dir>`; herdr is the record (`workspace list` + `pane list`, 3 s). `/api/terminal` keeps its PTY bridge and frames, on `herdr terminal attach <terminal_id> --takeover`. Pre-existing tmux shells stay listed and attachable until Stage 5. Results and proof: `docs/herdr-only-migration.md` Stage 2.
+**Why:** Jeremie: "Everything under herdr please." A `claude` typed in a tmux shell was a session the app can't mirror; in a herdr pane it is an ordinary mirrored session. The raw attach means no iOS change.
+**Rejected:** the plan's pane-mirror switch (needs iOS, polls); a metadata tag (display-only, not read back); `workspace close` on close (takes a split pane with it).
+**Revisit if:** two devices on one shell matters (herdr takes one attach per terminal, so the newest wins).
+**Amended 2026-11-07 (task 96fedf65, replaces #268):** a shell is a pane carrying the herdr pane label `phone-shell`, set at spawn. A row is that pane, named by its workspace's label, and nothing is inferred from names, pane counts, list order or which pane was first. Probed on 0.9.5: the mark survives a SIGKILL + restore and a clean restart, follows its pane through a swap, isn't touched by a title escape or a running Claude, and a split or new tab doesn't inherit it. `taken` is every workspace label, shell or not, and every recently closed tmux name. A label with two marked panes gives no row until it is unique: a key is a label, so a second shell can't sit behind one key. Spawn reads a fresh listing and matches the terminal id create returned; a failed read, no match or a failed mark fails the spawn and closes nothing. A refused resume keeps the shell and says so.
+**Why:** four rounds of inferring which pane was the shell each moved the hole; every version could hand a human's split to Close after some sequence of restart, exit and rename. The mark needs no record in Companion and no release state.
+**Rejected:** `releasedWorkspaces` + renaming a workspace `split-<dir>` (built, then deleted); workspace id + pane count + `restored` logic (deleted); parsing `:p1` (herdr's ids are opaque); a Companion-side record; a workspace metadata tag (display-only, not read back).
+**Close (amended 2026-11-07, scope cut by Jeremie, relayed by the brain):** every P1 since round 1 was in a destructive path, so `shell-sessions.ts` issues no destructive herdr call at all, asserted by the tests on every path. Close on a herdr shell answers 409 `close_unavailable` with the sentence the phone shows; `exit` ends a shell. tmux shells keep their kill path. Close returns in its own task from `b7ceda1`: `docs/herdr-only-migration.md`, Close follow-up. Outside this module, `paneInfo` in `ended-sessions.ts` reads a marked pane as gone, so an ended row's Delete never closes a shell even before the shell list has seen it, and `closableWorkspace` refuses the mark. A herdr row is dropped on a name clash with a tmux row, on every refresh, since a key is a name.
+**Ceilings:** the phone's Close doesn't work on herdr shells until the follow-up. A failed spawn can leave a workspace, and its label stays taken. A human relabelling the pane takes the shell off the phone (safe); a human giving their own pane this label makes it a shell. `sh-*` workspaces with no marked pane are not shells: none exist, main never made one (0 of 16 in live herdr's saved session, 2026-11-07).
 
 ### Pane mirror scrollback: opt-in history request, answered to the asking viewer only (2026-11-02, t-ios-term-input-1)
 **Choice:** phone → `{"type":"scrollback","lines":N}` (cap 2000); server → that viewer only `{"type":"history","lines":M}` + one binary frame of M plain rows (CRLF, SGR reset per row), from `pane.read --source recent --lines N` (visible screen included). One answer per viewer per 1 s, latest wins. tmux / failed read → `lines:0`, no binary frame.
@@ -50,7 +60,7 @@ Last updated: 2026-10-25
 **Choice:** `POST /api/spawn-session {agent:"shell", cwd}` starts `$SHELL -l` in a detached tmux session `sh-<dir>` (argv, `-c <cwd>`, never a command line), tagged `@companion_shell 1`. tmux is the record (`lib/shell-sessions.ts`): a 3 s `list-sessions` poll feeds the list, so a restart loses nothing and `exit` ends it. Shells are appended to the wire session list (`wireSessions`: init, `sessions` frame, `/api/status`, `/api/feed`) as `agent:"shell"`, never into the lib/sessions.ts Map. `GET /api/terminal?key=&cols=&rows=` (Bearer gate, 410 for an unknown key) upgrades to a WS bridged to `tmux attach-session -t =<name>` under a Bun PTY (`lib/terminal-bridge.ts`): binary both ways, JSON `resize`, close 4000 "ended" when the attach exits.
 **Why:** the iPhone has no way to run tmux/ssh (Canvas does, TerminalAttach.swift), so the server is the terminal client. Jeremie wants Moshi-style terminals without paying for Moshi Pro.
 **Rejected:** herdr for shells (no PTY attach client to bridge); shell rows in the sessions Map (inject/triage/canvas/waiting would all have to learn to skip them).
-**Revisit if:** the phone needs to attach agent panes too (same bridge, `-t <pane>`), or the poll shows up in load.
+**Revisit if:** the phone needs to attach agent panes too (same bridge, `-t <pane>`), or the poll shows up in load. **Superseded 2026-11-05 for new shells** (phone shells on herdr, above).
 
 ### One work stream: Companion files `pending` rows, never claims (task d2487443, 2026-10-21)
 **Date:** 2026-10-21 (plan: `docs/one-stream-plan.md`)
