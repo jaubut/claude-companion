@@ -11,7 +11,7 @@ const { folderTrusted, spawnInHerdr } = await import("../lib/spawn-session")
 const NAME = "lead-claude-companion"
 
 /** A lead whose herdr record survived, in workspace w7: dead unless `live`, then in or out of its clone. */
-function stale(label: string, panes: string[], info: Record<string, unknown> | null = { shell_pid: 5, foreground_process_group_id: 5 }, live = false, isolated = true) {
+function stale(label: string, panes: string[], info: Record<string, unknown> | null = { shell_pid: 5, foreground_process_group_id: 5 }, live = false, isolated: boolean | Error = true) {
   const f = fakeHerdr({
     reply: (a) => a[0] === "workspace" && a[1] === "list" ? { workspaces: [{ workspace_id: "w7", label }] }
       : a[0] === "pane" && a[1] === "list" ? { panes: panes.map((p) => ({ pane_id: p, workspace_id: "w7" })) }
@@ -19,8 +19,9 @@ function stale(label: string, panes: string[], info: Record<string, unknown> | n
   })
   const spawned: string[] = []
   const lead = createBrainLead({
-    herdr: f.h, running: async () => live, isolated: () => isolated,
-    agentOf: async () => ({ kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
+    // The registry lags: a closed lead's session stays listed, as `alive()` does in production. Herdr is the truth.
+    herdr: f.h, running: async () => live, isolated: () => { if (isolated instanceof Error) throw isolated; return isolated }, settleMs: 0,
+    agentOf: async () => (f.verbs().includes("workspace close") ? { kind: "absent" } : { kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
     spawn: async (repo) => { spawned.push(repo); return { ok: true } },
   })
   return { f, lead, spawned }
@@ -49,7 +50,7 @@ describe("a lead's own clone", () => {
     expect(out).toEqual({ ok: true, dir: leadDir("claude-companion", h) })
     expect(calls).toEqual([["git", "clone", "-q", "--depth", "1", "https://github.com/jaubut/claude-companion.git", leadDir("claude-companion", h)]])
     const written = JSON.parse(readFileSync(join(leadDir("claude-companion", h), ".claude/settings.local.json"), "utf8"))
-    expect(written.sandbox).toEqual({ enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true })
+    expect(written.sandbox).toMatchObject({ enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true })
     expect(written.permissions.deny).toEqual(expect.arrayContaining(["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]))
   })
   test("a tampered tree doesn't survive the next spawn", async () => {
@@ -60,7 +61,7 @@ describe("a lead's own clone", () => {
     expect(existsSync(join(dir, ".git/hooks/post-merge"))).toBe(false)
   })
   test("the deny list follows the user's excludedCommands, in both rule forms", () => {
-    const deny = leadSettings(["docker *", "systemctl --user restart claude-companion.service"]).permissions.deny
+    const deny = leadSettings(["docker *", "systemctl --user restart claude-companion.service"], "/d").permissions.deny
     expect(deny).toEqual(expect.arrayContaining(["Bash(docker *)", "Bash(docker:*)", "Bash(systemctl --user restart claude-companion.service)"]))
   })
   test("an unreadable settings file or a failed clone refuses the spawn", async () => {
@@ -87,9 +88,9 @@ describe("a lead's own clone", () => {
   })
   test("is isolated only once the settings are in the clone", async () => {
     const h = home()
-    expect(leadIsolated("claude-companion", h)).toBe(false)
+    expect(leadIsolated("claude-companion", h, excluded)).toBe(false)
     await prepareLeadDir("claude-companion", h, cloned([], h), noTrust, excluded)
-    expect(leadIsolated("claude-companion", h)).toBe(true)
+    expect(leadIsolated("claude-companion", h, excluded)).toBe(true)
   })
   test("a repo with no lead gets nothing", async () => {
     expect(await prepareLeadDir("other", home(), cloned([], "/x"), noTrust, excluded)).toMatchObject({ ok: false })
@@ -136,5 +137,50 @@ describe("repo lead", () => {
     expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
     expect(f.verbs()).toEqual(expect.arrayContaining(["agent stop", "workspace close"]))
     expect(spawned).toEqual(["claude-companion"])
+  })
+})
+
+describe("the last round's three checks", () => {
+  test("the clone's .claude and .git are read-only as whole folders, so neither can be moved or filled", () => {
+    expect(leadSettings([], "/h/leads/r").sandbox.filesystem).toEqual({ denyWrite: ["/h/leads/r/.claude", "/h/leads/r/.git"] })
+  })
+  test("a lead only counts as isolated if its settings are exactly what the server wrote", () => {
+    const h = mkdtempSync(join(tmpdir(), "lead-iso-")), dir = leadDir("r", h), none = () => [] as string[]
+    mkdirSync(join(dir, ".claude"), { recursive: true })
+    const file = join(dir, ".claude/settings.local.json")
+    expect(leadIsolated("r", h, none)).toBe(false)
+    writeFileSync(file, "{}")
+    expect(leadIsolated("r", h, none)).toBe(false)
+    writeFileSync(file, JSON.stringify(leadSettings([], dir), null, 2))
+    expect(leadIsolated("r", h, none)).toBe(true)
+  })
+  test("a stale registry entry can't leave a closed lead unreplaced: first call or a retry", async () => {
+    const { lead, spawned } = stale(NAME, ["w7:p1"], { shell_pid: 5, foreground_process_group_id: 9 }, true, false)
+    expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
+    expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: true, state: "started" })
+    expect(spawned).toHaveLength(2)
+  })
+  test("a user settings read that fails proves nothing: the lead counts as neither safe nor unsafe, whatever its clone holds", () => {
+    const h = mkdtempSync(join(tmpdir(), "lead-iso-")), dir = leadDir("r", h)
+    mkdirSync(join(dir, ".claude"), { recursive: true })
+    writeFileSync(join(dir, ".claude/settings.local.json"), "{}")
+    expect(() => leadIsolated("r", h, () => { throw new Error("user settings unreadable: x") })).toThrow("user settings unreadable")
+  })
+  test("a lead that can't be verified answers down: nothing is stopped, spawned or deleted under it", async () => {
+    const { f, lead, spawned } = stale(NAME, ["w7:p1"], undefined, true, new Error("user settings unreadable: x"))
+    expect(await lead.ensure("claude-companion", NAME)).toEqual({ ok: false, name: NAME, state: "down", error: "user settings unreadable: x" })
+    expect(spawned).toEqual([])
+    expect(f.verbs()).toEqual([])
+  })
+  test("a lead that won't stop keeps its clone: nothing is spawned or deleted under it", async () => {
+    let spawned = 0
+    const f = fakeHerdr({ reply: (a) => a[0] === "workspace" && a[1] === "list" ? { workspaces: [{ workspace_id: "w7", label: NAME }] } : a[0] === "pane" && a[1] === "list" ? { panes: [{ pane_id: "w7:p1", workspace_id: "w7" }] } : {} })
+    const lead = createBrainLead({
+      herdr: f.h, running: async () => true, isolated: () => false, settleMs: 0,
+      agentOf: async () => ({ kind: "present", ref: { pane: "w7:p1", workspaceId: "w7" } }),
+      spawn: async () => { spawned++; return { ok: true } },
+    })
+    expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: false, state: "down" })
+    expect(spawned).toBe(0)
   })
 })

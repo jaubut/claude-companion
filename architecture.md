@@ -134,6 +134,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/terminal-bridge.ts` | 153 | lib | 17 |  |
+| `wiring/brain-lead.ts` | 152 | lib | 9 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
 | `routes/canvas.ts` | 150 | lib | 2 |  |
@@ -154,7 +155,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
-| `wiring/brain-lead.ts` | 129 | lib | 9 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
