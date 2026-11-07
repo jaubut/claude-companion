@@ -457,7 +457,7 @@ describe("POST /hooks/brain/pr-merge", () => {
     const h = route.createBrainRoute({
       wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
       prClose: async () => { throw new Error("pr-merge must not reach pr-close") },
-      prMerge: async (p) => { seen.push(p); return { status: 403, body: { ok: false, error: "needs_human", reasons: ["sensitive paths: billing.ts"] } } },
+      prMerge: async (p) => { seen.push(p); return { status: 403, body: { ok: false, error: "hold-label", action: "wait", reason: "held by label wip", head: "abc" } } },
     })
     const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
       const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
@@ -479,8 +479,42 @@ describe("POST /hooks/brain/pr-merge", () => {
     expect(seen).toHaveLength(0)
     const r = await post(ok)
     expect(r.status).toBe(403)
-    expect(r.json).toEqual({ ok: false, error: "needs_human", reasons: ["sensitive paths: billing.ts"] })
-    expect(seen).toEqual([ok])
+    expect(r.json).toEqual({ ok: false, error: "hold-label", action: "wait", reason: "held by label wip", head: "abc" })
+    expect(seen).toEqual([{ ...ok, signal: expect.any(AbortSignal) }])
+  })
+
+  test("a caller that hangs up on a real socket reaches the merge as an aborted signal", async () => {
+    const seen = Promise.withResolvers<AbortSignal>()
+    const leave = Promise.withResolvers<void>()
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true, prClose: async () => { throw new Error("unreachable") },
+      prMerge: async (p) => { seen.resolve(p.signal!); await leave.promise; return { status: 409, body: { ok: false, error: "client_gone" } } },
+    })
+    const server = Bun.serve({ port: 0, fetch: (req) => { recordPeer(req, "127.0.0.1"); return h(req, new URL(req.url)) as Promise<Response> } })
+    const client = new AbortController()
+    const sent = fetch(`http://127.0.0.1:${server.port}/hooks/brain/pr-merge`, {
+      method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: JSON.stringify({ repo: "o/r", pr: 7, reason: "routine" }), signal: client.signal,
+    }).catch(() => null)
+    const signal = await seen.promise
+    expect(signal.aborted).toBe(false)
+    client.abort()
+    await sent
+    await Bun.sleep(50)
+    expect(signal.aborted).toBe(true)
+    leave.resolve()
+    server.stop(true)
+  })
+
+  test("a 409 gate_unavailable reaches bin/pr-merge whole", async () => {
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true, prClose: async () => { throw new Error("unreachable") },
+      prMerge: async () => ({ status: 409, body: { ok: false, error: "gate_unavailable", detail: "pr-gate.ts missing on this host" } }),
+    })
+    const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: JSON.stringify({ repo: "o/r", pr: 7, reason: "routine" }) })
+    recordPeer(req, "127.0.0.1")
+    const res = (await h(req, new URL(req.url)))!
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ ok: false, error: "gate_unavailable", detail: "pr-gate.ts missing on this host" })
   })
 
   test("404 brain_disabled when the brain is off", async () => {
