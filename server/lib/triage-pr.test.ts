@@ -137,6 +137,13 @@ describe("merge intent", () => {
     expect(calls.some((c) => c[1] === "merge")).toBe(false)
   })
 
+  test("a hold with no head reported can't be approved: 409 head_moved, no row, no merge", async () => {
+    readiness = { mergeable: "CONFLICTING" }
+    expect(await mergePr(deps, target)).toEqual({ kind: "error", status: 409, error: "head_moved" })
+    expect(approvals()).toEqual([])
+    expect(calls.some((c) => c[1] === "merge")).toBe(false)
+  })
+
   test("behind / checks pending / checks failing → queued with that reason", async () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ ...green, mergeStateStatus: "BEHIND" }, "behind"],

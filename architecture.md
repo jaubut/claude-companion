@@ -61,9 +61,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/command-offpane-home.ts` | 289 | lib | 17 | state: let baseMemo |
 | `routes/brain.ts` | 288 | lib | 3 |  |
+| `lib/triage-pr.ts` | 286 | lib | 21 |  |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `wiring/auto-compact.ts` | 285 | lib | 6 | state: let statsDb · emits: inject_error |
-| `lib/triage-pr.ts` | 284 | lib | 21 |  |
 | `lib/ended-sessions.ts` | 282 | lib | 17 |  |
 | `lib/orchestrator-brain.ts` | 277 | lib | 7 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
