@@ -216,8 +216,8 @@ describe("choose", () => {
     expect(b.body.result).toBe("done")
     expect(c).toMatchObject({ status: 200, body: { ok: true, id: "task:t1", result: "replay" } })
     // A refusal is not remembered: the same key retries for real.
-    execOut = { kind: "error", status: 502, error: "merge_unverified" }
-    expect((await e.choose({ id: "task:t1", optionId: "a", idemKey: "k2" })).status).toBe(502)
+    execOut = { kind: "error", status: 409, error: "merge_unverified" }
+    expect((await e.choose({ id: "task:t1", optionId: "a", idemKey: "k2" })).status).toBe(409)
     execOut = { kind: "done" }
     expect((await e.choose({ id: "task:t1", optionId: "a", idemKey: "k2" })).body.result).toBe("done")
     expect(executed).toHaveLength(3)
@@ -273,7 +273,7 @@ describe("merge intent: queued outcome, pending rows, one log line per choose", 
   test("refusals and errors are logged too (status + code)", async () => {
     const logs: string[] = []
     sources = [pr("2")]
-    execOut = { kind: "error", status: 502, error: "merge_unverified" }
+    execOut = { kind: "error", status: 409, error: "merge_unverified" }
     const e = createTriageEngine({
       collect: async () => sources, phrase: async () => null, current: async (s) => s,
       execute: async () => execOut, store: createTriageStore(new Database(":memory:")), broadcast: () => {}, now: () => clock, log: (m) => logs.push(m),
@@ -281,8 +281,8 @@ describe("merge intent: queued outcome, pending rows, one log line per choose", 
     await e.refresh()
     const item = e.items()[0]!
     const merge = item.options.find((o) => o.action.kind === "merge")!
-    expect((await e.choose({ id: item.id, optionId: merge.id })).status).toBe(502)
-    expect(logs).toContain(`[triage] choose ${item.id} option=${merge.id} → merge · 502 error=merge_unverified`)
+    expect((await e.choose({ id: item.id, optionId: merge.id })).status).toBe(409)
+    expect(logs).toContain(`[triage] choose ${item.id} option=${merge.id} → merge · 409 error=merge_unverified`)
     execOut = { kind: "error", status: 403, error: "human-merge-path", extra: { reason: "touches hooks/x.py — human merge only" } }
     await e.choose({ id: item.id, optionId: merge.id })
     expect(logs.at(-1)).toBe(`[triage] choose ${item.id} option=${merge.id} → merge · 403 error=human-merge-path reason=touches hooks/x.py — human merge only`)

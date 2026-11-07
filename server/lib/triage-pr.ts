@@ -207,7 +207,7 @@ async function approveOrLand(deps: MergeDeps, t: PrTarget, head: string): Promis
   const late = after === "OPEN" ? await settle(deps, t, await readiness(deps.gh, t.prUrl), head) : null
   if (late) return late
   const detail = (run.stderr || run.stdout).trim().slice(0, 200)
-  return { kind: "error", status: 502, error: "merge_unverified", extra: { state: after, detail } }
+  return { kind: "error", status: 409, error: "merge_unverified", extra: { state: after, detail } }
 }
 
 async function approveOrMerge(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome> {

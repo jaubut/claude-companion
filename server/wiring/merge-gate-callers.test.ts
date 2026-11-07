@@ -205,6 +205,13 @@ function matrix(toolsFor: () => string): void {
       expect(await tap(w, gate)).toMatchObject({ status: 202, approvedHeadSha: SHA })
       expect(w.approvals()).toHaveLength(1)
     })
+    test("late: a refused merge nothing can explain is 409 merge_unverified, with no 5xx to re-send, and one merge", async () => {
+      const w = world({ afterMerge: { mergeable: "MERGEABLE", head: SHA } })
+      const blind: GhFn = async (args) => (merges(w).length && args[4] === "state" ? { code: 1, stdout: "", stderr: "HTTP 502" } : w.gh(args))
+      expect(await tap({ ...w, gh: blind }, gate)).toMatchObject({ status: 409, error: "merge_unverified", state: "unknown" })
+      expect(merges(w)).toHaveLength(1)
+      expect(rows(w)).toEqual({ n: 0 })
+    })
   })
 }
 

@@ -76,10 +76,10 @@ describe("merge", () => {
     expect(ledger()).toEqual([{ agent_slug: "builder", action: "outcome:merged", target_id: "t1", summary: "PR #4 merged" }])
   })
 
-  test("not MERGED afterwards (e.g. auto-merge queued) → 502 merge_unverified, nothing recorded", async () => {
+  test("not MERGED afterwards (e.g. auto-merge queued) → 409 merge_unverified, nothing recorded", async () => {
     mergeEffect = "OPEN"
     const out = await mergePr(deps, target)
-    expect(out).toMatchObject({ kind: "error", status: 502, error: "merge_unverified", extra: { state: "OPEN" } })
+    expect(out).toMatchObject({ kind: "error", status: 409, error: "merge_unverified", extra: { state: "OPEN" } })
     expect(task().done).toBe(0)
     expect(ledger()).toEqual([])
   })
@@ -158,7 +158,7 @@ describe("merge intent", () => {
     expect(approvals()).toHaveLength(4)
   })
 
-  test("GitHub refuses the merge and only then reports a conflict → the tap still counts: queued, not 502", async () => {
+  test("GitHub refuses the merge and only then reports a conflict → the tap still counts: queued, not merge_unverified", async () => {
     readiness = green
     readinessAfter = { ...green, mergeable: "CONFLICTING" }
     mergeEffect = "OPEN"
@@ -190,11 +190,42 @@ describe("merge intent", () => {
     expect(approvals()).toEqual([])
   })
 
-  test("GitHub refuses on the gated head for another reason: still 502 merge_unverified, which iOS treats as final", async () => {
+  test("GitHub refuses on the gated head for another reason: 409 merge_unverified", async () => {
     readiness = green
     readinessAfter = green
     mergeEffect = "OPEN"
-    expect(await mergePr(deps, target)).toMatchObject({ kind: "error", status: 502, error: "merge_unverified" })
+    expect(await mergePr(deps, target)).toMatchObject({ kind: "error", status: 409, error: "merge_unverified" })
+  })
+
+  // The answer to a pinned merge GitHub rejected when nothing afterwards can say why. A 5xx here could be re-sent, and a
+  // re-send passes the gate on a head Jeremie never tapped.
+  for (const [what, after, state] of [
+    ["the state read fails", { code: 1, stdout: "", stderr: "HTTP 502" }, "unknown"],
+    ["the state read is garbage", { code: 0, stdout: "not json", stderr: "" }, "unknown"],
+    ["the PR reads closed", { code: 0, stdout: JSON.stringify({ state: "CLOSED" }), stderr: "" }, "CLOSED"],
+  ] as const) {
+    test(`pinned merge rejected, then ${what}: 409, the detail kept, nothing recorded`, async () => {
+      const rejected: GhFn = async (args) => {
+        if (args[1] === "merge") { calls.push(args); return { code: 1, stdout: "", stderr: "Head branch was modified" } }
+        return calls.some((c) => c[1] === "merge") ? after : gh(args)
+      }
+      readiness = green
+      expect(await mergePr({ ...deps, gh: rejected }, target)).toEqual({ kind: "error", status: 409, error: "merge_unverified", extra: { state, detail: "Head branch was modified" } })
+      expect(task().done).toBe(0)
+      expect(approvals()).toEqual([])
+      expect(ledger()).toEqual([])
+    })
+  }
+
+  test("pinned merge rejected, PR still open, the readiness read fails: 409, nothing recorded", async () => {
+    const rejected: GhFn = async (args) => {
+      if (args[1] === "merge") { calls.push(args); return { code: 1, stdout: "", stderr: "Head branch was modified" } }
+      if (args[4] === READY && calls.some((c) => c[1] === "merge")) return { code: 1, stdout: "", stderr: "HTTP 502" }
+      return gh(args)
+    }
+    readiness = green
+    expect(await mergePr({ ...deps, gh: rejected }, target)).toEqual({ kind: "error", status: 409, error: "merge_unverified", extra: { state: "OPEN", detail: "Head branch was modified" } })
+    expect(approvals()).toEqual([])
   })
 
   // A throw past the gate would reach iOS as a 503, which it queues and re-sends with the card hidden.
