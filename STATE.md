@@ -1,6 +1,6 @@
 # STATE — Claude Companion: Single-Thread Orchestrator (PRJ-OR1T)
 
-Last updated: 2026-11-05
+Last updated: 2026-11-07
 
 ## Active Decisions
 
@@ -28,11 +28,16 @@ Last updated: 2026-11-05
 **Why:** nothing linted this repo. ast-grep reads no tsconfig, so TS 7 can't break it, and its YAML rules ship their own pass/fail fixtures.
 **Rejected:** typescript-eslint (needs the TS compiler API); pattern 1, swallowed errors (8 of 16 overall, 0 of 2 here, about 400 live candidates); a `tmuxCapture` timeout rule (a call site shows nothing, the gap is inside the wrapper).
 **Revisit if:** the 34 suppressions stop shrinking, or a second repo wants the same rules.
+
 ### Off-pane commands on herdr, through the same TmuxRunner seam (2026-11-05, herdr-only Stage 3)
 **Choice:** `lib/command-offpane-herdr.ts` answers the tmux verbs of the enumeration and reaper from a `cc-scrape-*` herdr workspace; the launch prefers `~/.local/bin/claude`. Results and proof: `docs/herdr-only-migration.md` Stage 3.
 **Why:** the list had been dead on Zettlab since 2026-10-11 (the `~/.bun/bin/claude` shim execs `$HOME/...`, and `$HOME` is throwaway). `/` suggestions don't replace it.
 **Rejected:** dropping it; rewriting the lifecycle and its 1458-line test (kept, Stage 5 can flatten); a separate hidden herdr session (a daemon to manage for a 30 s blip).
 **Revisit if:** the blip in a herdr client annoys, or a new herdr has a hidden workspace.
+**Amended 2026-11-07 (#269 review, Codex P1 + P2):** a scrape is a pane carrying the herdr label `companion-scrape` (`SCRAPE_PANE_MARK`), set right after create, plus the pane, terminal and workspace ids create returned. One check, `ownedScrape`, runs before every `pane run`, read, key and close: mark, terminal and workspace must match. Gone or not ours drops the record for good; unreadable is -1. Kill closes the workspace only while our pane is alone in it. A `cc-scrape-*` label with no record is never closed and never reads as gone. No pid, no claude: the pid is read before anything is typed, and a listing with an unreadable pid is no inventory. The marks compose because a pane has one label: a scrape is never a shell row, a shell never a scrape.
+**Rejected:** closing by label (proves nothing, takes a human's split with it); a Companion-only record (gone at restart, so the reaper would trust labels); retrying a mismatched pane (a reused id never becomes ours again).
+**Ceilings:** herdr has no compare-and-send, so a reuse in the ms between check and act is not covered. A scrape the old build left running at deploy has no mark and is never reaped: `herdr workspace list | grep cc-scrape-`, then `herdr workspace close <id>`.
+
 ### Builder progress: relay PROGRESS → brain's relay POSTs /hooks/builder-progress → `builder_jobs` frame (2026-11-02)
 **Choice:** the brain session's relay mod (gated on `COMPANION_TASK_ID=brain`) POSTs task / progress / done / aborted to `/hooks/builder-progress` on loopback; `lib/builder-jobs.ts` keeps the active jobs in memory (pct or null = indeterminate, step, stale at 10 min, dropped at 2 h, cleared on DONE / ABORTED) and broadcasts the full list as `builder_jobs` (sent on `/ws` open only when non-empty). Plan + contract + iOS spec: `docs/builder-progress-plan.md`.
 **Why:** Jeremie wants a progress ring for long builder jobs; relay had only ACK / DONE.

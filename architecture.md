@@ -45,7 +45,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 382 | lib | 26 |  |
-| `lib/herdr.ts` | 376 | lib | 32 | state: let clientMod, spawnedAgents: Map |
+| `lib/herdr.ts` | 379 | lib | 33 | state: let clientMod, spawnedAgents: Map |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
@@ -131,6 +131,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/builder-jobs.ts` | 167 | lib | 11 | state: EVENTS: Set |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `routes/triage.ts` | 165 | lib | 2 |  |
+| `lib/command-offpane-herdr.ts` | 160 | lib | 4 | state: scrapes: Map |
 | `lib/terminal-bridge.ts` | 160 | lib | 17 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
@@ -168,7 +169,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
-| `lib/command-offpane-herdr.ts` | 113 | lib | 3 | state: scrapeTerminals: Map |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/brain-task-cancel.ts` | 110 | lib | 5 |  |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
@@ -455,6 +455,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `brainEnabled()` | `lib/brain.ts` | `companion-server.ts`, `routes/brain.ts`, `routes/capture.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `ws.ts` |
 | `QuestionAnswer()` | `lib/questions.ts` | `lib/approval-history.ts`, `lib/orphan-question.ts`, `lib/question-driver.ts`, `lib/question-hook.ts`, `routes/api.ts#* /api/feed`, `ws.ts` |
 | `Dialog()` | `lib/dialogs.ts` | `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/inject-guard.ts`, `lib/model-control.ts`, `routes/model.ts`, `wiring/dialogs.ts` |
+| `herdrErrorCode()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/herdr-inject.ts`, `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `wiring/brain-workers.ts`, `wiring/takeover-liveness.ts` |
 | `Turn()` | `lib/orchestrator-chat.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `lib/orchestrator-brain.ts`, `wiring/body.ts`, `wiring/brain.ts`, `wiring/orchestrator.ts` |
 | `sendKeysArgs()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/session-pane.ts`, `lib/submit-confirm.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/pane-mirror.ts` |
 | `capturePane()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/pane-clean.ts`, `lib/session-pane.ts`, `lib/submit-confirm.ts`, `wiring/dialogs.ts`, `wiring/pane-mirror.ts` |
@@ -470,7 +471,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `BodyComponentDetail()` | `lib/body.ts` | `lib/body-agent.ts`, `lib/body-investigate-engine.ts`, `lib/body-investigator.ts`, `lib/resolver-prompt.ts`, `wiring/body-agent.ts` |
 | `addDays()` | `lib/my-tasks.ts` | `lib/body-tokens.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-load.ts`, `lib/tasks-agent-rules.ts`, `lib/tasks-agent.ts` |
 | `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `lib/suggest-cleanup.ts`, `routes/command.ts#POST /api/command/suggest` |
-| `herdrErrorCode()` | `lib/herdr.ts` | `lib/herdr-inject.ts`, `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `wiring/brain-workers.ts`, `wiring/takeover-liveness.ts` |
 | `endedStore()` | `lib/ended-sessions.ts` | `lib/herdr-workspace.ts`, `lib/shell-sessions.ts`, `routes/api.ts#POST /api/sessions/resume`, `routes/api.ts#POST /api/sessions/ended/delete`, `wiring/shell-sessions.ts` |
 | `TASKS_TZ()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `isQuestionTool()` | `lib/questions.ts` | `lib/orphan-question.ts`, `lib/question-hook.ts`, `lib/tool-format.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use` |

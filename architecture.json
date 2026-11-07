@@ -1329,15 +1329,16 @@
         },
         {
           "path": "lib/command-offpane-herdr.ts",
-          "lines": 113,
+          "lines": 160,
           "kind": "lib",
           "exports": [
             "PaneReader",
             "readPanePlain",
+            "resetHerdrScrapes",
             "herdrScrapeRunner"
           ],
           "state": [
-            "scrapeTerminals: Map"
+            "scrapes: Map"
           ],
           "emits": [],
           "consumes": [],
@@ -2170,7 +2171,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 376,
+          "lines": 379,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -2188,6 +2189,7 @@
             "HerdrOwner",
             "WorkspaceCloseOpts",
             "SHELL_PANE_MARK",
+            "SCRAPE_PANE_MARK",
             "closeHerdrWorkspaceWhenIdle",
             "validHerdrPane",
             "herdrPaneOf",
@@ -10320,6 +10322,23 @@
             "wiring/takeover-liveness.ts"
           ]
         },
+        "herdrErrorCode": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts",
+            "lib/herdr-inject.ts",
+            "lib/shell-sessions.ts",
+            "lib/spawn-session.ts",
+            "wiring/brain-workers.ts",
+            "wiring/takeover-liveness.ts"
+          ]
+        },
+        "SCRAPE_PANE_MARK": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts"
+          ]
+        },
         "TmuxRunner": {
           "module": "lib/command-offpane-launch.ts",
           "callers": [
@@ -10962,16 +10981,6 @@
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "wiring/dialogs.ts"
-          ]
-        },
-        "herdrErrorCode": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/herdr-inject.ts",
-            "lib/shell-sessions.ts",
-            "lib/spawn-session.ts",
-            "wiring/brain-workers.ts",
-            "wiring/takeover-liveness.ts"
           ]
         },
         "PickerIO": {
