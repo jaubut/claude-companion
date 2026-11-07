@@ -16,7 +16,7 @@ let sessions: typeof import("../lib/sessions")
 beforeAll(async () => {
   process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "api-shell-close-")), "test.db")
   process.env.COMPANION_TMUX_SOCKET = `cc-close-test-${process.pid}-${Date.now()}`
-  process.env.HERDR_BIN = "false" // never the host's herdr
+  process.env.HERDR_BIN = "/nonexistent/herdr" // never the host's herdr: a host without one
   process.env.COMPANION_AUTH_TOKEN ??= "shell-close-test-token-0123456789"
   handleApiRoute = (await import("./api")).handleApiRoute
   shells = await import("../lib/shell-sessions")
@@ -52,11 +52,21 @@ test("close: refused from the LAN like a shell spawn", async () => {
   expect(await close({ name: "sh-x" }, "192.168.2.40")).toEqual({ status: 403, json: { ok: false, error: "network_refused" } })
 })
 
-test("close: a herdr shell is refused with the sentence the phone shows, the row stays", async () => {
+test("close: every refusal is a 409 with a sentence the phone shows, never a 5xx; the row stays", async () => {
+  // No herdr here, so a herdr row can't be read again: herdr_unreadable.
   shells.store.replace([{ ...shell("sh-herdr", ""), herdrPane: "w1:p1", terminalId: "t1" }])
-  expect(await close({ name: "sh-herdr" })).toEqual({ status: 409, json: { ok: false, error: "Type exit in the shell to close it", code: "close_unavailable" } })
+  expect(await close({ name: "sh-herdr" })).toEqual({ status: 409, json: { ok: false, error: "herdr didn't answer, nothing was closed. Try again", code: "herdr_unreadable" } })
   expect(shells.listShellSessions().map((s) => s.name)).toEqual(["sh-herdr"])
   shells.store.replace([])
+})
+
+test("close: the refusal sentences, one per code", async () => {
+  const { closeRefusal } = shells
+  expect(closeRefusal("name_ambiguous")).toEqual({ ok: false, error: "Two terminals share this name, nothing was closed. Type exit in the one to close", code: "name_ambiguous" })
+  expect(closeRefusal("terminal_changed")).toEqual({ ok: false, error: "This terminal restarted, nothing was closed. Close it again", code: "terminal_changed" })
+  expect(closeRefusal("name_reused")).toEqual({ ok: false, error: "This name was closed a moment ago and another terminal has it now. Type exit in it to close it", code: "name_reused" })
+  expect(closeRefusal("kill_failed")).toEqual({ ok: false, error: "The terminal didn't close. Try again", code: "kill_failed" })
+  expect(closeRefusal("claude_running")).toEqual({ ok: false, error: "claude_running" })
 })
 
 test("close: a name not in the shell list is a 404", async () => {
