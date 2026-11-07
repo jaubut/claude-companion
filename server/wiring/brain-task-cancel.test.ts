@@ -1,92 +1,70 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
+import { randomUUID } from "node:crypto"
 import { mkdtempSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type HranaStubOptions, installHranaStub } from "../lib/hrana-stub.test-util"
 import { type SqlArg, type TxFn, tursoExec, tursoTx } from "../lib/turso"
+import { openTestDb, schemaDb, testDbConfigured } from "../lib/turso-test-db.test-util"
 
 // bin/task-cancel gate (wiring/brain-task-cancel.ts): every refusal and the cancel, with the production
-// tursoExec / tursoTx. Default: the Hrana stub over bun:sqlite with the live DDL and triggers (CI has no Turso).
-// TURSO_IT_URL=http://127.0.0.1:<port> runs the same cases on a fresh local sqld instead; it never takes prod.
+// tursoExec / tursoTx. Default: the Hrana stub over bun:sqlite on production's schema, which also carries the
+// fault injection. With TURSO_TEST_URL and TURSO_TEST_AUTH_TOKEN the same cases run on tls-test, shared with
+// other runs: ids are unique per test, and a statement that scans every row stays on the stub.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-taskcancel-")), "test.db")
-const REAL = process.env.TURSO_IT_URL
-if (REAL && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(REAL)) throw new Error("TURSO_IT_URL takes a local sqld, never prod")
+const REAL = testDbConfigured()
 const { TASK_CANCEL_ACTION, TASK_REF, cancelAgentTask } = await import("./brain-task-cancel")
 const { getTaskActivity, requeueTask, unblockTask } = await import("../lib/dispatch-tasks")
 const chat = await import("../lib/orchestrator-chat")
 const { db: localStore } = await import("../lib/orchestrator-db")
 
-// Copied from the live sqlite_master, 2026-11-07.
-const DDL = [
-  "CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT, ref_code TEXT, folder TEXT, status TEXT)",
-  `CREATE TABLE task_stamps (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('release', 'merge')), pr_url TEXT, head_sha TEXT, stamped_by TEXT NOT NULL, stamped_at TEXT DEFAULT (datetime('now')))`,
-  `CREATE TABLE tasks (id TEXT PRIMARY KEY, note_id TEXT NOT NULL, parent_id TEXT DEFAULT '', text TEXT NOT NULL, description TEXT DEFAULT '', done INTEGER DEFAULT 0, due_date TEXT DEFAULT '', position INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')), assignee TEXT, dispatch_status TEXT, dispatch_run_id TEXT, dispatch_started_at TEXT, dispatch_completed_at TEXT, dispatch_blocker TEXT,
-    last_pm_review TEXT, dispatch_owner TEXT, dispatch_result_ref TEXT, dispatch_pr_url TEXT, origin TEXT NOT NULL DEFAULT 'unknown', FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE)`,
-  `CREATE TABLE agent_activity (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_slug TEXT NOT NULL, action TEXT NOT NULL, target_kind TEXT, target_id TEXT, summary TEXT, meta TEXT, ts TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TRIGGER tasks_origin_immutable BEFORE UPDATE OF origin ON tasks WHEN NEW.origin <> OLD.origin BEGIN SELECT RAISE(ABORT, 'task origin is immutable'); END`,
-  `CREATE TRIGGER tasks_queue_guard_ins BEFORE INSERT ON tasks WHEN lower(trim(NEW.dispatch_status)) = 'queued' AND NEW.origin NOT IN ('jeremie', 'system', 'client')
-    AND NOT EXISTS (SELECT 1 FROM task_stamps s WHERE s.task_id = NEW.id AND s.kind = 'release') BEGIN SELECT RAISE(ABORT, 'tainted task needs a human stamp'); END`,
-  `CREATE TRIGGER tasks_queue_guard_upd BEFORE UPDATE OF dispatch_status ON tasks WHEN lower(trim(NEW.dispatch_status)) = 'queued' AND lower(trim(COALESCE(OLD.dispatch_status, ''))) <> 'queued'
-    AND NEW.origin NOT IN ('jeremie', 'system', 'client') AND NOT EXISTS (SELECT 1 FROM task_stamps s WHERE s.task_id = NEW.id AND s.kind = 'release') BEGIN SELECT RAISE(ABORT, 'tainted task needs a human stamp'); END`,
-]
-
-const saved = { token: process.env.TURSO_AUTH_TOKEN, url: process.env.TURSO_DATABASE_URL }
 const hooks: HranaStubOptions = {}
 let db: Database
 let restore: () => void = () => {}
 let trace: string[] = []
+let run: Awaited<ReturnType<typeof openTestDb>> | undefined
+let NOTE = "projects/x"
+let prefix = ""
 
 beforeAll(async () => {
   if (!REAL) return
-  process.env.TURSO_AUTH_TOKEN = "local"
-  process.env.TURSO_DATABASE_URL = REAL
-  for (const s of DDL) await tursoExec(s, [])
-})
-afterAll(() => {
-  for (const [k, v] of [["TURSO_AUTH_TOKEN", saved.token], ["TURSO_DATABASE_URL", saved.url]] as const) {
-    if (v === undefined) delete process.env[k]
-    else process.env[k] = v
-  }
-})
+  run = await openTestDb()
+  NOTE = run.note
+}, 60_000)
+afterAll(() => run?.close())
 beforeEach(async () => {
+  prefix = randomUUID().slice(0, 8)
   delete hooks.failOn
   delete hooks.onRequest
   localStore.exec("DELETE FROM orchestrator_tasks")
-  if (REAL) {
-    for (const t of ["agent_activity", "tasks"]) await tursoExec(`DELETE FROM ${t}`, [])
-    await tursoExec("DELETE FROM notes", [])
-  } else {
-    process.env.TURSO_AUTH_TOKEN = "test-token"
-    db = new Database(":memory:")
-    for (const s of DDL) db.exec(s)
-    const stub = installHranaStub(db, hooks)
-    restore = stub.restore
-    trace = stub.trace
-  }
-  await sql("INSERT INTO notes (id, title, folder) VALUES ('projects/x', 'X', 'projects')")
+  if (REAL) return
+  db = schemaDb()
+  const stub = installHranaStub(db, hooks)
+  restore = stub.restore
+  trace = stub.trace
+  await sql("INSERT INTO notes (id, folder, filename, title) VALUES (?, 'projects', 'x.md', 'X')", [NOTE])
 })
 afterEach(() => restore())
 
 const sql = (s: string, args: SqlArg[] = []) => tursoExec(s, args)
-const ID = (n: number) => `${String(n).padStart(8, "0")}${"a".repeat(24)}`
+const ID = (n: number) => `${prefix}${String(n).padStart(24, "0")}`
 const PR = "https://github.com/o/r/pull/7"
 
 interface Seed { status?: string | null; assignee?: string; owner?: string | null; pr?: string | null; blocker?: string | null; text?: string; done?: number; description?: string; origin?: string }
 
 async function seed(id: string, s: Seed = {}) {
   await sql(
-    "INSERT INTO tasks (id, note_id, text, description, done, assignee, dispatch_status, dispatch_owner, dispatch_pr_url, dispatch_blocker, origin) VALUES (?, 'projects/x', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [id, s.text ?? "Old plan", s.description ?? "", s.done ?? 0, s.assignee ?? "agent:builder", s.status === undefined ? "blocked" : s.status, s.owner ?? null, s.pr ?? null, s.blocker ?? null, s.origin ?? "jeremie"],
+    "INSERT INTO tasks (id, note_id, text, description, done, assignee, dispatch_status, dispatch_owner, dispatch_pr_url, dispatch_blocker, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [id, NOTE, s.text ?? "Old plan", s.description ?? "", s.done ?? 0, s.assignee ?? "agent:builder", s.status === undefined ? "blocked" : s.status, s.owner ?? null, s.pr ?? null, s.blocker ?? null, s.origin ?? "jeremie"],
   )
 }
 /** A proposal row as the brain files it: real createProposal → stampDispatchId → markFiled. */
 function proposal(id: string, thread: string = "brain", filed = true) {
-  const t = chat.createProposal("p", "", "why", thread, { noteId: "projects/x", agent: "builder", title: "t" })
+  const t = chat.createProposal("p", "", "why", thread, { noteId: NOTE, agent: "builder", title: "t" })
   chat.stampDispatchId(t.taskId, id)
-  if (filed) chat.markFiled(t.taskId, { noteId: "projects/x", agent: "builder" })
+  if (filed) chat.markFiled(t.taskId, { noteId: NOTE, agent: "builder" })
 }
 async function brainTask(id: string, s: Seed = {}) {
   await seed(id, s)
@@ -125,9 +103,9 @@ async function refused(id: string, status: number, error: string, extra: Record<
 describe("bin/task-cancel gate", () => {
   test("404 not_found: no row, or an 8-char prefix two rows share", async () => {
     expect(await cancel(ID(999))).toEqual({ status: 404, body: { ok: false, error: "not_found" } })
-    await brainTask(`aaaaaaaa${"1".repeat(24)}`)
-    await brainTask(`aaaaaaaa${"2".repeat(24)}`)
-    expect((await cancel("aaaaaaaa")).body.error).toBe("not_found")
+    await brainTask(`${prefix}${"1".repeat(24)}`)
+    await brainTask(`${prefix}${"2".repeat(24)}`)
+    expect((await cancel(prefix)).body.error).toBe("not_found")
   })
 
   test("403 not_agent_task: Jeremie's own to-do, a handoff, and a row reassigned after filing", async () => {
@@ -329,7 +307,7 @@ describe("bin/task-cancel gate", () => {
 // Each statement is a copy of a runner's own SQL (claude-config tools): a cancelled row must match none of them.
 describe("a cancelled row is never picked up again", () => {
   const ctx = () => ({ exec: tursoExec, cols: { prUrl: true, resultRef: true, origin: true }, host: "t", channel: null })
-  const zero: [string, string, SqlArg[]][] = [
+  const zero = (): [string, string, SqlArg[]][] => [
     ["dispatch-run.ts:249 claim", "UPDATE tasks SET dispatch_status='running', dispatch_owner=?, dispatch_started_at=datetime('now'), dispatch_blocker=NULL, updated_at=datetime('now') WHERE id=? AND dispatch_status='queued'", ["zettlab", ID(1)]],
     ["dispatch-run.ts:323 stall requeue", "UPDATE tasks SET dispatch_status='queued', dispatch_run_id=NULL, dispatch_started_at=NULL, dispatch_completed_at=NULL, dispatch_owner=NULL, dispatch_blocker=NULL, updated_at=datetime('now') WHERE id=? AND dispatch_status='running'", [ID(1)]],
     ["pm-nightly.py:120 queue sweep", "UPDATE tasks SET dispatch_status='queued', updated_at=datetime('now') WHERE done=0 AND assignee LIKE 'agent:%' AND dispatch_status IS NULL AND origin IN (?,?)", ["jeremie", "system"]],
@@ -343,12 +321,20 @@ describe("a cancelled row is never picked up again", () => {
     ["pr-shepherd.ts:2688 rows", "SELECT id FROM tasks WHERE done=0 AND dispatch_pr_url LIKE 'https://github.com/%' AND dispatch_status IN ('pr','completed')"],
   ]
 
-  test("no runner statement matches it, and the guarded retries refuse it", async () => {
+  // pm-nightly's sweep and the selectors scan every row: on tls-test that means other runs'.
+  test.skipIf(!!REAL)("no runner statement matches it", async () => {
     await brainTask(ID(1), { blocker: "Which repo?", owner: "zettlab", pr: null })
     expect((await cancel(ID(1))).status).toBe(200)
     const before = await row(ID(1))
-    for (const [what, s, args] of zero) expect([what, (await sql(s, args)).affected]).toEqual([what, 0])
+    for (const [what, s, args] of zero()) expect([what, (await sql(s, args)).affected]).toEqual([what, 0])
     for (const [what, s] of none) expect([what, (await sql(s)).rows]).toEqual([what, []])
+    expect(await row(ID(1))).toEqual(before)
+  })
+
+  test("the guarded retries refuse it", async () => {
+    await brainTask(ID(1), { blocker: "Which repo?", owner: "zettlab", pr: null })
+    expect((await cancel(ID(1))).status).toBe(200)
+    const before = await row(ID(1))
     expect(await requeueTask(ctx(), ID(1), "blocked")).toMatchObject({ ok: false, error: "conflict" })
     expect(await requeueTask(ctx(), ID(1), "failed")).toMatchObject({ ok: false, error: "conflict" })
     expect(await unblockTask(ctx(), ID(1), "go")).toMatchObject({ ok: false, error: "conflict" })

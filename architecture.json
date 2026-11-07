@@ -5743,6 +5743,66 @@
           "externals": []
         },
         {
+          "path": "lib/turso-test-db.test-util.ts",
+          "lines": 93,
+          "kind": "lib",
+          "exports": [
+            "schemaDb",
+            "Shape",
+            "schemaGaps",
+            "testDbConfigured",
+            "openTestDb"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso.ts",
+            "lib/turso-test-guard.test-util.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/turso-test-guard.test-util.ts",
+          "lines": 26,
+          "kind": "lib",
+          "exports": [
+            "TEST_HOST",
+            "testDbUrl",
+            "guardFetch"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/turso-test-preload.test-util.ts",
+          "lines": 16,
+          "kind": "lib",
+          "exports": [],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso-test-guard.test-util.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/turso.ts",
           "lines": 168,
           "kind": "lib",
@@ -8626,6 +8686,7 @@
           "callers": [
             "companion-server.ts",
             "lib/receipt-qa-worker.ts",
+            "lib/turso-test-db.test-util.ts",
             "routes/body.ts",
             "routes/goals.ts",
             "routes/my-tasks.ts",
@@ -9925,6 +9986,7 @@
             "lib/tasks-agent.ts",
             "lib/triage-sources.ts",
             "lib/trip-dashboard.ts",
+            "lib/turso-test-db.test-util.ts",
             "routes/goals.ts",
             "wiring/auto-compact.ts",
             "wiring/brain-task-cancel.ts"
@@ -10595,6 +10657,7 @@
             "lib/dispatch-poller.ts",
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/triage-engine.ts",
+            "lib/turso-test-db.test-util.ts",
             "routes/body.ts",
             "routes/goals.ts#GET /api/goals",
             "routes/my-tasks.ts",
@@ -13433,6 +13496,27 @@
             "lib/trip-service.ts"
           ]
         },
+        "testDbUrl": {
+          "module": "lib/turso-test-guard.test-util.ts",
+          "callers": [
+            "lib/turso-test-db.test-util.ts",
+            "lib/turso-test-preload.test-util.ts"
+          ]
+        },
+        "tursoTx": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "lib/turso-test-db.test-util.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/tasks-agent.ts"
+          ]
+        },
+        "guardFetch": {
+          "module": "lib/turso-test-guard.test-util.ts",
+          "callers": [
+            "lib/turso-test-preload.test-util.ts"
+          ]
+        },
         "finalizeRecording": {
           "module": "lib/dashboard-client.ts",
           "callers": [
@@ -15976,13 +16060,6 @@
           "callers": [
             "wiring/brain-stuck-events.ts",
             "wiring/brain.ts"
-          ]
-        },
-        "tursoTx": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "wiring/brain-task-cancel.ts",
-            "wiring/tasks-agent.ts"
           ]
         },
         "getTaskByDispatchId": {

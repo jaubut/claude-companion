@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { schemaDb, schemaGaps } from "./turso-test-db.test-util"
 import { TEST_HOST, guardFetch, testDbUrl } from "./turso-test-guard.test-util"
 import { tursoExec } from "./turso"
 
@@ -90,6 +91,25 @@ describe("guardFetch", () => {
     globalThis.fetch = guardFetch(spy)
     await expect(tursoExec("SELECT 1", [])).rejects.toThrow("http 401")
     expect(seen.map((s) => s.auth)).toEqual(["Bearer test-token"])
+  })
+})
+
+describe("schemaGaps: a behind tls-test fails by name", () => {
+  const want = { cols: [{ tbl: "tasks", col: "origin" }], objs: [{ type: "trigger", name: "g", sql: "CREATE TRIGGER g  x" }] }
+
+  test("whitespace aside, in step; extra columns pass, so a bump doesn't fail other branches", () => {
+    const have = { cols: [{ tbl: "tasks", col: "origin" }, { tbl: "tasks", col: "newer" }], objs: [{ type: "trigger", name: "g", sql: "CREATE TRIGGER g\nx" }] }
+    expect(schemaGaps(want, have)).toEqual([])
+  })
+
+  test("a missing column and a changed trigger are each named", () => {
+    expect(schemaGaps(want, { cols: [], objs: [{ type: "trigger", name: "g", sql: "CREATE TRIGGER g y" }] }))
+      .toEqual(["column tasks.origin is missing", "trigger g is missing or differs"])
+  })
+
+  test("the committed subset loads, with the task guards and no FTS", () => {
+    const names = (schemaDb().query("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as { name: string }[]).map((r) => r.name)
+    expect(names.sort()).toEqual(["tasks_origin_immutable", "tasks_queue_guard_ins", "tasks_queue_guard_upd"])
   })
 })
 

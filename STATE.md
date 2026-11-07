@@ -4,6 +4,13 @@ Last updated: 2026-10-25
 
 ## Active Decisions
 
+### Integration tests run on tls-test, nothing else (2026-11-07, task 069fc796)
+**Choice:** `tls-test` is a Turso database with production's schema and no production data. A bunfig preload (`lib/turso-test-preload.test-util.ts`) refuses any `TURSO_TEST_URL` but that exact host before a test file loads, replaces production's env, and wraps `globalThis.fetch` so no other `*.turso.io` host is reachable. `TURSO_TEST_REQUIRED=1`, set only by CI's `integration` job, turns missing vars into a refusal. A run owns one note and deletes only under it. `scripts/turso-test-schema.ts` syncs from one fixed `sqlite_master` read through `turso db shell`, run by hand; its write path goes through the same allowlist.
+**Why:** tests that talk to Turso were stubs, and the hand-copied DDL had drifted (real `notes` has `folder` and `filename NOT NULL`). `turso.ts` defaults to production's URL, so a test that lost its stub could reach it from a dev host.
+**Rejected:** committing the full DDL (the repo is public; only the four tables tests touch are in `lib/turso-test-schema.sql`); a production token for the script (the CLI read is enough); a database per run (needs a platform token in CI); a lock row (serializes runs, stale after a crash); loopback sqld (`TURSO_IT_URL`, replaced).
+**Rotate the token:** `turso db tokens invalidate tls-test -y`, then `turso db tokens create tls-test | gh secret set TURSO_TEST_AUTH_TOKEN -R jaubut/claude-companion`. An expired or revoked token reds `integration` with `tls-test token rejected`.
+**Revisit if:** `--check` gets a nightly home (tls-test can lag production until then), `turso.ts` changes transport, or the shepherd learns to treat a Turso outage as infra.
+
 ### bin/task-cancel: the brain cancels tasks it proposed, never a running one (2026-11-07, task 40c8a551)
 **Choice:** `POST /hooks/brain/task-cancel` cancels `queued`, `blocked` or `failed` rows only, by one compare-and-set on status, assignee, owner and PR URL, in one `tursoTx` with its `agent_activity` row. "The brain proposed it" = the local proposal row for the Turso id has thread `brain` and status `filed`. A card or the resolver can only requeue a row still at the status it read (`requeueTask` `from`); Jeremie's direct Retry stays the undo.
 **Why:** PR #260 judged whether a running task's worker was alive, and no lease exists to prove it. `tasks` has no proposer column and brain filings carry origin `jeremie`, so the Turso row can't say who proposed it.
