@@ -166,11 +166,35 @@ Shipped in `server/lib/shell-sessions.ts` + `server/lib/terminal-bridge.ts`:
 - Failure paths: Companion restart → row back (same pid); SIGKILL of the herdr unit → row back, same key, new shell; `exit` → socket 4000 `ended`, row gone; second socket → takes over, first gets 4000, row stays; a legacy tagged tmux shell on a private tmux server is listed, attaches, closes; a full `herdr` client stays attached through a takeover.
 - Tests: `bun test --isolate` (as CI) 2596 pass, 6 fail, all 6 failing on main too in this sandbox; typecheck clean.
 
+**Proof against the mark (2026-11-07, Zettlab, herdr 0.9.5).** The proof above predates the mark. This one ran on the merged code, same setup: a Companion from the branch on port 47245 (own HOME, DB and token, brain off) on a throwaway herdr with its own HOME and socket, unsandboxed because herdr needs unix sockets. Not on the live server, live herdr or the Mac. Claude was the real CLI with a dummy key; "session hooks" are scratch copies of SessionStart and SessionEnd pointed at 47245. Full output is in #289.
+```
+spawn {"status":200,"ok":true,"app":"herdr","cwd":"/tmp/claude-1000/s2w","agent":"shell","key":"shell:sh-s2w","sessionName":"sh-s2w"}
+mark visible in herdr: ["w1:p1:phone-shell"]
+attach, typed output seen: true
+split: ["w1:p1:phone-shell","w1:p2:(no mark)"]
+Companion restarted
+  rows [ "sh-s2w w1:p1" ] labels [ "sh-s2w" ] panes [ "w1:p1/1ec1", "w1:p2/7282" ]
+attach after restart, typed output seen: true
+close {"status":200,"ok":true,"gone":false}
+socket closed: 4000 closed
+  rows [] labels [ "sh-s2w" ] panes [ "w1:p2/7282" ]
+close retry {"status":200,"ok":true,"gone":true}
+split alive after retry: true
+```
+- herdr probes: the mark survives SIGKILL + restore and a clean restart, follows its pane through a swap, ignores a title escape and a running Claude, and disappears with the pane. Splits and new tabs don't inherit it. `pane list` is layout order, not id order. A closed pane's id isn't reused in its workspace, but a restore reissues ids it lost.
+- Restore with a split: same marked pane, new terminal, attach works, Close takes only that pane. Companion restart with a split: the row stays. A shell exiting while Companion is down leaves no row, and the split is untouched. An `sh-*` workspace with no mark is not a shell.
+- Two workspaces with one label: no row, Close 404, both alive; unique again, both back. Close, reopen, retry: reopened under a new name, the retry answers `gone:true` and the new shell lives.
+- Close: 409 with Claude in front and while suspended (with hooks and without); after `/exit` 409 until the next poll clears the link, then 200.
+
 **Behaviour change: one attach per terminal (accepted by Jeremie, 2026-11-05).** tmux let a phone and an iPad share a shell. herdr refuses a second attach, so ours takes over: the newest device wins and the other gets close 4000, which the app shows as "Session ended" although the shell lives; tapping the row takes it back. A shell being mirrored and attached at once is fine (the sizer's `control` exits, the mirror keeps the pane's width).
 
 **Where it can fail in production:**
 - The Mac side is unverified: same code, herdr pinned, but it was not run there, and the Mac server is 27 commits behind.
 - A human relabelling a shell's pane takes it off the phone; giving another pane the `phone-shell` label puts that pane on it.
+- Two workspaces with one label take both shells off the phone until one is renamed.
+- A closed name isn't reused for 50 closes, so reopening gives `sh-repo-2`. A human relabelling a shell onto a closed name gets `gone:true` from Close, and no close.
+- `abandon` closes by workspace id, as `spawn-session.ts` does, so it can't confirm that id is still the one it created.
+- Close within 3 s of a herdr restore can read the row's old terminal: it closes nothing and answers `gone:true`, and the row returns at the next poll.
 - `herdr` not on the server's PATH (launchd): `spawnPty` throws at the WS open. `HERDR_BIN` covers it, same as spawn.
 - A pane keeps the last attach's size after detach, with no client to restore it (`pane layout` still says 220x60, `stty size` says the phone's). Cosmetic until something else sizes it.
 
