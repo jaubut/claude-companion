@@ -756,6 +756,24 @@ test("closed names span both backends: a herdr shell renamed onto a closed tmux 
   store.replace([])
 })
 
+test("closed names span both backends: a tmux shell sharing a name with a herdr shell closes, and the retry never reaches the herdr one", async () => {
+  store.replace([])
+  const f = fakeShells()
+  f.ws.push({ id: "w8", label: "sh-shared", term: "t8", cwd: "/x", mark: SHELL_PANE_MARK })
+  let killed = false
+  const deps: ShellDeps = { ...f.deps, which: () => "/usr/bin/tmux", run: async (argv) => {
+    if (argv.includes("kill-session")) { killed = true; return { code: 0, stdout: "", stderr: "" } }
+    return { code: 0, stdout: killed ? "" : "sh-shared\t1\t%1\t/x\t1\t/s\t1\n", stderr: "" }
+  } }
+  store.replace(await readShellSessions(deps)) // one row per name: the tmux one
+  expect(listShellSessions().map((s) => s.tmuxPane)).toEqual(["%1"])
+  expect(await closeShellSession("sh-shared", [], () => undefined, deps)).toEqual({ ok: true, gone: false })
+  expect(listShellSessions().map((s) => s.terminalId)).toEqual(["t8"]) // the herdr row shows now
+  expect(await closeShellSession("sh-shared", [], () => undefined, deps)).toEqual({ ok: false, error: "name_reused" })
+  expect(f.ws.map((w) => w.term)).toEqual(["t8"])
+  store.replace([])
+})
+
 test("closed names span both backends: a tmux shell under a closed herdr name is never killed by the retry", async () => {
   store.replace([])
   const f = fakeShells()
