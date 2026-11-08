@@ -1329,7 +1329,7 @@
         },
         {
           "path": "lib/command-offpane-herdr.ts",
-          "lines": 171,
+          "lines": 188,
           "kind": "lib",
           "exports": [
             "PaneReader",
@@ -1428,7 +1428,7 @@
         },
         {
           "path": "lib/command-offpane.ts",
-          "lines": 562,
+          "lines": 563,
           "kind": "lib",
           "exports": [
             "OffPaneTiming",

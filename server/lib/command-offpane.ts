@@ -336,7 +336,8 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
     if (active.has(rec.name) || !reapable(rec.name, selfPid, alive)) continue
     const pending = pendingKill.get(rec.name)
     const home = pending?.home || (await homes.pathFor?.(rec.name).catch(() => null)) || ""
-    todo.set(rec.name, { ...rec, pid: rec.pid || (pending?.pid ?? 0), home })
+    // A pending kill's pid stands: a listing's may already name another process.
+    todo.set(rec.name, { ...rec, pid: pending?.pid || rec.pid, home })
   }
   const reaped: string[] = []
   for (const rec of todo.values()) {

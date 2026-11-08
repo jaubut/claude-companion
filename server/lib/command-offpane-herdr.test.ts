@@ -258,7 +258,8 @@ test("kill: a workspace with the scrape's label that is not ours is never closed
 })
 
 const listing = (panes: Array<Record<string, unknown>>, workspaces = [{ workspace_id: "w4", label: NAME, pane_count: panes.filter((p) => p.workspace_id === "w4").length }, { workspace_id: "w1", label: "brain", pane_count: 1 }]) =>
-  (a: string[]) => a[1] === "process-info" ? { process_info: { shell_pid: 77 } } : a[1] === "list" ? { workspaces, panes } : {}
+  (a: string[]) => a[1] === "process-info" ? { process_info: { shell_pid: 77 } } : a[1] === "list" ? { workspaces, panes }
+    : a[0] === "pane" && a[1] === "get" ? { pane: panes.find((p) => p.pane_id === a[2]) } : {}
 
 test("list-panes: only cc-scrape-* workspaces, in the reaper's columns, with the claude's pid", async () => {
   const f = fakeHerdr({ reply: listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }, { workspace_id: "w1", pane_id: "w1:p1", terminal_id: "term_1", label: "" }]) })
@@ -323,6 +324,71 @@ test("list-panes: an unreadable pid or two marked panes under one label is no in
 test("a scrape-marked pane is never a phone shell row", async () => {
   const f = fakeHerdr({ reply: listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }]) })
   expect(await readHerdrShells(f.h, [])).toEqual([])
+})
+
+test("list-panes: a scrape's known pid is never replaced by a lookup (the id may name another process by then)", async () => {
+  let pid = 77
+  const f = fakeHerdr({
+    reply: (a) => {
+      if (a[1] === "create") return created
+      if (a[0] === "pane" && a[1] === "get") return { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK } }
+      if (a[1] === "process-info") return { process_info: { shell_pid: pid } }
+      return listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }])(a)
+    },
+  })
+  const run = herdrScrapeRunner(f.h)
+  await run(NEW)
+  pid = 999
+  expect(await run(["list-panes", "-a", "-F", "x"])).toEqual({ code: 0, stdout: `${NAME}\tw4:p1\t\t77\t` })
+})
+
+test("list-panes: adopting after a restart, the pane changes between listing and pid lookup: no inventory", async () => {
+  let terminal = "term_4"
+  const f = fakeHerdr({
+    reply: (a) => {
+      if (a[1] === "process-info") { terminal = "term_other"; return { process_info: { shell_pid: 999 } } }
+      if (a[0] === "pane" && a[1] === "get") return { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: terminal, label: MARK } }
+      return listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }])(a)
+    },
+  })
+  expect((await herdrScrapeRunner(f.h)(["list-panes", "-a", "-F", "x"])).code).toBe(-1)
+})
+
+// A failed rename leaves our pane unmarked, before anything was launched in it.
+function renameFails(pane: () => Record<string, unknown>) {
+  return fakeHerdr({
+    reply: (a) => {
+      if (a[1] === "create") return created
+      if (a[1] === "rename") throw new Error("rename failed")
+      if (a[0] === "pane" && a[1] === "get") return { pane: pane() }
+      if (a[0] === "workspace" && a[1] === "list") return { workspaces: [] }
+      return {}
+    },
+  })
+}
+
+test("a failed rename: cleanup closes the unmarked pane exactly once, proven by its terminal and workspace", async () => {
+  let gone = false
+  const f = renameFails(() => gone ? notFound() : { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: "" })
+  const run = herdrScrapeRunner(f.h)
+  expect((await run(NEW)).code).toBe(-1)
+  expect(writes(f.calls)).toEqual([])
+  const orig = f.h.call
+  f.h.call = async (args, ...rest) => { if (args[0] === "pane" && args[1] === "close") gone = true; return orig(args, ...rest) }
+  expect(await killScrapeSession(run, NAME, async () => {})).toBe(true)
+  expect(writes(f.calls)).toEqual([["pane", "close", "w4:p1"]])
+})
+
+test("a failed rename, then the id holds another terminal, another workspace, or an agent: nothing is closed", async () => {
+  for (const other of [{ terminal_id: "term_human" }, { workspace_id: "w9" }, { agent: "claude" }]) {
+    let now: Record<string, unknown> = {}
+    const f = renameFails(() => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: "", ...now }))
+    const run = herdrScrapeRunner(f.h)
+    await run(NEW)
+    now = other
+    await killScrapeSession(run, NAME, async () => {}, 2, 0)
+    expect(writes(f.calls)).toEqual([])
+  }
 })
 
 test("the launch skips a shim on PATH for the real binary (the shim execs $HOME, which is throwaway)", async () => {

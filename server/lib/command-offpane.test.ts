@@ -11,7 +11,7 @@ import { createCommandLister, createSlots, prepareRealList } from "./command-off
 import { createScrapeHome, removeScrapeHome, resolveHomesBase, sweepOrphanHomes, UnsafeDirError, verifyPrivateDir } from "./command-offpane-home"
 import { isScrapeProcess, processEnvEntries } from "./discover"
 import {
-  computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
+  computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult, type TmuxRunner,
 } from "./command-offpane-launch"
 import { herdrScrapeRunner, resetHerdrScrapes } from "./command-offpane-herdr"
 import type { Herdr } from "./herdr"
@@ -1607,6 +1607,25 @@ describe("off-pane on herdr", () => {
     world.linger.clear()
     await reapScrapeSessions(d)
     expect(h.removed).toHaveLength(1)
+  })
+
+  test("a pending kill's pid is never replaced by a later listing's (a reused id names another process)", async () => {
+    const h = fakeHomes()
+    h.homes.pathFor = async (n) => `/tmp/homes/${n}`
+    const name = names()
+    let listedPid = 77
+    const runner: TmuxRunner = async (args) => {
+      if (args[0] === "list-panes") return { code: 0, stdout: `${name}\tw4:p1\t\t${listedPid}\t` }
+      if (args[0] === "has-session") return { code: 1, stdout: "" }
+      return { code: 0, stdout: "" }
+    }
+    const reap = () => reapScrapeSessions({ tmux: runner, sleep: async () => {}, pidAlive: (p) => p === 77 || p === SELF, selfPid: SELF, homes: h.homes, timing: { pidExitMs: 1, pollMs: 1 } })
+    await reap()                                  // killed, but claude (77) still runs: pending
+    expect(pendingKills()).toEqual([name])
+    listedPid = 999                               // the id now names a dead stranger's pid
+    await reap()
+    expect(h.removed).toEqual([])
+    expect(pendingKills()).toEqual([name])
   })
 
   test("a reap keeps a pending kill's pid and HOME while its claude outlives the pane, and deletes the HOME once it exits", async () => {

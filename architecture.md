@@ -15,7 +15,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 599 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
-| `lib/command-offpane.ts` | 562 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
+| `lib/command-offpane.ts` | 563 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
@@ -119,11 +119,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
+| `lib/command-offpane-herdr.ts` | 188 | lib | 4 | state: scrapes: Map |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
-| `lib/command-offpane-herdr.ts` | 171 | lib | 4 | state: scrapes: Map |
 | `lib/scrape-registry.ts` | 171 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
 | `lib/triage-store.ts` | 171 | lib | 9 |  |
 | `wiring/body-agent.ts` | 171 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |

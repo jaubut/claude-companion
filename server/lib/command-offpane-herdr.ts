@@ -34,7 +34,7 @@ export const readPanePlain: PaneReader = async (pane) => {
 }
 
 interface WorkspaceRow { workspace_id?: string; label?: string }
-interface PaneRow { pane_id?: string; workspace_id?: string; terminal_id?: string; label?: string }
+interface PaneRow { pane_id?: string; workspace_id?: string; terminal_id?: string; label?: string; agent?: string }
 
 // The claude's pid: `exec` makes it the shell's. Throws when herdr can't say.
 async function panePid(pane: string, h: Herdr): Promise<number> {
@@ -56,15 +56,17 @@ async function panePid(pane: string, h: Herdr): Promise<number> {
 // ponytail: check then act, a reuse inside that gap of a few ms is not
 // covered; herdr 0.9.5 has no compare-and-send. Gone records stay (one per
 // run, a few a day) until the process ends.
-interface Owned { pane: string; terminal: string; workspace: string; gone?: boolean }
+// `unmarked`: created, not yet (or never) renamed, nothing launched in it. Such
+// a pane is ours only while the ids hold and no agent runs in it, and that is
+// what lets cleanup close it after a failed rename. `pid`: the claude's, once
+// known; a later lookup never replaces it.
+interface Owned { pane: string; terminal: string; workspace: string; gone?: boolean; unmarked?: boolean; pid?: number }
 const scrapes = new Map<string, Owned>()
 export function resetHerdrScrapes(): void { scrapes.clear() }
 
 const markOf = (name: string): string => `${SCRAPE_PANE_MARK}:${name}`
 
-// `marked: false` only before the mark is set: the ids create returned must
-// still hold, or nothing (not even the rename) may touch the pane.
-async function ownedScrape(name: string, h: Herdr, marked = true): Promise<Owned | null> {
+async function ownedScrape(name: string, h: Herdr): Promise<Owned | null> {
   const o = scrapes.get(name)
   if (!o || o.gone) return null
   let p: PaneRow | undefined
@@ -73,7 +75,8 @@ async function ownedScrape(name: string, h: Herdr, marked = true): Promise<Owned
   } catch (err) {
     if (herdrErrorCode(err) !== "pane_not_found") throw err
   }
-  if ((!marked || p?.label === markOf(name)) && p?.terminal_id === o.terminal && p.workspace_id === o.workspace) return o
+  const mine = o.unmarked ? !p?.agent : p?.label === markOf(name)
+  if (mine && p?.terminal_id === o.terminal && p.workspace_id === o.workspace) return o
   o.gone = true
   return null
 }
@@ -101,12 +104,16 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
           const workspace = (r.workspace as WorkspaceRow | undefined)?.workspace_id
           if (!root?.pane_id || !root.terminal_id || !workspace) return UNKNOWN
           mine = label
-          scrapes.set(label, { pane: root.pane_id, terminal: root.terminal_id, workspace })
-          if (!await ownedScrape(label, h, false)) return MISSING
+          const rec: Owned = { pane: root.pane_id, terminal: root.terminal_id, workspace, unmarked: true }
+          scrapes.set(label, rec)
+          // The ids create returned must still hold before even the rename.
+          if (!await ownedScrape(label, h)) return MISSING
           await h.call(["pane", "rename", root.pane_id, markOf(label)])
+          rec.unmarked = false
           if (!await ownedScrape(label, h)) return MISSING
           // No pid, no claude: its HOME may only go once that pid has exited.
           const pid = await panePid(root.pane_id, h)
+          rec.pid = pid
           if (!await ownedScrape(label, h)) return MISSING
           // A lost reply may still have launched claude: pane and pid go back
           // either way, so cleanup waits for that pid before the HOME goes.
@@ -155,8 +162,18 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
             if (!p?.pane_id || !p.terminal_id || !w.workspace_id) { rows.push(`${label}\t\t\t\t`); continue }
             const known = scrapes.get(label)
             if (known && (known.gone || known.pane !== p.pane_id || known.terminal !== p.terminal_id || known.workspace !== w.workspace_id)) { rows.push(`${label}\t\t\t\t`); continue }
-            if (!known) scrapes.set(label, { pane: p.pane_id, terminal: p.terminal_id, workspace: w.workspace_id })
-            rows.push(`${label}\t${p.pane_id}\t\t${await panePid(p.pane_id, h)}\t`)
+            // A known pid stands. A looked-up one counts only if the pane
+            // still holds the listed terminal right after: the id may have
+            // been reissued between the listing and the lookup.
+            let pid = known?.pid
+            if (!pid) {
+              pid = await panePid(p.pane_id, h)
+              const now = (await h.call(["pane", "get", p.pane_id], 2_000)).pane as PaneRow | undefined
+              if (now?.terminal_id !== p.terminal_id || now.workspace_id !== w.workspace_id || now.label !== markOf(label)) return UNKNOWN
+            }
+            if (known) known.pid = pid
+            else scrapes.set(label, { pane: p.pane_id, terminal: p.terminal_id, workspace: w.workspace_id, pid })
+            rows.push(`${label}\t${p.pane_id}\t\t${pid}\t`)
           }
           return { code: 0, stdout: rows.join("\n") }
         }
