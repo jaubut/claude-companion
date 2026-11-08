@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { LEAD_PREFIX } from "../lib/brain"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-lead-")), "test.db")
 const { createBrainLead, leadArgs, leadDir, leadIsolated, leadSettings, prepareLeadDir } = await import("./brain-lead")
@@ -97,6 +98,13 @@ describe("a lead's own clone", () => {
     expect(leadIsolated("claude-companion", h, excluded)).toBe(false)
     await prepareLeadDir("claude-companion", h, cloned([], h), noTrust, excluded)
     expect(leadIsolated("claude-companion", h, excluded)).toBe(true)
+  })
+  test("a second lead clones its own repo into its own dir", async () => {
+    const h = home(), calls: string[][] = [], repo = "remorquage-pelchat-web"
+    const sh = async (cmd: string, args: string[]) => { calls.push([cmd, ...args]); mkdirSync(leadDir(repo, h), { recursive: true }); return { ok: true, code: 0, out: "", err: "" } }
+    expect(await prepareLeadDir(repo, h, sh, noTrust, excluded)).toEqual({ ok: true, dir: leadDir(repo, h) })
+    expect(calls).toEqual([["git", "clone", "-q", "--depth", "1", "https://github.com/jaubut/remorquage-pelchat-web.git", leadDir(repo, h)]])
+    expect(`${LEAD_PREFIX}${repo}`.length).toBeLessThanOrEqual(32)
   })
   test("a repo with no lead gets nothing", async () => {
     expect(await prepareLeadDir("other", home(), cloned([], "/x"), noTrust, excluded)).toMatchObject({ ok: false })
