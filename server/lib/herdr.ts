@@ -187,6 +187,10 @@ const HERDR_WORKSPACE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 
 // The pane label that makes a pane a phone shell (lib/shell-sessions.ts).
 export const SHELL_PANE_MARK = "phone-shell"
+// The prefix of a hidden `/help` scrape's pane label, `companion-scrape:<session
+// name>` (lib/command-offpane-herdr.ts). A pane has one label, so a scrape is
+// never a shell row and a shell never a scrape.
+export const SCRAPE_PANE_MARK = "companion-scrape"
 
 // The workspace to close, or "" when it is not (or no longer) ours, is split,
 // or herdr can't say.

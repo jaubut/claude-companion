@@ -4,9 +4,10 @@
 
 import { homedir } from "node:os"
 import type { CommandEntry } from "./command-list"
+import { herdrScrapeRunner } from "./command-offpane-herdr"
 import { enumerateCommandsOffPane, realSleep, type OffPaneResult, type OffPaneStatus } from "./command-offpane"
 import {
-  claudeVersion, computeFingerprint, defaultTmux, defaultWhich, resolveClaudeLaunch, secureStorageProblem, type ClaudeLaunch,
+  claudeVersion, computeFingerprint, defaultWhich, resolveClaudeLaunch, secureStorageProblem, type ClaudeLaunch,
 } from "./command-offpane-launch"
 import { companionLog } from "./log"
 
@@ -185,7 +186,7 @@ const LAUNCH_TTL_MS = 60_000
 let launchMemo: { at: number; value: ClaudeLaunch | null } | null = null
 async function currentLaunch(): Promise<ClaudeLaunch | null> {
   if (launchMemo && Date.now() - launchMemo.at < LAUNCH_TTL_MS) return launchMemo.value
-  const value = await resolveClaudeLaunch({ tmux: defaultTmux, which: defaultWhich, processEnv: process.env, home: homedir() })
+  const value = await resolveClaudeLaunch({ tmux: herdrScrapeRunner(), which: defaultWhich, processEnv: process.env, home: homedir() })
   launchMemo = { at: Date.now(), value }
   return value
 }
@@ -202,7 +203,7 @@ export interface PrepareDeps {
 
 export async function prepareRealList(cwd: string, deps: PrepareDeps = {}): Promise<PreparedList | PrepareRefusal> {
   const launch = await (deps.launch ?? currentLaunch)()
-  if (!launch) return { error: "claude not on PATH (tmux server env or usual install dirs)" }
+  if (!launch) return { error: "claude not on PATH (server env or usual install dirs)" }
   const version = await (deps.version ?? claudeVersion)(launch)
   // Too old to reach the credentials from the throwaway HOME: it would boot
   // to the login screen. Refuse before spawning anything.
@@ -217,7 +218,7 @@ export async function prepareRealList(cwd: string, deps: PrepareDeps = {}): Prom
   }
   return {
     fingerprint: await computeFingerprint(cwd, launch, version),
-    enumerate: () => enumerateCommandsOffPane(cwd, { tmux: defaultTmux, sleep: realSleep, now: Date.now, launch }),
+    enumerate: () => enumerateCommandsOffPane(cwd, { tmux: herdrScrapeRunner(), sleep: realSleep, now: Date.now, launch }),
   }
 }
 
