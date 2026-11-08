@@ -1329,7 +1329,7 @@
         },
         {
           "path": "lib/command-offpane-herdr.ts",
-          "lines": 162,
+          "lines": 171,
           "kind": "lib",
           "exports": [
             "PaneReader",
@@ -2171,7 +2171,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 379,
+          "lines": 380,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -10323,6 +10323,12 @@
             "wiring/takeover-liveness.ts"
           ]
         },
+        "SCRAPE_PANE_MARK": {
+          "module": "lib/herdr.ts",
+          "callers": [
+            "lib/command-offpane-herdr.ts"
+          ]
+        },
         "herdrErrorCode": {
           "module": "lib/herdr.ts",
           "callers": [
@@ -10332,12 +10338,6 @@
             "lib/spawn-session.ts",
             "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
-          ]
-        },
-        "SCRAPE_PANE_MARK": {
-          "module": "lib/herdr.ts",
-          "callers": [
-            "lib/command-offpane-herdr.ts"
           ]
         },
         "TmuxRunner": {

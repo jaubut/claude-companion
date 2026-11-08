@@ -44,8 +44,11 @@ async function panePid(pane: string, h: Herdr): Promise<number> {
 }
 
 // herdr reuses pane and workspace ids, so an id never proves a pane is ours.
-// What does: the pane still carries SCRAPE_PANE_MARK, the terminal and the
-// workspace this server created (or adopted from a listing after a restart).
+// What does: the pane still carries its scrape's own mark,
+// `companion-scrape:<session name>`, the terminal and the workspace this
+// server created (or adopted from a listing after a restart). The name in the
+// mark binds a pane to one scrape, so a reused workspace id can never pair a
+// dead owner's label with a newer scrape's pane.
 // Every read and write goes through ownedScrape first. A pane that is gone or
 // no longer ours marks its record gone for good, so a later answer can't
 // revive it and has-session can say so even while a split keeps the label;
@@ -57,7 +60,11 @@ interface Owned { pane: string; terminal: string; workspace: string; gone?: bool
 const scrapes = new Map<string, Owned>()
 export function resetHerdrScrapes(): void { scrapes.clear() }
 
-async function ownedScrape(name: string, h: Herdr): Promise<Owned | null> {
+const markOf = (name: string): string => `${SCRAPE_PANE_MARK}:${name}`
+
+// `marked: false` only before the mark is set: the ids create returned must
+// still hold, or nothing (not even the rename) may touch the pane.
+async function ownedScrape(name: string, h: Herdr, marked = true): Promise<Owned | null> {
   const o = scrapes.get(name)
   if (!o || o.gone) return null
   let p: PaneRow | undefined
@@ -66,7 +73,7 @@ async function ownedScrape(name: string, h: Herdr): Promise<Owned | null> {
   } catch (err) {
     if (herdrErrorCode(err) !== "pane_not_found") throw err
   }
-  if (p?.label === SCRAPE_PANE_MARK && p.terminal_id === o.terminal && p.workspace_id === o.workspace) return o
+  if ((!marked || p?.label === markOf(name)) && p?.terminal_id === o.terminal && p.workspace_id === o.workspace) return o
   o.gone = true
   return null
 }
@@ -95,7 +102,8 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
           if (!root?.pane_id || !root.terminal_id || !workspace) return UNKNOWN
           mine = label
           scrapes.set(label, { pane: root.pane_id, terminal: root.terminal_id, workspace })
-          await h.call(["pane", "rename", root.pane_id, SCRAPE_PANE_MARK])
+          if (!await ownedScrape(label, h, false)) return MISSING
+          await h.call(["pane", "rename", root.pane_id, markOf(label)])
           if (!await ownedScrape(label, h)) return MISSING
           // No pid, no claude: its HOME may only go once that pid has exited.
           const pid = await panePid(root.pane_id, h)
@@ -132,15 +140,16 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
         }
         case "list-panes": {
           // Every cc-scrape-* workspace is listed, so the reaper keeps its HOME;
-          // only one whose single marked pane is unambiguous gets a pane and is
-          // adopted. A pid herdr can't give, or two marked panes, is no inventory.
+          // only one whose single pane marked with that same name is
+          // unambiguous gets a pane and is adopted. A pid herdr can't give, or
+          // two such panes, is no inventory.
           const [workspaces, panes] = await Promise.all([h.call(["workspace", "list"], 3_000), h.call(["pane", "list"], 3_000)])
           if (!Array.isArray(workspaces.workspaces) || !Array.isArray(panes.panes)) return UNKNOWN
           const rows: string[] = []
           for (const w of workspaces.workspaces as WorkspaceRow[]) {
             const label = w.label ?? ""
             if (!isScrapeSessionName(label)) continue
-            const marked = (panes.panes as PaneRow[]).filter((p) => p.workspace_id === w.workspace_id && p.label === SCRAPE_PANE_MARK)
+            const marked = (panes.panes as PaneRow[]).filter((p) => p.workspace_id === w.workspace_id && p.label === markOf(label))
             if (marked.length > 1) return UNKNOWN
             const p = marked[0]
             if (!p?.pane_id || !p.terminal_id || !w.workspace_id) { rows.push(`${label}\t\t\t\t`); continue }

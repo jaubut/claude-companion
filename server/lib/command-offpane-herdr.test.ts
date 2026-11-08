@@ -2,13 +2,14 @@ import { afterEach, test, expect } from "bun:test"
 import { herdrScrapeRunner, resetHerdrScrapes } from "./command-offpane-herdr"
 import { fakeHerdr } from "./herdr-fake.test-util"
 import { resolveClaudeLaunch } from "./command-offpane-launch"
-import { killScrapeSession } from "./command-offpane"
+import { killScrapeSession, reapScrapeSessions, resetOffPaneState } from "./command-offpane"
 import { SCRAPE_PANE_MARK, SHELL_PANE_MARK } from "./herdr"
 import { readHerdrShells } from "./shell-sessions"
 
-afterEach(() => resetHerdrScrapes())
+afterEach(() => { resetHerdrScrapes(); resetOffPaneState() })
 
 const NAME = "cc-scrape-123-1-abcd"
+const MARK = `${SCRAPE_PANE_MARK}:${NAME}`
 const created = { workspace: { workspace_id: "w4" }, root_pane: { pane_id: "w4:p1", terminal_id: "term_4" } }
 const NEW = ["new-session", "-d", "-P", "-F", "fmt", "-x", "220", "-y", "60", "-s", NAME, "/bin/sh", "-c", "exec claude"]
 const notFound = () => { throw Object.assign(new Error("pane_not_found"), { code: "pane_not_found" }) }
@@ -16,7 +17,7 @@ const notFound = () => { throw Object.assign(new Error("pane_not_found"), { code
 // A scrape's pane as herdr describes it; `pane` returns what `pane get` says it
 // holds now (a throw = herdr can't say).
 function scrapePane(o: { pane?: () => Record<string, unknown>; pid?: () => number } = {}) {
-  const pane = o.pane ?? (() => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: SCRAPE_PANE_MARK }))
+  const pane = o.pane ?? (() => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK }))
   return fakeHerdr({
     reply: (a) => {
       if (a[1] === "create") return created
@@ -34,7 +35,7 @@ test("new-session: an unfocused workspace, its pane marked, the command typed wi
   const r = await herdrScrapeRunner(f.h)(["new-session", "-d", "-P", "-F", "fmt", "-x", "220", "-y", "60", "-s", NAME, "/bin/sh", "-c", "cd /x && exec claude"])
   expect(r).toEqual({ code: 0, stdout: "w4:p1||77|\n" })
   expect(f.calls[0]).toEqual(["workspace", "create", "--cwd", "/tmp", "--label", NAME, "--no-focus"])
-  expect(f.calls).toContainEqual(["pane", "rename", "w4:p1", SCRAPE_PANE_MARK])
+  expect(f.calls).toContainEqual(["pane", "rename", "w4:p1", MARK])
   expect(f.calls.at(-1)).toEqual(["pane", "run", "w4:p1", " cd /x && exec claude"])
 })
 
@@ -46,12 +47,29 @@ test("new-session: no terminal or workspace id to prove ownership with counts as
   }
 })
 
-test("new-session: the id reused before the command is typed, or herdr can't say: nothing typed", async () => {
-  for (const pane of [() => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_human", label: "" }), notFound, () => { throw new Error("down") }]) {
+test("new-session: the id reused before the mark or the command, or herdr can't say: nothing renamed, nothing typed", async () => {
+  const human = () => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_human", label: SHELL_PANE_MARK })
+  const elsewhere = () => ({ pane_id: "w4:p1", workspace_id: "w9", terminal_id: "term_4", label: "" })
+  for (const pane of [human, elsewhere, notFound, () => { throw new Error("down") }]) {
     const f = scrapePane({ pane })
     expect((await herdrScrapeRunner(f.h)(NEW)).code).not.toBe(0)
+    expect(f.calls.filter((c) => c[1] === "rename")).toEqual([])
     expect(writes(f.calls)).toEqual([])
   }
+})
+
+test("new-session: a phone shell holding the reused id keeps its phone-shell label", async () => {
+  let label = SHELL_PANE_MARK
+  const f = fakeHerdr({
+    reply: (a) => {
+      if (a[1] === "create") return created
+      if (a[1] === "rename") { label = a[3]!; return {} }
+      if (a[0] === "pane" && a[1] === "get") return { pane: { pane_id: "w4:p1", workspace_id: "w2", terminal_id: "term_shell", label } }
+      return {}
+    },
+  })
+  await herdrScrapeRunner(f.h)(NEW)
+  expect(label).toBe(SHELL_PANE_MARK)
 })
 
 test("new-session: an unreadable pid launches nothing (a claude must never run without one)", async () => {
@@ -70,7 +88,7 @@ test("capture-pane: the screen, or a miss when unreadable", async () => {
 
 test("a reused pane id: no read and no keystroke reaches the new owner", async () => {
   let terminal = "term_4"
-  const f = scrapePane({ pane: () => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: terminal, label: SCRAPE_PANE_MARK }) })
+  const f = scrapePane({ pane: () => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: terminal, label: MARK }) })
   let reads = 0
   const run = herdrScrapeRunner(f.h, async () => { reads++; return "their screen" })
   await run(NEW)
@@ -85,7 +103,7 @@ test("a reused pane id: no read and no keystroke reaches the new owner", async (
 test("ownership needs the mark, the terminal and the workspace: a shell pane or a moved pane is not ours", async () => {
   for (const other of [{ label: SHELL_PANE_MARK }, { label: "" }, { workspace_id: "w9" }]) {
     let now: Record<string, unknown> = {}
-    const f = scrapePane({ pane: () => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: SCRAPE_PANE_MARK, ...now }) })
+    const f = scrapePane({ pane: () => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK, ...now }) })
     const run = herdrScrapeRunner(f.h)
     await run(NEW)
     f.calls.length = 0
@@ -97,7 +115,7 @@ test("ownership needs the mark, the terminal and the workspace: a shell pane or 
 
 test("a mismatch is final: the old terminal answering again gets nothing", async () => {
   let terminal = "term_4"
-  const f = scrapePane({ pane: () => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: terminal, label: SCRAPE_PANE_MARK }) })
+  const f = scrapePane({ pane: () => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: terminal, label: MARK }) })
   const run = herdrScrapeRunner(f.h)
   await run(NEW)
   terminal = "term_human"
@@ -111,7 +129,7 @@ test("a mismatch is final: the old terminal answering again gets nothing", async
 
 test("herdr can't say whose pane it is: unknown (-1), no write, and the scrape stays ours", async () => {
   let down = false
-  const f = scrapePane({ pane: () => { if (down) throw new Error("down"); return { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: SCRAPE_PANE_MARK } } })
+  const f = scrapePane({ pane: () => { if (down) throw new Error("down"); return { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK } } })
   const run = herdrScrapeRunner(f.h)
   await run(NEW)
   f.calls.length = 0
@@ -136,7 +154,7 @@ test("send-keys: a named key, or -l literal text", async () => {
 
 test("kill + has-session: closes our pane (herdr drops the workspace with its last pane), gone is code 1, a herdr failure proves nothing", async () => {
   const gone = () => f.calls.some((c) => c[1] === "close")
-  const f = scrapePane({ pane: () => gone() ? notFound() : { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: SCRAPE_PANE_MARK } })
+  const f = scrapePane({ pane: () => gone() ? notFound() : { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK } })
   const run = herdrScrapeRunner(f.h)
   await run(NEW)
   f.calls.length = 0
@@ -164,7 +182,7 @@ test("kill confirms even while a split keeps the scrape's label: our pane's own 
   const f = fakeHerdr({
     reply: (a) => {
       if (a[1] === "create") return created
-      if (a[0] === "pane" && a[1] === "get") return closed() ? notFound() : { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: SCRAPE_PANE_MARK } }
+      if (a[0] === "pane" && a[1] === "get") return closed() ? notFound() : { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK } }
       if (a[1] === "process-info") return { process_info: { shell_pid: 77 } }
       if (a[0] === "workspace" && a[1] === "list") return { workspaces: [{ workspace_id: "w4", label: NAME }] }
       return {}
@@ -221,7 +239,7 @@ test("new-session: `pane run` fails after launching: the pane and pid still come
   const f = fakeHerdr({
     reply: (a) => {
       if (a[1] === "create") return created
-      if (a[0] === "pane" && a[1] === "get") return { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: SCRAPE_PANE_MARK } }
+      if (a[0] === "pane" && a[1] === "get") return { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK } }
       if (a[1] === "process-info") return { process_info: { shell_pid: 77 } }
       if (a[1] === "run") throw new Error("timeout")
       return {}
@@ -243,15 +261,15 @@ const listing = (panes: Array<Record<string, unknown>>, workspaces = [{ workspac
   (a: string[]) => a[1] === "process-info" ? { process_info: { shell_pid: 77 } } : a[1] === "list" ? { workspaces, panes } : {}
 
 test("list-panes: only cc-scrape-* workspaces, in the reaper's columns, with the claude's pid", async () => {
-  const f = fakeHerdr({ reply: listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: SCRAPE_PANE_MARK }, { workspace_id: "w1", pane_id: "w1:p1", terminal_id: "term_1", label: "" }]) })
+  const f = fakeHerdr({ reply: listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }, { workspace_id: "w1", pane_id: "w1:p1", terminal_id: "term_1", label: "" }]) })
   expect(await herdrScrapeRunner(f.h)(["list-panes", "-a", "-F", "x"])).toEqual({ code: 0, stdout: `${NAME}\tw4:p1\t\t77\t` })
 })
 
 test("after a restart: a listed scrape is adopted by its mark and terminal, so the reaper can close it and nothing else", async () => {
   let terminal = "term_4"
   const f = fakeHerdr({
-    reply: (a) => a[0] === "pane" && a[1] === "get" ? { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: terminal, label: SCRAPE_PANE_MARK } }
-      : listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: SCRAPE_PANE_MARK }])(a),
+    reply: (a) => a[0] === "pane" && a[1] === "get" ? { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: terminal, label: MARK } }
+      : listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }])(a),
   })
   const run = herdrScrapeRunner(f.h)
   await run(["list-panes", "-a", "-F", "x"])
@@ -259,6 +277,29 @@ test("after a restart: a listed scrape is adopted by its mark and terminal, so t
   f.calls.length = 0
   await run(["kill-session", "-t", `=${NAME}`])
   expect(writes(f.calls)).toEqual([])
+})
+
+test("a dead owner's label paired with a newer scrape's reused workspace id: nothing of the newer scrape is adopted or closed", async () => {
+  // Two snapshots: the workspace list still says w4 is the dead owner's, the
+  // pane list already holds the newer scrape in the reused w4.
+  const OLD = "cc-scrape-999999-1-old0"
+  const NEWER = "cc-scrape-123-2-new0"
+  const f = fakeHerdr({
+    reply: (a) => {
+      if (a[0] === "workspace" && a[1] === "list") return { workspaces: [{ workspace_id: "w4", label: OLD }] }
+      if (a[0] === "pane" && a[1] === "list") return { panes: [{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_9", label: `${SCRAPE_PANE_MARK}:${NEWER}` }] }
+      if (a[0] === "pane" && a[1] === "get") return { pane: { pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_9", label: `${SCRAPE_PANE_MARK}:${NEWER}` } }
+      if (a[1] === "process-info") return { process_info: { shell_pid: 77 } }
+      return {}
+    },
+  })
+  const run = herdrScrapeRunner(f.h)
+  expect(await run(["list-panes", "-a", "-F", "x"])).toEqual({ code: 0, stdout: `${OLD}\t\t\t\t` })
+  const removed: string[] = []
+  const homes = { create: async () => { throw new Error("unused") }, remove: async (root: string) => { removed.push(root) }, sweep: async () => {}, pathFor: async (n: string) => `/tmp/homes/${n}` }
+  await reapScrapeSessions({ tmux: run, sleep: async () => {}, pidAlive: (pid) => pid === 123 || pid === 77, selfPid: 123, homes, timing: { killAttempts: 1, pidExitMs: 1, pollMs: 1 } })
+  expect(writes(f.calls)).toEqual([])
+  expect(removed).toEqual([])
 })
 
 test("list-panes: an unmarked cc-scrape-* workspace (a human's, an old build's) is listed with no pane, never adopted", async () => {
@@ -272,7 +313,7 @@ test("list-panes: an unmarked cc-scrape-* workspace (a human's, an old build's) 
 })
 
 test("list-panes: an unreadable pid or two marked panes under one label is no inventory (-1)", async () => {
-  const marked = { workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: SCRAPE_PANE_MARK }
+  const marked = { workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }
   const noPid = fakeHerdr({ reply: (a) => a[1] === "process-info" ? (() => { throw new Error("down") })() : listing([marked])(a) })
   expect((await herdrScrapeRunner(noPid.h)(["list-panes", "-a", "-F", "x"])).code).toBe(-1)
   const two = fakeHerdr({ reply: listing([marked, { ...marked, pane_id: "w4:p2", terminal_id: "term_5" }]) })
@@ -280,7 +321,7 @@ test("list-panes: an unreadable pid or two marked panes under one label is no in
 })
 
 test("a scrape-marked pane is never a phone shell row", async () => {
-  const f = fakeHerdr({ reply: listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: SCRAPE_PANE_MARK }]) })
+  const f = fakeHerdr({ reply: listing([{ workspace_id: "w4", pane_id: "w4:p1", terminal_id: "term_4", label: MARK }]) })
   expect(await readHerdrShells(f.h, [])).toEqual([])
 })
 

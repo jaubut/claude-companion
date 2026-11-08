@@ -14,7 +14,7 @@ import {
   computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
 } from "./command-offpane-launch"
 import { herdrScrapeRunner, resetHerdrScrapes } from "./command-offpane-herdr"
-import { SCRAPE_PANE_MARK, type Herdr } from "./herdr"
+import type { Herdr } from "./herdr"
 import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, noteTmuxServer, releaseScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner, tmuxServerPidOf } from "./scrape-registry"
 import { DETACHED_COLS, DETACHED_ROWS } from "./spawn-session"
 
