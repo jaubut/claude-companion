@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { BRAIN_AGENT, BRAIN_THREAD } from "../lib/brain"
 import { companionLog } from "../lib/log"
 import { type MergeGateFn, mergeGate } from "../lib/merge-gate"
@@ -26,6 +29,9 @@ import { orchEmit } from "./orchestrator"
 //     dispatch account); none with CHANGES on that head; no CHANGES_REQUESTED
 //   merge_cap (429): ≤ MERGE_CAP brain merges in 24 h
 //   base read again (409 base_moved / gate_unavailable): the gate's reads are behind all of the above
+//     TEMPORARY: while the flag file ~/.claude/state/claude-review-paused exists (read on every call), a
+//     `normal` tier PR needs the Codex APPROVE instead of Claude's (no CHANGES from either reviewer);
+//     a client-origin one needs both.
 //   caller still there (409 client_gone): nobody would hear the answer, so nothing merges
 // Then `gh pr merge --squash --match-head-commit <checked sha>`: a head pushed
 // after the checks makes GitHub refuse. Each merge is a `brain:pr-merge`
@@ -48,7 +54,8 @@ const LOW_FILE_LIMIT = 100
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
 interface PrMergeInput { repo: string; pr: number; reason: string; signal?: AbortSignal }
-interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void; gate: MergeGateFn }
+interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void; gate: MergeGateFn; pausedFlag?: string }
+const CLAUDE_PAUSED_FLAG = join(homedir(), ".claude", "state", "claude-review-paused")
 type Out = { status: number; body: Record<string, unknown> }
 
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}): Out => ({ status, body: { ok: false, error, ...extra } })
@@ -102,7 +109,7 @@ function notGreen(v: PrView): string[] {
 }
 
 /** Why the review cascade has not approved this head (empty = approved). */
-function notApproved(v: PrView): string[] {
+function notApproved(v: PrView, claudePaused = false, clientOrigin = false): string[] {
   const out: string[] = []
   const login = v.author?.login
   if (!login || !v.headRefOid) return ["no PR author or head sha"]
@@ -114,17 +121,21 @@ function notApproved(v: PrView): string[] {
   // The shepherd's newest tier marker (claude-config PR 230); no marker counts as high.
   const tier = v.comments.filter((c) => c.author?.login === login).map((c) => /<!-- review-tier: (\w+) -->/.exec(String(c.body))?.[1]).filter(Boolean).at(-1)
   if (tier === "low" && v.files.length > 0 && v.files.length < LOW_FILE_LIMIT && v.files.every((f) => LOW_FILE.test(String(f.path)))) return out
-  if (!claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
-  if (tier !== "normal" && !codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
+  // Paused: a normal tier needs Codex; a client-origin one keeps Claude too (both).
+  const codexOnly = claudePaused && tier === "normal" && !clientOrigin
+  if (!codexOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
+  if ((tier !== "normal" || claudePaused) && !codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
   return out
 }
 
 /** Why this PR is parked as broken or held (empty = mergeable). Turso errors propagate. */
-async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[] }> {
+async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[]; clientOrigin: boolean }> {
   const reasons: string[] = []
   // Tasks linked by the PR url (a branch-name match is guessable): park rows and the digest row key on them.
-  const { rows } = await exec("SELECT id FROM tasks WHERE dispatch_pr_url = ?", [v.url])
+  const { rows } = await exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ?", [v.url])
   const taskIds = rows.map((r) => String(r.id))
+  // The PR read doesn't carry origin: tasks.origin is the authority, the label is advisory (forgeable, so it can only tighten).
+  const clientOrigin = rows.some((r) => r.origin === "client") || v.labels.some((l) => l.name === "client-origin")
   // The newest shepherd park / hold / unpark for this PR: a live one refuses unless it is a retired human-review park.
   const last = await exec(
     "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND target_id IN (" + [v.url, ...taskIds].map(() => "?").join(", ") + ") ORDER BY id DESC LIMIT 20",
@@ -140,7 +151,7 @@ async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; tas
     }
     break
   }
-  return { reasons, taskIds }
+  return { reasons, taskIds, clientOrigin }
 }
 
 export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps): Promise<Out> {
@@ -166,7 +177,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (park.reasons.length) return fail(403, "parked", { reasons: park.reasons })
   const red = notGreen(v)
   if (red.length) return fail(409, "not_green", { reasons: red })
-  const unapproved = notApproved(v)
+  const unapproved = notApproved(v, existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG), park.clientOrigin)
   if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
   if (!(recent < MERGE_CAP)) return fail(429, "merge_cap", { cap: MERGE_CAP })
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.

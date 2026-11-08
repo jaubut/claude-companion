@@ -93,6 +93,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/events.ts` | 224 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `routes/vault.ts` | 221 | lib | 1 |  |
 | `lib/resolver-work.ts` | 219 | lib | 5 |  |
+| `wiring/brain-pr-merge.ts` | 218 | lib | 4 |  |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/dialogs.ts` | 216 | lib | 7 |  |
@@ -107,7 +108,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
 | `routes/model.ts` | 207 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `wiring/brain-pr-merge.ts` | 207 | lib | 4 |  |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
