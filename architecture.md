@@ -96,6 +96,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/dialogs.ts` | 216 | lib | 7 |  |
+| `wiring/brain-pr-merge.ts` | 216 | lib | 4 |  |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `wiring/dialogs.ts` | 213 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `routes/command.ts` | 212 | route-host | 1 | routes: 2 |
@@ -107,7 +108,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
 | `routes/model.ts` | 207 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `wiring/brain-pr-merge.ts` | 207 | lib | 4 |  |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
