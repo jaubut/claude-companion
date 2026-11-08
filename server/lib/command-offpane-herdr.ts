@@ -47,17 +47,19 @@ async function panePid(pane: string, h: Herdr): Promise<number> {
 // What does: the pane still carries SCRAPE_PANE_MARK, the terminal and the
 // workspace this server created (or adopted from a listing after a restart).
 // Every read and write goes through ownedScrape first. A pane that is gone or
-// no longer ours drops its record for good, so a later answer can't revive it;
+// no longer ours marks its record gone for good, so a later answer can't
+// revive it and has-session can say so even while a split keeps the label;
 // herdr failing to answer throws, which the runner reports as unknown (-1).
 // ponytail: check then act, a reuse inside that gap of a few ms is not
-// covered; herdr 0.9.5 has no compare-and-send.
-interface Owned { pane: string; terminal: string; workspace: string }
+// covered; herdr 0.9.5 has no compare-and-send. Gone records stay (one per
+// run, a few a day) until the process ends.
+interface Owned { pane: string; terminal: string; workspace: string; gone?: boolean }
 const scrapes = new Map<string, Owned>()
 export function resetHerdrScrapes(): void { scrapes.clear() }
 
 async function ownedScrape(name: string, h: Herdr): Promise<Owned | null> {
   const o = scrapes.get(name)
-  if (!o) return null
+  if (!o || o.gone) return null
   let p: PaneRow | undefined
   try {
     p = (await h.call(["pane", "get", o.pane], 2_000)).pane as PaneRow | undefined
@@ -65,13 +67,8 @@ async function ownedScrape(name: string, h: Herdr): Promise<Owned | null> {
     if (herdrErrorCode(err) !== "pane_not_found") throw err
   }
   if (p?.label === SCRAPE_PANE_MARK && p.terminal_id === o.terminal && p.workspace_id === o.workspace) return o
-  scrapes.delete(name)
+  o.gone = true
   return null
-}
-
-// The newest record holding this pane id: an older scrape's stale id loses.
-function nameOfPane(pane: string): string {
-  return [...scrapes].findLast(([, o]) => o.pane === pane)?.[0] ?? ""
 }
 
 async function hasLabel(name: string, h: Herdr): Promise<boolean> {
@@ -80,7 +77,12 @@ async function hasLabel(name: string, h: Herdr): Promise<boolean> {
   return (list as WorkspaceRow[]).some((w) => w.label === name)
 }
 
+// One runner drives one enumeration: its reads and keys go to the scrape it
+// created, never to whichever record holds a pane id now.
 export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readPanePlain): TmuxRunner {
+  let mine = ""
+  const minePane = async (pane: string): Promise<boolean> =>
+    !!mine && scrapes.get(mine)?.pane === pane && !!await ownedScrape(mine, h)
   return async (args) => {
     const name = (args[args.indexOf("-t") + 1] ?? "").replace(/^=/, "")
     try {
@@ -91,41 +93,41 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
           const root = r.root_pane as PaneRow | undefined
           const workspace = (r.workspace as WorkspaceRow | undefined)?.workspace_id
           if (!root?.pane_id || !root.terminal_id || !workspace) return UNKNOWN
+          mine = label
           scrapes.set(label, { pane: root.pane_id, terminal: root.terminal_id, workspace })
           await h.call(["pane", "rename", root.pane_id, SCRAPE_PANE_MARK])
           if (!await ownedScrape(label, h)) return MISSING
           // No pid, no claude: its HOME may only go once that pid has exited.
           const pid = await panePid(root.pane_id, h)
           if (!await ownedScrape(label, h)) return MISSING
-          await h.call(["pane", "run", root.pane_id, ` ${args.at(-1)!}`])
-          return { code: 0, stdout: `${root.pane_id}||${pid}|\n` }
+          // A lost reply may still have launched claude: pane and pid go back
+          // either way, so cleanup waits for that pid before the HOME goes.
+          const out = `${root.pane_id}||${pid}|\n`
+          const ran = await h.call(["pane", "run", root.pane_id, ` ${args.at(-1)!}`]).then(() => true, () => false)
+          return { code: ran ? 0 : -1, stdout: out }
         }
         case "capture-pane": {
-          if (!await ownedScrape(nameOfPane(name), h)) return MISSING
+          if (!await minePane(name)) return MISSING
           const text = await read(name)
           return text === null ? MISSING : { code: 0, stdout: text }
         }
         case "send-keys": {
-          if (!await ownedScrape(nameOfPane(name), h)) return MISSING
+          if (!await minePane(name)) return MISSING
           const keys = args.slice(args.indexOf("-t") + 2)
           const ok = keys[0] === "-l" ? await herdrSendText(name, keys[1]!, h) : await herdrSendKey(name, keys[0]!, h)
           return ok ? OK : MISSING
         }
         case "kill-session": {
-          // A split someone added to the workspace survives: only a workspace
-          // holding our pane alone is closed. Read first, ownership last.
-          const o = scrapes.get(name)
-          if (!o) return OK
-          const count = ((await h.call(["workspace", "get", o.workspace], 2_000)).workspace as { pane_count?: unknown } | undefined)?.pane_count
-          if (typeof count !== "number") return UNKNOWN
-          if (!await ownedScrape(name, h)) return OK
-          await h.call(count === 1 ? ["workspace", "close", o.workspace] : ["pane", "close", o.pane], 5_000)
+          // Our pane only, never the workspace: a split someone adds can land
+          // after any read of it. The workspace goes with its last pane.
+          const o = await ownedScrape(name, h)
+          if (o) await h.call(["pane", "close", o.pane], 5_000)
           return OK
         }
         case "has-session": {
-          if (await ownedScrape(name, h)) return OK
-          // Not ours, or ours and gone: a workspace still wearing the label is
-          // one nothing here can prove gone, so it is never reported as gone.
+          if (scrapes.has(name)) return (await ownedScrape(name, h)) ? OK : MISSING
+          // Never ours to check: a workspace still wearing the label is one
+          // nothing here can prove gone, so it is never reported as gone.
           return (await hasLabel(name, h)) ? UNKNOWN : MISSING
         }
         case "list-panes": {
@@ -143,8 +145,8 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
             const p = marked[0]
             if (!p?.pane_id || !p.terminal_id || !w.workspace_id) { rows.push(`${label}\t\t\t\t`); continue }
             const known = scrapes.get(label)
-            if (known && (known.pane !== p.pane_id || known.terminal !== p.terminal_id || known.workspace !== w.workspace_id)) { rows.push(`${label}\t\t\t\t`); continue }
-            scrapes.set(label, { pane: p.pane_id, terminal: p.terminal_id, workspace: w.workspace_id })
+            if (known && (known.gone || known.pane !== p.pane_id || known.terminal !== p.terminal_id || known.workspace !== w.workspace_id)) { rows.push(`${label}\t\t\t\t`); continue }
+            if (!known) scrapes.set(label, { pane: p.pane_id, terminal: p.terminal_id, workspace: w.workspace_id })
             rows.push(`${label}\t${p.pane_id}\t\t${await panePid(p.pane_id, h)}\t`)
           }
           return { code: 0, stdout: rows.join("\n") }

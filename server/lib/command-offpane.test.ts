@@ -1488,6 +1488,12 @@ class HerdrWorld {
   live = new Set<number>()
   reads = 0
   onRead: (() => void) | null = null
+  // `pane run` types the command, then its reply is lost (a timeout).
+  runReplyLost = false
+  // A closed pane's claude stays alive (in `linger`) until a test lets it go.
+  outlive = false
+  linger = new Set<number>()
+  alive = (pid: number): boolean => this.live.has(pid) || this.linger.has(pid)
   private serial = 0
   constructor(readonly spawnSim: () => SimClaude) {}
 
@@ -1501,7 +1507,14 @@ class HerdrWorld {
     return pane
   }
   closeWs(ws: string): void {
-    for (const [id, p] of this.panes) if (p.ws === ws) { this.panes.delete(id); this.live.delete(p.pid) }
+    for (const [id, p] of this.panes) if (p.ws === ws) this.closePane(id)
+  }
+  closePane(id: string): void {
+    const p = this.panes.get(id)
+    if (!p) return
+    this.panes.delete(id)
+    this.live.delete(p.pid)
+    if (this.outlive) this.linger.add(p.pid)
   }
   writesTo(terminal: string): string[][] { return this.writes.get(terminal) ?? [] }
 
@@ -1535,11 +1548,12 @@ class HerdrWorld {
       if (verb === "get") return { pane: { pane_id: id, workspace_id: p.ws, terminal_id: p.terminal, label: p.label } }
       if (verb === "process-info") return { process_info: { shell_pid: p.pid } }
       if (verb === "rename") { p.label = args[3]!; return {} }
-      if (verb === "close") { this.panes.delete(id); this.live.delete(p.pid); return {} }
+      if (verb === "close") { this.closePane(id); return {} }
       if (verb === "run" || verb === "send-text" || verb === "send-keys") {
         this.writes.set(p.terminal, [...this.writesTo(p.terminal), args.slice(1)])
         if (verb === "send-text" && p.sim) p.sim.typed += args[3]!
         if (verb === "send-keys") p.sim?.key(HERDR_KEYS[args[3]!] ?? args[3]!)
+        if (verb === "run" && this.runReplyLost) throw new Error("timeout")
         return {}
       }
       return {}
@@ -1549,7 +1563,7 @@ class HerdrWorld {
 
 function herdrDeps(world: HerdrWorld, homes = fakeHomes().homes) {
   const c = clock()
-  return { tmux: herdrScrapeRunner(world.h, world.read), sleep: c.sleep, now: c.now, timing: {}, launch: LAUNCH, sessionName: names, homes, pidAlive: (pid: number) => world.live.has(pid), selfPid: SELF }
+  return { tmux: herdrScrapeRunner(world.h, world.read), sleep: c.sleep, now: c.now, timing: {}, launch: LAUNCH, sessionName: names, homes, pidAlive: world.alive, selfPid: SELF }
 }
 
 describe("off-pane on herdr", () => {
@@ -1578,6 +1592,21 @@ describe("off-pane on herdr", () => {
     expect(res.status).toBe("error")
     expect(world.writesTo(victim)).toEqual([])
     expect(world.panes.size).toBe(1)
+  })
+
+  test("`pane run` launches claude but its reply is lost: the HOME stays until that claude exits", async () => {
+    const world = new HerdrWorld(sim())
+    world.runReplyLost = true
+    world.outlive = true
+    const h = fakeHomes()
+    const d = { ...herdrDeps(world, h.homes), timing: { pidExitMs: 1, pollMs: 1 } }
+    const res = await enumerateCommandsOffPane("/proj", d)
+    expect(res.status).toBe("error")
+    expect(world.panes.size).toBe(0)
+    expect(h.removed).toEqual([])
+    world.linger.clear()
+    await reapScrapeSessions(d)
+    expect(h.removed).toHaveLength(1)
   })
 
   test("a reap keeps a pending kill's pid and HOME while its claude outlives the pane, and deletes the HOME once it exits", async () => {
