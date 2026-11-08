@@ -246,15 +246,31 @@ export interface SweepOptions {
 // elsewhere one `ps eww` (an argv token that looks like HOME= only keeps more).
 // A HOME in this set is in use whatever happened to the server that made it:
 // a tmux scrape from before the herdr switch outlives that server.
-export async function liveHomes(platform: NodeJS.Platform = process.platform): Promise<Set<string> | null> {
+// Only a complete scan counts: a process gone mid-scan (ENOENT, ESRCH) or
+// another user's (EACCES, EPERM: never a scrape, which runs as us) is an
+// answer; any other read error (EMFILE…) makes the whole result unknown.
+// Reads are one at a time, so the scan can't exhaust file descriptors itself.
+const PROC_ANSWERS = new Set(["ENOENT", "ESRCH", "EACCES", "EPERM"])
+interface ProcFs { list: () => Promise<string[]>; read: (pid: string) => Promise<string> }
+const realProc: ProcFs = {
+  list: () => readdir("/proc"),
+  read: (pid) => readFile(`/proc/${pid}/environ`, "latin1"),
+}
+
+export async function liveHomes(platform: NodeJS.Platform = process.platform, proc: ProcFs = realProc): Promise<Set<string> | null> {
   const out = new Set<string>()
   try {
     if (platform === "linux") {
-      const pids = (await readdir("/proc")).filter((p) => /^\d+$/.test(p))
-      await Promise.all(pids.map(async (pid) => {
-        const home = (await readFile(`/proc/${pid}/environ`, "latin1").catch(() => "")).split("\0").find((e) => e.startsWith("HOME="))
+      for (const pid of (await proc.list()).filter((p) => /^\d+$/.test(p))) {
+        let env = ""
+        try {
+          env = await proc.read(pid)
+        } catch (err) {
+          if (!PROC_ANSWERS.has((err as NodeJS.ErrnoException).code ?? "")) return null
+        }
+        const home = env.split("\0").find((e) => e.startsWith("HOME="))
         if (home) out.add(home.slice(5))
-      }))
+      }
       return out
     }
     const p = Bun.spawn(["ps", "eww", "-ax", "-o", "command="], { stdout: "pipe", stderr: "ignore" })

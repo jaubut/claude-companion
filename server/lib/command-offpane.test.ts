@@ -8,7 +8,7 @@ import {
   reapScrapeSessions, resetOffPaneState, type HomeFactory, type OffPaneResult,
 } from "./command-offpane"
 import { createCommandLister, createSlots, prepareRealList } from "./command-offpane-cache"
-import { createScrapeHome, removeScrapeHome, resolveHomesBase, sweepOrphanHomes, UnsafeDirError, verifyPrivateDir } from "./command-offpane-home"
+import { createScrapeHome, liveHomes, removeScrapeHome, resolveHomesBase, sweepOrphanHomes, UnsafeDirError, verifyPrivateDir } from "./command-offpane-home"
 import { isScrapeProcess, processEnvEntries } from "./discover"
 import {
   computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult, type TmuxRunner,
@@ -1204,6 +1204,25 @@ describe("throwaway HOME base: private, ours, not a symlink", () => {
     expect(existsSync(legacy)).toBe(true)
     expect(existsSync(stale)).toBe(false)
     expect(existsSync(dead)).toBe(true)
+  })
+  test("sweep: a process scan that fails partway (EMFILE) is unknown, and no HOME is deleted", async () => {
+    const tmp = fresh()
+    const dead = join(tmp, "cc-scrape-homes-6666-abc123"); mkdirSync(dead, { mode: 0o700 })
+    const stale = join(dead, "cc-scrape-6666-2-cd34"); mkdirSync(stale, { mode: 0o700 })
+    let reads = 0
+    const proc = {
+      list: async () => ["1", "2", "3"],
+      read: async (pid: string) => {
+        if (++reads === 2) throw Object.assign(new Error("too many open files"), { code: "EMFILE" })
+        return `HOME=/home/x${pid}\0`
+      },
+    }
+    await sweepOrphanHomes({ keep: () => false, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid, inUse: () => liveHomes("linux", proc) })
+    expect(existsSync(stale)).toBe(true)
+    // A process gone mid-scan, or another user's, is still a complete answer.
+    const gone = { list: proc.list, read: async (pid: string) => { if (pid === "2") throw Object.assign(new Error("gone"), { code: "ENOENT" }); if (pid === "3") throw Object.assign(new Error("denied"), { code: "EACCES" }); return "HOME=/home/x\0" } }
+    await sweepOrphanHomes({ keep: () => false, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid, inUse: () => liveHomes("linux", gone) })
+    expect(existsSync(stale)).toBe(false)
   })
   test("sweep: a dead server's base keeps a pending-kill session's HOME, and goes only once empty", async () => {
     const tmp = fresh()

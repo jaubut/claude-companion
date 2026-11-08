@@ -1329,7 +1329,7 @@
         },
         {
           "path": "lib/command-offpane-herdr.ts",
-          "lines": 209,
+          "lines": 193,
           "kind": "lib",
           "exports": [
             "PaneReader",
@@ -1347,7 +1347,6 @@
           "imports": [
             "lib/herdr.ts",
             "lib/herdr-socket.ts",
-            "lib/log.ts",
             "lib/scrape-registry.ts",
             "lib/command-offpane-launch.ts"
           ],
@@ -1357,7 +1356,7 @@
         },
         {
           "path": "lib/command-offpane-home.ts",
-          "lines": 318,
+          "lines": 334,
           "kind": "lib",
           "exports": [
             "LINKED_CONFIG_ENTRIES",
@@ -1380,7 +1379,8 @@
             "resetHomesBase"
           ],
           "state": [
-            "let baseMemo"
+            "let baseMemo",
+            "PROC_ANSWERS: Set"
           ],
           "emits": [],
           "consumes": [],
@@ -9379,7 +9379,6 @@
             "lib/approval-history-auto.ts",
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
-            "lib/command-offpane-herdr.ts",
             "lib/discover.ts",
             "lib/herdr-workspace.ts",
             "lib/inject-verified.ts",
