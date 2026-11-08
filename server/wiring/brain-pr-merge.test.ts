@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { MergeGateFn } from "../lib/merge-gate"
@@ -127,6 +127,64 @@ describe("bin/pr-merge gate: refusals", () => {
       expect([out.status, out.body.error]).toEqual([409, "not_approved"])
     })
   }
+
+  // Claude reviews paused: the flag file's existence (read on each call) lets a normal-tier, non-client PR merge on Codex alone.
+  describe("claude-review-paused flag", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-prmerge-flag-"))
+    const flag = join(dir, "claude-review-paused")
+    const absent = join(dir, "never-created")
+    writeFileSync(flag, "")
+    const CLIENT_TASK = `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'client', '${URL}');`
+    const run = async (pr: Record<string, unknown>, path: string, seed = TASK) => {
+      const w = world(pr, seed)
+      const out = await mergeAgentPr(input, { ...w.deps, pausedFlag: path })
+      return { out, merged: merges(w.calls).length }
+    }
+    const codexOnly = (...extra: unknown[]) => green({ comments: [tier("normal"), review("codex", "APPROVE"), ...extra] })
+    const notApproved = (r: Awaited<ReturnType<typeof run>>) => {
+      expect([r.out.status, r.out.body.error, r.merged]).toEqual([409, "not_approved", 0])
+    }
+
+    test("flag absent: normal tier + Codex only still 409 not_approved", async () => notApproved(await run(codexOnly(), absent)))
+
+    test("flag present, normal tier, Codex APPROVE: merges", async () => {
+      const r = await run(codexOnly(), flag)
+      expect([r.out.status, r.merged]).toEqual([200, 1])
+    })
+
+    test("flag present: a Codex comment tagged (codex only, Claude review paused) merges", async () => {
+      const tagged = { author: { login: BOT }, body: `🧠 **Codex review** (codex only, Claude review paused)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->` }
+      const r = await run(green({ comments: [tier("normal"), tagged] }), flag)
+      expect([r.out.status, r.merged]).toEqual([200, 1])
+    })
+
+    test("flag is read on every call, never cached", async () => {
+      const f = join(dir, "toggled")
+      writeFileSync(f, "")
+      expect((await run(codexOnly(), f)).out.status).toBe(200)
+      rmSync(f)
+      notApproved(await run(codexOnly(), f))
+    })
+
+    test("flag present: Codex CHANGES refuses", async () => notApproved(await run(green({ comments: [tier("normal"), review("codex", "CHANGES")] }), flag)))
+    test("flag present: Claude CHANGES refuses even with a Codex APPROVE", async () => notApproved(await run(codexOnly(review("claude", "CHANGES")), flag)))
+    test("flag present: Codex APPROVE of an older head refuses", async () => notApproved(await run(green({ comments: [tier("normal"), review("codex", "APPROVE", OLD)] }), flag)))
+    test("flag present: no Codex review refuses", async () => notApproved(await run(green({ comments: [tier("normal")] }), flag)))
+    test("flag present: GitHub CHANGES_REQUESTED refuses", async () => notApproved(await run({ ...codexOnly(), reviewDecision: "CHANGES_REQUESTED" }, flag)))
+
+    for (const [what, marker] of [["high tier", [tier("high")]], ["no tier marker", []]] as const) {
+      test(`flag present: ${what} still needs both`, async () => notApproved(await run(green({ comments: [...marker, review("codex", "APPROVE")] }), flag)))
+    }
+
+    test("flag present: a low marker on code still needs both", async () => notApproved(await run(green({ files: [{ path: "server/lib/a.ts" }], comments: [tier("low"), review("codex", "APPROVE")] }), flag)))
+
+    test("flag present: a client-origin task is unchanged (needs both)", async () => notApproved(await run(codexOnly(), flag, CLIENT_TASK)))
+    test("flag present: a client-origin PR label is unchanged (needs both)", async () => notApproved(await run({ ...codexOnly(), labels: [{ name: "client-origin" }] }, flag)))
+    test("flag present: client-origin with both reviews still merges, as today", async () => {
+      const r = await run(green({ comments: [tier("normal"), review("claude", "APPROVE"), review("codex", "APPROVE")] }), flag, CLIENT_TASK)
+      expect([r.out.status, r.merged]).toEqual([200, 1])
+    })
+  })
 
   const held: Array<[string, Record<string, unknown>, string?]> = [
     ["a conflict park", {}, park("pr:needs-human", "merge conflict unresolved after 2 attempts")],
