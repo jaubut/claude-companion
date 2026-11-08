@@ -30,7 +30,8 @@ import { orchEmit } from "./orchestrator"
 //   merge_cap (429): ≤ MERGE_CAP brain merges in 24 h
 //   base read again (409 base_moved / gate_unavailable): the gate's reads are behind all of the above
 //     TEMPORARY: while the flag file ~/.claude/state/claude-review-paused exists (read on every call), a
-//     `normal` tier, non-client-origin PR needs only the Codex APPROVE (no CHANGES from either reviewer).
+//     `normal` tier PR needs the Codex APPROVE instead of Claude's (no CHANGES from either reviewer);
+//     a client-origin one needs both.
 //   caller still there (409 client_gone): nobody would hear the answer, so nothing merges
 // Then `gh pr merge --squash --match-head-commit <checked sha>`: a head pushed
 // after the checks makes GitHub refuse. Each merge is a `brain:pr-merge`
@@ -108,7 +109,7 @@ function notGreen(v: PrView): string[] {
 }
 
 /** Why the review cascade has not approved this head (empty = approved). */
-function notApproved(v: PrView, claudePaused = false): string[] {
+function notApproved(v: PrView, claudePaused = false, clientOrigin = false): string[] {
   const out: string[] = []
   const login = v.author?.login
   if (!login || !v.headRefOid) return ["no PR author or head sha"]
@@ -120,9 +121,10 @@ function notApproved(v: PrView, claudePaused = false): string[] {
   // The shepherd's newest tier marker (claude-config PR 230); no marker counts as high.
   const tier = v.comments.filter((c) => c.author?.login === login).map((c) => /<!-- review-tier: (\w+) -->/.exec(String(c.body))?.[1]).filter(Boolean).at(-1)
   if (tier === "low" && v.files.length > 0 && v.files.length < LOW_FILE_LIMIT && v.files.every((f) => LOW_FILE.test(String(f.path)))) return out
-  const codexOnly = claudePaused && tier === "normal"
+  // Paused: a normal tier needs Codex; a client-origin one keeps Claude too (both).
+  const codexOnly = claudePaused && tier === "normal" && !clientOrigin
   if (!codexOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
-  if ((tier !== "normal" || codexOnly) && !codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
+  if ((tier !== "normal" || claudePaused) && !codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
   return out
 }
 
@@ -175,7 +177,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (park.reasons.length) return fail(403, "parked", { reasons: park.reasons })
   const red = notGreen(v)
   if (red.length) return fail(409, "not_green", { reasons: red })
-  const unapproved = notApproved(v, !park.clientOrigin && existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG))
+  const unapproved = notApproved(v, existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG), park.clientOrigin)
   if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
   if (!(recent < MERGE_CAP)) return fail(429, "merge_cap", { cap: MERGE_CAP })
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.

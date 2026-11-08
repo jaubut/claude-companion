@@ -180,6 +180,13 @@ describe("bin/pr-merge gate: refusals", () => {
 
     test("flag present: a client-origin task is unchanged (needs both)", async () => notApproved(await run(codexOnly(), flag, CLIENT_TASK)))
     test("flag present: a client-origin PR label is unchanged (needs both)", async () => notApproved(await run({ ...codexOnly(), labels: [{ name: "client-origin" }] }, flag)))
+    const claudeOnly = green({ comments: [tier("normal"), review("claude", "APPROVE")] })
+    test("flag present: normal tier + Claude APPROVE only refuses (Codex replaces Claude)", async () => notApproved(await run(claudeOnly, flag)))
+    test("flag present: a client-origin task with Claude APPROVE only refuses", async () => notApproved(await run(claudeOnly, flag, CLIENT_TASK)))
+    test("flag present: a client-origin label with Claude APPROVE only refuses", async () => notApproved(await run({ ...claudeOnly, labels: [{ name: "client-origin" }] }, flag)))
+    test("flag absent: a client-origin task with Claude APPROVE only merges, as before", async () => {
+      expect((await run(claudeOnly, absent, CLIENT_TASK)).out.status).toBe(200)
+    })
     test("flag present: client-origin with both reviews still merges, as today", async () => {
       const r = await run(green({ comments: [tier("normal"), review("claude", "APPROVE"), review("codex", "APPROVE")] }), flag, CLIENT_TASK)
       expect([r.out.status, r.merged]).toEqual([200, 1])

@@ -93,10 +93,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/events.ts` | 224 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
 | `routes/vault.ts` | 221 | lib | 1 |  |
 | `lib/resolver-work.ts` | 219 | lib | 5 |  |
+| `wiring/brain-pr-merge.ts` | 218 | lib | 4 |  |
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/dialogs.ts` | 216 | lib | 7 |  |
-| `wiring/brain-pr-merge.ts` | 216 | lib | 4 |  |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `wiring/dialogs.ts` | 213 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `routes/command.ts` | 212 | route-host | 1 | routes: 2 |
