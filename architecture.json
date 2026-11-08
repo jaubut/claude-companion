@@ -1667,7 +1667,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 469,
+          "lines": 501,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1682,6 +1682,8 @@
             "herdrPaneFromEnv",
             "TmuxRefDeps",
             "resolveTmuxRef",
+            "processArgv",
+            "codexCwdFromArgv",
             "firstDiscovery",
             "expectFirstDiscovery",
             "waitForFirstDiscovery",
