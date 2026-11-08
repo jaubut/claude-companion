@@ -285,13 +285,26 @@ async function findProcessStartMs(pid: string): Promise<number> {
   return Number.isFinite(start) ? start : 0
 }
 
+// A process's exact argv (Linux: NUL-separated /proc/<pid>/cmdline). null elsewhere: `ps` flattens the
+// argv, so a path with spaces or a prompt containing "--cd /x" can't be told apart from real options.
+export async function processArgv(pid: string, platform: NodeJS.Platform = process.platform): Promise<string[] | null> {
+  if (platform !== "linux") return null
+  try {
+    return (await readFile(`/proc/${pid}/cmdline`, "utf-8")).replace(/\0$/, "").split("\0")
+  } catch {
+    return null
+  }
+}
+
 // A Codex started as `codex --cd <dir>` (handoff-builder.sh --kind codex, in a herdr pane whose cwd is the
 // clone's parent) keeps the PANE's cwd as its process cwd; the thread, the label and the work live in <dir>.
-export function codexCwdFromCommand(command: string, processCwd: string): string {
-  const parts = command.split(/\s+/)
-  for (let i = 1; i < parts.length; i++) {
-    const p = parts[i] ?? ""
-    const dir = p.startsWith("--cd=") ? p.slice(5) : p === "--cd" || p === "-C" ? parts[i + 1] ?? "" : ""
+// Exact argv only (a prompt is one element, never an option); unknown argv → the process cwd.
+export function codexCwdFromArgv(argv: readonly string[] | null, processCwd: string): string {
+  if (!argv) return processCwd
+  for (let i = 1; i < argv.length; i++) {
+    const p = argv[i] ?? ""
+    if (p === "--") break
+    const dir = p.startsWith("--cd=") ? p.slice(5) : p === "--cd" || p === "-C" ? argv[i + 1] ?? "" : ""
     if (dir.startsWith("/")) return dir
   }
   return processCwd
@@ -432,8 +445,11 @@ async function discoverOnce(): Promise<{ registered: number }> {
       ])
       if (!cwd) return
       if (p.agent === "codex") {
-        const codexCwd = codexCwdFromCommand(p.command, cwd)
+        const codexCwd = codexCwdFromArgv(await processArgv(p.pid), cwd)
         const [thread, env] = await Promise.all([findCodexThreadForPid(p.pid, codexCwd, p.command), processEnvEntries(p.pid)])
+        // Same as the Claude branch: a Codex in tmux inside herdr also inherits HERDR_PANE_ID, and
+        // without its own tmux address an inject would land on the outer terminal's active pane.
+        const ref = await resolveTmuxRef(p.pid, p.tty, "", { ttyMap, envOf: async () => env })
         recordSession({
           agent: p.agent,
           cwd: codexCwd,
@@ -441,6 +457,8 @@ async function discoverOnce(): Promise<{ registered: number }> {
           tty: p.tty,
           pid: p.pid,
           termProgram,
+          tmuxPane: ref.pane,
+          tmuxSocket: ref.socket,
           herdrPane: herdrPaneFromEnv(env),
           label: thread ? codexThreadLabel(thread, p.tty) : undefined,
         }, { provisional: true })

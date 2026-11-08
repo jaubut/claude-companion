@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test"
 import {
-  codexCwdFromCommand,
+  codexCwdFromArgv,
   herdrPaneFromEnv,
+  processArgv,
   isIgnoredAgentProcess,
   isNoTty,
   markFirstDiscoveryDoneForTest,
@@ -108,24 +109,44 @@ test("isIgnoredAgentProcess: a DISPATCH_WORKER=1 claude is skipped, a plain one 
 // ~/apps/wt-codex. The vendor binary IS matched (base name codex), but its process cwd is the pane's,
 // not the clone, so the Codex thread (cwd = clone) never matched and the row was an anonymous
 // "wt-codex · ptsN" with no herdr pane.
-const BUILDER_CMD =
-  "/home/aubut/.local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex" +
-  " --cd /home/aubut/apps/wt-codex/repo-t1 --sandbox workspace-write --ask-for-approval never" +
-  " -c sandbox_workspace_write.network_access=true" +
-  " -c sandbox_workspace_write.writable_roots=[\"/home/aubut/apps/wt-codex/repo-t1/.git\"]"
+const BUILDER_ARGV = [
+  "/home/aubut/.local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+  "--cd", "/home/aubut/apps/wt-codex/repo-t1", "--sandbox", "workspace-write", "--ask-for-approval", "never",
+  "-c", "sandbox_workspace_write.network_access=true",
+  "-c", "sandbox_workspace_write.writable_roots=[\"/home/aubut/apps/wt-codex/repo-t1/.git\"]",
+]
 
 test("a script-started Codex builder is matched by ps, and --cd is its real cwd", () => {
-  const [a] = parseAgentPs(`  4242 pts/30   ${BUILDER_CMD}`)
+  const [a] = parseAgentPs(`  4242 pts/30   ${BUILDER_ARGV.join(" ")}`)
   expect(a?.agent).toBe("codex")
-  expect(codexCwdFromCommand(a!.command, "/home/aubut/apps/wt-codex")).toBe("/home/aubut/apps/wt-codex/repo-t1")
+  expect(codexCwdFromArgv(BUILDER_ARGV, "/home/aubut/apps/wt-codex")).toBe("/home/aubut/apps/wt-codex/repo-t1")
 })
 
-test("codexCwdFromCommand: --cd / --cd= / -C, absolute only, else the process cwd", () => {
-  expect(codexCwdFromCommand("codex --cd=/a/b", "/p")).toBe("/a/b")
-  expect(codexCwdFromCommand("codex -C /a/b --sandbox x", "/p")).toBe("/a/b")
-  expect(codexCwdFromCommand("codex --cd rel/dir", "/p")).toBe("/p")
-  expect(codexCwdFromCommand("codex resume abc", "/p")).toBe("/p")
-  expect(codexCwdFromCommand("codex --cd", "/p")).toBe("/p")
+test("codexCwdFromArgv: --cd / --cd= / -C, absolute only, else the process cwd", () => {
+  expect(codexCwdFromArgv(["codex", "--cd=/a/b"], "/p")).toBe("/a/b")
+  expect(codexCwdFromArgv(["codex", "-C", "/a/b", "--sandbox", "x"], "/p")).toBe("/a/b")
+  expect(codexCwdFromArgv(["codex", "--cd", "/my dir/repo"], "/p")).toBe("/my dir/repo")
+  expect(codexCwdFromArgv(["codex", "--cd", "rel/dir"], "/p")).toBe("/p")
+  expect(codexCwdFromArgv(["codex", "resume", "abc"], "/p")).toBe("/p")
+  expect(codexCwdFromArgv(["codex", "--cd"], "/p")).toBe("/p")
+  // A prompt is one argv element: text inside it is never an option.
+  expect(codexCwdFromArgv(["codex", "fix it then run with --cd /etc"], "/p")).toBe("/p")
+  expect(codexCwdFromArgv(["codex", "--", "--cd", "/etc"], "/p")).toBe("/p")
+  // Flattened ps output only (not Linux): ambiguous, keep the process cwd.
+  expect(codexCwdFromArgv(null, "/p")).toBe("/p")
+})
+
+test("processArgv reads a real process's argv boundaries on Linux, null elsewhere", async () => {
+  expect(await processArgv(String(process.pid), "darwin")).toBeNull()
+  if (process.platform !== "linux") return
+  const argv = ["sh", "-c", "sleep 30; :", "x", "a b"]
+  const p = Bun.spawn(argv, { stdout: "ignore", stderr: "ignore" })
+  try {
+    await Bun.sleep(50)
+    expect(await processArgv(String(p.pid))).toEqual(argv)
+  } finally {
+    p.kill()
+  }
 })
 
 test("herdrPaneFromEnv: the pane of a herdr-started agent", () => {
