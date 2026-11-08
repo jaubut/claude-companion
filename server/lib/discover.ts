@@ -285,6 +285,18 @@ async function findProcessStartMs(pid: string): Promise<number> {
   return Number.isFinite(start) ? start : 0
 }
 
+// A Codex started as `codex --cd <dir>` (handoff-builder.sh --kind codex, in a herdr pane whose cwd is the
+// clone's parent) keeps the PANE's cwd as its process cwd; the thread, the label and the work live in <dir>.
+export function codexCwdFromCommand(command: string, processCwd: string): string {
+  const parts = command.split(/\s+/)
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i] ?? ""
+    const dir = p.startsWith("--cd=") ? p.slice(5) : p === "--cd" || p === "-C" ? parts[i + 1] ?? "" : ""
+    if (dir.startsWith("/")) return dir
+  }
+  return processCwd
+}
+
 function resumedCodexThreadId(command: string): string {
   const m = command.match(/\bresume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i)
   return m?.[1] ?? ""
@@ -420,14 +432,16 @@ async function discoverOnce(): Promise<{ registered: number }> {
       ])
       if (!cwd) return
       if (p.agent === "codex") {
-        const thread = await findCodexThreadForPid(p.pid, cwd, p.command)
+        const codexCwd = codexCwdFromCommand(p.command, cwd)
+        const [thread, env] = await Promise.all([findCodexThreadForPid(p.pid, codexCwd, p.command), processEnvEntries(p.pid)])
         recordSession({
           agent: p.agent,
-          cwd,
+          cwd: codexCwd,
           sessionId: thread?.id ?? "",
           tty: p.tty,
           pid: p.pid,
           termProgram,
+          herdrPane: herdrPaneFromEnv(env),
           label: thread ? codexThreadLabel(thread, p.tty) : undefined,
         }, { provisional: true })
       } else {

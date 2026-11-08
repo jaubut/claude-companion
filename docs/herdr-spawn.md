@@ -42,6 +42,14 @@ task: the row stays blocked) — `server/lib/spawn-seed.ts`:
   typed-but-unsubmitted seed is never retyped). Reply `seed: "pending"`, or `"unsupported"` when
   the spawn has no herdr pane to match. Both refused on `agent: "shell"` (400 `agent_only`).
 
+A herdr agent a script started (not `/api/spawn-session`; e.g. `handoff-builder.sh --kind codex`)
+is listed by process discovery (`server/lib/discover.ts`, every 60 s): any interactive `claude`/`codex`
+with a tty. Its `$HERDR_PANE_ID` becomes the session's `herdrPane` (inject and picker keys go through
+herdr), and a Codex started as `codex --cd <dir>` is registered with `<dir>` as its cwd, because the
+pane's cwd is the clone's parent and the Codex thread (matched by cwd, within 2 min of the process
+start) lives in `<dir>`. No spawn record exists, so nothing closes its workspace (`close` stays the
+script's job).
+
 Not changed: the Zettlab `~/.bashrc` `claude()` tmux wrapper (manual SSH launches) and
 dispatch workers (`DISPATCH_WORKER=1`, hidden from the picker). Both share the one herdr
 server per host.

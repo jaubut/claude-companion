@@ -1,5 +1,7 @@
 import { test, expect } from "bun:test"
 import {
+  codexCwdFromCommand,
+  herdrPaneFromEnv,
   isIgnoredAgentProcess,
   isNoTty,
   markFirstDiscoveryDoneForTest,
@@ -100,4 +102,34 @@ test("isIgnoredAgentProcess: a DISPATCH_WORKER=1 claude is skipped, a plain one 
   expect(await isIgnoredAgentProcess("302", "/dev/pts/8", deps)).toBe(false)
   expect(await isIgnoredAgentProcess("303", "/dev/pts/9", deps)).toBe(true)
   expect(await isIgnoredAgentProcess("304", "/dev/pts/10", deps)).toBe(false) // env unreadable: listed, as before
+})
+
+// handoff-builder.sh --kind codex: `herdr agent start … -- codex --cd <clone> …` in a pane whose cwd is
+// ~/apps/wt-codex. The vendor binary IS matched (base name codex), but its process cwd is the pane's,
+// not the clone, so the Codex thread (cwd = clone) never matched and the row was an anonymous
+// "wt-codex · ptsN" with no herdr pane.
+const BUILDER_CMD =
+  "/home/aubut/.local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex" +
+  " --cd /home/aubut/apps/wt-codex/repo-t1 --sandbox workspace-write --ask-for-approval never" +
+  " -c sandbox_workspace_write.network_access=true" +
+  " -c sandbox_workspace_write.writable_roots=[\"/home/aubut/apps/wt-codex/repo-t1/.git\"]"
+
+test("a script-started Codex builder is matched by ps, and --cd is its real cwd", () => {
+  const [a] = parseAgentPs(`  4242 pts/30   ${BUILDER_CMD}`)
+  expect(a?.agent).toBe("codex")
+  expect(codexCwdFromCommand(a!.command, "/home/aubut/apps/wt-codex")).toBe("/home/aubut/apps/wt-codex/repo-t1")
+})
+
+test("codexCwdFromCommand: --cd / --cd= / -C, absolute only, else the process cwd", () => {
+  expect(codexCwdFromCommand("codex --cd=/a/b", "/p")).toBe("/a/b")
+  expect(codexCwdFromCommand("codex -C /a/b --sandbox x", "/p")).toBe("/a/b")
+  expect(codexCwdFromCommand("codex --cd rel/dir", "/p")).toBe("/p")
+  expect(codexCwdFromCommand("codex resume abc", "/p")).toBe("/p")
+  expect(codexCwdFromCommand("codex --cd", "/p")).toBe("/p")
+})
+
+test("herdrPaneFromEnv: the pane of a herdr-started agent", () => {
+  expect(herdrPaneFromEnv(["TERM_PROGRAM=herdr", "HERDR_PANE_ID=wA3:p1"])).toBe("wA3:p1")
+  expect(herdrPaneFromEnv(["HOME=/x"])).toBe("")
+  expect(herdrPaneFromEnv(null)).toBe("")
 })
