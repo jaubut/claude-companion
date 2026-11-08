@@ -16,13 +16,14 @@ const notFound = () => { throw Object.assign(new Error("pane_not_found"), { code
 
 // A scrape's pane as herdr describes it; `pane` returns what `pane get` says it
 // holds now (a throw = herdr can't say).
-function scrapePane(o: { pane?: () => Record<string, unknown>; pid?: () => number } = {}) {
+function scrapePane(o: { pane?: () => Record<string, unknown>; pid?: () => number; ws?: () => Record<string, unknown> } = {}) {
   const pane = o.pane ?? (() => ({ pane_id: "w4:p1", workspace_id: "w4", terminal_id: "term_4", label: MARK }))
   return fakeHerdr({
     reply: (a) => {
       if (a[1] === "create") return created
       if (a[0] === "pane" && a[1] === "get") return { pane: pane() }
       if (a[1] === "process-info") return { process_info: { shell_pid: (o.pid ?? (() => 77))() } }
+      if (a[0] === "workspace" && a[1] === "get") return (o.ws ?? (() => { throw Object.assign(new Error("workspace_not_found"), { code: "workspace_not_found" }) }))()
       if (a[0] === "workspace" && a[1] === "list") return { workspaces: [] }
       return {}
     },
@@ -191,6 +192,34 @@ test("kill confirms even while a split keeps the scrape's label: our pane's own 
   const run = herdrScrapeRunner(f.h)
   await run(NEW)
   expect(await killScrapeSession(run, NAME, async () => {})).toBe(true)
+})
+
+test("kill: herdr keeps the emptied workspace: it is closed once, after a re-read shows the same id and no pane", async () => {
+  const f = scrapePane({ ws: () => ({ workspace: { workspace_id: "w4", label: NAME, pane_count: 0 } }) })
+  const run = herdrScrapeRunner(f.h)
+  await run(NEW)
+  f.calls.length = 0
+  await run(["kill-session", "-t", `=${NAME}`])
+  expect(writes(f.calls)).toEqual([["pane", "close", "w4:p1"], ["workspace", "close", "w4"]])
+  expect(f.calls.filter((c) => c[0] === "workspace" && c[1] === "get")).toHaveLength(2)
+})
+
+test("kill: a workspace that still has a pane, another workspace on the id, or one herdr can't read is never closed", async () => {
+  const shapes = [
+    () => ({ workspace: { workspace_id: "w4", label: NAME, pane_count: 1 } }),
+    () => ({ workspace: { workspace_id: "w4", label: "sh-home", pane_count: 0 } }),
+    () => ({ workspace: { workspace_id: "w4", label: NAME } }),
+    () => { throw new Error("down") },
+  ]
+  for (const ws of shapes) {
+    resetHerdrScrapes()
+    const f = scrapePane({ ws })
+    const run = herdrScrapeRunner(f.h)
+    await run(NEW)
+    f.calls.length = 0
+    await run(["kill-session", "-t", `=${NAME}`])
+    expect(writes(f.calls)).toEqual([["pane", "close", "w4:p1"]])
+  }
 })
 
 test("two scrapes, a pane id reused: the old scrape's reads and writes reach neither pane", async () => {

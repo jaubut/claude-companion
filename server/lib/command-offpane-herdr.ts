@@ -14,10 +14,13 @@
 //
 // A cc-scrape-* workspace is visible in a herdr client for the ~30 s of a run.
 // herdr detects the claude in it as an agent; nothing here reads that. Hooks
-// are off, and ps-discovery skips it by its environment (scrape-registry.ts).
+// are off, and ps-discovery skips it by its environment (discover.ts
+// isScrapeProcess). The registry's pane/tty mark is inert here: no tty, and a
+// herdr pane id never reaches its tmux lookups.
 
 import { type Herdr, SCRAPE_PANE_MARK, herdrErrorCode, herdrSendKey, herdrSendText, realHerdr } from "./herdr"
 import { herdrSocketCall } from "./herdr-socket"
+import { companionLog } from "./log"
 import { isScrapeSessionName } from "./scrape-registry"
 import type { TmuxResult, TmuxRunner } from "./command-offpane-launch"
 
@@ -81,6 +84,22 @@ async function ownedScrape(name: string, h: Herdr): Promise<Owned | null> {
   return null
 }
 
+// herdr 0.9.5 drops a workspace with its last pane (#289, "Attach proof on
+// fb57aba": after the sole pane's shell exits, `labels []`). If one stays
+// anyway, it is closed only while two reads in a row show it under this
+// scrape's name with no pane. Anything else, or no answer, leaves it.
+async function closeEmptied(name: string, ws: string, h: Herdr): Promise<void> {
+  const empty = async (): Promise<boolean> => {
+    const w = (await h.call(["workspace", "get", ws], 2_000)).workspace as { workspace_id?: string; label?: string; pane_count?: unknown } | undefined
+    return w?.workspace_id === ws && w.label === name && w.pane_count === 0
+  }
+  try {
+    if (await empty() && await empty()) await h.call(["workspace", "close", ws], 5_000)
+  } catch (err) {
+    if (herdrErrorCode(err) !== "workspace_not_found") companionLog(`commands: scrape workspace ${ws} (${name}) left in place: ${(err as Error).message}`)
+  }
+}
+
 async function hasLabel(name: string, h: Herdr): Promise<boolean> {
   const list = (await h.call(["workspace", "list"], 3_000)).workspaces
   if (!Array.isArray(list)) throw new Error("workspace list: bad shape")
@@ -136,7 +155,9 @@ export function herdrScrapeRunner(h: Herdr = realHerdr, read: PaneReader = readP
           // Our pane only, never the workspace: a split someone adds can land
           // after any read of it. The workspace goes with its last pane.
           const o = await ownedScrape(name, h)
-          if (o) await h.call(["pane", "close", o.pane], 5_000)
+          if (!o) return OK
+          await h.call(["pane", "close", o.pane], 5_000)
+          await closeEmptied(name, o.workspace, h)
           return OK
         }
         case "has-session": {

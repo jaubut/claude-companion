@@ -1329,7 +1329,7 @@
         },
         {
           "path": "lib/command-offpane-herdr.ts",
-          "lines": 188,
+          "lines": 209,
           "kind": "lib",
           "exports": [
             "PaneReader",
@@ -1347,6 +1347,7 @@
           "imports": [
             "lib/herdr.ts",
             "lib/herdr-socket.ts",
+            "lib/log.ts",
             "lib/scrape-registry.ts",
             "lib/command-offpane-launch.ts"
           ],
@@ -1356,7 +1357,7 @@
         },
         {
           "path": "lib/command-offpane-home.ts",
-          "lines": 289,
+          "lines": 318,
           "kind": "lib",
           "exports": [
             "LINKED_CONFIG_ENTRIES",
@@ -1374,6 +1375,7 @@
             "createScrapeHome",
             "removeScrapeHome",
             "SweepOptions",
+            "liveHomes",
             "sweepOrphanHomes",
             "resetHomesBase"
           ],
@@ -1428,7 +1430,7 @@
         },
         {
           "path": "lib/command-offpane.ts",
-          "lines": 563,
+          "lines": 569,
           "kind": "lib",
           "exports": [
             "OffPaneTiming",
@@ -4148,7 +4150,7 @@
         },
         {
           "path": "lib/scrape-registry.ts",
-          "lines": 171,
+          "lines": 175,
           "kind": "lib",
           "exports": [
             "SCRAPE_SESSION_PREFIX",
@@ -9377,6 +9379,7 @@
             "lib/approval-history-auto.ts",
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
+            "lib/command-offpane-herdr.ts",
             "lib/discover.ts",
             "lib/herdr-workspace.ts",
             "lib/inject-verified.ts",

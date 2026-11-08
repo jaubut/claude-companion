@@ -20,6 +20,10 @@
 //      lapsed. The command line is never consulted: a user's own
 //      `claude -p "… COMPANION_SCRAPE=1 …"` is a real session.
 //
+// On herdr (lib/command-offpane-herdr.ts) layer 3 does nothing: a herdr pane
+// id never reaches tmuxPane lookups and the tty is empty, so hiding a herdr
+// scrape rests on layers 1, 2 and 4, the env check in discover.ts.
+//
 // recordSession (sessions.ts) itself does not consult the registry: the
 // checks sit at the call sites above. The module is dependency-free so any of
 // them can import it.

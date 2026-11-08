@@ -303,6 +303,9 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
   const alive = full.pidAlive ?? pidAlive
   const selfPid = full.selfPid ?? process.pid
   const homes = full.homes ?? realHomes
+  // A listed session with no pane is one nothing proves ours (herdr: a
+  // cc-scrape-* workspace without its mark): foreign, never killed or retried.
+  const ours = (rec: ScrapeRecord): boolean => rec.pane !== "" && reapable(rec.name, selfPid, alive)
   const ticket = ++serverTicket
   const r = await full.tmux(["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_tty}\t#{pane_pid}\t#{pid}"]).catch(() => ({ code: -1, stdout: "" }))
   // A complete inventory: a good listing, or "no server running" (every
@@ -318,7 +321,7 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
       if (!names.has(name)) { releaseScrapeTarget(rec); foreign.delete(name) }
     }
     for (const rec of listed) {
-      if (!active.has(rec.name) && !pendingKill.has(rec.name) && !reapable(rec.name, selfPid, alive)) foreign.set(rec.name, rec)
+      if (!active.has(rec.name) && !pendingKill.has(rec.name) && !ours(rec)) foreign.set(rec.name, rec)
       else foreign.delete(rec.name)
     }
     // Server gone or replaced: its pane ids will be reused, so no pane mark
@@ -333,7 +336,7 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
   const todo = new Map<string, ScrapeRecord>()
   for (const rec of pendingKill.values()) todo.set(rec.name, rec)
   for (const rec of listed) {
-    if (active.has(rec.name) || !reapable(rec.name, selfPid, alive)) continue
+    if (active.has(rec.name) || !ours(rec)) continue
     const pending = pendingKill.get(rec.name)
     const home = pending?.home || (await homes.pathFor?.(rec.name).catch(() => null)) || ""
     // A pending kill's pid stands: a listing's may already name another process.
@@ -353,7 +356,8 @@ export async function reapScrapeSessions(deps: Partial<LifecycleDeps> = {}): Pro
     (pid) => !alive(pid),
     selfPid,
   ).catch(() => undefined)
-  if (foreign.size > 0) schedulePendingRetry(full)
+  // Only a foreign pane holds a mark to release once it is gone.
+  if ([...foreign.values()].some((f) => f.pane)) schedulePendingRetry(full)
   return reaped
 }
 
@@ -421,7 +425,9 @@ export async function enumerateCommandsOffPane(cwd: string, deps: OffPaneDeps): 
     const serverPid = Number(server) > 0 ? Number(server) : null
     Object.assign(rec, { pane, tty, pid: Number(pid) || 0, serverPid })
     if (created.code === 0 && serverPid !== null) observeServer(serverPid, ticket)
-    // Marked before claude has booted far enough to do anything.
+    // Marked before claude has booted far enough to do anything. On herdr the
+    // mark is inert (no tty, a pane id tmux lookups never see): hiding rests
+    // on the env check in discover.ts (scrape-registry.ts, layer 4).
     markScrapeTarget(rec)
     if (created.code !== 0 || !/^(%\d+|[A-Za-z0-9]+:p\d+)$/.test(pane)) return result("error", [], 0, "tmux new-session failed")
 

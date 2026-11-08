@@ -1195,6 +1195,16 @@ describe("throwaway HOME base: private, ours, not a symlink", () => {
     expect(existsSync(self)).toBe(true)
     expect(existsSync(loose)).toBe(true)
   })
+  test("sweep: a HOME a live process still runs in survives, whatever its owner (a tmux scrape outliving the deploy)", async () => {
+    const tmp = fresh()
+    const dead = join(tmp, "cc-scrape-homes-6666-abc123"); mkdirSync(dead, { mode: 0o700 })
+    const legacy = join(dead, "cc-scrape-6666-1-ab12"); mkdirSync(legacy, { mode: 0o700 })
+    const stale = join(dead, "cc-scrape-6666-2-cd34"); mkdirSync(stale, { mode: 0o700 })
+    await sweepOrphanHomes({ keep: () => false, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid, inUse: async () => new Set([legacy]) })
+    expect(existsSync(legacy)).toBe(true)
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(dead)).toBe(true)
+  })
   test("sweep: a dead server's base keeps a pending-kill session's HOME, and goes only once empty", async () => {
     const tmp = fresh()
     const dead = join(tmp, "cc-scrape-homes-6666-abc123"); mkdirSync(dead, { mode: 0o700 })
@@ -1607,6 +1617,20 @@ describe("off-pane on herdr", () => {
     world.linger.clear()
     await reapScrapeSessions(d)
     expect(h.removed).toHaveLength(1)
+  })
+
+  test("an unmarked cc-scrape-* workspace (listed with no pane) is foreign: never killed, never pending", async () => {
+    const name = "cc-scrape-999999-1-old0"
+    const calls: string[][] = []
+    const runner: TmuxRunner = async (args) => {
+      calls.push(args)
+      if (args[0] === "list-panes") return { code: 0, stdout: `${name}\t\t\t\t` }
+      return { code: -1, stdout: "" }
+    }
+    await reapScrapeSessions({ tmux: runner, sleep: async () => {}, pidAlive: (p) => p === SELF, selfPid: SELF, homes: fakeHomes().homes })
+    expect(pendingKills()).toEqual([])
+    expect(foreignScrapes()).toEqual([name])
+    expect(calls.filter((c) => c[0] === "kill-session")).toEqual([])
   })
 
   test("a pending kill's pid is never replaced by a later listing's (a reused id names another process)", async () => {
