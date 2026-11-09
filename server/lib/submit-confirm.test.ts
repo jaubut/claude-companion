@@ -1,5 +1,8 @@
-import { test, expect } from "bun:test"
-import { type ConfirmDeps, type SubmitClock, LATE_HOOK_GRACE_MS, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
+import { test, expect, spyOn } from "bun:test"
+import { type ConfirmDeps, type SubmitClock, LATE_HOOK_GRACE_MS, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, injectConfirmed, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
+import * as keyboard from "./keyboard-inject"
+import * as tmux from "./tmux-pane"
+import type { Herdr } from "./herdr"
 
 // A manual clock: timers fire only when the test advances time.
 function fakeClock() {
@@ -28,6 +31,37 @@ const box = (input: string, footer = "  ⏸ manual mode on · ? for shortcuts") 
 
 // Text still typed in the box: the Enter was lost.
 const STUCK = box("❯ hello there")
+
+for (const backend of ["herdr", "tmux"] as const) test(`guard: ${backend} Enter retry refuses changed identity even if a later hook confirms`, async () => {
+  const target = { key: `guard-retry-${backend}`, sessionId: "retry-before", tty: "/dev/pts/992",
+    ...(backend === "herdr" ? { herdrPane: "w992:p1" } : { tmuxPane: "%992" }) }
+  let current = true
+  const retries: string[] = []
+  let hook: ReturnType<typeof setTimeout> | undefined
+  const capture = async () => {
+    current = false
+    hook = setTimeout(() => noteUserPromptSubmit(target, "hello there"), 0)
+    return STUCK
+  }
+  const h: Herdr = { gate: async () => null, read: capture, call: async (args) => {
+    if (args[1] === "send-keys") retries.push("Enter")
+    return {}
+  } }
+  const spies = backend === "tmux" ? [
+    spyOn(keyboard, "injectText").mockResolvedValue(true),
+    spyOn(tmux, "capturePane").mockImplementation(capture),
+    spyOn(keyboard, "tmuxSendKeys").mockImplementation(async () => { retries.push("Enter"); return { ok: true, reason: "" } }),
+  ] : []
+  const watches = activeWatchCount()
+  try {
+    expect(await injectConfirmed("hello there", target, h, () => current)).toEqual({ ok: false, error: "target_changed" })
+    expect(retries).toEqual([])
+    expect(activeWatchCount()).toBe(watches)
+  } finally {
+    clearTimeout(hook)
+    for (const spy of spies) spy.mockRestore()
+  }
+}, 5_000)
 // Empty box with Claude Code's dim predicted reply (capture-pane -e).
 const GHOST = box("❯ \x1b[2mdone, service is running\x1b[0m")
 const PICKER = "  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n"
