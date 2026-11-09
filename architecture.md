@@ -25,7 +25,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 506 | lib | 26 | state: RETIRED_APPS: Set |
 | `lib/discover.ts` | 501 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
-| `lib/canvas.ts` | 481 | lib | 31 | state: BLOCKING: Set |
+| `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |

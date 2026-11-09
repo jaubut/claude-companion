@@ -205,6 +205,7 @@ export function createCanvasStore(db: Database): CanvasStore {
     patchNode(id, patch, now) {
       const sets: string[] = []
       const args: (string | number)[] = []
+      let resetPick = patch.boundSid !== undefined
       for (const k of ["ref", "x", "y", "w", "h"] as const) {
         if (patch[k] !== undefined) { sets.push(`${k} = ?`); args.push(patch[k]) }
       }
@@ -212,16 +213,19 @@ export function createCanvasStore(db: Database): CanvasStore {
         const data = { ...patch.data }
         const current = getNode(id)
         if (current?.kind === "preview") {
+          const groupChanged = JSON.stringify(data.group) !== JSON.stringify(current.data.group)
           // Pick facts belong to the store even when clients replace the rest of data.
           for (const field of ["picked", "pickedAt"] as const) {
             delete data[field]
-            if (Object.hasOwn(current.data, field)) data[field] = current.data[field]
+            if (!groupChanged && Object.hasOwn(current.data, field)) data[field] = current.data[field]
           }
+          if (groupChanged) { data.picked = false; resetPick = true }
         }
         sets.push("data = ?"); args.push(JSON.stringify(data))
       }
-      // A new target hasn't heard about the pick.
-      if (patch.boundSid !== undefined) { sets.push("bound_sid = ?", "pick_state = ''", "pick_token = ''"); args.push(patch.boundSid) }
+      if (patch.boundSid !== undefined) { sets.push("bound_sid = ?"); args.push(patch.boundSid) }
+      // A new group or target invalidates the delivery in the same update as the node data.
+      if (resetPick) sets.push("pick_state = ''", "pick_token = ''")
       sets.push("updated_at = ?")
       args.push(now)
       const r = db.query(`UPDATE canvas_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...args, id)

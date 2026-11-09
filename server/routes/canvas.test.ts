@@ -395,7 +395,7 @@ describe("preview pick (design-first)", () => {
 
   for (const state of ["sending", "sent"] as const) {
     for (const fields of [{}, { picked: false, pickedAt: -1 }]) {
-      test(`a data PATCH preserves the ${state} pick claim (${Object.keys(fields).length ? "forged" : "omitted"} pick fields)`, async () => {
+      test(`a same-group data PATCH preserves the ${state} pick claim (${Object.keys(fields).length ? "forged" : "omitted"} pick fields)`, async () => {
         const id = `patch-${state}-${Object.keys(fields).length}`
         await preview(id, id)
         const { deliveries, pick } = delayedPicks()
@@ -405,8 +405,8 @@ describe("preview pick (design-first)", () => {
           await first
         }
         try {
-          const patched = await call("PATCH", `/api/canvas/nodes/${id}`, { data: { title: "edited", ...fields } })
-          expect(patched.json.node).toMatchObject({ data: { title: "edited", picked: true, pickedAt: 42 } })
+          const patched = await call("PATCH", `/api/canvas/nodes/${id}`, { data: { group: id, title: "edited", ...fields } })
+          expect(patched.json.node).toMatchObject({ data: { group: id, title: "edited", picked: true, pickedAt: 42 } })
           expect(await pick(id)).toMatchObject({ status: 200, json: { duplicate: true, delivered: state === "sent" } })
           expect(deliveries).toHaveLength(1)
         } finally {
