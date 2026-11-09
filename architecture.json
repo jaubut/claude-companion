@@ -1106,7 +1106,7 @@
         },
         {
           "path": "lib/canvas.ts",
-          "lines": 458,
+          "lines": 473,
           "kind": "lib",
           "exports": [
             "NODE_KINDS",

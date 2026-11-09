@@ -240,6 +240,74 @@ describe("preview pick (design-first)", () => {
     call("POST", "/api/canvas/nodes", { id, kind: "preview", ref: `http://zettlab:3147/${id}.html`, x: 0, y: 600, w: 1, h: 1, data: { title: id, direction: id, group, ...extra } })
   const data = (id: string): Record<string, unknown> => store.node(id)!.data
 
+  const delayedPicks = () => {
+    const deliveries: ReturnType<typeof Promise.withResolvers<SendResult>>[] = []
+    const handle = createCanvasRoute({
+      store, status: () => ({}), host: "testhost", notify: () => {}, references: () => [], query: async () => [],
+      send: async () => ({ ok: true }), now: () => 42,
+      pickNotify: () => {
+        const delivery = Promise.withResolvers<SendResult>()
+        deliveries.push(delivery)
+        return delivery.promise
+      },
+    })
+    const pick = async (id: string) => {
+      const url = new URL(`/api/canvas/nodes/${id}/pick`, base)
+      const response = (await handle(new Request(url.href, { method: "POST" }), url))!
+      return { status: response.status, json: await response.json() as Record<string, unknown> }
+    }
+    return { deliveries, pick }
+  }
+
+  test("a delayed A success cannot settle a newer A claim after A -> B -> A", async () => {
+    await preview("race-a", "race")
+    await preview("race-b", "race")
+    const { deliveries, pick } = delayedPicks()
+    const firstA = pick("race-a")
+    const b = pick("race-b")
+    const latestA = pick("race-a")
+    expect(deliveries).toHaveLength(3)
+    deliveries[0]!.resolve({ ok: true })
+    deliveries[1]!.resolve({ ok: true })
+    await Promise.all([firstA, b])
+    try {
+      expect(await pick("race-a")).toMatchObject({ status: 200, json: { duplicate: true, delivered: false } })
+    } finally {
+      deliveries[2]!.resolve({ ok: false, status: 409, error: "pane_not_ready" })
+      await latestA
+    }
+    const retry = pick("race-a")
+    expect(deliveries).toHaveLength(4)
+    deliveries[3]!.resolve({ ok: true })
+    expect(await retry).toMatchObject({ status: 200, json: { delivered: true } })
+    for (const id of ["race-a", "race-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  for (const state of ["sending", "sent"] as const) {
+    for (const fields of [{}, { picked: false, pickedAt: -1 }]) {
+      test(`a data PATCH preserves the ${state} pick claim (${Object.keys(fields).length ? "forged" : "omitted"} pick fields)`, async () => {
+        const id = `patch-${state}-${Object.keys(fields).length}`
+        await preview(id, id)
+        const { deliveries, pick } = delayedPicks()
+        const first = pick(id)
+        if (state === "sent") {
+          deliveries[0]!.resolve({ ok: true })
+          await first
+        }
+        try {
+          const patched = await call("PATCH", `/api/canvas/nodes/${id}`, { data: { title: "edited", ...fields } })
+          expect(patched.json.node).toMatchObject({ data: { title: "edited", picked: true, pickedAt: 42 } })
+          expect(await pick(id)).toMatchObject({ status: 200, json: { duplicate: true, delivered: state === "sent" } })
+          expect(deliveries).toHaveLength(1)
+        } finally {
+          for (const delivery of deliveries) delivery.resolve({ ok: true })
+          await first
+          await call("DELETE", `/api/canvas/nodes/${id}`)
+        }
+      })
+    }
+  }
+
   test("404 / 400 invalid_kind / 400 invalid_id, nothing typed", async () => {
     picks.length = 0
     expect(await call("POST", "/api/canvas/nodes/nope/pick", {})).toMatchObject({ status: 404, json: { error: "not_found" } })
@@ -296,9 +364,11 @@ describe("preview pick (design-first)", () => {
     expect(await call("POST", "/api/canvas/nodes/dt-a/pick", {})).toMatchObject({ status: 200, json: { delivered: true, duplicate: true } })
     expect(picks).toEqual(["dt-a"])
 
-    expect(store.pickNode("dt-b", 1)).toMatchObject({ ok: true, claimed: true })
+    const claimed = store.pickNode("dt-b", 1)
+    expect(claimed).toMatchObject({ ok: true, claimed: true })
+    if (!claimed.ok || !claimed.claimed) throw new Error("pick was not claimed")
     expect(store.pickNode("dt-b", 2)).toMatchObject({ ok: true, claimed: false, sent: false, changed: [] })
-    store.settlePick("dt-b", false)
+    store.settlePick("dt-b", claimed.token, false)
 
     pickResult = { ok: false, status: 409, error: "pane_not_ready" }
     expect((await call("POST", "/api/canvas/nodes/dt-b/pick", {})).status).toBe(409)

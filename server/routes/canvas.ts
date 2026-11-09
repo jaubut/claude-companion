@@ -94,7 +94,7 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       if (!p.claimed) return Response.json({ ok: true, node: p.node, delivered: p.sent, duplicate: true })
       // The pick is stored before typing: a refused inject still leaves it for GET /api/canvas.
       const r = await deps.pickNotify(p.node).catch((): SendResult => ({ ok: false, status: 503, error: "send_failed" }))
-      deps.store.settlePick(pickId, r?.ok === true)
+      deps.store.settlePick(pickId, p.token, r?.ok === true)
       if (!r || r.ok) return Response.json({ ok: true, node: p.node, delivered: r !== null })
       return Response.json({ ...r.detail, ok: false, error: r.error, node: p.node, delivered: false }, { status: r.status })
     }
