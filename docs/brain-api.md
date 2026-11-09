@@ -82,6 +82,7 @@ turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, duration
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
+| POST | `/hooks/brain/pr-update-branch` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-update-branch). |
 | POST | `/hooks/brain/task-cancel` | `{task, reason}` (task = id or 8-char prefix, `^[\w-]{8,64}$`; reason ≤ 300) | see below. Same auth as propose (brain/bin/task-cancel). |
 | POST | `/hooks/brain/lead` | `{repo}` | `{ok, name, state}`: `running`, `starting`, `started`; 404 `no_lead_for_repo`; 502 down. Same auth as propose (brain/bin/lead). |
 | POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
@@ -179,6 +180,28 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 429 `merge_cap` | 10 brain merges in 24 h |
 | 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
 
+### Stale agent PRs (`/hooks/brain/pr-update-branch`)
+
+Dispatch workers cannot create merge commits, so a dispatch PR with stale CI waits on the brain. `wiring/brain-pr-update-branch.ts` reads the PR from GitHub (`gh pr view`), never from the brain's word. Repo, pr and reason get the same input checks as pr-merge. It refuses unless the PR is open, its head is `dispatch/*` and `mergeable` is not CONFLICTING. The shared `wiring/brain-pr-park.ts` helper checks linked tasks and shepherd activity in Turso: client origin (task origin or the advisory `client-origin` label), a live park (including tainted or human-merge parks), or a hold refuses before updating. A Turso read failure also refuses. The same retired review parks and newer unparks as pr-merge apply; client-origin PRs always refuse an update, even when pr-merge could merge them. Then `gh pr update-branch` without `--rebase`: a merge commit on the PR branch, never a rebase, never a force. The new head is read back (up to 5 reads, 1 s apart), then an `agent_activity` row `brain:pr-update-branch` is written (meta: repo, pr, url, branch, from, head, reason) and an event turn goes to the brain thread.
+
+The new head voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `not_approved` until the review cascade has reviewed it.
+
+| answer | when |
+|---|---|
+| 200 `{ok, updated, url, head}` | updated; `head` is the new head sha |
+| 400 | bad repo / pr / reason |
+| 403 `not_agent_branch` (+`branch`) | head is not `dispatch/*` |
+| 403 `client_origin` | a linked task has origin `client`, or the PR carries the `client-origin` label |
+| 403 `parked` (+`reasons`) | live shepherd park (including tainted or human-merge parks) or hold |
+| 404 `pr_not_found` | gh cannot read it |
+| 409 `not_open` (+`state`) | already closed or merged |
+| 409 `conflict` | CONFLICTING, or GitHub refused the update on a conflict |
+| 409 `up_to_date` (+`head`) | the base has nothing new |
+| 502 `update_failed` (+`head`, the old one) | `gh pr update-branch` failed; a head that moved anyway is someone else's push, nothing recorded |
+| 502 `update_unverified` (+`head`, the old one) · 503 `gh_unreachable` | nothing recorded |
+| 502 `gh_bad_json` | the initial GitHub response is not valid JSON; no update attempted |
+| 503 `turso_unreachable` | origin or park/hold lookup failed; no update attempted |
+
 ### Obsolete tasks (`/hooks/brain/task-cancel`)
 
 `wiring/brain-task-cancel.ts` cancels a task the brain proposed. It decides from Turso and the server's own proposal row, never from the brain's word.
@@ -218,7 +241,7 @@ Every step writes an `agent_activity` row (`agent_slug` auto-deploy, action `dep
 
 ## Hooks (no hook-script change)
 
-The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|task-cancel|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|pr-update-branch|task-cancel|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
 - PreToolUse: the brain takes the normal path like any session (SUPER, then auto-judge → phone; Jeremie, 2026-10-29). Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
 - Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).

@@ -213,6 +213,19 @@ Last updated: 2026-11-07
 
 ## Change Plans
 
+### Change Plan — brain-pr-update-branch (2026-11-04)
+**Request:** (proposal 32ee1636) Dispatch workers cannot create merge commits, so a dispatch PR with stale CI stays stuck until a human updates it. Add `bin/pr-update-branch`, modeled on `bin/pr-merge` and `bin/pr-close`.
+**Contracts touched**
+| contract | kind | change | consumers | compat |
+|---|---|---|---|---|
+| `POST /hooks/brain/pr-update-branch` | hook endpoint | new | brain/bin/pr-update-branch | additive |
+| `BrainRouteDeps.prUpdate` | export | new optional | routes/brain.test.ts | additive |
+| `agent_activity` action `brain:pr-update-branch` | row | new | digest readers | additive |
+| brain permissions | settings | allow `bin/pr-update-branch` (added by hand on Zettlab, not in this PR) | the brain session | additive |
+**Files** (one owner): `server/wiring/brain-pr-update-branch.ts` (new; no module state) · `server/wiring/brain-pr-update-branch.test.ts` (new) · `server/routes/brain.ts` · `server/routes/brain.test.ts` · `server/lib/request-gate.test.ts` · `brain/bin/pr-update-branch` (new) · `brain/.claude/settings.json` (by hand, see the permissions row) · `brain/CLAUDE.md` · `docs/brain-api.md` · `STATE.md` · `architecture.*`
+**Verify:** each refusal and the happy path in brain-pr-update-branch.test.ts (gh faked, sqlite Turso); route auth/input in brain.test.ts; tsc; archmap --check --lint; full `bun test --isolate`.
+**Review amendment (2026-11-09, PR #263):** extract `parked` and `retiredPark` into `server/wiring/brain-pr-park.ts`, shared with `brain-pr-merge.ts` (merge policy unchanged; `retiredPark` remains re-exported). Updating refuses with 403 `client_origin` for a linked client task or advisory label, 403 `parked` for a live shepherd park/hold, and 503 `turso_unreachable` on either lookup failure. Six regressions fail against the old gate with 200; the failed-update/concurrent-push regression fails against `c042947` with 200 and passes with the existing `12a9927` fix (502 `update_failed`). Added `gh_bad_json` to the API table. **Human merge required:** this PR edits `brain/CLAUDE.md`.
+
 ### Change Plan — auto-deploy (2026-10-31)
 **Request:** (task t-auto-deploy-1, relayed by brain-72) No hand pull + restart after a merge. On the brain host, claude-companion and claude-config follow origin/main. `bin/deploy` deploys now, with the same auth as pr-merge.
 **State decisions**

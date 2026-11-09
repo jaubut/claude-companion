@@ -8,8 +8,11 @@ import { appendTurn } from "../lib/orchestrator-chat"
 import { redactSecrets } from "../lib/secret-redact"
 import { type GhFn, prReadiness, prState, realGh } from "../lib/triage-pr"
 import { type ExecFn, TursoUnreachable } from "../lib/turso"
+import { parked } from "./brain-pr-park"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
+
+export { retiredPark } from "./brain-pr-park"
 
 // bin/pr-merge (POST /hooks/brain/pr-merge): the brain merges a ROUTINE agent
 // PR. The brain's word counts for nothing: every check is made here, from
@@ -41,11 +44,6 @@ export const PR_MERGE_ACTION = "brain:pr-merge"
 const REASON_MAX = 300
 export const MERGE_CAP = 10
 
-// The shepherd's client-origin / sensitive-path human-review parks are retired, except tainted or human-merge parks.
-// Every other park (conflict unresolved, fix budget spent, infra hold, no CI…) means the work is broken: refuse.
-// C-017's tainted parks and `human merge` hard stops survive whatever prefix clientPark puts on them.
-const RETIRED_PARK = /^(client(-origin)? PR|touches .+ — needs your review)/
-export const retiredPark = (why: string): boolean => RETIRED_PARK.test(why) && !/tainted \(|human merge/i.test(why)
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
 /** Files the marker's low tier may cover here: a comment is writable by any agent, so the server checks. Narrower than the shepherd's rule: agent instructions (.md) need a review. */
@@ -126,32 +124,6 @@ function notApproved(v: PrView, claudePaused = false, clientOrigin = false): str
   if (!codexOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
   if ((tier !== "normal" || claudePaused) && !codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
   return out
-}
-
-/** Why this PR is parked as broken or held (empty = mergeable). Turso errors propagate. */
-async function parked(exec: ExecFn, v: PrView): Promise<{ reasons: string[]; taskIds: string[]; clientOrigin: boolean }> {
-  const reasons: string[] = []
-  // Tasks linked by the PR url (a branch-name match is guessable): park rows and the digest row key on them.
-  const { rows } = await exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ?", [v.url])
-  const taskIds = rows.map((r) => String(r.id))
-  // The PR read doesn't carry origin: tasks.origin is the authority, the label is advisory (forgeable, so it can only tighten).
-  const clientOrigin = rows.some((r) => r.origin === "client") || v.labels.some((l) => l.name === "client-origin")
-  // The newest shepherd park / hold / unpark for this PR: a live one refuses unless it is a retired human-review park.
-  const last = await exec(
-    "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND target_id IN (" + [v.url, ...taskIds].map(() => "?").join(", ") + ") ORDER BY id DESC LIMIT 20",
-    [v.url, ...taskIds],
-  )
-  for (const row of last.rows) {
-    let meta: Record<string, unknown> = {}
-    try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → counts */ }
-    if (meta.url !== undefined && meta.url !== v.url) continue
-    const why = typeof meta.reason === "string" ? meta.reason : ""
-    if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !retiredPark(why))) {
-      reasons.push(`${row.action === "pr:hold" ? "held" : "parked"} by the shepherd${why ? `: ${why.slice(0, 120)}` : ""}`)
-    }
-    break
-  }
-  return { reasons, taskIds, clientOrigin }
 }
 
 export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps): Promise<Out> {
