@@ -1,7 +1,9 @@
-import { test, expect, afterEach } from "bun:test"
+import { test, expect, afterEach, spyOn } from "bun:test"
 import { ESC_SETTLE_MS } from "./command-list"
 import { keyGate } from "./key-gate"
 import { deliverViaTmux, injectText } from "./keyboard-inject"
+import { deliverViaHerdr } from "./herdr-inject"
+import type { Herdr } from "./herdr"
 
 // The user-facing bug behind PR #38: a phone prompt "do both" arrived at
 // Claude Code as "o both". An Escape followed within ~100ms by a byte is read
@@ -29,6 +31,133 @@ test("inject: text sent during an open Escape window is delayed past the window"
   expect(r.sent.map((s) => s.args.at(-1))).toEqual(["do both", "Enter"])
   // 1ms slack for timer rounding on the real clock.
   expect(r.sent[0]!.at - escAt).toBeGreaterThanOrEqual(ESC_SETTLE_MS - 1)
+})
+
+test("guard: tmux identity changes between literal text and Enter", async () => {
+  const sent: string[] = []
+  let current = true
+  const result = await deliverViaTmux("%991", "private prompt", async (args) => {
+    sent.push(args.at(-1)!)
+    current = false
+    return { ok: true, reason: "" }
+  }, Date.now() + 2000, "", () => current)
+  expect(sent).toEqual(["private prompt"])
+  expect(result).toMatchObject({ ok: false, reason: "target_changed" })
+})
+
+for (const changeAt of ["queued", "read", "text"] as const) test(`guard: herdr identity changes at ${changeAt}`, async () => {
+  let current = changeAt !== "queued"
+  const sent: string[] = []
+  const h: Herdr = {
+    gate: async () => null, read: async () => null,
+    call: async (args) => {
+      if (args[1] === "get" && changeAt === "read") current = false
+      if (args[1] === "send-text" || args[1] === "send-keys") sent.push(args[1])
+      if (args[1] === "send-text" && changeAt === "text") current = false
+      return {}
+    },
+  }
+  const result = await deliverViaHerdr("w991:p1", "/clear", { herdr: h, canDeliver: () => current })
+  expect(sent).toEqual(changeAt === "text" ? ["send-text"] : [])
+  expect(result).toMatchObject({ ok: false, reason: "target_changed" })
+})
+
+for (const waitAt of ["get", "send-text", "prompt"] as const) test(`abort: guarded herdr ${waitAt} cannot write after its gate expires`, async () => {
+  const sent: string[] = []
+  let signalSeen: AbortSignal | undefined
+  const gateSend = keyGate.send
+  const gate = spyOn(keyGate, "send").mockImplementation((pane, key, fn, opts) => gateSend(pane, key, fn, { ...opts, timeoutMs: 20 }))
+  const h: Herdr = { gate: async () => null, read: async () => null, call: async (args, _timeout, signal) => {
+    if (args[1] === waitAt) {
+      signalSeen = signal
+      await Bun.sleep(60)
+      if (waitAt === "prompt" && signal?.aborted) throw new Error("aborted")
+    }
+    if (["prompt", "send-text", "send-keys"].includes(args[1]!)) sent.push(args[1]!)
+    return {}
+  } }
+  try {
+    expect((await deliverViaHerdr("w993:p1", waitAt === "prompt" ? "hello" : "/clear", { herdr: h, canDeliver: () => true })).ok).toBe(false)
+    await Bun.sleep(80)
+    expect(signalSeen?.aborted).toBe(true)
+    expect(sent).toEqual(waitAt === "send-text" ? ["send-text"] : [])
+  } finally { gate.mockRestore() }
+})
+
+async function macScripts(run: (script: string) => { result?: string; exited?: Promise<number>; kill?: () => void }, check: () => Promise<void>) {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+  Object.defineProperty(process, "platform", { value: "darwin", configurable: true })
+  const spawn = spyOn(Bun, "spawn").mockImplementation(((args: string[]) => {
+    expect(args[0]).toBe("osascript")
+    const proc = run(args[2]!)
+    return { stdout: new Response(proc.result ?? "MATCH").body!, stderr: new Response("").body!,
+      exited: proc.exited ?? Promise.resolve(0), exitCode: 0, kill: proc.kill ?? (() => {}) }
+  }) as typeof Bun.spawn)
+  try { await check() } finally { spawn.mockRestore(); Object.defineProperty(process, "platform", platform) }
+}
+
+for (const termProgram of ["Apple_Terminal", "unknown"]) test(`guard: ${termProgram} rechecks between AppleScript text and Enter`, async () => {
+  let current = true
+  const writes: string[] = []
+  await macScripts((script) => {
+    if (script.includes("do script")) { writes.push("text"); current = false }
+    if (script.includes("keystroke return")) writes.push("Enter")
+    return { result: script.includes("do script") ? "MATCH" : "Terminal" }
+  }, async () => {
+    expect(await injectText("guarded text", { tty: "/dev/ttys993", termProgram }, { canDeliver: () => current })).toBe(false)
+    expect(writes).toEqual(["text"])
+  })
+})
+
+test("guard: an iTerm miss cannot fall back to Terminal after invalidation", async () => {
+  let current = true
+  const scripts: string[] = []
+  await macScripts((script) => { scripts.push(script); current = false; return { result: "MISS" } }, async () => {
+    expect(await injectText("guarded text", { tty: "/dev/ttys993", termProgram: "iTerm" }, { canDeliver: () => current })).toBe(false)
+    expect(scripts).toHaveLength(1)
+  })
+})
+
+test("guard: AppleScript revalidates after the global focus lock wait", async () => {
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<number>()
+  let current = true
+  const scripts: string[] = []
+  await macScripts((script) => {
+    scripts.push(script)
+    if (scripts.length === 1) { entered.resolve(); return { exited: release.promise } }
+    return {}
+  }, async () => {
+    const target = { tty: "/dev/ttys993", termProgram: "iTerm" }
+    const first = injectText("earlier", target)
+    await entered.promise
+    const next = injectText("never type this", target, { canDeliver: () => current })
+    current = false
+    release.resolve(0)
+    expect(await first).toBe(true)
+    expect(await next).toBe(false)
+    expect(scripts).toHaveLength(1)
+  })
+})
+
+test("abort: guarded AppleScript kills the process and cannot send a late Enter or fallback", async () => {
+  const gateSend = keyGate.send
+  const gate = spyOn(keyGate, "send").mockImplementation((pane, key, fn, opts) => gateSend(pane, key, fn, { ...opts, timeoutMs: 20 }))
+  let killed = 0
+  const scripts: string[] = []
+  try {
+    await macScripts((script) => {
+      scripts.push(script)
+      const exit = Promise.withResolvers<number>()
+      const timer = setTimeout(() => exit.resolve(0), 70)
+      return { exited: exit.promise, kill: () => { killed++; clearTimeout(timer); setTimeout(() => exit.resolve(1), 10) } }
+    }, async () => {
+      expect(await injectText("guarded text", { tty: "/dev/ttys993", termProgram: "Apple_Terminal" }, { canDeliver: () => true })).toBe(false)
+      await Bun.sleep(80)
+      expect(killed).toBe(1)
+      expect(scripts).toHaveLength(1)
+    })
+  } finally { gate.mockRestore() }
 })
 
 test("inject: the text and its Enter are one turn — no other key lands between them", async () => {

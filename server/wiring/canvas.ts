@@ -64,7 +64,7 @@ export const canvasStore: CanvasStore = {
 // ponytail: no per-edge auto-send yet; add it on the Phase 7 trust ramp when Jeremie asks.
 // The guarded inject behind POST /api/inject (routes/api.ts). Handed in by
 // companion-server.ts at boot: wiring never imports up into routes/.
-type Deliver = (text: string, key?: string, cwd?: string) => Promise<Response>
+type Deliver = (text: string, key?: string, cwd?: string, boundSid?: string, canDeliver?: () => boolean) => Promise<Response>
 let deliver: Deliver | null = null
 export function setCanvasDeliver(fn: Deliver): void {
   deliver = fn
@@ -104,15 +104,15 @@ function boundCheck(key: string, boundSid: string | undefined): SendResult | nul
   return null
 }
 
-async function inject(text: string, key: string): Promise<SendResult> {
+async function inject(text: string, key: string, boundSid?: string, canDeliver?: () => boolean): Promise<SendResult> {
   if (!deliver) return { ok: false, status: 503, error: "deliver_unavailable" }
-  const res = await deliver(text, key)
+  const res = await deliver(text, key, undefined, boundSid, canDeliver)
   const body = (await res.json()) as Record<string, unknown>
   if (res.ok && body.ok === true) return { ok: true }
   return { ok: false, status: res.ok ? 502 : res.status, error: typeof body.error === "string" ? body.error : "deliver_failed", detail: body }
 }
 
-export async function canvasSend(edge: CanvasEdge): Promise<SendResult> {
+export async function canvasSend(edge: CanvasEdge, canDeliver?: () => boolean): Promise<SendResult> {
   const from = canvasStore.node(edge.from)
   const to = canvasStore.node(edge.to)
   if (!from || !to) return { ok: false, status: 404, error: "node_not_found" }
@@ -121,19 +121,26 @@ export async function canvasSend(edge: CanvasEdge): Promise<SendResult> {
   const prompt = await contextPrompt(from, tursoQuery)
   if (!prompt.ok) return { ok: false, status: prompt.error === "source_not_found" ? 404 : 400, error: prompt.error }
   companionLog(`canvas send ${edge.id}: ${from.kind} ${from.ref || from.id} → ${to.ref}`)
-  return inject(prompt.text, to.ref)
+  return inject(prompt.text, to.ref, canDeliver ? to.boundSid : undefined, canDeliver)
 }
 
 // Design-first pick: tell the agent that posted the preview (data.sessionKey) which direction won.
 // null = no live session to tell: the pick is only stored, the agent reads it from GET /api/canvas.
-export async function canvasPickNotify(node: CanvasNode): Promise<SendResult | null> {
+export async function canvasPickNotify(node: CanvasNode, claimValid?: () => boolean): Promise<SendResult | null> {
   const key = bindKey(node.kind, node)
   if (!key || !listSessions().some((s) => s.key === key)) return null
   const refused = boundCheck(key, node.boundSid)
   if (refused) return refused
   const direction = typeof node.data.direction === "string" ? node.data.direction : ""
   companionLog(`canvas pick ${node.id}: ${direction} → ${key}`)
-  return inject(oneLine(`Picked direction: ${direction} — ${node.ref}`), key)
+  let superseded = false
+  const canDeliver = claimValid ? () => {
+    if (!claimValid()) superseded = true
+    return !superseded
+  } : undefined
+  const result = await inject(oneLine(`Picked direction: ${direction} — ${node.ref}`), key, canDeliver ? node.boundSid : undefined, canDeliver)
+  // Only a cancellation observed before a write is stored-only, never a later edit.
+  return superseded ? null : result
 }
 
 // canvas-note-refs: the note nodes linked to whoever sent a prompt — a session (its agent node,

@@ -43,7 +43,7 @@ export interface CanvasRouteDeps {
   /** The note nodes linked to a live session (by key) or to the brain (wiring/canvas.ts). */
   references: (who: { key?: string; brain?: boolean }) => CanvasNode[]
   /** Type a preview pick into the agent that posted it; null = no live session, stored only (wiring/canvas.ts). */
-  pickNotify: (node: CanvasNode) => Promise<SendResult | null>
+  pickNotify: (node: CanvasNode, canDeliver?: () => boolean) => Promise<SendResult | null>
   query: QueryFn
   now?: () => number
 }
@@ -103,11 +103,15 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       if (!p.claimed) return Response.json({ ok: true, node: p.node, delivered: p.sent, duplicate: true })
       // The pick is stored before typing: a refused inject still leaves it for GET /api/canvas.
       const key = pickDeliveryKey(p.node)
+      const canDeliver = (): boolean => {
+        const current = deps.store.currentPick(pickId, p.token)
+        return !!current && pickDeliveryKey(current) === key
+      }
       const deliver = async (): Promise<SendResult | null> => {
         let result: SendResult | null
         try {
           const current = deps.store.currentPick(pickId, p.token)
-          result = current && pickDeliveryKey(current) === key ? await deps.pickNotify(current) : null
+          result = current && canDeliver() ? await deps.pickNotify(current, canDeliver) : null
         } catch {
           result = { ok: false, status: 503, error: "send_failed" }
         }

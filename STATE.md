@@ -213,6 +213,76 @@ Last updated: 2026-11-07
 
 ## Change Plans
 
+### Change Plan — typing-target-validity (2026-11-09)
+**Request:** TASK 7ea7fd77089d3166876a2e91b684155a. Reapply the shared typing-path hardening from `a9ed1b90` after #261 and cancel a pending pick invalidated by a group move. Security-sensitive; human merge only.
+**Approval:** Brain GO with binding conditions: optional guards preserve main behavior when omitted; no HTTP shape/default-send/iOS changes, dependency changes, extra modules or worktree files. Exactly three test files below. This supersedes the draft's automatic identity snapshot/empty-SID refusal for ordinary sends.
+**Baseline:** #261 merged at `9229554`; this task branch starts there. Source patch reapplied using `git diff HEAD a9ed1b90` for the six implementation files; the source delivery test restored verbatim before additions. Eighteen pick-route cases already landed; the missing three tty-reuse cases restore the referenced 21.
+**Done when:** an opted-in delivery revalidates after locks before each external write; pending A moved into B's group cannot type after B; omitted callbacks retain existing send behavior; tests/maps pass; one human-merge PR has a CLEAN drift review.
+
+**Target shape & drift**
+- tmux's server-scoped pane ID maps to `(socket, pane)` key-gate identity; the agent SID is a separate binding (reference: https://man.openbsd.org/tmux.1#send-keys).
+- Routes own claims, wiring passes bindings, delivery libraries guard side effects. Existing checks were before asynchronous preflight and locks.
+- Move validation to write boundaries using the source optional callback; retain store/gate/watch ownership. The AppleScript focus lock remains global, with a tty gate inside it only for guarded sends.
+
+**State decisions**
+- No new persistent state. Existing `currentPick(id, token)` plus original group key determines live claim validity; PATCH already clears moved claims atomically.
+- `injectConfirmed` keeps an observed validity failure sticky through fallback/retry and drops its phone-origin/watch state normally. Never recheck after successful submission: `/clear` may change the SID.
+- `deliverInject` accepts optional `boundSid` and `canDeliver`; omitted arguments leave ordinary phone/brain/spawn delivery unchanged. A supplied binding checks its exact session key before writes.
+- Canvas pick routes explicitly pass claim validity. Wiring records only invalidation observed during delivery and translates that refusal to existing stored-only `200 delivered:false`; session mismatch stays `409 target_changed`.
+- `canvasSend(edge, canDeliver?)` forwards the stored SID only when opted in. The existing edge route supplies no callback and preserves main behavior, including its initial binding check.
+- Guarded herdr calls receive the gate's abort signal. Guarded AppleScript separates Terminal text/Enter, kills osascript on abort, and holds the outer focus lock until process cleanup finishes. Unguarded script paths remain unchanged.
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `deliverInject` | export | optional binding/validity; source `409 target_changed` for opted-in calls | `routes/api.ts` phone/spawn seed; boot registration to `wiring/brain.ts` and `wiring/canvas.ts` | additive; omitted arguments unchanged |
+| `injectConfirmed`, `InjectOutcome` | export | source optional sticky callback/refusal; guarded Enter retries | `routes/api.ts`, `ws.ts` | additive; WS call unchanged |
+| `injectText`, `InjectOpts` | export | source optional callback; guarded tty gate and abortable AppleScript | `lib/submit-confirm.ts` | additive; unguarded behavior unchanged |
+| `deliverViaTmux`, sender exports | export/move | source extraction; check before literal and Enter | `keyboard-inject.ts`; old reexports used by `submit-confirm.ts`, `inject-verified.ts` | old import paths preserved |
+| `deliverViaHerdr` | export | optional callback; guarded signal forwarding at each write | `keyboard-inject.ts`, `submit-confirm.ts` | additive |
+| `canvasPickNotify`, `CanvasRouteDeps.pickNotify`, `setCanvasDeliver` | callback | optional claim validity through route/wiring/delivery | `routes/canvas.ts`, `wiring/canvas.ts`, boot registration | existing HTTP shape; invalidated claims stored-only |
+| `canvasSend` | export | optional opt-in callback/binding propagation | `routes/canvas.ts` via boot registration | existing edge endpoint defaults unchanged |
+| HTTP endpoints / `canvas` frames | wire | none | existing clients, iOS | unchanged |
+
+**Files — one owner each**
+| file | owner | change | map lines now → after |
+|---|---|---|---|
+| `server/lib/herdr-inject.ts` | root | restore source guards; guarded abort propagation | 83 → 90 |
+| `server/lib/keyboard-inject.ts` | root | source extraction/guards; guarded AppleScript stages/cancellation | 600 → 572 |
+| `server/lib/tmux-inject.ts` | root | NEW from source: `TMUX_PANE_RE`, `TmuxResult`, `TmuxSender`, `tmuxSendKeys`, `deliverViaTmux` | 0 → 77 |
+| `server/lib/submit-confirm.ts` | root | source sticky refusal and guarded retries | 473 → 484 |
+| `server/routes/api.ts` | root | optional guard propagation and source refusal mapping | 599 → 600 |
+| `server/routes/canvas.ts` | root | supply current-token/group callback | 203 → 207 |
+| `server/wiring/canvas.ts` | root | optional binding/claim propagation; stored-only cancellation | 193 → 200 |
+| `server/routes/canvas-pick-delivery.test.ts` | root | restore 3 source cases; group move; default/guarded send and edge tests | test |
+| `server/lib/keyboard-inject.test.ts` | root | tmux/herdr between-write guards; herdr/AppleScript abort and fallback tests | test |
+| `server/lib/submit-confirm.test.ts` | root | guarded tmux/herdr retries; sticky refusal and watch cleanup | test |
+| `STATE.md` | root | approved plan and evidence | docs |
+| `architecture.json`, `architecture.md`, `architecture.refs.json` | root | vendored generator output; refs only if changed | generated |
+
+**Fan-in / analyst findings**
+- All seven contract analyses reconciled. Same-module/callback consumers include API spawn seed, brain's registered deliver function, and both canvas operations; boot wiring already matches source, so no `companion-server.ts` edit.
+- Preserve text+Enter in one tmux turn, socket qualification, Escape settling, deadlines, confirmation ownership and sticky refusal despite a later hook.
+- Existing canvas tokens already invalidate on PATCH/sibling pick, and settlement is token-CAS. No store edit or new queue.
+- Map blind spots: dynamic canvas endpoints are absent; `deliverInject` is attributed to `/api/feed`; callback fan-in is incomplete. Source-call review supplements the map; adapter repair is outside this task.
+- No external npm packages in touched-module metadata, so no package-specific KB queries apply.
+
+**Risks**
+- External terminals (Terminal/iTerm) cannot atomically compare Companion's SID and execute a write. This closes application wait races only; tmux/herdr likewise expose no atomic Companion-identity compare-and-send.
+- Default sends, direct WS input, raw keys, picker/mirror paths and `inject-verified` do not gain automatic guards. An edge's deletion/repointing while its original agent remains alive is a separate cancellation policy.
+- Linux process-spy tests do not execute AppleScript. The running-build pass across tmux, herdr, Terminal/iTerm and iOS is Jeremie's before merge; no deployment/automatic merge.
+
+**Verify**
+1. Main baseline: `bun test --isolate server` → 3186 pass, 2 skip, 0 fail. `bun install` with a writable `/tmp` cache succeeded; package/lock files unchanged.
+2. Failing-first evidence before implementation: source tty reuse 3 fail; A-pause/PATCH-group/B-pick 2 fail; guarded shared/edge sends 2 fail (unguarded defaults 2 pass); tmux/herdr between-write guards 4 fail; retries 2 fail; herdr/AppleScript abort/lock/fallback 8 fail. Then source diff reapplied; original 3 cases green.
+3. Exact overtaking case pauses A inside preflight after `pickNotify` begins, lets B deliver, releases A, asserts only B typed and A stored-only, then retries A. Real key-lock wait also covered. One fixture double-read of a Response body was corrected with `clone()`; assertions retained.
+4. Targeted typing/canvas suite → 135 pass, 0 fail. `bun --bun run typecheck` and `bun --bun run lint` pass; Bun runtime avoids this host's unusable snap Node wrapper.
+5. Vendored map regeneration and CI `--check --lint --baseline` pass. Full CI command `bun test --isolate` → 3226 pass, 2 skip, 0 fail (3209 server passes; missing sibling iOS fixtures skipped). Diff/security inspection and existing ast-grep security rules pass: no changed bearer/secret handling, shell interpolation, HTTP payload shape or default send behavior. PR drift review pending; its verdict will be linked in the PR.
+6. PR body carries this plan, TASK marker, security-sensitive shared typing notice, human merge only, source provenance and explicit limits. Push only `dispatch/7ea7fd77089d3166876a2e91b684155a`, no force; one PR via `gh`.
+7. Jeremie before merge: verify ordinary sends/picks on tmux/herdr/Terminal/iTerm, no stale text after tty reuse or pending group move, and iOS refusal handling without unintended retries. Pending human verification; not shipped.
+
+**Out of scope:** default-send behavior changes, new endpoints/HTTP shapes/iOS contract changes, additional modules/tests, schema/UI/dependency changes, adapter repair, unrelated failures, deployment and automatic merge. Any such need stops with `BRAIN: asking`.
+
 ### Change Plan — brain-pr-update-branch (2026-11-04)
 **Request:** (proposal 32ee1636) Dispatch workers cannot create merge commits, so a dispatch PR with stale CI stays stuck until a human updates it. Add `bin/pr-update-branch`, modeled on `bin/pr-merge` and `bin/pr-close`.
 **Contracts touched**
