@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import type { Server, ServerWebSocket } from "bun"
-import { createCanvasStore } from "../lib/canvas"
+import { createCanvasStore, type CanvasNode } from "../lib/canvas"
 import type { Row } from "../lib/turso"
 import { broadcast, clients, type WsData } from "../state"
 import { type SendResult, createCanvasRoute } from "./canvas"
@@ -236,20 +236,20 @@ describe("context edges (P6)", () => {
 })
 
 describe("preview pick (design-first)", () => {
-  const preview = (id: string, group: string, extra: Record<string, unknown> = {}) =>
+  const preview = (id: string, group: string | number | undefined, extra: Record<string, unknown> = {}) =>
     call("POST", "/api/canvas/nodes", { id, kind: "preview", ref: `http://zettlab:3147/${id}.html`, x: 0, y: 600, w: 1, h: 1, data: { title: id, direction: id, group, ...extra } })
   const data = (id: string): Record<string, unknown> => store.node(id)!.data
 
-  const delayedPicks = () => {
+  const delayedPicks = (notify?: (node: CanvasNode) => Promise<SendResult | null>) => {
     const deliveries: ReturnType<typeof Promise.withResolvers<SendResult>>[] = []
     const handle = createCanvasRoute({
       store, status: () => ({}), host: "testhost", notify: () => {}, references: () => [], query: async () => [],
       send: async () => ({ ok: true }), now: () => 42,
-      pickNotify: () => {
+      pickNotify: notify ?? (() => {
         const delivery = Promise.withResolvers<SendResult>()
         deliveries.push(delivery)
         return delivery.promise
-      },
+      }),
     })
     const pick = async (id: string) => {
       const url = new URL(`/api/canvas/nodes/${id}/pick`, base)
@@ -259,6 +259,115 @@ describe("preview pick (design-first)", () => {
     return { deliveries, pick }
   }
 
+  for (const supersede of [false, true]) {
+    test(`a slow A inject cannot finish after the final group pick${supersede ? "; queued B is superseded by C" : " B"}`, async () => {
+      const ids = ["order-a", "order-b", "order-c"]
+      for (const id of ids) await preview(id, "order")
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const typed: string[] = []
+      const { pick } = delayedPicks(async (node) => {
+        if (node.id === "order-a") { started.resolve(); await release.promise }
+        typed.push(node.id)
+        return { ok: true }
+      })
+      const a = pick("order-a")
+      await started.promise
+      const b = pick("order-b")
+      const c = supersede ? pick("order-c") : null
+      try {
+        expect(data(supersede ? "order-c" : "order-b").picked).toBe(true)
+        release.resolve()
+        const [, resultB] = await Promise.all([a, b, c])
+        expect(typed).toEqual(["order-a", supersede ? "order-c" : "order-b"])
+        expect(resultB.json.delivered).toBe(!supersede)
+      } finally {
+        release.resolve()
+        await Promise.all([a, b, c])
+        for (const id of ids) await call("DELETE", `/api/canvas/nodes/${id}`)
+      }
+    })
+  }
+
+  for (const [aGroup, bGroup] of [[1, "1"], [undefined, undefined], [undefined, "independent-a"]] as const) {
+    test(`separate picks deliver independently (${JSON.stringify([aGroup, bGroup])})`, async () => {
+      await preview("independent-a", aGroup)
+      await preview("independent-b", bGroup)
+      const release = Promise.withResolvers<void>()
+      const typed: string[] = []
+      const { pick } = delayedPicks(async (node) => {
+        if (node.id === "independent-a") await release.promise
+        typed.push(node.id)
+        return { ok: true }
+      })
+      const a = pick("independent-a")
+      try {
+        expect(await pick("independent-b")).toMatchObject({ status: 200, json: { delivered: true } })
+        expect(typed).toEqual(["independent-b"])
+      } finally {
+        release.resolve()
+        await a
+        for (const id of ["independent-a", "independent-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+      }
+    })
+  }
+
+  for (const failure of [new Error("inject failed"), { ok: false, status: 409, error: "pane_not_ready" }] as const) {
+    test(`a ${failure instanceof Error ? "thrown" : "refused"} slow delivery releases its group queue`, async () => {
+      await preview("failure-a", "failure")
+      await preview("failure-b", "failure")
+      const release = Promise.withResolvers<void>()
+      let failFirst = true
+      const { pick } = delayedPicks(async (node) => {
+        if (node.id === "failure-a" && failFirst) {
+          failFirst = false
+          await release.promise
+          if (failure instanceof Error) throw failure
+          return failure
+        }
+        return { ok: true }
+      })
+      const a = pick("failure-a")
+      const b = pick("failure-b")
+      release.resolve()
+      try {
+        expect(await a).toMatchObject({ status: failure instanceof Error ? 503 : 409, json: { delivered: false } })
+        expect(await b).toMatchObject({ status: 200, json: { delivered: true } })
+        expect(await pick("failure-a")).toMatchObject({ status: 200, json: { delivered: true } })
+      } finally {
+        await Promise.all([a, b])
+        for (const id of ["failure-a", "failure-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+      }
+    })
+  }
+
+  test("a queued pick moved to another group is skipped and can be retried there", async () => {
+    await preview("moved-a", "original")
+    await preview("moved-b", "original")
+    const release = Promise.withResolvers<void>()
+    const typed: string[] = []
+    const { pick } = delayedPicks(async (node) => {
+      if (node.id === "moved-a") await release.promise
+      typed.push(node.id)
+      return { ok: true }
+    })
+    const a = pick("moved-a")
+    const b = pick("moved-b")
+    try {
+      await call("PATCH", "/api/canvas/nodes/moved-b", { data: { group: "moved" } })
+      release.resolve()
+      await a
+      expect(await b).toMatchObject({ status: 200, json: { delivered: false } })
+      expect(typed).toEqual(["moved-a"])
+      expect(await pick("moved-b")).toMatchObject({ status: 200, json: { delivered: true } })
+      expect(typed).toEqual(["moved-a", "moved-b"])
+    } finally {
+      release.resolve()
+      await Promise.all([a, b])
+      for (const id of ["moved-a", "moved-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+    }
+  })
+
   test("a delayed A success cannot settle a newer A claim after A -> B -> A", async () => {
     await preview("race-a", "race")
     await preview("race-b", "race")
@@ -266,19 +375,20 @@ describe("preview pick (design-first)", () => {
     const firstA = pick("race-a")
     const b = pick("race-b")
     const latestA = pick("race-a")
-    expect(deliveries).toHaveLength(3)
+    expect(deliveries).toHaveLength(1)
     deliveries[0]!.resolve({ ok: true })
-    deliveries[1]!.resolve({ ok: true })
-    await Promise.all([firstA, b])
+    await firstA
+    expect(await b).toMatchObject({ status: 200, json: { delivered: false } })
+    expect(deliveries).toHaveLength(2)
     try {
       expect(await pick("race-a")).toMatchObject({ status: 200, json: { duplicate: true, delivered: false } })
     } finally {
-      deliveries[2]!.resolve({ ok: false, status: 409, error: "pane_not_ready" })
+      deliveries[1]!.resolve({ ok: false, status: 409, error: "pane_not_ready" })
       await latestA
     }
     const retry = pick("race-a")
-    expect(deliveries).toHaveLength(4)
-    deliveries[3]!.resolve({ ok: true })
+    expect(deliveries).toHaveLength(3)
+    deliveries[2]!.resolve({ ok: true })
     expect(await retry).toMatchObject({ status: 200, json: { delivered: true } })
     for (const id of ["race-a", "race-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
   })

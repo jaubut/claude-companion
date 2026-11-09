@@ -102,6 +102,8 @@ export interface CanvasStore {
    * `claimed` = this call owns the delivery; false when the card is already picked and sending or sent (nothing written).
    */
   pickNode(id: string, now: number): PickResult
+  /** The current node only while this token still owns its pending pick delivery. */
+  currentPick(id: string, token: string): CanvasNode | null
   /** Ends only the matching claim: sent stays claimed, anything else can be picked again to retry. */
   settlePick(id: string, token: string, delivered: boolean): void
   /** sending → sent|failed; null when the edge was removed meanwhile. */
@@ -254,6 +256,10 @@ export function createCanvasStore(db: Database): CanvasStore {
       return r.changes > 0 ? getEdge(id) : null
     },
     pickNode: (id, now) => pickTx(id, now),
+    currentPick(id, token) {
+      const r = db.query("SELECT * FROM canvas_nodes WHERE id = ? AND pick_state = 'sending' AND pick_token = ?").get(id, token) as RawNode | null
+      return r ? toNode(r) : null
+    },
     settlePick(id, token, delivered) {
       db.query("UPDATE canvas_nodes SET pick_state = ?, pick_token = '' WHERE id = ? AND pick_state = 'sending' AND pick_token = ?").run(delivered ? "sent" : "", id, token)
     },

@@ -26,7 +26,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/spawn-session.ts` | 506 | lib | 26 | state: RETIRED_APPS: Set |
 | `lib/discover.ts` | 501 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
-| `lib/canvas.ts` | 473 | lib | 31 | state: BLOCKING: Set |
+| `lib/canvas.ts` | 479 | lib | 31 | state: BLOCKING: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
@@ -113,18 +113,18 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
+| `routes/canvas.ts` | 197 | lib | 2 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `companion-server.ts` | 194 | route-host | 1 | routes: 7 |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
+| `wiring/canvas.ts` | 193 | lib | 8 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
-| `wiring/canvas.ts` | 192 | lib | 8 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `wiring/brain-pr-merge.ts` | 190 | lib | 3 |  |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/scrape-registry.ts` | 175 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
-| `routes/canvas.ts` | 174 | lib | 2 |  |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/triage-store.ts` | 171 | lib | 9 |  |

@@ -17,6 +17,7 @@ export type { SendResult }
 //          else stored only (delivered: false). 400 invalid_kind unless preview; inject refusals as /send,
 //          with the pick already stored. Picking a card already picked and sending or sent types nothing
 //          (200 { ok, node, delivered, duplicate: true }); a failed delivery can be picked again.
+//          Deliveries run in group order; superseded queued picks are stored only (delivered: false).
 //   POST   /api/canvas/edges          { from, to, kind? }                   → 201 { ok, edge }. Kind/state come from
 //          the endpoints (a posted kind is ignored): task → agent = "context"/"proposed" (Send?);
 //          note|turso_note → agent|brain = "reference"/"linked" (a live read-only link, never sent)
@@ -64,9 +65,15 @@ function idUnder(path: string, base: string): string | null {
   return id && !id.includes("/") ? id : null
 }
 
+function pickDeliveryKey(node: CanvasNode): string {
+  const group = node.data.group
+  return JSON.stringify(typeof group === "string" || typeof group === "number" ? ["group", group] : ["node", node.id])
+}
+
 export function createCanvasRoute(deps: CanvasRouteDeps) {
   const now = deps.now ?? Date.now
   const frame = (op: string, rest: Record<string, unknown>): void => deps.notify({ type: "canvas", op, ...rest })
+  const pickDeliveries = new Map<string, Promise<SendResult | null>>()
 
   return async function handle(req: Request, url: URL): Promise<Response | null> {
     const path = url.pathname
@@ -93,8 +100,24 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       // A double tap (or a second client) finds the claim held and types nothing.
       if (!p.claimed) return Response.json({ ok: true, node: p.node, delivered: p.sent, duplicate: true })
       // The pick is stored before typing: a refused inject still leaves it for GET /api/canvas.
-      const r = await deps.pickNotify(p.node).catch((): SendResult => ({ ok: false, status: 503, error: "send_failed" }))
-      deps.store.settlePick(pickId, p.token, r?.ok === true)
+      const key = pickDeliveryKey(p.node)
+      const deliver = async (): Promise<SendResult | null> => {
+        let result: SendResult | null
+        try {
+          const current = deps.store.currentPick(pickId, p.token)
+          result = current && pickDeliveryKey(current) === key ? await deps.pickNotify(current) : null
+        } catch {
+          result = { ok: false, status: 503, error: "send_failed" }
+        }
+        deps.store.settlePick(pickId, p.token, result?.ok === true)
+        return result
+      }
+      const previous = pickDeliveries.get(key)
+      const delivery = previous ? previous.then(deliver, deliver) : deliver()
+      pickDeliveries.set(key, delivery)
+      const r = await delivery.finally(() => {
+        if (pickDeliveries.get(key) === delivery) pickDeliveries.delete(key)
+      })
       if (!r || r.ok) return Response.json({ ok: true, node: p.node, delivered: r !== null })
       return Response.json({ ...r.detail, ok: false, error: r.error, node: p.node, delivered: false }, { status: r.status })
     }

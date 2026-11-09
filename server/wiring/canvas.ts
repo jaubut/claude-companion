@@ -50,6 +50,7 @@ export const canvasStore: CanvasStore = {
   edge: (id) => openStore().edge(id),
   claimEdge: (id, now) => openStore().claimEdge(id, now),
   pickNode: (id, now) => openStore().pickNode(id, now),
+  currentPick: (id, token) => openStore().currentPick(id, token),
   settlePick: (id, token, delivered) => openStore().settlePick(id, token, delivered),
   references: (target) => openStore().references(target),
   settleEdge: (id, result, now) => openStore().settleEdge(id, result, now),
