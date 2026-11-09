@@ -5,13 +5,16 @@ import { redactSecrets } from "../lib/secret-redact"
 import { type GhFn, realGh } from "../lib/triage-pr"
 import type { ExecFn } from "../lib/turso"
 import { REASON_MAX } from "./brain-pr-close"
+import { parked } from "./brain-pr-park"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
 
 // bin/pr-update-branch (POST /hooks/brain/pr-update-branch): the brain refreshes
 // a stale agent PR, because dispatch workers cannot create merge commits. Every
-// check is made here from GitHub, never from the brain's word:
+// check is made here from GitHub and Turso, never from the brain's word:
 //   open (409 not_open) · head `dispatch/*` (403 not_agent_branch) ·
+//   no client origin (403 client_origin), live shepherd park or hold (403 parked) ·
+//   Turso must answer (503 turso_unreachable) ·
 //   no conflict with the base (409 conflict, before or from the update).
 // A failed update answers 502 update_failed, whatever the head does after.
 // `gh pr update-branch` without --rebase: a merge commit on the PR branch, never
@@ -26,14 +29,14 @@ const READBACK_MS = 1_000
 interface PrUpdateInput { repo: string; pr: number; reason: string }
 interface PrUpdateDeps { gh: GhFn; exec: ExecFn; event(text: string): void; sleep(ms: number): Promise<unknown> }
 interface Out { status: number; body: Record<string, unknown> }
-interface PrView { state: string; headRefName: string; headRefOid: string; mergeable: string; url: string; title: string }
+interface PrView { state: string; headRefName: string; headRefOid: string; mergeable: string; url: string; title: string; labels: Array<{ name?: string }> }
 
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}): Out => ({ status, body: { ok: false, error, ...extra } })
 
 async function view(gh: GhFn, p: PrUpdateInput): Promise<PrView | Out> {
   let r: Awaited<ReturnType<GhFn>>
   try {
-    r = await gh(["pr", "view", String(p.pr), "--repo", p.repo, "--json", "state,headRefName,headRefOid,mergeable,url,title"])
+    r = await gh(["pr", "view", String(p.pr), "--repo", p.repo, "--json", "state,headRefName,headRefOid,mergeable,url,title,labels"])
   } catch (err) {
     return fail(503, "gh_unreachable", { detail: String((err as Error)?.message ?? "").slice(0, 200) })
   }
@@ -43,6 +46,7 @@ async function view(gh: GhFn, p: PrUpdateInput): Promise<PrView | Out> {
     return {
       state: String(v.state ?? ""), headRefName: String(v.headRefName ?? ""), headRefOid: String(v.headRefOid ?? ""),
       mergeable: String(v.mergeable ?? ""), url: String(v.url ?? ""), title: String(v.title ?? ""),
+      labels: Array.isArray(v.labels) ? v.labels : [],
     }
   } catch {
     return fail(502, "gh_bad_json")
@@ -64,6 +68,15 @@ export async function updateAgentPr(p: PrUpdateInput, deps: PrUpdateDeps = realD
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
+  let park: Awaited<ReturnType<typeof parked>>
+  try {
+    park = await parked(deps.exec, v)
+  } catch (err) {
+    companionLog(`[brain] pr-update-branch: turso ${(err as Error)?.name ?? "error"}`)
+    return fail(503, "turso_unreachable")
+  }
+  if (park.clientOrigin) return fail(403, "client_origin")
+  if (park.reasons.length) return fail(403, "parked", { reasons: park.reasons })
   if (v.mergeable === "CONFLICTING") return fail(409, "conflict")
   let run: Awaited<ReturnType<GhFn>>
   try {

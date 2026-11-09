@@ -190,8 +190,9 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
-  const run = op === "pr-close" ? deps.prClose ?? closeDeadPr : op === "pr-merge" ? deps.prMerge ?? mergeAgentPr : deps.prUpdate ?? updateAgentPr
-  const out = await run({ repo, pr, reason, signal: req.signal })
+  const out = op === "pr-merge"
+    ? await (deps.prMerge ?? mergeAgentPr)({ repo, pr, reason, signal: req.signal })
+    : await (op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prUpdate ?? updateAgentPr)({ repo, pr, reason })
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
 }

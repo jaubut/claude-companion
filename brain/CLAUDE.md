@@ -63,10 +63,13 @@ A refusal is final: tell Jeremie the `error` and `reasons`, don't retry or work 
 
 A dispatch PR stuck on stale CI: `bin/pr-update-branch --repo <owner/name> --pr <n> --reason "<why it is stale>"` merges the base into its branch (merge commit, never a rebase or a force) and answers the new head. The new head reruns CI and needs a fresh review, so `bin/pr-merge` answers `not_approved` until the cascade has reviewed it. Refusals, final as above:
 - 403 `not_agent_branch`: the head is not `dispatch/*`.
+- 403 `client_origin`: a client task or `client-origin` label; client PRs are never updated by the brain.
+- 403 `parked`: a live shepherd park (including tainted or human-merge parks) or hold.
 - 409 `not_open`: already closed or merged.
 - 409 `conflict`: the branch conflicts with its base.
 - 409 `up_to_date`: the base has nothing new, so updating won't help.
 - 502 `update_failed`: GitHub refused the update; check the PR before asking Jeremie.
+- 503 `turso_unreachable`: origin or park/hold checks could not complete; no update attempted.
 
 ## Deploys
 

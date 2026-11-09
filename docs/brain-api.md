@@ -182,7 +182,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 
 ### Stale agent PRs (`/hooks/brain/pr-update-branch`)
 
-Dispatch workers cannot create merge commits, so a dispatch PR with stale CI waits on the brain. `wiring/brain-pr-update-branch.ts` reads the PR from GitHub (`gh pr view`), never from the brain's word. Repo, pr and reason get the same input checks as pr-merge. It refuses unless the PR is open, its head is `dispatch/*` and `mergeable` is not CONFLICTING. Then `gh pr update-branch` without `--rebase`: a merge commit on the PR branch, never a rebase, never a force. The new head is read back (up to 5 reads, 1 s apart), then an `agent_activity` row `brain:pr-update-branch` is written (meta: repo, pr, url, branch, from, head, reason) and an event turn goes to the brain thread.
+Dispatch workers cannot create merge commits, so a dispatch PR with stale CI waits on the brain. `wiring/brain-pr-update-branch.ts` reads the PR from GitHub (`gh pr view`), never from the brain's word. Repo, pr and reason get the same input checks as pr-merge. It refuses unless the PR is open, its head is `dispatch/*` and `mergeable` is not CONFLICTING. The shared `wiring/brain-pr-park.ts` helper checks linked tasks and shepherd activity in Turso: client origin (task origin or the advisory `client-origin` label), a live park (including tainted or human-merge parks), or a hold refuses before updating. A Turso read failure also refuses. The same retired review parks and newer unparks as pr-merge apply; client-origin PRs always refuse an update, even when pr-merge could merge them. Then `gh pr update-branch` without `--rebase`: a merge commit on the PR branch, never a rebase, never a force. The new head is read back (up to 5 reads, 1 s apart), then an `agent_activity` row `brain:pr-update-branch` is written (meta: repo, pr, url, branch, from, head, reason) and an event turn goes to the brain thread.
 
 The new head voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `not_approved` until the review cascade has reviewed it.
 
@@ -191,12 +191,16 @@ The new head voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `n
 | 200 `{ok, updated, url, head}` | updated; `head` is the new head sha |
 | 400 | bad repo / pr / reason |
 | 403 `not_agent_branch` (+`branch`) | head is not `dispatch/*` |
+| 403 `client_origin` | a linked task has origin `client`, or the PR carries the `client-origin` label |
+| 403 `parked` (+`reasons`) | live shepherd park (including tainted or human-merge parks) or hold |
 | 404 `pr_not_found` | gh cannot read it |
 | 409 `not_open` (+`state`) | already closed or merged |
 | 409 `conflict` | CONFLICTING, or GitHub refused the update on a conflict |
 | 409 `up_to_date` (+`head`) | the base has nothing new |
 | 502 `update_failed` (+`head`, the old one) | `gh pr update-branch` failed; a head that moved anyway is someone else's push, nothing recorded |
 | 502 `update_unverified` (+`head`, the old one) · 503 `gh_unreachable` | nothing recorded |
+| 502 `gh_bad_json` | the initial GitHub response is not valid JSON; no update attempted |
+| 503 `turso_unreachable` | origin or park/hold lookup failed; no update attempted |
 
 ### Obsolete tasks (`/hooks/brain/task-cancel`)
 
