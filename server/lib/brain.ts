@@ -29,6 +29,7 @@ export type BrainState = "up" | "starting" | "down" | "paused"
 export const LEAD_REPOS: Readonly<Record<string, string>> = {
   "claude-companion": "jaubut/claude-companion",
   "remorquage-pelchat-web": "jaubut/remorquage-pelchat-web",
+  "claude-config": "jaubut/claude-config",
 }
 export const LEAD_PREFIX = "lead-"
 export const leadSlug = (repo: string): string | null => Object.hasOwn(LEAD_REPOS, repo) ? LEAD_REPOS[repo]! : null
