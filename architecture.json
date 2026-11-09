@@ -6348,7 +6348,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 311,
+          "lines": 322,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6373,6 +6373,7 @@
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain-lead.ts",
             "wiring/auto-deploy.ts",
@@ -7492,12 +7493,11 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 218,
+          "lines": 190,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
-            "retiredPark",
             "mergeAgentPr"
           ],
           "state": [],
@@ -7513,6 +7513,56 @@
             "lib/secret-redact.ts",
             "lib/triage-pr.ts",
             "lib/turso.ts",
+            "wiring/brain-pr-park.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-pr-park.ts",
+          "lines": 34,
+          "kind": "lib",
+          "exports": [
+            "retiredPark",
+            "parked"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-pr-update-branch.ts",
+          "lines": 115,
+          "kind": "lib",
+          "exports": [
+            "PR_UPDATE_ACTION",
+            "updateAgentPr"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-park.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ],
@@ -9442,6 +9492,7 @@
             "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
@@ -9489,6 +9540,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts"
           ]
@@ -9905,6 +9957,8 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-park.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/resolver-dry-run.ts"
@@ -10113,6 +10167,7 @@
             "routes/brain.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain-workers.ts",
@@ -10130,6 +10185,7 @@
             "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
@@ -11276,6 +11332,7 @@
             "lib/merge-gate.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
@@ -14284,6 +14341,12 @@
             "routes/brain.ts"
           ]
         },
+        "updateAgentPr": {
+          "module": "wiring/brain-pr-update-branch.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "cancelAgentTask": {
           "module": "wiring/brain-task-cancel.ts",
           "callers": [
@@ -14312,6 +14375,7 @@
           "module": "wiring/brain-pr-close.ts",
           "callers": [
             "routes/brain.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts"
           ]
         },
@@ -14942,6 +15006,7 @@
             "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain-todo.ts",
@@ -15063,6 +15128,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
@@ -15091,6 +15157,7 @@
             "wiring/body.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
@@ -15695,6 +15762,7 @@
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
@@ -16089,6 +16157,13 @@
           "callers": [
             "wiring/brain-lead.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "parked": {
+          "module": "wiring/brain-pr-park.ts",
+          "callers": [
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts"
           ]
         },
         "prReadiness": {
