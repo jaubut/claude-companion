@@ -80,8 +80,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
+| `lib/brain.ts` | 244 | lib | 45 |  |
 | `ws.ts` | 244 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
-| `lib/brain.ts` | 243 | lib | 45 |  |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `wiring/auto-deploy.ts` | 228 | lib | 14 | state: let live |

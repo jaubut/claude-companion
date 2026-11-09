@@ -28,6 +28,7 @@ export type BrainState = "up" | "starting" | "down" | "paused"
 /** The repos with a lead: one line per repo, GitHub slug by repo name. */
 export const LEAD_REPOS: Readonly<Record<string, string>> = {
   "claude-companion": "jaubut/claude-companion",
+  "remorquage-pelchat-web": "jaubut/remorquage-pelchat-web",
 }
 export const LEAD_PREFIX = "lead-"
 export const leadSlug = (repo: string): string | null => Object.hasOwn(LEAD_REPOS, repo) ? LEAD_REPOS[repo]! : null
