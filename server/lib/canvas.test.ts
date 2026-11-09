@@ -54,3 +54,28 @@ test("store: a pre-P6 edges table is migrated; a send cut by a restart reopens a
   expect(s.claimEdge("old", 3)).toBeNull()
   expect(createCanvasStore(db).edge("old")).toMatchObject({ state: "failed", error: "server_restart" })
 })
+
+for (const [otherGroup, group] of [[true, 1], [false, 0], [[1], "[1]"], [{ a: 1 }, '{"a":1}']] as const) {
+  test(`store: preview groups match JSON type as well as value (${JSON.stringify(otherGroup)} vs ${JSON.stringify(group)})`, () => {
+    const db = new Database(":memory:")
+    const s = createCanvasStore(db)
+    try {
+      for (const [id, value] of [["other", otherGroup], ["same", group], ["picked", group]] as const) {
+        s.addNode({ ...node("preview", "", { group: value }), id }, 1)
+      }
+      const other = s.pickNode("other", 2)
+      if (!other.ok || !other.claimed) throw new Error("other pick was not claimed")
+      s.pickNode("same", 3)
+      const picked = s.pickNode("picked", 4)
+      if (!picked.ok) throw new Error(picked.error)
+
+      expect(s.node("other")?.data.picked).toBe(true)
+      expect(s.currentPick("other", other.token)).not.toBeNull()
+      expect(s.node("same")?.data.picked).toBe(false)
+      expect(s.node("picked")?.data.picked).toBe(true)
+      expect(picked.changed.map((n) => n.id)).toEqual(["picked", "same"])
+    } finally {
+      db.close()
+    }
+  })
+}

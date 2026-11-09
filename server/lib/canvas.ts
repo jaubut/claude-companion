@@ -180,9 +180,11 @@ export function createCanvasStore(db: Database): CanvasStore {
     db.query("UPDATE canvas_nodes SET pick_state = 'sending', pick_token = ? WHERE id = ?").run(token, id)
     const node = setData(n, { ...n.data, picked: true, pickedAt: now }, now)
     const group = n.data.group
-    // No group (or a non-scalar one) → no siblings to un-pick.
+    // Only string/number groups have siblings; match JSON type as well as extracted value.
     const siblings = typeof group === "string" || typeof group === "number"
-      ? (db.query("SELECT * FROM canvas_nodes WHERE kind = 'preview' AND id != ? AND json_extract(data, '$.group') = ?").all(id, group) as RawNode[]).map(toNode)
+      ? (db.query(
+        "SELECT * FROM canvas_nodes WHERE kind = 'preview' AND id != ? AND json_type(data, '$.group') = json_type(?) AND json_extract(data, '$.group') = ?",
+      ).all(id, JSON.stringify(group), group) as RawNode[]).map(toNode)
       : []
     const unpicked = siblings.filter((s) => s.data.picked !== false).map((s) => {
       db.query("UPDATE canvas_nodes SET pick_state = '', pick_token = '' WHERE id = ?").run(s.id)
