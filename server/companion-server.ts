@@ -46,6 +46,7 @@ import { ensureUtf8Locale } from "./lib/tmux-pane"
 import { brainRoute } from "./routes/brain"
 import { brainWiring, setBrainDeliver } from "./wiring/brain"
 import { brainWorkers } from "./wiring/brain-workers"
+import { startStuckEvents } from "./wiring/brain-stuck-events"
 import { brainEnabled } from "./lib/brain"
 import { startAutoDeploy } from "./wiring/auto-deploy"
 
@@ -67,13 +68,13 @@ export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
   // happy-eyeballs path is a known process crash — see lib/apns.ts.
   disableAutoSelectFamily()
-  // Shell sessions are read from tmux (lib/shell-sessions.ts): first read now,
-  // then every few seconds so an `exit` reaches the phone.
+  // Shell sessions are read from herdr (lib/shell-sessions.ts; tmux's old ones
+  // too): first read now, then every few seconds so an `exit` reaches the phone.
   startShellPoll(listSessions)
   startEndedSweep(listSessions)
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
-  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy() }
+  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy(); startStuckEvents() }
   watchTailscaleName()
   const server = Bun.serve<WsData>({
     port,
@@ -104,6 +105,10 @@ export function createCompanionServer(port: number) {
       // dashboard before replying — far past Bun's 10 s idle default. After the
       // gate: unauthenticated callers keep the default.
       if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
+      // bin/lead waits for the lead's clone and start.
+      if (url.pathname === "/hooks/brain/lead") server.timeout(req, 180)
+      // A merge: the gate's 20 s, then readiness, `gh pr merge` and its read-back at 60 s each (GH_TIMEOUT_MS).
+      if (url.pathname === "/hooks/brain/pr-merge" || /^\/api\/orchestrator\/triage\/[^/]+\/choose$/.test(url.pathname)) server.timeout(req, 200)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
 

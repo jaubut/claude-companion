@@ -6,16 +6,21 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          bun-version: latest
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -38,3 +43,37 @@ jobs:
 
       - name: Tests
         run: bun test --isolate
+
+  # Real Turso, on tls-test only (allowlist: server/lib/turso-test-preload.test-util.ts). Its own job so `test` stays
+  # secret-free and a Turso outage can't redden it. Never pull_request_target: it would hand the secrets to fork code.
+  # Forks get no secrets on pull_request, so they skip here rather than go red.
+  integration:
+    name: Integration (tls-test)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # Step-level env: install scripts never see the secrets. TURSO_TEST_REQUIRED turns missing vars into a refusal.
+      - name: Tests on tls-test
+        env:
+          TURSO_TEST_URL: ${{ secrets.TURSO_TEST_URL }}
+          TURSO_TEST_AUTH_TOKEN: ${{ secrets.TURSO_TEST_AUTH_TOKEN }}
+          TURSO_TEST_REQUIRED: "1"
+        run: bun test --isolate --timeout 20000 server/wiring/brain-task-cancel.test.ts
+
+      - name: Point at the usual suspect
+        if: failure()
+        run: echo '::notice title=Generic "query failed"?::turso.ts hides SQL errors by design. tls-test or server/lib/turso-test-schema.sql may be behind the code; run bun scripts/turso-test-schema.ts from a host with a turso login.'

@@ -41,7 +41,7 @@ export const realSh: ShFn = async (cmd, args, opts) => {
 
 export interface RepoEntry { match: RegExp; path: string; name?: string; project?: string; requires?: string[]; /** GitHub "owner/name" (claude-config `github`). */ github?: string }
 
-const toolsDir = (): string => join(process.env.HOME || homedir(), ".claude", "tools")
+export const toolsDir = (): string => join(process.env.HOME || homedir(), ".claude", "tools")
 
 /**
  * Where REPO_MAP is read from, in order. `COMPANION_REPO_MAP` pins one file;

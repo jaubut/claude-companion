@@ -49,7 +49,7 @@ import { autoCompactor, compactTargetFor } from "../wiring/auto-compact"
 import { gauge, gaugeFromTranscript } from "../wiring/gauge"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { workerHookGate } from "../lib/worker-hook-gate"
-import { isBrainHook } from "../lib/brain"
+import { isBrainHook, isSupervisedTask } from "../lib/brain"
 import { brainWiring } from "../wiring/brain"
 import { checked, jsonObject } from "../lib/json-body"
 
@@ -442,10 +442,10 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     })
 
     // brain-v2: the brain's reply goes to its thread. No waiting badge, no
-    // global auto-compact (the supervisor compacts it when idle), no push.
-    if (isBrainHook(headerMeta.taskId || session?.taskId)) {
+    // global auto-compact (the supervisor compacts it when idle), no push; nor for a repo lead.
+    if (isSupervisedTask(headerMeta.taskId || session?.taskId)) {
       if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
-      void brainWiring.onStop(body.session_id ?? "", lastMessage).catch(() => { /* logged inside */ })
+      if (isBrainHook(headerMeta.taskId || session?.taskId)) void brainWiring.onStop(body.session_id ?? "", lastMessage).catch(() => { /* logged inside */ })
       return Response.json({})
     }
 

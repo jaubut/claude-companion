@@ -6,11 +6,15 @@
 #
 # It dispatches at once (filed `queued`, no Approve card); Jeremie sees a trace
 # line. A failed filing stays a proposal card he can tap.
+#
+# --handoff files the row and queues nothing: {"taskId":…,"origin":…} for a
+# builder session you hand the work to by relay (TASK <taskId>). The server sets
+# the origin from --turn.
 # Auth is the caller's identity: loopback only, X-Companion-Task-Id: brain and
 # the pid of the brain's claude process (found by walking up the parent chain).
 set -euo pipefail
 
-TURN="" NOTE="" TITLE="" PROMPT="" WHY="" AGENT=""
+TURN="" NOTE="" TITLE="" PROMPT="" WHY="" AGENT="" HANDOFF=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --turn) TURN="$2"; shift 2 ;;
@@ -19,6 +23,7 @@ while [ $# -gt 0 ]; do
     --prompt) PROMPT="$2"; shift 2 ;;
     --why) WHY="$2"; shift 2 ;;
     --agent) AGENT="$2"; shift 2 ;;
+    --handoff) HANDOFF=1; shift ;;
     *) echo "propose: unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -41,11 +46,12 @@ claude_pid() {
   echo "${PPID}"
 }
 
-BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" AGENT="$AGENT" python3 -c '
+BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" AGENT="$AGENT" HANDOFF="$HANDOFF" python3 -c '
 import json, os
 b = {"sourceTurnId": os.environ["TURN"], "noteId": os.environ["NOTE"], "prompt": os.environ["PROMPT"],
      "title": os.environ["TITLE"], "reasoning": os.environ["WHY"]}
 if os.environ["AGENT"]: b["agent"] = os.environ["AGENT"]
+if os.environ["HANDOFF"]: b["handoff"] = True
 print(json.dumps(b))')
 
 curl -sS --max-time 30 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/propose" \

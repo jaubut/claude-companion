@@ -8,11 +8,13 @@ import {
   reapScrapeSessions, resetOffPaneState, type HomeFactory, type OffPaneResult,
 } from "./command-offpane"
 import { createCommandLister, createSlots, prepareRealList } from "./command-offpane-cache"
-import { createScrapeHome, removeScrapeHome, resolveHomesBase, sweepOrphanHomes, UnsafeDirError, verifyPrivateDir } from "./command-offpane-home"
+import { createScrapeHome, liveHomes, removeScrapeHome, resolveHomesBase, sweepOrphanHomes, UnsafeDirError, verifyPrivateDir } from "./command-offpane-home"
 import { isScrapeProcess, processEnvEntries } from "./discover"
 import {
-  computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult,
+  computeFingerprint, fingerprintEntries, fingerprintSources, mainWorktreeRoot, parseTmuxEnv, tmuxNoServer, resolveClaudeLaunch, secureStorageProblem, versionAtLeast, type ClaudeLaunch, type TmuxResult, type TmuxRunner,
 } from "./command-offpane-launch"
+import { herdrScrapeRunner, resetHerdrScrapes } from "./command-offpane-herdr"
+import type { Herdr } from "./herdr"
 import { envHasScrapeVar, isScrapeSessionName, isScrapeTarget, markScrapeTarget, noteTmuxServer, releaseScrapeTarget, resetScrapeRegistry, scrapeSessionName, scrapeSessionOwner, tmuxServerPidOf } from "./scrape-registry"
 import { DETACHED_COLS, DETACHED_ROWS } from "./spawn-session"
 
@@ -245,7 +247,7 @@ function run(tmux: FakeTmux, timing: Record<string, number> = {}, homes = fakeHo
 const sim = (rows = 17, opts: ConstructorParameters<typeof SimClaude>[2] = {}) =>
   () => new SimClaude({ default: DEFAULTS, custom: CUSTOMS }, rows, opts)
 
-afterEach(() => { resetScrapeRegistry(); resetOffPaneState() })
+afterEach(() => { resetScrapeRegistry(); resetOffPaneState(); resetHerdrScrapes() })
 
 describe("enumerateCommandsOffPane", () => {
   test("reads the whole list from a hidden session — ZERO keystrokes reach the user's pane", async () => {
@@ -527,6 +529,21 @@ describe("reapScrapeSessions", () => {
     tmux.nextPane = 10
     tmux.addSession("cc-myproject", "%10", "/dev/ttys070", 9070)
     expect(isScrapeTarget({ tmuxPane: "%10" })).toBe(false)
+  })
+
+  test("a listing without pids keeps a pending kill's pid: its claude must exit before the HOME goes", async () => {
+    const tmux = new FakeTmux(sim(), { unkillable: { count: 3 } })
+    expect((await run(tmux, { killAttempts: 3 })).status).toBe("ok")
+    expect(pendingKills()).toHaveLength(1)
+    const noPids: typeof tmux.run = async (args) => {
+      const r = await tmux.run(args)
+      if (args[0] !== "list-panes") return r
+      return { ...r, stdout: r.stdout.split("\n").map((l) => l.split("\t").map((c, i) => (i === 3 ? "" : c)).join("\t")).join("\n") }
+    }
+    await reapScrapeSessions({ tmux: noPids, sleep: async () => {}, pidAlive: () => true, selfPid: SELF, homes: fakeHomes().homes, timing: { pidExitMs: 1, pollMs: 1 } })
+    expect(pendingKills()).toHaveLength(1)
+    await reapScrapeSessions({ tmux: tmux.run, sleep: async () => {}, pidAlive: tmux.pidAlive, selfPid: SELF, homes: fakeHomes().homes })
+    expect(pendingKills()).toEqual([])
   })
 
   test("a pending kill of a replaced server's session is never re-marked by its cleanup", async () => {
@@ -1178,6 +1195,35 @@ describe("throwaway HOME base: private, ours, not a symlink", () => {
     expect(existsSync(self)).toBe(true)
     expect(existsSync(loose)).toBe(true)
   })
+  test("sweep: a HOME a live process still runs in survives, whatever its owner (a tmux scrape outliving the deploy)", async () => {
+    const tmp = fresh()
+    const dead = join(tmp, "cc-scrape-homes-6666-abc123"); mkdirSync(dead, { mode: 0o700 })
+    const legacy = join(dead, "cc-scrape-6666-1-ab12"); mkdirSync(legacy, { mode: 0o700 })
+    const stale = join(dead, "cc-scrape-6666-2-cd34"); mkdirSync(stale, { mode: 0o700 })
+    await sweepOrphanHomes({ keep: () => false, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid, inUse: async () => new Set([legacy]) })
+    expect(existsSync(legacy)).toBe(true)
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(dead)).toBe(true)
+  })
+  test("sweep: a process scan that fails partway (EMFILE) is unknown, and no HOME is deleted", async () => {
+    const tmp = fresh()
+    const dead = join(tmp, "cc-scrape-homes-6666-abc123"); mkdirSync(dead, { mode: 0o700 })
+    const stale = join(dead, "cc-scrape-6666-2-cd34"); mkdirSync(stale, { mode: 0o700 })
+    let reads = 0
+    const proc = {
+      list: async () => ["1", "2", "3"],
+      read: async (pid: string) => {
+        if (++reads === 2) throw Object.assign(new Error("too many open files"), { code: "EMFILE" })
+        return `HOME=/home/x${pid}\0`
+      },
+    }
+    await sweepOrphanHomes({ keep: () => false, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid, inUse: () => liveHomes("linux", proc) })
+    expect(existsSync(stale)).toBe(true)
+    // A process gone mid-scan, or another user's, is still a complete answer.
+    const gone = { list: proc.list, read: async (pid: string) => { if (pid === "2") throw Object.assign(new Error("gone"), { code: "ENOENT" }); if (pid === "3") throw Object.assign(new Error("denied"), { code: "EACCES" }); return "HOME=/home/x\0" } }
+    await sweepOrphanHomes({ keep: () => false, reapable: () => true, ownerDead: () => true, selfPid: 4242, env: {}, tmp, uid, inUse: () => liveHomes("linux", gone) })
+    expect(existsSync(stale)).toBe(false)
+  })
   test("sweep: a dead server's base keeps a pending-kill session's HOME, and goes only once empty", async () => {
     const tmp = fresh()
     const dead = join(tmp, "cc-scrape-homes-6666-abc123"); mkdirSync(dead, { mode: 0o700 })
@@ -1454,5 +1500,192 @@ describe("finding 6: claude too old for the throwaway HOME's credentials", () =>
     expect(result.status).toBe("unsupported")
     expect(result.commands).toEqual([])
     expect(enumerated).toBe(0)
+  })
+})
+
+// ── The same lifecycle on a fake herdr ─────────────────────────────────────
+//
+// One pane per workspace, ids reissued lowest-first as herdr does ("w4:p1"
+// comes back), each pane a fresh terminal. Every write is recorded by
+// TERMINAL, so a test can tell the scrape's claude from whoever got its id.
+
+const HERDR_KEYS: Record<string, string> = { enter: "Enter", esc: "Escape", tab: "Tab", down: "Down", "ctrl+u": "C-u" }
+
+class HerdrWorld {
+  panes = new Map<string, { ws: string; wsLabel: string; terminal: string; label: string; pid: number; sim: SimClaude | null }>()
+  writes = new Map<string, string[][]>()
+  live = new Set<number>()
+  reads = 0
+  onRead: (() => void) | null = null
+  // `pane run` types the command, then its reply is lost (a timeout).
+  runReplyLost = false
+  // A closed pane's claude stays alive (in `linger`) until a test lets it go.
+  outlive = false
+  linger = new Set<number>()
+  alive = (pid: number): boolean => this.live.has(pid) || this.linger.has(pid)
+  private serial = 0
+  constructor(readonly spawnSim: () => SimClaude) {}
+
+  open(wsLabel: string, sim: SimClaude | null): string {
+    let i = 1
+    while ([...this.panes.values()].some((p) => p.ws === `w${i}`)) i++
+    const pane = `w${i}:p1`
+    const pid = 7000 + ++this.serial
+    this.panes.set(pane, { ws: `w${i}`, wsLabel, terminal: `term_${this.serial}`, label: "", pid, sim })
+    this.live.add(pid)
+    return pane
+  }
+  closeWs(ws: string): void {
+    for (const [id, p] of this.panes) if (p.ws === ws) this.closePane(id)
+  }
+  closePane(id: string): void {
+    const p = this.panes.get(id)
+    if (!p) return
+    this.panes.delete(id)
+    this.live.delete(p.pid)
+    if (this.outlive) this.linger.add(p.pid)
+  }
+  writesTo(terminal: string): string[][] { return this.writes.get(terminal) ?? [] }
+
+  read = async (pane: string): Promise<string | null> => {
+    this.reads++
+    this.onRead?.()
+    const p = this.panes.get(pane)
+    return p ? (p.sim ? p.sim.render() : "$ ") : null
+  }
+
+  h: Herdr = {
+    gate: async () => null,
+    read: async () => "",
+    call: async (args) => {
+      const [noun, verb, id = ""] = args
+      const p = this.panes.get(noun === "pane" && verb === "process-info" ? args[3]! : id)
+      const missing = () => { throw Object.assign(new Error("pane_not_found"), { code: "pane_not_found" }) }
+      if (noun === "workspace" && verb === "create") {
+        const pane = this.open(args[args.indexOf("--label") + 1]!, this.spawnSim())
+        const q = this.panes.get(pane)!
+        return { workspace: { workspace_id: q.ws }, root_pane: { pane_id: pane, terminal_id: q.terminal } }
+      }
+      if (noun === "workspace" && verb === "list") {
+        const ws = new Map([...this.panes.values()].map((q) => [q.ws, q.wsLabel]))
+        return { workspaces: [...ws].map(([workspace_id, label]) => ({ workspace_id, label, pane_count: 1 })) }
+      }
+      if (noun === "workspace" && verb === "get") return { workspace: { workspace_id: id, pane_count: [...this.panes.values()].filter((q) => q.ws === id).length } }
+      if (noun === "workspace" && verb === "close") { this.closeWs(id); return {} }
+      if (noun === "pane" && verb === "list") return { panes: [...this.panes].map(([pane_id, q]) => ({ pane_id, workspace_id: q.ws, terminal_id: q.terminal, label: q.label })) }
+      if (!p) return missing()
+      if (verb === "get") return { pane: { pane_id: id, workspace_id: p.ws, terminal_id: p.terminal, label: p.label } }
+      if (verb === "process-info") return { process_info: { shell_pid: p.pid } }
+      if (verb === "rename") { p.label = args[3]!; return {} }
+      if (verb === "close") { this.closePane(id); return {} }
+      if (verb === "run" || verb === "send-text" || verb === "send-keys") {
+        this.writes.set(p.terminal, [...this.writesTo(p.terminal), args.slice(1)])
+        if (verb === "send-text" && p.sim) p.sim.typed += args[3]!
+        if (verb === "send-keys") p.sim?.key(HERDR_KEYS[args[3]!] ?? args[3]!)
+        if (verb === "run" && this.runReplyLost) throw new Error("timeout")
+        return {}
+      }
+      return {}
+    },
+  }
+}
+
+function herdrDeps(world: HerdrWorld, homes = fakeHomes().homes) {
+  const c = clock()
+  return { tmux: herdrScrapeRunner(world.h, world.read), sleep: c.sleep, now: c.now, timing: {}, launch: LAUNCH, sessionName: names, homes, pidAlive: world.alive, selfPid: SELF }
+}
+
+describe("off-pane on herdr", () => {
+  test("the whole list from a marked scrape pane, then its workspace closed and its HOME deleted", async () => {
+    const world = new HerdrWorld(sim())
+    const h = fakeHomes()
+    const res = await enumerateCommandsOffPane("/proj", herdrDeps(world, h.homes))
+    expect(res.status).toBe("ok")
+    expect(res.commands.filter((c) => c.kind === "default").map((c) => c.name)).toEqual(DEFAULTS)
+    expect(world.panes.size).toBe(0)
+    expect(h.removed).toHaveLength(1)
+  })
+
+  test("the scrape's workspace closes mid-list and a stranger gets its pane id: the scrape aborts, nothing reaches the stranger", async () => {
+    const world = new HerdrWorld(sim())
+    let victim = ""
+    world.onRead = () => {
+      if (world.reads !== 6) return
+      const [id, ours] = [...world.panes].find(([, p]) => p.sim)!
+      world.closeWs(ours.ws)
+      expect(world.open("sh-home", null)).toBe(id)
+      victim = world.panes.get(id)!.terminal
+    }
+    const res = await enumerateCommandsOffPane("/proj", herdrDeps(world))
+    expect(victim).not.toBe("")
+    expect(res.status).toBe("error")
+    expect(world.writesTo(victim)).toEqual([])
+    expect(world.panes.size).toBe(1)
+  })
+
+  test("`pane run` launches claude but its reply is lost: the HOME stays until that claude exits", async () => {
+    const world = new HerdrWorld(sim())
+    world.runReplyLost = true
+    world.outlive = true
+    const h = fakeHomes()
+    const d = { ...herdrDeps(world, h.homes), timing: { pidExitMs: 1, pollMs: 1 } }
+    const res = await enumerateCommandsOffPane("/proj", d)
+    expect(res.status).toBe("error")
+    expect(world.panes.size).toBe(0)
+    expect(h.removed).toEqual([])
+    world.linger.clear()
+    await reapScrapeSessions(d)
+    expect(h.removed).toHaveLength(1)
+  })
+
+  test("an unmarked cc-scrape-* workspace (listed with no pane) is foreign: never killed, never pending", async () => {
+    const name = "cc-scrape-999999-1-old0"
+    const calls: string[][] = []
+    const runner: TmuxRunner = async (args) => {
+      calls.push(args)
+      if (args[0] === "list-panes") return { code: 0, stdout: `${name}\t\t\t\t` }
+      return { code: -1, stdout: "" }
+    }
+    await reapScrapeSessions({ tmux: runner, sleep: async () => {}, pidAlive: (p) => p === SELF, selfPid: SELF, homes: fakeHomes().homes })
+    expect(pendingKills()).toEqual([])
+    expect(foreignScrapes()).toEqual([name])
+    expect(calls.filter((c) => c[0] === "kill-session")).toEqual([])
+  })
+
+  test("a pending kill's pid is never replaced by a later listing's (a reused id names another process)", async () => {
+    const h = fakeHomes()
+    h.homes.pathFor = async (n) => `/tmp/homes/${n}`
+    const name = names()
+    let listedPid = 77
+    const runner: TmuxRunner = async (args) => {
+      if (args[0] === "list-panes") return { code: 0, stdout: `${name}\tw4:p1\t\t${listedPid}\t` }
+      if (args[0] === "has-session") return { code: 1, stdout: "" }
+      return { code: 0, stdout: "" }
+    }
+    const reap = () => reapScrapeSessions({ tmux: runner, sleep: async () => {}, pidAlive: (p) => p === 77 || p === SELF, selfPid: SELF, homes: h.homes, timing: { pidExitMs: 1, pollMs: 1 } })
+    await reap()                                  // killed, but claude (77) still runs: pending
+    expect(pendingKills()).toEqual([name])
+    listedPid = 999                               // the id now names a dead stranger's pid
+    await reap()
+    expect(h.removed).toEqual([])
+    expect(pendingKills()).toEqual([name])
+  })
+
+  test("a reap keeps a pending kill's pid and HOME while its claude outlives the pane, and deletes the HOME once it exits", async () => {
+    const world = new HerdrWorld(sim())
+    const h = fakeHomes()
+    h.homes.pathFor = async (n) => `/tmp/homes/${n}`
+    const name = names()
+    await herdrScrapeRunner(world.h, world.read)(["new-session", "-d", "-s", name, "/bin/sh", "-c", "exec claude"])
+    const linger = new Set([[...world.panes.values()][0]!.pid])
+    const reap = () => reapScrapeSessions({ tmux: herdrScrapeRunner(world.h, world.read), sleep: async () => {}, pidAlive: (p) => world.live.has(p) || linger.has(p), selfPid: SELF, homes: h.homes, timing: { pidExitMs: 1, pollMs: 1 } })
+    await reap()
+    expect(world.panes.size).toBe(0)
+    expect(pendingKills()).toEqual([name])
+    await reap()                                  // herdr no longer lists it: the pid is still the pending one
+    expect(h.removed).toEqual([])
+    linger.clear()
+    await reap()
+    expect(h.removed).toEqual([`/tmp/homes/${name}`])
   })
 })
