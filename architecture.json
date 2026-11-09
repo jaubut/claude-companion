@@ -6420,7 +6420,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 197,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",

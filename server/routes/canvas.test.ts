@@ -256,8 +256,50 @@ describe("preview pick (design-first)", () => {
       const response = (await handle(new Request(url.href, { method: "POST" }), url))!
       return { status: response.status, json: await response.json() as Record<string, unknown> }
     }
-    return { deliveries, pick }
+    return { deliveries, pick, handle }
   }
+
+  test("a queued pick responds at the 8-second cap and still delivers afterward in order", async () => {
+    await preview("wait-a", "wait")
+    await preview("wait-b", "wait")
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const finished = Promise.withResolvers<void>()
+    const typed: string[] = []
+    const { handle } = delayedPicks(async (node) => {
+      if (node.id === "wait-a") { started.resolve(); await release.promise }
+      typed.push(node.id)
+      if (node.id === "wait-b") finished.resolve()
+      return { ok: true }
+    })
+    const http = Bun.serve({ port: 0, idleTimeout: 10, fetch: async (req) => (await handle(req, new URL(req.url)))! })
+    const request = (id: string) => fetch(`http://localhost:${http.port}/api/canvas/nodes/${id}/pick`, { method: "POST" })
+    const first = request("wait-a")
+    await started.promise
+    const began = performance.now()
+    const second = request("wait-b")
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      const response = await Promise.race([second, new Promise<null>((resolve) => { deadline = setTimeout(() => resolve(null), 9_000) })])
+      expect(response?.status).toBe(200)
+      expect(performance.now() - began).toBeGreaterThanOrEqual(7_900)
+      expect(performance.now() - began).toBeLessThan(9_000)
+      expect(await response!.json()).toMatchObject({ ok: true, delivered: false, queued: true, node: { id: "wait-b" } })
+      expect(typed).toEqual([])
+      expect(await (await request("wait-b")).json()).toMatchObject({ delivered: false, duplicate: true })
+
+      release.resolve()
+      await finished.promise
+      expect(typed).toEqual(["wait-a", "wait-b"])
+      expect(await (await request("wait-b")).json()).toMatchObject({ delivered: true, duplicate: true })
+    } finally {
+      clearTimeout(deadline)
+      release.resolve()
+      await Promise.all([first, second])
+      http.stop(true)
+      for (const id of ["wait-a", "wait-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+    }
+  }, 12_000)
 
   for (const supersede of [false, true]) {
     test(`a slow A inject cannot finish after the final group pick${supersede ? "; queued B is superseded by C" : " B"}`, async () => {

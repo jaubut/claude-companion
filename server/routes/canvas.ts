@@ -18,6 +18,7 @@ export type { SendResult }
 //          with the pick already stored. Picking a card already picked and sending or sent types nothing
 //          (200 { ok, node, delivered, duplicate: true }); a failed delivery can be picked again.
 //          Deliveries run in group order; superseded queued picks are stored only (delivered: false).
+//          After 8 s, respond with delivered: false, queued: true while delivery continues in the background.
 //   POST   /api/canvas/edges          { from, to, kind? }                   → 201 { ok, edge }. Kind/state come from
 //          the endpoints (a posted kind is ignored): task → agent = "context"/"proposed" (Send?);
 //          note|turso_note → agent|brain = "reference"/"linked" (a live read-only link, never sent)
@@ -50,6 +51,7 @@ export interface CanvasRouteDeps {
 const NODES = "/api/canvas/nodes"
 const EDGES = "/api/canvas/edges"
 const LINKED = "/api/canvas/linked-notes"
+const PICK_WAIT_MS = 8_000 // Leave headroom under the server's 10 s HTTP idle timeout.
 
 const bad = (error: string, status = 400): Response => Response.json({ ok: false, error }, { status })
 
@@ -115,9 +117,13 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       const previous = pickDeliveries.get(key)
       const delivery = previous ? previous.then(deliver, deliver) : deliver()
       pickDeliveries.set(key, delivery)
-      const r = await delivery.finally(() => {
+      const completed = delivery.finally(() => {
         if (pickDeliveries.get(key) === delivery) pickDeliveries.delete(key)
       })
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<"queued">((resolve) => { timer = setTimeout(() => resolve("queued"), PICK_WAIT_MS) })
+      const r = await Promise.race([completed, timeout]).finally(() => clearTimeout(timer))
+      if (r === "queued") return Response.json({ ok: true, node: p.node, delivered: false, queued: true })
       if (!r || r.ok) return Response.json({ ok: true, node: p.node, delivered: r !== null })
       return Response.json({ ...r.detail, ok: false, error: r.error, node: p.node, delivered: false }, { status: r.status })
     }

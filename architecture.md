@@ -111,9 +111,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
+| `routes/canvas.ts` | 203 | lib | 2 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
-| `routes/canvas.ts` | 197 | lib | 2 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `companion-server.ts` | 194 | route-host | 1 | routes: 7 |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
