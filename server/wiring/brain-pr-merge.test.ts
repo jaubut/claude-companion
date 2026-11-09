@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -13,6 +13,10 @@ import type { ExecFn, Row } from "../lib/turso"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prmerge-")), "test.db")
 const { mergeAgentPr, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")
+
+// Default to unpaused reviews, independent of the host's flag.
+const flagDir = mkdtempSync(join(tmpdir(), "cc-prmerge-unpaused-"))
+afterAll(() => rmSync(flagDir, { recursive: true, force: true }))
 
 const URL = "https://github.com/o/r/pull/7"
 const SHA = "1111111111111111111111111111111111111111"
@@ -63,7 +67,7 @@ function world(pr: Record<string, unknown>, seed = TASK, opts: { mergeSticks?: b
   }
   // The gate has its own matrix (merge-gate-callers.test.ts): here it passes at the head GitHub reports.
   const gate: MergeGateFn = async () => ({ ok: true, head: String(state.headRefOid), base: String(state.baseRefName) })
-  return { db, calls, events, deps: { gh, exec, event: (t: string) => events.push(t), gate } }
+  return { db, calls, events, deps: { gh, exec, event: (t: string) => events.push(t), gate, pausedFlag: join(flagDir, "claude-review-paused") } }
 }
 
 const park = (action: string, reason: string) =>
