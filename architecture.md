@@ -25,6 +25,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 506 | lib | 26 | state: RETIRED_APPS: Set |
 | `lib/discover.ts` | 501 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
+| `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/submit-confirm.ts` | 473 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
@@ -34,7 +35,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
-| `lib/canvas.ts` | 415 | lib | 29 | state: BLOCKING: Set |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
 | `routes/orchestrator.ts` | 409 | route-host | 3 | routes: 11 |
@@ -111,11 +111,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/front-door.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
+| `routes/canvas.ts` | 203 | lib | 2 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `companion-server.ts` | 194 | route-host | 1 | routes: 7 |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
+| `wiring/canvas.ts` | 193 | lib | 8 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `wiring/brain-pr-merge.ts` | 190 | lib | 3 |  |
@@ -139,11 +141,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-lead.ts` | 152 | lib | 9 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
-| `routes/canvas.ts` | 150 | lib | 2 |  |
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `routes/body.ts` | 149 | route-host | 3 | routes: 5 |
-| `wiring/canvas.ts` | 147 | lib | 7 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `wiring/pane-mirror.ts` | 147 | lib | 7 | state: mirrors: Map, viewers: WeakMap |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
@@ -717,6 +717,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `DetachedDeps()` | `lib/tmux-spawn-confirm.ts` | `lib/shell-sessions.ts`, `lib/spawn-session.ts` |
 | `realDetachedDeps()` | `lib/tmux-spawn-confirm.ts` | `lib/shell-sessions.ts`, `lib/spawn-session.ts` |
 | `spawnSocketPath()` | `lib/tmux-pane.ts` | `lib/shell-sessions.ts`, `lib/spawn-session.ts` |
+| `oneLine()` | `lib/canvas.ts` | `lib/spawn-seed.ts`, `wiring/canvas.ts` |
 | `githubName()` | `lib/live-repo.ts` | `lib/spawn-seed.ts`, `wiring/repo-view.ts` |
 | `BodyResponse()` | `lib/body.ts` | `lib/status-answer.ts`, `wiring/front-door.ts` |
 | `readClaudeSessionFile()` | `lib/discover.ts` | `lib/submit-confirm.ts`, `wiring/auto-compact.ts` |
