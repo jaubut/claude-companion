@@ -202,6 +202,27 @@ function matrix(toolsFor: () => string): void {
 
   describe("bin/pr-merge order", () => {
     const run = CALLERS[0]![1]
+    // The live gate passes these routine files; the existing park must still be respected.
+    for (const [why, held] of [
+      ["tainted (web) PR: external link added — needs your review", true],
+      ["client-origin PR — human review required: tainted (client) PR: external link added — needs your review", true],
+      ["client-origin PR — human review required: touches server/lib/pay.ts", false],
+      ["touches server/lib/invoice.ts — needs your review · Opus: escalate", false],
+      ["tainted (web) PR touches server/lib/auth.ts — human merge only", true],
+      ["client-origin PR — human review required: human merge", true],
+      ["touches server/lib/invoice.ts — needs your review · HUMAN MERGE required", true],
+    ] as const) {
+      test(`live park: ${why}`, async () => {
+        const w = world({}, "web")
+        w.db.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', ?, ?)")
+          .run(TASK, JSON.stringify({ url: URL, reason: why }))
+        expect(await gate(w, { url: URL })).toMatchObject({ ok: true, head: SHA, base: "main" })
+        const out = await run(w, gate)
+        expect(out).toMatchObject(held ? { status: 403, error: "parked" } : { status: 200 })
+        expect(merges(w)).toHaveLength(held ? 0 : 1)
+        expect(w.db.query("SELECT COUNT(*) AS n FROM agent_activity WHERE action = 'brain:pr-merge'").get()).toEqual({ n: held ? 0 : 1 })
+      })
+    }
     test("a stop outranks draft", async () => {
       const w = world({ draft: true, files: ["hooks/x.py"] })
       expect(await run(w, gate)).toMatchObject({ status: 403, error: "human-merge-path" })

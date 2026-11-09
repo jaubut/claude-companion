@@ -19,10 +19,10 @@ import { orchEmit } from "./orchestrator"
 //     before draft and the branch check, so no head is exempt, sync/* included
 //   not draft · head `dispatch/*` (403 not_agent_branch)
 //   parked (403): no live shepherd park or hold, except the client-origin /
-//     tainted / sensitive-path park (the MFA human-review policy, retired
+//     sensitive-path review park (the MFA human-review policy, retired
 //     2026-10-31: money, origin and paths alone no longer gate a green,
-//     twice-approved agent PR). A park that says `human merge` is a hard stop,
-//     never retired.
+//     twice-approved agent PR). A tainted park or one that says `human merge`
+//     is never retired, including with a client-origin prefix.
 //   not_green (409): MERGEABLE + mergeStateStatus CLEAN + every check passed (≥ 1)
 //   not_approved (409): Claude AND Codex auto-review comments with VERDICT:
 //     APPROVE stamped with the current head sha, from the PR's author (the
@@ -41,11 +41,11 @@ export const PR_MERGE_ACTION = "brain:pr-merge"
 const REASON_MAX = 300
 export const MERGE_CAP = 10
 
-// The shepherd's human-review parks (pr-shepherd clientPark / taint / sensitive): retired, they no longer refuse.
+// The shepherd's client-origin / sensitive-path human-review parks are retired, except tainted or human-merge parks.
 // Every other park (conflict unresolved, fix budget spent, infra hold, no CI…) means the work is broken: refuse.
-// `human merge` marks pr-gate.ts's hard stops, C-017 among them, whatever prefix clientPark puts on them.
-const RETIRED_PARK = /^(client(-origin)? PR|tainted \(|touches .+ — needs your review)/
-export const retiredPark = (why: string): boolean => RETIRED_PARK.test(why) && !/human merge/i.test(why)
+// C-017's tainted parks and `human merge` hard stops survive whatever prefix clientPark puts on them.
+const RETIRED_PARK = /^(client(-origin)? PR|touches .+ — needs your review)/
+export const retiredPark = (why: string): boolean => RETIRED_PARK.test(why) && !/tainted \(|human merge/i.test(why)
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
 /** Files the marker's low tier may cover here: a comment is writable by any agent, so the server checks. Narrower than the shepherd's rule: agent instructions (.md) need a review. */
