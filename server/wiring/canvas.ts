@@ -64,7 +64,7 @@ export const canvasStore: CanvasStore = {
 // ponytail: no per-edge auto-send yet; add it on the Phase 7 trust ramp when Jeremie asks.
 // The guarded inject behind POST /api/inject (routes/api.ts). Handed in by
 // companion-server.ts at boot: wiring never imports up into routes/.
-type Deliver = (text: string, key?: string, cwd?: string, boundSid?: string) => Promise<Response>
+type Deliver = (text: string, key?: string, cwd?: string) => Promise<Response>
 let deliver: Deliver | null = null
 export function setCanvasDeliver(fn: Deliver): void {
   deliver = fn
@@ -104,9 +104,9 @@ function boundCheck(key: string, boundSid: string | undefined): SendResult | nul
   return null
 }
 
-async function inject(text: string, key: string, boundSid?: string): Promise<SendResult> {
+async function inject(text: string, key: string): Promise<SendResult> {
   if (!deliver) return { ok: false, status: 503, error: "deliver_unavailable" }
-  const res = await deliver(text, key, undefined, boundSid)
+  const res = await deliver(text, key)
   const body = (await res.json()) as Record<string, unknown>
   if (res.ok && body.ok === true) return { ok: true }
   return { ok: false, status: res.ok ? 502 : res.status, error: typeof body.error === "string" ? body.error : "deliver_failed", detail: body }
@@ -133,7 +133,7 @@ export async function canvasPickNotify(node: CanvasNode): Promise<SendResult | n
   if (refused) return refused
   const direction = typeof node.data.direction === "string" ? node.data.direction : ""
   companionLog(`canvas pick ${node.id}: ${direction} → ${key}`)
-  return inject(oneLine(`Picked direction: ${direction} — ${node.ref}`), key, node.boundSid)
+  return inject(oneLine(`Picked direction: ${direction} — ${node.ref}`), key)
 }
 
 // canvas-note-refs: the note nodes linked to whoever sent a prompt — a session (its agent node,

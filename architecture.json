@@ -2102,7 +2102,7 @@
         },
         {
           "path": "lib/herdr-inject.ts",
-          "lines": 86,
+          "lines": 83,
           "kind": "lib",
           "exports": [
             "INJECT_QUEUE_MS",
@@ -2528,12 +2528,15 @@
         },
         {
           "path": "lib/keyboard-inject.ts",
-          "lines": 537,
+          "lines": 600,
           "kind": "lib",
           "exports": [
             "InjectTarget",
             "InjectOpts",
             "injectText",
+            "TmuxResult",
+            "tmuxSendKeys",
+            "deliverViaTmux",
             "withPickerIO"
           ],
           "state": [
@@ -2545,7 +2548,7 @@
           "apiCalls": [],
           "imports": [
             "lib/log.ts",
-            "lib/tmux-inject.ts",
+            "lib/key-gate.ts",
             "lib/tmux-pane.ts",
             "lib/herdr.ts",
             "lib/herdr-inject.ts",
@@ -4648,7 +4651,7 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 484,
+          "lines": 473,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
@@ -5031,31 +5034,6 @@
             "lib/tmux-pane.ts",
             "lib/shell-sessions.ts",
             "lib/vault-guard.ts"
-          ],
-          "listeners": [],
-          "sheets": 0,
-          "externals": []
-        },
-        {
-          "path": "lib/tmux-inject.ts",
-          "lines": 77,
-          "kind": "lib",
-          "exports": [
-            "TMUX_PANE_RE",
-            "TmuxResult",
-            "TmuxSender",
-            "tmuxSendKeys",
-            "deliverViaTmux"
-          ],
-          "state": [],
-          "emits": [],
-          "consumes": [],
-          "endpoints": [],
-          "apiCalls": [],
-          "imports": [
-            "lib/key-gate.ts",
-            "lib/tmux-pane.ts",
-            "lib/herdr-inject.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6065,7 +6043,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 600,
+          "lines": 599,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -10641,9 +10619,9 @@
             "lib/command-scrape.ts",
             "lib/herdr-inject.ts",
             "lib/inject-verified.ts",
+            "lib/keyboard-inject.ts",
             "lib/session-pane.ts",
             "lib/submit-confirm.ts",
-            "lib/tmux-inject.ts",
             "routes/api.ts#POST /api/sessions/resume",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
@@ -11171,6 +11149,13 @@
             "lib/inject-verified.ts"
           ]
         },
+        "tmuxSendKeys": {
+          "module": "lib/keyboard-inject.ts",
+          "callers": [
+            "lib/inject-verified.ts",
+            "lib/submit-confirm.ts"
+          ]
+        },
         "sendKeysArgs": {
           "module": "lib/tmux-pane.ts",
           "callers": [
@@ -11216,7 +11201,6 @@
             "lib/pane-mirror.ts",
             "lib/session-pane.ts",
             "lib/submit-confirm.ts",
-            "lib/tmux-inject.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "wiring/dialogs.ts",
@@ -11227,16 +11211,15 @@
           "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/inject-verified.ts",
-            "lib/keyboard-inject.ts",
-            "lib/tmux-inject.ts"
+            "lib/keyboard-inject.ts"
           ]
         },
         "INJECT_SEND_MS": {
           "module": "lib/herdr-inject.ts",
           "callers": [
             "lib/inject-verified.ts",
-            "lib/submit-confirm.ts",
-            "lib/tmux-inject.ts"
+            "lib/keyboard-inject.ts",
+            "lib/submit-confirm.ts"
           ]
         },
         "Intent": {
@@ -11307,20 +11290,7 @@
             "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "lib/terminal-bridge.ts",
-            "lib/tmux-inject.ts",
             "lib/tmux-spawn-confirm.ts"
-          ]
-        },
-        "TmuxSender": {
-          "module": "lib/tmux-inject.ts",
-          "callers": [
-            "lib/keyboard-inject.ts"
-          ]
-        },
-        "tmuxSendKeys": {
-          "module": "lib/tmux-inject.ts",
-          "callers": [
-            "lib/keyboard-inject.ts"
           ]
         },
         "deliverViaHerdr": {
@@ -11330,8 +11300,14 @@
             "lib/submit-confirm.ts"
           ]
         },
-        "deliverViaTmux": {
-          "module": "lib/tmux-inject.ts",
+        "tmuxSocketFlags": {
+          "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/keyboard-inject.ts"
+          ]
+        },
+        "KeyGateTimeout": {
+          "module": "lib/key-gate.ts",
           "callers": [
             "lib/keyboard-inject.ts"
           ]
@@ -11342,19 +11318,6 @@
             "lib/keyboard-inject.ts",
             "lib/question-hook.ts",
             "lib/submit-confirm.ts"
-          ]
-        },
-        "tmuxSocketFlags": {
-          "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/keyboard-inject.ts",
-            "lib/tmux-inject.ts"
-          ]
-        },
-        "TMUX_PANE_RE": {
-          "module": "lib/tmux-inject.ts",
-          "callers": [
-            "lib/keyboard-inject.ts"
           ]
         },
         "herdrPickerIO": {
@@ -12760,7 +12723,6 @@
           "callers": [
             "lib/session-resolve.ts",
             "routes/api.ts#GET /api/sessions/history",
-            "routes/api.ts#* /api/feed",
             "wiring/auto-compact.ts",
             "wiring/brain.ts",
             "wiring/events.ts",
@@ -13214,12 +13176,6 @@
           "module": "lib/shell-sessions.ts",
           "callers": [
             "lib/terminal-bridge.ts"
-          ]
-        },
-        "KeyGateTimeout": {
-          "module": "lib/key-gate.ts",
-          "callers": [
-            "lib/tmux-inject.ts"
           ]
         },
         "detectArtifacts": {
