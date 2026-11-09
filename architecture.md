@@ -156,7 +156,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `lib/tool-format.ts` | 136 | lib | 6 |  |
-| `wiring/brain-stuck-events.ts` | 132 | lib | 4 |  |
+| `wiring/brain-stuck-events.ts` | 136 | lib | 4 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
