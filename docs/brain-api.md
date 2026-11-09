@@ -125,7 +125,7 @@ The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.t
 
 ### Stuck PRs
 
-`wiring/brain-stuck-events.ts` polls `pr:brain-event` rows with a `stuck_key` every minute and posts each new one to the brain thread. The rows come from the PR shepherd in claude-config, one per PR per stuck state. The cursor is `brain_kv`'s `stuck-events-cursor`. Its first run posts one summary and replays nothing. Only checked fields are posted, and the reason is one quoted, bounded line of data.
+`wiring/brain-stuck-events.ts` polls `pr:brain-event` rows with a `stuck_key` every minute and posts each new one to the brain thread. The rows come from the PR shepherd in claude-config, one per PR per stuck state. Accepted kinds: `stuck-parked`, `stuck-no-review`, `stuck-main-red`, `stuck-main-cancelled`, `loop-round-3`, `loop-repeat`, `loop-budget`, and `loop-stop`. Rows do not require `head_sha`. The cursor is `brain_kv`'s `stuck-events-cursor`. Its first run posts one summary and replays nothing. Only checked fields are posted, and the reason is one quoted line of data capped at 200 characters.
 
 ### Repo leads (`/hooks/brain/lead`)
 

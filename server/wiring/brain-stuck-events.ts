@@ -23,6 +23,10 @@ const KINDS: Readonly<Record<string, string>> = {
   "stuck-no-review": "no review",
   "stuck-main-red": "main CI red",
   "stuck-main-cancelled": "main CI cancelled",
+  "loop-round-3": "loop round 3",
+  "loop-repeat": "loop repeat",
+  "loop-budget": "loop budget",
+  "loop-stop": "loop stop",
 }
 const REPO = /^[\w.-]+$/
 const PR_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/
