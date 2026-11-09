@@ -296,6 +296,7 @@ async function confirmTyped(deps: ConfirmDeps): Promise<ConfirmResult> {
 export type InjectOutcome =
   | { ok: true; confirmed: boolean; retried?: boolean; queued?: boolean; command?: boolean }
   | { ok: false; error: "deliver_failed" }
+  | { ok: false; error: "target_changed" }
   | { ok: false; error: "not_submitted"; excerpt: string }
   // herdr refused the prompt: the agent sits at an approval/question
   // (agent_blocked). Same code as the pre-inject pane_not_ready refusal.
@@ -341,10 +342,11 @@ async function confirmPane(target: ConfirmTarget): Promise<PaneRef | null> {
   return null
 }
 
-function pressEnterIn(ref: PaneRef): () => Promise<boolean> {
+function pressEnterIn(ref: PaneRef, canDeliver?: () => boolean): () => Promise<boolean> {
   return async () => {
     try {
-      const r = await keyGate.send(paneKey(ref.pane, ref.socket), "Enter", (signal) => tmuxSendKeys(sendKeysArgs(ref, "Enter"), 2000, signal), { timeoutMs: INJECT_SEND_MS })
+      const r = await keyGate.send(paneKey(ref.pane, ref.socket), "Enter", async (signal) => canDeliver && !canDeliver()
+        ? { ok: false } : tmuxSendKeys(sendKeysArgs(ref, "Enter"), 2000, signal), { timeoutMs: INJECT_SEND_MS })
       return r.ok
     } catch {
       return false
@@ -379,21 +381,29 @@ function withPaneLock<T>(pane: string, fn: () => Promise<T>): Promise<T> {
 // `herdr` is a test seam.
 // A Claude prompt (not /cmd or !cmd) is recorded as a phone origin until its
 // hook consumes it; a failed or already-confirmed inject drops the record.
-export async function injectConfirmed(text: string, target: ConfirmTarget | undefined, herdr: Herdr = realHerdr): Promise<InjectOutcome> {
+export async function injectConfirmed(text: string, target: ConfirmTarget | undefined, herdr: Herdr = realHerdr, isCurrent?: () => boolean): Promise<InjectOutcome> {
   const origin = target && (target.agent ?? "claude") === "claude" && !isHooklessInput(text)
     ? notePhoneOrigin({ key: target.key, sessionId: target.sessionId, tty: target.tty }, text)
     : null
-  const res = await injectRouted(text, target, herdr)
+  // A pick's binding is checked at the actual write, after every delivery lock.
+  // Keep a refusal sticky through fallback/retry paths and preserve injectText's boolean contract.
+  let targetChanged = false
+  const canDeliver = isCurrent ? () => {
+    if (!isCurrent()) targetChanged = true
+    return !targetChanged
+  } : undefined
+  const delivered = await injectRouted(text, target, herdr, canDeliver)
+  const res: InjectOutcome = targetChanged ? { ok: false, error: "target_changed" } : delivered
   if (origin && (!res.ok || res.confirmed)) origin.drop()
   return res
 }
 
-async function injectRouted(text: string, target: ConfirmTarget | undefined, herdr: Herdr): Promise<InjectOutcome> {
+async function injectRouted(text: string, target: ConfirmTarget | undefined, herdr: Herdr, canDeliver?: () => boolean): Promise<InjectOutcome> {
   const herdrPane = herdrPaneOf(target)
-  if (target && herdrPane) return injectHerdr(text, target, herdrPane, herdr)
+  if (target && herdrPane) return injectHerdr(text, target, herdrPane, herdr, canDeliver)
   const ref = target && (target.agent ?? "claude") === "claude" ? await confirmPane(target) : null
   if (!target || !ref) {
-    return (await injectText(text, target)) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
+    return (await injectText(text, target, { canDeliver })) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
   }
   // (socket, pane) is the lock's identity: two servers' panes sharing an id
   // are two keyboards.
@@ -402,11 +412,11 @@ async function injectRouted(text: string, target: ConfirmTarget | undefined, her
     const hookless = isHooklessInput(text)
     const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty, pane: ref.pane }, { boundary: hookless, text })
     try {
-      if (!(await injectText(text, { ...target, tmuxPane: ref.pane, tmuxSocket: ref.socket }))) return { ok: false, error: "deliver_failed" }
+      if (!(await injectText(text, { ...target, tmuxPane: ref.pane, tmuxSocket: ref.socket }, { canDeliver }))) return { ok: false, error: "deliver_failed" }
       const r = await confirmSubmit({
         watch,
         text,
-        pressEnter: pressEnterIn(ref),
+        pressEnter: pressEnterIn(ref, canDeliver),
         capture: () => capturePane(ref.pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true, socket: ref.socket }),
         busy: busyOf(target),
         hookless,
@@ -436,13 +446,13 @@ function confirmOutcome(r: ConfirmResult, where: string): InjectOutcome {
 // before the Enter, same confirmSubmit (#51). Delivery is `herdr agent
 // prompt`; the Enter retry and the read-back go through `pane send-keys` /
 // `pane read`. Never AppleScript.
-async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h: Herdr): Promise<InjectOutcome> {
+async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h: Herdr, canDeliver?: () => boolean): Promise<InjectOutcome> {
   const where = herdrGateKey(pane)
   return withPaneLock(where, async (): Promise<InjectOutcome> => {
     const hookless = isHooklessInput(text)
     const watch = watchSubmit({ key: target.key, sessionId: target.sessionId, tty: target.tty }, { boundary: hookless, text })
     try {
-      const d = await deliverViaHerdr(pane, text, { typed: hookless, herdr: h })
+      const d = await deliverViaHerdr(pane, text, { typed: hookless, herdr: h, canDeliver })
       if (!d.ok) {
         companionLog(`\x1b[31mdeliver failed\x1b[0m (herdr ${pane}) — ${d.reason}`)
         if (!d.blocked) return { ok: false, error: "deliver_failed" }
@@ -455,7 +465,8 @@ async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h:
         text,
         pressEnter: async () => {
           try {
-            return await keyGate.send(where, "Enter", () => herdrSendKey(pane, "Enter", h), { timeoutMs: INJECT_SEND_MS })
+            return await keyGate.send(where, "Enter", async () => canDeliver && !canDeliver()
+              ? false : herdrSendKey(pane, "Enter", h), { timeoutMs: INJECT_SEND_MS })
           } catch {
             return false
           }

@@ -434,7 +434,7 @@ async function handleInject(req: Request): Promise<Response> {
  * submit confirmation). Also the canvas Context-edge send (wiring/canvas.ts),
  * so a canvas prompt passes the exact same inject guards as a phone prompt.
  */
-export async function deliverInject(text: string, key?: string, cwd?: string): Promise<Response> {
+export async function deliverInject(text: string, key?: string, cwd?: string, boundSid?: string): Promise<Response> {
   const lookup = key || cwd || ""
   let target = lookup ? resolveSession(lookup) : null
   // The target the caller actually named, captured before the fallback below
@@ -519,7 +519,8 @@ export async function deliverInject(text: string, key?: string, cwd?: string): P
     companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
   }
 
-  const res = await injectConfirmed(text, target ?? undefined)
+  const res = await injectConfirmed(text, target ?? undefined, undefined, boundSid === undefined ? undefined : () => !!boundSid && getSessionByKey(key ?? "")?.sessionId === boundSid)
+  if (!res.ok && res.error === "target_changed") return Response.json({ ok: false, error: res.error, key, cwd }, { status: 409 })
   if (!res.ok && res.error === "pane_not_ready") {
     // herdr refused it (agent_blocked): same 409 as the pre-inject refusal.
     companionLog(`\x1b[31minject refused\x1b[0m — ${target?.label || target?.key} herdr agent blocked`)

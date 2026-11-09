@@ -37,7 +37,7 @@ export type HerdrDelivery = { ok: true } | { ok: false; blocked: boolean; reason
 export async function deliverViaHerdr(
   pane: string,
   text: string,
-  opts: { typed?: boolean; deadline?: number; herdr?: Herdr } = {},
+  opts: { typed?: boolean; deadline?: number; herdr?: Herdr; canDeliver?: () => boolean } = {},
 ): Promise<HerdrDelivery> {
   // herdr 0.9.3 has no `--` end-of-options separator (`agent prompt` takes
   // `--` as the text), so text with a leading dash would parse as an option.
@@ -46,6 +46,7 @@ export async function deliverViaHerdr(
   const typed = opts.typed ?? isHooklessInput(text)
   try {
     return await keyGate.send(herdrGateKey(pane), "Enter", async (): Promise<HerdrDelivery> => {
+      if (opts.canDeliver && !opts.canDeliver()) return { ok: false, blocked: false, reason: "target_changed" }
       if (!typed) {
         await h.call(["agent", "prompt", pane, text])
         return { ok: true }
@@ -54,7 +55,9 @@ export async function deliverViaHerdr(
       if ((got.agent as { agent_status?: string } | undefined)?.agent_status === "blocked") {
         return { ok: false, blocked: true, reason: "agent_blocked" }
       }
+      if (opts.canDeliver && !opts.canDeliver()) return { ok: false, blocked: false, reason: "target_changed" }
       await h.call(["pane", "send-text", pane, text])
+      if (opts.canDeliver && !opts.canDeliver()) return { ok: false, blocked: false, reason: "target_changed" }
       await h.call(["pane", "send-keys", pane, "enter"])
       return { ok: true }
     }, { startBy: opts.deadline ?? Date.now() + INJECT_QUEUE_MS, timeoutMs: INJECT_SEND_MS })

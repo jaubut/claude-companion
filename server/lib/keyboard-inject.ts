@@ -6,10 +6,11 @@
 // which instance their reply lands in.
 
 import { companionLog } from "./log"
-import { KeyGateTimeout, keyGate } from "./key-gate"
+import { deliverViaTmux, tmuxSendKeys, TMUX_PANE_RE, type TmuxSender } from "./tmux-inject"
+export { deliverViaTmux, tmuxSendKeys, type TmuxResult } from "./tmux-inject"
 import { type PaneRef, paneKey, resolveTmuxRefFromTty, tmuxArgv, tmuxSocketFlags } from "./tmux-pane"
 import { type Herdr, herdrGateKey, herdrPaneOf } from "./herdr"
-import { INJECT_QUEUE_MS, INJECT_SEND_MS, deliverViaHerdr, herdrPickerIO } from "./herdr-inject"
+import { INJECT_QUEUE_MS, deliverViaHerdr, herdrPickerIO } from "./herdr-inject"
 
 export interface InjectTarget {
   tty?: string
@@ -172,7 +173,7 @@ async function focusTerminal(target: InjectTarget): Promise<boolean> {
 // Targeted delivery — write directly to the specific tab's pty via Terminal's
 // `do script` or iTerm's `write text`. No clipboard, no focus, no frontmost
 // race. Works regardless of which window is visually active.
-async function deliverToTty(target: InjectTarget, text: string): Promise<boolean> {
+async function deliverToTty(target: InjectTarget, text: string, canDeliver?: () => boolean): Promise<boolean> {
   const tty = target.tty?.trim()
   if (!tty) return false
   const ttyEscaped = escapeForAppleScript(tty)
@@ -180,6 +181,7 @@ async function deliverToTty(target: InjectTarget, text: string): Promise<boolean
   const program = (target.termProgram ?? "").toLowerCase()
 
   async function tryTerminal(): Promise<boolean> {
+    if (canDeliver && !canDeliver()) return false
     // Two-phase delivery to stop the intermittent misroute:
     //   1. do script "..." in t — types text into the target tab's pty
     //   2. Verify that the FRONT tab of the front Terminal window matches
@@ -246,6 +248,7 @@ async function deliverToTty(target: InjectTarget, text: string): Promise<boolean
   }
 
   async function tryITerm(): Promise<boolean> {
+    if (canDeliver && !canDeliver()) return false
     // iTerm's `write text` submits on its own — no extra keystroke needed.
     const r = await runOsa(`
       tell application "iTerm"
@@ -274,6 +277,7 @@ async function deliverToTty(target: InjectTarget, text: string): Promise<boolean
     return await tryITerm()
   }
   // No hint — only touch apps that are already running.
+  if (canDeliver && !canDeliver()) return false
   const r = await runOsa(`
     tell application "System Events"
       set iTermRunning to (name of processes) contains "iTerm2"
@@ -348,8 +352,8 @@ function withInjectLock<T>(fn: () => Promise<T>): Promise<T> {
   return next
 }
 
-// Tests only: an absolute start deadline (Date.now clock) and a fake sender.
-export interface InjectOpts { deadline?: number; sendKeys?: TmuxSender; herdr?: Herdr }
+// Optional identity guard runs after locks, immediately before typing. Other options are test seams.
+export interface InjectOpts { deadline?: number; sendKeys?: TmuxSender; herdr?: Herdr; canDeliver?: () => boolean }
 
 export async function injectText(text: string, target?: InjectTarget, opts: InjectOpts = {}): Promise<boolean> {
   const deadline = opts.deadline ?? Date.now() + INJECT_QUEUE_MS
@@ -358,7 +362,7 @@ export async function injectText(text: string, target?: InjectTarget, opts: Inje
   // AppleScript: its tty belongs to no Terminal/iTerm tab.
   const herdrPane = herdrPaneOf(target)
   if (herdrPane) {
-    const r = await deliverViaHerdr(herdrPane, text, { deadline, herdr: opts.herdr })
+    const r = await deliverViaHerdr(herdrPane, text, { deadline, herdr: opts.herdr, canDeliver: opts.canDeliver })
     companionLog(r.ok ? `\x1b[32mdelivered (herdr)\x1b[0m → ${herdrPane}` : `\x1b[31mdeliver failed\x1b[0m (herdr ${herdrPane}) — ${r.reason}`)
     return r.ok
   }
@@ -367,11 +371,12 @@ export async function injectText(text: string, target?: InjectTarget, opts: Inje
   // wedged pane cannot stall injects into every other session.
   if (target?.tmuxPane) {
     const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const green = "\x1b[32m"
-    const result = await deliverViaTmux(target.tmuxPane, text, sendKeys, deadline, target.tmuxSocket)
+    const result = await deliverViaTmux(target.tmuxPane, text, sendKeys, deadline, target.tmuxSocket, opts.canDeliver)
     if (result.ok) {
       companionLog(`${green}delivered (tmux)${reset} → ${paneKey(target.tmuxPane, target.tmuxSocket)}`)
       return true
     }
+    if (result.reason === "target_changed") return false
     // tmux failed (stale pane, no tmux, timed out, queue wedged past the
     // deadline). Fall back to AppleScript only with a tty (targeted,
     // focus-safe); without one the only fallback is a frontmost paste — refuse.
@@ -382,88 +387,19 @@ export async function injectText(text: string, target?: InjectTarget, opts: Inje
     }
     companionLog(`${yellow}retrying via osascript${reset} → ${target.tty}`)
     const { tmuxPane: _dropped, tmuxSocket: _droppedSocket, ...rest } = target
-    return withInjectLock(() => injectTextLocked(text, rest, deadline, sendKeys))
+    return withInjectLock(() => injectTextLocked(text, rest, deadline, sendKeys, opts.canDeliver))
   }
-  return withInjectLock(() => injectTextLocked(text, target, deadline, sendKeys))
-}
-
-// $TMUX_PANE is always "%N" (pane id). Reject anything else — stale targets,
-// session names, or accidentally-shell-quoted strings — before we spawn tmux.
-const TMUX_PANE_RE = /^%\d+$/
-
-export interface TmuxResult {
-  ok: boolean
-  reason: string
-}
-
-type TmuxSender = (args: readonly string[], timeoutMs: number, signal?: AbortSignal) => Promise<TmuxResult>
-export async function tmuxSendKeys(args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<TmuxResult> {
-  try {
-    // `args` may lead with `-S <socket>` (tmuxSocketFlags): global flags go
-    // before the command, so they are passed straight through.
-    const proc = Bun.spawn([...tmuxArgv(), ...args], { stdout: "pipe", stderr: "pipe" })
-    // Killed on its own timeout AND when the key gate aborts the turn.
-    const kill = () => { try { proc.kill() } catch { /* already exited */ } }
-    const timer = setTimeout(kill, timeoutMs)
-    if (signal?.aborted) kill()
-    signal?.addEventListener("abort", kill, { once: true })
-    try {
-      const stderr = (await new Response(proc.stderr).text()).trim()
-      await proc.exited
-      const code = proc.exitCode ?? 1
-      if (code === 0) return { ok: true, reason: "" }
-      return { ok: false, reason: stderr || `exit ${code}` }
-    } finally {
-      clearTimeout(timer)
-      signal?.removeEventListener("abort", kill)
-    }
-  } catch (err) {
-    return { ok: false, reason: String(err) }
-  }
+  return withInjectLock(() => injectTextLocked(text, target, deadline, sendKeys, opts.canDeliver))
 }
 
 // tty → pane resolution lives in lib/tmux-pane.ts; re-exported for callers
 // that import it from here.
 export { resolveTmuxPaneFromTty, resolveTmuxRefFromTty } from "./tmux-pane"
 
-// Exported with an injectable sender for the tests only.
-export async function deliverViaTmux(
-  paneId: string,
-  text: string,
-  sendKeys: TmuxSender = tmuxSendKeys,
-  deadline: number = Date.now() + INJECT_QUEUE_MS,
-  socket = "",
-): Promise<TmuxResult> {
-  // Two send-keys calls — first with `-l` (literal) so the text is typed
-  // exactly as-is regardless of contents, second to send Enter as a real
-  // key event. tmux holds the pty master, so the Enter byte sequence
-  // arrives as a key event that Ink's onSubmit fires on (a raw \n in
-  // stdin does not — see claude-code issue #15553).
-  // Both run as ONE turn of the per-pane key gate (lib/key-gate.ts): the text
-  // waits out any open Escape window ("do both" arrived as "o both"), nothing
-  // lands between text and Enter, the turn must START by `deadline` (else it
-  // is cancelled, never typed late) and is bounded by INJECT_SEND_MS.
-  if (!TMUX_PANE_RE.test(paneId)) return { ok: false, reason: `invalid pane id "${paneId}"` }
-  try {
-    // The gate is keyed by (socket, pane): %3 on `tmux -L cc` and %3 on the
-    // default server are two keyboards.
-    const flags = tmuxSocketFlags(socket)
-    return await keyGate.send(paneKey(paneId, socket), "Enter", async (signal): Promise<TmuxResult> => {
-      const literal = await sendKeys([...flags, "send-keys", "-t", paneId, "-l", text], 2000, signal)
-      if (!literal.ok) return { ok: false, reason: `send-keys -l: ${literal.reason}` }
-      if (signal.aborted) return { ok: false, reason: "send-keys -l: timed out" }
-      const enter = await sendKeys([...flags, "send-keys", "-t", paneId, "Enter"], 2000, signal)
-      if (!enter.ok) return { ok: false, reason: `send-keys Enter: ${enter.reason}` }
-      return { ok: true, reason: "" }
-    }, { startBy: deadline, timeoutMs: INJECT_SEND_MS })
-  } catch (err) {
-    return { ok: false, reason: err instanceof KeyGateTimeout ? `key gate: ${err.message}` : String(err) }
-  }
-}
-
-async function injectTextLocked(text: string, target: InjectTarget | undefined, deadline: number, sendKeys: TmuxSender): Promise<boolean> {
+async function injectTextLocked(text: string, target: InjectTarget | undefined, deadline: number, sendKeys: TmuxSender, canDeliver?: () => boolean): Promise<boolean> {
   const reset = "\x1b[0m"; const red = "\x1b[31m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"; const green = "\x1b[32m"
   try {
+    if (canDeliver && !canDeliver()) return false
     // (A target with a tmux pane was handled in injectText, outside the lock.)
     // Targeted path: the tab's pty. No focus steal, clipboard, or WM race.
     if (target?.tty) {
@@ -478,7 +414,7 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
         const ref = await resolveTmuxRefFromTty(target.tty)
         if (ref) {
           const where = paneKey(ref.pane, ref.socket)
-          const result = await deliverViaTmux(ref.pane, text, sendKeys, deadline, ref.socket)
+          const result = await deliverViaTmux(ref.pane, text, sendKeys, deadline, ref.socket, canDeliver)
           if (result.ok) {
             companionLog(`${green}delivered (tmux)${reset} → ${where} (resolved from ${target.tty})`)
             return true
@@ -489,7 +425,7 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
         companionLog(`${red}deliver failed${reset} — no tmux pane backs ${target.tty}`)
         return false
       }
-      const delivered = await deliverToTty(target, text)
+      const delivered = await deliverToTty(target, text, canDeliver)
       if (delivered) {
         companionLog(`${cyan}delivered${reset} → ${target.tty}`)
         return true
@@ -506,6 +442,7 @@ async function injectTextLocked(text: string, target: InjectTarget | undefined, 
     await pbcopy.exited
     await new Promise(r => setTimeout(r, 50))
 
+    if (canDeliver && !canDeliver()) return false
     const r = await runOsa(`
       tell application "System Events"
         keystroke "v" using command down
