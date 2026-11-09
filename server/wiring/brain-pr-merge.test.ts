@@ -199,6 +199,8 @@ describe("bin/pr-merge gate: refusals", () => {
     ["a spent review fix budget", {}, park("pr:needs-human", "review verdict CHANGES after 2 fix runs — see the reviewer summary")],
     ["a park with no reason", {}, `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}"}');`],
     ["a cascade hold", {}, `${TASK} INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:hold', 'pr', '${URL}', '{"url":"${URL}"}');`],
+    ["a tainted review park", {}, park("pr:needs-human", "tainted (web) PR: external link added — needs your review")],
+    ["a client-prefixed tainted review park", {}, park("pr:needs-human", "client-origin PR — human review required: tainted (client) PR: external link added — needs your review")],
     ["a tainted human-merge-only park", {}, park("pr:needs-human", "tainted (web) PR touches server/lib/auth.ts — human merge only")],
     ["a C-017 park with clientPark's prefix", {}, park("pr:needs-human", "client-origin PR — human review required: tainted (client) PR touches server/lib/auth.ts — human merge only")],
     ["a truncated-list park (no `only`)", {}, park("pr:needs-human", "tainted (web) PR: file list may be truncated — human merge")],
@@ -324,7 +326,6 @@ describe("bin/pr-merge gate: the merge", () => {
     ["an unset-origin task", {}, `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', NULL, '${URL}');`],
     ["no task linked by url", {}, ""],
     ["a client-origin park", {}, park("pr:needs-human", "client-origin PR — human review required: touches server/lib/pay.ts")],
-    ["a tainted review park", {}, park("pr:needs-human", "tainted (web) PR: external link added — needs your review")],
     ["a sensitive-path park", {}, park("pr:needs-human", "touches server/lib/invoice.ts — needs your review · Opus: escalate")],
   ]
   for (const [what, over, seed] of routine) {
