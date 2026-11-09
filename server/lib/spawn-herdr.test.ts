@@ -61,18 +61,40 @@ test("gate failure: nothing created, herdr_unavailable error with the reason", a
   expect(f.calls).toEqual([])
 })
 
-test("agent start failure after the gate closes the workspace and does NOT set fallback", async () => {
-  const f = fakeHerdr({
-    reply: (a) => {
-      if (a[1] === "create") return { workspace: { workspace_id: "w7" }, root_pane: { pane_id: "w7:p1" } }
-      if (a[1] === "start") throw Object.assign(new Error("timeout"), { code: "timeout" })
-      return {}
-    },
-  })
+// herdr as it stands after a failed start: `pane` is what `pane get w7:p1` says.
+const failedStart = (pane: Record<string, unknown>, paneCount = 1) => fakeHerdr({
+  reply: (a) => {
+    if (a[1] === "create") return { workspace: { workspace_id: "w7" }, root_pane: { pane_id: "w7:p1", terminal_id: "term_7" } }
+    if (a[1] === "start") throw Object.assign(new Error("timeout"), { code: "timeout" })
+    if (a[0] === "pane" && a[1] === "get") return { pane: { pane_id: "w7:p1", ...pane } }
+    if (a[0] === "workspace" && a[1] === "get") return { workspace: { workspace_id: "w7", label: "cc-claude-companion", pane_count: paneCount } }
+    return {}
+  },
+})
+
+test("agent start failure after the gate closes the workspace it made and does NOT set fallback", async () => {
+  const f = failedStart({ workspace_id: "w7", terminal_id: "term_7" })
   const r = await spawnInHerdr(CWD, "claude", undefined, f.h)
   expect(r.ok).toBe(false)
   expect(r.fallback).toBeUndefined()
   expect(f.calls.at(-1)).toEqual(["workspace", "close", "w7"])
+})
+
+test("agent start failure: a reissued id, a phone shell, a split or no answer is never closed", async () => {
+  for (const f of [
+    failedStart({ workspace_id: "w7", terminal_id: "term_other" }),
+    failedStart({ workspace_id: "w7", terminal_id: "term_7", label: "phone-shell" }),
+    failedStart({ workspace_id: "w7", terminal_id: "term_7" }, 2),
+    fakeHerdr({ reply: (a) => {
+      if (a[1] === "create") return { workspace: { workspace_id: "w7" }, root_pane: { pane_id: "w7:p1", terminal_id: "term_7" } }
+      if (a[1] === "start") throw Object.assign(new Error("timeout"), { code: "timeout" })
+      if (a[1] === "get") throw new Error("herdr down")
+      return {}
+    } }),
+  ]) {
+    expect((await spawnInHerdr(CWD, "claude", undefined, f.h)).ok).toBe(false)
+    expect(f.verbs()).not.toContain("workspace close")
+  }
 })
 
 test("agent_not_ready at start (blocked on a dialog) still counts as spawned", async () => {

@@ -64,6 +64,11 @@ export function markDelivered(ids: string[], now = Date.now()): void {
   setState(ids, "typed", now)
 }
 
+/** A boot seed that couldn't hold these: back in line, whatever state they were in. */
+export function requeueDeliveries(ids: string[], now = Date.now()): void {
+  setState(ids, "queued", now)
+}
+
 /** not_submitted: never retyped into the same session. */
 export function markMaybe(ids: string[], now = Date.now()): void {
   setState(ids, "maybe", now)

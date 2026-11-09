@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
+import { passGate } from "../lib/merge-gate.test-util"
 import type { GhFn } from "../lib/triage-pr"
 import type { ResolverConfig } from "../lib/resolver"
 
@@ -94,6 +95,7 @@ const gh: GhFn = async (args) => {
 
 /** The mock Opus: the reply for the first rule whose needle the prompt contains. */
 let rules: { needle: string; reply: Record<string, unknown> }[] = []
+let beforeReply: (() => void) | null = null
 const prompts: string[] = []
 const reply = (o: Record<string, unknown>) => ({ analysis: "Evidence from the repo.", summary: "s", confidence: 0.95, needsJeremie: false, why: "none", category: "", action: { kind: "none" }, ...o })
 
@@ -109,7 +111,7 @@ function makeHarness() {
     liveIdentity: () => null, log: () => {}, mirror, generalChannel: "general",
   })
   const engine = triageWiring.createLiveTriage({
-    dispatch: w, gh, model: async () => null, severity: async () => null,
+    dispatch: w, gh, gate: passGate("feed21"), model: async () => null, severity: async () => null,
     investigations: () => invLib.createInvestigationStore(new Database(":memory:")),
     body: { get: async () => ({ components: [] }) } as never, broadcast: () => {},
     resolverLive: {
@@ -117,6 +119,7 @@ function makeHarness() {
       overrides: {
         analyze: async (prompt) => {
           prompts.push(prompt)
+          beforeReply?.()
           const hit = rules.find((r) => prompt.includes(r.needle))
           return hit ? { ok: true, text: JSON.stringify(hit.reply) } : { ok: false, error: "no mock for this item" }
         },
@@ -167,11 +170,27 @@ beforeEach(() => {
   turso.exec("DELETE FROM tasks; DELETE FROM agent_activity; DELETE FROM notes")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status, body) VALUES ('projects/dash', 'projects', 'Dashboard', 'PRJ-WCLS', 'active', 'Decision 2026-09-30: invoices round per line.')").run()
   rules = []
+  beforeReply = null
   prompts.length = 0
   ghCalls.length = 0
   prFiles.clear()
   prState.clear()
   h = makeHarness()
+})
+
+describe("failed task", () => {
+  // The resolver holds its source through the Opus run and never re-reads it: the requeue's status bound is the last guard.
+  test("cancelled during the Opus run: a sure requeue changes nothing", async () => {
+    const id = blockedTask("Flaky run", "claude exited 1: rate limit")
+    turso.query("UPDATE tasks SET dispatch_status = 'failed' WHERE id = ?").run(id)
+    rules = [{ needle: "claude exited 1: rate limit", reply: reply({ action: { kind: "requeue" }, category: "transient", summary: "Transient" }) }]
+    beforeReply = () => { turso.query("UPDATE tasks SET dispatch_status = 'cancelled', done = 1, dispatch_blocker = 'Cancelled by the brain: obsolete' WHERE id = ?").run(id) }
+    await sync()
+    await until(() => prompts.length > 0)
+    await Bun.sleep(50)
+    expect(activity("dispatch:queued", id)).toHaveLength(0)
+    expect(row(id)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
+  })
 })
 
 describe("blocked task", () => {

@@ -5,11 +5,13 @@ import { recordPeer } from "./vault-guard"
 
 // The /api/terminal bridge: phone socket ↔ `tmux attach-session` under a PTY.
 
-const SHELL: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1, panePid: 0, claudeKey: "" }
+const SHELL: ShellSession = { key: "shell:sh-a", name: "sh-a", cwd: "/x", herdrPane: "", terminalId: "", tmuxPane: "%7", tmuxSocket: "/tmp/tmux-501/cc", createdAt: 1, panePid: 0, claudeKey: "" }
 
 test("attach argv: exact-match session on the shell's own tmux server", () => {
   expect(terminalAttachArgv(SHELL)).toEqual(["tmux", "-S", "/tmp/tmux-501/cc", "attach-session", "-t", "=sh-a"])
-  expect(terminalAttachArgv({ name: "sh-a", tmuxSocket: "" })).toEqual(["tmux", "attach-session", "-t", "=sh-a"])
+  expect(terminalAttachArgv({ name: "sh-a", tmuxSocket: "", terminalId: "" })).toEqual(["tmux", "attach-session", "-t", "=sh-a"])
+  // herdr shell: that one terminal, taking over a dropped socket's attach.
+  expect(terminalAttachArgv({ name: "sh-a", tmuxSocket: "", terminalId: "term_1" }).slice(1)).toEqual(["terminal", "attach", "term_1", "--takeover"])
 })
 
 test("size: clamped integers, junk → phone default", () => {
