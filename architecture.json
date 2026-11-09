@@ -7757,7 +7757,7 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 191,
+          "lines": 192,
           "kind": "lib",
           "exports": [
             "canvasStore",

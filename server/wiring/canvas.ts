@@ -83,12 +83,13 @@ function rebind(id: string, patch: NodePatch): NodePatch {
   const cur = openStore().node(id)
   if (!cur || (cur.kind === "preview" ? patch.data : patch.ref) === undefined) return patch
   if (cur.kind !== "preview") return { ...patch, boundSid: sidOf(bindKey(cur.kind, patch)) }
-  // A data edit is not a re-point: only a new sessionKey rebinds (the tty may hold another agent by now),
-  // and an edit that leaves the key out keeps it, because data is replaced wholesale.
+  // A new key rebinds; an explicit same key only fills an empty binding. A non-empty binding
+  // survives data edits (the tty may hold another agent). Omitted keys survive wholesale data replacement.
   const old = bindKey(cur.kind, cur)
   const data = patch.data?.sessionKey === undefined && old ? { ...patch.data, sessionKey: old } : patch.data
   const key = bindKey(cur.kind, { data })
-  return key === old ? { ...patch, data } : { ...patch, data, boundSid: sidOf(key) }
+  const shouldBind = key !== old || (!cur.boundSid && typeof patch.data?.sessionKey === "string")
+  return shouldBind ? { ...patch, data, boundSid: sidOf(key) } : { ...patch, data }
 }
 
 // The bound-session check before typing into `key`: a refusal, or null when it may go ahead.

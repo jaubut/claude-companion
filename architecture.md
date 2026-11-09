@@ -118,8 +118,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `companion-server.ts` | 194 | route-host | 1 | routes: 7 |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `lib/dashboard-client.ts` | 192 | lib | 32 |  |
+| `wiring/canvas.ts` | 192 | lib | 8 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
-| `wiring/canvas.ts` | 191 | lib | 8 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |

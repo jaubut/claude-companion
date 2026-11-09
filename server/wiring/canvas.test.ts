@@ -122,3 +122,37 @@ test("pick notify: types into the bound posting session; no session → null; an
   for (const n of canvas.canvasStore.nodes()) canvas.canvasStore.removeNode(n.id)
   sessions.removeSessionByKey(s.key)
 })
+
+test("pick notify: a same-key PATCH repairs an empty binding but preserves a non-empty binding", async () => {
+  const typed: [string, string | undefined][] = []
+  canvas.setCanvasDeliver(async (text, key) => { typed.push([text, key]); return Response.json({ ok: true }) })
+  const meta = { cwd: "/tmp/canvas-late-bind", tty: "/dev/pts/80" }
+  const pending = sessions.recordSession(meta)!
+  const { node } = canvas.canvasStore.addNode({
+    kind: "preview", ref: "http://zettlab:3147/legacy.html", x: 0, y: 0, w: 1, h: 1,
+    data: { direction: "bold", sessionKey: pending.key },
+  }, 1)
+  try {
+    expect(node.boundSid).toBe("")
+    sessions.recordSession({ ...meta, sessionId: "sid-late" }, { sessionIdConfirmed: true })
+    expect(await canvas.canvasPickNotify(node)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+    // Merely editing the card must not bind it using an inherited key.
+    const ordinary = canvas.canvasStore.patchNode(node.id, { data: { direction: "bold" } }, 2)!
+    expect([ordinary.boundSid, ordinary.data.sessionKey]).toEqual(["", pending.key])
+
+    const repaired = canvas.canvasStore.patchNode(node.id, { data: { ...ordinary.data, sessionKey: pending.key } }, 3)!
+    expect(repaired.boundSid).toBe("sid-late")
+    expect(await canvas.canvasPickNotify(repaired)).toEqual({ ok: true })
+    expect(typed).toEqual([["Picked direction: bold — http://zettlab:3147/legacy.html", pending.key]])
+
+    sessions.removeSessionByKey(pending.key)
+    sessions.recordSession({ ...meta, sessionId: "sid-replacement" }, { sessionIdConfirmed: true })
+    const edited = canvas.canvasStore.patchNode(node.id, { data: { ...repaired.data, title: "edited", sessionKey: pending.key } }, 4)!
+    expect(edited.boundSid).toBe("sid-late")
+    expect(await canvas.canvasPickNotify(edited)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+    expect(typed).toHaveLength(1)
+  } finally {
+    canvas.canvasStore.removeNode(node.id)
+    sessions.removeSessionByKey(pending.key)
+  }
+})
