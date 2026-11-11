@@ -2664,7 +2664,7 @@
         },
         {
           "path": "lib/link-media.ts",
-          "lines": 445,
+          "lines": 460,
           "kind": "lib",
           "exports": [
             "LinkMediaMeta",
