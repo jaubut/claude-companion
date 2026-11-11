@@ -25,14 +25,10 @@ export const BRAIN_TAKE_PREFIX = "brain:"
 
 export type BrainState = "up" | "starting" | "down" | "paused"
 
-/** The repos with a lead: one line per repo, GitHub slug by repo name. */
-export const LEAD_REPOS: Readonly<Record<string, string>> = {
-  "claude-companion": "jaubut/claude-companion",
-  "remorquage-pelchat-web": "jaubut/remorquage-pelchat-web",
-  "claude-config": "jaubut/claude-config",
-}
 export const LEAD_PREFIX = "lead-"
-export const leadSlug = (repo: string): string | null => Object.hasOwn(LEAD_REPOS, repo) ? LEAD_REPOS[repo]! : null
+const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+/** Any jaubut repo, by bare name: no slash, no traversal. Whether this host has a checkout is wiring/brain-lead.ts's call. */
+export const leadSlug = (repo: string): string | null => REPO_NAME.test(repo) && !repo.includes("..") ? `jaubut/${repo}` : null
 
 /** The brain runs on the host that sets COMPANION_BRAIN=1 (Zettlab) and nowhere else. */
 export function brainEnabled(env: Record<string, string | undefined> = process.env): boolean {

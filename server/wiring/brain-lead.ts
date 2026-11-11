@@ -3,7 +3,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { leadSlug } from "../lib/brain"
 import { type Herdr, herdrWorkspacePanes, herdrWorkspaces, realHerdr } from "../lib/herdr"
-import { type ShFn, realSh } from "../lib/live-repo"
+import { type ShFn, githubName, isDir, realSh, repoEntriesSafe } from "../lib/live-repo"
 import { type SpawnResult, ensureFolderTrusted, folderTrusted, spawnInHerdr } from "../lib/spawn-session"
 import { brainLiveness } from "./brain-workers"
 import type { AgentLookup } from "./takeover-liveness"
@@ -16,6 +16,10 @@ export const leadArgs = (name: string): string[] => ["--name", name, "--remote-c
 
 /** A lead works in its own clone: the sandbox limits its Bash to this tree, so the live checkout and brain/ stay out of reach. */
 export const leadDir = (repo: string, home = homedir()): string => join(home, "leads", repo)
+
+/** A checkout this host can lead from: the lead's own clone, or a REPO_MAP checkout of that GitHub name (what the first spawn clones from). */
+export const leadCheckout = (repo: string, home = homedir(), entries = repoEntriesSafe()): boolean =>
+  isDir(leadDir(repo, home)) || entries.some((e) => githubName(e)?.toLowerCase() === repo.toLowerCase() && isDir(e.path))
 
 const settingsFile = (dir: string): string => join(dir, ".claude", "settings.local.json")
 
