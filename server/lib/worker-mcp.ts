@@ -106,14 +106,17 @@ function toolResult(payload: Record<string, unknown>, isError = false): { conten
   }
 }
 
-function isLocalTarget(targetHost: string | undefined, localHost: string): boolean {
+function isLocalTarget(targetHost: string | undefined, localHost: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const h = (targetHost ?? "").trim().toLowerCase()
   if (!h || h === "local") return true
   const loc = localHost.trim().toLowerCase()
   if (h === loc) return true
-  const knownRole = loc.includes("zettlab")
+  const envRole = (env.COMPANION_HOST_ROLE ?? "").trim().toLowerCase()
+  const knownRole = envRole === "zettlab" || envRole === "mac"
+    ? envRole
+    : /\bzettlab\b/.test(loc)
     ? "zettlab"
-    : loc.includes("mac")
+    : /\bmac(book)?\b/.test(loc)
     ? "mac"
     : process.platform === "darwin"
     ? "mac"

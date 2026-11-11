@@ -1,5 +1,5 @@
 import { checkBearer, unauthorized } from "../lib/auth"
-import { BRAIN_AGENT, LEAD_PREFIX } from "../lib/brain"
+import { BRAIN_AGENT, LEAD_PREFIX, brainEnabled } from "../lib/brain"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import type { WorkerMcpHandler } from "../lib/worker-mcp"
@@ -12,6 +12,7 @@ import { workerMcp } from "../wiring/worker-mcp"
 
 export interface WorkerMcpRouteDeps {
   mcp?: WorkerMcpHandler
+  enabled?: () => boolean
   wiring?: Pick<BrainWiring, "status">
   sessions?: () => Array<Pick<Session, "key" | "sessionId" | "pid" | "taskId">>
 }
@@ -58,8 +59,13 @@ export function createWorkerMcpRoute(deps: WorkerMcpRouteDeps = {}) {
     }
     if (url.pathname === "/api/mcp/workers") {
       if (!checkBearer(req)) return unauthorized()
-    } else if (!callerAuthorizedOnHook(req, deps)) {
-      return Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+    } else {
+      if (!(deps.enabled ?? brainEnabled)()) {
+        return Response.json({ ok: false, error: "brain_disabled" }, { status: 403 })
+      }
+      if (!callerAuthorizedOnHook(req, deps)) {
+        return Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+      }
     }
 
     const body = await readObject(req)

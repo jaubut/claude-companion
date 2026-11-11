@@ -65,8 +65,10 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
       }) as typeof fetch,
     })
 
+    let enabled = true
     const route = createWorkerMcpRoute({
       mcp,
+      enabled: () => enabled,
       wiring: {
         status: () => ({
           state: "up",
@@ -116,6 +118,15 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
         new URL("http://127.0.0.1:4245/hooks/brain/workers-mcp"),
       )
       expect(nonLoop?.status).toBe(403)
+
+      // Refused when brainEnabled() is false (403 brain_disabled)
+      enabled = false
+      const disabledRes = await route(
+        makeHookReq({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { "X-Companion-Task-Id": "brain", "X-Companion-Pid": "9001" }),
+        new URL("http://127.0.0.1:4245/hooks/brain/workers-mcp"),
+      )
+      expect(disabledRes?.status).toBe(403)
+      enabled = true
 
       // Wrong pid is refused (403)
       const wrongPid = await route(

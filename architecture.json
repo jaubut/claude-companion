@@ -6117,7 +6117,7 @@
         },
         {
           "path": "lib/worker-mcp.ts",
-          "lines": 264,
+          "lines": 267,
           "kind": "lib",
           "exports": [
             "WORKER_MCP_TOOLS",
@@ -6143,11 +6143,12 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 599,
+          "lines": 785,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
             "REPO_NAME_RE",
+            "SAFE_IDENTIFIER_RE",
             "ALLOWED_MODES",
             "WorkerTaskStatus",
             "StreamJsonEvent",
@@ -6159,6 +6160,7 @@
             "WorkerSupervisorDeps",
             "defaultResolveRepoDir",
             "defaultSpawnWorker",
+            "buildWorkerEnv",
             "buildHeadlessClaudeArgs",
             "createWorkerSupervisor",
             "WorkerSupervisor"
@@ -6171,8 +6173,7 @@
           "imports": [
             "lib/builder-jobs.ts",
             "lib/live-repo.ts",
-            "lib/secret-redact.ts",
-            "lib/spawn-session.ts"
+            "lib/secret-redact.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7305,7 +7306,7 @@
         },
         {
           "path": "routes/worker-mcp.ts",
-          "lines": 83,
+          "lines": 89,
           "kind": "route-host",
           "exports": [
             "WorkerMcpRouteDeps",
@@ -9138,6 +9139,7 @@
             "companion-server.ts",
             "routes/brain.ts",
             "routes/capture.ts",
+            "routes/worker-mcp.ts#* /api/mcp/workers",
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/worker-blocked.ts",

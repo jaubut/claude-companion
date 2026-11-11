@@ -1,12 +1,10 @@
 import { spawn } from "node:child_process"
-import { randomUUID } from "node:crypto"
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
-import { type ShFn, realSh } from "./live-repo"
+import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
-import { ensureFolderTrusted } from "./spawn-session"
 
 // Inverted MCP Worker Supervisor (BKM-Q24R Phase 3):
 // Supervises headless `claude -p --output-format stream-json --verbose` builder
@@ -19,6 +17,7 @@ import { ensureFolderTrusted } from "./spawn-session"
 
 export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
+export const SAFE_IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 export const ALLOWED_MODES = new Set(["acceptEdits", "auto", "default", "dontAsk", "plan"])
 const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/
 const PROMPT_MAX = 100_000
@@ -182,6 +181,8 @@ export interface WorkerSupervisorDeps {
   sh: ShFn
   trust(dir: string): void
   reportJob(report: BuilderReport): void
+  stateFile?: string
+  killGraceMs?: number
   resolveRepoDir?(repo: string, home: string): string | null
   spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
 }
@@ -244,7 +245,24 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
   }
 }
 
-/** Build the headless `claude -p` argv for turn 1 (`--session-id`) or follow-up turns (`--resume`). */
+/** Remove Companion control-plane bearer tokens from the worker's environment so a worker cannot invoke `/api/mcp/workers`. */
+export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv }
+  delete env.COMPANION_TOKEN
+  for (const key of Object.keys(env)) {
+    if (/^COMPANION_PEER_/i.test(key)) delete env[key]
+  }
+  env.DISPATCH_TASK_ID = taskId
+  env.DISPATCH_WORKER = "1"
+  env.DISPATCH_HEADLESS = "1"
+  env.COMPANION_TASK_ID = builder
+  return env
+}
+
+/**
+ * Build the headless `claude -p` argv for turn 1 (`--session-id`) or follow-up turns (`--resume`).
+ * Places `--` before the positional prompt so a prompt starting with `-` is never parsed as a CLI option.
+ */
 export function buildHeadlessClaudeArgs(opts: {
   prompt: string
   sessionId: string
@@ -255,7 +273,6 @@ export function buildHeadlessClaudeArgs(opts: {
 }): string[] {
   const args = [
     "-p",
-    opts.prompt,
     "--output-format",
     "stream-json",
     "--verbose",
@@ -265,12 +282,20 @@ export function buildHeadlessClaudeArgs(opts: {
   ]
   if (opts.agent) args.push("--agent", opts.agent)
   if (opts.model) args.push("--model", opts.model)
+  args.push("--", opts.prompt)
   return args
 }
 
-interface InternalTask extends SupervisedTaskSnapshot {
+interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   repoDir: string
+}
+
+interface InternalTask extends PersistedTaskRecord {
+  activeTurn: number
+  jobId: string
+  turnReportedTerminal: boolean
   handle: SpawnedWorkerHandle | null
+  exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null
   killTimer: ReturnType<typeof setTimeout> | null
   waiters: Set<() => void>
@@ -301,8 +326,80 @@ function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
 
 export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const tasks = new Map<string, InternalTask>()
+  const inFlightDispatches = new Set<string>()
   const resolveRepo = deps.resolveRepoDir ?? defaultResolveRepoDir
   const spawnWorker = deps.spawnWorker ?? defaultSpawnWorker
+  const stateFile = deps.stateFile ?? join(deps.home, ".claude", "state", "companion-worker-tasks.json")
+  const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
+
+  function loadPersistedTasks(): void {
+    if (!existsSync(stateFile)) return
+    let parsed: unknown = null
+    try {
+      parsed = JSON.parse(readFileSync(stateFile, "utf8")) as unknown
+    } catch {
+      return
+    }
+    if (!Array.isArray(parsed)) return
+    const now = deps.now()
+    for (const item of parsed) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue
+      const r = item as Partial<PersistedTaskRecord>
+      if (typeof r.taskId !== "string" || !TASK_ID_RE.test(r.taskId)) continue
+      if (typeof r.repo !== "string" || !REPO_NAME_RE.test(r.repo)) continue
+      if (typeof r.repoDir !== "string" || !r.repoDir) continue
+      if (typeof r.worktree !== "string" || !r.worktree) continue
+      if (typeof r.sessionId !== "string" || !r.sessionId) continue
+      const wasRunning = r.status === "running"
+      const turnCount = typeof r.turnCount === "number" && r.turnCount > 0 ? Math.floor(r.turnCount) : 1
+      tasks.set(r.taskId, {
+        taskId: r.taskId,
+        repo: r.repo,
+        repoDir: r.repoDir,
+        title: typeof r.title === "string" ? r.title : r.taskId,
+        builder: typeof r.builder === "string" ? r.builder : `builder-${r.repo}-${r.taskId}`,
+        branch: typeof r.branch === "string" ? r.branch : `dispatch/${r.taskId}`,
+        worktree: r.worktree,
+        sessionId: r.sessionId,
+        status: wasRunning ? "interrupted" : (r.status ?? "interrupted"),
+        turnCount,
+        step: wasRunning ? "Interrupted (server restarted)" : (typeof r.step === "string" ? r.step : null),
+        pct: typeof r.pct === "number" ? r.pct : null,
+        result: typeof r.result === "string" ? r.result : "",
+        prUrl: typeof r.prUrl === "string" ? r.prUrl : null,
+        error: wasRunning ? "server restarted while task was running" : (typeof r.error === "string" ? r.error : null),
+        startedAt: typeof r.startedAt === "number" ? r.startedAt : now,
+        updatedAt: wasRunning ? now : (typeof r.updatedAt === "number" ? r.updatedAt : now),
+        completedAt: wasRunning ? now : (typeof r.completedAt === "number" ? r.completedAt : null),
+        activeTurn: turnCount,
+        jobId: turnCount <= 1 ? r.taskId : `${r.taskId}-t${turnCount}`,
+        turnReportedTerminal: true,
+        handle: null,
+        exitPromise: null,
+        timeoutTimer: null,
+        killTimer: null,
+        waiters: new Set(),
+        stderrTail: [],
+      })
+    }
+  }
+
+  function savePersistedTasks(): void {
+    try {
+      mkdirSync(dirname(stateFile), { recursive: true })
+      const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({
+        ...toSnapshot(t),
+        repoDir: t.repoDir,
+      }))
+      const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
+      writeFileSync(tmp, JSON.stringify(records))
+      renameSync(tmp, stateFile)
+    } catch {
+      /* best-effort persistence */
+    }
+  }
+
+  loadPersistedTasks()
 
   function notifyWaiters(t: InternalTask): void {
     for (const fn of [...t.waiters]) {
@@ -348,170 +445,234 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!prompt || prompt.length > PROMPT_MAX) return { ok: false, status: 400, error: "invalid_prompt" }
       const mode = input.mode?.trim() || "auto"
       if (!ALLOWED_MODES.has(mode)) return { ok: false, status: 400, error: "invalid_mode" }
+      const agent = input.agent?.trim() || undefined
+      if (agent && !SAFE_IDENTIFIER_RE.test(agent)) return { ok: false, status: 400, error: "invalid_agent" }
+      const model = input.model?.trim() || undefined
+      if (model && !SAFE_IDENTIFIER_RE.test(model)) return { ok: false, status: 400, error: "invalid_model" }
 
       const existing = tasks.get(taskId)
-      if (existing && existing.status === "running") {
+      if (existing && existing.repo !== repo) {
+        return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
+      }
+      if (inFlightDispatches.has(taskId) || (existing && existing.status === "running")) {
         return { ok: false, status: 409, error: "task_already_running" }
       }
 
-      const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home)
-      if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
+      // Reserve the taskId synchronously BEFORE any await so concurrent dispatches cannot race setup.
+      inFlightDispatches.add(taskId)
+      try {
+        if (existing?.exitPromise) {
+          await existing.exitPromise
+        }
 
-      const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
-      const wt = await ensureWorktree(repoDir, repoSlug, taskId)
-      if (!wt.ok) return { ok: false, status: 500, error: wt.error }
+        const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home)
+        if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
-      deps.trust(wt.worktree)
+        const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
+        const wt = await ensureWorktree(repoDir, repoSlug, taskId)
+        if (!wt.ok) return { ok: false, status: 500, error: wt.error }
 
-      const now = deps.now()
-      const resume = !!existing && existing.turnCount > 0
-      const sessionId = existing?.sessionId ?? deps.uuid()
-      const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
-      const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
+        deps.trust(wt.worktree)
 
-      const task: InternalTask = existing ?? {
-        taskId,
-        repo,
-        repoDir,
-        title,
-        builder,
-        branch: wt.branch,
-        worktree: wt.worktree,
-        sessionId,
-        status: "running",
-        turnCount: 0,
-        step: "Starting headless builder",
-        pct: 5,
-        result: "",
-        prUrl: null,
-        error: null,
-        startedAt: now,
-        updatedAt: now,
-        completedAt: null,
-        handle: null,
-        timeoutTimer: null,
-        killTimer: null,
-        waiters: new Set(),
-        stderrTail: [],
-      }
+        const now = deps.now()
+        const resume = !!existing && existing.turnCount > 0
+        const sessionId = existing?.sessionId ?? deps.uuid()
+        const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
+        const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
+        const myTurn = (existing?.turnCount ?? 0) + 1
+        // Use a distinct BuilderJobStore job id on follow-up turns so tombstoned turn-1 ids never drop turn-2+ events.
+        const myJobId = myTurn === 1 ? taskId : `${taskId}-t${myTurn}`
 
-      task.title = title
-      task.status = "running"
-      task.turnCount += 1
-      task.step = resume ? `Turn ${task.turnCount}: resuming builder` : "Starting headless builder"
-      task.pct = 5
-      task.error = null
-      task.completedAt = null
-      task.updatedAt = now
-      task.stderrTail = []
-      tasks.set(taskId, task)
+        const task: InternalTask = existing ?? {
+          taskId,
+          repo,
+          repoDir,
+          title,
+          builder,
+          branch: wt.branch,
+          worktree: wt.worktree,
+          sessionId,
+          status: "running",
+          turnCount: 0,
+          step: "Starting headless builder",
+          pct: 5,
+          result: "",
+          prUrl: null,
+          error: null,
+          startedAt: now,
+          updatedAt: now,
+          completedAt: null,
+          activeTurn: myTurn,
+          jobId: myJobId,
+          turnReportedTerminal: false,
+          handle: null,
+          exitPromise: null,
+          timeoutTimer: null,
+          killTimer: null,
+          waiters: new Set(),
+          stderrTail: [],
+        }
 
-      deps.reportJob({
-        event: "task",
-        id: taskId,
-        title: task.title,
-        builder: task.builder,
-        step: task.step,
-        pct: task.pct,
-      })
+        clearTimers(task)
+        task.title = title
+        task.status = "running"
+        task.turnCount = myTurn
+        task.activeTurn = myTurn
+        task.jobId = myJobId
+        task.turnReportedTerminal = false
+        task.step = resume ? `Turn ${myTurn}: resuming builder` : "Starting headless builder"
+        task.pct = 5
+        task.error = null
+        task.completedAt = null
+        task.updatedAt = now
+        task.stderrTail = []
+        tasks.set(taskId, task)
+        savePersistedTasks()
 
-      const args = buildHeadlessClaudeArgs({
-        prompt,
-        sessionId: task.sessionId,
-        resume,
-        mode,
-        agent: input.agent?.trim() || undefined,
-        model: input.model?.trim() || undefined,
-      })
+        deps.reportJob({
+          event: "task",
+          id: myJobId,
+          title: task.title,
+          builder: task.builder,
+          step: task.step,
+          pct: task.pct,
+        })
 
-      let settled = false
-      const handle = spawnWorker({
-        cmd: "claude",
-        args,
-        cwd: task.worktree,
-        env: {
-          ...process.env,
-          DISPATCH_TASK_ID: taskId,
-          DISPATCH_WORKER: "1",
-          DISPATCH_HEADLESS: "1",
-          COMPANION_TASK_ID: task.builder,
-        },
-        onStdoutLine(line) {
-          const ev = parseStreamJsonLine(line)
-          if (!ev) return
-          task.updatedAt = deps.now()
-          if (ev.sessionId) task.sessionId = ev.sessionId
-          if (ev.prUrl) task.prUrl = ev.prUrl
-          if (ev.assistantText) task.result = ev.assistantText
-          if (ev.resultText) task.result = ev.resultText
-          if (ev.step) {
-            task.step = ev.step
-            task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
-            deps.reportJob({
-              event: "progress",
-              id: taskId,
-              title: task.title,
-              builder: task.builder,
-              step: task.step,
-              pct: task.pct,
-            })
-          }
-          if (ev.done && ev.isError) {
-            task.error = (ev.resultText || "builder turn reported an error").slice(0, 400)
-          }
-        },
-        onStderrLine(line) {
-          const clean = redactSecrets(line.trim()).slice(0, 300)
-          if (clean) {
-            task.stderrTail.push(clean)
-            if (task.stderrTail.length > 10) task.stderrTail.shift()
-          }
-        },
-        onExit(code, sig) {
-          if (settled) return
+        const args = buildHeadlessClaudeArgs({
+          prompt,
+          sessionId: task.sessionId,
+          resume,
+          mode,
+          agent,
+          model,
+        })
+
+        let settled = false
+        let resolveExit!: () => void
+        const exitPromise = new Promise<void>((resolve) => {
+          resolveExit = resolve
+        })
+        task.exitPromise = exitPromise
+
+        let handle: SpawnedWorkerHandle
+        try {
+          handle = spawnWorker({
+            cmd: "claude",
+            args,
+            cwd: task.worktree,
+            env: buildWorkerEnv(process.env, taskId, task.builder),
+            onStdoutLine(line) {
+              if (settled || task.activeTurn !== myTurn) return
+              const ev = parseStreamJsonLine(line)
+              if (!ev) return
+              task.updatedAt = deps.now()
+              if (ev.sessionId) task.sessionId = ev.sessionId
+              if (ev.prUrl) task.prUrl = ev.prUrl
+              if (ev.assistantText) task.result = ev.assistantText
+              if (ev.resultText) task.result = ev.resultText
+              if (ev.step) {
+                task.step = ev.step
+                task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
+                deps.reportJob({
+                  event: "progress",
+                  id: myJobId,
+                  title: task.title,
+                  builder: task.builder,
+                  step: task.step,
+                  pct: task.pct,
+                })
+              }
+              if (ev.done && ev.isError) {
+                task.error = (ev.resultText || "builder turn reported an error").slice(0, 400)
+              }
+            },
+            onStderrLine(line) {
+              if (settled || task.activeTurn !== myTurn) return
+              const clean = redactSecrets(line.trim()).slice(0, 300)
+              if (clean) {
+                task.stderrTail.push(clean)
+                if (task.stderrTail.length > 10) task.stderrTail.shift()
+              }
+            },
+            onExit(code, sig) {
+              if (settled) return
+              settled = true
+              resolveExit()
+              if (task.activeTurn !== myTurn) return
+              clearTimers(task)
+              task.handle = null
+              task.exitPromise = null
+              task.updatedAt = deps.now()
+              task.completedAt = task.updatedAt
+              if (task.status === "interrupted") {
+                if (!task.turnReportedTerminal) {
+                  task.turnReportedTerminal = true
+                  deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step ?? "Interrupted", pct: task.pct })
+                }
+                savePersistedTasks()
+                notifyWaiters(task)
+                return
+              }
+              const ok = code === 0 && !sig && !task.error
+              if (ok) {
+                task.status = "completed"
+                task.pct = 100
+                task.step = task.prUrl ? `PR ready: ${task.prUrl}` : "Turn completed"
+                if (!task.turnReportedTerminal) {
+                  task.turnReportedTerminal = true
+                  deps.reportJob({ event: "done", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: 100 })
+                }
+              } else {
+                task.status = "failed"
+                const tail = task.stderrTail.join(" | ")
+                task.error = task.error ?? (`claude exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
+                task.step = `Failed: ${task.error.slice(0, 100)}`
+                if (!task.turnReportedTerminal) {
+                  task.turnReportedTerminal = true
+                  deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+                }
+              }
+              savePersistedTasks()
+              notifyWaiters(task)
+            },
+          })
+        } catch (err) {
           settled = true
+          resolveExit()
           clearTimers(task)
           task.handle = null
+          task.exitPromise = null
+          task.status = "failed"
+          task.error = `spawn failed: ${((err as Error)?.message ?? String(err)).slice(0, 300)}`
+          task.step = `Failed: ${task.error.slice(0, 100)}`
           task.updatedAt = deps.now()
           task.completedAt = task.updatedAt
-          if (task.status === "interrupted") {
-            deps.reportJob({ event: "aborted", id: taskId, title: task.title, builder: task.builder, step: task.step ?? "Interrupted", pct: task.pct })
-            notifyWaiters(task)
-            return
-          }
-          const ok = code === 0 && !sig && !task.error
-          if (ok) {
-            task.status = "completed"
-            task.pct = 100
-            task.step = task.prUrl ? `PR ready: ${task.prUrl}` : "Turn completed"
-            deps.reportJob({ event: "done", id: taskId, title: task.title, builder: task.builder, step: task.step, pct: 100 })
-          } else {
-            task.status = "failed"
-            const tail = task.stderrTail.join(" | ")
-            task.error = task.error ?? (`claude exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
-            task.step = `Failed: ${task.error.slice(0, 100)}`
-            deps.reportJob({ event: "aborted", id: taskId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
-          }
+          task.turnReportedTerminal = true
+          deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+          savePersistedTasks()
           notifyWaiters(task)
-        },
-      })
+          return { ok: false, status: 500, error: task.error }
+        }
 
-      if (!settled) {
-        task.handle = handle
-        const timeoutMs = Math.max(1, input.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
-        task.timeoutTimer = setTimeout(() => {
-          if (settled || task.status !== "running") return
-          task.error = `timed out after ${Math.round(timeoutMs / 1000)}s`
-          task.handle?.kill("SIGTERM")
-          task.killTimer = setTimeout(() => {
-            if (!settled) task.handle?.kill("SIGKILL")
-          }, 5_000)
-          task.killTimer.unref?.()
-        }, timeoutMs)
-        task.timeoutTimer.unref?.()
+        if (!settled && task.activeTurn === myTurn) {
+          task.handle = handle
+          const timeoutMs = Math.max(1, input.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
+          task.timeoutTimer = setTimeout(() => {
+            if (settled || task.activeTurn !== myTurn || task.status !== "running") return
+            task.error = `timed out after ${Math.round(timeoutMs / 1000)}s`
+            task.handle?.kill("SIGTERM")
+            task.killTimer = setTimeout(() => {
+              if (!settled && task.activeTurn === myTurn) task.handle?.kill("SIGKILL")
+            }, 5_000)
+            task.killTimer.unref?.()
+          }, timeoutMs)
+          task.timeoutTimer.unref?.()
+        }
+
+        return { ok: true, task: toSnapshot(task) }
+      } finally {
+        inFlightDispatches.delete(taskId)
       }
-
-      return { ok: true, task: toSnapshot(task) }
     },
 
     async awaitTask(taskId: string, waitMs = DEFAULT_WAIT_MS): Promise<{ ok: true; task: SupervisedTaskSnapshot; timedOut: boolean } | { ok: false; status: number; error: string }> {
@@ -539,49 +700,74 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     },
 
     async interruptTask(taskId: string, opts: { closeWorktree?: boolean } = {}): Promise<{ ok: true; task: SupervisedTaskSnapshot; worktreeRemoved: boolean; note?: string } | { ok: false; status: number; error: string }> {
-      const t = tasks.get(taskId.trim())
+      const id = taskId.trim()
+      const t = tasks.get(id)
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
-      if (t.status === "running") {
-        t.status = "interrupted"
-        t.error = "interrupted by caller"
-        t.step = "Interrupted"
-        t.updatedAt = deps.now()
-        t.completedAt = t.updatedAt
-        const h = t.handle
-        clearTimers(t)
-        if (h) {
-          h.kill("SIGTERM")
-          const killTimer = setTimeout(() => h.kill("SIGKILL"), 3_000)
-          killTimer.unref?.()
-        }
-        deps.reportJob({ event: "aborted", id: t.taskId, title: t.title, builder: t.builder, step: "Interrupted", pct: t.pct })
-        notifyWaiters(t)
+      if (inFlightDispatches.has(id)) {
+        return { ok: false, status: 409, error: "task_dispatch_in_progress" }
       }
+      inFlightDispatches.add(id)
+      try {
+        if (t.status === "running") {
+          t.status = "interrupted"
+          t.error = "interrupted by caller"
+          t.step = "Interrupted"
+          t.updatedAt = deps.now()
+          t.completedAt = t.updatedAt
+          const h = t.handle
+          const exitP = t.exitPromise
+          clearTimers(t)
+          if (!t.turnReportedTerminal) {
+            t.turnReportedTerminal = true
+            deps.reportJob({ event: "aborted", id: t.jobId, title: t.title, builder: t.builder, step: "Interrupted", pct: t.pct })
+          }
+          savePersistedTasks()
+          notifyWaiters(t)
+          if (h) {
+            h.kill("SIGTERM")
+            const killTimer = setTimeout(() => h.kill("SIGKILL"), killGraceMs)
+            killTimer.unref?.()
+          }
+          if (exitP) {
+            await Promise.race([
+              exitP,
+              new Promise<void>((resolve) => {
+                const tm = setTimeout(resolve, killGraceMs + 1_000)
+                tm.unref?.()
+              }),
+            ])
+          }
+          t.handle = null
+          t.exitPromise = null
+        }
 
-      let worktreeRemoved = false
-      let note: string | undefined
-      if (opts.closeWorktree && existsSync(t.worktree)) {
-        const statusRes = await deps.sh("git", ["-C", t.worktree, "status", "--porcelain"], { cwd: t.worktree, timeoutMs: 10_000 })
-        if (!statusRes.ok || statusRes.out.trim() !== "") {
-          note = "worktree kept: uncommitted changes present"
-        } else {
-          await deps.sh("git", ["-C", t.worktree, "fetch", "-q", "origin"], { cwd: t.worktree, timeoutMs: 20_000 })
-          const pushed = await deps.sh("git", ["-C", t.worktree, "branch", "-r", "--contains", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
-          if (!pushed.ok || pushed.out.trim() === "") {
-            note = "worktree kept: HEAD is not pushed to any remote branch"
+        let worktreeRemoved = false
+        let note: string | undefined
+        if (opts.closeWorktree && existsSync(t.worktree)) {
+          const statusRes = await deps.sh("git", ["-C", t.worktree, "status", "--porcelain"], { cwd: t.worktree, timeoutMs: 10_000 })
+          if (!statusRes.ok || statusRes.out.trim() !== "") {
+            note = "worktree kept: uncommitted changes present"
           } else {
-            const rm = await deps.sh("git", ["-C", t.repoDir, "worktree", "remove", t.worktree], { cwd: t.repoDir, timeoutMs: 20_000 })
-            if (rm.ok) {
-              await deps.sh("git", ["-C", t.repoDir, "branch", "-D", t.branch], { cwd: t.repoDir, timeoutMs: 10_000 })
-              worktreeRemoved = true
+            await deps.sh("git", ["-C", t.worktree, "fetch", "-q", "origin"], { cwd: t.worktree, timeoutMs: 20_000 })
+            const pushed = await deps.sh("git", ["-C", t.worktree, "branch", "-r", "--contains", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
+            if (!pushed.ok || pushed.out.trim() === "") {
+              note = "worktree kept: HEAD is not pushed to any remote branch"
             } else {
-              note = `worktree kept: ${(rm.err || rm.out).trim().slice(0, 160)}`
+              const rm = await deps.sh("git", ["-C", t.repoDir, "worktree", "remove", t.worktree], { cwd: t.repoDir, timeoutMs: 20_000 })
+              if (rm.ok) {
+                await deps.sh("git", ["-C", t.repoDir, "branch", "-D", t.branch], { cwd: t.repoDir, timeoutMs: 10_000 })
+                worktreeRemoved = true
+              } else {
+                note = `worktree kept: ${(rm.err || rm.out).trim().slice(0, 160)}`
+              }
             }
           }
         }
-      }
 
-      return { ok: true, task: toSnapshot(t), worktreeRemoved, ...(note ? { note } : {}) }
+        return { ok: true, task: toSnapshot(t), worktreeRemoved, ...(note ? { note } : {}) }
+      } finally {
+        inFlightDispatches.delete(id)
+      }
     },
 
     listTasks(): SupervisedTaskSnapshot[] {

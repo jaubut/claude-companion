@@ -6,6 +6,7 @@ import type { BuilderReport } from "./builder-jobs"
 import {
   type SpawnWorkerOpts,
   buildHeadlessClaudeArgs,
+  buildWorkerEnv,
   createWorkerSupervisor,
   parseStreamJsonLine,
 } from "./worker-supervisor"
@@ -65,16 +66,15 @@ describe("parseStreamJsonLine", () => {
     })
   })
 
-  test("buildHeadlessClaudeArgs uses --session-id on turn 1 and --resume on follow-up turns", () => {
+  test("buildHeadlessClaudeArgs places -- before prompt (safe for prompts starting with -) and buildWorkerEnv strips tokens", () => {
     expect(buildHeadlessClaudeArgs({
-      prompt: "Build feature X",
+      prompt: "--add-dir=/",
       sessionId: "uuid-1",
       resume: false,
       mode: "auto",
       agent: "builder",
     })).toEqual([
       "-p",
-      "Build feature X",
       "--output-format",
       "stream-json",
       "--verbose",
@@ -84,6 +84,8 @@ describe("parseStreamJsonLine", () => {
       "uuid-1",
       "--agent",
       "builder",
+      "--",
+      "--add-dir=/",
     ])
 
     expect(buildHeadlessClaudeArgs({
@@ -93,7 +95,6 @@ describe("parseStreamJsonLine", () => {
       mode: "auto",
     })).toEqual([
       "-p",
-      "Fix review finding 1",
       "--output-format",
       "stream-json",
       "--verbose",
@@ -101,7 +102,20 @@ describe("parseStreamJsonLine", () => {
       "auto",
       "--resume",
       "uuid-1",
+      "--",
+      "Fix review finding 1",
     ])
+
+    const env = buildWorkerEnv({
+      PATH: "/usr/bin",
+      COMPANION_TOKEN: "secret-1",
+      COMPANION_PEER_MAC_TOKEN: "secret-2",
+      COMPANION_PEER_ZETTLAB_URL: "http://100.64.0.1:4245",
+    }, "task-1", "builder-zettlab-cc-task-1")
+    expect(env.COMPANION_TOKEN).toBeUndefined()
+    expect(env.COMPANION_PEER_MAC_TOKEN).toBeUndefined()
+    expect(env.COMPANION_PEER_ZETTLAB_URL).toBeUndefined()
+    expect(env.DISPATCH_TASK_ID).toBe("task-1")
   })
 })
 
@@ -120,6 +134,7 @@ describe("createWorkerSupervisor", () => {
     const sup = createWorkerSupervisor({
       host: "zettlab",
       home,
+      killGraceMs: 50,
       now: () => 1700000000000,
       uuid: () => "11111111-2222-4333-8444-555555555555",
       trust: () => {},
@@ -149,20 +164,27 @@ describe("createWorkerSupervisor", () => {
           pid: 4242,
           kill(sig) {
             signals.push(sig)
+            queueMicrotask(() => opts.onExit(null, sig))
           },
         }
       },
     })
 
     try {
-      // Rejects bypassPermissions mode
-      const badMode = await sup.dispatchTask({
+      // Rejects bypassPermissions mode and invalid agent/model flags
+      expect(await sup.dispatchTask({
         taskId: "task-1",
         repo: "claude-companion",
         prompt: "Do work",
         mode: "bypassPermissions",
-      })
-      expect(badMode).toEqual({ ok: false, status: 400, error: "invalid_mode" })
+      })).toEqual({ ok: false, status: 400, error: "invalid_mode" })
+
+      expect(await sup.dispatchTask({
+        taskId: "task-1",
+        repo: "claude-companion",
+        prompt: "Do work",
+        agent: "--bad-flag",
+      })).toEqual({ ok: false, status: 400, error: "invalid_agent" })
 
       // Turn 1 dispatch
       const d1 = await sup.dispatchTask({
@@ -207,9 +229,16 @@ describe("createWorkerSupervisor", () => {
       expect(awaited.timedOut).toBe(false)
       expect(awaited.task.status).toBe("completed")
       expect(awaited.task.prUrl).toBe("https://github.com/jaubut/claude-companion/pull/310")
-      expect(reports.map((r) => r.event)).toEqual(["task", "progress", "done"])
+      expect(reports.map((r) => `${r.id}:${r.event}`)).toEqual(["task-1:task", "task-1:progress", "task-1:done"])
 
-      // Turn 2 on the same task uses --resume <sessionId>
+      // Rejects reusing the same taskId with a different repo
+      expect(await sup.dispatchTask({
+        taskId: "task-1",
+        repo: "other-repo",
+        prompt: "Wrong repo",
+      })).toEqual({ ok: false, status: 409, error: "task_repo_mismatch: task-1 belongs to claude-companion" })
+
+      // Turn 2 on the same task uses --resume <sessionId> and distinct jobId `task-1-t2`
       const d2 = await sup.dispatchTask({
         taskId: "task-1",
         repo: "claude-companion",
@@ -218,8 +247,9 @@ describe("createWorkerSupervisor", () => {
       expect(d2.ok).toBe(true)
       expect(spawned[1]!.args).toContain("--resume")
       expect(spawned[1]!.args).toContain("11111111-2222-4333-8444-555555555555")
+      expect(reports.at(-1)?.id).toBe("task-1-t2")
 
-      // Interrupt turn 2 with dirty worktree -> worktree kept
+      // Interrupt turn 2 with dirty worktree -> worktree kept, only 1 "aborted" event emitted
       dirtyWorktree = true
       const intDirty = await sup.interruptTask("task-1", { closeWorktree: true })
       expect(intDirty.ok).toBe(true)
@@ -228,6 +258,7 @@ describe("createWorkerSupervisor", () => {
       expect(intDirty.worktreeRemoved).toBe(false)
       expect(intDirty.note).toContain("uncommitted")
       expect(signals).toContain("SIGTERM")
+      expect(reports.filter((r) => r.id === "task-1-t2" && r.event === "aborted")).toHaveLength(1)
 
       // Once clean and pushed, closeWorktree removes the worktree
       dirtyWorktree = false
@@ -236,6 +267,95 @@ describe("createWorkerSupervisor", () => {
       expect(intClean.ok).toBe(true)
       if (!intClean.ok) return
       expect(intClean.worktreeRemoved).toBe(true)
+
+      // Reloading state from disk preserves task history and sessionId across supervisor restarts
+      const supReloaded = createWorkerSupervisor({
+        host: "zettlab",
+        home,
+        now: () => 1700000005000,
+        uuid: () => "99999999-9999-4999-8999-999999999999",
+        trust: () => {},
+        reportJob: () => {},
+        sh: async () => ({ ok: true, out: "", err: "", code: 0 }),
+      })
+      const reloadedTask = supReloaded.getTask("task-1")
+      expect(reloadedTask?.sessionId).toBe("11111111-2222-4333-8444-555555555555")
+      expect(reloadedTask?.turnCount).toBe(2)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("prevents concurrent dispatch races, isolates late exits across turns, and recovers from synchronous spawn errors", async () => {
+    const home = join(tmpdir(), `worker-sup-race-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    const repoDir = join(home, "claude-companion")
+    mkdirSync(join(repoDir, ".git"), { recursive: true })
+
+    const spawned: SpawnWorkerOpts[] = []
+    let throwOnSpawn = false
+
+    const sup = createWorkerSupervisor({
+      host: "zettlab",
+      home,
+      killGraceMs: 40,
+      now: () => 1700000000000,
+      uuid: () => "aaaa1111-2222-4333-8444-555555555555",
+      trust: () => {},
+      reportJob: () => {},
+      sh: async (_cmd, args) => {
+        await Bun.sleep(20)
+        if (args.includes("worktree") && args.includes("add")) {
+          const wtPath = args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!
+          mkdirSync(wtPath, { recursive: true })
+        }
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker(opts) {
+        if (throwOnSpawn) throw new Error("ENOENT: claude binary missing")
+        spawned.push(opts)
+        return {
+          pid: 5000 + spawned.length,
+          kill() {
+            // Deliberately delay exit to test late exit isolation
+            setTimeout(() => opts.onExit(null, "SIGTERM"), 15)
+          },
+        }
+      },
+    })
+
+    try {
+      // 1. Two simultaneous dispatches of the same taskId -> exactly one succeeds, one gets 409
+      const [r1, r2] = await Promise.all([
+        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "First" }),
+        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "Second" }),
+      ])
+      const oks = [r1, r2].filter((r) => r.ok)
+      const errs = [r1, r2].filter((r) => !r.ok)
+      expect(oks).toHaveLength(1)
+      expect(errs).toEqual([{ ok: false, status: 409, error: "task_already_running" }])
+      expect(spawned).toHaveLength(1)
+
+      // 2. Interrupt turn 1 and immediately re-dispatch turn 2 -> turn 1's exit does not clobber turn 2
+      await sup.interruptTask("race-1")
+      const turn2 = await sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "Turn 2" })
+      expect(turn2.ok).toBe(true)
+      //Even if turn 1's onExit fires again late, turn 2 remains running
+      spawned[0]!.onExit(1, "SIGTERM")
+      expect(sup.getTask("race-1")?.status).toBe("running")
+      expect(sup.getTask("race-1")?.turnCount).toBe(2)
+      spawned[1]!.onExit(0, null)
+      expect(sup.getTask("race-1")?.status).toBe("completed")
+
+      // 3. Synchronous spawn failure marks task failed instead of leaving it permanently running
+      throwOnSpawn = true
+      const failDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Run" })
+      expect(failDisp.ok).toBe(false)
+      expect(sup.getTask("spawn-err")?.status).toBe("failed")
+
+      // Subsequent retry after fixing spawn succeeds (not 409)
+      throwOnSpawn = false
+      const retryDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Retry" })
+      expect(retryDisp.ok).toBe(true)
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
