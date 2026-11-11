@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import sharp from "sharp"
-import { MAX_BYTES, checkUrl, guardProxy, safeFetch, startGuardProxy, vetHost } from "./link-media-guard"
+import { MAX_BYTES, checkUrl, safeFetch, startGuardProxy, vetHost } from "./link-media-guard"
 import { type Swatch, palette } from "./link-media-palette"
 import { companionLog } from "./log"
 
@@ -21,6 +21,8 @@ const ROOT = process.env.COMPANION_LINK_MEDIA_DIR ?? join(homedir(), ".cache", "
 const TIMEOUT_MS = 120_000
 const MAX_VIDEO_BYTES = MAX_BYTES
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024
+const MAX_META_BYTES = 10 * 1024 * 1024
+const MAX_SUB_BYTES = 5 * 1024 * 1024
 const MAX_SECONDS = 600
 const FRAMES = 10
 const FRAME_WIDTH = 768
@@ -93,16 +95,18 @@ const SAFE_PROTOCOL = "[protocol~='^(https?|m3u8_native|http_dash_segments)$']"
 export const VIDEO_FORMAT = ["bv*[width<=?1080]", "b[width<=?1080]", "bv*", "b"].map((f) => f + SAFE_PROTOCOL).join("/")
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
 
-/** True when yt-dlp metadata only advertises http(s) / HLS / DASH formats over http(s) URLs. */
+const isSafeProtocol = (proto: string): boolean => proto.split("+").every((p) => SAFE_PROTOCOL_RE.test(p))
+
+/** True when yt-dlp metadata only advertises http(s) / native-HLS / DASH formats over http(s) URLs. */
 export function isSafeMediaInfo(raw: Record<string, unknown>): boolean {
   if (typeof raw.url === "string" && !/^https?:\/\//i.test(raw.url)) return false
-  if (typeof raw.protocol === "string" && !SAFE_PROTOCOL_RE.test(raw.protocol)) return false
+  if (typeof raw.protocol === "string" && !isSafeProtocol(raw.protocol)) return false
   if (Array.isArray(raw.formats) && raw.formats.length > 0) {
     const anySafe = raw.formats.some((f) => {
       if (!f || typeof f !== "object") return false
       const fmt = f as Record<string, unknown>
       if (typeof fmt.url === "string" && !/^https?:\/\//i.test(fmt.url)) return false
-      if (typeof fmt.protocol === "string" && !SAFE_PROTOCOL_RE.test(fmt.protocol)) return false
+      if (typeof fmt.protocol === "string" && !isSafeProtocol(fmt.protocol)) return false
       return typeof fmt.url === "string" || typeof fmt.protocol === "string"
     })
     if (!anySafe) return false
@@ -139,7 +143,15 @@ export function jsonOrNull<T>(s: string): T | null {
 }
 
 async function ytInfo(url: string, deadline: number): Promise<Info | { error: string }> {
-  const r = await run([YTDLP, ...ytArgs(await guardProxy()), "-J", "--skip-download", url], deadline)
+  const abort = new AbortController()
+  const proxy = await startGuardProxy(vetHost, { maxBytes: MAX_META_BYTES, onExceed: () => abort.abort() })
+  let r: RunResult
+  try {
+    r = await run([YTDLP, ...ytArgs(proxy.url), "-f", VIDEO_FORMAT, "-J", "--skip-download", url], deadline, abort.signal)
+    if (proxy.exceeded()) return { error: "metadata over 10 MB" }
+  } finally {
+    proxy.close()
+  }
   if (r.code !== 0) return { error: r.stderr.trim().split("\n").pop()?.slice(0, 300) ?? "yt-dlp failed" }
   const raw = jsonOrNull<Record<string, unknown>>(r.stdout)
   if (!raw) return { error: "yt-dlp printed unreadable JSON" }
@@ -252,10 +264,19 @@ export function vttText(vtt: string): string {
 async function transcript(url: string, info: Info, dir: string, deadline: number): Promise<string | null> {
   if (!info.raw || !hasCaptions(info.raw)) return null
   const langs = [text(info.raw.language), "en.*", "fr.*"].filter(Boolean).join(",")
-  await run([YTDLP, ...ytArgs(await guardProxy()), "--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", langs, "--sub-format", "vtt", "-o", join(dir, "subs.%(ext)s"), url], deadline)
+  const abort = new AbortController()
+  const proxy = await startGuardProxy(vetHost, { maxBytes: MAX_SUB_BYTES, onExceed: () => abort.abort() })
+  try {
+    await run([YTDLP, ...ytArgs(proxy.url), "--max-filesize", "5M", "--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", langs, "--sub-format", "vtt", "-o", join(dir, "subs.%(ext)s"), url], deadline, abort.signal)
+    if (proxy.exceeded()) return null
+  } finally {
+    proxy.close()
+  }
   const vtt = readdirSync(dir).find((n) => n.startsWith("subs.") && n.endsWith(".vtt"))
   if (!vtt) return null
-  const t = vttText(readFileSync(join(dir, vtt), "utf8"))
+  const vttPath = join(dir, vtt)
+  if (statSync(vttPath).size > MAX_SUB_BYTES) return null
+  const t = vttText(readFileSync(vttPath, "utf8"))
   return t.length > TRANSCRIPT_MAX ? `${t.slice(0, TRANSCRIPT_MAX - 1)}…` : t || null
 }
 

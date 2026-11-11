@@ -73,10 +73,12 @@ describe("bin/media pipeline", () => {
     expect(imageTitle(new URL("https://8.8.8.8/"))).toBeNull()
   })
 
-  test("isSafeMediaInfo accepts http(s)/native-HLS/DASH and rejects ffmpeg-m3u8/rtmp/file/non-http URLs", () => {
+  test("isSafeMediaInfo accepts http(s)/native-HLS/DASH (including merged https+https) and rejects ffmpeg-m3u8/rtmp/file/non-http URLs", () => {
     expect(isSafeMediaInfo({ url: "https://cdn.example.com/v.mp4", protocol: "https" })).toBe(true)
+    expect(isSafeMediaInfo({ protocol: "https+https", formats: [{ url: "https://cdn.example.com/v.mp4", protocol: "https" }, { url: "https://cdn.example.com/a.m4a", protocol: "https" }] })).toBe(true)
     expect(isSafeMediaInfo({ formats: [{ url: "https://cdn.example.com/master.m3u8", protocol: "m3u8_native" }] })).toBe(true)
     expect(isSafeMediaInfo({ formats: [{ url: "https://cdn.example.com/master.m3u8", protocol: "m3u8" }] })).toBe(false)
+    expect(isSafeMediaInfo({ protocol: "https+rtmp" })).toBe(false)
     expect(isSafeMediaInfo({ url: "rtmp://live.example.com/app/stream", protocol: "rtmp" })).toBe(false)
     expect(isSafeMediaInfo({ url: "file:///etc/passwd" })).toBe(false)
     expect(isSafeMediaInfo({ formats: [{ url: "rtmp://live.example.com/s", protocol: "rtmp" }] })).toBe(false)

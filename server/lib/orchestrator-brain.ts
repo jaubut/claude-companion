@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { brainText } from "./brain"
 import type { Turn } from "./orchestrator-chat"
 import { parseCliResult } from "./cli-json"
 
@@ -87,8 +88,8 @@ function stripFence(s: string): string {
   return s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim()
 }
 
-function history(turns: Turn[]): string {
-  const h = turns.slice(-20).map((t) => `${t.role}: ${t.text}`).join("\n")
+export function history(turns: Turn[]): string {
+  const h = turns.slice(-20).map((t) => `${t.role}: ${brainText(t)}`).join("\n")
   return h || "(empty)"
 }
 

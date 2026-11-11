@@ -54,11 +54,12 @@ TraceRow {
 ### `orchestrator` turn `card`
 
 ```
-turn.card? = {kind:"dispatch"|"voice", source:"app", taskId?, audioId?, durationMs?, locale?}
+turn.card? = {kind:"dispatch"|"voice"|"worker_blocked", source:"app", taskId?, audioId?, durationMs?, locale?, …worker_blocked fields}
 ```
 
 - `voice`: a user turn sent from the 🧠 composer with `voice` (below); `audioId` arrives later when the take is archived (the turn is re-sent with the same id).
 - `dispatch`: a receipt the poller writes into the brain thread (role `orchestrator`) when a task moves to blocked / PR / completed / done. `card.taskId` is the Turso id. **`turn.taskId` stays null** on card turns (shipped builds group taskId turns as worker output). The old channel still gets its turn until P3.
+- `worker_blocked`: a dispatch worker stuck on a dialog, with its options and `state` open | answered | expired. Contract: `docs/worker-blocked-api.md`.
 - Turns without a card serialize exactly as before (no `card` key).
 
 ## Endpoints
