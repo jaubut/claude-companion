@@ -1,3 +1,4 @@
+import { brainText } from "./brain"
 import type { BrainDecision } from "./orchestrator-brain"
 import type { Channel } from "./orchestrator-channels"
 import type { Turn } from "./orchestrator-chat"
@@ -63,12 +64,12 @@ export interface FrontDoorDeps {
 export const ACK_TEXT = "⏳ on it…"
 export const ACK_DELAY_MS = 800
 
-function routerInput(text: string, channel: Channel, thread: Turn[]): RouterInput {
+export function routerInput(text: string, channel: Channel, thread: Turn[]): RouterInput {
   // The latest turn is this message itself (/send appended it first).
   const prior = thread.length && thread[thread.length - 1]!.role === "user" && thread[thread.length - 1]!.text === text ? thread.slice(0, -1) : thread
   return {
     text, channelName: channel.name, channelProject: channel.noteTitle ?? channel.noteId ?? null,
-    recent: prior.slice(-4).map((t) => ({ role: t.role, text: t.text })),
+    recent: prior.slice(-4).map((t) => ({ role: t.role, text: brainText(t) })),
   }
 }
 
