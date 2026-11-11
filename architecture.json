@@ -6143,7 +6143,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 678,
+          "lines": 563,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -14060,6 +14060,12 @@
             "lib/worker-mcp.ts"
           ]
         },
+        "BuilderReport": {
+          "module": "lib/builder-jobs.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "ShFn": {
           "module": "lib/live-repo.ts",
           "callers": [
@@ -14067,12 +14073,6 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-lead.ts",
             "wiring/resolver.ts"
-          ]
-        },
-        "BuilderReport": {
-          "module": "lib/builder-jobs.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
           ]
         },
         "registerToken": {

@@ -8,17 +8,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 257 modules, cap 600)
 
-⚠ over cap: `lib/worker-supervisor.ts` (678)
-
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/worker-supervisor.ts` | 678 ⚠ 678 > cap 600 | lib | 18 |  |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `routes/api.ts` | 600 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/keyboard-inject.ts` | 572 | lib | 4 | state: let injectQueue |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
+| `lib/worker-supervisor.ts` | 563 | lib | 18 |  |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `routes/hooks.ts` | 556 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
