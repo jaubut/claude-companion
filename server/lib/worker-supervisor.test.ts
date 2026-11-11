@@ -471,6 +471,48 @@ describe("createWorkerSupervisor", () => {
     }
   })
 
+  test("keeps the reservation while the group lives when the saved leader identity is missing, and cleans up once the group is gone", async () => {
+    const home = join(tmpdir(), `worker-sup-noid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const shCalls: string[][] = []
+    let groupAlive = true
+    let identity: string | null = null // probe failed at spawn: saved identity is null
+    const makeSup = () =>
+      createWorkerSupervisor({
+        host: "zettlab", home, killGraceMs: 50, now: () => 1700000000000, uuid: () => "cccc1111-2222-4333-8444-555555555555",
+        trust: () => {}, reportJob: () => {},
+        isPidAlive: (pid) => pid === 7778 && groupAlive,
+        killPid: () => {},
+        getPidIdentity: () => identity,
+        sh: async (_cmd, args) => {
+          shCalls.push(args)
+          if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+          return { ok: true, out: args.includes("status") ? "" : "origin/main\n", err: "", code: 0 }
+        },
+        spawnWorker: () => ({ pid: 7778, kill() {} }),
+      })
+    try {
+      const sup1 = makeSup()
+      expect((await sup1.dispatchTask({ taskId: "noid-1", repo: "claude-companion", prompt: "t" })).ok).toBe(true)
+
+      // Restart: leader pid now probes as some process, descendants still alive -> unknown, not exited
+      identity = "boot1:7778:555"
+      const sup2 = makeSup()
+      shCalls.length = 0
+      const kept = await sup2.interruptTask("noid-1", { closeWorktree: true })
+      expect(kept.ok && kept.worktreeRemoved).toBe(false)
+      expect(shCalls.some((a) => a.includes("remove"))).toBe(false)
+      expect(await sup2.dispatchTask({ taskId: "noid-1", repo: "claude-companion", prompt: "again" })).toEqual({ ok: false, status: 409, error: "task_already_running" })
+
+      // Whole group gone: cleanup proceeds
+      groupAlive = false
+      const done = await sup2.interruptTask("noid-1", { closeWorktree: true })
+      expect(done.ok && done.worktreeRemoved).toBe(true)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   test("supports headless Codex and Gemini agent families and parses their stream-json events", async () => {
     expect(resolveWorkerFamily({ family: "codex" })).toBe("codex")
     expect(resolveWorkerFamily({ family: "gemini" })).toBe("gemini")

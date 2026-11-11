@@ -378,7 +378,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         if (savedIdentity && currentIdentity !== null && currentIdentity === savedIdentity) {
           killPid(rawPid, "SIGTERM")
           if (isPidAlive(rawPid)) { survivingPid = rawPid; survivingIdentity = savedIdentity }
-        } else if (currentIdentity === null) { survivingPid = rawPid; survivingIdentity = savedIdentity }
+        } else if (currentIdentity === null || !savedIdentity) { survivingPid = rawPid; survivingIdentity = savedIdentity } // unknown identity != exited: group stays reserved
         dirty = true
       } else if (rawPid !== null) dirty = true
       if (wasRunning) dirty = true
