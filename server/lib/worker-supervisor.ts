@@ -54,9 +54,7 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
   try {
     const parsed = JSON.parse(trimmed) as unknown
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) obj = parsed as Record<string, unknown>
-  } catch {
-    return null
-  }
+  } catch { return null }
   if (!obj) return null
 
   const out: StreamJsonEvent = {}
@@ -118,19 +116,28 @@ export interface SpawnWorkerOpts {
 export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
+  isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void
 }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
   if (!REPO_NAME_RE.test(repo)) return null
   const candidates = [
     repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "",
-    join(home, repo),
-    join(home, "lanes", repo),
-    join(home, "Developer", repo),
-    join(home, "apps", repo),
+    join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo),
   ].filter(Boolean)
   for (const c of candidates) if (existsSync(join(c, ".git"))) return c
   return null
+}
+
+export function defaultIsPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false
+  try { process.kill(-pid, 0); return true } catch (e) { if ((e as NodeJS.ErrnoException).code === "EPERM") return true }
+  try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM" }
+}
+
+export function defaultKillPid(pid: number, sig: NodeJS.Signals): void {
+  if (!Number.isInteger(pid) || pid <= 1) return
+  try { process.kill(-pid, sig) } catch { try { process.kill(pid, sig) } catch { /* gone */ } }
 }
 
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
@@ -157,18 +164,16 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
   })
   return {
     pid: child.pid ?? 0,
-    kill(sig: NodeJS.Signals) {
-      if (!child.pid) return
-      try { process.kill(-child.pid, sig) } catch { try { child.kill(sig) } catch { /* gone */ } }
-    },
+    kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) },
   }
 }
 
 /** Remove Companion control-plane bearer tokens from the worker's environment so a worker cannot invoke `/api/mcp/workers`. */
 export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
+  delete env.COMPANION_AUTH_TOKEN
   delete env.COMPANION_TOKEN
-  for (const key of Object.keys(env)) if (/^COMPANION_PEER_/i.test(key)) delete env[key]
+  for (const key of Object.keys(env)) if (/^COMPANION_(AUTH_|PEER_|TOKEN)/i.test(key)) delete env[key]
   env.DISPATCH_TASK_ID = taskId
   env.DISPATCH_WORKER = "1"
   env.DISPATCH_HEADLESS = "1"
@@ -186,19 +191,14 @@ export function buildHeadlessClaudeArgs(opts: { prompt: string; sessionId: strin
 }
 
 interface PersistedTaskRecord extends SupervisedTaskSnapshot {
-  repoDir: string
+  repoDir: string; pid?: number | null; sessionStarted?: boolean
 }
 
 interface InternalTask extends PersistedTaskRecord {
-  activeTurn: number
-  jobId: string
-  turnReportedTerminal: boolean
-  handle: SpawnedWorkerHandle | null
-  exitPromise: Promise<void> | null
-  timeoutTimer: ReturnType<typeof setTimeout> | null
-  killTimer: ReturnType<typeof setTimeout> | null
-  waiters: Set<() => void>
-  stderrTail: string[]
+  pid: number | null; sessionStarted: boolean; activeTurn: number; jobId: string; turnReportedTerminal: boolean
+  handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
+  timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
+  waiters: Set<() => void>; stderrTail: string[]
 }
 
 function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
@@ -206,13 +206,31 @@ function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
   return { taskId, repo, title, builder, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt }
 }
 
+function waitMsPromise(ms: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => { const tm = setTimeout(() => resolve(false), ms); tm.unref?.() })
+}
+
 export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const tasks = new Map<string, InternalTask>()
   const inFlightDispatches = new Set<string>()
   const resolveRepo = deps.resolveRepoDir ?? defaultResolveRepoDir
   const spawnWorker = deps.spawnWorker ?? defaultSpawnWorker
+  const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
+  const killPid = deps.killPid ?? defaultKillPid
   const stateFile = deps.stateFile ?? join(deps.home, ".claude", "state", "companion-worker-tasks.json")
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
+
+  function savePersistedTasks(): void {
+    try {
+      mkdirSync(dirname(stateFile), { recursive: true })
+      const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({
+        ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, sessionStarted: t.sessionStarted,
+      }))
+      const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
+      writeFileSync(tmp, JSON.stringify(records))
+      renameSync(tmp, stateFile)
+    } catch { /* best-effort persistence */ }
+  }
 
   function loadPersistedTasks(): void {
     if (!existsSync(stateFile)) return
@@ -220,6 +238,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     try { parsed = JSON.parse(readFileSync(stateFile, "utf8")) as unknown } catch { return }
     if (!Array.isArray(parsed)) return
     const now = deps.now()
+    let dirty = false
     for (const item of parsed) {
       if (!item || typeof item !== "object" || Array.isArray(item)) continue
       const r = item as Partial<PersistedTaskRecord>
@@ -227,6 +246,14 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (typeof r.repoDir !== "string" || !r.repoDir || typeof r.worktree !== "string" || !r.worktree || typeof r.sessionId !== "string" || !r.sessionId) continue
       const wasRunning = r.status === "running"
       const turnCount = typeof r.turnCount === "number" && r.turnCount > 0 ? Math.floor(r.turnCount) : 1
+      const rawPid = typeof r.pid === "number" && Number.isInteger(r.pid) && r.pid > 1 ? r.pid : null
+      let survivingPid: number | null = null
+      if (rawPid !== null && isPidAlive(rawPid)) {
+        killPid(rawPid, "SIGTERM")
+        if (isPidAlive(rawPid)) survivingPid = rawPid
+        dirty = true
+      }
+      if (wasRunning) dirty = true
       tasks.set(r.taskId, {
         taskId: r.taskId, repo: r.repo, repoDir: r.repoDir,
         title: typeof r.title === "string" ? r.title : r.taskId,
@@ -243,23 +270,35 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         startedAt: typeof r.startedAt === "number" ? r.startedAt : now,
         updatedAt: wasRunning ? now : (typeof r.updatedAt === "number" ? r.updatedAt : now),
         completedAt: wasRunning ? now : (typeof r.completedAt === "number" ? r.completedAt : null),
-        activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}-t${turnCount}`,
+        pid: survivingPid,
+        sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
+        activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
       })
     }
-  }
-
-  function savePersistedTasks(): void {
-    try {
-      mkdirSync(dirname(stateFile), { recursive: true })
-      const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({ ...toSnapshot(t), repoDir: t.repoDir }))
-      const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
-      writeFileSync(tmp, JSON.stringify(records))
-      renameSync(tmp, stateFile)
-    } catch { /* best-effort persistence */ }
+    if (dirty) savePersistedTasks()
   }
 
   loadPersistedTasks()
+
+  async function reconcileSurvivingProcess(t: InternalTask): Promise<boolean> {
+    if (t.exitPromise) {
+      const exited = await Promise.race([t.exitPromise.then(() => true), waitMsPromise(killGraceMs + 1_000)])
+      if (!exited || t.handle !== null || t.exitPromise !== null) return false
+    }
+    if (t.pid !== null) {
+      if (isPidAlive(t.pid)) {
+        killPid(t.pid, "SIGTERM")
+        const deadline = Date.now() + killGraceMs
+        while (Date.now() < deadline && isPidAlive(t.pid)) await waitMsPromise(25)
+        if (isPidAlive(t.pid)) { killPid(t.pid, "SIGKILL"); await waitMsPromise(100) }
+        if (isPidAlive(t.pid)) return false
+      }
+      t.pid = null
+      savePersistedTasks()
+    }
+    return true
+  }
 
   function notifyWaiters(t: InternalTask): void {
     for (const fn of [...t.waiters]) { t.waiters.delete(fn); fn() }
@@ -310,7 +349,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       // Reserve the taskId synchronously BEFORE any await so concurrent dispatches cannot race setup.
       inFlightDispatches.add(taskId)
       try {
-        if (existing?.exitPromise) await existing.exitPromise
+        if (existing && !(await reconcileSurvivingProcess(existing))) return { ok: false, status: 409, error: "task_already_running" }
         const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
@@ -320,34 +359,26 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         deps.trust(wt.worktree)
 
         const now = deps.now()
-        const resume = !!existing && existing.turnCount > 0
+        const resume = !!existing && existing.sessionStarted
         const sessionId = existing?.sessionId ?? deps.uuid()
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
         const myTurn = (existing?.turnCount ?? 0) + 1
-        const myJobId = myTurn === 1 ? taskId : `${taskId}-t${myTurn}`
+        // Use `:` separator on turn 2+ (`:` is forbidden in TASK_ID_RE so it can never collide with another taskId).
+        const myJobId = myTurn === 1 ? taskId : `${taskId}:t${myTurn}`
 
         const task: InternalTask = existing ?? {
           taskId, repo, repoDir, title, builder, branch: wt.branch, worktree: wt.worktree, sessionId,
           status: "running", turnCount: 0, step: "Starting headless builder", pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
-          activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
+          pid: null, sessionStarted: false, activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
         clearTimers(task)
-        task.title = title
-        task.status = "running"
-        task.turnCount = myTurn
-        task.activeTurn = myTurn
-        task.jobId = myJobId
-        task.turnReportedTerminal = false
-        task.step = resume ? `Turn ${myTurn}: resuming builder` : "Starting headless builder"
-        task.pct = 5
-        task.error = null
-        task.completedAt = null
-        task.updatedAt = now
-        task.stderrTail = []
+        task.title = title; task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
+        task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming builder` : "Starting headless builder"
+        task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []
         tasks.set(taskId, task)
         savePersistedTasks()
 
@@ -371,11 +402,12 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               const ev = parseStreamJsonLine(line)
               if (!ev) return
               task.updatedAt = deps.now()
-              if (ev.sessionId) task.sessionId = ev.sessionId
+              if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
-              if (ev.assistantText) task.result = ev.assistantText
-              if (ev.resultText) task.result = ev.resultText
+              if (ev.assistantText) { task.result = ev.assistantText; task.sessionStarted = true }
+              if (ev.resultText) { task.result = ev.resultText; task.sessionStarted = true }
               if (ev.step) {
+                task.sessionStarted = true
                 task.step = ev.step
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
                 deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
@@ -396,22 +428,17 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               resolveExit()
               if (task.activeTurn !== myTurn) return
               clearTimers(task)
-              task.handle = null
-              task.exitPromise = null
-              task.updatedAt = deps.now()
-              task.completedAt = task.updatedAt
+              task.handle = null; task.exitPromise = null; task.pid = null
+              task.updatedAt = deps.now(); task.completedAt = task.updatedAt
               if (task.status === "interrupted") {
                 if (!task.turnReportedTerminal) {
                   task.turnReportedTerminal = true
                   deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step ?? "Interrupted", pct: task.pct })
                 }
-                savePersistedTasks()
-                notifyWaiters(task)
-                return
+                savePersistedTasks(); notifyWaiters(task); return
               }
               if (code === 0 && !sig && !task.error) {
-                task.status = "completed"
-                task.pct = 100
+                task.sessionStarted = true; task.status = "completed"; task.pct = 100
                 task.step = task.prUrl ? `PR ready: ${task.prUrl}` : "Turn completed"
                 if (!task.turnReportedTerminal) {
                   task.turnReportedTerminal = true
@@ -427,30 +454,24 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                   deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
                 }
               }
-              savePersistedTasks()
-              notifyWaiters(task)
+              savePersistedTasks(); notifyWaiters(task)
             },
           })
         } catch (err) {
-          settled = true
-          resolveExit()
-          clearTimers(task)
-          task.handle = null
-          task.exitPromise = null
-          task.status = "failed"
+          settled = true; resolveExit(); clearTimers(task)
+          task.handle = null; task.exitPromise = null; task.pid = null; task.status = "failed"
           task.error = `spawn failed: ${((err as Error)?.message ?? String(err)).slice(0, 300)}`
           task.step = `Failed: ${task.error.slice(0, 100)}`
-          task.updatedAt = deps.now()
-          task.completedAt = task.updatedAt
-          task.turnReportedTerminal = true
+          task.updatedAt = deps.now(); task.completedAt = task.updatedAt; task.turnReportedTerminal = true
           deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
-          savePersistedTasks()
-          notifyWaiters(task)
+          savePersistedTasks(); notifyWaiters(task)
           return { ok: false, status: 500, error: task.error }
         }
 
         if (!settled && task.activeTurn === myTurn) {
           task.handle = handle
+          task.pid = handle.pid > 0 ? handle.pid : null
+          savePersistedTasks()
           const timeoutMs = Math.max(1, input.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
           task.timeoutTimer = setTimeout(() => {
             if (settled || task.activeTurn !== myTurn || task.status !== "running") return
@@ -490,35 +511,25 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (inFlightDispatches.has(id)) return { ok: false, status: 409, error: "task_dispatch_in_progress" }
       inFlightDispatches.add(id)
       try {
-        if (t.status === "running") {
-          t.status = "interrupted"
-          t.error = "interrupted by caller"
-          t.step = "Interrupted"
-          t.updatedAt = deps.now()
-          t.completedAt = t.updatedAt
+        if (t.status === "running" || t.handle !== null || t.exitPromise !== null) {
+          t.status = "interrupted"; t.error = "interrupted by caller"; t.step = "Interrupted"
+          t.updatedAt = deps.now(); t.completedAt = t.updatedAt
           const h = t.handle
-          const exitP = t.exitPromise
           clearTimers(t)
           if (!t.turnReportedTerminal) {
             t.turnReportedTerminal = true
             deps.reportJob({ event: "aborted", id: t.jobId, title: t.title, builder: t.builder, step: "Interrupted", pct: t.pct })
           }
-          savePersistedTasks()
-          notifyWaiters(t)
+          savePersistedTasks(); notifyWaiters(t)
           if (h) {
             h.kill("SIGTERM")
             const killTimer = setTimeout(() => h.kill("SIGKILL"), killGraceMs)
             killTimer.unref?.()
           }
-          if (exitP) {
-            await Promise.race([
-              exitP,
-              new Promise<void>((resolve) => { const tm = setTimeout(resolve, killGraceMs + 1_000); tm.unref?.() }),
-            ])
-          }
-          t.handle = null
-          t.exitPromise = null
         }
+
+        const exited = await reconcileSurvivingProcess(t)
+        if (!exited) return { ok: true, task: toSnapshot(t), worktreeRemoved: false, note: "worktree kept: worker process has not exited yet" }
 
         let worktreeRemoved = false
         let note: string | undefined

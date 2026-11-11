@@ -108,10 +108,12 @@ describe("parseStreamJsonLine", () => {
 
     const env = buildWorkerEnv({
       PATH: "/usr/bin",
+      COMPANION_AUTH_TOKEN: "secret-auth-token",
       COMPANION_TOKEN: "secret-1",
       COMPANION_PEER_MAC_TOKEN: "secret-2",
       COMPANION_PEER_ZETTLAB_URL: "http://100.64.0.1:4245",
     }, "task-1", "builder-zettlab-cc-task-1")
+    expect(env.COMPANION_AUTH_TOKEN).toBeUndefined()
     expect(env.COMPANION_TOKEN).toBeUndefined()
     expect(env.COMPANION_PEER_MAC_TOKEN).toBeUndefined()
     expect(env.COMPANION_PEER_ZETTLAB_URL).toBeUndefined()
@@ -238,7 +240,7 @@ describe("createWorkerSupervisor", () => {
         prompt: "Wrong repo",
       })).toEqual({ ok: false, status: 409, error: "task_repo_mismatch: task-1 belongs to claude-companion" })
 
-      // Turn 2 on the same task uses --resume <sessionId> and distinct jobId `task-1-t2`
+      // Turn 2 on the same task uses --resume <sessionId> and distinct jobId `task-1:t2` (`:` cannot collide with any taskId)
       const d2 = await sup.dispatchTask({
         taskId: "task-1",
         repo: "claude-companion",
@@ -247,7 +249,7 @@ describe("createWorkerSupervisor", () => {
       expect(d2.ok).toBe(true)
       expect(spawned[1]!.args).toContain("--resume")
       expect(spawned[1]!.args).toContain("11111111-2222-4333-8444-555555555555")
-      expect(reports.at(-1)?.id).toBe("task-1-t2")
+      expect(reports.at(-1)?.id).toBe("task-1:t2")
 
       // Interrupt turn 2 with dirty worktree -> worktree kept, only 1 "aborted" event emitted
       dirtyWorktree = true
@@ -258,7 +260,7 @@ describe("createWorkerSupervisor", () => {
       expect(intDirty.worktreeRemoved).toBe(false)
       expect(intDirty.note).toContain("uncommitted")
       expect(signals).toContain("SIGTERM")
-      expect(reports.filter((r) => r.id === "task-1-t2" && r.event === "aborted")).toHaveLength(1)
+      expect(reports.filter((r) => r.id === "task-1:t2" && r.event === "aborted")).toHaveLength(1)
 
       // Once clean and pushed, closeWorktree removes the worktree
       dirtyWorktree = false
@@ -346,16 +348,19 @@ describe("createWorkerSupervisor", () => {
       spawned[1]!.onExit(0, null)
       expect(sup.getTask("race-1")?.status).toBe("completed")
 
-      // 3. Synchronous spawn failure marks task failed instead of leaving it permanently running
+      // 3. Synchronous spawn failure marks task failed instead of leaving it permanently running,
+      // and retry uses --session-id (not --resume) because no session was created on the failed attempt.
       throwOnSpawn = true
       const failDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Run" })
       expect(failDisp.ok).toBe(false)
       expect(sup.getTask("spawn-err")?.status).toBe("failed")
 
-      // Subsequent retry after fixing spawn succeeds (not 409)
       throwOnSpawn = false
       const retryDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Retry" })
       expect(retryDisp.ok).toBe(true)
+      expect(spawned.at(-1)?.args).toContain("--session-id")
+      expect(spawned.at(-1)?.args).not.toContain("--resume")
+      spawned.at(-1)?.onExit(0, null)
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

@@ -6143,7 +6143,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 563,
+          "lines": 574,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6159,6 +6159,8 @@
             "SpawnWorkerOpts",
             "WorkerSupervisorDeps",
             "defaultResolveRepoDir",
+            "defaultIsPidAlive",
+            "defaultKillPid",
             "defaultSpawnWorker",
             "buildWorkerEnv",
             "buildHeadlessClaudeArgs",
