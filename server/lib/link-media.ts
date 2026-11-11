@@ -78,17 +78,18 @@ export async function run(cmd: string[], deadline: number, signal?: AbortSignal)
 }
 
 /**
- * yt-dlp flags: no host config, every request (ffmpeg's too) through the guard proxy, and that ffmpeg limited to
- * http(s). --fixup never: a fixup runs ffprobe on the download, unproxied, and the bytes are the sender's.
+ * yt-dlp flags: no host config, every request through the guard proxy, native HLS downloader, and ffmpeg_i stripped
+ * of network/file protocols so yt-dlp's external ffmpeg downloader can never open nested HLS key/segment URLs directly.
+ * --fixup never: a fixup runs ffprobe on the download, unproxied, and the bytes are the sender's.
  */
-export const ytArgs = (proxy: string): string[] => ["--ignore-config", "--proxy", proxy, "--fixup", "never", "--downloader-args", "ffmpeg_i:-protocol_whitelist http,https,tcp,tls,crypto,httpproxy", "--no-warnings", "--no-playlist", "--no-progress", "--socket-timeout", "20"]
+export const ytArgs = (proxy: string): string[] => ["--ignore-config", "--proxy", proxy, "--fixup", "never", "--hls-prefer-native", "--downloader-args", "ffmpeg_i:-protocol_whitelist crypto", "--no-warnings", "--no-playlist", "--no-progress", "--socket-timeout", "20"]
 // ffmpeg picks a demuxer from the file's content and name, and both come from the sender: a playlist saved as
 // video.* would make the local ffmpeg open its segments directly, past the guard proxy. Plain containers from disk only.
 export const LOCAL_INPUT = ["-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,mpegts"]
-// Only formats fetched over http(s)/HLS/DASH: ffmpeg would open rtmp:// and
-// friends directly, past the guard proxy.
-const SAFE_PROTOCOL_RE = /^(https?|m3u8(_native)?|http_dash_segments)$/
-const SAFE_PROTOCOL = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']"
+// Only formats fetched by yt-dlp's Python downloaders over http(s)/native-HLS/DASH through the guard proxy
+// (never legacy 'm3u8' or rtmp:// which invoke ffmpeg directly on remote URLs).
+const SAFE_PROTOCOL_RE = /^(https?|m3u8_native|http_dash_segments)$/
+const SAFE_PROTOCOL = "[protocol~='^(https?|m3u8_native|http_dash_segments)$']"
 export const VIDEO_FORMAT = ["bv*[width<=?1080]", "b[width<=?1080]", "bv*", "b"].map((f) => f + SAFE_PROTOCOL).join("/")
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
 
@@ -195,11 +196,10 @@ async function download(url: string, info: Info, dir: string, deadline: number):
   if (info.videoUrl) {
     await saveCapped(await safeFetch(info.videoUrl, { headers: { "User-Agent": UA }, signal: until(deadline) }), join(dir, "video.mp4"), MAX_VIDEO_BYTES)
   } else {
-    const long = (info.meta.duration ?? 0) > MAX_SECONDS ? ["--download-sections", `*0-${MAX_SECONDS}`] : []
     const abort = new AbortController()
     const proxy = await startGuardProxy(vetHost, { maxBytes: MAX_VIDEO_BYTES, onExceed: () => abort.abort() })
     try {
-      const r = await run([YTDLP, ...ytArgs(proxy.url), "-f", VIDEO_FORMAT, "--max-filesize", "200M", ...long, "-o", join(dir, "video.%(ext)s"), url], deadline, abort.signal)
+      const r = await run([YTDLP, ...ytArgs(proxy.url), "-f", VIDEO_FORMAT, "--max-filesize", "200M", "-o", join(dir, "video.%(ext)s"), url], deadline, abort.signal)
       if (proxy.exceeded()) throw new MediaError(413, "video over 200 MB (not downloaded)")
       if (r.code !== 0) throw new MediaError(502, `download failed: ${r.stderr.trim().split("\n").pop()?.slice(0, 300)}`)
     } finally {

@@ -11,11 +11,12 @@ describe("bin/media pipeline", () => {
     expect(a.slice(a.indexOf("--proxy"), a.indexOf("--proxy") + 2)).toEqual(["--proxy", "http://127.0.0.1:9"])
   })
 
-  test("yt-dlp never runs ffprobe on the download, and its ffmpeg speaks http(s) only", () => {
+  test("yt-dlp never runs ffprobe on the download, uses native HLS, and blocks ffmpeg_i network protocols", () => {
     const a = ytArgs("http://127.0.0.1:1")
     expect(a[a.indexOf("--fixup") + 1]).toBe("never")
-    expect(a[a.indexOf("--downloader-args") + 1]).toStartWith("ffmpeg_i:-protocol_whitelist http,https,")
-    expect(a.join(" ")).not.toMatch(/whitelist \S*(file|rtmp)/)
+    expect(a).toContain("--hls-prefer-native")
+    expect(a[a.indexOf("--downloader-args") + 1]).toBe("ffmpeg_i:-protocol_whitelist crypto")
+    expect(a.join(" ")).not.toMatch(/whitelist \S*(file|rtmp|http|tcp|tls)/)
   })
 
   test.skipIf(!Bun.which("ffprobe"))("the local ffmpeg refuses a playlist saved as video.*", async () => {
@@ -28,8 +29,8 @@ describe("bin/media pipeline", () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  test("every video format alternative is limited to proxied protocols (no rtmp)", () => {
-    for (const alt of VIDEO_FORMAT.split("/")) expect(alt).toEndWith("[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']")
+  test("every video format alternative is limited to native proxied protocols (no ffmpeg m3u8 or rtmp)", () => {
+    for (const alt of VIDEO_FORMAT.split("/")) expect(alt).toEndWith("[protocol~='^(https?|m3u8_native|http_dash_segments)$']")
   })
 
   test("a hung step fails with 504 at the deadline instead of hanging the job", async () => {
@@ -72,9 +73,10 @@ describe("bin/media pipeline", () => {
     expect(imageTitle(new URL("https://8.8.8.8/"))).toBeNull()
   })
 
-  test("isSafeMediaInfo accepts http(s)/HLS/DASH and rejects rtmp/file/non-http URLs", () => {
+  test("isSafeMediaInfo accepts http(s)/native-HLS/DASH and rejects ffmpeg-m3u8/rtmp/file/non-http URLs", () => {
     expect(isSafeMediaInfo({ url: "https://cdn.example.com/v.mp4", protocol: "https" })).toBe(true)
     expect(isSafeMediaInfo({ formats: [{ url: "https://cdn.example.com/master.m3u8", protocol: "m3u8_native" }] })).toBe(true)
+    expect(isSafeMediaInfo({ formats: [{ url: "https://cdn.example.com/master.m3u8", protocol: "m3u8" }] })).toBe(false)
     expect(isSafeMediaInfo({ url: "rtmp://live.example.com/app/stream", protocol: "rtmp" })).toBe(false)
     expect(isSafeMediaInfo({ url: "file:///etc/passwd" })).toBe(false)
     expect(isSafeMediaInfo({ formats: [{ url: "rtmp://live.example.com/s", protocol: "rtmp" }] })).toBe(false)
