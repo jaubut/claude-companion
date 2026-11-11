@@ -1,6 +1,7 @@
 import { checkBearer, unauthorized } from "../lib/auth"
 import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, brainText, leadSlug } from "../lib/brain"
 import { latestRows, rowsSince } from "../lib/brain-trace"
+import { analyseLink } from "../lib/link-media"
 import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
@@ -30,6 +31,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/pr-update-branch    → bin/pr-update-branch: {repo, pr, reason} → {ok, updated, url, head} (stale dispatch/* PRs only)
 //   POST /hooks/brain/task-cancel         → bin/task-cancel: {task, reason} → {ok, cancelled, from, pr?, prState?, note?} (queued, blocked, failed tasks the brain proposed)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
+//   POST /hooks/brain/media               → bin/media: {url} → {ok, kind, meta, palette, transcript, frames, contactSheet} | {ok:false, error, reason}
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
@@ -67,6 +69,8 @@ export interface BrainRouteDeps {
   deploy?: ((repo: string) => Promise<DeployResult>) | null
   /** bin/lead (default: the real one). */
   lead?: BrainLead
+  /** bin/media (default: the real fetch + analyse, lib/link-media.ts). */
+  media?: typeof analyseLink
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -241,6 +245,20 @@ async function deploy(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out, { status })
 }
 
+const URL_MAX = 2_000
+
+/** bin/media: lib/link-media.ts re-vets the URL (http(s), public host) and does the work. */
+async function media(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const url = str(body.url, URL_MAX)
+  if (!url) return Response.json({ ok: false, error: "bad_url", reason: "url required" }, { status: 400 })
+  const out = await (deps.media ?? analyseLink)(url)
+  return Response.json(out.body, { status: out.status })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -293,6 +311,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return deploy(req, deps)
+    }
+    if (p === "/hooks/brain/media") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return media(req, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()

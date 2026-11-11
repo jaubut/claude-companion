@@ -570,6 +570,32 @@ describe("POST /hooks/brain/pr-update-branch", () => {
   })
 })
 
+describe("POST /hooks/brain/media", () => {
+  test("brain auth, then input checks; only a valid call reaches the media job", async () => {
+    const seen: string[] = []
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      media: async (url) => { seen.push(url); return { status: 400, body: { ok: false, error: "bad_url", reason: "private or loopback host refused" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+      const req = new Request("http://localhost:4245/hooks/brain/media", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { url: "http://127.0.0.1:4245/" }
+    expect((await post(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    expect((await post(ok, {})).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-task-id": "worker" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post({})).status).toBe(400)
+    expect(seen).toEqual([])
+    const r = await post(ok)
+    expect([r.status, r.json.ok, r.json.reason]).toEqual([400, false, "private or loopback host refused"])
+    expect(seen).toEqual([ok.url])
+  })
+})
+
 describe("POST /hooks/brain/deploy", () => {
   const post = (h: ReturnType<typeof route.createBrainRoute>) => async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
     const req = new Request("http://localhost:4245/hooks/brain/deploy", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
