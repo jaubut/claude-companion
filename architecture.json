@@ -2664,7 +2664,7 @@
         },
         {
           "path": "lib/link-media.ts",
-          "lines": 394,
+          "lines": 445,
           "kind": "lib",
           "exports": [
             "LinkMediaMeta",
@@ -2678,6 +2678,8 @@
             "isSafeMediaInfo",
             "jsonOrNull",
             "vttText",
+            "readCappedUtf8",
+            "pickCaptionUrl",
             "asImage",
             "imageTitle",
             "BuildOptions",
