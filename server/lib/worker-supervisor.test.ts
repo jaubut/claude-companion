@@ -361,6 +361,92 @@ describe("createWorkerSupervisor", () => {
       expect(spawned.at(-1)?.args).toContain("--session-id")
       expect(spawned.at(-1)?.args).not.toContain("--resume")
       spawned.at(-1)?.onExit(0, null)
+
+      // 4. Worktree paths for (repo="foo-bar", task="baz") and (repo="foo", task="bar-baz") do not collide
+      mkdirSync(join(home, "foo-bar", ".git"), { recursive: true })
+      mkdirSync(join(home, "foo", ".git"), { recursive: true })
+      const w1 = await sup.dispatchTask({ taskId: "baz", repo: "foo-bar", prompt: "A" })
+      const w2 = await sup.dispatchTask({ taskId: "bar-baz", repo: "foo", prompt: "B" })
+      expect(w1.ok).toBe(true)
+      expect(w2.ok).toBe(true)
+      if (w1.ok && w2.ok) {
+        expect(w1.task.worktree).not.toBe(w2.task.worktree)
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("persists sessionStarted on stream events, blocks cleanup while process group lives, and checks pidIdentity on restart", async () => {
+    const home = join(tmpdir(), `worker-sup-pgid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    const repoDir = join(home, "claude-companion")
+    mkdirSync(join(repoDir, ".git"), { recursive: true })
+
+    const spawned: SpawnWorkerOpts[] = []
+    const killedPids: Array<{ pid: number; sig: NodeJS.Signals }> = []
+    let groupAlive = true
+    let currentPidIdentity = "boot1:7777:100"
+
+    const makeSup = () =>
+      createWorkerSupervisor({
+        host: "zettlab",
+        home,
+        killGraceMs: 50,
+        now: () => 1700000000000,
+        uuid: () => "bbbb1111-2222-4333-8444-555555555555",
+        trust: () => {},
+        reportJob: () => {},
+        isPidAlive: (pid) => pid === 7777 && groupAlive,
+        killPid: (pid, sig) => { killedPids.push({ pid, sig }) },
+        getPidIdentity: () => currentPidIdentity,
+        sh: async (_cmd, args) => {
+          if (args.includes("worktree") && args.includes("add")) {
+            const wtPath = args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!
+            mkdirSync(wtPath, { recursive: true })
+          }
+          return { ok: true, out: "origin/main\n", err: "", code: 0 }
+        },
+        spawnWorker(opts) {
+          spawned.push(opts)
+          return { pid: 7777, kill(sig) { killedPids.push({ pid: 7777, sig }) } }
+        },
+      })
+
+    try {
+      const sup1 = makeSup()
+      const d1 = await sup1.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Turn 1" })
+      expect(d1.ok).toBe(true)
+
+      // Emit session_id on stdout (persists sessionStarted = true immediately before turn exit)
+      spawned[0]!.onStdoutLine(JSON.stringify({ type: "system", subtype: "init", session_id: "sid-live" }))
+
+      // Simulate server restart while PID 7777 is now a DIFFERENT unrelated process (PID reuse)
+      currentPidIdentity = "boot1:7777:999-unrelated"
+      killedPids.length = 0
+      const supReusedPid = makeSup()
+      // Unrelated process with reused PID 7777 must NOT be signaled on startup
+      expect(killedPids).toHaveLength(0)
+
+      // Resume after mid-turn restart uses --resume sid-live because sessionStarted was persisted on stdout
+      groupAlive = false
+      const d2 = await supReusedPid.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Resume turn" })
+      expect(d2.ok).toBe(true)
+      expect(spawned[1]!.args).toContain("--resume")
+      expect(spawned[1]!.args).toContain("sid-live")
+
+      // Leader exits (`onExit`), but a descendant in process group 7777 remains alive (`groupAlive = true`)
+      groupAlive = true
+      spawned[1]!.onExit(0, null)
+
+      // Cleanup / redispatch is blocked while the process group is still alive
+      const intWhileGroupAlive = await supReusedPid.interruptTask("pg-1", { closeWorktree: true })
+      expect(intWhileGroupAlive.ok).toBe(true)
+      if (intWhileGroupAlive.ok) {
+        expect(intWhileGroupAlive.worktreeRemoved).toBe(false)
+        expect(intWhileGroupAlive.note).toContain("not exited")
+      }
+      const dispWhileGroupAlive = await supReusedPid.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Blocked" })
+      expect(dispWhileGroupAlive).toEqual({ ok: false, status: 409, error: "task_already_running" })
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

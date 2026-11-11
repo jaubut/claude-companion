@@ -1,28 +1,22 @@
-import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { spawn, spawnSync } from "node:child_process"
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
 import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
 
-// Inverted MCP Worker Supervisor (BKM-Q24R Phase 3):
-// Supervises headless `claude -p --output-format stream-json --verbose` builder
-// subprocesses in isolated per-task git worktrees (`~/apps/wt/<repo>-<taskId>`
-// on branch `dispatch/<taskId>`), replacing `herdr`/`tmux` pane scraping.
+// Inverted MCP Worker Supervisor (BKM-Q24R Phase 3): headless `claude -p --output-format stream-json --verbose`
+// builder supervisor in isolated worktrees (`~/apps/wt/<repo>/<taskId>` on branch `dispatch/<taskId>`).
 
 export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
 export const SAFE_IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 export const ALLOWED_MODES = new Set(["acceptEdits", "auto", "default", "dontAsk", "plan"])
 const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/
-const PROMPT_MAX = 100_000
-const DEFAULT_TIMEOUT_S = 3600
-const MAX_WAIT_MS = 120_000
-const DEFAULT_WAIT_MS = 30_000
+const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
 
 export type WorkerTaskStatus = "running" | "completed" | "failed" | "interrupted"
-
 export interface StreamJsonEvent {
   sessionId?: string; step?: string; assistantText?: string; resultText?: string; isError?: boolean; prUrl?: string; done?: boolean
 }
@@ -31,12 +25,10 @@ function shortCmd(raw: unknown): string {
   const s = redactSecrets(typeof raw === "string" ? raw : "").replace(/\s+/g, " ").trim()
   return s ? `Running ${s.length > 60 ? `${s.slice(0, 59)}…` : s}` : "Running command"
 }
-
 function shortPath(raw: unknown, prefix: string): string {
   const base = typeof raw === "string" && raw.trim() ? basename(raw.trim()) : ""
   return base ? `${prefix} ${base}` : prefix
 }
-
 function toolStep(name: string, input: Record<string, unknown>): string {
   if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit") return shortPath(input.file_path ?? input.path, "Editing")
   if (name === "Read") return shortPath(input.file_path ?? input.path, "Reading")
@@ -116,23 +108,20 @@ export interface SpawnWorkerOpts {
 export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
-  isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void
+  isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
 }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
   if (!REPO_NAME_RE.test(repo)) return null
-  const candidates = [
-    repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "",
-    join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo),
-  ].filter(Boolean)
+  const candidates = [repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "", join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo)].filter(Boolean)
   for (const c of candidates) if (existsSync(join(c, ".git"))) return c
   return null
 }
 
 export function defaultIsPidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 1) return false
-  try { process.kill(-pid, 0); return true } catch (e) { if ((e as NodeJS.ErrnoException).code === "EPERM") return true }
-  try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM" }
+  try { process.kill(-pid, 0); return true } catch { /* check leader */ }
+  try { process.kill(pid, 0); return true } catch { return false }
 }
 
 export function defaultKillPid(pid: number, sig: NodeJS.Signals): void {
@@ -140,20 +129,31 @@ export function defaultKillPid(pid: number, sig: NodeJS.Signals): void {
   try { process.kill(-pid, sig) } catch { try { process.kill(pid, sig) } catch { /* gone */ } }
 }
 
+export function defaultGetPidIdentity(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 1) return null
+  try {
+    if (existsSync(`/proc/${pid}/stat`)) {
+      const bootId = existsSync("/proc/sys/kernel/random/boot_id") ? readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() : "linux"
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+      const rparen = stat.lastIndexOf(")")
+      const startTime = rparen > 0 ? stat.slice(rparen + 2).trim().split(/\s+/)[19] ?? "" : ""
+      if (startTime) return `${bootId}:${pid}:${startTime}`
+    }
+    const ps = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", timeout: 1_000 })
+    const out = (ps.stdout ?? "").trim()
+    return ps.status === 0 && out ? `ps:${pid}:${out}` : null
+  } catch { return null }
+}
+
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
   const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], detached: true })
-  let outBuf = ""
-  let errBuf = ""
+  let outBuf = "", errBuf = ""
   child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-    outBuf += chunk
-    const lines = outBuf.split("\n")
-    outBuf = lines.pop() ?? ""
+    outBuf += chunk; const lines = outBuf.split("\n"); outBuf = lines.pop() ?? ""
     for (const l of lines) if (l.trim()) opts.onStdoutLine(l)
   })
   child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-    errBuf += chunk
-    const lines = errBuf.split("\n")
-    errBuf = lines.pop() ?? ""
+    errBuf += chunk; const lines = errBuf.split("\n"); errBuf = lines.pop() ?? ""
     for (const l of lines) if (l.trim()) opts.onStderrLine(l)
   })
   child.on("error", (err) => { opts.onStderrLine(err.message); opts.onExit(1, null) })
@@ -162,22 +162,15 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
     if (errBuf.trim()) opts.onStderrLine(errBuf)
     opts.onExit(code, sig)
   })
-  return {
-    pid: child.pid ?? 0,
-    kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) },
-  }
+  return { pid: child.pid ?? 0, kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) } }
 }
 
 /** Remove Companion control-plane bearer tokens from the worker's environment so a worker cannot invoke `/api/mcp/workers`. */
 export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
-  delete env.COMPANION_AUTH_TOKEN
-  delete env.COMPANION_TOKEN
+  delete env.COMPANION_AUTH_TOKEN; delete env.COMPANION_TOKEN
   for (const key of Object.keys(env)) if (/^COMPANION_(AUTH_|PEER_|TOKEN)/i.test(key)) delete env[key]
-  env.DISPATCH_TASK_ID = taskId
-  env.DISPATCH_WORKER = "1"
-  env.DISPATCH_HEADLESS = "1"
-  env.COMPANION_TASK_ID = builder
+  env.DISPATCH_TASK_ID = taskId; env.DISPATCH_WORKER = "1"; env.DISPATCH_HEADLESS = "1"; env.COMPANION_TASK_ID = builder
   return env
 }
 
@@ -191,32 +184,35 @@ export function buildHeadlessClaudeArgs(opts: { prompt: string; sessionId: strin
 }
 
 interface PersistedTaskRecord extends SupervisedTaskSnapshot {
-  repoDir: string; pid?: number | null; sessionStarted?: boolean
+  repoDir: string; pid?: number | null; pidIdentity?: string | null; sessionStarted?: boolean
 }
-
 interface InternalTask extends PersistedTaskRecord {
-  pid: number | null; sessionStarted: boolean; activeTurn: number; jobId: string; turnReportedTerminal: boolean
+  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean
+  activeTurn: number; jobId: string; turnReportedTerminal: boolean
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
   waiters: Set<() => void>; stderrTail: string[]
 }
-
 function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
   const { taskId, repo, title, builder, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt } = t
   return { taskId, repo, title, builder, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt }
 }
-
 function waitMsPromise(ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => { const tm = setTimeout(() => resolve(false), ms); tm.unref?.() })
+}
+function sameRealPath(a: string, b: string): boolean {
+  try { return realpathSync(a) === realpathSync(b) } catch { return a === b }
 }
 
 export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const tasks = new Map<string, InternalTask>()
   const inFlightDispatches = new Set<string>()
+  const inFlightWorktrees = new Set<string>()
   const resolveRepo = deps.resolveRepoDir ?? defaultResolveRepoDir
   const spawnWorker = deps.spawnWorker ?? defaultSpawnWorker
   const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
   const killPid = deps.killPid ?? defaultKillPid
+  const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
   const stateFile = deps.stateFile ?? join(deps.home, ".claude", "state", "companion-worker-tasks.json")
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
 
@@ -224,7 +220,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     try {
       mkdirSync(dirname(stateFile), { recursive: true })
       const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({
-        ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, sessionStarted: t.sessionStarted,
+        ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted,
       }))
       const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
       writeFileSync(tmp, JSON.stringify(records))
@@ -247,10 +243,16 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const wasRunning = r.status === "running"
       const turnCount = typeof r.turnCount === "number" && r.turnCount > 0 ? Math.floor(r.turnCount) : 1
       const rawPid = typeof r.pid === "number" && Number.isInteger(r.pid) && r.pid > 1 ? r.pid : null
+      const savedIdentity = typeof r.pidIdentity === "string" && r.pidIdentity ? r.pidIdentity : null
       let survivingPid: number | null = null
-      if (rawPid !== null && isPidAlive(rawPid)) {
-        killPid(rawPid, "SIGTERM")
-        if (isPidAlive(rawPid)) survivingPid = rawPid
+      let survivingIdentity: string | null = null
+      if (rawPid !== null) {
+        // Verify process identity (boot_id + start time) before signaling so a reused PID after restart/reboot is never killed.
+        const currentIdentity = getPidIdentity(rawPid)
+        if (savedIdentity && currentIdentity === savedIdentity && isPidAlive(rawPid)) {
+          killPid(rawPid, "SIGTERM")
+          if (isPidAlive(rawPid)) { survivingPid = rawPid; survivingIdentity = savedIdentity }
+        }
         dirty = true
       }
       if (wasRunning) dirty = true
@@ -270,7 +272,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         startedAt: typeof r.startedAt === "number" ? r.startedAt : now,
         updatedAt: wasRunning ? now : (typeof r.updatedAt === "number" ? r.updatedAt : now),
         completedAt: wasRunning ? now : (typeof r.completedAt === "number" ? r.completedAt : null),
-        pid: survivingPid,
+        pid: survivingPid, pidIdentity: survivingIdentity, reloadedFromDisk: survivingPid !== null,
         sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
@@ -287,6 +289,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!exited || t.handle !== null || t.exitPromise !== null) return false
     }
     if (t.pid !== null) {
+      if (t.reloadedFromDisk) {
+        const curId = getPidIdentity(t.pid)
+        if (!t.pidIdentity || curId !== t.pidIdentity) {
+          t.pid = null; t.pidIdentity = null; t.reloadedFromDisk = false; savePersistedTasks()
+          return true
+        }
+      }
       if (isPidAlive(t.pid)) {
         killPid(t.pid, "SIGTERM")
         const deadline = Date.now() + killGraceMs
@@ -294,8 +303,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         if (isPidAlive(t.pid)) { killPid(t.pid, "SIGKILL"); await waitMsPromise(100) }
         if (isPidAlive(t.pid)) return false
       }
-      t.pid = null
-      savePersistedTasks()
+      t.pid = null; t.pidIdentity = null; t.reloadedFromDisk = false; savePersistedTasks()
     }
     return true
   }
@@ -309,11 +317,27 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
   }
 
-  async function ensureWorktree(repoDir: string, repoSlug: string, taskId: string): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
-    const wtRoot = join(deps.home, "apps", "wt")
-    const worktree = join(wtRoot, `${repoSlug}-${taskId}`)
+  async function ensureWorktree(repoDir: string, repo: string, taskId: string, ownedByTask: boolean): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
+    const wtRoot = join(deps.home, "apps", "wt", repo)
+    const worktree = join(wtRoot, taskId)
     const branch = `dispatch/${taskId}`
-    if (existsSync(worktree)) return { ok: true, worktree, branch }
+    for (const other of tasks.values()) {
+      if ((other.taskId !== taskId || other.repo !== repo) && other.worktree.toLowerCase() === worktree.toLowerCase()) {
+        return { ok: false, error: `worktree collision with ${other.repo}/${other.taskId}` }
+      }
+    }
+    if (existsSync(worktree)) {
+      if (!ownedByTask && !existsSync(join(worktree, ".git"))) return { ok: false, error: "worktree path already exists and is not a git worktree" }
+      const common = await deps.sh("git", ["-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: worktree, timeoutMs: 10_000 })
+      if (!common.ok) return { ok: false, error: "existing worktree is not a valid git repository" }
+      const commonOut = common.out.trim()
+      if (commonOut.startsWith("/") && !sameRealPath(commonOut, join(repoDir, ".git"))) return { ok: false, error: "existing worktree belongs to a different repository" }
+      const curBranch = await deps.sh("git", ["-C", worktree, "symbolic-ref", "-q", "--short", "HEAD"], { cwd: worktree, timeoutMs: 10_000 })
+      if (!curBranch.ok) return { ok: false, error: "existing worktree is not on a branch" }
+      const bOut = curBranch.out.trim()
+      if (bOut && bOut !== "origin/main" && bOut !== branch) return { ok: false, error: `existing worktree branch mismatch: ${bOut}` }
+      return { ok: true, worktree, branch }
+    }
     mkdirSync(wtRoot, { recursive: true })
     const sym = await deps.sh("git", ["-C", repoDir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], { cwd: repoDir, timeoutMs: 15_000 })
     const baseRef = sym.ok && sym.out.trim() ? sym.out.trim() : "origin/main"
@@ -344,17 +368,19 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
       const existing = tasks.get(taskId)
       if (existing && existing.repo !== repo) return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
-      if (inFlightDispatches.has(taskId) || (existing && existing.status === "running")) return { ok: false, status: 409, error: "task_already_running" }
+      const wtKey = (existing?.worktree ?? join(deps.home, "apps", "wt", repo, taskId)).toLowerCase()
+      if (inFlightDispatches.has(taskId) || inFlightWorktrees.has(wtKey) || (existing && existing.status === "running")) {
+        return { ok: false, status: 409, error: "task_already_running" }
+      }
 
-      // Reserve the taskId synchronously BEFORE any await so concurrent dispatches cannot race setup.
-      inFlightDispatches.add(taskId)
+      // Reserve the taskId and worktree synchronously BEFORE any await so concurrent dispatches cannot race setup.
+      inFlightDispatches.add(taskId); inFlightWorktrees.add(wtKey)
       try {
         if (existing && !(await reconcileSurvivingProcess(existing))) return { ok: false, status: 409, error: "task_already_running" }
         const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
-        const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
-        const wt = await ensureWorktree(repoDir, repoSlug, taskId)
+        const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
 
@@ -362,6 +388,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const resume = !!existing && existing.sessionStarted
         const sessionId = existing?.sessionId ?? deps.uuid()
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
+        const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
         const myTurn = (existing?.turnCount ?? 0) + 1
         // Use `:` separator on turn 2+ (`:` is forbidden in TASK_ID_RE so it can never collide with another taskId).
@@ -371,7 +398,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           taskId, repo, repoDir, title, builder, branch: wt.branch, worktree: wt.worktree, sessionId,
           status: "running", turnCount: 0, step: "Starting headless builder", pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
-          pid: null, sessionStarted: false, activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
+          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false,
+          activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
@@ -379,8 +407,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         task.title = title; task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
         task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming builder` : "Starting headless builder"
         task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []
-        tasks.set(taskId, task)
-        savePersistedTasks()
+        tasks.set(taskId, task); savePersistedTasks()
 
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
 
@@ -393,42 +420,36 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         let handle: SpawnedWorkerHandle
         try {
           handle = spawnWorker({
-            cmd: "claude",
-            args,
-            cwd: task.worktree,
-            env: buildWorkerEnv(process.env, taskId, task.builder),
+            cmd: "claude", args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder),
             onStdoutLine(line) {
               if (settled || task.activeTurn !== myTurn) return
               const ev = parseStreamJsonLine(line)
               if (!ev) return
               task.updatedAt = deps.now()
+              const prevSid = task.sessionId; const prevStarted = task.sessionStarted
               if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
               if (ev.assistantText) { task.result = ev.assistantText; task.sessionStarted = true }
               if (ev.resultText) { task.result = ev.resultText; task.sessionStarted = true }
               if (ev.step) {
-                task.sessionStarted = true
-                task.step = ev.step
+                task.sessionStarted = true; task.step = ev.step
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
                 deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
               }
               if (ev.done && ev.isError) task.error = (ev.resultText || "builder turn reported an error").slice(0, 400)
+              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid) savePersistedTasks()
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return
               const clean = redactSecrets(line.trim()).slice(0, 300)
-              if (clean) {
-                task.stderrTail.push(clean)
-                if (task.stderrTail.length > 10) task.stderrTail.shift()
-              }
+              if (clean) { task.stderrTail.push(clean); if (task.stderrTail.length > 10) task.stderrTail.shift() }
             },
             onExit(code, sig) {
               if (settled) return
-              settled = true
-              resolveExit()
+              settled = true; resolveExit()
               if (task.activeTurn !== myTurn) return
-              clearTimers(task)
-              task.handle = null; task.exitPromise = null; task.pid = null
+              clearTimers(task); task.handle = null; task.exitPromise = null
+              if (task.pid !== null && !isPidAlive(task.pid)) { task.pid = null; task.pidIdentity = null; task.reloadedFromDisk = false }
               task.updatedAt = deps.now(); task.completedAt = task.updatedAt
               if (task.status === "interrupted") {
                 if (!task.turnReportedTerminal) {
@@ -459,7 +480,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           })
         } catch (err) {
           settled = true; resolveExit(); clearTimers(task)
-          task.handle = null; task.exitPromise = null; task.pid = null; task.status = "failed"
+          task.handle = null; task.exitPromise = null; task.pid = null; task.pidIdentity = null; task.status = "failed"
           task.error = `spawn failed: ${((err as Error)?.message ?? String(err)).slice(0, 300)}`
           task.step = `Failed: ${task.error.slice(0, 100)}`
           task.updatedAt = deps.now(); task.completedAt = task.updatedAt; task.turnReportedTerminal = true
@@ -470,7 +491,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
         if (!settled && task.activeTurn === myTurn) {
           task.handle = handle
-          task.pid = handle.pid > 0 ? handle.pid : null
+          task.pid = handle.pid > 1 ? handle.pid : null
+          task.pidIdentity = task.pid ? getPidIdentity(task.pid) : null
+          task.reloadedFromDisk = false
           savePersistedTasks()
           const timeoutMs = Math.max(1, input.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
           task.timeoutTimer = setTimeout(() => {
@@ -485,7 +508,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
         return { ok: true, task: toSnapshot(task) }
       } finally {
-        inFlightDispatches.delete(taskId)
+        inFlightDispatches.delete(taskId); inFlightWorktrees.delete(wtKey)
       }
     },
 
@@ -508,8 +531,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const id = taskId.trim()
       const t = tasks.get(id)
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
-      if (inFlightDispatches.has(id)) return { ok: false, status: 409, error: "task_dispatch_in_progress" }
-      inFlightDispatches.add(id)
+      const wtKey = t.worktree.toLowerCase()
+      if (inFlightDispatches.has(id) || inFlightWorktrees.has(wtKey)) return { ok: false, status: 409, error: "task_dispatch_in_progress" }
+      inFlightDispatches.add(id); inFlightWorktrees.add(wtKey)
       try {
         if (t.status === "running" || t.handle !== null || t.exitPromise !== null) {
           t.status = "interrupted"; t.error = "interrupted by caller"; t.step = "Interrupted"
@@ -555,7 +579,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         }
         return { ok: true, task: toSnapshot(t), worktreeRemoved, ...(note ? { note } : {}) }
       } finally {
-        inFlightDispatches.delete(id)
+        inFlightDispatches.delete(id); inFlightWorktrees.delete(wtKey)
       }
     },
 
