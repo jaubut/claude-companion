@@ -192,6 +192,12 @@ function firstWorkspacePath(workspaceUrisJson: string): string {
   return homedir()
 }
 
+function parseAgyTimestamp(raw: string): number {
+  if (!raw) return 0
+  const iso = raw.trim().replace(/^(\d{4}-\d{2}-\d{2})\s+/, "$1T").replace(/(\.\d{3})\d+/, "$1")
+  return Date.parse(iso) || 0
+}
+
 export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_WINDOW_MS): AgyConversationSummary[] {
   const dbPath = agySummariesDbPath(home)
   if (!existsSync(dbPath)) return []
@@ -225,7 +231,7 @@ export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_W
       const out: AgyConversationSummary[] = []
       for (const r of rows) {
         if (!r.id) continue
-        const updatedAtMs = Date.parse(r.lastModifiedTime) || 0
+        const updatedAtMs = parseAgyTimestamp(r.lastModifiedTime)
         if (updatedAtMs < cutoff) continue
         const busy = Boolean(r.notFullyIdle) || r.status === "CASCADE_RUN_STATUS_RUNNING"
         out.push({
