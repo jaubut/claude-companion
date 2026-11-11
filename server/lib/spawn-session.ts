@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from "node:fs"
 import { spawnNewSessionFlags, spawnServerFlags, spawnSocketPath, tmuxArgv } from "./tmux-pane"
-import { type Herdr, HERDR_VERSIONS_ENV, forgetHerdrAgent, herdrErrorCode, herdrOwnerFor, noteHerdrAgent, realHerdr } from "./herdr"
+import { type Herdr, HERDR_VERSIONS_ENV, closableWorkspace, forgetHerdrAgent, herdrErrorCode, herdrOwnerFor, noteHerdrAgent, realHerdr } from "./herdr"
 import { companionLog } from "./log"
 import { applyMcpChoices } from "./claude-mcp-trust"
 import { type DetachedDeps, type TmuxArgvRunner, createConfirmed, realDetachedDeps } from "./tmux-spawn-confirm"
@@ -43,6 +43,16 @@ export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${
     writeFileSync(tmp, JSON.stringify(cfg, null, 2))
     renameSync(tmp, cfgPath)
   } catch { /* best-effort — worst case the trust dialog still appears */ }
+}
+
+/** For a caller nobody can rescue from the trust dialog: did the best-effort write above land? */
+export function folderTrusted(cwd: string, cfgPath = `${process.env.HOME ?? ""}/.claude.json`): boolean {
+  try {
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as { projects?: Record<string, { hasTrustDialogAccepted?: unknown }> }
+    return cfg.projects?.[cwd]?.hasTrustDialogAccepted === true
+  } catch {
+    return false
+  }
 }
 
 export const TMUX_RETIRED = "tmux_retired"
@@ -319,7 +329,10 @@ export async function spawnInHerdr(
     // register it — the phone can answer from there.
     if (herdrErrorCode(err) !== "agent_not_ready") {
       forgetHerdrAgent(paneId)
-      if (workspaceId) await h.call(["workspace", "close", workspaceId]).catch(() => undefined)
+      // Only the workspace this create made, still alone and still ours (label,
+      // ids, no shell mark): a restore can reissue the id to someone else's.
+      const ws = await closableWorkspace(paneId, h, { name, workspaceId, terminalId }).catch(() => "")
+      if (ws) await h.call(["workspace", "close", ws]).catch(() => undefined)
       return { ok: false, app: "herdr", error: `herdr agent start: ${(err as Error).message}` }
     }
   }

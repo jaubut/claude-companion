@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { LOCAL_INPUT, VIDEO_FORMAT, asImage, beforeDeadline, imageTitle, jsonOrNull, run, ytArgs } from "./link-media"
+import { LOCAL_INPUT, VIDEO_FORMAT, asImage, beforeDeadline, build, imageTitle, isSafeMediaInfo, jsonOrNull, run, ytArgs } from "./link-media"
 
 describe("bin/media pipeline", () => {
   test("yt-dlp ignores host config and goes through the guard proxy", () => {
@@ -70,5 +70,59 @@ describe("bin/media pipeline", () => {
     expect(imageTitle(new URL("https://8.8.8.8/a%E0.jpg"))).toBe("a%E0.jpg")
     expect(imageTitle(new URL("https://8.8.8.8/caf%C3%A9.jpg"))).toBe("café.jpg")
     expect(imageTitle(new URL("https://8.8.8.8/"))).toBeNull()
+  })
+
+  test("isSafeMediaInfo accepts http(s)/HLS/DASH and rejects rtmp/file/non-http URLs", () => {
+    expect(isSafeMediaInfo({ url: "https://cdn.example.com/v.mp4", protocol: "https" })).toBe(true)
+    expect(isSafeMediaInfo({ formats: [{ url: "https://cdn.example.com/master.m3u8", protocol: "m3u8_native" }] })).toBe(true)
+    expect(isSafeMediaInfo({ url: "rtmp://live.example.com/app/stream", protocol: "rtmp" })).toBe(false)
+    expect(isSafeMediaInfo({ url: "file:///etc/passwd" })).toBe(false)
+    expect(isSafeMediaInfo({ formats: [{ url: "rtmp://live.example.com/s", protocol: "rtmp" }] })).toBe(false)
+  })
+
+  test("a timed-out attempt stages in an isolated temp dir and never clobbers a retry's cache dir", async () => {
+    const root = mkdtempSync(join(tmpdir(), "media-stage-"))
+    const dir = join(root, "cache-item")
+    const url = new URL("https://8.8.8.8/pic.jpg")
+    let firstWorkDir = ""
+    let firstSettled = false
+
+    try {
+      const first = await build(url, dir, {
+        timeoutMs: 40,
+        attempt: async (workDir) => {
+          firstWorkDir = workDir
+          await Bun.sleep(120)
+          // Late write after timeout + after the retry has already committed `dir`
+          if (existsSync(workDir)) writeFileSync(join(workDir, "image.jpg"), "stale-from-attempt-1")
+          firstSettled = true
+          return { kind: "image", frames: [join(workDir, "image.jpg")], contactSheet: null }
+        },
+      })
+      expect(first.status).toBe(504)
+      expect(existsSync(dir)).toBe(false)
+
+      // Retry starts immediately while attempt 1 is still in flight
+      const second = await build(url, dir, {
+        timeoutMs: 1_000,
+        attempt: async (workDir) => {
+          expect(workDir).not.toBe(firstWorkDir)
+          writeFileSync(join(workDir, "image.jpg"), "fresh-from-attempt-2")
+          return { kind: "image", frames: [join(workDir, "image.jpg")], contactSheet: null }
+        },
+      })
+      expect(second.status).toBe(200)
+      expect(second.body.frames).toEqual([join(dir, "image.jpg")])
+
+      // Wait for attempt 1's late background work to finish and run its cleanup
+      await Bun.sleep(120)
+      expect(firstSettled).toBe(true)
+      expect(existsSync(firstWorkDir)).toBe(false)
+      expect(readFileSync(join(dir, "image.jpg"), "utf8")).toBe("fresh-from-attempt-2")
+      expect(existsSync(join(dir, "result.json"))).toBe(true)
+      expect(readdirSync(root)).toEqual(["cache-item"])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

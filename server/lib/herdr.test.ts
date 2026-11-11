@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test"
-import { type Herdr, closeHerdrWorkspaceWhenIdle, herdrGatedKey, herdrGatedText, forgetHerdrAgent, herdrAgentFor, herdrKeyName, herdrOwnerFor, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, herdrSendKey, herdrSendText, noteHerdrAgent, silentSuccess } from "./herdr"
+import { type Herdr, SHELL_PANE_MARK, closeHerdrWorkspaceWhenIdle, herdrGatedKey, herdrGatedText, forgetHerdrAgent, herdrAgentFor, herdrKeyName, herdrOwnerFor, herdrPaneAtShell, herdrPaneOf, herdrPaneWidth, herdrScreen, herdrSendKey, herdrSendText, noteHerdrAgent, silentSuccess } from "./herdr"
 import { parseDialog } from "./dialogs"
 import { inputLine, unstyle } from "./command-menu"
 import { createDialogWatcher } from "./dialog-watch"
@@ -194,11 +194,11 @@ test("staged chunks never start with '-' (herdr send-text has no `--`)", () => {
 const AT_SHELL = { process_info: { shell_pid: 500, foreground_process_group_id: 500, foreground_processes: [{ name: "bash", pid: 500 }] } }
 const IN_CLAUDE = { process_info: { shell_pid: 500, foreground_process_group_id: 612, foreground_processes: [{ name: "claude", pid: 612 }] } }
 
-function closeHerdr(front: () => Record<string, unknown>, paneCount = 1) {
+function closeHerdr(front: () => Record<string, unknown>, paneCount = 1, label?: string) {
   return fakeHerdr({
     reply: (args) => {
       if (args[1] === "process-info") return front()
-      if (args[0] === "pane" && args[1] === "get") return { pane: { pane_id: args[2], workspace_id: "w6" } }
+      if (args[0] === "pane" && args[1] === "get") return { pane: { pane_id: args[2], workspace_id: "w6", label } }
       if (args[0] === "workspace" && args[1] === "get") return { workspace: { workspace_id: "w6", pane_count: paneCount } }
       return {}
     },
@@ -218,6 +218,12 @@ test("claude still in front: polled, closed once the shell is back (twice in a r
   const f = closeHerdr(() => (++n <= 2 ? IN_CLAUDE : AT_SHELL))
   expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, ...noSleep })).toBe("w6")
   expect(f.verbs().filter((v) => v === "pane process-info").length).toBe(4)
+})
+
+test("a phone shell's pane is never closed with its workspace", async () => {
+  const f = closeHerdr(() => AT_SHELL, 1, SHELL_PANE_MARK)
+  expect(await closeHerdrWorkspaceWhenIdle("w6:p1", { h: f.h, ...noSleep })).toBe("")
+  expect(f.verbs()).not.toContain("workspace close")
 })
 
 test("never closed while a command holds the pane, the pane is shared, or a session is back in it", async () => {

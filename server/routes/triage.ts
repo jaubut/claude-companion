@@ -59,7 +59,7 @@ async function choose(req: Request, id: string, engine: TriageEngine): Promise<R
   const idemKey = req.headers.get("idempotency-key")?.trim() || null
   if (idemKey && idemKey.length > MAX_KEY_LENGTH) return Response.json({ ok: false, error: "idempotency-key-too-long" }, { status: 400 })
   const version = typeof body.version === "string" ? body.version : null
-  const out = await engine.choose({ id, optionId, text: (body.text as string | undefined) ?? null, idemKey, version })
+  const out = await engine.choose({ id, optionId, text: (body.text as string | undefined) ?? null, idemKey, version, signal: req.signal })
   return Response.json(out.body, { status: out.status, headers: out.body.result === "replay" ? { "Idempotent-Replayed": "true" } : undefined })
 }
 

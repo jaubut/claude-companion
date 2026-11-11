@@ -11,6 +11,30 @@ import { type Socket, connect, createServer, isIP } from "node:net"
 
 export type UrlCheck = { ok: true; url: URL } | { ok: false; reason: string }
 
+export const MAX_BYTES = 200 * 1024 * 1024
+
+export interface GuardProxyOptions {
+  vet?: typeof vetHost
+  maxBytes?: number
+  onExceed?: () => void
+}
+
+export interface GuardProxy {
+  url: string
+  close(): void
+  bytes(): number
+  exceeded(): boolean
+}
+
+interface Quota {
+  maxBytes: number
+  transferred: number
+  exceeded: boolean
+  sockets: Set<Socket>
+  trip(spare?: Socket): void
+  take(n: number): boolean
+}
+
 const V4_BLOCKED: Array<[number, number]> = [
   [0x00000000, 8], [0x0a000000, 8], [0x64400000, 10], [0x7f000000, 8], [0xa9fe0000, 16],
   [0xac100000, 12], [0xc0000000, 24], [0xc0a80000, 16], [0xc6120000, 15], [0xe0000000, 3],
@@ -67,8 +91,14 @@ export async function checkUrl(raw: string): Promise<UrlCheck> {
   return { ok: true, url }
 }
 
+const TOO_LARGE = "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+
 /** One proxied connection: CONNECT host:port (https) or an absolute-form http request. */
-async function forward(client: Socket, buf: Buffer, end: number, vet: typeof vetHost): Promise<void> {
+async function forward(client: Socket, buf: Buffer, end: number, vet: typeof vetHost, quota: Quota): Promise<void> {
+  if (quota.exceeded) {
+    client.end(TOO_LARGE)
+    return
+  }
   const lines = buf.subarray(0, end).toString("latin1").split("\r\n")
   const [method, target] = lines[0]!.split(" ")
   const connectMode = method === "CONNECT"
@@ -89,20 +119,92 @@ async function forward(client: Socket, buf: Buffer, end: number, vet: typeof vet
     return
   }
   if (client.destroyed) return
+  if (quota.exceeded) {
+    client.end(TOO_LARGE)
+    return
+  }
   const upstream = connect(Number(u.port || (connectMode ? 443 : 80)), ip)
+  quota.sockets.add(upstream)
+  upstream.on("close", () => quota.sockets.delete(upstream))
   upstream.on("error", () => (upstream.readyState === "opening" ? client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") : client.destroy()))
   client.on("close", () => upstream.destroy())
   upstream.on("connect", () => {
+    if (quota.exceeded) {
+      upstream.destroy()
+      client.end(TOO_LARGE)
+      return
+    }
     if (connectMode) client.write("HTTP/1.1 200 Connection Established\r\n\r\n")
     if (first.length) upstream.write(first)
     client.pipe(upstream)
-    upstream.pipe(client)
+    let headBuf: Buffer | null = connectMode ? null : Buffer.alloc(0)
+    const writeToClient = (chunk: Buffer): void => {
+      if (!client.write(chunk)) {
+        upstream.pause()
+        client.once("drain", () => upstream.resume())
+      }
+    }
+    upstream.on("data", (chunk: Buffer) => {
+      if (headBuf !== null) {
+        headBuf = Buffer.concat([headBuf, chunk])
+        const hEnd = headBuf.indexOf("\r\n\r\n")
+        if (hEnd < 0) {
+          if (headBuf.length > 65_536) { upstream.destroy(); client.destroy() }
+          return
+        }
+        const rawHead = headBuf.subarray(0, hEnd + 4)
+        const body = headBuf.subarray(hEnd + 4)
+        headBuf = null
+        const cl = rawHead.toString("latin1").match(/\r\ncontent-length:\s*(\d+)/i)
+        const declared = cl ? Number(cl[1]) : 0
+        if ((declared > 0 && quota.transferred + declared > quota.maxBytes) || !quota.take(body.length)) {
+          quota.trip(client)
+          client.end(TOO_LARGE)
+          return
+        }
+        writeToClient(body.length ? Buffer.concat([rawHead, body]) : rawHead)
+        return
+      }
+      if (quota.take(chunk.length)) writeToClient(chunk)
+    })
+    upstream.on("end", () => client.end())
+    upstream.on("close", () => { if (!client.writableEnded) client.destroy() })
   })
 }
 
-/** Start a loopback HTTP proxy that only reaches hosts `vet` passes, pinned to the vetted IP. */
-export function startGuardProxy(vet: typeof vetHost = vetHost): Promise<{ url: string; close(): void }> {
+/** Start a loopback HTTP proxy that only reaches hosts `vet` passes, pinned to the vetted IP, with a cumulative `maxBytes` quota. */
+export function startGuardProxy(vetOrOpts: typeof vetHost | GuardProxyOptions = vetHost, maybeOpts: GuardProxyOptions | number = {}): Promise<GuardProxy> {
+  const opts: GuardProxyOptions = typeof vetOrOpts === "function"
+    ? (typeof maybeOpts === "number" ? { vet: vetOrOpts, maxBytes: maybeOpts } : { ...maybeOpts, vet: vetOrOpts })
+    : vetOrOpts
+  const vet = opts.vet ?? vetHost
+  const quota: Quota = {
+    maxBytes: opts.maxBytes ?? MAX_BYTES,
+    transferred: 0,
+    exceeded: false,
+    sockets: new Set<Socket>(),
+    trip(spare?: Socket) {
+      if (this.exceeded) return
+      this.exceeded = true
+      opts.onExceed?.()
+      for (const s of this.sockets) {
+        if (s !== spare) s.destroy()
+      }
+      this.sockets.clear()
+    },
+    take(n: number) {
+      if (this.exceeded) return false
+      this.transferred += n
+      if (this.transferred > this.maxBytes) {
+        this.trip()
+        return false
+      }
+      return true
+    },
+  }
   const server = createServer((client) => {
+    quota.sockets.add(client)
+    client.on("close", () => quota.sockets.delete(client))
     client.on("error", () => client.destroy())
     let buf = Buffer.alloc(0)
     const onData = (chunk: Buffer): void => {
@@ -114,7 +216,7 @@ export function startGuardProxy(vet: typeof vetHost = vetHost): Promise<{ url: s
       }
       client.off("data", onData)
       client.pause()
-      forward(client, buf, end, vet).catch(() => client.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+      forward(client, buf, end, vet, quota).catch(() => client.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
     }
     client.on("data", onData)
   })
@@ -123,7 +225,16 @@ export function startGuardProxy(vet: typeof vetHost = vetHost): Promise<{ url: s
     server.once("error", reject)
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address()
-      resolve({ url: `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`, close: () => server.close() })
+      resolve({
+        url: `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`,
+        close: () => {
+          for (const s of quota.sockets) s.destroy()
+          quota.sockets.clear()
+          server.close()
+        },
+        bytes: () => quota.transferred,
+        exceeded: () => quota.exceeded,
+      })
     })
   })
 }
@@ -131,7 +242,7 @@ export function startGuardProxy(vet: typeof vetHost = vetHost): Promise<{ url: s
 let shared: Promise<string> | null = null
 /** The process-wide guard proxy URL (started on first use). */
 export function guardProxy(): Promise<string> {
-  shared ??= startGuardProxy().then((p) => p.url)
+  shared ??= startGuardProxy(vetHost, { maxBytes: Infinity }).then((p) => p.url)
   return shared
 }
 

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import sharp from "sharp"
-import { checkUrl, guardProxy, safeFetch } from "./link-media-guard"
+import { MAX_BYTES, checkUrl, guardProxy, safeFetch, startGuardProxy, vetHost } from "./link-media-guard"
 import { type Swatch, palette } from "./link-media-palette"
 import { companionLog } from "./log"
 
@@ -19,7 +19,7 @@ import { companionLog } from "./log"
 
 const ROOT = process.env.COMPANION_LINK_MEDIA_DIR ?? join(homedir(), ".cache", "companion", "media")
 const TIMEOUT_MS = 120_000
-const MAX_VIDEO_BYTES = 200 * 1024 * 1024
+const MAX_VIDEO_BYTES = MAX_BYTES
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024
 const MAX_SECONDS = 600
 const FRAMES = 10
@@ -55,21 +55,25 @@ export function beforeDeadline<T>(p: Promise<T>, deadline: number): Promise<T> {
   return Promise.race([p, late]).finally(() => clearTimeout(timer))
 }
 
-/** Run a command in its own process group; at the deadline the whole group (yt-dlp's ffmpeg too) is killed. */
-export async function run(cmd: string[], deadline: number): Promise<RunResult> {
+/** Run a command in its own process group; at the deadline (or abort signal) the whole group (yt-dlp's ffmpeg too) is killed. */
+export async function run(cmd: string[], deadline: number, signal?: AbortSignal): Promise<RunResult> {
   const left = deadline - Date.now()
   if (left <= 0) throw new MediaError(504, "timed out")
   const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true, env: { ...process.env, NO_PROXY: "", no_proxy: "" } })
-  const timer = setTimeout(() => {
+  const killGroup = (): void => {
     try {
       process.kill(-proc.pid, "SIGKILL")
     } catch {
       proc.kill("SIGKILL")
     }
-  }, left)
+  }
+  const timer = setTimeout(killGroup, left)
+  if (signal?.aborted) killGroup()
+  else signal?.addEventListener("abort", killGroup, { once: true })
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
   clearTimeout(timer)
-  if (Date.now() >= deadline) throw new MediaError(504, "timed out")
+  signal?.removeEventListener("abort", killGroup)
+  if (Date.now() >= deadline && !signal?.aborted) throw new MediaError(504, "timed out")
   return { code, stdout, stderr }
 }
 
@@ -83,9 +87,27 @@ export const ytArgs = (proxy: string): string[] => ["--ignore-config", "--proxy"
 export const LOCAL_INPUT = ["-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,mpegts"]
 // Only formats fetched over http(s)/HLS/DASH: ffmpeg would open rtmp:// and
 // friends directly, past the guard proxy.
+const SAFE_PROTOCOL_RE = /^(https?|m3u8(_native)?|http_dash_segments)$/
 const SAFE_PROTOCOL = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']"
 export const VIDEO_FORMAT = ["bv*[width<=?1080]", "b[width<=?1080]", "bv*", "b"].map((f) => f + SAFE_PROTOCOL).join("/")
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
+
+/** True when yt-dlp metadata only advertises http(s) / HLS / DASH formats over http(s) URLs. */
+export function isSafeMediaInfo(raw: Record<string, unknown>): boolean {
+  if (typeof raw.url === "string" && !/^https?:\/\//i.test(raw.url)) return false
+  if (typeof raw.protocol === "string" && !SAFE_PROTOCOL_RE.test(raw.protocol)) return false
+  if (Array.isArray(raw.formats) && raw.formats.length > 0) {
+    const anySafe = raw.formats.some((f) => {
+      if (!f || typeof f !== "object") return false
+      const fmt = f as Record<string, unknown>
+      if (typeof fmt.url === "string" && !/^https?:\/\//i.test(fmt.url)) return false
+      if (typeof fmt.protocol === "string" && !SAFE_PROTOCOL_RE.test(fmt.protocol)) return false
+      return typeof fmt.url === "string" || typeof fmt.protocol === "string"
+    })
+    if (!anySafe) return false
+  }
+  return true
+}
 
 /** Stream a response to disk, refusing past `max` bytes. */
 async function saveCapped(res: Response, path: string, max: number): Promise<void> {
@@ -120,6 +142,7 @@ async function ytInfo(url: string, deadline: number): Promise<Info | { error: st
   if (r.code !== 0) return { error: r.stderr.trim().split("\n").pop()?.slice(0, 300) ?? "yt-dlp failed" }
   const raw = jsonOrNull<Record<string, unknown>>(r.stdout)
   if (!raw) return { error: "yt-dlp printed unreadable JSON" }
+  if (!isSafeMediaInfo(raw)) return { error: "unsupported media protocol" }
   return {
     raw, videoUrl: null,
     meta: {
@@ -142,7 +165,8 @@ async function instagramEmbed(url: URL, deadline: number): Promise<Info | null> 
   if (!res.ok) return null
   const html = (await res.text()).replace(/\\"/g, '"')
   const m = html.match(/"video_url":"((?:[^"\\]|\\.)*)"/)
-  const videoUrl = m ? jsonOrNull<string>(`"${m[1]}"`) : null
+  const rawVideoUrl = m ? jsonOrNull<string>(`"${m[1]}"`) : null
+  const videoUrl = rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl) ? rawVideoUrl : null
   const strip = (s: string | undefined): string | null => text(s?.replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;/g, "'"))
   const caption = strip(html.match(/class="Caption"[^>]*>([\s\S]*?)<\/div>/)?.[1])
   const uploader = strip(html.match(/class="CaptionUsername"[^>]*>([\s\S]*?)<\/a>/)?.[1])
@@ -172,11 +196,18 @@ async function download(url: string, info: Info, dir: string, deadline: number):
     await saveCapped(await safeFetch(info.videoUrl, { headers: { "User-Agent": UA }, signal: until(deadline) }), join(dir, "video.mp4"), MAX_VIDEO_BYTES)
   } else {
     const long = (info.meta.duration ?? 0) > MAX_SECONDS ? ["--download-sections", `*0-${MAX_SECONDS}`] : []
-    const r = await run([YTDLP, ...ytArgs(await guardProxy()), "-f", VIDEO_FORMAT, "--max-filesize", "200M", ...long, "-o", join(dir, "video.%(ext)s"), url], deadline)
-    if (r.code !== 0) throw new MediaError(502, `download failed: ${r.stderr.trim().split("\n").pop()?.slice(0, 300)}`)
+    const abort = new AbortController()
+    const proxy = await startGuardProxy(vetHost, { maxBytes: MAX_VIDEO_BYTES, onExceed: () => abort.abort() })
+    try {
+      const r = await run([YTDLP, ...ytArgs(proxy.url), "-f", VIDEO_FORMAT, "--max-filesize", "200M", ...long, "-o", join(dir, "video.%(ext)s"), url], deadline, abort.signal)
+      if (proxy.exceeded()) throw new MediaError(413, "video over 200 MB (not downloaded)")
+      if (r.code !== 0) throw new MediaError(502, `download failed: ${r.stderr.trim().split("\n").pop()?.slice(0, 300)}`)
+    } finally {
+      proxy.close()
+    }
   }
   const v = findVideo(dir)
-  if (!v) throw new MediaError(413, "video over 200 MB (not downloaded)")
+  if (!v || statSync(v).size > MAX_VIDEO_BYTES) throw new MediaError(413, "video over 200 MB (not downloaded)")
   return v
 }
 
@@ -291,17 +322,32 @@ function prune(): void {
 
 const inflight = new Map<string, Promise<LinkMediaOut>>()
 
-async function build(url: URL, dir: string): Promise<LinkMediaOut> {
-  const deadline = Date.now() + TIMEOUT_MS
-  rmSync(dir, { recursive: true, force: true })
-  mkdirSync(dir, { recursive: true })
+export interface BuildOptions {
+  timeoutMs?: number
+  attempt?: (workDir: string, deadline: number) => Promise<Record<string, unknown>>
+}
+
+export async function build(url: URL, dir: string, opts: BuildOptions = {}): Promise<LinkMediaOut> {
+  const deadline = Date.now() + (opts.timeoutMs ?? TIMEOUT_MS)
+  mkdirSync(dirname(dir), { recursive: true })
+  const workDir = `${dir}.attempt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  mkdirSync(workDir, { recursive: true })
+  const runAttempt = opts.attempt ?? ((w, d) => imageResponse(url, d).then((img) => (img ? analyseImage(url, img, w) : analyseVideo(url, w, d))))
+  const analysis = (async () => runAttempt(workDir, deadline))()
   try {
-    const analysis = imageResponse(url, deadline).then((img) => (img ? analyseImage(url, img, dir) : analyseVideo(url, dir, deadline)))
-    const result = { ok: true, url: url.href, dir, ...await beforeDeadline(analysis, deadline) }
-    writeFileSync(join(dir, "result.json"), JSON.stringify(result))
+    const raw = await beforeDeadline(analysis, deadline)
+    if (Date.now() >= deadline) throw new MediaError(504, "timed out")
+    const frames = Array.isArray(raw.frames) ? raw.frames.map((f) => join(dir, basename(String(f)))) : raw.frames
+    const contactSheet = typeof raw.contactSheet === "string" ? join(dir, basename(raw.contactSheet)) : raw.contactSheet
+    const result = { ok: true, url: url.href, dir, ...raw, frames, contactSheet }
+    writeFileSync(join(workDir, "result.json"), JSON.stringify(result))
+    rmSync(dir, { recursive: true, force: true })
+    renameSync(workDir, dir)
     return { status: 200, body: { ...result, cached: false } }
   } catch (err) {
-    rmSync(dir, { recursive: true, force: true })
+    const clean = (): void => rmSync(workDir, { recursive: true, force: true })
+    clean()
+    analysis.then(clean, clean)
     const e = err instanceof MediaError ? err : new MediaError(502, String((err as Error)?.message ?? err).slice(0, 300))
     companionLog(`[media] ${url.host} failed: ${e.reason}`)
     return { status: e.status, body: { ok: false, error: "media_failed", reason: e.reason } }

@@ -74,6 +74,11 @@ export type NodePatch = Partial<Pick<CanvasNode, "ref" | "x" | "y" | "w" | "h" |
 export type EdgeInput = Pick<CanvasEdge, "kind" | "from" | "to">
 export type SendResult = { ok: true } | { ok: false; status: number; error: string; detail?: Record<string, unknown> }
 
+/** A preview pick: the picked node plus every node it changed (itself first, then group siblings un-picked). */
+export type PickResult = ({ ok: true; node: CanvasNode; changed: CanvasNode[] } & (
+  { claimed: true; token: string; sent: false } | { claimed: false; sent: boolean }
+)) | { ok: false; error: "not_found" | "invalid_kind" }
+
 export type EdgeAddResult = { ok: true; edge: CanvasEdge } | { ok: false; error: "node_not_found" | "self_edge" | "edge_exists" | "invalid_endpoints" }
 
 export interface CanvasStore {
@@ -92,6 +97,15 @@ export interface CanvasStore {
   claimEdge(id: string, now: number): CanvasEdge | null
   /** The note nodes referenced by an agent bound to (key, sid), or by any brain node. */
   references(target: { key: string; sid: string } | "brain"): CanvasNode[]
+  /**
+   * Design-first pick: data.picked/pickedAt on a preview, data.picked = false on the other previews of its data.group.
+   * `claimed` = this call owns the delivery; false when the card is already picked and sending or sent (nothing written).
+   */
+  pickNode(id: string, now: number): PickResult
+  /** The current node only while this token still owns its pending pick delivery. */
+  currentPick(id: string, token: string): CanvasNode | null
+  /** Ends only the matching claim: sent stays claimed, anything else can be picked again to retry. */
+  settlePick(id: string, token: string, delivered: boolean): void
   /** sending → sent|failed; null when the edge was removed meanwhile. */
   settleEdge(id: string, result: { ok: true } | { ok: false; error: string }, now: number): CanvasEdge | null
 }
@@ -128,8 +142,12 @@ export function createCanvasStore(db: Database): CanvasStore {
   if (!cols.has("updated_at")) db.exec("ALTER TABLE canvas_edges ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
   const nodeCols = new Set((db.query("PRAGMA table_info(canvas_nodes)").all() as { name: string }[]).map((c) => c.name))
   if (!nodeCols.has("bound_sid")) db.exec("ALTER TABLE canvas_nodes ADD COLUMN bound_sid TEXT NOT NULL DEFAULT ''")
+  // A pick's delivery: '' | 'sending' | 'sent'. Not in data: clients write data back wholesale.
+  if (!nodeCols.has("pick_state")) db.exec("ALTER TABLE canvas_nodes ADD COLUMN pick_state TEXT NOT NULL DEFAULT ''")
+  if (!nodeCols.has("pick_token")) db.exec("ALTER TABLE canvas_nodes ADD COLUMN pick_token TEXT NOT NULL DEFAULT ''")
   // A send cut short by a restart never reported back: offer it again rather than leave it stuck.
   db.query("UPDATE canvas_edges SET state = 'failed', error = 'server_restart' WHERE state = 'sending'").run()
+  db.query("UPDATE canvas_nodes SET pick_state = '', pick_token = '' WHERE pick_state = 'sending'").run()
   // canvas-note-refs: note edges made before it (proposed, failed or sent) become live references.
   db.query(
     "UPDATE canvas_edges SET kind = 'reference', state = 'linked', error = '' WHERE kind = 'context' AND from_id IN (SELECT id FROM canvas_nodes WHERE kind IN ('note', 'turso_note'))",
@@ -148,6 +166,32 @@ export function createCanvasStore(db: Database): CanvasStore {
     db.query("DELETE FROM canvas_edges WHERE from_id = ? OR to_id = ?").run(id, id)
     return { edgeIds }
   })
+  const setData = (n: CanvasNode, data: Record<string, unknown>, now: number): CanvasNode => {
+    db.query("UPDATE canvas_nodes SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(data), now, n.id)
+    return getNode(n.id)!
+  }
+  const pickTx = db.transaction((id: string, now: number): PickResult => {
+    const n = getNode(id)
+    if (!n) return { ok: false, error: "not_found" }
+    if (n.kind !== "preview") return { ok: false, error: "invalid_kind" }
+    const { pick_state: state } = db.query("SELECT pick_state FROM canvas_nodes WHERE id = ?").get(id) as { pick_state: string }
+    if (n.data.picked === true && state) return { ok: true, node: n, changed: [], claimed: false, sent: state === "sent" }
+    const token = crypto.randomUUID()
+    db.query("UPDATE canvas_nodes SET pick_state = 'sending', pick_token = ? WHERE id = ?").run(token, id)
+    const node = setData(n, { ...n.data, picked: true, pickedAt: now }, now)
+    const group = n.data.group
+    // Only string/number groups have siblings; match JSON type as well as extracted value.
+    const siblings = typeof group === "string" || typeof group === "number"
+      ? (db.query(
+        "SELECT * FROM canvas_nodes WHERE kind = 'preview' AND id != ? AND json_type(data, '$.group') = json_type(?) AND json_extract(data, '$.group') = ?",
+      ).all(id, JSON.stringify(group), group) as RawNode[]).map(toNode)
+      : []
+    const unpicked = siblings.filter((s) => s.data.picked !== false).map((s) => {
+      db.query("UPDATE canvas_nodes SET pick_state = '', pick_token = '' WHERE id = ?").run(s.id)
+      return setData(s, { ...s.data, picked: false }, now)
+    })
+    return { ok: true, node, changed: [node, ...unpicked], claimed: true, token, sent: false }
+  })
   return {
     nodes: () => (db.query("SELECT * FROM canvas_nodes ORDER BY created_at, id").all() as RawNode[]).map(toNode),
     edges: () => (db.query("SELECT * FROM canvas_edges ORDER BY created_at, id").all() as RawEdge[]).map(toEdge),
@@ -161,11 +205,27 @@ export function createCanvasStore(db: Database): CanvasStore {
     patchNode(id, patch, now) {
       const sets: string[] = []
       const args: (string | number)[] = []
+      let resetPick = patch.boundSid !== undefined
       for (const k of ["ref", "x", "y", "w", "h"] as const) {
         if (patch[k] !== undefined) { sets.push(`${k} = ?`); args.push(patch[k]) }
       }
-      if (patch.data !== undefined) { sets.push("data = ?"); args.push(JSON.stringify(patch.data)) }
+      if (patch.data !== undefined) {
+        const data = { ...patch.data }
+        const current = getNode(id)
+        if (current?.kind === "preview") {
+          const groupChanged = JSON.stringify(data.group) !== JSON.stringify(current.data.group)
+          // Pick facts belong to the store even when clients replace the rest of data.
+          for (const field of ["picked", "pickedAt"] as const) {
+            delete data[field]
+            if (!groupChanged && Object.hasOwn(current.data, field)) data[field] = current.data[field]
+          }
+          if (groupChanged) { data.picked = false; resetPick = true }
+        }
+        sets.push("data = ?"); args.push(JSON.stringify(data))
+      }
       if (patch.boundSid !== undefined) { sets.push("bound_sid = ?"); args.push(patch.boundSid) }
+      // A new group or target invalidates the delivery in the same update as the node data.
+      if (resetPick) sets.push("pick_state = ''", "pick_token = ''")
       sets.push("updated_at = ?")
       args.push(now)
       const r = db.query(`UPDATE canvas_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...args, id)
@@ -201,6 +261,14 @@ export function createCanvasStore(db: Database): CanvasStore {
       const r = db.query("UPDATE canvas_edges SET state = 'sending', error = '', updated_at = ? WHERE id = ? AND state IN ('proposed', 'failed')").run(now, id)
       return r.changes > 0 ? getEdge(id) : null
     },
+    pickNode: (id, now) => pickTx(id, now),
+    currentPick(id, token) {
+      const r = db.query("SELECT * FROM canvas_nodes WHERE id = ? AND pick_state = 'sending' AND pick_token = ?").get(id, token) as RawNode | null
+      return r ? toNode(r) : null
+    },
+    settlePick(id, token, delivered) {
+      db.query("UPDATE canvas_nodes SET pick_state = ?, pick_token = '' WHERE id = ? AND pick_state = 'sending' AND pick_token = ?").run(delivered ? "sent" : "", id, token)
+    },
     settleEdge(id, result, now) {
       const r = result.ok
         ? db.query("UPDATE canvas_edges SET state = 'sent', error = '', sent_at = ?, updated_at = ? WHERE id = ? AND state = 'sending'").run(now, now, id)
@@ -217,6 +285,8 @@ const SIZE_MAX = 1e5
 const REF_MAX = 500
 const ID_MAX = 100
 const DATA_MAX = 16_000
+/** A client-chosen node id (also checked on a pick's path). */
+export const NODE_ID = /^[A-Za-z0-9_-]{1,100}$/
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string }
 
@@ -251,7 +321,7 @@ function parseFields(b: Record<string, unknown>, required: boolean): Parsed<Node
 export function parseNodeInput(raw: unknown): Parsed<NodeInput> {
   if (!isObj(raw)) return { ok: false, error: "invalid_body" }
   if (!NODE_KINDS.includes(raw.kind as NodeKind)) return { ok: false, error: "invalid_kind" }
-  if (raw.id !== undefined && (typeof raw.id !== "string" || !raw.id || raw.id.length > ID_MAX || !/^[A-Za-z0-9_-]+$/.test(raw.id))) return { ok: false, error: "invalid_id" }
+  if (raw.id !== undefined && (typeof raw.id !== "string" || !NODE_ID.test(raw.id))) return { ok: false, error: "invalid_id" }
   const f = parseFields(raw, true)
   if (!f.ok) return f
   const { x, y, w, h } = f.value as Required<Pick<NodePatch, "x" | "y" | "w" | "h">>

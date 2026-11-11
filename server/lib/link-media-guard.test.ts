@@ -66,4 +66,57 @@ describe("bin/media URL guard", () => {
     expect(await vetHost("[2a03:2880:f12f:83:face:b00c::25de]")).toBe("2a03:2880:f12f:83:face:b00c::25de")
     await expect(vetHost("localhost")).rejects.toThrow("private or loopback host refused")
   })
+
+  test("guard proxy enforces cumulative maxBytes across segment requests and streams", async () => {
+    const origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req) => {
+        const p = new URL(req.url).pathname
+        if (p === "/stream") {
+          return new Response(new ReadableStream({
+            async start(ctrl) {
+              for (let i = 0; i < 5; i++) {
+                ctrl.enqueue(new Uint8Array(40))
+                await Bun.sleep(10)
+              }
+              ctrl.close()
+            },
+          }))
+        }
+        return new Response("x".repeat(60))
+      },
+    })
+    let tripped = 0
+    const vet = async () => "127.0.0.1"
+    const proxy = await startGuardProxy(vet, { maxBytes: 100, onExceed: () => { tripped++ } })
+    const proxyStream = await startGuardProxy(vet, { maxBytes: 100 })
+    try {
+      const r1 = await fetch(`http://seg.test:${origin.port}/seg1.ts`, { proxy: { url: proxy.url, respectNoProxy: false } })
+      expect(r1.status).toBe(200)
+      expect((await r1.text()).length).toBe(60)
+      expect(proxy.exceeded()).toBe(false)
+      expect(proxy.bytes()).toBe(60)
+
+      // Second 60-byte segment pushes cumulative total (120) past maxBytes (100) → 413
+      const r2 = await fetch(`http://seg.test:${origin.port}/seg2.ts`, { proxy: { url: proxy.url, respectNoProxy: false } })
+      expect(r2.status).toBe(413)
+      expect(proxy.exceeded()).toBe(true)
+      expect(tripped).toBe(1)
+
+      // Subsequent requests after quota is tripped also receive 413 immediately
+      const r3 = await fetch(`http://seg.test:${origin.port}/seg3.ts`, { proxy: { url: proxy.url, respectNoProxy: false } })
+      expect(r3.status).toBe(413)
+
+      // Streaming response without Content-Length is cut off mid-stream once cumulative bytes exceed maxBytes
+      const sr = await fetch(`http://seg.test:${origin.port}/stream`, { proxy: { url: proxyStream.url, respectNoProxy: false } })
+      const buf = await sr.arrayBuffer().catch(() => new ArrayBuffer(0))
+      expect(buf.byteLength).toBeLessThanOrEqual(100)
+      expect(proxyStream.exceeded()).toBe(true)
+    } finally {
+      proxy.close()
+      proxyStream.close()
+      origin.stop(true)
+    }
+  })
 })

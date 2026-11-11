@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import type { Server, ServerWebSocket } from "bun"
-import { createCanvasStore } from "../lib/canvas"
+import { createCanvasStore, type CanvasNode } from "../lib/canvas"
 import type { Row } from "../lib/turso"
 import { broadcast, clients, type WsData } from "../state"
 import { type SendResult, createCanvasRoute } from "./canvas"
@@ -27,7 +27,14 @@ const route = createCanvasRoute({
     if (sendResult instanceof Error) throw sendResult
     return sendResult
   },
+  pickNotify: async (node) => {
+    picks.push(node.id)
+    if (pickResult instanceof Error) throw pickResult
+    return pickResult
+  },
 })
+const picks: string[] = []
+let pickResult: SendResult | null | Error = null
 let server: Server<WsData>
 let base: string
 
@@ -225,6 +232,327 @@ describe("context edges (P6)", () => {
     expect(rich.json).toMatchObject({ ok: true, note: { body: "v2" }, content: [{ type: "text", text: "v2" }], omitted: 0 })
     expect((await call("GET", "/api/canvas/linked-notes")).json.error).toBe("missing_target")
     for (const id of ["ln-agent", "ln-brain", "ln-spec", "ln-sticky", "ln-other"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+})
+
+describe("preview pick (design-first)", () => {
+  const preview = (id: string, group: string | number | undefined, extra: Record<string, unknown> = {}) =>
+    call("POST", "/api/canvas/nodes", { id, kind: "preview", ref: `http://zettlab:3147/${id}.html`, x: 0, y: 600, w: 1, h: 1, data: { title: id, direction: id, group, ...extra } })
+  const data = (id: string): Record<string, unknown> => store.node(id)!.data
+
+  const delayedPicks = (notify?: (node: CanvasNode) => Promise<SendResult | null>) => {
+    const deliveries: ReturnType<typeof Promise.withResolvers<SendResult>>[] = []
+    const handle = createCanvasRoute({
+      store, status: () => ({}), host: "testhost", notify: () => {}, references: () => [], query: async () => [],
+      send: async () => ({ ok: true }), now: () => 42,
+      pickNotify: notify ?? (() => {
+        const delivery = Promise.withResolvers<SendResult>()
+        deliveries.push(delivery)
+        return delivery.promise
+      }),
+    })
+    const pick = async (id: string) => {
+      const url = new URL(`/api/canvas/nodes/${id}/pick`, base)
+      const response = (await handle(new Request(url.href, { method: "POST" }), url))!
+      return { status: response.status, json: await response.json() as Record<string, unknown> }
+    }
+    return { deliveries, pick, handle }
+  }
+
+  test("a queued pick responds at the 8-second cap and still delivers afterward in order", async () => {
+    await preview("wait-a", "wait")
+    await preview("wait-b", "wait")
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const finished = Promise.withResolvers<void>()
+    const typed: string[] = []
+    const { handle } = delayedPicks(async (node) => {
+      if (node.id === "wait-a") { started.resolve(); await release.promise }
+      typed.push(node.id)
+      if (node.id === "wait-b") finished.resolve()
+      return { ok: true }
+    })
+    const http = Bun.serve({ port: 0, idleTimeout: 10, fetch: async (req) => (await handle(req, new URL(req.url)))! })
+    const request = (id: string) => fetch(`http://localhost:${http.port}/api/canvas/nodes/${id}/pick`, { method: "POST" })
+    const first = request("wait-a")
+    await started.promise
+    const began = performance.now()
+    const second = request("wait-b")
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      const response = await Promise.race([second, new Promise<null>((resolve) => { deadline = setTimeout(() => resolve(null), 9_000) })])
+      expect(response?.status).toBe(200)
+      expect(performance.now() - began).toBeGreaterThanOrEqual(7_900)
+      expect(performance.now() - began).toBeLessThan(9_000)
+      expect(await response!.json()).toMatchObject({ ok: true, delivered: false, queued: true, node: { id: "wait-b" } })
+      expect(typed).toEqual([])
+      expect(await (await request("wait-b")).json()).toMatchObject({ delivered: false, duplicate: true })
+
+      release.resolve()
+      await finished.promise
+      expect(typed).toEqual(["wait-a", "wait-b"])
+      expect(await (await request("wait-b")).json()).toMatchObject({ delivered: true, duplicate: true })
+    } finally {
+      clearTimeout(deadline)
+      release.resolve()
+      await Promise.all([first, second])
+      http.stop(true)
+      for (const id of ["wait-a", "wait-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+    }
+  }, 12_000)
+
+  for (const supersede of [false, true]) {
+    test(`a slow A inject cannot finish after the final group pick${supersede ? "; queued B is superseded by C" : " B"}`, async () => {
+      const ids = ["order-a", "order-b", "order-c"]
+      for (const id of ids) await preview(id, "order")
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const typed: string[] = []
+      const { pick } = delayedPicks(async (node) => {
+        if (node.id === "order-a") { started.resolve(); await release.promise }
+        typed.push(node.id)
+        return { ok: true }
+      })
+      const a = pick("order-a")
+      await started.promise
+      const b = pick("order-b")
+      const c = supersede ? pick("order-c") : null
+      try {
+        expect(data(supersede ? "order-c" : "order-b").picked).toBe(true)
+        release.resolve()
+        const [, resultB] = await Promise.all([a, b, c])
+        expect(typed).toEqual(["order-a", supersede ? "order-c" : "order-b"])
+        expect(resultB.json.delivered).toBe(!supersede)
+      } finally {
+        release.resolve()
+        await Promise.all([a, b, c])
+        for (const id of ids) await call("DELETE", `/api/canvas/nodes/${id}`)
+      }
+    })
+  }
+
+  for (const [aGroup, bGroup] of [[1, "1"], [undefined, undefined], [undefined, "independent-a"]] as const) {
+    test(`separate picks deliver independently (${JSON.stringify([aGroup, bGroup])})`, async () => {
+      await preview("independent-a", aGroup)
+      await preview("independent-b", bGroup)
+      const release = Promise.withResolvers<void>()
+      const typed: string[] = []
+      const { pick } = delayedPicks(async (node) => {
+        if (node.id === "independent-a") await release.promise
+        typed.push(node.id)
+        return { ok: true }
+      })
+      const a = pick("independent-a")
+      try {
+        expect(await pick("independent-b")).toMatchObject({ status: 200, json: { delivered: true } })
+        expect(typed).toEqual(["independent-b"])
+      } finally {
+        release.resolve()
+        await a
+        for (const id of ["independent-a", "independent-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+      }
+    })
+  }
+
+  for (const failure of [new Error("inject failed"), { ok: false, status: 409, error: "pane_not_ready" }] as const) {
+    test(`a ${failure instanceof Error ? "thrown" : "refused"} slow delivery releases its group queue`, async () => {
+      await preview("failure-a", "failure")
+      await preview("failure-b", "failure")
+      const release = Promise.withResolvers<void>()
+      let failFirst = true
+      const { pick } = delayedPicks(async (node) => {
+        if (node.id === "failure-a" && failFirst) {
+          failFirst = false
+          await release.promise
+          if (failure instanceof Error) throw failure
+          return failure
+        }
+        return { ok: true }
+      })
+      const a = pick("failure-a")
+      const b = pick("failure-b")
+      release.resolve()
+      try {
+        expect(await a).toMatchObject({ status: failure instanceof Error ? 503 : 409, json: { delivered: false } })
+        expect(await b).toMatchObject({ status: 200, json: { delivered: true } })
+        expect(await pick("failure-a")).toMatchObject({ status: 200, json: { delivered: true } })
+      } finally {
+        await Promise.all([a, b])
+        for (const id of ["failure-a", "failure-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+      }
+    })
+  }
+
+  test("a queued pick moved to another group is skipped and can be retried there", async () => {
+    await preview("moved-a", "original")
+    await preview("moved-b", "original")
+    const release = Promise.withResolvers<void>()
+    const typed: string[] = []
+    const { pick } = delayedPicks(async (node) => {
+      if (node.id === "moved-a") await release.promise
+      typed.push(node.id)
+      return { ok: true }
+    })
+    const a = pick("moved-a")
+    const b = pick("moved-b")
+    try {
+      await call("PATCH", "/api/canvas/nodes/moved-b", { data: { group: "moved" } })
+      release.resolve()
+      await a
+      expect(await b).toMatchObject({ status: 200, json: { delivered: false } })
+      expect(typed).toEqual(["moved-a"])
+      expect(await pick("moved-b")).toMatchObject({ status: 200, json: { delivered: true } })
+      expect(typed).toEqual(["moved-a", "moved-b"])
+    } finally {
+      release.resolve()
+      await Promise.all([a, b])
+      for (const id of ["moved-a", "moved-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+    }
+  })
+
+  test("a delayed A success cannot settle a newer A claim after A -> B -> A", async () => {
+    await preview("race-a", "race")
+    await preview("race-b", "race")
+    const { deliveries, pick } = delayedPicks()
+    const firstA = pick("race-a")
+    const b = pick("race-b")
+    const latestA = pick("race-a")
+    expect(deliveries).toHaveLength(1)
+    deliveries[0]!.resolve({ ok: true })
+    await firstA
+    expect(await b).toMatchObject({ status: 200, json: { delivered: false } })
+    expect(deliveries).toHaveLength(2)
+    try {
+      expect(await pick("race-a")).toMatchObject({ status: 200, json: { duplicate: true, delivered: false } })
+    } finally {
+      deliveries[1]!.resolve({ ok: false, status: 409, error: "pane_not_ready" })
+      await latestA
+    }
+    const retry = pick("race-a")
+    expect(deliveries).toHaveLength(3)
+    deliveries[2]!.resolve({ ok: true })
+    expect(await retry).toMatchObject({ status: 200, json: { delivered: true } })
+    for (const id of ["race-a", "race-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  for (const state of ["sending", "sent"] as const) {
+    for (const fields of [{}, { picked: false, pickedAt: -1 }]) {
+      test(`a same-group data PATCH preserves the ${state} pick claim (${Object.keys(fields).length ? "forged" : "omitted"} pick fields)`, async () => {
+        const id = `patch-${state}-${Object.keys(fields).length}`
+        await preview(id, id)
+        const { deliveries, pick } = delayedPicks()
+        const first = pick(id)
+        if (state === "sent") {
+          deliveries[0]!.resolve({ ok: true })
+          await first
+        }
+        try {
+          const patched = await call("PATCH", `/api/canvas/nodes/${id}`, { data: { group: id, title: "edited", ...fields } })
+          expect(patched.json.node).toMatchObject({ data: { group: id, title: "edited", picked: true, pickedAt: 42 } })
+          expect(await pick(id)).toMatchObject({ status: 200, json: { duplicate: true, delivered: state === "sent" } })
+          expect(deliveries).toHaveLength(1)
+        } finally {
+          for (const delivery of deliveries) delivery.resolve({ ok: true })
+          await first
+          await call("DELETE", `/api/canvas/nodes/${id}`)
+        }
+      })
+    }
+  }
+
+  test("404 / 400 invalid_kind / 400 invalid_id, nothing typed", async () => {
+    picks.length = 0
+    expect(await call("POST", "/api/canvas/nodes/nope/pick", {})).toMatchObject({ status: 404, json: { error: "not_found" } })
+    await call("POST", "/api/canvas/nodes", { id: "pk-note", kind: "note", x: 0, y: 0, w: 1, h: 1 })
+    expect(await call("POST", "/api/canvas/nodes/pk-note/pick", {})).toMatchObject({ status: 400, json: { error: "invalid_kind" } })
+    expect(await call("POST", "/api/canvas/nodes/a%20b/pick", {})).toMatchObject({ status: 400, json: { error: "invalid_id" } })
+    expect(data("pk-note").picked).toBeUndefined()
+    expect(picks).toEqual([])
+    await call("DELETE", "/api/canvas/nodes/pk-note")
+  })
+
+  test("group exclusivity + one node frame per changed node; delivered true/false", async () => {
+    const ws = new WebSocket(`ws://localhost:${server.port}/ws`)
+    const frames: Record<string, unknown>[] = []
+    ws.onmessage = (m) => frames.push(JSON.parse(String(m.data)))
+    await new Promise((r) => { ws.onopen = r })
+    for (const id of ["safe", "bold", "wild"]) await preview(id, "g1")
+    await preview("other", "g2", { picked: true })
+    const nodeFrames = async (n: number) => {
+      for (let i = 0; i < 100 && frames.length < n; i++) await Bun.sleep(10)
+      return frames.splice(0).map((f) => (f.node as { id: string; data: Record<string, unknown> }))
+    }
+    await nodeFrames(4)
+
+    picks.length = 0
+    pickResult = null
+    const a = await call("POST", "/api/canvas/nodes/bold/pick", {})
+    expect(a).toMatchObject({ status: 200, json: { ok: true, delivered: false, node: { id: "bold", data: { picked: true, pickedAt: expect.any(Number), direction: "bold" } } } })
+    expect(data("safe").picked).toBe(false)
+    expect(data("wild").picked).toBe(false)
+    expect(data("other").picked).toBe(true) // another group is untouched
+    expect((await nodeFrames(3)).map((n) => [n.id, n.data.picked])).toEqual([["bold", true], ["safe", false], ["wild", false]])
+
+    pickResult = { ok: true }
+    const b = await call("POST", "/api/canvas/nodes/wild/pick", {})
+    expect(b).toMatchObject({ status: 200, json: { ok: true, delivered: true, node: { id: "wild", data: { picked: true } } } })
+    expect(data("bold").picked).toBe(false)
+    // safe was already false: only wild and bold change.
+    expect((await nodeFrames(2)).map((n) => [n.id, n.data.picked])).toEqual([["wild", true], ["bold", false]])
+    expect(picks).toEqual(["bold", "wild"])
+    ws.close()
+    for (const id of ["safe", "bold", "wild", "other"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("a double tap types once, concurrent or not; a failed delivery can be retried; a new pick re-claims", async () => {
+    await preview("dt-a", "g4")
+    await preview("dt-b", "g4")
+    picks.length = 0
+    pickResult = { ok: true }
+    const [x, y] = await Promise.all(["a", "b"].map(() => call("POST", "/api/canvas/nodes/dt-a/pick", {})))
+    expect([x!.status, y!.status]).toEqual([200, 200])
+    expect([x!.json.duplicate, y!.json.duplicate].filter(Boolean)).toEqual([true])
+    expect(picks).toEqual(["dt-a"])
+    expect(await call("POST", "/api/canvas/nodes/dt-a/pick", {})).toMatchObject({ status: 200, json: { delivered: true, duplicate: true } })
+    expect(picks).toEqual(["dt-a"])
+
+    const claimed = store.pickNode("dt-b", 1)
+    expect(claimed).toMatchObject({ ok: true, claimed: true })
+    if (!claimed.ok || !claimed.claimed) throw new Error("pick was not claimed")
+    expect(store.pickNode("dt-b", 2)).toMatchObject({ ok: true, claimed: false, sent: false, changed: [] })
+    store.settlePick("dt-b", claimed.token, false)
+
+    pickResult = { ok: false, status: 409, error: "pane_not_ready" }
+    expect((await call("POST", "/api/canvas/nodes/dt-b/pick", {})).status).toBe(409)
+    pickResult = { ok: true }
+    expect(await call("POST", "/api/canvas/nodes/dt-b/pick", {})).toMatchObject({ status: 200, json: { delivered: true } })
+    expect(picks).toEqual(["dt-a", "dt-b", "dt-b"])
+
+    expect(await call("POST", "/api/canvas/nodes/dt-a/pick", {})).toMatchObject({ status: 200, json: { delivered: true } })
+    expect(picks).toEqual(["dt-a", "dt-b", "dt-b", "dt-a"])
+    pickResult = null
+    for (const id of ["dt-a", "dt-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
+  })
+
+  test("inject refusals answer with /send's codes; the pick is still stored", async () => {
+    await preview("pk-a", "g3")
+    await preview("pk-b", "g3")
+    for (const [res, status] of [
+      [{ ok: false, status: 409, error: "pane_not_ready", detail: { ok: true, reason: "busy" } }, 409],
+      [{ ok: false, status: 409, error: "dialog_open" }, 409],
+      [{ ok: false, status: 410, error: "target_gone" }, 410],
+    ] as const) {
+      pickResult = res
+      const r = await call("POST", "/api/canvas/nodes/pk-a/pick", {})
+      expect(r.status).toBe(status)
+      expect(r.json).toMatchObject({ ok: false, error: res.error, delivered: false, node: { id: "pk-a", data: { picked: true } } })
+    }
+    pickResult = new Error("boom")
+    expect(await call("POST", "/api/canvas/nodes/pk-b/pick", {})).toMatchObject({ status: 503, json: { error: "send_failed", delivered: false } })
+    expect(data("pk-b").picked).toBe(true)
+    expect(data("pk-a").picked).toBe(false)
+    pickResult = null
+    for (const id of ["pk-a", "pk-b"]) await call("DELETE", `/api/canvas/nodes/${id}`)
   })
 })
 

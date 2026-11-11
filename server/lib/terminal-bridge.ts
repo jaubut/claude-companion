@@ -1,19 +1,25 @@
 // The phone's live terminal: a WebSocket on /api/terminal bridged to
-// `tmux attach-session` running under a PTY on this host. The iPhone can't
-// run tmux or ssh itself (the Mac Canvas does, TerminalAttach.swift), so the
+// `herdr terminal attach` (a pre-Stage-2 tmux shell: `tmux attach-session`)
+// running under a PTY on this host. The iPhone can't run either itself, so the
 // server is the terminal client and the phone is its screen and keyboard.
 //
-// Frames: server → phone binary = PTY output, as tmux draws it. Phone →
+// herdr takes one attach per terminal: a second is refused, so ours always
+// takes over. That keeps a reconnect working while the dropped socket's attach
+// is still up; a second device viewing the same shell ends the first one's
+// socket (4000) and the row stays, so a tap takes it back.
+//
+// Frames: server → phone binary = PTY output, as the attach draws it. Phone →
 // server binary = keystrokes (raw bytes); text = JSON control, only
 // {"type":"resize","cols":N,"rows":N}. The socket closes when the attach ends
 // (shell `exit`, session killed) with code 4000 + reason "ended"; closing the
-// socket only detaches — the shell keeps running in tmux.
+// socket only detaches — the shell keeps running.
 //
 // Auth is the Bearer token in the Authorization header only, never `?token=`
 // (companion-server.ts, before the upgrade). Only shell sessions this server
 // tracks can be attached: the key is looked up, never parsed into a target,
 // and the argv carries nothing the phone typed. At most MAX_ATTACHES_PER_KEY
-// sockets per shell (a phone and an iPad, plus one reconnect in flight).
+// sockets per shell: tmux shares a shell between them, while a herdr terminal
+// takes one attach, so there a newer socket ends the older one.
 
 import { tmuxArgv } from "./tmux-pane"
 import type { ShellSession } from "./shell-sessions"
@@ -47,7 +53,7 @@ export function parseTerminalSize(cols: string | null, rows: string | null): Ter
   return c !== null && r !== null ? { cols: c, rows: r } : null
 }
 
-// Phone-reported size, clamped to something tmux and a phone screen can both
+// Phone-reported size, clamped to something a pane and a phone screen can both
 // use. Anything unreadable → the iPhone portrait default.
 export function terminalSize(cols: unknown, rows: unknown): TerminalSize {
   const clamp = (v: unknown, lo: number, hi: number, dflt: number) => {
@@ -57,7 +63,8 @@ export function terminalSize(cols: unknown, rows: unknown): TerminalSize {
   return { cols: clamp(cols, 20, 500, 50), rows: clamp(rows, 5, 200, 30) }
 }
 
-export function terminalAttachArgv(s: Pick<ShellSession, "name" | "tmuxSocket">): string[] {
+export function terminalAttachArgv(s: Pick<ShellSession, "name" | "tmuxSocket" | "terminalId">): string[] {
+  if (s.terminalId) return [process.env.HERDR_BIN || "herdr", "terminal", "attach", s.terminalId, "--takeover"]
   return [...tmuxArgv(s.tmuxSocket || null), "attach-session", "-t", `=${s.name}`]
 }
 

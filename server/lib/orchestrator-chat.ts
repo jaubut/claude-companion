@@ -10,7 +10,7 @@ export type TurnRole = "user" | "orchestrator" | "worker"
 // proposed → (approve | auto) → dispatched → running → done | error ; (reject) → rejected
 // Backpressure (Phase 7): past the WIP cap an admitted task parks as queued and
 // drains FIFO into dispatched when a live worker exits. cancelled = user pulled a
-// queued/dispatched/running task (its tmux worker is killed).
+// queued/dispatched/running task.
 // filed (orchestrator-one-queue P2) = approved and handed to Turso `tasks`
 // under dispatch_task_id; the local row is history, listTasks hides it.
 export type TaskStatus = "proposed" | "queued" | "dispatched" | "running" | "done" | "error" | "rejected" | "cancelled" | "filed"
@@ -47,10 +47,6 @@ export interface Task {
   prompt: string
   cwd: string
   sessionKey: string | null
-  tmuxSession: string | null
-  // Socket path of the tmux server holding tmuxSession (COMPANION_TMUX_SOCKET).
-  // null/absent = the default server.
-  tmuxSocket?: string | null
   reasoning: string | null
   logTail: string | null
   status: TaskStatus
@@ -83,8 +79,6 @@ interface TaskRow {
   prompt: string
   cwd: string
   session_key: string | null
-  tmux_session: string | null
-  tmux_socket: string | null
   reasoning: string | null
   log_tail: string | null
   status: TaskStatus
@@ -118,8 +112,6 @@ function toTask(r: TaskRow): Task {
     prompt: r.prompt,
     cwd: r.cwd,
     sessionKey: r.session_key,
-    tmuxSession: r.tmux_session,
-    tmuxSocket: r.tmux_socket ?? null,
     reasoning: r.reasoning,
     logTail: r.log_tail,
     status: r.status,
@@ -206,11 +198,11 @@ export function searchThread(threadId: string, q: string, limit = 20): Turn[] {
 
 function insertTask(task: Task): void {
   db.query(
-    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, tmux_session, tmux_socket, reasoning, log_tail, status, created_at, updated_at, note_id, agent, title) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO orchestrator_tasks (task_id, thread_id, prompt, cwd, session_key, reasoning, log_tail, status, created_at, updated_at, note_id, agent, title) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     task.taskId, task.threadId, task.prompt, task.cwd, task.sessionKey,
-    task.tmuxSession, task.tmuxSocket || null, task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
+    task.reasoning, task.logTail, task.status, task.createdAt, task.updatedAt,
     task.noteId ?? null, task.agent ?? null, task.title ?? null,
   )
 }
@@ -219,23 +211,23 @@ function insertTask(task: Task): void {
 // filed to Turso and live runs start from a proposal row (createProposal +
 // stampDispatchId). Kept for the legacy-history fixtures in the tests.
 // Direct dispatch (Phase 1, manual /dispatch): task is spawned immediately.
-export function createTask(prompt: string, cwd: string, tmuxSession: string | null = null, threadId: string = GENERAL_CHANNEL): Task {
+export function createTask(prompt: string, cwd: string, threadId: string = GENERAL_CHANNEL): Task {
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
-    sessionKey: null, tmuxSession, reasoning: null, logTail: null, status: "dispatched", createdAt: now, updatedAt: now,
+    sessionKey: null, reasoning: null, logTail: null, status: "dispatched", createdAt: now, updatedAt: now,
   }
   insertTask(task)
   return task
 }
 
 // Manual /dispatch that hit the WIP cap (Phase 7): recorded now, spawned by the
-// queue drain once a worker slot frees. No tmux session until then.
+// queue drain once a worker slot frees.
 export function createQueuedTask(prompt: string, cwd: string, threadId: string = GENERAL_CHANNEL): Task {
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
-    sessionKey: null, tmuxSession: null, reasoning: null, logTail: null, status: "queued", createdAt: now, updatedAt: now,
+    sessionKey: null, reasoning: null, logTail: null, status: "queued", createdAt: now, updatedAt: now,
   }
   insertTask(task)
   return task
@@ -247,7 +239,7 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
   const now = Date.now()
   const task: Task = {
     taskId: randomUUID().slice(0, 8), threadId, prompt, cwd,
-    sessionKey: null, tmuxSession: null, reasoning, logTail: null, status: "proposed", createdAt: now, updatedAt: now,
+    sessionKey: null, reasoning, logTail: null, status: "proposed", createdAt: now, updatedAt: now,
     noteId: target.noteId ?? null, agent: target.agent ?? null, title: target.title ?? null, dispatchTaskId: null,
   }
   insertTask(task)
@@ -295,7 +287,7 @@ export function setTaskStatus(taskId: string, status: TaskStatus): void {
 // (the Tasks panel's global view); scoped → that channel's dispatched work.
 // Filed proposals are hidden: their Turso task is listed instead (P2). So are
 // live runs (P4): a local worker row linked to a Turso id past `proposed` — the
-// Turso row carries its tmux identity.
+// Turso row carries its identity.
 const LISTED = "status != 'filed' AND (dispatch_task_id IS NULL OR status IN ('proposed', 'rejected'))"
 
 export function listTasks(threadId?: string): Task[] {

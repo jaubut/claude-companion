@@ -142,7 +142,7 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
   // plus `cached`, and `incomplete: true` when the list is a prefix.
   //
   // Enumerated OFF the user's pane (lib/command-offpane.ts): a hidden
-  // `cc-scrape-*` tmux session runs claude in the same cwd (hooks and MCP
+  // `cc-scrape-*` herdr workspace runs claude in the same cwd (hooks and MCP
   // off), /help is scraped there, the session is killed. The user's pane gets
   // zero keystrokes, so nothing here claims it, refuses on its state, or is
   // aborted by an inject.

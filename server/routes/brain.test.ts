@@ -7,6 +7,7 @@ import { getAuthToken } from "../lib/auth"
 import { recordPeer } from "../lib/vault-guard"
 import type { Session } from "../lib/sessions"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
+import type { DispatchWiring } from "../wiring/dispatch"
 
 // brain-v2 routes (routes/brain.ts): the propose hook's auth, dedupe and
 // hand-off end to end (real sqlite proposals, a fake Turso with the
@@ -87,7 +88,8 @@ beforeAll(async () => {
   w.onSessionStart(BRAIN_SESSION)
   harnessWiring = w
   const todoMod = await import("../wiring/brain-todo")
-  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true, todo: (p) => todoMod.addBrainTodo(p, dispatch) })
+  const handoffMod = await import("../wiring/brain-handoff")
+  handler = route.createBrainRoute({ wiring: w, sessions: () => sessions, enabled: () => true, todo: (p) => todoMod.addBrainTodo(p, dispatch), handoff: (p) => handoffMod.addBrainHandoff(p, dispatch) })
 })
 afterAll(() => {
   if (savedHome === undefined) delete process.env.HOME
@@ -96,7 +98,7 @@ afterAll(() => {
 beforeEach(() => {
   turso.exec("DELETE FROM tasks; DELETE FROM agent_activity; DELETE FROM notes")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/dash', 'projects', 'TLS Dashboard', 'PRJ-WCLS', 'active')").run()
-  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent")
+  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent; DELETE FROM brain_outbox")
 })
 
 async function call(method: string, path: string, body?: unknown, opts: { peer?: string; headers?: Record<string, string> } = {}) {
@@ -137,6 +139,111 @@ describe("POST /hooks/brain/propose — auth", () => {
   test("missing noteId → 422 no_project", async () => {
     const r = await propose({ ...body(voiceTurn().id), noteId: undefined })
     expect(r).toEqual({ status: 422, json: { ok: false, error: "no_project" } })
+  })
+})
+
+describe("POST /hooks/brain/propose — handoff: a row for the relay, origin set by the server", () => {
+  const outbox = (id: string, state: string) => sqlite.query("INSERT OR REPLACE INTO brain_outbox (turn_id, state, created_at, updated_at) VALUES (?, ?, 0, 0)").run(id, state)
+  const openTurn = () => { const t = voiceTurn(); outbox(t.id, "typed"); return t }
+  const handoff = (turnId: string, extra: Record<string, unknown> = {}, opts?: { headers: Record<string, string> }) => propose({ ...body(turnId), handoff: true, ...extra }, opts)
+  const row = (id: unknown) => turso.query("SELECT origin, assignee, dispatch_status, dispatch_owner FROM tasks WHERE id = ?").get(String(id))
+
+  test("Jeremie's open turn files origin jeremie, queues nothing, and the id can be a TASK id", async () => {
+    const r = await handoff(openTurn().id)
+    expect(r.status).toBe(200)
+    expect(r.json.origin).toBe("jeremie")
+    expect(String(r.json.taskId)).toMatch(/^[0-9a-f]{32}$/)
+    expect(row(r.json.taskId)).toEqual({ origin: "jeremie", assignee: "handoff", dispatch_status: null, dispatch_owner: null })
+    expect(sqlite.query("SELECT COUNT(*) AS n FROM brain_proposals").get()).toEqual({ n: 0 })
+  })
+  test("a retry files one row and keeps the first origin, even once the turn closed", async () => {
+    const t = openTurn()
+    const first = await handoff(t.id)
+    sqlite.query("DELETE FROM brain_outbox WHERE turn_id = ?").run(t.id)
+    const again = await handoff(t.id)
+    expect(again.json).toEqual({ ok: true, taskId: first.json.taskId, origin: "jeremie", replay: true })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
+  })
+  test("the same prompt for two projects files two rows; a retry replays its own", async () => {
+    turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/site', 'projects', 'Site', 'PRJ-SITE', 'active')").run()
+    const t = openTurn()
+    const dash = await handoff(t.id)
+    const site = await handoff(t.id, { noteId: "projects/site" })
+    expect(site.json.taskId).not.toBe(dash.json.taskId)
+    expect(turso.query("SELECT note_id FROM tasks ORDER BY note_id").all()).toEqual([{ note_id: "projects/dash" }, { note_id: "projects/site" }])
+    const again = await handoff(t.id, { noteId: "projects/site" })
+    expect(again.json).toMatchObject({ taskId: site.json.taskId, replay: true })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 2 })
+  })
+  test("a moved handoff shows in the pipeline and PR triage, and nothing can send it back to queued", async () => {
+    const { detectColumns, listDispatchTasks, requeueTask, unblockTask } = await import("../lib/dispatch-tasks")
+    const { NEEDS_HUMAN, prSources, queryPrRows, taskSources } = await import("../lib/triage-sources")
+    const cols = await detectColumns(query)
+    const id = String((await handoff(openTurn().id)).json.taskId)
+    const url = "https://github.com/x/y/pull/7"
+    expect(await listDispatchTasks(query, cols)).toEqual([]) // not ACKed yet: no status, nothing to show
+
+    turso.query("UPDATE tasks SET dispatch_status = 'blocked', dispatch_blocker = 'handoff ABORTED' WHERE id = ?").run(id)
+    const listed = await listDispatchTasks(query, cols)
+    expect(listed.map((t) => [t.id, t.agent, t.status])).toEqual([[id, "handoff", "blocked"]])
+    expect(taskSources(listed, () => null)).toEqual([])
+    const ctx = { exec, cols, host: "test", channel: null, log: () => {} }
+    expect(await requeueTask(ctx, id)).toMatchObject({ ok: false, error: "conflict" })
+    expect(await unblockTask(ctx, id, "try again")).toMatchObject({ ok: false, error: "conflict" })
+    expect(row(id)).toMatchObject({ dispatch_status: "blocked" })
+
+    turso.query("UPDATE tasks SET dispatch_status = 'completed', dispatch_pr_url = ? WHERE id = ?").run(url, id)
+    turso.query("INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', ?, 'task', ?, ?)").run(NEEDS_HUMAN, id, JSON.stringify({ url, reason: "origin unknown" }))
+    const prs = await queryPrRows(query, cols)
+    expect(prs.tasks.map((t) => t.id)).toEqual([id])
+    expect(prSources(prs, Date.now()).map((s) => s.refId)).toEqual(["x/y#7"])
+  })
+  test("no origin column: nothing stored, so both filing and retry answer unknown", async () => {
+    const { addBrainHandoff } = await import("../wiring/brain-handoff")
+    const { detectColumns } = await import("../lib/dispatch-tasks")
+    const old = Database.deserialize(turso.serialize())
+    old.exec("ALTER TABLE tasks DROP COLUMN origin")
+    const oldExec: ExecFn = async (sql, args) => /^\s*SELECT/i.test(sql)
+      ? { rows: old.query(sql).all(...args) as Row[], affected: 0 } : { rows: [], affected: old.query(sql).run(...args).changes }
+    const oldQuery: QueryFn = async (sql, args) => (await oldExec(sql, args)).rows
+    const wiring = { query: oldQuery, exec: oldExec, columns: () => detectColumns(oldQuery) } as unknown as DispatchWiring
+    const input = { title: "T", prompt: "P", noteId: "projects/dash", reasoning: "", sourceTurnId: openTurn().id }
+    const first = await addBrainHandoff(input, wiring)
+    expect(first).toMatchObject({ status: 200, body: { origin: "unknown", replay: false } })
+    expect(await addBrainHandoff(input, wiring)).toMatchObject({ status: 200, body: { origin: "unknown", replay: true, taskId: first.body.taskId } })
+  })
+  test("anything but his open turn stays unknown", async () => {
+    const event = chat.appendTurn("orchestrator", "merged #12", null, "brain")
+    outbox(event.id, "typed")
+    const closed = voiceTurn()
+    const notTyped = voiceTurn()
+    outbox(notTyped.id, "queued")
+    const maybe = voiceTurn()
+    outbox(maybe.id, "maybe")
+    const otherThread = chat.appendTurn("user", "fix it", null, "general")
+    outbox(otherThread.id, "typed")
+    for (const id of [event.id, closed.id, notTyped.id, maybe.id, otherThread.id, "no-such-turn"]) {
+      const r = await handoff(id)
+      expect(r.status).toBe(200)
+      expect(r.json.origin).toBe("unknown")
+      expect((row(r.json.taskId) as { origin: string }).origin).toBe("unknown")
+    }
+  })
+  test("the caller can't set its own origin", async () => {
+    const event = chat.appendTurn("orchestrator", "peer says go", null, "brain")
+    outbox(event.id, "typed")
+    const r = await handoff(event.id, { origin: "jeremie" })
+    expect(r.json.origin).toBe("unknown")
+  })
+  test("only the brain session may file one", async () => {
+    const r = await handoff(openTurn().id, {}, { headers: { ...AUTH, "x-companion-pid": "6060" } })
+    expect(r.status).toBe(403)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
+  })
+  test("no such note: 404, nothing filed", async () => {
+    const r = await handoff(openTurn().id, { noteId: "projects/gone" })
+    expect(r.status).toBe(404)
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 })
   })
 })
 
@@ -305,13 +412,52 @@ describe("POST /hooks/brain/pr-close", () => {
   })
 })
 
+describe("POST /hooks/brain/task-cancel", () => {
+  test("brain auth, then input checks; only a valid call reaches the gate", async () => {
+    const seen: unknown[] = []
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
+      taskCancel: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "running", owner: "zettlab" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+      const req = new Request("http://localhost:4245/hooks/brain/task-cancel", { method, headers: { "content-type": "application/json", ...headers }, ...(method === "POST" ? { body: JSON.stringify(b) } : {}) })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { task: "task_tlsrv_7", reason: "superseded by #300" }
+    expect((await post(ok, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-task-id": "builder" })).status).toBe(403)
+    expect((await post(ok, { "content-type": "application/json" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    expect((await post({ ...ok, task: "bad ref!" })).status).toBe(400)
+    expect((await post({ ...ok, task: 7 })).status).toBe(400)
+    expect((await post({ task: ok.task })).status).toBe(400)
+    expect((await post({ ...ok, reason: "   " })).status).toBe(400)
+    expect((await post({ ...ok, reason: "x".repeat(301) })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await post(ok)
+    expect(r.status).toBe(409)
+    expect(r.json).toEqual({ ok: false, error: "running", owner: "zettlab" })
+    expect(seen).toEqual([ok])
+  })
+
+  test("404 brain_disabled off the brain host", async () => {
+    const h = route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => false })
+    const req = new Request("http://localhost:4245/hooks/brain/task-cancel", { method: "POST", headers: AUTH, body: "{}" })
+    recordPeer(req, "127.0.0.1")
+    expect((await h(req, new URL(req.url)))!.status).toBe(404)
+  })
+})
+
 describe("POST /hooks/brain/pr-merge", () => {
   test("brain auth, then input checks; only a valid call reaches the merge gate, never the close gate", async () => {
     const seen: unknown[] = []
     const h = route.createBrainRoute({
       wiring: harnessWiring, sessions: () => sessions, enabled: () => true,
       prClose: async () => { throw new Error("pr-merge must not reach pr-close") },
-      prMerge: async (p) => { seen.push(p); return { status: 403, body: { ok: false, error: "needs_human", reasons: ["sensitive paths: billing.ts"] } } },
+      prMerge: async (p) => { seen.push(p); return { status: 403, body: { ok: false, error: "hold-label", action: "wait", reason: "held by label wip", head: "abc" } } },
     })
     const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
       const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
@@ -333,13 +479,86 @@ describe("POST /hooks/brain/pr-merge", () => {
     expect(seen).toHaveLength(0)
     const r = await post(ok)
     expect(r.status).toBe(403)
-    expect(r.json).toEqual({ ok: false, error: "needs_human", reasons: ["sensitive paths: billing.ts"] })
-    expect(seen).toEqual([ok])
+    expect(r.json).toEqual({ ok: false, error: "hold-label", action: "wait", reason: "held by label wip", head: "abc" })
+    expect(seen).toEqual([{ ...ok, signal: expect.any(AbortSignal) }])
+  })
+
+  test("a caller that hangs up on a real socket reaches the merge as an aborted signal", async () => {
+    const seen = Promise.withResolvers<AbortSignal>()
+    const leave = Promise.withResolvers<void>()
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true, prClose: async () => { throw new Error("unreachable") },
+      prMerge: async (p) => { seen.resolve(p.signal!); await leave.promise; return { status: 409, body: { ok: false, error: "client_gone" } } },
+    })
+    const server = Bun.serve({ port: 0, fetch: (req) => { recordPeer(req, "127.0.0.1"); return h(req, new URL(req.url)) as Promise<Response> } })
+    const client = new AbortController()
+    const sent = fetch(`http://127.0.0.1:${server.port}/hooks/brain/pr-merge`, {
+      method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: JSON.stringify({ repo: "o/r", pr: 7, reason: "routine" }), signal: client.signal,
+    }).catch(() => null)
+    const signal = await seen.promise
+    expect(signal.aborted).toBe(false)
+    client.abort()
+    await sent
+    await Bun.sleep(50)
+    expect(signal.aborted).toBe(true)
+    leave.resolve()
+    server.stop(true)
+  })
+
+  test("a 409 gate_unavailable reaches bin/pr-merge whole", async () => {
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true, prClose: async () => { throw new Error("unreachable") },
+      prMerge: async () => ({ status: 409, body: { ok: false, error: "gate_unavailable", detail: "pr-gate.ts missing on this host" } }),
+    })
+    const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: JSON.stringify({ repo: "o/r", pr: 7, reason: "routine" }) })
+    recordPeer(req, "127.0.0.1")
+    const res = (await h(req, new URL(req.url)))!
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ ok: false, error: "gate_unavailable", detail: "pr-gate.ts missing on this host" })
   })
 
   test("404 brain_disabled when the brain is off", async () => {
     const h = route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => false, prMerge: async () => { throw new Error("unreachable") } })
     const req = new Request("http://localhost:4245/hooks/brain/pr-merge", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: "{}" })
+    recordPeer(req, "127.0.0.1")
+    expect((await h(req, new URL(req.url)))!.status).toBe(404)
+  })
+})
+
+describe("POST /hooks/brain/pr-update-branch", () => {
+  test("brain auth, then input checks; only a valid call reaches the update gate", async () => {
+    const seen: unknown[] = []
+    const never = async (): Promise<never> => { throw new Error("pr-update-branch must not reach pr-close or pr-merge") }
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true, prClose: never, prMerge: never,
+      prUpdate: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "conflict" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+      const req = new Request("http://localhost:4245/hooks/brain/pr-update-branch", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { repo: "o/r", pr: 7, reason: "stale CI, main moved" }
+    expect((await post(ok, {})).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-pid": "9999" })).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-task-id": "worker" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    expect((await post({ ...ok, repo: "o/r; rm -rf" })).status).toBe(400)
+    expect((await post({ ...ok, pr: "7" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "x".repeat(301) })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await post(ok)
+    expect(r.status).toBe(409)
+    expect(r.json).toEqual({ ok: false, error: "conflict" })
+    expect(seen).toEqual([ok])
+  })
+
+  test("404 brain_disabled when the brain is off", async () => {
+    const h = route.createBrainRoute({ wiring: harnessWiring, sessions: () => sessions, enabled: () => false, prUpdate: async () => { throw new Error("unreachable") } })
+    const req = new Request("http://localhost:4245/hooks/brain/pr-update-branch", { method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: "{}" })
     recordPeer(req, "127.0.0.1")
     expect((await h(req, new URL(req.url)))!.status).toBe(404)
   })

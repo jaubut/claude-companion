@@ -1,4 +1,4 @@
-import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, parseEdgeInput, parseNodeInput, parseNodePatch, readReferences, referenceRef, type SendResult } from "../lib/canvas"
+import { type CanvasEdge, type CanvasNode, type CanvasStatus, type CanvasStore, NODE_ID, parseEdgeInput, parseNodeInput, parseNodePatch, readReferences, referenceRef, type SendResult } from "../lib/canvas"
 import { noteContextBlocks } from "../lib/note-media"
 import type { QueryFn } from "../lib/turso"
 export type { SendResult }
@@ -10,6 +10,15 @@ export type { SendResult }
 //   POST   /api/canvas/nodes          { kind, x, y, w, h, ref?, data?, id? } → 201 { ok, node } (200 when id exists)
 //   PATCH  /api/canvas/nodes/<id>     { x?, y?, w?, h?, ref?, data? }       → { ok, node }
 //   DELETE /api/canvas/nodes/<id>     → { ok, edgeIds } (its edges go with it)
+//   POST   /api/canvas/nodes/<id>/pick {} → { ok, node, delivered } — design-first pick on a `preview`:
+//          data.picked = true + data.pickedAt (ms) on it, data.picked = false on the other previews of its
+//          data.group, a `node` frame per changed node. If data.sessionKey is a live session (bound when the
+//          card was posted), "Picked direction: <data.direction> — <ref>" is typed into it (delivered: true);
+//          else stored only (delivered: false). 400 invalid_kind unless preview; inject refusals as /send,
+//          with the pick already stored. Picking a card already picked and sending or sent types nothing
+//          (200 { ok, node, delivered, duplicate: true }); a failed delivery can be picked again.
+//          Deliveries run in group order; superseded queued picks are stored only (delivered: false).
+//          After 8 s, respond with delivered: false, queued: true while delivery continues in the background.
 //   POST   /api/canvas/edges          { from, to, kind? }                   → 201 { ok, edge }. Kind/state come from
 //          the endpoints (a posted kind is ignored): task → agent = "context"/"proposed" (Send?);
 //          note|turso_note → agent|brain = "reference"/"linked" (a live read-only link, never sent)
@@ -33,6 +42,8 @@ export interface CanvasRouteDeps {
   send: (edge: CanvasEdge) => Promise<SendResult>
   /** The note nodes linked to a live session (by key) or to the brain (wiring/canvas.ts). */
   references: (who: { key?: string; brain?: boolean }) => CanvasNode[]
+  /** Type a preview pick into the agent that posted it; null = no live session, stored only (wiring/canvas.ts). */
+  pickNotify: (node: CanvasNode, canDeliver?: () => boolean) => Promise<SendResult | null>
   query: QueryFn
   now?: () => number
 }
@@ -40,6 +51,7 @@ export interface CanvasRouteDeps {
 const NODES = "/api/canvas/nodes"
 const EDGES = "/api/canvas/edges"
 const LINKED = "/api/canvas/linked-notes"
+const PICK_WAIT_MS = 8_000 // Leave headroom under the server's 10 s HTTP idle timeout.
 
 const bad = (error: string, status = 400): Response => Response.json({ ok: false, error }, { status })
 
@@ -55,9 +67,15 @@ function idUnder(path: string, base: string): string | null {
   return id && !id.includes("/") ? id : null
 }
 
+function pickDeliveryKey(node: CanvasNode): string {
+  const group = node.data.group
+  return JSON.stringify(typeof group === "string" || typeof group === "number" ? ["group", group] : ["node", node.id])
+}
+
 export function createCanvasRoute(deps: CanvasRouteDeps) {
   const now = deps.now ?? Date.now
   const frame = (op: string, rest: Record<string, unknown>): void => deps.notify({ type: "canvas", op, ...rest })
+  const pickDeliveries = new Map<string, Promise<SendResult | null>>()
 
   return async function handle(req: Request, url: URL): Promise<Response | null> {
     const path = url.pathname
@@ -73,6 +91,45 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       const { node, created } = deps.store.addNode(p.value, now())
       if (created) frame("node", { node })
       return Response.json({ ok: true, node }, { status: created ? 201 : 200 })
+    }
+
+    const pickId = path.endsWith("/pick") ? idUnder(path.slice(0, -"/pick".length), NODES) : null
+    if (pickId && req.method === "POST") {
+      if (!NODE_ID.test(pickId)) return bad("invalid_id")
+      const p = deps.store.pickNode(pickId, now())
+      if (!p.ok) return bad(p.error, p.error === "not_found" ? 404 : 400)
+      for (const node of p.changed) frame("node", { node })
+      // A double tap (or a second client) finds the claim held and types nothing.
+      if (!p.claimed) return Response.json({ ok: true, node: p.node, delivered: p.sent, duplicate: true })
+      // The pick is stored before typing: a refused inject still leaves it for GET /api/canvas.
+      const key = pickDeliveryKey(p.node)
+      const canDeliver = (): boolean => {
+        const current = deps.store.currentPick(pickId, p.token)
+        return !!current && pickDeliveryKey(current) === key
+      }
+      const deliver = async (): Promise<SendResult | null> => {
+        let result: SendResult | null
+        try {
+          const current = deps.store.currentPick(pickId, p.token)
+          result = current && canDeliver() ? await deps.pickNotify(current, canDeliver) : null
+        } catch {
+          result = { ok: false, status: 503, error: "send_failed" }
+        }
+        deps.store.settlePick(pickId, p.token, result?.ok === true)
+        return result
+      }
+      const previous = pickDeliveries.get(key)
+      const delivery = previous ? previous.then(deliver, deliver) : deliver()
+      pickDeliveries.set(key, delivery)
+      const completed = delivery.finally(() => {
+        if (pickDeliveries.get(key) === delivery) pickDeliveries.delete(key)
+      })
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<"queued">((resolve) => { timer = setTimeout(() => resolve("queued"), PICK_WAIT_MS) })
+      const r = await Promise.race([completed, timeout]).finally(() => clearTimeout(timer))
+      if (r === "queued") return Response.json({ ok: true, node: p.node, delivered: false, queued: true })
+      if (!r || r.ok) return Response.json({ ok: true, node: p.node, delivered: r !== null })
+      return Response.json({ ...r.detail, ok: false, error: r.error, node: p.node, delivered: false }, { status: r.status })
     }
 
     const nodeId = idUnder(path, NODES)
