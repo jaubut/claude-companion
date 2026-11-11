@@ -90,3 +90,69 @@ test("send: a different agent on the bound session's tty → 409 target_changed,
   for (const n of [note, agent]) canvas.canvasStore.removeNode(n.id)
   sessions.removeSessionByKey(second.key)
 })
+
+test("pick notify: types into the bound posting session; no session → null; another agent on the tty → 409", async () => {
+  const typed: [string, string | undefined][] = []
+  canvas.setCanvasDeliver(async (text, key) => { typed.push([text, key]); return Response.json({ ok: true }) })
+  const s = sessions.recordSession({ cwd: "/tmp/canvas-pick", tty: "/dev/pts/79", sessionId: "sid-pick" }, { sessionIdConfirmed: true })!
+  const add = (sessionKey: string) => canvas.canvasStore.addNode(
+    { kind: "preview", ref: "http://zettlab:3147/direction-bold.html", x: 0, y: 0, w: 1, h: 1, data: { direction: "bold", group: "g", sessionKey } }, 1).node
+  const bound = add(s.key)
+  expect(bound.boundSid).toBe("sid-pick")
+  expect(await canvas.canvasPickNotify(bound)).toEqual({ ok: true })
+  expect(typed).toEqual([["Picked direction: bold — http://zettlab:3147/direction-bold.html", s.key]])
+
+  expect(await canvas.canvasPickNotify(add("claude:tty:/dev/pts/none"))).toBeNull()
+  expect(await canvas.canvasPickNotify(add(""))).toBeNull()
+
+  sessions.removeSessionByKey(s.key)
+  sessions.recordSession({ cwd: "/tmp/canvas-pick", tty: "/dev/pts/79", sessionId: "sid-other" }, { sessionIdConfirmed: true })
+  expect(await canvas.canvasPickNotify(bound)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+  // A data edit is not a re-point: the tty's new agent stays refused, and leaving the key out keeps it.
+  const edited = canvas.canvasStore.patchNode(bound.id, { data: { ...bound.data, title: "fixed" } }, 2)!
+  expect(edited.boundSid).toBe("sid-pick")
+  expect(await canvas.canvasPickNotify(edited)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+  const noKey = canvas.canvasStore.patchNode(bound.id, { data: { direction: "bold" } }, 3)!
+  expect([noKey.boundSid, noKey.data.sessionKey]).toEqual(["sid-pick", s.key])
+  // A new sessionKey rebinds to whoever holds it now.
+  const moved = canvas.canvasStore.patchNode(bound.id, { data: { ...bound.data, sessionKey: "claude:tty:/dev/pts/none" } }, 4)!
+  expect(moved.boundSid).toBe("")
+  expect(canvas.canvasStore.patchNode(bound.id, { data: { ...bound.data, sessionKey: s.key } }, 5)?.boundSid).toBe("sid-other")
+  expect(typed.length).toBe(1)
+  for (const n of canvas.canvasStore.nodes()) canvas.canvasStore.removeNode(n.id)
+  sessions.removeSessionByKey(s.key)
+})
+
+test("pick notify: a same-key PATCH repairs an empty binding but preserves a non-empty binding", async () => {
+  const typed: [string, string | undefined][] = []
+  canvas.setCanvasDeliver(async (text, key) => { typed.push([text, key]); return Response.json({ ok: true }) })
+  const meta = { cwd: "/tmp/canvas-late-bind", tty: "/dev/pts/80" }
+  const pending = sessions.recordSession(meta)!
+  const { node } = canvas.canvasStore.addNode({
+    kind: "preview", ref: "http://zettlab:3147/legacy.html", x: 0, y: 0, w: 1, h: 1,
+    data: { direction: "bold", sessionKey: pending.key },
+  }, 1)
+  try {
+    expect(node.boundSid).toBe("")
+    sessions.recordSession({ ...meta, sessionId: "sid-late" }, { sessionIdConfirmed: true })
+    expect(await canvas.canvasPickNotify(node)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+    // Merely editing the card must not bind it using an inherited key.
+    const ordinary = canvas.canvasStore.patchNode(node.id, { data: { direction: "bold" } }, 2)!
+    expect([ordinary.boundSid, ordinary.data.sessionKey]).toEqual(["", pending.key])
+
+    const repaired = canvas.canvasStore.patchNode(node.id, { data: { ...ordinary.data, sessionKey: pending.key } }, 3)!
+    expect(repaired.boundSid).toBe("sid-late")
+    expect(await canvas.canvasPickNotify(repaired)).toEqual({ ok: true })
+    expect(typed).toEqual([["Picked direction: bold — http://zettlab:3147/legacy.html", pending.key]])
+
+    sessions.removeSessionByKey(pending.key)
+    sessions.recordSession({ ...meta, sessionId: "sid-replacement" }, { sessionIdConfirmed: true })
+    const edited = canvas.canvasStore.patchNode(node.id, { data: { ...repaired.data, title: "edited", sessionKey: pending.key } }, 4)!
+    expect(edited.boundSid).toBe("sid-late")
+    expect(await canvas.canvasPickNotify(edited)).toMatchObject({ ok: false, status: 409, error: "target_changed" })
+    expect(typed).toHaveLength(1)
+  } finally {
+    canvas.canvasStore.removeNode(node.id)
+    sessions.removeSessionByKey(pending.key)
+  }
+})

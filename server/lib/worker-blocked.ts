@@ -15,8 +15,8 @@ import { redactSecrets } from "./secret-redact"
 
 /** Only herdr dispatch workers: never cc-*, builder-*, tko-* or anything else. */
 export const WORKER_RE = /^dispatch-[0-9a-f]{8}$/
-/** Never offered: "Yes, and switch to auto mode" or "Yes, and don't ask again" would lift later prompts too. */
-const STANDING_GRANT_RE = /auto[\s-]*mode|(don['’]?t|do not) ask again/i
+/** Never offered: standing grants ("switch to auto mode", "don't ask again", "always allow", etc.) would lift later prompts too. */
+const STANDING_GRANT_RE = /auto[\s-]*mode|switch to auto|(don['’]?t|do not) ask again|never ask|always allow|allow all|allow for\b|accept all|for this session|for the rest of|remember this|trust this|permanently/i
 /** The runner's give-up while an alert is open; past it the card reads expired. */
 export const ALERT_TTL_MS = 30 * 60_000
 const KEY_RE = /^[0-9A-Za-z]$/
@@ -83,7 +83,7 @@ export function parseBlocked(raw: unknown): BlockedInput | string {
   if (!WORKER_RE.test(worker)) return "not_dispatch_worker"
   const taskId = str(b.taskId)
   if (!TASK_RE.test(taskId)) return "taskId_required"
-  const title = str(b.title).slice(0, TITLE_MAX)
+  const title = redactSecrets(str(b.title)).slice(0, TITLE_MAX)
   const dialog = redactSecrets(str(b.dialog)).slice(0, DIALOG_MAX)
   if (!dialog) return "dialog_required"
   if (!Array.isArray(b.options) || b.options.length > OPTIONS_MAX) return "options_invalid"
@@ -91,9 +91,10 @@ export function parseBlocked(raw: unknown): BlockedInput | string {
   for (const o of b.options as unknown[]) {
     const rec = o && typeof o === "object" ? o as Record<string, unknown> : {}
     const key = str(rec.key)
-    const label = redactSecrets(str(rec.label)).slice(0, LABEL_MAX)
+    const fullLabel = redactSecrets(str(rec.label))
+    const label = fullLabel.slice(0, LABEL_MAX)
     if (!KEY_RE.test(key) || !label) return "options_invalid"
-    if (!STANDING_GRANT_RE.test(label) && !options.some((x) => x.key === key)) options.push({ key, label })
+    if (!STANDING_GRANT_RE.test(fullLabel) && !options.some((x) => x.key === key)) options.push({ key, label })
   }
   if (!options.length) return "options_invalid"
   return { taskId, title, worker, dialog, options }

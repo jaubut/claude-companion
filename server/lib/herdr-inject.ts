@@ -37,7 +37,7 @@ export type HerdrDelivery = { ok: true } | { ok: false; blocked: boolean; reason
 export async function deliverViaHerdr(
   pane: string,
   text: string,
-  opts: { typed?: boolean; deadline?: number; herdr?: Herdr } = {},
+  opts: { typed?: boolean; deadline?: number; herdr?: Herdr; canDeliver?: () => boolean } = {},
 ): Promise<HerdrDelivery> {
   // herdr 0.9.3 has no `--` end-of-options separator (`agent prompt` takes
   // `--` as the text), so text with a leading dash would parse as an option.
@@ -45,17 +45,24 @@ export async function deliverViaHerdr(
   const h = opts.herdr ?? realHerdr
   const typed = opts.typed ?? isHooklessInput(text)
   try {
-    return await keyGate.send(herdrGateKey(pane), "Enter", async (): Promise<HerdrDelivery> => {
+    return await keyGate.send(herdrGateKey(pane), "Enter", async (turnSignal): Promise<HerdrDelivery> => {
+      const signal = opts.canDeliver ? turnSignal : undefined
+      signal?.throwIfAborted()
+      if (opts.canDeliver && !opts.canDeliver()) return { ok: false, blocked: false, reason: "target_changed" }
       if (!typed) {
-        await h.call(["agent", "prompt", pane, text])
+        await h.call(["agent", "prompt", pane, text], undefined, signal)
         return { ok: true }
       }
-      const got = await h.call(["agent", "get", pane])
+      const got = await h.call(["agent", "get", pane], undefined, signal)
       if ((got.agent as { agent_status?: string } | undefined)?.agent_status === "blocked") {
         return { ok: false, blocked: true, reason: "agent_blocked" }
       }
-      await h.call(["pane", "send-text", pane, text])
-      await h.call(["pane", "send-keys", pane, "enter"])
+      signal?.throwIfAborted()
+      if (opts.canDeliver && !opts.canDeliver()) return { ok: false, blocked: false, reason: "target_changed" }
+      await h.call(["pane", "send-text", pane, text], undefined, signal)
+      signal?.throwIfAborted()
+      if (opts.canDeliver && !opts.canDeliver()) return { ok: false, blocked: false, reason: "target_changed" }
+      await h.call(["pane", "send-keys", pane, "enter"], undefined, signal)
       return { ok: true }
     }, { startBy: opts.deadline ?? Date.now() + INJECT_QUEUE_MS, timeoutMs: INJECT_SEND_MS })
   } catch (err) {

@@ -9,7 +9,6 @@ import { workerBlocked } from "../wiring/worker-blocked"
 //   POST /api/orchestrator/worker-blocked/<id>/choose        phone → {optionId} + Idempotency-Key
 // /hooks/* = loopback or Bearer (host gate, like /hooks/dispatch-event); /api/* = Bearer.
 
-const ID_RE = /^[0-9a-f-]{36}$/
 const HOOK_RE = /^\/hooks\/worker-blocked\/([0-9a-f-]{36})(\/close)?$/
 const CHOOSE_RE = /^\/api\/orchestrator\/worker-blocked\/([0-9a-f-]{36})\/choose$/
 
@@ -35,7 +34,7 @@ export function workerBlockedRoute(alerts: WorkerBlocked) {
       return reply(alerts.create(input, key))
     }
     const hook = HOOK_RE.exec(p)
-    if (hook && ID_RE.test(hook[1]!)) {
+    if (hook) {
       if (!hook[2] && req.method === "GET") return reply(alerts.status(hook[1]!))
       if (hook[2] && req.method === "POST") return reply(alerts.close(hook[1]!))
       return null

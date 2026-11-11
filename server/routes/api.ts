@@ -278,7 +278,9 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
   // ── Close a terminal row (lib/shell-sessions.ts closeShellSession) ──
   // {name} → 200 {ok, gone} (gone: it had already exited) | 400 bad_name |
-  // 404 unknown_shell (not in the shell list) | 409 claude_running | 502 kill_failed.
+  // 404 unknown_shell (not in the shell list) | 409 claude_running |
+  // 409 {code: close_unavailable} (a herdr shell; `error` is the sentence the
+  // phone shows, as it shows any code) | 502 kill_failed.
   // The row leaves every client through the shell store's `sessions` broadcast.
   if (url.pathname === "/api/shell/close" && req.method === "POST") {
     const refused = shellNetworkRefusal(req)
@@ -291,6 +293,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
       companionLog(`\x1b[35mshell closed\x1b[0m ${name}${r.gone ? " (already gone)" : ""}`)
       return Response.json(r)
     }
+    if (r.error === "close_unavailable") return Response.json({ ok: false, error: "Type exit in the shell to close it", code: r.error }, { status: 409 })
     const status = { unknown_shell: 404, claude_running: 409, kill_failed: 502 }[r.error]
     return Response.json(r, { status })
   }
@@ -340,8 +343,8 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   return null
 }
 
-// A login shell in a detached tmux session (lib/shell-sessions.ts). Always
-// tmux, whatever `app` says: the phone attaches it through /api/terminal.
+// A login shell in a marked herdr pane (lib/shell-sessions.ts). Always herdr,
+// whatever `app` says: the phone attaches it through /api/terminal.
 // Replies with the session's wire record so the phone can open it at once.
 // `resume` (a Claude session id) types `claude --resume <id>` into it.
 async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
@@ -356,9 +359,9 @@ async function spawnShell(rawCwd: string, resume: unknown): Promise<Response> {
   const r = await spawnShellSession(cwd.dir, undefined, resume as string | undefined)
   if (!r.ok) {
     companionLog(`\x1b[31mspawn failed\x1b[0m — ${r.error}`)
-    return Response.json({ ok: false, error: r.error }, { status: 400 })
+    return Response.json({ ok: false, error: r.error, ...(r.session && { key: r.session.key, sessionName: r.session.name }) }, { status: 400 })
   }
-  return Response.json({ ok: true, app: "tmux", cwd: cwd.dir, agent: "shell", key: r.session.key, sessionName: r.session.name })
+  return Response.json({ ok: true, app: "herdr", cwd: cwd.dir, agent: "shell", key: r.session.key, sessionName: r.session.name })
 }
 
 async function handleResolve(req: Request): Promise<Response> {
@@ -431,7 +434,7 @@ async function handleInject(req: Request): Promise<Response> {
  * submit confirmation). Also the canvas Context-edge send (wiring/canvas.ts),
  * so a canvas prompt passes the exact same inject guards as a phone prompt.
  */
-export async function deliverInject(text: string, key?: string, cwd?: string): Promise<Response> {
+export async function deliverInject(text: string, key?: string, cwd?: string, boundSid?: string, canDeliver?: () => boolean): Promise<Response> {
   const lookup = key || cwd || ""
   let target = lookup ? resolveSession(lookup) : null
   // The target the caller actually named, captured before the fallback below
@@ -516,7 +519,8 @@ export async function deliverInject(text: string, key?: string, cwd?: string): P
     companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
   }
 
-  const res = await injectConfirmed(text, target ?? undefined)
+  const res = await injectConfirmed(text, target ?? undefined, undefined, boundSid === undefined ? canDeliver : () => !!boundSid && getSessionByKey(key ?? "")?.sessionId === boundSid && (canDeliver?.() ?? true))
+  if (!res.ok && res.error === "target_changed") return Response.json({ ok: false, error: res.error, key, cwd }, { status: 409 })
   if (!res.ok && res.error === "pane_not_ready") {
     // herdr refused it (agent_blocked): same 409 as the pre-inject refusal.
     companionLog(`\x1b[31minject refused\x1b[0m — ${target?.label || target?.key} herdr agent blocked`)

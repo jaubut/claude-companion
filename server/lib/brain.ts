@@ -25,6 +25,15 @@ export const BRAIN_TAKE_PREFIX = "brain:"
 
 export type BrainState = "up" | "starting" | "down" | "paused"
 
+/** The repos with a lead: one line per repo, GitHub slug by repo name. */
+export const LEAD_REPOS: Readonly<Record<string, string>> = {
+  "claude-companion": "jaubut/claude-companion",
+  "remorquage-pelchat-web": "jaubut/remorquage-pelchat-web",
+  "claude-config": "jaubut/claude-config",
+}
+export const LEAD_PREFIX = "lead-"
+export const leadSlug = (repo: string): string | null => Object.hasOwn(LEAD_REPOS, repo) ? LEAD_REPOS[repo]! : null
+
 /** The brain runs on the host that sets COMPANION_BRAIN=1 (Zettlab) and nowhere else. */
 export function brainEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return env.COMPANION_BRAIN?.trim() === "1"
@@ -37,7 +46,7 @@ export function isBrainHook(taskId: string | null | undefined): boolean {
 
 /** Brain or a repo lead (P2: `lead-<repo>`): sessions the supervisor owns, never the global auto-compact's. */
 export function isSupervisedTask(taskId: string | null | undefined): boolean {
-  return taskId === BRAIN_AGENT || !!taskId?.startsWith("lead-")
+  return taskId === BRAIN_AGENT || !!taskId?.startsWith(LEAD_PREFIX)
 }
 
 // ── Delivery text ──
@@ -52,13 +61,33 @@ export const brainText = (t: DeliveryTurn): string => (t.card?.kind === "worker_
 
 /** Queued turns as one prompt, oldest first: Jeremie's `[turn <id>] (voice) text`, system `[event <id>] text`. */
 export function deliveryText(turns: DeliveryTurn[]): string {
-  const lines = turns.map((t) => {
-    const text = brainText(t).replace(/\s+/g, " ").trim()
-    if (t.role === "orchestrator") return `[event ${t.id}] ${text}`
-    return `[turn ${t.id}]${t.card?.kind === "voice" ? " (voice)" : ""} ${text}`
-  })
-  const text = lines.join("\n")
+  const text = turns.map(deliveryLine).join("\n")
   return text.length > DELIVERY_MAX ? `${text.slice(0, DELIVERY_MAX - 1)}…` : text
+}
+
+function deliveryLine(t: DeliveryTurn): string {
+  const text = brainText(t).replace(/\s+/g, " ").trim()
+  if (t.role === "orchestrator") return `[event ${t.id}] ${text}`
+  return `[turn ${t.id}]${t.card?.kind === "voice" ? " (voice)" : ""} ${text}`
+}
+
+/** The oldest turns that fit one delivery; the rest stay queued. A single turn over the cap still goes, cut. */
+export function fitDelivery<T extends DeliveryTurn>(turns: T[]): T[] {
+  let used = 0
+  const fit: T[] = []
+  for (const t of turns) {
+    used += deliveryLine(t).length + 1
+    if (fit.length && used - 1 > DELIVERY_MAX) break
+    fit.push(t)
+  }
+  return fit
+}
+
+/** What goes out now: the turns that fit, plus queued ids with no turn left. The rest stays queued for the next Stop. */
+export function fitQueued<T extends DeliveryTurn>(queued: string[], found: T[]): { turns: T[]; ids: string[] } {
+  const turns = fitDelivery(found)
+  const held = new Set(found.slice(turns.length).map((t) => t.id))
+  return { turns, ids: queued.filter((id) => !held.has(id)) }
 }
 
 /** First prompt of a fresh brain: memory first, then every turn still open. */

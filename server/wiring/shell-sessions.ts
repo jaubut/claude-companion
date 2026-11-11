@@ -1,7 +1,7 @@
 import type { ServerWebSocket } from "bun"
 import { companionLog } from "../lib/log"
 import { listSessions } from "../lib/sessions"
-import { getShellSession, onShellSessions, readShellSessions, store, wireSessions } from "../lib/shell-sessions"
+import { getShellSession, onShellSessions, readShellSessions, replaceKeepingLinks, wireSessions } from "../lib/shell-sessions"
 import { TERMINAL_ENDED, openTerminal } from "../lib/terminal-bridge"
 import { endedStore } from "../lib/ended-sessions"
 import { broadcast, describeClient, type WsData } from "../state"
@@ -40,7 +40,7 @@ export function terminalOpen(ws: ServerWebSocket<WsData>): void {
     end: (code, reason) => ws.close(code, reason),
   }, undefined, () => {
     // The attach ended: maybe the shell exited. Refresh now, not at the next poll.
-    void readShellSessions().then((list) => store.replace(list))
+    void readShellSessions().then(replaceKeepingLinks)
   })
   bridges.set(ws, bridge)
 }

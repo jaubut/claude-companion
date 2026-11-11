@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   brainToolStep,
   RESTART_WINDOW_MS, START_GRACE_MS,
-  bootSeed, brainEnabled, deliveryText, idleCompactDue, isBrainHook, isSupervisedTask,
+  bootSeed, brainEnabled, deliveryText, fitDelivery, DELIVERY_MAX, idleCompactDue, isBrainHook, isSupervisedTask,
   rolloverDue, superviseStep,
 } from "./brain"
 
@@ -83,4 +83,13 @@ describe("brainToolStep", () => {
     expect(brainToolStep("WebSearch", { query: "herdr states" })).toMatchObject({ kind: "searching", detail: "herdr states" })
     expect(brainToolStep("mcp__claude_ai_Google_Calendar__list_events", {})).toMatchObject({ kind: "working", running: "Using list events", done: "Used list events" })
   })
+})
+
+test("fitDelivery: only turns that fit go out, the rest stay queued, and one huge turn still moves", () => {
+  const turn = (id: string, n: number) => ({ id, role: "orchestrator", text: "x".repeat(n), createdAt: 0 })
+  const fit = fitDelivery([turn("a", 2_000), turn("b", 1_900), turn("c", 500)])
+  expect(fit.map((t) => t.id)).toEqual(["a", "b"])
+  expect(deliveryText(fit).length).toBeLessThanOrEqual(DELIVERY_MAX)
+  expect(fitDelivery([turn("a", 9_000), turn("b", 10)]).map((t) => t.id)).toEqual(["a"])
+  expect(fitDelivery([])).toEqual([])
 })

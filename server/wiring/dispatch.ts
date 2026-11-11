@@ -54,6 +54,6 @@ export const dispatchWiring: DispatchWiring = createDispatchWiring({
   localQueue: () => ({ cap: 0, live: countLiveTasks(), queued: listQueued().length }),
   liveIdentity: (id) => {
     const t = getTaskByDispatchId(id)
-    return t ? { localTaskId: t.taskId, tmuxSession: t.tmuxSession, tmuxSocket: t.tmuxSocket ?? null, sessionKey: t.sessionKey, logTail: t.logTail } : null
+    return t ? { localTaskId: t.taskId, sessionKey: t.sessionKey, logTail: t.logTail } : null
   },
 })

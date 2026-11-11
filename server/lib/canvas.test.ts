@@ -54,3 +54,80 @@ test("store: a pre-P6 edges table is migrated; a send cut by a restart reopens a
   expect(s.claimEdge("old", 3)).toBeNull()
   expect(createCanvasStore(db).edge("old")).toMatchObject({ state: "failed", error: "server_restart" })
 })
+
+for (const [otherGroup, group] of [[true, 1], [false, 0], [[1], "[1]"], [{ a: 1 }, '{"a":1}']] as const) {
+  test(`store: preview groups match JSON type as well as value (${JSON.stringify(otherGroup)} vs ${JSON.stringify(group)})`, () => {
+    const db = new Database(":memory:")
+    const s = createCanvasStore(db)
+    try {
+      for (const [id, value] of [["other", otherGroup], ["same", group], ["picked", group]] as const) {
+        s.addNode({ ...node("preview", "", { group: value }), id }, 1)
+      }
+      const other = s.pickNode("other", 2)
+      if (!other.ok || !other.claimed) throw new Error("other pick was not claimed")
+      s.pickNode("same", 3)
+      const picked = s.pickNode("picked", 4)
+      if (!picked.ok) throw new Error(picked.error)
+
+      expect(s.node("other")?.data.picked).toBe(true)
+      expect(s.currentPick("other", other.token)).not.toBeNull()
+      expect(s.node("same")?.data.picked).toBe(false)
+      expect(s.node("picked")?.data.picked).toBe(true)
+      expect(picked.changed.map((n) => n.id)).toEqual(["picked", "same"])
+    } finally {
+      db.close()
+    }
+  })
+}
+
+for (const state of ["sending", "sent"] as const) {
+  test(`store: moving a ${state} pick into a picked group unpicks it and releases its claim`, () => {
+    const db = new Database(":memory:")
+    const s = createCanvasStore(db)
+    try {
+      s.addNode({ ...node("preview", "", { group: "old" }), id: "moved" }, 1)
+      s.addNode({ ...node("preview", "", { group: "new" }), id: "existing" }, 1)
+      const original = s.pickNode("moved", 2)
+      const existing = s.pickNode("existing", 3)
+      if (!original.ok || !original.claimed || !existing.ok || !existing.claimed) throw new Error("picks were not claimed")
+      if (state === "sent") s.settlePick("moved", original.token, true)
+      s.settlePick("existing", existing.token, true)
+
+      const moved = s.patchNode("moved", { data: { group: "new", picked: true, pickedAt: 99 } }, 4)!
+      expect(moved.data.picked).toBe(false)
+      expect(moved.data.pickedAt).toBeUndefined()
+      expect(s.node("existing")?.data.picked).toBe(true)
+      expect(db.query("SELECT pick_state, pick_token FROM canvas_nodes WHERE id = ?").get("moved"))
+        .toEqual({ pick_state: "", pick_token: "" })
+
+      const repick = s.pickNode("moved", 5)
+      expect(repick).toMatchObject({ ok: true, claimed: true, sent: false })
+      if (!repick.ok || !repick.claimed) throw new Error("moved pick was not reclaimed")
+      expect(s.node("existing")?.data.picked).toBe(false)
+      s.settlePick("moved", original.token, true)
+      expect(s.currentPick("moved", repick.token)).not.toBeNull()
+      s.settlePick("moved", repick.token, true)
+      expect(s.pickNode("moved", 6)).toMatchObject({ ok: true, claimed: false, sent: true })
+    } finally {
+      db.close()
+    }
+  })
+}
+
+test("store: removing a group in a wholesale data PATCH also resets the pick", () => {
+  const db = new Database(":memory:")
+  const s = createCanvasStore(db)
+  try {
+    s.addNode(node("preview", "", { group: "old" }), 1)
+    const claim = s.pickNode("n", 2)
+    if (!claim.ok || !claim.claimed) throw new Error("pick was not claimed")
+    s.settlePick("n", claim.token, true)
+    expect(s.patchNode("n", { data: { title: "ungrouped" } }, 3)?.data)
+      .toEqual({ title: "ungrouped", picked: false })
+    expect(db.query("SELECT pick_state, pick_token FROM canvas_nodes WHERE id = ?").get("n"))
+      .toEqual({ pick_state: "", pick_token: "" })
+    expect(s.pickNode("n", 4)).toMatchObject({ ok: true, claimed: true, sent: false })
+  } finally {
+    db.close()
+  }
+})

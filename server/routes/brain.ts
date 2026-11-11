@@ -1,14 +1,18 @@
 import { checkBearer, unauthorized } from "../lib/auth"
-import { BRAIN_AGENT, BRAIN_THREAD, brainEnabled, brainText } from "../lib/brain"
+import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, brainText, leadSlug } from "../lib/brain"
 import { latestRows, rowsSince } from "../lib/brain-trace"
 import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { type BrainWiring, brainWiring } from "../wiring/brain"
+import { addBrainHandoff } from "../wiring/brain-handoff"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { updateAgentPr } from "../wiring/brain-pr-update-branch"
+import { TASK_REF, cancelAgentTask } from "../wiring/brain-task-cancel"
+import { type BrainLead, brainLead } from "../wiring/brain-lead"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -16,12 +20,15 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
 //   GET  /api/brain/trace?since=<seq>     → {ok, rows: TraceRow[]}
 //   POST /api/brain/pause|resume|restart  → {ok, brain}; restart while paused → 409 paused
-//   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId}
+//   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId, handoff?}
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
+//   POST /hooks/brain/lead                → bin/lead: {repo} → {ok, name, state} (docs/brain-api.md § Repo leads)
 //   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
 //   POST /hooks/brain/sessions            → bin/sessions: {op:"list"} → {ok, sessions, mode}; {op:"close", workspaceId}
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
+//   POST /hooks/brain/pr-update-branch    → bin/pr-update-branch: {repo, pr, reason} → {ok, updated, url, head} (stale dispatch/* PRs only)
+//   POST /hooks/brain/task-cancel         → bin/task-cancel: {task, reason} → {ok, cancelled, from, pr?, prState?, note?} (queued, blocked, failed tasks the brain proposed)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
@@ -43,6 +50,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/
 export interface BrainRouteDeps {
   wiring: BrainWiring
   todo?: typeof addBrainTodo
+  handoff?: typeof addBrainHandoff
   sessions: () => Session[]
   enabled: () => boolean
   /** The brain-workers reaper (default: the real one). */
@@ -51,8 +59,14 @@ export interface BrainRouteDeps {
   prClose?: typeof closeDeadPr
   /** The routine-PR merge (default: the real one, gh + Turso). */
   prMerge?: typeof mergeAgentPr
+  /** The stale-PR update (default: the real one, gh + Turso). */
+  prUpdate?: typeof updateAgentPr
+  /** The task cancel (default: the real one, Turso + the proposal store). */
+  taskCancel?: typeof cancelAgentTask
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
+  /** bin/lead (default: the real one). */
+  lead?: BrainLead
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -99,6 +113,10 @@ async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const agent = body.agent === undefined || body.agent === null ? null : str(body.agent, 64)
   if (body.agent !== undefined && body.agent !== null && !agent) return fail(400, "unknown_agent")
   const reasoning = str(body.reasoning, REASONING_MAX) ?? ""
+  if (body.handoff === true) {
+    const out = await (deps.handoff ?? addBrainHandoff)({ title, prompt, noteId, reasoning, sourceTurnId })
+    return Response.json(out.body, { status: out.status })
+  }
   const out = await deps.wiring.propose({ title, prompt, noteId, agent, reasoning, sourceTurnId })
   return Response.json(out.body, { status: out.status })
 }
@@ -160,8 +178,8 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
-/** bin/pr-close and bin/pr-merge: the gate (wiring/brain-pr-close.ts, brain-pr-merge.ts) re-checks it all on GitHub and Turso. */
-async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge"): Promise<Response> {
+/** bin/pr-close, pr-merge and pr-update-branch: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and Turso. */
+async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge" | "pr-update-branch"): Promise<Response> {
   const refused = proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
@@ -172,10 +190,38 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
-  const run = op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prMerge ?? mergeAgentPr
-  const out = await run({ repo, pr, reason })
+  const out = op === "pr-merge"
+    ? await (deps.prMerge ?? mergeAgentPr)({ repo, pr, reason, signal: req.signal })
+    : await (op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prUpdate ?? updateAgentPr)({ repo, pr, reason })
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
+}
+
+/** bin/task-cancel: the gate (wiring/brain-task-cancel.ts) re-checks it all on Turso and the proposal row. */
+async function taskCancel(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const task = typeof body.task === "string" && TASK_REF.test(body.task) ? body.task : null
+  if (!task) return fail(400, "task must be an id or 8-char prefix")
+  const reason = str(body.reason, REASON_MAX)
+  if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
+  const out = await (deps.taskCancel ?? cancelAgentTask)({ task, reason })
+  companionLog(`[brain] task-cancel ${task.slice(0, 8)} → ${out.status} ${String(out.body.error ?? "ok")}`)
+  return Response.json(out.body, { status: out.status })
+}
+
+/** bin/lead: the brain finds or starts a repo's lead. */
+async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const repo = typeof body.repo === "string" && leadSlug(body.repo) ? body.repo : null
+  if (!repo) return fail(404, "no_lead_for_repo")
+  const out = await (deps.lead ?? brainLead).ensure(repo, `${LEAD_PREFIX}${repo}`)
+  return Response.json(out, { status: out.ok ? 200 : 502 })
 }
 
 /** bin/deploy: the deployer (wiring/auto-deploy.ts) re-checks the repo allowlist and fast-forward itself. */
@@ -227,6 +273,21 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-merge")
+    }
+    if (p === "/hooks/brain/pr-update-branch") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return prAction(req, deps, "pr-update-branch")
+    }
+    if (p === "/hooks/brain/task-cancel") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return taskCancel(req, deps)
+    }
+    if (p === "/hooks/brain/lead") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return leadOp(req, deps)
     }
     if (p === "/hooks/brain/deploy") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")

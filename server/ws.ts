@@ -13,6 +13,7 @@ import { clients, broadcast, describeClient, HOST_INFO, type WsData } from "./st
 import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPaneForInject } from "./wiring/dialogs"
 import { announceWaiting } from "./wiring/waiting"
 import { copyJobs } from "./wiring/copy-jobs"
+import { builderJobs } from "./wiring/builder-jobs"
 import { canvasSnapshot } from "./wiring/canvas"
 import { wireSessions } from "./lib/shell-sessions"
 import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-sessions"
@@ -60,6 +61,9 @@ export const websocket: WebSocketHandler<WsData> = {
     // The host's copy jobs right after init (same reset trap), only when any.
     const copies = copyJobs.frame()
     if (copies.jobs.length > 0) ws.send(JSON.stringify(copies))
+    // The brain's builder jobs (wiring/builder-jobs.ts), only when any.
+    const builds = builderJobs.frame()
+    if (builds.jobs.length > 0) ws.send(JSON.stringify(builds))
     // The canvas board + tri-state status (wiring/canvas.ts), only when the board has nodes.
     const canvas = canvasSnapshot()
     if (canvas) ws.send(JSON.stringify(canvas))

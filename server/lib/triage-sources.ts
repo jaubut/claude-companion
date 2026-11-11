@@ -22,9 +22,9 @@ const NOT_RETRYABLE = /\b(unknown agent|unknown_agent|no such (note|project|repo
 /** Version of a task row: any status or updated_at move makes a new item version. */
 export const taskVersion = (t: Pick<DispatchTask, "status" | "updatedAtRaw">): string => `${t.status ?? "none"}|${t.updatedAtRaw}`
 
-/** Does this dispatch task need Jeremie (blocked, or failed with a retryable cause)? */
+/** Does this dispatch task need Jeremie (blocked, or failed with a retryable cause)? Not a handoff: no answer or retry reaches its builder session. */
 export function taskNeedsHuman(t: DispatchTask): boolean {
-  if (t.done) return false
+  if (t.done || t.agent === "handoff") return false
   if (t.status === "blocked") return true
   return t.status === "failed" && !NOT_RETRYABLE.test(t.blocker ?? "")
 }
@@ -105,7 +105,7 @@ export async function queryPrRows(query: QueryFn, cols: DispatchColumns): Promis
   const tasks = await query(
     `SELECT t.id, t.text, t.done, t.created_at, t.updated_at, t.dispatch_status, t.dispatch_blocker, ${prCol} AS dispatch_pr_url, n.title AS note_title ` +
       "FROM tasks t LEFT JOIN notes n ON n.id = t.note_id " +
-      "WHERE t.assignee LIKE 'agent:%' AND (" +
+      "WHERE (t.assignee LIKE 'agent:%' OR t.assignee = 'handoff') AND (" +
       `(t.done = 0 AND t.dispatch_status IN ('pr', 'completed') AND (${prFilter}${parked})) OR (t.done = 1 AND ${parked})` +
       ") ORDER BY t.done ASC, t.updated_at DESC LIMIT 200",
     [NEEDS_HUMAN, NEEDS_HUMAN],

@@ -238,6 +238,49 @@ export interface SweepOptions {
   env?: Record<string, string | undefined>
   tmp?: string
   uid?: number
+  // HOMEs live processes run in (null: can't tell, so nothing is swept).
+  inUse?: () => Promise<Set<string> | null>
+}
+
+// The HOME of every live process this user can read: Linux from /proc,
+// elsewhere one `ps eww` (an argv token that looks like HOME= only keeps more).
+// A HOME in this set is in use whatever happened to the server that made it:
+// a tmux scrape from before the herdr switch outlives that server.
+// Only a complete scan counts: a process gone mid-scan (ENOENT, ESRCH) or
+// another user's (EACCES, EPERM: never a scrape, which runs as us) is an
+// answer; any other read error (EMFILE…) makes the whole result unknown.
+// Reads are one at a time, so the scan can't exhaust file descriptors itself.
+const PROC_ANSWERS = new Set(["ENOENT", "ESRCH", "EACCES", "EPERM"])
+interface ProcFs { list: () => Promise<string[]>; read: (pid: string) => Promise<string> }
+const realProc: ProcFs = {
+  list: () => readdir("/proc"),
+  read: (pid) => readFile(`/proc/${pid}/environ`, "latin1"),
+}
+
+export async function liveHomes(platform: NodeJS.Platform = process.platform, proc: ProcFs = realProc): Promise<Set<string> | null> {
+  const out = new Set<string>()
+  try {
+    if (platform === "linux") {
+      for (const pid of (await proc.list()).filter((p) => /^\d+$/.test(p))) {
+        let env = ""
+        try {
+          env = await proc.read(pid)
+        } catch (err) {
+          if (!PROC_ANSWERS.has((err as NodeJS.ErrnoException).code ?? "")) return null
+        }
+        const home = env.split("\0").find((e) => e.startsWith("HOME="))
+        if (home) out.add(home.slice(5))
+      }
+      return out
+    }
+    const p = Bun.spawn(["ps", "eww", "-ax", "-o", "command="], { stdout: "pipe", stderr: "ignore" })
+    const text = await new Response(p.stdout).text()
+    if ((await p.exited) !== 0) return null
+    for (const m of text.matchAll(/(?:^|\s)HOME=(\S+)/g)) out.add(m[1]!)
+    return out
+  } catch {
+    return null
+  }
 }
 
 // Homes left by a crashed server: inside the shared XDG base (by session
@@ -246,6 +289,8 @@ export interface SweepOptions {
 export async function sweepOrphanHomes(opts: SweepOptions): Promise<void> {
   const uid = opts.uid ?? myUid()
   const env = opts.env ?? process.env
+  const used = await (opts.inUse ?? liveHomes)()
+  if (!used) return
   const bases = new Set<string>()
   const own = await knownHomesBase()
   if (own) bases.add(own)
@@ -255,7 +300,7 @@ export async function sweepOrphanHomes(opts: SweepOptions): Promise<void> {
     let names: string[] = []
     try { names = await readdir(base) } catch { continue }
     for (const name of names) {
-      if (opts.keep(name) || !opts.reapable(name)) continue
+      if (opts.keep(name) || !opts.reapable(name) || used.has(join(base, name))) continue
       await removeScrapeHome(join(base, name)).catch(() => undefined)
     }
   }
@@ -275,7 +320,7 @@ export async function sweepOrphanHomes(opts: SweepOptions): Promise<void> {
     let children: string[] = []
     try { children = await readdir(path) } catch { continue }
     for (const name of children) {
-      if (opts.keep(name)) continue
+      if (opts.keep(name) || used.has(join(path, name))) continue
       await removeScrapeHome(join(path, name)).catch(() => undefined)
     }
     await rmdir(path).catch(() => undefined)

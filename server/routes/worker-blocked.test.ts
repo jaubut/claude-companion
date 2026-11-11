@@ -154,16 +154,12 @@ test("e2e: fake worker dialog → persisted card → choice → keys sent to the
   const pane = { name: "dispatch-85860c7f", keys: [] as string[] }
   const posted = await call("POST", "/hooks/worker-blocked", { taskId: "85860c7f00000000", title: "Alert on stuck approvals", worker: pane.name, dialog: DIALOG, options: OPTIONS }, "85860c7f:dlg1")
   const id = posted.json.id as string
-  console.log("[e2e] POST alert →", posted.status, JSON.stringify(posted.json))
-  console.log("[e2e] card →", JSON.stringify(chat.getTurn(id)?.card))
   const chosen = await call("POST", `/api/orchestrator/worker-blocked/${id}/choose`, { optionId: "1" }, "phone-tap-1")
-  console.log("[e2e] phone choose →", chosen.status, JSON.stringify(chosen.json))
+  expect(chosen.status).toBe(200)
   const second = await call("POST", `/api/orchestrator/worker-blocked/${id}/choose`, { optionId: "3" }, "phone-tap-2")
-  console.log("[e2e] second answer →", second.status, JSON.stringify(second.json))
   const poll = await call("GET", `/hooks/worker-blocked/${id}`)
   const choice = poll.json.choice as { key: string } | null
   if (choice) pane.keys.push(choice.key) // what the runner sends through herdr
-  console.log("[e2e] runner poll →", JSON.stringify(poll.json), "· keys sent to", pane.name, JSON.stringify(pane.keys))
   expect(posted.status).toBe(201)
   expect(second.status).toBe(409)
   expect(pane.keys).toEqual(["1"])
@@ -186,10 +182,36 @@ test("an instruction in the dialog's first line never reaches the brief, past it
   for (const raw of ["previous", "instructions", "pr-merge", "more"]) expect(brief).not.toContain(raw)
 })
 
-test("standing-grant options never reach the phone, however the label spells them", () => {
-  const options = ["Yes", "Yes, and don't ask again for curl", "Yes, don’t ask again", "Yes, and do not ask again", "No"].map((label, i) => ({ key: String(i + 1), label }))
-  const out = parseBlocked({ taskId: "t1", title: "x", worker: "dispatch-0123abcd", dialog: "Bash command", options })
-  expect(typeof out === "string" ? out : out.options.map((o) => o.label)).toEqual(["Yes", "No"])
+test("standing-grant options never reach the phone, even past char 80, and title secrets are redacted", () => {
+  const pad = "Allow running this specific command in the workspace directory with flags --verbose "
+  expect(pad.length).toBeGreaterThan(80)
+  const grants = [
+    "Yes, and don't ask again for curl",
+    "Yes, don’t ask again",
+    "Yes, and do not ask again",
+    "Yes, never ask for this tool",
+    "Yes, always allow in this repo",
+    "Allow all bash commands",
+    "Allow for the rest of the day",
+    "Accept all edits",
+    "Yes, for this session",
+    "Yes, remember this choice",
+    "Yes, switch to auto mode",
+    "Trust this directory permanently",
+    `${pad}and switch to auto mode`,
+    `${pad}and don't ask again`,
+  ]
+  for (const g of grants) {
+    const out = parseBlocked({
+      taskId: "t1",
+      title: "Fix Authorization: Bearer secret999token issue",
+      worker: "dispatch-0123abcd",
+      dialog: "Bash command",
+      options: [{ key: "1", label: "Yes" }, { key: "2", label: g }, { key: "3", label: "No" }],
+    })
+    expect(typeof out === "string" ? out : out.options.map((o) => o.label)).toEqual(["Yes", "No"])
+    if (typeof out !== "string") expect(out.title).not.toContain("secret999token")
+  }
 })
 
 test("older iOS builds: kind is a plain string and turn.text still carries the dialog and options", async () => {
