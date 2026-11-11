@@ -193,15 +193,20 @@ async function deliverToTty(target: InjectTarget, text: string, canDeliver?: () 
     const r = await runOsa(`
       tell application "Terminal"
         activate
+        set matchedTab to false
         repeat with w in windows
           repeat with t in tabs of w
             if tty of t is "${ttyEscaped}" then
+              do script "${textEscaped}" in t
               set selected of t to true
               set index of w to 1
-              do script "${textEscaped}" in t
+              set matchedTab to true
+              exit repeat
             end if
           end repeat
+          if matchedTab is true then exit repeat
         end repeat
+        if matchedTab is false then return "MISS"
       end tell
       delay 0.08
       tell application "System Events"
@@ -311,15 +316,20 @@ async function deliverToTty(target: InjectTarget, text: string, canDeliver?: () 
       try
         tell application "Terminal"
           activate
+          set matchedTab to false
           repeat with w in windows
             repeat with t in tabs of w
               if tty of t is "${ttyEscaped}" then
+                do script "${textEscaped}" in t
                 set selected of t to true
                 set index of w to 1
-                do script "${textEscaped}" in t
+                set matchedTab to true
+                exit repeat
               end if
             end repeat
+            if matchedTab is true then exit repeat
           end repeat
+          if matchedTab is false then return "MISS"
         end tell
         tell application "System Events"
           tell process "Terminal"

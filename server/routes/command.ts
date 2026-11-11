@@ -1,3 +1,7 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import type { CommandEntry } from "../lib/command-list"
 import { inputLine, parseCommandMenu, suggestFromList, suggestRefusal } from "../lib/command-menu"
 import { getShellSession } from "../lib/shell-sessions"
 import { companionLog } from "../lib/log"
@@ -29,9 +33,51 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // phone can tell it from a live menu read. Only ever from the cache: an
 // uncached enumeration takes ~40 s, far past a keystroke's budget, so with
 // nothing cached this answers null and the caller keeps its own answer.
+const AGY_BUILTIN_COMMANDS: CommandEntry[] = [
+  { name: "/goal", description: "Run a thorough long-running task until the goal is achieved", kind: "default" },
+  { name: "/compact", description: "Compact and summarize conversation context", kind: "default" },
+  { name: "/schedule", description: "Run an instruction on a recurring schedule or timer", kind: "default" },
+  { name: "/browser", description: "Browse, search, or interact with web applications", kind: "default" },
+  { name: "/plan", description: "Step-by-step planning before execution", kind: "default" },
+  { name: "/grill-me", description: "Interactive design interview to resolve decisions", kind: "default" },
+  { name: "/teamwork", description: "Coordinate a team of autonomous agents", kind: "default" },
+  { name: "/learn", description: "Persist a learned behavior or setup for future tasks", kind: "default" },
+  { name: "/boost", description: "Deep thinking, strategic planning & rigorous verification", kind: "default" },
+  { name: "/model", description: "Switch the active model", kind: "default" },
+  { name: "/status", description: "Show session status", kind: "default" },
+]
+
+let cachedAgyCommands: { at: number; items: CommandEntry[] } | null = null
+function listAgyCommands(): CommandEntry[] {
+  if (cachedAgyCommands && Date.now() - cachedAgyCommands.at < 60_000) return cachedAgyCommands.items
+  const seen = new Set<string>(AGY_BUILTIN_COMMANDS.map((c) => c.name))
+  const out: CommandEntry[] = [...AGY_BUILTIN_COMMANDS]
+  for (const dir of [join(homedir(), ".agents", "skills"), join(homedir(), ".claude", "skills")]) {
+    if (!existsSync(dir)) continue
+    try {
+      for (const entry of readdirSync(dir)) {
+        const name = `/${entry}`
+        if (seen.has(name)) continue
+        const skillMd = join(dir, entry, "SKILL.md")
+        if (!existsSync(skillMd)) continue
+        let desc = `Run ${entry} skill`
+        try {
+          const head = readFileSync(skillMd, "utf8").slice(0, 600)
+          const m = head.match(/^description:\s*(.+)$/m)
+          if (m?.[1]) desc = m[1].replace(/^["']|["']$/g, "").trim().slice(0, 120)
+        } catch { /* ignore */ }
+        seen.add(name)
+        out.push({ name, description: desc, kind: "custom" })
+      }
+    } catch { /* ignore */ }
+  }
+  cachedAgyCommands = { at: Date.now(), items: out }
+  return out
+}
+
 function suggestFromCachedList(session: Session | null, prefix: string, why: string): Response | null {
   if (!session || session.agent === "codex") return null
-  const all = commandLister.peek(session.cwd)
+  const all = session.agent === "gemini" ? listAgyCommands() : commandLister.peek(session.cwd)
   if (!all) return null
   const commands = suggestFromList(all, prefix)
   companionLog(`\x1b[36mcommands\x1b[0m "/${prefix}" → ${commands.length} from the cached list (${why}) on ${session.label || session.key}`)
@@ -180,6 +226,9 @@ export async function handleCommandRoute(req: Request, url: URL): Promise<Respon
     // /help is Claude Code's; a Codex session has a different command set and
     // there is nothing to enumerate.
     if (session.agent === "codex") return aborted(0)
+    if (session.agent === "gemini") {
+      return Response.json({ ok: true, key: session.key, cached: true, commands: listAgyCommands() })
+    }
 
     const t0 = Date.now()
     const { cached, result } = await commandLister.list(session.cwd, { force: body.force === true })
