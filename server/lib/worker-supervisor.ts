@@ -10,7 +10,7 @@ import { redactSecrets } from "./secret-redact"
 // builder supervisor in isolated worktrees (`~/apps/wt/<repo>/<taskId>` on branch `dispatch/<taskId>`).
 
 export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
-export const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
+export const REPO_NAME_RE = /^(?!\.+$)[A-Za-z0-9._-]{1,100}$/
 export const SAFE_IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 export const ALLOWED_MODES = new Set(["acceptEdits", "auto", "default", "dontAsk", "plan"])
 const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/
@@ -120,13 +120,12 @@ export function defaultResolveRepoDir(repo: string, home = homedir()): string | 
 
 export function defaultIsPidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 1) return false
-  try { process.kill(-pid, 0); return true } catch { /* check leader */ }
-  try { process.kill(pid, 0); return true } catch { return false }
+  try { process.kill(-pid, 0); return true } catch { return false }
 }
 
 export function defaultKillPid(pid: number, sig: NodeJS.Signals): void {
   if (!Number.isInteger(pid) || pid <= 1) return
-  try { process.kill(-pid, sig) } catch { try { process.kill(pid, sig) } catch { /* gone */ } }
+  try { process.kill(-pid, sig) } catch { /* gone */ }
 }
 
 export function defaultGetPidIdentity(pid: number): string | null {
@@ -246,15 +245,14 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const savedIdentity = typeof r.pidIdentity === "string" && r.pidIdentity ? r.pidIdentity : null
       let survivingPid: number | null = null
       let survivingIdentity: string | null = null
-      if (rawPid !== null) {
-        // Verify process identity (boot_id + start time) before signaling so a reused PID after restart/reboot is never killed.
+      if (rawPid !== null && isPidAlive(rawPid)) {
         const currentIdentity = getPidIdentity(rawPid)
-        if (savedIdentity && currentIdentity === savedIdentity && isPidAlive(rawPid)) {
+        if (savedIdentity && currentIdentity !== null && currentIdentity === savedIdentity) {
           killPid(rawPid, "SIGTERM")
           if (isPidAlive(rawPid)) { survivingPid = rawPid; survivingIdentity = savedIdentity }
-        }
+        } else if (currentIdentity === null) { survivingPid = rawPid; survivingIdentity = savedIdentity }
         dirty = true
-      }
+      } else if (rawPid !== null) dirty = true
       if (wasRunning) dirty = true
       tasks.set(r.taskId, {
         taskId: r.taskId, repo: r.repo, repoDir: r.repoDir,
@@ -289,19 +287,23 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!exited || t.handle !== null || t.exitPromise !== null) return false
     }
     if (t.pid !== null) {
-      if (t.reloadedFromDisk) {
-        const curId = getPidIdentity(t.pid)
-        if (!t.pidIdentity || curId !== t.pidIdentity) {
-          t.pid = null; t.pidIdentity = null; t.reloadedFromDisk = false; savePersistedTasks()
-          return true
+      const pid = t.pid
+      if (isPidAlive(pid)) {
+        const curId = getPidIdentity(pid)
+        if (t.pidIdentity && curId !== null && curId !== t.pidIdentity) {
+          t.pid = null; t.pidIdentity = null; t.reloadedFromDisk = false; savePersistedTasks(); return true
         }
-      }
-      if (isPidAlive(t.pid)) {
-        killPid(t.pid, "SIGTERM")
+        if (t.pidIdentity && curId === t.pidIdentity) killPid(pid, "SIGTERM")
         const deadline = Date.now() + killGraceMs
-        while (Date.now() < deadline && isPidAlive(t.pid)) await waitMsPromise(25)
-        if (isPidAlive(t.pid)) { killPid(t.pid, "SIGKILL"); await waitMsPromise(100) }
-        if (isPidAlive(t.pid)) return false
+        while (Date.now() < deadline && isPidAlive(pid)) await waitMsPromise(25)
+        if (isPidAlive(pid)) {
+          const curId2 = getPidIdentity(pid)
+          if (t.pidIdentity && curId2 !== null && curId2 !== t.pidIdentity) {
+            t.pid = null; t.pidIdentity = null; t.reloadedFromDisk = false; savePersistedTasks(); return true
+          }
+          if (t.pidIdentity && curId2 === t.pidIdentity) { killPid(pid, "SIGKILL"); await waitMsPromise(100) }
+        }
+        if (isPidAlive(pid)) return false
       }
       t.pid = null; t.pidIdentity = null; t.reloadedFromDisk = false; savePersistedTasks()
     }
@@ -583,14 +585,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       }
     },
 
-    listTasks(): SupervisedTaskSnapshot[] {
-      return [...tasks.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(toSnapshot)
-    },
-
-    getTask(taskId: string): SupervisedTaskSnapshot | null {
-      const t = tasks.get(taskId.trim())
-      return t ? toSnapshot(t) : null
-    },
+    listTasks(): SupervisedTaskSnapshot[] { return [...tasks.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(toSnapshot) },
+    getTask(taskId: string): SupervisedTaskSnapshot | null { const t = tasks.get(taskId.trim()); return t ? toSnapshot(t) : null },
   }
 }
 

@@ -6239,7 +6239,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 598,
+          "lines": 594,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",

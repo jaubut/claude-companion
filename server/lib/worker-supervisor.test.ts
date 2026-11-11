@@ -385,7 +385,7 @@ describe("createWorkerSupervisor", () => {
     const spawned: SpawnWorkerOpts[] = []
     const killedPids: Array<{ pid: number; sig: NodeJS.Signals }> = []
     let groupAlive = true
-    let currentPidIdentity = "boot1:7777:100"
+    let currentPidIdentity: string | null = "boot1:7777:100"
 
     const makeSup = () =>
       createWorkerSupervisor({
@@ -434,11 +434,12 @@ describe("createWorkerSupervisor", () => {
       expect(spawned[1]!.args).toContain("--resume")
       expect(spawned[1]!.args).toContain("sid-live")
 
-      // Leader exits (`onExit`), but a descendant in process group 7777 remains alive (`groupAlive = true`)
+      // Leader exits (`onExit`), so leader identity is now null, while descendants in group 7777 remain alive (`groupAlive = true`)
       groupAlive = true
+      currentPidIdentity = null
       spawned[1]!.onExit(0, null)
 
-      // Cleanup / redispatch is blocked while the process group is still alive
+      // Cleanup / redispatch is blocked both in-memory and across a restart while descendants remain alive and leader identity is null
       const intWhileGroupAlive = await supReusedPid.interruptTask("pg-1", { closeWorktree: true })
       expect(intWhileGroupAlive.ok).toBe(true)
       if (intWhileGroupAlive.ok) {
@@ -447,6 +448,20 @@ describe("createWorkerSupervisor", () => {
       }
       const dispWhileGroupAlive = await supReusedPid.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Blocked" })
       expect(dispWhileGroupAlive).toEqual({ ok: false, status: 409, error: "task_already_running" })
+
+      const supRestartedWithOrphanGroup = makeSup()
+      const intAfterRestart = await supRestartedWithOrphanGroup.interruptTask("pg-1", { closeWorktree: true })
+      expect(intAfterRestart.ok).toBe(true)
+      if (intAfterRestart.ok) {
+        expect(intAfterRestart.worktreeRemoved).toBe(false)
+      }
+
+      // If the group later exits and PID 7777 is reused in-memory by an unrelated process, interrupt/dispatch does not signal it
+      currentPidIdentity = "boot1:7777:unrelated-new-owner"
+      killedPids.length = 0
+      const dispAfterReuse = await supReusedPid.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Safe after reuse" })
+      expect(dispAfterReuse.ok).toBe(true)
+      expect(killedPids).toHaveLength(0)
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

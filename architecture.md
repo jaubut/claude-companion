@@ -14,7 +14,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/api.ts` | 600 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `lib/worker-supervisor.ts` | 598 | lib | 21 |  |
+| `lib/worker-supervisor.ts` | 594 | lib | 21 |  |
 | `lib/keyboard-inject.ts` | 572 | lib | 4 | state: let injectQueue |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
