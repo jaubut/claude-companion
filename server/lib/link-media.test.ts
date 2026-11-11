@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { LOCAL_INPUT, VIDEO_FORMAT, asImage, beforeDeadline, build, imageTitle, isSafeMediaInfo, jsonOrNull, run, ytArgs } from "./link-media"
+import { LOCAL_INPUT, VIDEO_FORMAT, asImage, beforeDeadline, build, imageTitle, isSafeMediaInfo, jsonOrNull, pickCaptionUrl, readCappedUtf8, run, ytArgs } from "./link-media"
 
 describe("bin/media pipeline", () => {
   test("yt-dlp ignores host config and goes through the guard proxy", () => {
@@ -82,6 +82,34 @@ describe("bin/media pipeline", () => {
     expect(isSafeMediaInfo({ url: "rtmp://live.example.com/app/stream", protocol: "rtmp" })).toBe(false)
     expect(isSafeMediaInfo({ url: "file:///etc/passwd" })).toBe(false)
     expect(isSafeMediaInfo({ formats: [{ url: "rtmp://live.example.com/s", protocol: "rtmp" }] })).toBe(false)
+  })
+
+  test("pickCaptionUrl selects preferred safe vtt URL and readCappedUtf8 aborts when decompressed stream exceeds maxBytes", async () => {
+    expect(pickCaptionUrl({
+      language: "fr",
+      subtitles: {
+        en: [{ ext: "vtt", url: "https://cdn.example.com/en.vtt" }],
+        "fr-CA": [{ ext: "srv3", url: "https://cdn.example.com/fr.srv3" }, { ext: "vtt", url: "https://cdn.example.com/fr.vtt" }],
+      },
+    })).toBe("https://cdn.example.com/fr.vtt")
+    expect(pickCaptionUrl({
+      automatic_captions: {
+        en: [{ ext: "vtt", url: "file:///etc/passwd" }, { ext: "vtt", url: "https://cdn.example.com/auto-en.vtt", protocol: "m3u8" }],
+      },
+    })).toBeNull()
+
+    const small = new Response("WEBVTT\n\n00:00.000 --> 00:01.000\nhello\n")
+    expect(await readCappedUtf8(small, 1024)).toContain("hello")
+
+    let extraPolls = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        extraPolls++
+        controller.enqueue(new Uint8Array(600))
+      },
+    })
+    expect(await readCappedUtf8(new Response(stream), 1000)).toBeNull()
+    expect(extraPolls).toBe(2)
   })
 
   test("a timed-out attempt stages in an isolated temp dir and never clobbers a retry's cache dir", async () => {

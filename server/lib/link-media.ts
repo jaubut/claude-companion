@@ -132,11 +132,6 @@ async function saveCapped(res: Response, path: string, max: number): Promise<voi
 
 interface Info { meta: LinkMediaMeta; raw: Record<string, unknown> | null; videoUrl: string | null }
 
-function hasCaptions(raw: Record<string, unknown>): boolean {
-  const n = (v: unknown): number => (v && typeof v === "object" ? Object.keys(v).length : 0)
-  return n(raw.subtitles) + n(raw.automatic_captions) > 0
-}
-
 /** null when `s` isn't valid JSON: tool output, a scraped string or a cache file can all be cut short. */
 export function jsonOrNull<T>(s: string): T | null {
   try { return JSON.parse(s) as T } catch { return null }
@@ -261,22 +256,78 @@ export function vttText(vtt: string): string {
   return out.join("\n")
 }
 
-async function transcript(url: string, info: Info, dir: string, deadline: number): Promise<string | null> {
-  if (!info.raw || !hasCaptions(info.raw)) return null
-  const langs = [text(info.raw.language), "en.*", "fr.*"].filter(Boolean).join(",")
-  const abort = new AbortController()
-  const proxy = await startGuardProxy(vetHost, { maxBytes: MAX_SUB_BYTES, onExceed: () => abort.abort() })
-  try {
-    await run([YTDLP, ...ytArgs(proxy.url), "--max-filesize", "5M", "--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", langs, "--sub-format", "vtt", "-o", join(dir, "subs.%(ext)s"), url], deadline, abort.signal)
-    if (proxy.exceeded()) return null
-  } finally {
-    proxy.close()
+/** Stream a response body as UTF-8 text, aborting immediately if decompressed bytes exceed `max`. */
+export async function readCappedUtf8(res: Response, max: number): Promise<string | null> {
+  if (!res.ok || !res.body) return null
+  if (Number(res.headers.get("content-length") ?? 0) > max) {
+    await res.body.cancel().catch(() => {})
+    return null
   }
-  const vtt = readdirSync(dir).find((n) => n.startsWith("subs.") && n.endsWith(".vtt"))
-  if (!vtt) return null
-  const vttPath = join(dir, vtt)
-  if (statSync(vttPath).size > MAX_SUB_BYTES) return null
-  const t = vttText(readFileSync(vttPath, "utf8"))
+  const chunks: Uint8Array[] = []
+  let total = 0
+  const reader = res.body.getReader()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > max) {
+        await reader.cancel().catch(() => {})
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    merged.set(c, offset)
+    offset += c.byteLength
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(merged)
+}
+
+/** Pick the preferred WebVTT URL from yt-dlp's extracted `subtitles` / `automatic_captions` metadata. */
+export function pickCaptionUrl(raw: Record<string, unknown>): string | null {
+  const pref = text(raw.language)?.toLowerCase() ?? null
+  const matchLang = (lang: string, pass: number): boolean => {
+    const l = lang.toLowerCase()
+    if (pass === 0) return pref !== null && (l === pref || l.startsWith(`${pref}-`) || l.startsWith(`${pref}_`))
+    if (pass === 1) return l === "en" || /^en[_-]/.test(l)
+    return l === "fr" || /^fr[_-]/.test(l)
+  }
+  for (const key of ["subtitles", "automatic_captions"] as const) {
+    const table = raw[key]
+    if (!table || typeof table !== "object") continue
+    const entries = Object.entries(table as Record<string, unknown>)
+    for (let pass = 0; pass < 3; pass++) {
+      for (const [lang, formats] of entries) {
+        if (!matchLang(lang, pass) || !Array.isArray(formats)) continue
+        for (const f of formats) {
+          if (!f || typeof f !== "object") continue
+          const fmt = f as Record<string, unknown>
+          const ext = typeof fmt.ext === "string" ? fmt.ext.toLowerCase() : ""
+          const url = typeof fmt.url === "string" ? fmt.url.trim() : ""
+          const proto = typeof fmt.protocol === "string" ? fmt.protocol : "https"
+          if (ext === "vtt" && /^https?:\/\//i.test(url) && isSafeProtocol(proto)) return url
+        }
+      }
+    }
+  }
+  return null
+}
+
+async function transcript(info: Info, deadline: number): Promise<string | null> {
+  if (!info.raw) return null
+  const subUrl = pickCaptionUrl(info.raw)
+  if (!subUrl) return null
+  const res = await safeFetch(subUrl, { headers: { "User-Agent": UA, "Accept-Encoding": "identity" }, signal: until(deadline, 20_000) })
+  const rawVtt = await readCappedUtf8(res, MAX_SUB_BYTES)
+  if (!rawVtt) return null
+  const t = vttText(rawVtt)
   return t.length > TRANSCRIPT_MAX ? `${t.slice(0, TRANSCRIPT_MAX - 1)}…` : t || null
 }
 
@@ -287,7 +338,7 @@ async function analyseVideo(url: URL, dir: string, deadline: number): Promise<Re
   const frames = await extractFrames(video, duration, dir, deadline)
   const sheet = await contactSheet(dir, deadline)
   const colours: Swatch[] = await palette(frames)
-  const captions = await transcript(url.href, info, dir, deadline).catch(() => null)
+  const captions = await transcript(info, deadline).catch(() => null)
   rmSync(video, { force: true })
   return {
     kind: "video", meta: { ...info.meta, duration: info.meta.duration ?? duration }, truncated: (info.meta.duration ?? 0) > MAX_SECONDS,
