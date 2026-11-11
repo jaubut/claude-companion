@@ -3,7 +3,7 @@ import {
   brainToolStep,
   RESTART_WINDOW_MS, START_GRACE_MS,
   bootSeed, brainEnabled, deliveryText, fitDelivery, DELIVERY_MAX, idleCompactDue, isBrainHook, isSupervisedTask,
-  rolloverDue, superviseStep,
+  leadSlug, rolloverDue, superviseStep,
 } from "./brain"
 
 // brain-v2 policy (lib/brain.ts): pure, so every rule is pinned here. The
@@ -92,4 +92,10 @@ test("fitDelivery: only turns that fit go out, the rest stay queued, and one hug
   expect(deliveryText(fit).length).toBeLessThanOrEqual(DELIVERY_MAX)
   expect(fitDelivery([turn("a", 9_000), turn("b", 10)]).map((t) => t.id)).toEqual(["a"])
   expect(fitDelivery([])).toEqual([])
+})
+
+test("leadSlug: any bare jaubut repo name, nothing path-like", () => {
+  expect(leadSlug("tls-dashboard-v2")).toBe("jaubut/tls-dashboard-v2")
+  expect(leadSlug("claude-companion")).toBe("jaubut/claude-companion")
+  for (const bad of ["../x", "a/b", "", "..", "-x", "a..b"]) expect(leadSlug(bad)).toBeNull()
 })

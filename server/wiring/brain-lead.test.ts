@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { LEAD_PREFIX } from "../lib/brain"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-lead-")), "test.db")
-const { createBrainLead, leadArgs, leadDir, leadIsolated, leadSettings, prepareLeadDir } = await import("./brain-lead")
+const { createBrainLead, leadArgs, leadCheckout, leadDir, leadIsolated, leadSettings, prepareLeadDir } = await import("./brain-lead")
 const { fakeHerdr } = await import("../lib/herdr-fake.test-util")
 const { folderTrusted, spawnInHerdr } = await import("../lib/spawn-session")
 
@@ -107,7 +107,7 @@ describe("a lead's own clone", () => {
     expect(`${LEAD_PREFIX}${repo}`.length).toBeLessThanOrEqual(32)
   })
   test("a repo with no lead gets nothing", async () => {
-    expect(await prepareLeadDir("other", home(), cloned([], "/x"), noTrust, excluded)).toMatchObject({ ok: false })
+    expect(await prepareLeadDir("../other", home(), cloned([], "/x"), noTrust, excluded)).toMatchObject({ ok: false })
   })
 })
 
@@ -197,4 +197,13 @@ describe("the last round's three checks", () => {
     expect(await lead.ensure("claude-companion", NAME)).toMatchObject({ ok: false, state: "down" })
     expect(spawned).toBe(0)
   })
+})
+
+test("leadCheckout: the lead's own clone or a REPO_MAP checkout counts, a bare name alone does not", () => {
+  const h = mkdtempSync(join(tmpdir(), "lead-home-")), repo = "tls-dashboard-v2"
+  expect(leadCheckout(repo, h, [])).toBe(false)
+  const mapped = join(h, "elsewhere"); mkdirSync(mapped)
+  expect(leadCheckout(repo, h, [{ match: /x/, path: mapped, github: `jaubut/${repo}` }])).toBe(true)
+  mkdirSync(leadDir(repo, h), { recursive: true })
+  expect(leadCheckout(repo, h, [])).toBe(true)
 })

@@ -629,3 +629,12 @@ describe("POST /hooks/brain/deploy", () => {
     expect([r.status, r.json.error]).toEqual([404, "deploy_disabled"])
   })
 })
+
+describe("POST /hooks/brain/lead", () => {
+  test("a repo with no checkout here answers 404 no_lead_for_repo", async () => {
+    for (const repo of ["tls-dashboard-v2", "../x", "a/b", ""]) {
+      const r = await call("POST", "/hooks/brain/lead", { repo }, { headers: AUTH })
+      expect([r.status, r.json.error]).toEqual([404, "no_lead_for_repo"])
+    }
+  })
+})

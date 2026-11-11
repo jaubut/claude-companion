@@ -13,7 +13,7 @@ import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { updateAgentPr } from "../wiring/brain-pr-update-branch"
 import { TASK_REF, cancelAgentTask } from "../wiring/brain-task-cancel"
-import { type BrainLead, brainLead } from "../wiring/brain-lead"
+import { type BrainLead, brainLead, leadCheckout } from "../wiring/brain-lead"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -69,6 +69,8 @@ export interface BrainRouteDeps {
   deploy?: ((repo: string) => Promise<DeployResult>) | null
   /** bin/lead (default: the real one). */
   lead?: BrainLead
+  /** Whether this host has a checkout for a lead repo (default: wiring/brain-lead.ts). */
+  checkout?: (repo: string) => boolean
   /** bin/media (default: the real fetch + analyse, lib/link-media.ts). */
   media?: typeof analyseLink
 }
@@ -222,7 +224,7 @@ async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (refused) return refused
   const body = await readJson(req)
   if (!body) return fail(400, "bad_json")
-  const repo = typeof body.repo === "string" && leadSlug(body.repo) ? body.repo : null
+  const repo = typeof body.repo === "string" && leadSlug(body.repo) && (deps.checkout ?? leadCheckout)(body.repo) ? body.repo : null
   if (!repo) return fail(404, "no_lead_for_repo")
   const out = await (deps.lead ?? brainLead).ensure(repo, `${LEAD_PREFIX}${repo}`)
   return Response.json(out, { status: out.ok ? 200 : 502 })
