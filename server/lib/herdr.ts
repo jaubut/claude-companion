@@ -260,6 +260,7 @@ export async function closeHerdrWorkspaceWhenIdle(pane: string, opts: WorkspaceC
 const HERDR_PANE_RE = /^[A-Za-z0-9][A-Za-z0-9:_.-]{0,63}$/
 export function validHerdrPane(pane: string | undefined | null): string {
   const p = (pane ?? "").trim()
+  if (p.startsWith("headless:")) return ""
   return HERDR_PANE_RE.test(p) ? p : ""
 }
 

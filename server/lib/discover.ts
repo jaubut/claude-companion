@@ -17,13 +17,14 @@ import { isDispatchWorkerPid } from "./dispatch-worker"
 import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
 import { companionLog } from "./log"
 import { validHerdrPane } from "./herdr"
+import { type AgyConversationSummary, readAgyModel, readRecentAgyConversations } from "./agy-feed"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
 const CODEX_START_MATCH_WINDOW_MS = 2 * 60 * 1000
 
 interface DiscoveredAgent {
-  agent: "claude" | "codex" | "kimi"
+  agent: "claude" | "codex" | "kimi" | "gemini"
   pid: string
   tty: string
   cwd: string
@@ -72,12 +73,14 @@ export function parseAgentPs(raw: string): DiscoveredAgent[] {
     const parts = trimmed.split(/\s+/)
     const cmdBase = parts[0] ?? ""
     const base = cmdBase.split("/").pop() ?? cmdBase
-    if (base !== "claude" && base !== "codex") continue
+    if (base !== "claude" && base !== "codex" && base !== "agy" && base !== "gemini") continue
     // `codex exec` workers are non-interactive job runners. They write useful
     // logs, but there is no terminal conversation for the phone to inject into,
     // so keep the live session picker focused on interactive Codex instances.
     if (base === "codex" && parts.slice(1).some((part) => part === "exec" || part === "app-server")) continue
-    out.push({ agent: base, pid, tty: `/dev/${tty}`, cwd: "", command: trimmed })
+    if ((base === "agy" || base === "gemini") && parts.slice(1).some((part) => part === "-p" || part === "--print" || part === "--prompt" || part === "acp")) continue
+    const agent = base === "agy" ? "gemini" : base
+    out.push({ agent, pid, tty: `/dev/${tty}`, cwd: "", command: trimmed })
   }
   return out
 }
@@ -428,6 +431,22 @@ export async function discoverLiveClaudes(): Promise<{ registered: number }> {
   }
 }
 
+function agyThreadLabel(convo: AgyConversationSummary | undefined, tty: string): string {
+  const raw = (convo?.title || "Antigravity").replace(/\s+/g, " ").trim()
+  const title = raw.length > 46 ? `${raw.slice(0, 45)}…` : raw
+  const tag = tty.match(/ttys?(\d+)$/)?.[1]
+  return tag ? `${title} · s${tag}` : title
+}
+
+async function findAgyConversationIdForPid(pid: string): Promise<string> {
+  const raw = await run("lsof", ["-p", pid, "-Fn"])
+  for (const line of raw.split("\n")) {
+    const m = line.match(/\.gemini\/antigravity-cli\/presence\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.lock$/i)
+    if (m?.[1]) return m[1]
+  }
+  return ""
+}
+
 async function discoverOnce(): Promise<{ registered: number }> {
   let registered = 0
   let pids: DiscoveredAgent[]
@@ -435,6 +454,8 @@ async function discoverOnce(): Promise<{ registered: number }> {
     pids = await listAgentPids()
   } catch { return { registered: 0 } }
   const ttyMap = memo(() => mapTtysToPanes())
+  const recentAgy = readRecentAgyConversations()
+  const agyModel = readAgyModel()
 
   await Promise.all(pids.map(async (p) => {
     try {
@@ -444,7 +465,34 @@ async function discoverOnce(): Promise<{ registered: number }> {
         findTermProgramForPid(p.pid),
       ])
       if (!cwd) return
-      if (p.agent === "codex") {
+      if (p.agent === "gemini") {
+        const [lockedId, env, startedAt] = await Promise.all([
+          findAgyConversationIdForPid(p.pid),
+          processEnvEntries(p.pid),
+          findProcessStartMs(p.pid),
+        ])
+        const ref = await resolveTmuxRef(p.pid, p.tty, "", { ttyMap, envOf: async () => env })
+        const convo = (lockedId ? recentAgy.find((c) => c.id === lockedId) : undefined)
+          ?? recentAgy.find((c) => c.cwd === cwd)
+          ?? recentAgy[0]
+        const sessionId = lockedId || convo?.id || ""
+        recordSession({
+          agent: "gemini",
+          cwd: convo?.cwd || cwd,
+          sessionId,
+          tty: p.tty,
+          pid: p.pid,
+          termProgram,
+          tmuxPane: ref.pane,
+          tmuxSocket: ref.socket,
+          herdrPane: herdrPaneFromEnv(env),
+          title: convo?.title,
+          label: agyThreadLabel(convo, p.tty),
+          firstSeenAt: startedAt || undefined,
+          agentStatus: convo?.status ?? "idle",
+          model: agyModel,
+        }, { provisional: true, sessionIdConfirmed: !!sessionId })
+      } else if (p.agent === "codex") {
         const codexCwd = codexCwdFromArgv(await processArgv(p.pid), cwd)
         const [thread, env] = await Promise.all([findCodexThreadForPid(p.pid, codexCwd, p.command), processEnvEntries(p.pid)])
         // Same as the Claude branch: a Codex in tmux inside herdr also inherits HERDR_PANE_ID, and
@@ -495,6 +543,35 @@ async function discoverOnce(): Promise<{ registered: number }> {
       registered++
     } catch { /* one bad pid doesn't fail the rest */ }
   }))
+
+  // Also register recent Antigravity conversations that are not currently attached to a live TTY
+  // so they remain visible and resumable headlessly from the iPhone drawer.
+  const liveAgyIds = new Set<string>()
+  for (const c of recentAgy) {
+    const lockPath = join(homedir(), ".gemini", "antigravity-cli", "presence", `${c.id}.lock`)
+    try {
+      await stat(lockPath)
+      // If a live gemini/agy tty session already claimed this id, skip headless duplicate
+    } catch { /* no lock file */ }
+  }
+  for (const c of recentAgy.slice(0, 5)) {
+    if (liveAgyIds.has(c.id)) continue
+    // Only register headlessly if no tty-backed session already owns this sessionId
+    const { listSessions } = await import("./sessions")
+    if (listSessions().some((s) => s.sessionId === c.id && !!s.tty)) continue
+    recordSession({
+      agent: "gemini",
+      cwd: c.cwd,
+      sessionId: c.id,
+      herdrPane: `headless:agy:${c.id}`,
+      title: c.title,
+      label: c.title,
+      firstSeenAt: c.updatedAtMs || undefined,
+      agentStatus: c.status,
+      model: agyModel,
+      pid: String(process.pid),
+    }, { provisional: true, sessionIdConfirmed: true })
+  }
 
   return { registered }
 }

@@ -191,6 +191,7 @@ import { rehydrateSessions } from "./server/lib/rehydrate"
 import { discoverLiveClaudes, expectFirstDiscovery } from "./server/lib/discover"
 import { reapScrapeSessions } from "./server/lib/command-offpane"
 import { startCodexFeedMonitor } from "./server/lib/codex-feed"
+import { startAgyFeedMonitor } from "./server/lib/agy-feed"
 import { getAuthToken, maskToken } from "./server/lib/auth"
 import { secureLogFile } from "./server/lib/log"
 import { startMediaSweeper } from "./server/wiring/media"
@@ -246,7 +247,8 @@ function ensureCodexFeedMonitor(): void {
   if (codexFeedStarted) return
   codexFeedStarted = true
   startCodexFeedMonitor()
-  console.log(`${dim}↯ watching local Codex rollout feed${reset}`)
+  startAgyFeedMonitor()
+  console.log(`${dim}↯ watching local Codex & Antigravity rollout feeds${reset}`)
 }
 
 // Discover live Claude/Codex processes first — gives us tty-keyed entries that

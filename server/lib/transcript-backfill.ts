@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs"
+import { agyTranscriptPath, eventsFromAgyTranscript } from "./agy-feed"
 import { type FeedEvent, getFeed, sessionRetention } from "./feed"
 import { SESSION_ID_RE } from "./recent-sessions"
 import { findTranscript, transcriptPath } from "./session-titles"
@@ -96,22 +97,33 @@ export function eventsFromTranscript(path: string, s: HistorySession, tailBytes 
 const contentKey = (e: FeedEvent) => [e.kind, e.text ?? "", e.tool ?? "", e.summary ?? ""].join("\u001f")
 
 // The newest HISTORY_MAX rows older than what the feed still holds for `s`.
-export function historyRows(path: string, s: HistorySession, feed: FeedEvent[] = getFeed(), now = Date.now()): FeedEvent[] {
+export function filterHistoryRows(events: FeedEvent[], s: HistorySession, feed: FeedEvent[] = getFeed(), now = Date.now()): FeedEvent[] {
   const belongs = sessionRetention([s])
   const live = feed.filter((e) => belongs(e) !== null)
   const before = live.length ? Math.min(...live.map((e) => e.ts)) + BOUNDARY_SLACK_MS : now
   const known = new Set(live.map(contentKey))
-  return eventsFromTranscript(path, s)
+  return events
     .filter((e) => e.ts < before && !known.has(contentKey(e)))
     .slice(-HISTORY_MAX)
 }
 
+export function historyRows(path: string, s: HistorySession, feed: FeedEvent[] = getFeed(), now = Date.now()): FeedEvent[] {
+  return filterHistoryRows(eventsFromTranscript(path, s), s, feed, now)
+}
+
 // The transcript file for a listed session: the cwd-derived path, else the
-// one under another project dir (a session resumed elsewhere). Only the
-// session record names it — a request never supplies a path. Codex sessions
-// have no Claude transcript (codex-feed.ts reads their rollouts): none.
+// one under another project dir (a session resumed elsewhere). Also reads
+// Antigravity (`agy` / `gemini`) transcripts from ~/.gemini/antigravity-cli/brain/<id>.
 export async function historyFor(s: HistorySession, projectsDir?: string): Promise<FeedEvent[]> {
-  if (s.agent !== "claude" || !SESSION_ID_RE.test(s.sessionId) || !s.cwd.startsWith("/")) return []
+  if (!SESSION_ID_RE.test(s.sessionId) || !s.cwd.startsWith("/")) return []
+  if (s.agent === "gemini") {
+    const agyPath = agyTranscriptPath(s.sessionId)
+    if (existsSync(agyPath)) {
+      return filterHistoryRows(eventsFromAgyTranscript(agyPath, s), s)
+    }
+    return []
+  }
+  if (s.agent !== "claude") return []
   const direct = transcriptPath(s.cwd, s.sessionId, projectsDir)
   const path = existsSync(direct) ? direct : await findTranscript(s.cwd, s.sessionId, projectsDir)
   return path ? historyRows(path, s) : []

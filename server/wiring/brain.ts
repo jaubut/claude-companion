@@ -720,7 +720,7 @@ function createHeadlessBrainRunner() {
   }
 }
 
-const headlessBrainRunner = createHeadlessBrainRunner()
+export const headlessBrainRunner = createHeadlessBrainRunner()
 
 export const brainWiring = createBrainWiring({
   now: Date.now,

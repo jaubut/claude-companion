@@ -1,5 +1,9 @@
 import { hostname } from "node:os"
+import { basename } from "node:path"
 import { getPending, resolveApproval } from "../lib/pty-manager"
+import { deliverHeadlessAgyTurn } from "../lib/agy-feed"
+import { headlessBrainRunner } from "../wiring/brain"
+import { workerSupervisor } from "../wiring/worker-mcp"
 import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
 import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
@@ -452,8 +456,57 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
   // System-Events fallback can still send key="" + cwd="" on a
   // server with no registered sessions; injectText handles that.
   if (!lookup) {
-    const recent = listSessions().find(s => !!s.tty)
+    const recent = listSessions().find(s => !!s.tty || s.herdrPane?.startsWith("headless:"))
     if (recent) target = recent
+  }
+
+  // Headless session delivery (BKM-Q24R): brain, Inverted MCP workers, and headless Antigravity conversations.
+  if (target?.herdrPane?.startsWith("headless:")) {
+    if (boundSid && target.sessionId !== boundSid) {
+      return Response.json({ ok: false, error: "target_changed", key, cwd }, { status: 409 })
+    }
+    if (canDeliver && !canDeliver()) {
+      return Response.json({ ok: false, error: "target_changed", key, cwd }, { status: 409 })
+    }
+    const { cleared } = clearWaitingForTarget(explicit, "turn-end")
+    announceWaiting(cleared)
+    recordUserPrompt({
+      text,
+      cwd: target.cwd,
+      sessionId: target.sessionId,
+      tty: target.tty,
+      sessionKey: target.key,
+    })
+    if (target.herdrPane === "headless:brain") {
+      const r = await headlessBrainRunner.deliver(text)
+      if (!r.ok) return r
+      return Response.json({ ok: true, confirmed: true })
+    }
+    if (target.herdrPane.startsWith("headless:worker:")) {
+      const taskId = target.taskId || target.herdrPane.slice("headless:worker:".length)
+      const existing = workerSupervisor.getTask(taskId)
+      const dispatched = await workerSupervisor.dispatchTask({
+        taskId,
+        repo: existing?.repo || basename(target.cwd),
+        title: existing?.title || target.title || taskId,
+        prompt: text,
+        mode: existing?.mode ?? "auto",
+        family: existing?.family ?? (target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude"),
+        model: target.model || existing?.model,
+      })
+      if (!dispatched.ok) {
+        return Response.json({ ok: false, error: dispatched.error ?? "deliver_failed", key, cwd }, { status: 409 })
+      }
+      return Response.json({ ok: true, confirmed: true })
+    }
+    if (target.herdrPane.startsWith("headless:agy:")) {
+      const ok = deliverHeadlessAgyTurn({
+        sessionId: target.sessionId,
+        cwd: target.cwd,
+        prompt: text,
+      })
+      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
+    }
   }
 
   // A dialog the COMPANION opened (the /help command scrape) is ours to

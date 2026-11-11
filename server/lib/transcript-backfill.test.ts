@@ -109,4 +109,29 @@ describe("transcript backfill", () => {
   test("no transcript on disk: nothing", async () => {
     expect(await historyFor(session, dir)).toEqual([])
   })
+
+  test("Antigravity (agy/gemini) transcript steps map to FeedEvent rows", async () => {
+    const { eventsFromAgyTranscript } = await import("./agy-feed")
+    const agyFile = `${dir}/agy-transcript.jsonl`
+    writeFileSync(agyFile, [
+      JSON.stringify({
+        step_index: 0,
+        type: "USER_INPUT",
+        created_at: at(0),
+        content: "<USER_REQUEST>\nresume this session inside companion\n</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        step_index: 1,
+        type: "PLANNER_RESPONSE",
+        created_at: at(1000),
+        thinking: "Checking transcript backfill and discover.ts.",
+        tool_calls: [{ name: "read_file", args: { Path: "\"/Users/jeremieaubut/claude-companion/server/routes/api.ts\"" } }],
+        content: "Here is how we wire Antigravity sessions into Companion.",
+      }),
+    ].join("\n") + "\n")
+    const rows = eventsFromAgyTranscript(agyFile, { ...session, agent: "gemini" })
+    expect(rows.map((r) => r.kind)).toEqual(["user_prompt", "assistant_thinking", "tool_start", "assistant_text"])
+    expect(rows[0]!.text).toBe("resume this session inside companion")
+    expect(rows[3]!.text).toBe("Here is how we wire Antigravity sessions into Companion.")
+  })
 })

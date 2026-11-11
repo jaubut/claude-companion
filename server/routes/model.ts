@@ -25,12 +25,18 @@ const HEADLESS_MODELS: HeadlessModelEntry[] = [
   { id: "claude-opus-5", family: "claude", text: "Opus 5 · Previous generation Opus", aliases: ["claude-opus-5", "opus 5"] },
   { id: "gpt-5.4", family: "codex", text: "GPT-5.4 (Codex) · OpenAI flagship coding agent", aliases: ["gpt-5.4", "codex"] },
   { id: "o3", family: "codex", text: "o3 (Codex) · Deep reasoning model", aliases: ["o3"] },
+  { id: "Gemini 4 Argon (Medium)", family: "gemini", text: "Gemini 4 Argon (Medium) · Antigravity default", aliases: ["gemini-4-argon-medium", "gemini 4 argon (medium)", "gemini 4 argon"] },
+  { id: "Gemini 4 Argon (High)", family: "gemini", text: "Gemini 4 Argon (High) · Deep reasoning", aliases: ["gemini-4-argon-high", "gemini 4 argon (high)"] },
+  { id: "Gemini 4 Carbon (High)", family: "gemini", text: "Gemini 4 Carbon (High) · Frontier multimodal", aliases: ["gemini-4-carbon-high", "gemini 4 carbon (high)", "gemini 4 carbon"] },
+  { id: "Gemini 3.8 Flash (High)", family: "gemini", text: "Gemini 3.8 Flash (High) · High-speed agentic", aliases: ["gemini-3.8-flash-high", "gemini 3.8 flash (high)", "gemini 3.8 flash"] },
   { id: "gemini-3.1-pro-preview", family: "gemini", text: "Gemini 3.1 Pro · Google flagship multimodal agent", aliases: ["gemini-3.1-pro-preview", "gemini"] },
-  { id: "gemini-3-flash-preview", family: "gemini", text: "Gemini 3 Flash · High-speed agentic model", aliases: ["gemini-3-flash-preview"] },
 ]
 
 function isHeadlessSession(session: Session | null): session is Session {
-  return !!session && typeof session.herdrPane === "string" && session.herdrPane.startsWith("headless:")
+  if (!session) return false
+  if (typeof session.herdrPane === "string" && session.herdrPane.startsWith("headless:")) return true
+  if (session.agent === "gemini" || session.agent === "codex") return true
+  return false
 }
 
 function headlessCatalogFor(session: Session): HeadlessModelEntry[] {
