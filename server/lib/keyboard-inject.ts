@@ -208,23 +208,15 @@ async function deliverToTty(target: InjectTarget, text: string, canDeliver?: () 
         end repeat
         if matchedTab is false then return "MISS"
       end tell
-      delay 0.08
+      delay 0.05
       tell application "System Events"
         tell process "Terminal"
           set frontmost to true
           try
             perform action "AXRaise" of window 1
           end try
-          -- Extended poll — up to 1.2s for focus to settle. On a cold switch
-          -- between two Terminal windows this routinely takes >400ms.
-          repeat with i from 1 to 60
-            try
-              if focused of window 1 is true then exit repeat
-            end try
-            delay 0.02
-          end repeat
         end tell
-        delay 0.12
+        delay 0.05
       end tell
 
       -- Now verify the front tab's tty actually matches our target. If the
@@ -337,14 +329,8 @@ async function deliverToTty(target: InjectTarget, text: string, canDeliver?: () 
             try
               perform action "AXRaise" of window 1
             end try
-            repeat with i from 1 to 20
-              try
-                if focused of window 1 is true then exit repeat
-              end try
-              delay 0.02
-            end repeat
           end tell
-          delay 0.08
+          delay 0.05
           keystroke return
         end tell
         return "MATCH"
