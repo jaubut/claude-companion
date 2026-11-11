@@ -22,6 +22,7 @@ import { handleAutoCompactRoute } from "./routes/auto-compact"
 import { handleGaugeRoute } from "./routes/gauge"
 import { handleCopyJobsRoute } from "./routes/copy-jobs"
 import { handleBuilderJobsRoute } from "./routes/builder-jobs"
+import { handleWorkerMcpRoute } from "./routes/worker-mcp"
 import { handleMyTasksRoute } from "./routes/my-tasks"
 import { handleTasteRoute } from "./routes/taste"
 import { handleNotesRoute } from "./routes/notes"
@@ -107,6 +108,8 @@ export function createCompanionServer(port: number) {
       if (url.pathname === VOICE_UPLOAD_PATH) server.timeout(req, VOICE_UPLOAD_IDLE_TIMEOUT_S)
       // bin/lead waits for the lead's clone and start.
       if (url.pathname === "/hooks/brain/lead") server.timeout(req, 180)
+      // await_task on the Inverted MCP worker plane can long-poll up to 120 s.
+      if (url.pathname === "/api/mcp/workers" || url.pathname === "/hooks/brain/workers-mcp") server.timeout(req, 150)
       // A merge: the gate's 20 s, then readiness, `gh pr merge` and its read-back at 60 s each (GH_TIMEOUT_MS).
       if (url.pathname === "/hooks/brain/pr-merge" || /^\/api\/orchestrator\/triage\/[^/]+\/choose$/.test(url.pathname)) server.timeout(req, 200)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
@@ -167,7 +170,7 @@ export function createCompanionServer(port: number) {
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
       try {
-        for (const route of [handleHookRoute, brainRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
+        for (const route of [handleHookRoute, brainRoute, handleWorkerMcpRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
           const handled = await route(req, url)
           if (handled) return handled
         }

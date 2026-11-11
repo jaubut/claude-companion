@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-09",
+  "generatedAt": "2026-11-11",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 194,
+          "lines": 197,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -38,6 +38,16 @@
             {
               "method": "*",
               "path": "/hooks/brain/lead",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/mcp/workers",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/workers-mcp",
               "prefix": false
             },
             {
@@ -81,6 +91,7 @@
             "routes/gauge.ts",
             "routes/copy-jobs.ts",
             "routes/builder-jobs.ts",
+            "routes/worker-mcp.ts",
             "routes/my-tasks.ts",
             "routes/taste.ts",
             "routes/notes.ts",
@@ -6065,6 +6076,69 @@
           "externals": []
         },
         {
+          "path": "lib/worker-mcp.ts",
+          "lines": 264,
+          "kind": "lib",
+          "exports": [
+            "WORKER_MCP_TOOLS",
+            "PeerHostConfig",
+            "WorkerMcpDeps",
+            "JsonRpcRequest",
+            "JsonRpcResponse",
+            "defaultResolvePeer",
+            "createWorkerMcpHandler",
+            "WorkerMcpHandler"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-supervisor.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-supervisor.ts",
+          "lines": 599,
+          "kind": "lib",
+          "exports": [
+            "TASK_ID_RE",
+            "REPO_NAME_RE",
+            "ALLOWED_MODES",
+            "WorkerTaskStatus",
+            "StreamJsonEvent",
+            "parseStreamJsonLine",
+            "DispatchTaskInput",
+            "SupervisedTaskSnapshot",
+            "SpawnedWorkerHandle",
+            "SpawnWorkerOpts",
+            "WorkerSupervisorDeps",
+            "defaultResolveRepoDir",
+            "defaultSpawnWorker",
+            "buildHeadlessClaudeArgs",
+            "createWorkerSupervisor",
+            "WorkerSupervisor"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/builder-jobs.ts",
+            "lib/live-repo.ts",
+            "lib/secret-redact.ts",
+            "lib/spawn-session.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/api.ts",
           "lines": 600,
           "kind": "route-host",
@@ -7162,6 +7236,39 @@
             "lib/vault-guard.ts",
             "lib/secret-requests.ts",
             "lib/vault-upstream.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/worker-mcp.ts",
+          "lines": 83,
+          "kind": "route-host",
+          "exports": [
+            "WorkerMcpRouteDeps",
+            "createWorkerMcpRoute",
+            "handleWorkerMcpRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "*",
+              "path": "/api/mcp/workers",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/brain.ts",
+            "lib/sessions.ts",
+            "lib/vault-guard.ts",
+            "lib/worker-mcp.ts",
+            "wiring/brain.ts",
+            "wiring/worker-mcp.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8669,6 +8776,31 @@
           "externals": []
         },
         {
+          "path": "wiring/worker-mcp.ts",
+          "lines": 25,
+          "kind": "lib",
+          "exports": [
+            "workerSupervisor",
+            "workerMcp"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/live-repo.ts",
+            "lib/spawn-session.ts",
+            "lib/worker-mcp.ts",
+            "lib/worker-supervisor.ts",
+            "state.ts",
+            "wiring/builder-jobs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "ws.ts",
           "lines": 244,
           "kind": "lib",
@@ -8836,6 +8968,7 @@
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts",
+            "wiring/worker-mcp.ts",
             "ws.ts"
           ]
         },
@@ -8888,6 +9021,7 @@
             "routes/brain.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
+            "routes/worker-mcp.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
@@ -8953,6 +9087,7 @@
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "routes/worker-mcp.ts",
             "ws.ts"
           ]
         },
@@ -8998,7 +9133,9 @@
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
-            "routes/hooks.ts#POST /hooks/dispatch-event"
+            "routes/hooks.ts#POST /hooks/dispatch-event",
+            "routes/worker-mcp.ts",
+            "routes/worker-mcp.ts#* /api/mcp/workers"
           ]
         },
         "unauthorized": {
@@ -9007,7 +9144,8 @@
             "companion-server.ts#* /ws",
             "routes/brain.ts",
             "routes/records.ts",
-            "routes/vault.ts"
+            "routes/vault.ts",
+            "routes/worker-mcp.ts#* /api/mcp/workers"
           ]
         },
         "VOICE_UPLOAD_PATH": {
@@ -9278,6 +9416,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleWorkerMcpRoute": {
+          "module": "routes/worker-mcp.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "BadJsonBody": {
           "module": "lib/json-body.ts",
           "callers": [
@@ -9330,6 +9474,7 @@
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
+            "routes/worker-mcp.ts",
             "wiring/auto-compact.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -9569,6 +9714,7 @@
             "lib/body-investigator.ts",
             "lib/jev-route-log.ts",
             "lib/quick-look.ts",
+            "lib/worker-supervisor.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
@@ -10197,6 +10343,7 @@
           "callers": [
             "lib/brain-workers.ts",
             "routes/brain.ts",
+            "routes/worker-mcp.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
@@ -11673,7 +11820,8 @@
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/records.ts",
-            "routes/vault.ts"
+            "routes/vault.ts",
+            "routes/worker-mcp.ts"
           ]
         },
         "clientOrigin": {
@@ -11684,7 +11832,8 @@
             "lib/terminal-bridge.ts",
             "routes/brain.ts",
             "routes/records.ts",
-            "routes/vault.ts"
+            "routes/vault.ts",
+            "routes/worker-mcp.ts"
           ]
         },
         "paneRefOf": {
@@ -13793,6 +13942,27 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
+        "WorkerSupervisor": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "lib/worker-mcp.ts"
+          ]
+        },
+        "ShFn": {
+          "module": "lib/live-repo.ts",
+          "callers": [
+            "lib/worker-supervisor.ts",
+            "wiring/auto-deploy.ts",
+            "wiring/brain-lead.ts",
+            "wiring/resolver.ts"
+          ]
+        },
+        "BuilderReport": {
+          "module": "lib/builder-jobs.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "registerToken": {
           "module": "lib/push-tokens.ts",
           "callers": [
@@ -14061,7 +14231,8 @@
           "module": "lib/spawn-session.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "wiring/brain-lead.ts"
+            "wiring/brain-lead.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "spawnShellSession": {
@@ -14365,7 +14536,8 @@
         "BrainWiring": {
           "module": "wiring/brain.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "routes/worker-mcp.ts"
           ]
         },
         "addBrainTodo": {
@@ -14452,7 +14624,8 @@
         "LEAD_PREFIX": {
           "module": "lib/brain.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "routes/worker-mcp.ts"
           ]
         },
         "brainLead": {
@@ -14497,6 +14670,7 @@
           "callers": [
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/builder-jobs.ts#GET /api/builder-jobs",
+            "wiring/worker-mcp.ts",
             "ws.ts"
           ]
         },
@@ -15750,6 +15924,18 @@
             "routes/vault.ts"
           ]
         },
+        "WorkerMcpHandler": {
+          "module": "lib/worker-mcp.ts",
+          "callers": [
+            "routes/worker-mcp.ts"
+          ]
+        },
+        "workerMcp": {
+          "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "routes/worker-mcp.ts"
+          ]
+        },
         "CompactTarget": {
           "module": "lib/auto-compact.ts",
           "callers": [
@@ -15862,20 +16048,13 @@
             "wiring/auto-compact.ts"
           ]
         },
-        "ShFn": {
-          "module": "lib/live-repo.ts",
-          "callers": [
-            "wiring/auto-deploy.ts",
-            "wiring/brain-lead.ts",
-            "wiring/resolver.ts"
-          ]
-        },
         "realSh": {
           "module": "lib/live-repo.ts",
           "callers": [
             "wiring/auto-deploy.ts",
             "wiring/brain-lead.ts",
-            "wiring/resolver.ts"
+            "wiring/resolver.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "DEFAULT_BODY_AGENT": {
@@ -17930,6 +18109,18 @@
           "module": "lib/sessions.ts",
           "callers": [
             "wiring/waiting.ts"
+          ]
+        },
+        "createWorkerSupervisor": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "createWorkerMcpHandler": {
+          "module": "lib/worker-mcp.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
           ]
         },
         "terminalOpen": {
