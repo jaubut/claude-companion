@@ -9,11 +9,7 @@ import { redactSecrets } from "./secret-redact"
 // Inverted MCP Worker Supervisor (BKM-Q24R Phase 3):
 // Supervises headless `claude -p --output-format stream-json --verbose` builder
 // subprocesses in isolated per-task git worktrees (`~/apps/wt/<repo>-<taskId>`
-// on branch `dispatch/<taskId>`), replacing `herdr`/`tmux` pane scraping with:
-//   - structured stream-json NDJSON event parsing → live BuilderJobStore frames
-//   - event-driven `awaitTask` completion notifications (no terminal polling)
-//   - multi-turn session continuity (`--session-id` on turn 1, `--resume` on 2+)
-//   - process-group interruption (`interruptTask`) and guarded worktree cleanup.
+// on branch `dispatch/<taskId>`), replacing `herdr`/`tmux` pane scraping.
 
 export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
@@ -87,9 +83,7 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
   if (!obj) return null
 
   const out: StreamJsonEvent = {}
-  if (typeof obj.session_id === "string" && obj.session_id.trim()) {
-    out.sessionId = obj.session_id.trim()
-  }
+  if (typeof obj.session_id === "string" && obj.session_id.trim()) out.sessionId = obj.session_id.trim()
 
   if (obj.type === "assistant") {
     const msg = obj.message && typeof obj.message === "object" ? (obj.message as Record<string, unknown>) : null
@@ -203,12 +197,7 @@ export function defaultResolveRepoDir(repo: string, home = homedir()): string | 
 }
 
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
-  const child = spawn(opts.cmd, opts.args, {
-    cwd: opts.cwd,
-    env: opts.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
-  })
+  const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], detached: true })
   let outBuf = ""
   let errBuf = ""
   child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
@@ -259,10 +248,7 @@ export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, build
   return env
 }
 
-/**
- * Build the headless `claude -p` argv for turn 1 (`--session-id`) or follow-up turns (`--resume`).
- * Places `--` before the positional prompt so a prompt starting with `-` is never parsed as a CLI option.
- */
+/** Build the headless `claude -p` argv with `--` before positional prompt so `-...` prompts are never parsed as flags. */
 export function buildHeadlessClaudeArgs(opts: {
   prompt: string
   sessionId: string
@@ -303,25 +289,8 @@ interface InternalTask extends PersistedTaskRecord {
 }
 
 function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
-  return {
-    taskId: t.taskId,
-    repo: t.repo,
-    title: t.title,
-    builder: t.builder,
-    branch: t.branch,
-    worktree: t.worktree,
-    sessionId: t.sessionId,
-    status: t.status,
-    turnCount: t.turnCount,
-    step: t.step,
-    pct: t.pct,
-    result: t.result,
-    prUrl: t.prUrl,
-    error: t.error,
-    startedAt: t.startedAt,
-    updatedAt: t.updatedAt,
-    completedAt: t.completedAt,
-  }
+  const { taskId, repo, title, builder, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt } = t
+  return { taskId, repo, title, builder, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt }
 }
 
 export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
@@ -335,11 +304,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   function loadPersistedTasks(): void {
     if (!existsSync(stateFile)) return
     let parsed: unknown = null
-    try {
-      parsed = JSON.parse(readFileSync(stateFile, "utf8")) as unknown
-    } catch {
-      return
-    }
+    try { parsed = JSON.parse(readFileSync(stateFile, "utf8")) as unknown } catch { return }
     if (!Array.isArray(parsed)) return
     const now = deps.now()
     for (const item of parsed) {
@@ -347,9 +312,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const r = item as Partial<PersistedTaskRecord>
       if (typeof r.taskId !== "string" || !TASK_ID_RE.test(r.taskId)) continue
       if (typeof r.repo !== "string" || !REPO_NAME_RE.test(r.repo)) continue
-      if (typeof r.repoDir !== "string" || !r.repoDir) continue
-      if (typeof r.worktree !== "string" || !r.worktree) continue
-      if (typeof r.sessionId !== "string" || !r.sessionId) continue
+      if (typeof r.repoDir !== "string" || !r.repoDir || typeof r.worktree !== "string" || !r.worktree || typeof r.sessionId !== "string" || !r.sessionId) continue
       const wasRunning = r.status === "running"
       const turnCount = typeof r.turnCount === "number" && r.turnCount > 0 ? Math.floor(r.turnCount) : 1
       tasks.set(r.taskId, {
@@ -387,25 +350,17 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   function savePersistedTasks(): void {
     try {
       mkdirSync(dirname(stateFile), { recursive: true })
-      const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({
-        ...toSnapshot(t),
-        repoDir: t.repoDir,
-      }))
+      const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({ ...toSnapshot(t), repoDir: t.repoDir }))
       const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
       writeFileSync(tmp, JSON.stringify(records))
       renameSync(tmp, stateFile)
-    } catch {
-      /* best-effort persistence */
-    }
+    } catch { /* best-effort persistence */ }
   }
 
   loadPersistedTasks()
 
   function notifyWaiters(t: InternalTask): void {
-    for (const fn of [...t.waiters]) {
-      t.waiters.delete(fn)
-      fn()
-    }
+    for (const fn of [...t.waiters]) { t.waiters.delete(fn); fn() }
   }
 
   function clearTimers(t: InternalTask): void {
@@ -417,9 +372,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     const wtRoot = join(deps.home, "apps", "wt")
     const worktree = join(wtRoot, `${repoSlug}-${taskId}`)
     const branch = `dispatch/${taskId}`
-    if (existsSync(worktree)) {
-      return { ok: true, worktree, branch }
-    }
+    if (existsSync(worktree)) return { ok: true, worktree, branch }
     mkdirSync(wtRoot, { recursive: true })
     const sym = await deps.sh("git", ["-C", repoDir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], { cwd: repoDir, timeoutMs: 15_000 })
     const baseRef = sym.ok && sym.out.trim() ? sym.out.trim() : "origin/main"
@@ -429,9 +382,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     const wtRes = hasBranch
       ? await deps.sh("git", ["-C", repoDir, "worktree", "add", "-q", worktree, branch], { cwd: repoDir, timeoutMs: 30_000 })
       : await deps.sh("git", ["-C", repoDir, "worktree", "add", "-q", "-b", branch, worktree, baseRef], { cwd: repoDir, timeoutMs: 30_000 })
-    if (!wtRes.ok) {
-      return { ok: false, error: `worktree add failed: ${(wtRes.err || wtRes.out).trim().slice(0, 200)}` }
-    }
+    if (!wtRes.ok) return { ok: false, error: `worktree add failed: ${(wtRes.err || wtRes.out).trim().slice(0, 200)}` }
     return { ok: true, worktree, branch }
   }
 
@@ -451,19 +402,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (model && !SAFE_IDENTIFIER_RE.test(model)) return { ok: false, status: 400, error: "invalid_model" }
 
       const existing = tasks.get(taskId)
-      if (existing && existing.repo !== repo) {
-        return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
-      }
-      if (inFlightDispatches.has(taskId) || (existing && existing.status === "running")) {
-        return { ok: false, status: 409, error: "task_already_running" }
-      }
+      if (existing && existing.repo !== repo) return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
+      if (inFlightDispatches.has(taskId) || (existing && existing.status === "running")) return { ok: false, status: 409, error: "task_already_running" }
 
       // Reserve the taskId synchronously BEFORE any await so concurrent dispatches cannot race setup.
       inFlightDispatches.add(taskId)
       try {
-        if (existing?.exitPromise) {
-          await existing.exitPromise
-        }
+        if (existing?.exitPromise) await existing.exitPromise
 
         const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
@@ -484,33 +429,11 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const myJobId = myTurn === 1 ? taskId : `${taskId}-t${myTurn}`
 
         const task: InternalTask = existing ?? {
-          taskId,
-          repo,
-          repoDir,
-          title,
-          builder,
-          branch: wt.branch,
-          worktree: wt.worktree,
-          sessionId,
-          status: "running",
-          turnCount: 0,
-          step: "Starting headless builder",
-          pct: 5,
-          result: "",
-          prUrl: null,
-          error: null,
-          startedAt: now,
-          updatedAt: now,
-          completedAt: null,
-          activeTurn: myTurn,
-          jobId: myJobId,
-          turnReportedTerminal: false,
-          handle: null,
-          exitPromise: null,
-          timeoutTimer: null,
-          killTimer: null,
-          waiters: new Set(),
-          stderrTail: [],
+          taskId, repo, repoDir, title, builder, branch: wt.branch, worktree: wt.worktree, sessionId,
+          status: "running", turnCount: 0, step: "Starting headless builder", pct: 5,
+          result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
+          activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
+          handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
         clearTimers(task)
@@ -529,29 +452,12 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         tasks.set(taskId, task)
         savePersistedTasks()
 
-        deps.reportJob({
-          event: "task",
-          id: myJobId,
-          title: task.title,
-          builder: task.builder,
-          step: task.step,
-          pct: task.pct,
-        })
+        deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
 
-        const args = buildHeadlessClaudeArgs({
-          prompt,
-          sessionId: task.sessionId,
-          resume,
-          mode,
-          agent,
-          model,
-        })
-
+        const args = buildHeadlessClaudeArgs({ prompt, sessionId: task.sessionId, resume, mode, agent, model })
         let settled = false
         let resolveExit!: () => void
-        const exitPromise = new Promise<void>((resolve) => {
-          resolveExit = resolve
-        })
+        const exitPromise = new Promise<void>((resolve) => { resolveExit = resolve })
         task.exitPromise = exitPromise
 
         let handle: SpawnedWorkerHandle
@@ -573,18 +479,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               if (ev.step) {
                 task.step = ev.step
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
-                deps.reportJob({
-                  event: "progress",
-                  id: myJobId,
-                  title: task.title,
-                  builder: task.builder,
-                  step: task.step,
-                  pct: task.pct,
-                })
+                deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
               }
-              if (ev.done && ev.isError) {
-                task.error = (ev.resultText || "builder turn reported an error").slice(0, 400)
-              }
+              if (ev.done && ev.isError) task.error = (ev.resultText || "builder turn reported an error").slice(0, 400)
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return
@@ -679,9 +576,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const t = tasks.get(taskId.trim())
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
       const boundedWait = Math.min(MAX_WAIT_MS, Math.max(0, Math.floor(waitMs)))
-      if (t.status !== "running" || boundedWait === 0) {
-        return { ok: true, task: toSnapshot(t), timedOut: false }
-      }
+      if (t.status !== "running" || boundedWait === 0) return { ok: true, task: toSnapshot(t), timedOut: false }
       const timedOut = await new Promise<boolean>((resolve) => {
         let timer: ReturnType<typeof setTimeout> | null = null
         const onDone = () => {
@@ -703,9 +598,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const id = taskId.trim()
       const t = tasks.get(id)
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
-      if (inFlightDispatches.has(id)) {
-        return { ok: false, status: 409, error: "task_dispatch_in_progress" }
-      }
+      if (inFlightDispatches.has(id)) return { ok: false, status: 409, error: "task_dispatch_in_progress" }
       inFlightDispatches.add(id)
       try {
         if (t.status === "running") {

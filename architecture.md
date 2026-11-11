@@ -8,11 +8,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 257 modules, cap 600)
 
-⚠ over cap: `lib/worker-supervisor.ts` (785)
+⚠ over cap: `lib/worker-supervisor.ts` (678)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/worker-supervisor.ts` | 785 ⚠ 785 > cap 600 | lib | 18 |  |
+| `lib/worker-supervisor.ts` | 678 ⚠ 678 > cap 600 | lib | 18 |  |
 | `lib/sessions.ts` | 600 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `routes/api.ts` | 600 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 600 | lib | 10 | state: let deliverFn · emits: brain_trace, brain |
