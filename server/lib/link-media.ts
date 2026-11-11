@@ -243,12 +243,27 @@ async function contactSheet(dir: string, deadline: number): Promise<string | nul
   return existsSync(out) ? out : null
 }
 
+/** Drop `<...>` tags in one pass. A regex rescans to end-of-line from every unmatched `<` (quadratic); once no `>` remains the rest is literal. */
+function stripTags(line: string): string {
+  let out = ""
+  let i = 0
+  while (i < line.length) {
+    const lt = line.indexOf("<", i)
+    if (lt < 0) break
+    const gt = line.indexOf(">", lt + 1)
+    if (gt < 0) break
+    out += line.slice(i, gt === lt + 1 ? lt + 1 : lt)
+    i = gt === lt + 1 ? lt + 1 : gt + 1
+  }
+  return out + line.slice(i)
+}
+
 /** Caption text from a WebVTT file, cue lines deduped (auto-captions repeat). */
 export function vttText(vtt: string): string {
   const seen = new Set<string>()
   const out: string[] = []
   for (const l of vtt.split("\n")) {
-    const line = l.replace(/<[^>]+>/g, "").trim()
+    const line = stripTags(l).trim()
     if (!line || line === "WEBVTT" || /^(NOTE|Kind:|Language:)/.test(line) || line.includes("-->") || /^\d+$/.test(line) || seen.has(line)) continue
     seen.add(line)
     out.push(line)

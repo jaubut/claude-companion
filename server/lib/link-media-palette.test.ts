@@ -43,4 +43,12 @@ describe("bin/media transcript", () => {
     const vtt = "WEBVTT\nKind: captions\n\n1\n00:00:00.000 --> 00:00:02.000\nhello <c>world</c>\n\n00:00:02.000 --> 00:00:04.000\nhello world\nnext line\n"
     expect(vttText(vtt)).toBe("hello world\nnext line")
   })
+
+  test("a long run of '<' with no '>' stays linear and keeps the text", () => {
+    const t0 = performance.now()
+    const out = vttText("<".repeat(200_000))
+    expect(performance.now() - t0).toBeLessThan(250)
+    expect(out.length).toBe(200_000)
+    expect(vttText("a < b <c>d</c> <> <<e> f <")).toBe("a d <>  f <")
+  })
 })
