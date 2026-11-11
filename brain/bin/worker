@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Inverted MCP worker CLI for the Brain and Repo Leads (POST /hooks/brain/workers-mcp).
 #
-#   bin/worker dispatch --task <id> --repo <repo> --prompt "<brief>" [--title "<title>"] [--mode auto] [--host local|zettlab|mac]
+#   bin/worker dispatch --task <id> --repo <repo> --prompt "<brief>" [--title "<title>"] [--family claude|codex|gemini] [--model <model>] [--mode auto] [--host local|zettlab|mac]
 #   bin/worker await --task <id> [--wait-ms 30000] [--host local|zettlab|mac]
 #   bin/worker interrupt --task <id> [--close-worktree] [--host local|zettlab|mac]
 #   bin/worker list [--host local|zettlab|mac]
@@ -11,7 +11,7 @@ SUB="${1:-}"
 [ -n "$SUB" ] || { echo "worker: usage: bin/worker <dispatch|await|interrupt|list> [flags]" >&2; exit 2; }
 shift
 
-TASK_ID=""; REPO=""; PROMPT=""; TITLE=""; MODE="auto"; HOST="local"; WAIT_MS="30000"; CLOSE_WT="0"; AGENT=""; MODEL=""
+TASK_ID=""; REPO=""; PROMPT=""; TITLE=""; MODE="auto"; HOST="local"; WAIT_MS="30000"; CLOSE_WT="0"; AGENT=""; MODEL=""; FAMILY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) TASK_ID="${2:-}"; shift 2 ;;
@@ -21,6 +21,7 @@ while [ $# -gt 0 ]; do
     --mode) MODE="${2:-}"; shift 2 ;;
     --host) HOST="${2:-}"; shift 2 ;;
     --wait-ms) WAIT_MS="${2:-}"; shift 2 ;;
+    --family) FAMILY="${2:-}"; shift 2 ;;
     --agent) AGENT="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
     --close-worktree) CLOSE_WT="1"; shift ;;
@@ -34,14 +35,14 @@ claude_pid() {
     [ -z "$pid" ] || [ "$pid" -le 1 ] && break
     comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
     case "$comm" in
-      *claude*) echo "$pid"; return 0 ;;
+      *claude*|*codex*|*gemini*) echo "$pid"; return 0 ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
   done
   echo "${PPID}"
 }
 
-BODY=$(SUB="$SUB" TASK_ID="$TASK_ID" REPO="$REPO" PROMPT="$PROMPT" TITLE="$TITLE" MODE="$MODE" HOST="$HOST" WAIT_MS="$WAIT_MS" CLOSE_WT="$CLOSE_WT" AGENT="$AGENT" MODEL="$MODEL" python3 -c '
+BODY=$(SUB="$SUB" TASK_ID="$TASK_ID" REPO="$REPO" PROMPT="$PROMPT" TITLE="$TITLE" MODE="$MODE" HOST="$HOST" WAIT_MS="$WAIT_MS" CLOSE_WT="$CLOSE_WT" AGENT="$AGENT" MODEL="$MODEL" FAMILY="$FAMILY" python3 -c '
 import json, os, sys
 sub = os.environ["SUB"]
 host = os.environ["HOST"] or "local"
@@ -54,6 +55,7 @@ if sub == "dispatch":
         "host": host,
     }
     if os.environ["TITLE"]: args["title"] = os.environ["TITLE"]
+    if os.environ["FAMILY"]: args["family"] = os.environ["FAMILY"]
     if os.environ["AGENT"]: args["agent"] = os.environ["AGENT"]
     if os.environ["MODEL"]: args["model"] = os.environ["MODEL"]
     tool = "dispatch_task"

@@ -162,7 +162,10 @@ function renderPlist(): string {
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
     <key>ThrottleInterval</key>
     <integer>5</integer>
     <key>StandardOutPath</key>

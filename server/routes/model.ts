@@ -1,11 +1,56 @@
 import { companionLog } from "../lib/log"
 import { ESC_SETTLE_MS } from "../lib/command-list"
 import type { Dialog } from "../lib/dialogs"
-import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelScope } from "../lib/model-control"
-import { resolveSession } from "../lib/sessions"
+import { choicesFrom, isModelPicker, openRefusal, setKeys, type ModelChoice, type ModelScope } from "../lib/model-control"
+import { recordSession, resolveSession, setSessionModel, type Session } from "../lib/sessions"
 import { type SessionPane, sessionPaneOf } from "../lib/session-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 import { checked, jsonObject } from "../lib/json-body"
+import { getBrainModel, setBrainModel } from "../wiring/brain"
+import { workerSupervisor } from "../wiring/worker-mcp"
+
+interface HeadlessModelEntry {
+  id: string
+  family: "claude" | "codex" | "gemini"
+  text: string
+  aliases: string[]
+}
+
+const HEADLESS_MODELS: HeadlessModelEntry[] = [
+  { id: "claude-opus-5-5", family: "claude", text: "Opus 5.5 · Most capable for complex work", aliases: ["opus", "claude-opus-5-5", "opus 5.5"] },
+  { id: "claude-sonnet-5-5", family: "claude", text: "Sonnet 5.5 · Best for everyday tasks", aliases: ["sonnet", "claude-sonnet-5-5", "sonnet 5.5"] },
+  { id: "claude-fable-5-1", family: "claude", text: "Fable 5.1 · Fast & expressive", aliases: ["fable", "claude-fable-5-1", "fable 5.1"] },
+  { id: "claude-haiku-4-5", family: "claude", text: "Haiku 4.5 · Fastest for quick answers", aliases: ["haiku", "claude-haiku-4-5", "haiku 4.5"] },
+  { id: "claude-sonnet-5", family: "claude", text: "Sonnet 5 · Previous generation Sonnet", aliases: ["claude-sonnet-5", "sonnet 5"] },
+  { id: "claude-opus-5", family: "claude", text: "Opus 5 · Previous generation Opus", aliases: ["claude-opus-5", "opus 5"] },
+  { id: "gpt-5.4", family: "codex", text: "GPT-5.4 (Codex) · OpenAI flagship coding agent", aliases: ["gpt-5.4", "codex"] },
+  { id: "o3", family: "codex", text: "o3 (Codex) · Deep reasoning model", aliases: ["o3"] },
+  { id: "gemini-3.1-pro-preview", family: "gemini", text: "Gemini 3.1 Pro · Google flagship multimodal agent", aliases: ["gemini-3.1-pro-preview", "gemini"] },
+  { id: "gemini-3-flash-preview", family: "gemini", text: "Gemini 3 Flash · High-speed agentic model", aliases: ["gemini-3-flash-preview"] },
+]
+
+function isHeadlessSession(session: Session | null): session is Session {
+  return !!session && typeof session.herdrPane === "string" && session.herdrPane.startsWith("headless:")
+}
+
+function headlessCatalogFor(session: Session): HeadlessModelEntry[] {
+  if (session.taskId === "brain") {
+    return HEADLESS_MODELS.filter((m) => m.family === "claude")
+  }
+  return HEADLESS_MODELS
+}
+
+function buildHeadlessChoices(session: Session): ModelChoice[] {
+  const catalog = headlessCatalogFor(session)
+  const rawCurrent = (session.taskId === "brain" ? (session.model || getBrainModel()) : session.model || "claude-opus-5-5").trim().toLowerCase()
+  let matchedIndex = catalog.findIndex((m) => m.id.toLowerCase() === rawCurrent || m.aliases.includes(rawCurrent))
+  if (matchedIndex < 0) matchedIndex = 0
+  return catalog.map((m, idx) => ({
+    index: idx,
+    text: m.text,
+    current: idx === matchedIndex,
+  }))
+}
 
 // Model control routes (PRJ-OR1T Phase 14, gap-table A1·A2·A3).
 //
@@ -74,6 +119,20 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
+    if (isHeadlessSession(session)) {
+      const choices = buildHeadlessChoices(session)
+      log(`open (headless) → ${choices.length} models on ${session.label || session.key}`)
+      return Response.json({
+        ok: true,
+        key: session.key,
+        choices,
+        hints: [
+          { key: "Enter", label: "to set as default" },
+          { key: "s", label: "to use this session only" },
+        ],
+      })
+    }
+
     const refusal = openRefusal(session, dialogWatcher.current()[session?.key ?? ""])
     if (refusal) {
       log(`open refused — ${refusal.error} (${session?.label || session?.key || key})`)
@@ -127,6 +186,24 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     if (typeof index !== "number") return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
 
     const session = key ? resolveSession(key) : null
+    if (isHeadlessSession(session)) {
+      const catalog = headlessCatalogFor(session)
+      if (index < 0 || index >= catalog.length) {
+        return Response.json({ ok: false, error: "no_such_model" }, { status: 400 })
+      }
+      const picked = catalog[index]!
+      if (session.taskId === "brain") {
+        setBrainModel(picked.id)
+      } else if (session.taskId) {
+        workerSupervisor.setTaskModel(session.taskId, picked.id)
+      }
+      setSessionModel(session.key, picked.id)
+      recordSession({ ...session, agent: picked.family, model: picked.id }, { sessionIdConfirmed: true })
+      const chosen: ModelChoice = { index, text: picked.text, current: true }
+      log(`set (headless) → "${picked.id}" scope=${scope} on ${session.label || session.key}`)
+      return Response.json({ ok: true, key: session.key, scope, chosen })
+    }
+
     const pane = sessionPaneOf(session)
     if (!session || !pane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
 
@@ -184,6 +261,10 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const body = checked(await jsonObject<{ key?: string }>(req, {}), { key: "string" })
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
+    if (isHeadlessSession(session)) {
+      return Response.json({ ok: true, closed: true })
+    }
+
     const pane = sessionPaneOf(session)
     if (!session || !pane) return Response.json({ ok: false, error: "no_pane" }, { status: 410 })
     // Fresh read, same reason as open: a stale "no picker" would leave one up.

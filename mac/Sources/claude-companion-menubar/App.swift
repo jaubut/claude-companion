@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import Foundation
 
 // Menubar status item for the Claude Companion server.
@@ -13,10 +14,9 @@ import Foundation
 //   - polls /health every 3s; flips the menubar icon between on/off
 //   - reads the bearer token from ~/.claude-companion/auth.token, then
 //     polls /api/status to surface client/pending counts
-//   - menu actions: copy token, restart launchd job, show logs
-//
-// Why it's tiny: this is the "is it running?" surface, not a full client.
-// The PWA + iOS app are the rich UIs.
+//   - renders a live scannable Pairing QR code ({"v":1,"url":"...","token":"..."})
+//     directly inside the menubar dropdown AND in a pop-out window
+//   - menu actions: show QR window, copy token, restart launchd job, show logs, quit
 
 @main
 struct ClaudeCompanionMenubar {
@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var pollTimer: Timer?
     private var status: ServerStatus = .unknown
+    private var qrPanel: NSPanel?
+    private var cachedServerURL: String = detectTailscaleHTTPSURL()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Use a fixed length rather than .variableLength — on macOS 26 with
@@ -77,13 +79,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
 
+        // Inline Scannable Pairing QR Code right inside the menubar dropdown
+        if let token = readToken(),
+           let payloadJSON = makePairingPayloadJSON(url: cachedServerURL, token: token),
+           let qrImage = makeQRCodeImage(from: payloadJSON, size: 168) {
+            menu.addItem(NSMenuItem.separator())
+            let qrItem = NSMenuItem()
+            qrItem.view = buildInlineQRMenuView(qrImage: qrImage, urlString: cachedServerURL)
+            menu.addItem(qrItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(menuItem(title: "Show Pairing QR Window…", action: #selector(showQRWindow), key: "p"))
         menu.addItem(menuItem(title: "Copy Pairing Token", action: #selector(copyToken), key: "c"))
+        menu.addItem(menuItem(title: "Copy Server URL", action: #selector(copyServerURL), key: "u"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(menuItem(title: "Restart Server", action: #selector(restartServer), key: "r"))
         menu.addItem(menuItem(title: "Show Logs", action: #selector(showLogs), key: "l"))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(menuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), key: "q"))
+        menu.addItem(menuItem(title: "Quit Companion Menubar", action: #selector(quitMenubar), key: ""))
 
         statusItem.menu = menu
     }
@@ -94,7 +108,122 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
+    private func buildInlineQRMenuView(qrImage: NSImage, urlString: String) -> NSView {
+        let width: CGFloat = 224
+        let height: CGFloat = 236
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+
+        let titleLabel = NSTextField(labelWithString: "Scan on iPhone to Pair")
+        titleLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+        titleLabel.textColor = NSColor.labelColor
+        titleLabel.alignment = .center
+        titleLabel.frame = NSRect(x: 12, y: height - 24, width: width - 24, height: 16)
+        container.addSubview(titleLabel)
+
+        let cardSize: CGFloat = 176
+        let cardX = (width - cardSize) / 2
+        let cardY: CGFloat = 32
+        let whiteCard = NSView(frame: NSRect(x: cardX, y: cardY, width: cardSize, height: cardSize))
+        whiteCard.wantsLayer = true
+        whiteCard.layer?.backgroundColor = NSColor.white.cgColor
+        whiteCard.layer?.cornerRadius = 12
+        whiteCard.layer?.borderWidth = 1
+        whiteCard.layer?.borderColor = NSColor.black.withAlphaComponent(0.08).cgColor
+
+        let imgView = NSImageView(frame: NSRect(x: 4, y: 4, width: cardSize - 8, height: cardSize - 8))
+        imgView.image = qrImage
+        imgView.imageScaling = .scaleProportionallyUpOrDown
+        whiteCard.addSubview(imgView)
+        container.addSubview(whiteCard)
+
+        let shortHost = urlString.replacingOccurrences(of: "https://", with: "")
+        let hostLabel = NSTextField(labelWithString: shortHost)
+        hostLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        hostLabel.textColor = NSColor.secondaryLabelColor
+        hostLabel.alignment = .center
+        hostLabel.lineBreakMode = .byTruncatingMiddle
+        hostLabel.frame = NSRect(x: 10, y: 8, width: width - 20, height: 16)
+        container.addSubview(hostLabel)
+
+        return container
+    }
+
     // MARK: - Actions
+
+    @objc private func showQRWindow() {
+        cachedServerURL = detectTailscaleHTTPSURL()
+        guard let token = readToken(),
+              let payloadJSON = makePairingPayloadJSON(url: cachedServerURL, token: token),
+              let qrImage = makeQRCodeImage(from: payloadJSON, size: 240) else {
+            notify(title: "No pairing token", body: "Start the companion server once to generate ~/.claude-companion/auth.token.")
+            return
+        }
+
+        if let existing = qrPanel {
+            existing.close()
+            qrPanel = nil
+        }
+
+        let panelWidth: CGFloat = 320
+        let panelHeight: CGFloat = 390
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+            styleMask: [.titled, .closable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Pair Claude Companion"
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.center()
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
+
+        let heading = NSTextField(labelWithString: "Scan from Companion on iPhone")
+        heading.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        heading.alignment = .center
+        heading.frame = NSRect(x: 16, y: panelHeight - 36, width: panelWidth - 32, height: 20)
+        content.addSubview(heading)
+
+        let sub = NSTextField(labelWithString: "Settings & Pairing → Pair QR / token")
+        sub.font = NSFont.systemFont(ofSize: 11.5)
+        sub.textColor = .secondaryLabelColor
+        sub.alignment = .center
+        sub.frame = NSRect(x: 16, y: panelHeight - 56, width: panelWidth - 32, height: 16)
+        content.addSubview(sub)
+
+        let cardSize: CGFloat = 256
+        let whiteCard = NSView(frame: NSRect(x: (panelWidth - cardSize) / 2, y: 66, width: cardSize, height: cardSize))
+        whiteCard.wantsLayer = true
+        whiteCard.layer?.backgroundColor = NSColor.white.cgColor
+        whiteCard.layer?.cornerRadius = 16
+        whiteCard.layer?.borderWidth = 1
+        whiteCard.layer?.borderColor = NSColor.black.withAlphaComponent(0.1).cgColor
+
+        let qrView = NSImageView(frame: NSRect(x: 8, y: 8, width: cardSize - 16, height: cardSize - 16))
+        qrView.image = qrImage
+        qrView.imageScaling = .scaleProportionallyUpOrDown
+        whiteCard.addSubview(qrView)
+        content.addSubview(whiteCard)
+
+        let urlField = NSTextField(labelWithString: cachedServerURL)
+        urlField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+        urlField.textColor = .secondaryLabelColor
+        urlField.alignment = .center
+        urlField.isSelectable = true
+        urlField.frame = NSRect(x: 16, y: 36, width: panelWidth - 32, height: 18)
+        content.addSubview(urlField)
+
+        let copyBtn = NSButton(title: "Copy Pairing Token", target: self, action: #selector(copyToken))
+        copyBtn.bezelStyle = .rounded
+        copyBtn.frame = NSRect(x: (panelWidth - 160) / 2, y: 8, width: 160, height: 24)
+        content.addSubview(copyBtn)
+
+        panel.contentView = content
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        self.qrPanel = panel
+    }
 
     @objc private func copyToken() {
         guard let token = readToken() else {
@@ -104,6 +233,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(token, forType: .string)
+    }
+
+    @objc private func copyServerURL() {
+        cachedServerURL = detectTailscaleHTTPSURL()
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(cachedServerURL, forType: .string)
+    }
+
+    @objc private func quitMenubar() {
+        NSApplication.shared.terminate(nil)
     }
 
     // launchctl kickstart -k restarts the running job (or starts it if
@@ -150,6 +290,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
+}
+
+// MARK: - Pairing QR Code & Tailscale URL Detection
+
+func detectTailscaleHTTPSURL() -> String {
+    let candidates = [
+        "/usr/local/bin/tailscale",
+        "/opt/homebrew/bin/tailscale",
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    ]
+    for bin in candidates where FileManager.default.isExecutableFile(atPath: bin) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: bin)
+        proc.arguments = ["status", "--json"]
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0,
+               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let selfNode = json["Self"] as? [String: Any],
+               let rawDNS = selfNode["DNSName"] as? String {
+                let trimmed = rawDNS.trimmingCharacters(in: CharacterSet(charactersIn: ". \t\n"))
+                if !trimmed.isEmpty {
+                    return "https://\(trimmed)"
+                }
+            }
+        } catch {
+            continue
+        }
+    }
+    return "https://m2-max-ji-dog.tailfc45f2.ts.net"
+}
+
+func makePairingPayloadJSON(url: String, token: String) -> String? {
+    let payload: [String: Any] = [
+        "v": 1,
+        "url": url,
+        "token": token,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes]) else {
+        return nil
+    }
+    return String(data: data, encoding: .utf8)
+}
+
+func makeQRCodeImage(from string: String, size: CGFloat) -> NSImage? {
+    guard let data = string.data(using: .utf8),
+          let filter = CIFilter(name: "CIQRCodeGenerator") else {
+        return nil
+    }
+    filter.setValue(data, forKey: "inputMessage")
+    filter.setValue("M", forKey: "inputCorrectionLevel")
+    guard let output = filter.outputImage else { return nil }
+
+    let extent = output.extent.integral
+    guard extent.width > 0, extent.height > 0 else { return nil }
+    let scale = max(1, floor(size / max(extent.width, extent.height)))
+    let scaled = output.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+
+    let rep = NSCIImageRep(ciImage: scaled)
+    let image = NSImage(size: rep.size)
+    image.addRepresentation(rep)
+    return image
 }
 
 // MARK: - Server status polling

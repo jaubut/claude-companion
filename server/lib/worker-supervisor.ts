@@ -6,13 +6,15 @@ import type { BuilderReport } from "./builder-jobs"
 import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
 
-// Inverted MCP Worker Supervisor (BKM-Q24R Phase 3): headless `claude -p --output-format stream-json --verbose`
-// builder supervisor in isolated worktrees (`~/apps/wt/<repo>/<taskId>` on branch `dispatch/<taskId>`).
+// Inverted MCP Worker Supervisor (BKM-Q24R Phase 3+): headless stream-json supervisor across
+// all agent families (`claude`, `codex`, `gemini`) in isolated worktrees (`~/apps/wt/<repo>/<taskId>`).
 
 export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_NAME_RE = /^(?!\.+$)[A-Za-z0-9._-]{1,100}$/
 export const SAFE_IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 export const ALLOWED_MODES = new Set(["acceptEdits", "auto", "default", "dontAsk", "plan"])
+export type WorkerFamily = "claude" | "codex" | "gemini"
+export const ALLOWED_FAMILIES = new Set<WorkerFamily>(["claude", "codex", "gemini"])
 const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/
 const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
 
@@ -30,15 +32,15 @@ function shortPath(raw: unknown, prefix: string): string {
   return base ? `${prefix} ${base}` : prefix
 }
 function toolStep(name: string, input: Record<string, unknown>): string {
-  if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit") return shortPath(input.file_path ?? input.path, "Editing")
-  if (name === "Read") return shortPath(input.file_path ?? input.path, "Reading")
-  if (name === "Grep") return typeof input.pattern === "string" && input.pattern.trim() ? `Searching ${redactSecrets(input.pattern.trim()).slice(0, 48)}` : "Searching codebase"
-  if (name === "Glob") return typeof input.pattern === "string" && input.pattern.trim() ? `Listing ${input.pattern.trim().slice(0, 48)}` : "Listing files"
-  if (name === "Bash") return shortCmd(input.command)
+  if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit" || name === "write_file" || name === "edit_file" || name === "replace") return shortPath(input.file_path ?? input.path, "Editing")
+  if (name === "Read" || name === "read_file") return shortPath(input.file_path ?? input.path, "Reading")
+  if (name === "Grep" || name === "search_file_content") return typeof input.pattern === "string" && input.pattern.trim() ? `Searching ${redactSecrets(input.pattern.trim()).slice(0, 48)}` : "Searching codebase"
+  if (name === "Glob" || name === "glob") return typeof input.pattern === "string" && input.pattern.trim() ? `Listing ${input.pattern.trim().slice(0, 48)}` : "Listing files"
+  if (name === "Bash" || name === "run_shell_command") return shortCmd(input.command)
   return `Tool: ${name.slice(0, 48)}`
 }
 
-/** Parse one NDJSON line from `claude -p --output-format stream-json --verbose`. Pure & never throws. */
+/** Parse one NDJSON line from headless `claude`, `codex`, or `gemini`. Pure & never throws. */
 export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
   const trimmed = line.trim()
   if (!trimmed.startsWith("{")) return null
@@ -51,7 +53,9 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
 
   const out: StreamJsonEvent = {}
   if (typeof obj.session_id === "string" && obj.session_id.trim()) out.sessionId = obj.session_id.trim()
+  if (typeof obj.thread_id === "string" && obj.thread_id.trim()) out.sessionId = obj.thread_id.trim()
 
+  // Claude stream-json assistant event
   if (obj.type === "assistant") {
     const msg = obj.message && typeof obj.message === "object" ? (obj.message as Record<string, unknown>) : null
     const content = Array.isArray(msg?.content) ? msg.content : []
@@ -74,13 +78,69 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
     return Object.keys(out).length > 0 ? out : null
   }
 
+  // Codex JSONL events (`item.started` / `item.completed` / `turn.completed` / `turn.failed` / `error`)
+  if (obj.type === "item.started" || obj.type === "item.completed") {
+    const item = obj.item && typeof obj.item === "object" && !Array.isArray(obj.item) ? (obj.item as Record<string, unknown>) : null
+    if (item) {
+      if (item.type === "command_execution") {
+        out.step = shortCmd(item.command)
+      } else if (item.type === "file_change") {
+        out.step = "Editing files"
+      } else if (item.type === "mcp_tool_call") {
+        out.step = `Tool: ${String(item.tool ?? item.server ?? "mcp").slice(0, 48)}`
+      } else if (item.type === "agent_message" && typeof item.text === "string" && item.text.trim()) {
+        out.assistantText = item.text.trim()
+        const pr = out.assistantText.match(PR_URL_RE)?.[0]
+        if (pr) out.prUrl = pr
+      }
+    }
+    return Object.keys(out).length > 0 ? out : null
+  }
+
+  if (obj.type === "turn.completed") {
+    out.done = true
+    out.isError = false
+    return out
+  }
+
+  if (obj.type === "turn.failed" || obj.type === "error") {
+    out.done = true
+    out.isError = true
+    const errObj = obj.error && typeof obj.error === "object" ? (obj.error as Record<string, unknown>) : null
+    const msg = typeof errObj?.message === "string" ? errObj.message : typeof obj.message === "string" ? obj.message : ""
+    if (msg.trim()) out.resultText = msg.trim()
+    return out
+  }
+
+  // Gemini stream-json events (`tool_use`, `message`, `result`)
+  if (obj.type === "tool_use") {
+    const toolName = typeof obj.tool_name === "string" ? obj.tool_name : typeof obj.name === "string" ? obj.name : "tool"
+    const params = (obj.parameters && typeof obj.parameters === "object" && !Array.isArray(obj.parameters))
+      ? (obj.parameters as Record<string, unknown>)
+      : (obj.input && typeof obj.input === "object" && !Array.isArray(obj.input))
+      ? (obj.input as Record<string, unknown>)
+      : {}
+    out.step = toolStep(toolName, params)
+    return out
+  }
+
+  if (obj.type === "message" && obj.role === "assistant" && typeof obj.content === "string" && obj.content.trim()) {
+    out.assistantText = obj.content.trim()
+    const pr = out.assistantText.match(PR_URL_RE)?.[0]
+    if (pr) out.prUrl = pr
+    return out
+  }
+
   if (obj.type === "result") {
     out.done = true
-    out.isError = obj.is_error === true || (typeof obj.subtype === "string" && obj.subtype.startsWith("error"))
-    if (typeof obj.result === "string") {
+    const errObj = obj.error && typeof obj.error === "object" ? (obj.error as Record<string, unknown>) : null
+    out.isError = obj.is_error === true || obj.status === "error" || (typeof obj.subtype === "string" && obj.subtype.startsWith("error"))
+    if (typeof obj.result === "string" && obj.result.trim()) {
       out.resultText = obj.result.trim()
       const pr = out.resultText.match(PR_URL_RE)?.[0]
       if (pr) out.prUrl = pr
+    } else if (typeof errObj?.message === "string" && errObj.message.trim()) {
+      out.resultText = errObj.message.trim()
     }
     return out
   }
@@ -89,11 +149,11 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
 }
 
 export interface DispatchTaskInput {
-  taskId: string; repo: string; prompt: string; title?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
+  taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
 }
 
 export interface SupervisedTaskSnapshot {
-  taskId: string; repo: string; title: string; builder: string; branch: string; worktree: string; sessionId: string
+  taskId: string; repo: string; title: string; builder: string; family: WorkerFamily; model: string | null; branch: string; worktree: string; sessionId: string
   status: WorkerTaskStatus; turnCount: number; step: string | null; pct: number | null; result: string; prUrl: string | null
   error: string | null; startedAt: number; updatedAt: number; completedAt: number | null
 }
@@ -109,6 +169,7 @@ export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
+  syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
 }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
@@ -173,13 +234,76 @@ export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, build
   return env
 }
 
+/** Resolve the target agent family (`claude` | `codex` | `gemini`) from explicit `family`, `agent`, or `model`. */
+export function resolveWorkerFamily(opts: { family?: string; agent?: string; model?: string }): WorkerFamily | null {
+  const rawFamily = opts.family?.trim().toLowerCase()
+  if (rawFamily) {
+    return ALLOWED_FAMILIES.has(rawFamily as WorkerFamily) ? (rawFamily as WorkerFamily) : null
+  }
+  const rawAgent = opts.agent?.trim().toLowerCase()
+  if (rawAgent === "codex") return "codex"
+  if (rawAgent === "gemini") return "gemini"
+  const rawModel = opts.model?.trim().toLowerCase() ?? ""
+  if (/^(gpt-|o1\b|o3\b|o4\b|codex)/.test(rawModel)) return "codex"
+  if (/^gemini-/.test(rawModel)) return "gemini"
+  return "claude"
+}
+
 /** Build the headless `claude -p` argv with `--` before positional prompt so `-...` prompts are never parsed as flags. */
 export function buildHeadlessClaudeArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): string[] {
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", opts.mode, ...(opts.resume ? ["--resume", opts.sessionId] : ["--session-id", opts.sessionId])]
-  if (opts.agent) args.push("--agent", opts.agent)
+  if (opts.agent && !ALLOWED_FAMILIES.has(opts.agent as WorkerFamily)) args.push("--agent", opts.agent)
   if (opts.model) args.push("--model", opts.model)
   args.push("--", opts.prompt)
   return args
+}
+
+/** Build the headless `codex exec --json` argv for fresh or resumed turns. */
+export function buildHeadlessCodexArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; model?: string }): string[] {
+  if (opts.resume) {
+    const args = ["exec", "resume", "--json", "--skip-git-repo-check"]
+    if (opts.mode === "auto" || opts.mode === "dontAsk") args.push("--dangerously-bypass-approvals-and-sandbox")
+    if (opts.model) args.push("-m", opts.model)
+    args.push("--", opts.sessionId, opts.prompt)
+    return args
+  }
+  const args = ["exec", "--json", "--skip-git-repo-check"]
+  if (opts.mode === "plan") args.push("--sandbox", "read-only")
+  else if (opts.mode === "auto" || opts.mode === "dontAsk") args.push("--dangerously-bypass-approvals-and-sandbox")
+  else args.push("--approve-for-me")
+  if (opts.model) args.push("-m", opts.model)
+  args.push("--", opts.prompt)
+  return args
+}
+
+/** Build the headless `gemini -p --output-format stream-json` argv for fresh or resumed turns. */
+export function buildHeadlessGeminiArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; model?: string }): string[] {
+  const approvalMode = opts.mode === "auto" || opts.mode === "dontAsk"
+    ? "yolo"
+    : opts.mode === "acceptEdits"
+    ? "auto_edit"
+    : opts.mode === "plan"
+    ? "plan"
+    : "default"
+  const args = [
+    "--output-format", "stream-json",
+    "--approval-mode", approvalMode,
+    ...(opts.resume ? ["--resume", opts.sessionId] : ["--session-id", opts.sessionId]),
+  ]
+  if (opts.model) args.push("--model", opts.model)
+  args.push("-p", opts.prompt)
+  return args
+}
+
+/** Build the command + argv for any supported headless agent family (`claude`, `codex`, `gemini`). */
+export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): { cmd: WorkerFamily; args: string[] } {
+  if (opts.family === "codex") {
+    return { cmd: "codex", args: buildHeadlessCodexArgs(opts) }
+  }
+  if (opts.family === "gemini") {
+    return { cmd: "gemini", args: buildHeadlessGeminiArgs(opts) }
+  }
+  return { cmd: "claude", args: buildHeadlessClaudeArgs(opts) }
 }
 
 interface PersistedTaskRecord extends SupervisedTaskSnapshot {
@@ -193,8 +317,8 @@ interface InternalTask extends PersistedTaskRecord {
   waiters: Set<() => void>; stderrTail: string[]
 }
 function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
-  const { taskId, repo, title, builder, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt } = t
-  return { taskId, repo, title, builder, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt }
+  const { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt } = t
+  return { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt }
 }
 function waitMsPromise(ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => { const tm = setTimeout(() => resolve(false), ms); tm.unref?.() })
@@ -214,6 +338,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
   const stateFile = deps.stateFile ?? join(deps.home, ".claude", "state", "companion-worker-tasks.json")
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
+
+  function syncTaskSession(t: InternalTask): void {
+    try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null) } catch { /* best effort */ }
+  }
 
   function savePersistedTasks(): void {
     try {
@@ -254,10 +382,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         dirty = true
       } else if (rawPid !== null) dirty = true
       if (wasRunning) dirty = true
-      tasks.set(r.taskId, {
+      const loadedFamily = resolveWorkerFamily({ family: r.family, model: r.model ?? undefined }) ?? "claude"
+      const taskRecord: InternalTask = {
         taskId: r.taskId, repo: r.repo, repoDir: r.repoDir,
         title: typeof r.title === "string" ? r.title : r.taskId,
         builder: typeof r.builder === "string" ? r.builder : `builder-${r.repo}-${r.taskId}`,
+        family: loadedFamily,
+        model: typeof r.model === "string" && r.model ? r.model : null,
         branch: typeof r.branch === "string" ? r.branch : `dispatch/${r.taskId}`,
         worktree: r.worktree, sessionId: r.sessionId,
         status: wasRunning ? "interrupted" : (r.status ?? "interrupted"),
@@ -274,7 +405,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
-      })
+      }
+      tasks.set(r.taskId, taskRecord)
+      syncTaskSession(taskRecord)
     }
     if (dirty) savePersistedTasks()
   }
@@ -367,8 +500,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (agent && !SAFE_IDENTIFIER_RE.test(agent)) return { ok: false, status: 400, error: "invalid_agent" }
       const model = input.model?.trim() || undefined
       if (model && !SAFE_IDENTIFIER_RE.test(model)) return { ok: false, status: 400, error: "invalid_model" }
-
       const existing = tasks.get(taskId)
+      const family = resolveWorkerFamily({ family: input.family, agent, model: model ?? existing?.model ?? undefined })
+      if (!family) return { ok: false, status: 400, error: "invalid_family" }
+
       if (existing && existing.repo !== repo) return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
       const wtKey = (existing?.worktree ?? join(deps.home, "apps", "wt", repo, taskId)).toLowerCase()
       if (inFlightDispatches.has(taskId) || inFlightWorktrees.has(wtKey) || (existing && existing.status === "running")) {
@@ -387,8 +522,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         deps.trust(wt.worktree)
 
         const now = deps.now()
-        const resume = !!existing && existing.sessionStarted
-        const sessionId = existing?.sessionId ?? deps.uuid()
+        const familyChanged = !!existing && existing.family !== family
+        const resume = !!existing && existing.sessionStarted && !familyChanged
+        const sessionId = (existing && !familyChanged) ? existing.sessionId : deps.uuid()
+        const effectiveModel = model ?? existing?.model ?? null
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
@@ -397,8 +534,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const myJobId = myTurn === 1 ? taskId : `${taskId}:t${myTurn}`
 
         const task: InternalTask = existing ?? {
-          taskId, repo, repoDir, title, builder, branch: wt.branch, worktree: wt.worktree, sessionId,
-          status: "running", turnCount: 0, step: "Starting headless builder", pct: 5,
+          taskId, repo, repoDir, title, builder, family, model: effectiveModel, branch: wt.branch, worktree: wt.worktree, sessionId,
+          status: "running", turnCount: 0, step: `Starting headless ${family} builder`, pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
           pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false,
           activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
@@ -406,14 +543,16 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         }
 
         clearTimers(task)
-        task.title = title; task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
-        task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming builder` : "Starting headless builder"
+        task.title = title; task.family = family; task.model = effectiveModel; task.sessionId = sessionId
+        if (familyChanged) task.sessionStarted = false
+        task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
+        task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming ${family} builder` : `Starting headless ${family} builder`
         task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []
-        tasks.set(taskId, task); savePersistedTasks()
+        tasks.set(taskId, task); savePersistedTasks(); syncTaskSession(task)
 
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
 
-        const args = buildHeadlessClaudeArgs({ prompt, sessionId: task.sessionId, resume, mode, agent, model })
+        const invocation = buildHeadlessWorkerInvocation({ family, prompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let resolveExit!: () => void
         const exitPromise = new Promise<void>((resolve) => { resolveExit = resolve })
@@ -422,7 +561,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         let handle: SpawnedWorkerHandle
         try {
           handle = spawnWorker({
-            cmd: "claude", args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder),
+            cmd: invocation.cmd, args: invocation.args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder),
             onStdoutLine(line) {
               if (settled || task.activeTurn !== myTurn) return
               const ev = parseStreamJsonLine(line)
@@ -438,8 +577,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
                 deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
               }
-              if (ev.done && ev.isError) task.error = (ev.resultText || "builder turn reported an error").slice(0, 400)
-              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid) savePersistedTasks()
+              if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
+              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid) { savePersistedTasks(); syncTaskSession(task) }
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return
@@ -458,7 +597,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                   task.turnReportedTerminal = true
                   deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step ?? "Interrupted", pct: task.pct })
                 }
-                savePersistedTasks(); notifyWaiters(task); return
+                savePersistedTasks(); syncTaskSession(task); notifyWaiters(task); return
               }
               if (code === 0 && !sig && !task.error) {
                 task.sessionStarted = true; task.status = "completed"; task.pct = 100
@@ -470,14 +609,14 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               } else {
                 task.status = "failed"
                 const tail = task.stderrTail.join(" | ")
-                task.error = task.error ?? (`claude exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
+                task.error = task.error ?? (`${family} exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
                 task.step = `Failed: ${task.error.slice(0, 100)}`
                 if (!task.turnReportedTerminal) {
                   task.turnReportedTerminal = true
                   deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
                 }
               }
-              savePersistedTasks(); notifyWaiters(task)
+              savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
             },
           })
         } catch (err) {
@@ -487,7 +626,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           task.step = `Failed: ${task.error.slice(0, 100)}`
           task.updatedAt = deps.now(); task.completedAt = task.updatedAt; task.turnReportedTerminal = true
           deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
-          savePersistedTasks(); notifyWaiters(task)
+          savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
           return { ok: false, status: 500, error: task.error }
         }
 
@@ -496,7 +635,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           task.pid = handle.pid > 1 ? handle.pid : null
           task.pidIdentity = task.pid ? getPidIdentity(task.pid) : null
           task.reloadedFromDisk = false
-          savePersistedTasks()
+          savePersistedTasks(); syncTaskSession(task)
           const timeoutMs = Math.max(1, input.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
           task.timeoutTimer = setTimeout(() => {
             if (settled || task.activeTurn !== myTurn || task.status !== "running") return
@@ -546,7 +685,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
             t.turnReportedTerminal = true
             deps.reportJob({ event: "aborted", id: t.jobId, title: t.title, builder: t.builder, step: "Interrupted", pct: t.pct })
           }
-          savePersistedTasks(); notifyWaiters(t)
+          savePersistedTasks(); syncTaskSession(t); notifyWaiters(t)
           if (h) {
             h.kill("SIGTERM")
             const killTimer = setTimeout(() => h.kill("SIGKILL"), killGraceMs)
@@ -583,6 +722,21 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       } finally {
         inFlightDispatches.delete(id); inFlightWorktrees.delete(wtKey)
       }
+    },
+
+    setTaskModel(taskId: string, model: string): SupervisedTaskSnapshot | null {
+      const t = tasks.get(taskId.trim())
+      if (!t) return null
+      const nextFamily = resolveWorkerFamily({ model })
+      t.model = model
+      if (nextFamily && nextFamily !== t.family) {
+        t.family = nextFamily
+        t.sessionStarted = false
+        t.sessionId = deps.uuid()
+      }
+      t.updatedAt = deps.now()
+      savePersistedTasks(); syncTaskSession(t)
+      return toSnapshot(t)
     },
 
     listTasks(): SupervisedTaskSnapshot[] { return [...tasks.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(toSnapshot) },

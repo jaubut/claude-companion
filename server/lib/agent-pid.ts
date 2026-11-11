@@ -16,6 +16,7 @@ export function isAgentPidAlive(pid: string, agent: Session["agent"]): boolean {
     const comm = new TextDecoder().decode(res.stdout).trim()
     const base = comm.split("/").pop() ?? comm
     if (agent === "codex") return base === "codex"
+    if (agent === "gemini") return base === "gemini" || base === "node"
     return base === "claude"
   } catch {
     return false

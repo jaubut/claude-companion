@@ -45,10 +45,19 @@ export async function printPair(opts: { url?: string; port?: number } = {}): Pro
   console.log(`${dim}(e.g. your Tailscale Serve URL: https://mac-name.tailnet.ts.net)${reset}`)
 }
 
-// Pick a LAN-routable IPv4 the iPhone can reach. Skips loopback, point-to-
-// point tunnels (Tailscale's `utun*`), and Apple Wireless Direct Link
-// (`awdl*`). The first remaining external interface wins — typically en0.
+// Prefer Tailscale Serve HTTPS URL (https://<machine>.<tailnet>.ts.net) when
+// Tailscale is running, falling back to LAN IPv4 if Tailscale isn't available.
 function autoDetectURL(port: number): string {
+  for (const bin of ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]) {
+    try {
+      const res = Bun.spawnSync({ cmd: [bin, "status", "--json"], stdout: "pipe", stderr: "ignore" })
+      if (res.exitCode === 0) {
+        const json = JSON.parse(res.stdout.toString())
+        const dns = (json?.Self?.DNSName ?? "").replace(/\.$/, "").trim()
+        if (dns) return `https://${dns}`
+      }
+    } catch {}
+  }
   const ifaces = networkInterfaces()
   for (const name of Object.keys(ifaces)) {
     if (name.startsWith("lo") || name.startsWith("utun") || name.startsWith("awdl") || name.startsWith("llw")) {

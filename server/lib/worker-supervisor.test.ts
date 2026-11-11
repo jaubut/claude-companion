@@ -6,9 +6,13 @@ import type { BuilderReport } from "./builder-jobs"
 import {
   type SpawnWorkerOpts,
   buildHeadlessClaudeArgs,
+  buildHeadlessCodexArgs,
+  buildHeadlessGeminiArgs,
+  buildHeadlessWorkerInvocation,
   buildWorkerEnv,
   createWorkerSupervisor,
   parseStreamJsonLine,
+  resolveWorkerFamily,
 } from "./worker-supervisor"
 
 describe("parseStreamJsonLine", () => {
@@ -465,5 +469,46 @@ describe("createWorkerSupervisor", () => {
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+
+  test("supports headless Codex and Gemini agent families and parses their stream-json events", async () => {
+    expect(resolveWorkerFamily({ family: "codex" })).toBe("codex")
+    expect(resolveWorkerFamily({ family: "gemini" })).toBe("gemini")
+    expect(resolveWorkerFamily({ model: "gpt-5.4" })).toBe("codex")
+    expect(resolveWorkerFamily({ model: "gemini-3.1-pro-preview" })).toBe("gemini")
+    expect(resolveWorkerFamily({ family: "unknown" })).toBeNull()
+
+    const codexFresh = buildHeadlessCodexArgs({ prompt: "fix bug", sessionId: "sid-cx", resume: false, mode: "auto", model: "gpt-5.4" })
+    expect(codexFresh).toEqual(["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.4", "--", "fix bug"])
+    const codexResume = buildHeadlessCodexArgs({ prompt: "add test", sessionId: "sid-cx", resume: true, mode: "auto", model: "gpt-5.4" })
+    expect(codexResume).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.4", "--", "sid-cx", "add test"])
+
+    const geminiFresh = buildHeadlessGeminiArgs({ prompt: "build ui", sessionId: "sid-gm", resume: false, mode: "auto", model: "gemini-3.1-pro-preview" })
+    expect(geminiFresh).toEqual(["--output-format", "stream-json", "--approval-mode", "yolo", "--session-id", "sid-gm", "--model", "gemini-3.1-pro-preview", "-p", "build ui"])
+    const geminiinv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: "build ui", sessionId: "sid-gm", resume: true, mode: "acceptEdits", model: "gemini-3.1-pro-preview" })
+    expect(geminiinv.cmd).toBe("gemini")
+    expect(geminiinv.args).toContain("--resume")
+
+    // Codex stream events
+    expect(parseStreamJsonLine(JSON.stringify({ type: "thread.started", thread_id: "cx-thread-1" }))).toEqual({ sessionId: "cx-thread-1" })
+    expect(parseStreamJsonLine(JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "Opened https://github.com/jaubut/claude-companion/pull/500" },
+    }))).toEqual({
+      assistantText: "Opened https://github.com/jaubut/claude-companion/pull/500",
+      prUrl: "https://github.com/jaubut/claude-companion/pull/500",
+    })
+
+    // Gemini stream events
+    expect(parseStreamJsonLine(JSON.stringify({ type: "init", session_id: "gm-sid-1" }))).toEqual({ sessionId: "gm-sid-1" })
+    expect(parseStreamJsonLine(JSON.stringify({ type: "tool_use", tool_name: "write_file", parameters: { path: "/tmp/index.ts" } }))).toEqual({ step: "Editing index.ts" })
+    expect(parseStreamJsonLine(JSON.stringify({
+      type: "message",
+      role: "assistant",
+      content: "PR ready at https://github.com/jaubut/claude-companion/pull/501",
+    }))).toEqual({
+      assistantText: "PR ready at https://github.com/jaubut/claude-companion/pull/501",
+      prUrl: "https://github.com/jaubut/claude-companion/pull/501",
+    })
   })
 })

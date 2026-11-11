@@ -31,7 +31,7 @@ import {
 
 export interface Session {
   key: string
-  agent: "claude" | "codex" | "kimi"
+  agent: "claude" | "codex" | "kimi" | "gemini"
   label: string
   // The chat's name: first real prompt of the session (see session-titles.ts).
   // Empty until a prompt lands or a resolver recovers it from the transcript.
@@ -100,6 +100,7 @@ const PRUNE_INTERVAL_MS = 60 * 1000
 function prune(now: number): boolean {
   let changed = false
   for (const [key, s] of sessions) {
+    if (s.herdrPane?.startsWith("headless:")) continue
     if (s.pid) {
       if (!isAgentPidAlive(s.pid, s.agent)) {
         sessions.delete(key)
@@ -221,7 +222,7 @@ export function recordSession(
     // registered the session as "now").
     firstSeenAt: Math.min(prev?.firstSeenAt ?? now, meta.firstSeenAt ?? now),
     lastSeenAt: now,
-    model: prev?.model ?? "",  // sticky like taskId: discovery carries none
+    model: meta.model || prev?.model || "",  // sticky like taskId: discovery carries none
   }
   sessions.set(key, next)
 
@@ -292,6 +293,7 @@ export function recordSession(
     prev.tmuxPane !== next.tmuxPane ||
     prev.tmuxSocket !== next.tmuxSocket ||
     prev.herdrPane !== next.herdrPane ||
+    prev.model !== next.model ||
     // Shape completeness only: no caller puts waiting in `meta`, so the sticky
     // merge always falls through to prev. The real emit path is the setters.
     prev.waitingSince !== next.waitingSince

@@ -4,7 +4,7 @@
 import type { Session } from "./sessions"
 
 export function deriveKey(meta: Partial<Session> & { cwd: string }): string {
-  const agent = meta.agent === "codex" ? "codex" : "claude"
+  const agent = meta.agent === "codex" ? "codex" : meta.agent === "gemini" ? "gemini" : "claude"
   if (meta.tty) return `${agent}:tty:${meta.tty}`
   if (meta.iTermSessionId) return `${agent}:iterm:${meta.iTermSessionId}`
   if (meta.sessionId) return `${agent}:sid:${meta.sessionId}`
