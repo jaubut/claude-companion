@@ -321,12 +321,12 @@ No WS frame or iOS change.
 **Files: one owner each.** Stacked on #309 (`origin/dispatch/c5a05d6d…`). #309 owns `worker-pr-link.ts`, `worker-supervisor.ts`, `wiring/worker-mcp.ts`, the backfill script and their tests until it freezes; this PR takes them after that.
 | file | owner | change | lines → cap |
 |---|---|---|---|
-| `server/lib/handoff-claim.ts` (+`.test.ts`) | builder | NEW: mintHandoffClaim, verifyHandoffClaim, HANDOFF_KEYS_PATH | 0 → ~75 ✓ |
+| `server/lib/handoff-claim.ts` (+`.test.ts`) | builder | NEW: mintHandoffClaim, verifyHandoffClaim, handoffKeysPath() (reads $HOME per call, so tests use a temp home), type ClaimCheck | 0 → ~75 ✓ |
 | `server/wiring/brain-handoff.ts` | builder | repo input, conditional hash segment, mint, resp `claim`, ledger payload | 51 → ~62 ✓ |
 | `server/routes/brain.ts` | builder | `body.repo` (invalid → undefined) | 401 → 403 ✓ |
 | `server/lib/dispatch-tasks.ts` | builder | `fileHandoff` optional claim meta | 555 → 557 ✓ |
 | `server/lib/worker-pr-link.ts` | builder (after #309) | verify+OWNABLE bind; link/replay verify; `claim_refused`; drop `instr`/`includeUnbound`; comments :6-18 | 130 → ~142 ✓ |
-| `server/lib/worker-supervisor.ts` | builder (after #309) | `claim` input; bind rule A5; whitelists A6; 0600 write; no claim in snapshot | 596 → over cap likely → split persistence into `lib/worker-task-store.ts` (NEW: workerStateFile, loadTaskRecords, saveTaskRecords; one concern: the state file) |
+| `server/lib/worker-supervisor.ts` | builder (after #309) | `claim` input; bind rule A5; whitelists A6; 0600 write; no claim in snapshot | 596 → over cap likely → split persistence into `lib/worker-task-store.ts` (NEW: workerStateFile, loadTaskRecords, saveTaskRecords, type PersistedTaskRecord (moved from the supervisor); one concern: the state file) |
 | `server/wiring/worker-mcp.ts` | builder (after #309) | claim to bind/link; claim status in log | 93 → ~97 ✓ |
 | `server/lib/worker-mcp.ts` | builder | schema + pass `claim`; result `claim` status | 268 → 272 ✓ |
 | `server/lib/worker-invocation.ts` | builder | NEW export `scrubAgentEnv`; `buildWorkerEnv` uses it + `CLAUDE_NO_AGENT_ENV=1` | 193 → ~200 ✓ |
@@ -337,7 +337,7 @@ No WS frame or iOS change.
 | `scripts/backfill-worker-pr-links.ts` | builder (after #309) | drop `--include-unbound`, comment | 18 → 17 |
 | `brain/bin/propose`, `brain/bin/worker` | builder | `--repo` / `--claim` | ✓ |
 | `brain/CLAUDE.md`, `brain/LEAD.md`, `docs/brain-api.md` | builder | `--repo`; copy `claim` into the relay with `TASK <id>` (no claim = no link, in imperative form); `--claim` on dispatch | ✓ |
-| tests: worker-pr-link, worker-supervisor (rewrite A12 ranges), worker-mcp, routes/brain, routes/api | builder | below | — |
+| tests: worker-pr-link, worker-supervisor (rewrite A12 ranges; covers the routes/api inject shape), worker-mcp, routes/brain, brain-lead, agy-feed (NEW: spawned env scrubbed) | builder | below | — |
 
 **Fan-in paths to guard**
 - The origin→trust readers stay untouched: `merge-gate.ts:119-125`, `brain-pr-park.ts:14`, claude-config `pr-shepherd.ts:2797-2804 loadTrust`, `pr-shepherd-park.ts:54`. Only who may write `dispatch_pr_url` changes.
