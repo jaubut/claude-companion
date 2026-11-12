@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { appendFeedEvent, type FeedEvent } from "./feed"
 import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
-import { listSessions } from "./sessions"
+import { listSessions, recordSession } from "./sessions"
 import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
@@ -217,6 +217,20 @@ function parseAgyTimestamp(raw: string): number {
   return Date.parse(iso) || 0
 }
 
+let cachedRecentAgyConversations: AgyConversationSummary[] = []
+
+function isEphemeralSubagentTranscript(sessionId: string, home: string): boolean {
+  const path = agyTranscriptPath(sessionId, home)
+  if (!existsSync(path)) return false
+  try {
+    const raw = readFileSync(path, "utf8")
+    const head = raw.slice(0, 8192)
+    if (head.includes('"type":"USER_INPUT"')) return false
+    if (head.includes("<SYSTEM_MESSAGE>") && head.includes("sender=")) return true
+  } catch { /* ignore */ }
+  return false
+}
+
 export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_WINDOW_MS): AgyConversationSummary[] {
   const dbPath = agySummariesDbPath(home)
   if (!existsSync(dbPath)) return []
@@ -224,6 +238,7 @@ export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_W
   try {
     const db = new Database(dbPath, { readonly: true })
     try {
+      db.exec("PRAGMA busy_timeout = 2500;")
       const rows = db.query(`
         SELECT
           conversation_id AS id,
@@ -252,21 +267,27 @@ export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_W
         if (!r.id) continue
         const updatedAtMs = parseAgyTimestamp(r.lastModifiedTime)
         if (updatedAtMs < cutoff) continue
+        const trimmedTitle = (r.title || "").trim()
+        if (!trimmedTitle && isEphemeralSubagentTranscript(r.id, home)) continue
         const busy = Boolean(r.notFullyIdle) || r.status === "CASCADE_RUN_STATUS_RUNNING"
         out.push({
           id: r.id,
-          title: (r.title || "").trim() || "Antigravity Session",
+          title: trimmedTitle || "Antigravity Session",
           cwd: firstWorkspacePath(r.workspaceUris),
           status: busy ? "busy" : "idle",
           updatedAtMs,
           stepCount: Number(r.stepCount) || 0,
         })
       }
+      if (home === homedir()) cachedRecentAgyConversations = out
       return out
     } finally {
       db.close()
     }
   } catch {
+    if (home === homedir() && cachedRecentAgyConversations.length > 0) {
+      return cachedRecentAgyConversations.filter((c) => c.updatedAtMs >= cutoff)
+    }
     return []
   }
 }
@@ -294,6 +315,38 @@ export function startAgyFeedMonitor(home = homedir()): { stop: () => void } {
 async function pollAgyOnce(home = homedir()): Promise<void> {
   const convos = readRecentAgyConversations(home)
   if (convos.length === 0) return
+
+  const agyModel = readAgyModel(home)
+  const currentSessions = listSessions()
+  for (const c of convos.slice(0, 5)) {
+    const ttyOwner = currentSessions.find((s) => s.sessionId === c.id && !!s.tty)
+    if (ttyOwner) {
+      if (ttyOwner.agentStatus !== c.status || (c.title && ttyOwner.title !== c.title)) {
+        recordSession({
+          ...ttyOwner,
+          title: c.title || ttyOwner.title,
+          agentStatus: c.status,
+          model: ttyOwner.model || agyModel,
+        }, { provisional: true, sessionIdConfirmed: true })
+      }
+      continue
+    }
+    const existing = currentSessions.find((s) => s.sessionId === c.id)
+    if (!existing || existing.agentStatus !== c.status || existing.title !== c.title) {
+      recordSession({
+        agent: "gemini",
+        cwd: c.cwd,
+        sessionId: c.id,
+        herdrPane: `headless:agy:${c.id}`,
+        title: c.title,
+        label: c.title,
+        firstSeenAt: existing?.firstSeenAt ?? (c.updatedAtMs || undefined),
+        agentStatus: c.status,
+        model: existing?.model || agyModel,
+        pid: String(process.pid),
+      }, { provisional: true, sessionIdConfirmed: true })
+    }
+  }
 
   const events: FeedEvent[] = []
   for (const c of convos) {
@@ -381,6 +434,24 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
     }
   }
   return firstRead ? out.slice(-INITIAL_EVENTS_PER_CONVERSATION) : out
+}
+
+export function ensureHeadlessAgySession(lookup: string, fallbackCwd?: string, home = homedir()) {
+  if (!lookup.startsWith("gemini:sid:")) return null
+  const sid = lookup.slice("gemini:sid:".length).trim()
+  if (!sid || !existsSync(agyTranscriptPath(sid, home))) return null
+  const convo = readRecentAgyConversations(home).find((c) => c.id === sid)
+  return recordSession({
+    agent: "gemini",
+    cwd: convo?.cwd || fallbackCwd || home,
+    sessionId: sid,
+    herdrPane: `headless:agy:${sid}`,
+    title: convo?.title || "Antigravity Session",
+    label: convo?.title || "Antigravity Session",
+    agentStatus: convo?.status ?? "idle",
+    model: readAgyModel(home),
+    pid: String(process.pid),
+  }, { provisional: true, sessionIdConfirmed: true })
 }
 
 export function deliverHeadlessAgyTurn(opts: {
