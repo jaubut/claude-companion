@@ -13,7 +13,7 @@ import type { AgentLookup } from "./takeover-liveness"
 // workspace per repo, one pane, following brain/LEAD.md. The server only starts it.
 
 /** `--name` is what the session registers as, so what SendMessage reaches; `--remote-control` only titles the bridge. Plan mode is off: nobody answers ExitPlanMode's approval in a lead's pane. No file-editing tools: a lead never edits code, and they ignore the Bash sandbox. */
-export const leadArgs = (name: string): string[] => ["--name", name, "--remote-control", name, "--permission-mode", "auto", "--disallowedTools", "EnterPlanMode", "ExitPlanMode", "Edit", "Write", "MultiEdit", "NotebookEdit"]
+export const leadArgs = (name: string): string[] => ["--name", name, "--remote-control", name, "--model", "claude-sonnet-5-5", "--permission-mode", "auto", "--disallowedTools", "EnterPlanMode", "ExitPlanMode", "Edit", "Write", "MultiEdit", "NotebookEdit"]
 
 /** A lead works in its own clone: the sandbox limits its Bash to this tree, so the live checkout and brain/ stay out of reach. */
 export const leadDir = (repo: string, home = homedir()): string => join(home, "leads", repo)
@@ -25,6 +25,7 @@ export const leadCheckout = (repo: string, home = homedir(), entries = repoEntri
 const settingsFile = (dir: string): string => join(dir, ".claude", "settings.local.json")
 
 interface LeadSettings {
+  model: string
   permissions: { allow: string[]; deny: string[] }
   sandbox: { enabled: boolean; allowUnsandboxedCommands: boolean; failIfUnavailable: boolean; excludedCommands: string[]; filesystem: { denyWrite: string[] } }
 }
@@ -54,6 +55,7 @@ export function leadSettings(excluded: string[], dir: string): LeadSettings {
     `${join(home, "claude-companion/brain/bin/sessions")} *`,
   ]
   return {
+    model: "claude-sonnet-5-5",
     permissions: { allow, deny: [...NO_FILE_TOOLS, ...new Set(commands)] },
     sandbox: {
       enabled: true,

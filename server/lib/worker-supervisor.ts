@@ -318,7 +318,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const familyChanged = !!existing && existing.family !== family
         const resume = !!existing && existing.sessionStarted && !familyChanged
         const sessionId = (existing && !familyChanged) ? existing.sessionId : deps.uuid()
-        const effectiveModel = model ?? existing?.model ?? null
+        const effectiveModel = model ?? existing?.model ?? (family === "claude" ? "claude-sonnet-5-5" : null)
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`

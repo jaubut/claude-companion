@@ -13,7 +13,7 @@ import { builderJobs } from "./builder-jobs"
 import { orchEmit } from "./orchestrator"
 
 const DEFAULT_FAMILY_MODELS = {
-  claude: "claude-opus-5-5",
+  claude: "claude-sonnet-5-5",
   codex: "gpt-5.4",
   gemini: "gemini-3.1-pro-preview",
 } as const
