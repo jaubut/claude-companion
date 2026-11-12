@@ -17,7 +17,7 @@ export const BRAIN_DIR = process.env.COMPANION_BRAIN_DIR?.trim() || join(import.
 export const HEADLESS_BRAIN_PANE = "headless:brain"
 
 export function getBrainModel(): string {
-  return getKv("brain_model") || "claude-opus-5-5"
+  return getKv("brain_model") || "auto"
 }
 
 export function createHeadlessBrainRunner(hooks: {
