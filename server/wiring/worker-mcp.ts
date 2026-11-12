@@ -52,14 +52,14 @@ export const workerSupervisor = createWorkerSupervisor({
       setSessionModel(recorded.key, model)
     }
   },
-  // Bind once at dispatch, link before the turn reads completed (lib/worker-pr-link.ts); bounded, never fails the turn.
-  bindTask: (taskId, repo) => bindWorkerTask(tursoExec, taskId, repo),
-  linkPr: (task) => linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl: task.prUrl ?? "" }, { deadlineMs: LINK_DEADLINE_MS })
+  // Bind at dispatch on a verified handoff claim, link before the turn reads completed (lib/worker-pr-link.ts); bounded, never fails the turn.
+  bindTask: (taskId, repo, claim) => bindWorkerTask(tursoExec, taskId, repo, claim),
+  linkPr: (task, claim) => linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl: task.prUrl ?? "", claim }, { deadlineMs: LINK_DEADLINE_MS })
     .then((outcome) => { companionLog(`[worker] ${task.taskId.slice(0, 8)} pr link ${task.prUrl}: ${outcome}`); return outcome }),
   onTaskTerminal: (task) => notifyBrain(task),
 })
 
-/** A link lost to a restart or past the retries: once at server start, bound tasks whose row is still unlinked. */
+/** A link lost to a restart or past the retries: once at server start, tasks whose claim verifies and row is still unlinked. */
 export function replayWorkerPrLinks(): void {
   if (process.env.NODE_ENV === "test") return // real gh + the real state file
   void backfillWorkerPrLinks({ gh: realGh, exec: tursoExec, log: (l) => companionLog(`[worker] pr link replay ${l}`) }, workerStateFile(homedir()), { write: true })

@@ -9,6 +9,7 @@ import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
+import { scrubAgentEnv } from "./worker-invocation"
 
 const POLL_MS = 1_500
 const THREAD_WINDOW_MS = 24 * 60 * 60 * 1_000
@@ -400,6 +401,7 @@ export function deliverHeadlessAgyTurn(opts: {
       "--dangerously-skip-permissions",
     ], {
       cwd: opts.cwd || homedir(),
+      env: scrubAgentEnv(process.env),
       stdout: "ignore",
       stderr: "ignore",
     })

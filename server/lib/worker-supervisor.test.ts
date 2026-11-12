@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, readFileSync, rmSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -123,6 +123,7 @@ describe("parseStreamJsonLine", () => {
     expect(env.COMPANION_PEER_MAC_TOKEN).toBeUndefined()
     expect(env.COMPANION_PEER_ZETTLAB_URL).toBeUndefined()
     expect(env.DISPATCH_TASK_ID).toBe("task-1")
+    expect(env.CLAUDE_NO_AGENT_ENV).toBe("1")
   })
 })
 
@@ -582,18 +583,23 @@ describe("createWorkerSupervisor", () => {
 
   describe("PR link binding (tasks.dispatch_pr_url)", () => {
     const PR = "https://github.com/jaubut/claude-companion/pull/999"
+    const CLAIM = "hc1.0123abcd.turn-1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     function harness(home: string, o: { bind?: boolean | null | (() => Promise<boolean | null>); link?: (t: { taskId: string; prUrl: string | null; status: string }) => Promise<string> } = {}) {
       const spawned: SpawnWorkerOpts[] = []
       const binds: Array<[string, string]> = []
+      const bindClaims: string[] = []
       const links: Array<{ taskId: string; prUrl: string | null; status: string }> = []
+      const linkClaims: string[] = []
       const terminal: string[] = []
+      const seen: unknown[] = [] // every snapshot the supervisor hands out
       let uuidN = 0
       const sup = createWorkerSupervisor({
         host: "zettlab", home, now: () => 1700000000000, uuid: () => `eeee1111-2222-4333-8444-55555555555${uuidN++ % 10}`,
         trust: () => {}, reportJob: () => {},
-        onTaskTerminal: (t) => { terminal.push(`${t.status}:${t.step}`) },
-        bindTask: async (taskId, repo) => { binds.push([taskId, repo]); return typeof o.bind === "function" ? o.bind() : o.bind === undefined ? true : o.bind },
-        linkPr: async (t) => { links.push({ taskId: t.taskId, prUrl: t.prUrl, status: t.status }); return o.link ? o.link(t) : "linked" },
+        onTaskTerminal: (t) => { seen.push(t); terminal.push(`${t.status}:${t.step}`) },
+        syncSession: (t) => { seen.push(t) },
+        bindTask: async (taskId, repo, claim) => { binds.push([taskId, repo]); bindClaims.push(claim); return typeof o.bind === "function" ? o.bind() : o.bind === undefined ? true : o.bind },
+        linkPr: async (t, claim) => { seen.push(t); links.push({ taskId: t.taskId, prUrl: t.prUrl, status: t.status }); linkClaims.push(claim); return o.link ? o.link(t) : "linked" },
         sh: async (_cmd, args) => {
           if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
           return { ok: true, out: "origin/main\n", err: "", code: 0 }
@@ -604,7 +610,7 @@ describe("createWorkerSupervisor", () => {
         spawned[i]!.onStdoutLine(JSON.stringify({ type: "result", result: `Done ${PR}` }))
         spawned[i]!.onExit(0, null)
       }
-      return { sup, spawned, binds, links, terminal, finish }
+      return { sup, spawned, binds, bindClaims, links, linkClaims, terminal, seen, finish }
     }
     const tmpHome = () => {
       const home = join(tmpdir(), `worker-sup-link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
@@ -619,7 +625,7 @@ describe("createWorkerSupervisor", () => {
       let release!: (v: string) => void
       const h = harness(home, { link: () => new Promise<string>((r) => { release = r }) })
       try {
-        await h.sup.dispatchTask({ taskId: "bind-1", repo: "claude-companion", prompt: "Ship PR" })
+        await h.sup.dispatchTask({ taskId: "bind-1", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         expect(h.binds).toEqual([["bind-1", "claude-companion"]])
         let woke = false
         const waiting = h.sup.awaitTask("bind-1", 10_000).then((r) => { woke = true; return r })
@@ -643,11 +649,11 @@ describe("createWorkerSupervisor", () => {
       const outcomes = ["timeout", "branch_mismatch"]
       const h = harness(home, { link: async () => outcomes.shift()! })
       try {
-        await h.sup.dispatchTask({ taskId: "bind-2", repo: "claude-companion", prompt: "Ship PR" })
+        await h.sup.dispatchTask({ taskId: "bind-2", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.finish(0)
         await flush(); await flush()
         expect(h.terminal).toEqual([`completed:PR ready: ${PR} (PR link still pending)`])
-        await h.sup.dispatchTask({ taskId: "bind-2", repo: "claude-companion", prompt: "Fix round" })
+        await h.sup.dispatchTask({ taskId: "bind-2", repo: "claude-companion", prompt: "Fix round", claim: CLAIM })
         h.finish(1)
         await flush(); await flush()
         expect(h.terminal[1]).toBe(`completed:PR ready: ${PR} (not linked: branch_mismatch)`)
@@ -661,7 +667,7 @@ describe("createWorkerSupervisor", () => {
       const home = tmpHome()
       const h = harness(home, { bind: false })
       try {
-        await h.sup.dispatchTask({ taskId: "bind-3", repo: "claude-companion", prompt: "Ship PR" })
+        await h.sup.dispatchTask({ taskId: "bind-3", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.finish(0)
         expect(h.links).toEqual([])
         expect(h.terminal).toEqual([`completed:PR ready: ${PR}`])
@@ -674,10 +680,10 @@ describe("createWorkerSupervisor", () => {
       const home = tmpHome()
       const h = harness(home)
       try {
-        await h.sup.dispatchTask({ taskId: "bind-4", repo: "claude-companion", prompt: "Ship PR" })
+        await h.sup.dispatchTask({ taskId: "bind-4", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.finish(0)
         await flush(); await flush()
-        expect(await h.sup.dispatchTask({ taskId: "bind-4", repo: "claude-config", prompt: "Borrow it" })).toEqual({ ok: false, status: 409, error: "task_repo_mismatch: bind-4 belongs to claude-companion" })
+        expect(await h.sup.dispatchTask({ taskId: "bind-4", repo: "claude-config", prompt: "Borrow it", claim: CLAIM })).toEqual({ ok: false, status: 409, error: "task_repo_mismatch: bind-4 belongs to claude-companion" })
         expect(h.binds).toEqual([["bind-4", "claude-companion"]])
       } finally {
         rmSync(home, { recursive: true, force: true })
@@ -688,17 +694,17 @@ describe("createWorkerSupervisor", () => {
       const home = tmpHome()
       try {
         const a = harness(home)
-        await a.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Ship PR" })
+        await a.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         a.spawned[0]!.onExit(1, null)
         const unbound = harness(home, { bind: false })
-        await unbound.sup.dispatchTask({ taskId: "bind-6", repo: "claude-companion", prompt: "Ship PR" })
+        await unbound.sup.dispatchTask({ taskId: "bind-6", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         unbound.spawned[0]!.onExit(1, null)
         const file = join(home, ".claude", "state", "companion-worker-tasks.json")
         const saved = JSON.parse(readFileSync(file, "utf8")) as Array<{ taskId: string; prLinkBound?: boolean }>
         expect(saved.find((r) => r.taskId === "bind-6")?.prLinkBound).toBe(false)
 
         const b = harness(home)
-        await b.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Retry" })
+        await b.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Retry", claim: CLAIM })
         expect(b.binds).toEqual([])
         b.finish(0)
         await flush(); await flush()
@@ -713,7 +719,7 @@ describe("createWorkerSupervisor", () => {
       try {
         const answers: Array<boolean | null> = [null, true]
         const a = harness(home, { bind: async () => answers.shift()! })
-        await a.sup.dispatchTask({ taskId: "bind-7", repo: "claude-companion", prompt: "Ship PR" })
+        await a.sup.dispatchTask({ taskId: "bind-7", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         a.finish(0)
         await flush(); await flush()
         expect(a.links).toEqual([])
@@ -722,7 +728,7 @@ describe("createWorkerSupervisor", () => {
         expect(saved.prLinkBound ?? null).toBeNull()
 
         const b = harness(home, { bind: async () => answers.shift()! })
-        await b.sup.dispatchTask({ taskId: "bind-7", repo: "claude-companion", prompt: "Fix round" })
+        await b.sup.dispatchTask({ taskId: "bind-7", repo: "claude-companion", prompt: "Fix round", claim: CLAIM })
         expect(b.binds).toEqual([["bind-7", "claude-companion"]])
         b.finish(0)
         await flush(); await flush()
@@ -730,6 +736,136 @@ describe("createWorkerSupervisor", () => {
         const again = (JSON.parse(readFileSync(file, "utf8")) as Array<{ taskId: string; prLinkBound?: unknown }>).find((r) => r.taskId === "bind-7")!
         expect(again.prLinkBound).toBe(true)
       } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("no claim: nothing to bind, never links, and the dispatch says the claim is absent", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        const d = await h.sup.dispatchTask({ taskId: "claim-1", repo: "claude-companion", prompt: "Ship PR" })
+        expect(d.ok && d.claim).toBe("absent")
+        expect(h.binds).toEqual([])
+        h.finish(0)
+        await flush(); await flush()
+        expect(h.links).toEqual([])
+        expect(h.terminal).toEqual([`completed:PR ready: ${PR}`])
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("a later turn that brings the claim binds a task dispatched without one; a refused claim says so", async () => {
+      const home = tmpHome()
+      const answers = [false, true]
+      const h = harness(home, { bind: async () => answers.shift()! })
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-2", repo: "claude-companion", prompt: "Ship PR" })
+        h.spawned[0]!.onExit(1, null)
+        const refused = await h.sup.dispatchTask({ taskId: "claim-2", repo: "claude-companion", prompt: "Retry", claim: "hc1.bad" })
+        expect(refused.ok && refused.claim).toBe("refused")
+        h.spawned[1]!.onExit(1, null)
+        const ok = await h.sup.dispatchTask({ taskId: "claim-2", repo: "claude-companion", prompt: "Retry", claim: CLAIM })
+        expect(ok.ok && ok.claim).toBe("verified")
+        expect(h.bindClaims).toEqual(["hc1.bad", CLAIM])
+        h.finish(2)
+        await flush(); await flush()
+        expect(h.linkClaims).toEqual([CLAIM])
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("a claimless follow-up (a phone inject through routes/api.ts) keeps the stored claim and still links", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.spawned[0]!.onExit(1, null)
+        // routes/api.ts deliverInject: no claim field at all
+        const inject = await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", title: "T", prompt: "also fix the typo", mode: "auto", family: "claude" })
+        expect(inject.ok && inject.claim).toBe("verified")
+        expect(h.binds).toHaveLength(1)
+        h.finish(1)
+        await flush(); await flush()
+        expect(h.linkClaims).toEqual([CLAIM])
+        const saved = (JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8")) as Array<{ taskId: string; handoffClaim?: unknown }>)
+        expect(saved.find((r) => r.taskId === "claim-3")?.handoffClaim).toBe(CLAIM)
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("a record bound before claims existed (#309 state) never links until a turn brings a claim", async () => {
+      const home = tmpHome()
+      try {
+        const a = harness(home)
+        await a.sup.dispatchTask({ taskId: "claim-4", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        a.spawned[0]!.onExit(1, null)
+        const file = join(home, ".claude", "state", "companion-worker-tasks.json")
+        const records = JSON.parse(readFileSync(file, "utf8")) as Array<Record<string, unknown>>
+        for (const r of records) delete r.handoffClaim // prLinkBound: true, no claim
+        writeFileSync(file, JSON.stringify(records))
+
+        const b = harness(home)
+        await b.sup.dispatchTask({ taskId: "claim-4", repo: "claude-companion", prompt: "Fix round" })
+        b.finish(0)
+        await flush(); await flush()
+        expect(b.links).toEqual([])
+        await b.sup.dispatchTask({ taskId: "claim-4", repo: "claude-companion", prompt: "Fix round", claim: CLAIM })
+        b.finish(1)
+        await flush(); await flush()
+        expect(b.linkClaims).toEqual([CLAIM])
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("the claim never leaves the supervisor: no result, snapshot or callback carries it; the state file is 0600", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        const out: unknown[] = []
+        out.push(await h.sup.dispatchTask({ taskId: "claim-5", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM }))
+        const waiting = h.sup.awaitTask("claim-5", 5_000)
+        h.finish(0)
+        out.push(await waiting)
+        await flush(); await flush()
+        out.push(h.sup.listTasks(), h.sup.getTask("claim-5"), h.sup.setTaskModel("claim-5", "claude-sonnet-5-5"), await h.sup.interruptTask("claim-5"))
+        const all = JSON.stringify([out, h.seen])
+        expect(h.seen.length).toBeGreaterThan(2)
+        expect(all).not.toContain("hc1.")
+        expect(all).not.toContain("handoffClaim")
+        expect(statSync(join(home, ".claude", "state", "companion-worker-tasks.json")).mode & 0o777).toBe(0o600)
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("every family spawns with no Turso, db or Companion/broker secret, and the claude shim told not to load them", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      const seeded = {
+        TURSO_AUTH_TOKEN: "t", TURSO_DATABASE_URL: "libsql://x", TURSO_TEST_AUTH_TOKEN: "t", LIBSQL_AUTH_TOKEN: "l", DATABASE_URL: "d",
+        COMPANION_BODY_PEER_TOKEN: "p", COMPANION_GCAL_TOKEN_FILE: "/f", BROKER_TOKEN: "b", CLAUDE_CODE_OAUTH_TOKEN: "keep-oauth",
+      }
+      const saved = Object.fromEntries(Object.keys(seeded).map((k) => [k, process.env[k]]))
+      Object.assign(process.env, seeded)
+      try {
+        for (const [i, family] of (["claude", "codex", "gemini"] as const).entries()) {
+          await h.sup.dispatchTask({ taskId: `env-${family}`, repo: "claude-companion", prompt: "Ship PR", family })
+          const env = h.spawned[i]!.env
+          for (const k of ["TURSO_AUTH_TOKEN", "TURSO_DATABASE_URL", "TURSO_TEST_AUTH_TOKEN", "LIBSQL_AUTH_TOKEN", "DATABASE_URL", "COMPANION_BODY_PEER_TOKEN", "COMPANION_GCAL_TOKEN_FILE", "BROKER_TOKEN"]) {
+            expect(env[k]).toBeUndefined()
+          }
+          expect(Object.keys(env).filter((k) => /^(TURSO|LIBSQL)_/i.test(k))).toEqual([])
+          expect(env.CLAUDE_NO_AGENT_ENV).toBe("1")
+          expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("keep-oauth")
+          expect(env.PATH).toBe(process.env.PATH)
+        }
+      } finally {
+        for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v
         rmSync(home, { recursive: true, force: true })
       }
     })

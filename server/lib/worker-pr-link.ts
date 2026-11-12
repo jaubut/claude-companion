@@ -1,33 +1,40 @@
 import { readFileSync } from "node:fs"
+import { verifyHandoffClaim } from "./handoff-claim"
+import { companionLog } from "./log"
 import type { GhFn } from "./triage-pr"
 import type { ExecFn } from "./turso"
 import { REPO_NAME_RE, TASK_ID_RE } from "./worker-invocation"
 
 // A bin/worker PR → tasks.dispatch_pr_url, the link the PR shepherd and merge gate read the PR's origin through.
-// Two halves, both needed:
-//  - bindWorkerTask, once, when the supervisor first dispatches a task id (the trusted side): the Turso row of that id
-//    must be OWNABLE (a brain handoff, open, never claimed by dispatch-run or the relay, unlinked) and its description
-//    must name the repo. The supervisor persists a definitive answer (a failed read is retried next turn); an unbound worker task never links, and the supervisor
-//    refuses the same id under another repo (task_repo_mismatch).
-//  - linkWorkerPr, on "PR ready" of a bound task: GitHub must show jaubut/<repo> with head `dispatch/<task id>` from that
-//    repo (not a fork); GitHub's canonical url is written by a compare-and-set on OWNABLE, so a link is never overwritten.
-// ponytail: residual risk, stated plainly: a worker MCP caller that dispatches first under the id of ANOTHER open,
-// unclaimed handoff row whose description names the same repo binds it, and its PR inherits that row's origin. Nothing
-// the supervisor holds can tell that dispatch from the legitimate one (the handoff has no filing token, and the first
-// dispatch wins); the bind is per host, so the Mac and Zettlab supervisors don't see each other's bindings. Closing it
-// needs the brain to pass a proof of the filing (a per-handoff secret) through dispatch_task.
+// Proof of filing: the handoff claim (lib/handoff-claim.ts) the server minted for this task id and repo, passed through
+// `bin/worker dispatch --claim`. Every half verifies it; no claim, or one for another id or repo, never links.
+//  - bindWorkerTask, when the supervisor dispatches a task id with a claim: the claim verifies and the Turso row of that
+//    id is OWNABLE (a brain handoff, open, never claimed by dispatch-run or the relay, unlinked). The supervisor
+//    persists the answer and the claim (a failed read is retried next turn) and refuses the id under another repo.
+//  - linkWorkerPr, on "PR ready" of a bound task, and the startup replay: the claim verifies again (the worker state file
+//    is writable by any same-uid process, so it's not trusted), GitHub must show jaubut/<repo> with head
+//    `dispatch/<task id>` from that repo (not a fork); GitHub's canonical url is written by a compare-and-set on OWNABLE,
+//    so a link is never overwritten.
 
 const PR_URL = /^https:\/\/github\.com\/jaubut\/([A-Za-z0-9._-]+)\/pull\/(\d+)$/
 export const OWNABLE = "id = ? AND done = 0 AND assignee = 'handoff' AND dispatch_status IS NULL AND (dispatch_owner IS NULL OR dispatch_owner = '') AND (dispatch_pr_url IS NULL OR dispatch_pr_url = '')"
 const TRIES = 3
 const RETRY_MS = 1_000
 
-export type LinkOutcome = "linked" | "would_link" | "not_linked" | "bad_url" | "repo_mismatch" | "branch_mismatch" | "gh_failed" | "write_failed" | "timeout"
+export type LinkOutcome = "claim_refused" | "linked" | "would_link" | "not_linked" | "bad_url" | "repo_mismatch" | "branch_mismatch" | "gh_failed" | "write_failed" | "timeout"
 
 interface LinkDeps { gh: GhFn; exec: ExecFn; sleep?(ms: number): Promise<unknown> }
-interface LinkTarget { taskId: string; repo: string; prUrl: string }
+interface LinkTarget { taskId: string; repo: string; prUrl: string; claim: string | null | undefined }
+
+/** The claim checks out for this id and repo; a refusal logs its reason, never the claim. */
+function claimHolds(t: { taskId: string; repo: string; claim: unknown }, log: (line: string) => void = (l) => companionLog(`[worker] ${l}`)): boolean {
+  const c = verifyHandoffClaim(t.claim, t.taskId, t.repo)
+  if (!c.ok) log(`${t.taskId.slice(0, 8)} ${t.repo}: claim refused: ${c.reason}`)
+  return c.ok
+}
 
 async function attempt(deps: LinkDeps, t: LinkTarget, write: boolean): Promise<LinkOutcome> {
+  if (!claimHolds(t)) return "claim_refused"
   const m = PR_URL.exec(t.prUrl)
   if (!m) return "bad_url"
   if (m[1]!.toLowerCase() !== t.repo.toLowerCase()) return "repo_mismatch"
@@ -51,10 +58,11 @@ async function attempt(deps: LinkDeps, t: LinkTarget, write: boolean): Promise<L
   }
 }
 
-/** Dispatch-time binding: the row of this id is OWNABLE and its description names the repo. null = the read failed (no answer). */
-export async function bindWorkerTask(exec: ExecFn, taskId: string, repo: string): Promise<boolean | null> {
+/** Dispatch-time binding: the claim is this id's and repo's, and the row of this id is OWNABLE. null = the read failed (no answer). */
+export async function bindWorkerTask(exec: ExecFn, taskId: string, repo: string, claim: unknown): Promise<boolean | null> {
+  if (!claimHolds({ taskId, repo, claim })) return false
   try {
-    return (await exec(`SELECT 1 FROM tasks WHERE ${OWNABLE} AND instr(lower(COALESCE(description, '')), lower(?)) > 0`, [taskId, repo])).rows.length > 0
+    return (await exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId])).rows.length > 0
   } catch {
     return null
   }
@@ -90,16 +98,16 @@ export function workerReceipt(t: { taskId: string; repo: string; title: string; 
 export interface Linked { taskId: string; repo: string; prUrl: string; outcome: LinkOutcome }
 
 /**
- * Open `dispatch/<id>` PRs of the worker state file's tasks whose row is still OWNABLE, through linkWorkerPr. Bound
- * tasks only; `includeUnbound` (the one-off backfill of tasks dispatched before binding existed, run by hand after a dry
- * run) checks bindWorkerTask now instead. Used by scripts/backfill-worker-pr-links.ts and the startup replay.
+ * Open `dispatch/<id>` PRs of the worker state file's tasks whose claim verifies and whose row is still OWNABLE, through
+ * linkWorkerPr. A record with no claim (bound before claims existed, or never) is skipped. Used by
+ * scripts/backfill-worker-pr-links.ts and the startup replay.
  */
 export async function backfillWorkerPrLinks(
   deps: LinkDeps & { log(line: string): void },
   stateFile: string,
-  opts: { write: boolean; includeUnbound?: boolean },
+  opts: { write: boolean },
 ): Promise<Linked[]> {
-  let records: Array<{ taskId?: unknown; repo?: unknown; prLinkBound?: unknown }>
+  let records: Array<{ taskId?: unknown; repo?: unknown; handoffClaim?: unknown }>
   try {
     records = JSON.parse(readFileSync(stateFile, "utf8")) as typeof records
   } catch (err) {
@@ -110,10 +118,9 @@ export async function backfillWorkerPrLinks(
   for (const r of Array.isArray(records) ? records : []) {
     if (typeof r.taskId !== "string" || !TASK_ID_RE.test(r.taskId) || typeof r.repo !== "string" || !REPO_NAME_RE.test(r.repo)) continue
     const { taskId, repo } = r
-    const eligible = r.prLinkBound === true
-      ? await deps.exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId]).then((x) => x.rows.length > 0, () => false)
-      : opts.includeUnbound === true && await bindWorkerTask(deps.exec, taskId, repo) === true
-    if (!eligible) continue
+    const claim = typeof r.handoffClaim === "string" ? r.handoffClaim : null
+    if (!claim || !claimHolds({ taskId, repo, claim }, deps.log)) continue
+    if (!await deps.exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId]).then((x) => x.rows.length > 0, () => false)) continue
     const list = await deps.gh(["pr", "list", "--repo", `jaubut/${repo}`, "--head", `dispatch/${taskId}`, "--state", "open", "--json", "url"]).catch(() => null)
     let prs: unknown = null
     try {
@@ -121,7 +128,7 @@ export async function backfillWorkerPrLinks(
     } catch { /* logged below */ }
     if (!Array.isArray(prs)) { deps.log(`${taskId} ${repo}: gh pr list failed`); continue }
     for (const { url } of prs as Array<{ url: string }>) {
-      const outcome = await linkWorkerPr(deps, { taskId, repo, prUrl: url }, { write: opts.write })
+      const outcome = await linkWorkerPr(deps, { taskId, repo, prUrl: url, claim }, { write: opts.write })
       deps.log(`${taskId} ${repo} ${url}: ${outcome}`)
       out.push({ taskId, repo, prUrl: url, outcome })
     }

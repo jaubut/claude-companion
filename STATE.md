@@ -213,6 +213,183 @@ Last updated: 2026-11-07
 
 ## Change Plans
 
+### Change Plan — handoff-claim (2026-11-12)
+**Request:** TASK 34e8dfe58e35004a621a3cef8eb501c3, the security follow-up to #309. (1) `bin/propose --handoff` on a Jeremie turn gets a server-signed claim (task id, repo, turn id, HMAC with a server secret). `bin/worker dispatch` and the worker PR link require a valid claim for that exact id and repo; anything else stays origin unknown and is never linked. (2) Headless workers (claude -p, codex exec, gemini) run without Turso/db credentials. The 3 other taint reasons stay as they are. Tests first. High review tier, human merge.
+**Done when:**
+- A dispatch under another open handoff's id+repo without its claim (or with a claim minted for a different id/repo) binds false, and its PR is never written to `tasks.dispatch_pr_url` (stays `unknown`).
+- A handoff filed on Jeremie's open turn with `--repo`, dispatched with its `--claim`, links its PR, and the shepherd reads `jeremie`.
+- The live worker process (the real `claude` binary behind the shim, `codex`, `agy`) has no `TURSO_*`, `LIBSQL_*`, `DATABASE_URL` or Companion/broker tokens in its env, and the signing key is never in any process env.
+
+**Target shape & drift** (reference: Stripe webhook signing for the claim, GitHub Actions secret scoping for the env)
+- Stripe → ours: `whsec_` secret → keys file; `v1=` versioned scheme → `hc1.` token; HMAC-SHA256 over a canonical payload; old and new secrets both verify during a roll → current key plus verify-only previous keys; constant-time compare → `timingSafeEqual`.
+- GitHub Actions → ours: a job gets only the secrets it declares → the worker gets an allowlisted env, and DB writes go through the server only.
+- Reference for this intent:
+  - The server, which already decides origin in `handoffOrigin`, mints a capability.
+  - Every sink that turns a row into trust (worker bind, PR link, startup replay) verifies it, and storage is never trusted on its own.
+  - Only the server holds the DB credential.
+  - Keys stay out of `process.env`.
+- Deviations today:
+  - Origin trust flows through `dispatch_pr_url`, which any Turso holder can write.
+  - The worker env is a denylist over the full server env (`worker-invocation.ts:131`), and the `~/.bun/bin/claude` shim re-injects agent secrets anyway.
+  - `agy-feed.ts:392` spawns with the full server env.
+  - The brain inherits `{...process.env}` (`brain-headless.ts:147`).
+  - Lead auth accepts `X-Companion-Sandbox: 1` on the taskId alone (`routes/worker-mcp.ts:45`, `routes/brain.ts:173`).
+  - The relay DONE path links handoff PRs with no proof (claude-config `mods/relay/hooks/register.ts:55-58`). This is a map blind spot.
+  - The Turso token is readable on disk by any same-uid agent (`turso.ts:41`).
+- This change moves toward: the capability at every sink, the key out of env, and one scrub function for every headless agent spawn.
+- Leaves for follow-up (to file):
+  - F1: worker env allowlist.
+  - F2: sandbox-header lead auth.
+  - F3: relay DONE claim (claude-config).
+  - F4: scoped Turso credential, or separate uid/bwrap, for agents.
+  - F5: brain/herdr env inheritance.
+  - F6: archmap adapter misses `routes/api.ts` → `dispatchTask`.
+
+**Analyst findings** (4 change-analyst reports, reconciled)
+- A1 BLOCKER, verified: the `claude` worker spawn runs through `~/.bun/bin/claude`. That shim evals `~/.local/bin/tls-agent-env` and re-exports TURSO_AUTH_TOKEN and other agent secrets unless `TLS_AGENT_LOADED` or `CLAUDE_NO_AGENT_ENV` is set.
+  - Fix: `buildWorkerEnv` sets `CLAUDE_NO_AGENT_ENV=1`.
+  - The builder lists the shim's exported key names (names only) and, for each, either passes it explicitly (e.g. GH auth for push/PR, if it comes only from the shim) or records it as unneeded.
+  - codex has no shim. gemini is not on PATH on Zettlab.
+- A2: keep the existing `/^COMPANION_(AUTH_|PEER_|TOKEN)/i` line (`worker-invocation.ts:134`) and add the new patterns beside it, all `/i`.
+  - Collateral: `TURSO_TEST_*` is stripped too, so integration tests a worker runs with `bun test` skip unless they are provisioned another way. Accepted; noted in the PR.
+- A3: `agy-feed.ts:392-405` (`agy -p --dangerously-skip-permissions`, called from `routes/api.ts:468`) inherits the full env. Brought in scope: it uses the same scrub function (one line).
+- A4: a third `dispatchTask` caller is missing from the map: `routes/api.ts:457-463` (deliverInject → `headless:worker:*`), which dispatches with no claim.
+  - Rule: a claimless follow-up never clears or overwrites a stored `handoffClaim`.
+  - Added to fan-in and tests; adapter gap → F6.
+- A5: #309's bind rule (`worker-supervisor.ts:338`) treats a persisted `prLinkBound` as final. Revised:
+  - Re-bind whenever a claim is presented and the record has no verified claim.
+  - A record with `prLinkBound:true` and no claim counts as unbound.
+  - Link and replay key on `verify(handoffClaim)`, never on `prLinkBound`.
+- A6: `handoffClaim` must be in both the save whitelist (:151-152) and the load whitelist (:188-211), or claims are dropped at the first restart. Write the state file with mode 0o600.
+- A7: `InternalTask` extends the snapshot type, so the claim could leak through spread. Guard test: no `hc1.` in the JSON of any supervisor result (dispatch/await/list/get/interrupt/setTaskModel) or in the `syncSession`/`onTaskTerminal` args.
+- A8: new `LinkOutcome` `claim_refused:<reason>` (never the token). It surfaces through `workerReceipt` as "(not linked: …)". The `dispatch_task` result and log carry `claim: verified|refused:<reason>|absent`, so a peer that silently drops the claim is visible.
+- A9: an older Mac peer drops `claim` (named-arg pick in `lib/worker-mcp.ts:192-203`), and a #309-only Mac still binds on `instr(description)`. Both hosts must ship this build together. Rolling back to #309 reopens the hole: roll back both PRs together, or neither.
+- A10: the handoff id hash stays byte-identical when repo is absent; the repo segment is added only when present. Repo is lowercased once, before both the hash and the MAC.
+  - Wording fix: `TASK_ID_RE`/`REPO_NAME_RE` allow `.`. The token stays unambiguous because kid is hex, turnId matches `^[\w:-]{1,64}$`, the mac is base64url, and the MAC payload is `\n`-delimited.
+- A11: an invalid or absent repo on propose → no claim, not a 400.
+  - `bin/propose` and `bin/worker` reject unknown flags with exit 2, so CLI and brain docs ship in one PR.
+  - Update `docs/brain-api.md:80,102` and the stale comments in `worker-pr-link.ts:6-18` and the backfill script.
+- A12: #309 tests that go red get rewritten, not deleted: `worker-pr-link.test.ts:165-181,196,204,209-217` and `worker-supervisor.test.ts:595-596,617-731`.
+  - Run `bun install` first (the worktree has no node_modules).
+  - `brain.test.ts:637` already fails on main (`no_lead_for_repo`, unrelated).
+- A13: if the brain does not copy `claim` from the propose output into the relay, the dispatch binds false silently. `CLAUDE.md` says this in imperative form, and Verify 7(a) smoke-tests it.
+
+**State decisions**
+- **Signing keys.**
+  - Location: `~/.claude-companion/handoff-claim.keys`, mode 0600, one base64url 32-byte key per line. Line 1 signs; every line verifies. `kid` = first 8 hex chars of sha256(key).
+  - Loading: read per call by `lib/handoff-claim.ts`, never put into `process.env`.
+  - Creation: generated on first mint if missing (pattern of `auth.ts:34-45`).
+  - Rotation: prepend a new line and keep the old one while open handoff PRs need it. Deleting a line revokes it, and those PRs read `unknown`.
+  - Read-deny: `leadSettings` (`sandbox.filesystem.denyRead` + `permissions.deny Read(...)`) and `readonly-claude.ts SECRET_PATHS`.
+- **Claim token.** `hc1.<kid>.<turnId>.<b64url mac>`.
+  - mac = HMAC-SHA256(key, `companion-handoff-claim/v1\n<taskId>\n<repo lowercased>\n<turnId>`).
+  - Verify: exactly 4 `.` parts, look up the kid, recompute, equal-length check, then `timingSafeEqual`. Result is `{ok,turnId,kid}` or `{ok:false, reason: missing|malformed|unknown_key|bad_mac|no_keys}`. The token is never logged.
+- **Who mints.** Only `addBrainHandoff` (`brain-handoff.ts:29`), and only when the stored origin `filed === "jeremie"` and the repo passes `REPO_NAME_RE`. `/hooks/brain/propose` is already pid-gated to the brain (`routes/brain.ts:93-104`).
+  - The claim payload `{repo, turnId, kid}`, never the mac, is recorded in the existing `fileHandoff` ledger meta (`dispatch-tasks.ts:444`). No schema migration.
+- **Worker binding.** `bindWorkerTask(exec, taskId, repo, claim)` returns true only if the claim verifies AND the row is `OWNABLE`. #309's `instr(description, repo)` check is dropped.
+  - The supervisor persists `handoffClaim` on the record and never on the snapshot.
+  - It re-binds whenever a claim is presented and the record has no verified claim (A5). A claimless dispatch, including the `routes/api.ts` inject path, never clears a stored claim (A4).
+- **Link and replay** re-verify `handoffClaim` before the CAS, because the state file is untrusted. On refusal: `claim_refused:<reason>`, logged, and the PR is not linked.
+- **Not consumed.** The claim only reaches the intended dispatcher; the first PR to link wins (the `dispatch_pr_url` CAS). See Needs Jeremie decision.
+- **Pre-existing rows.** Stored `origin` is not rewritten. A row with no claim is never linked by the worker path, so its PR reads `unknown`.
+  - In-flight handoffs park. Jeremie lifts them with "Merge <n>" (c5ae172) or re-files the handoff.
+  - #309-era records (`prLinkBound:true`, no claim) never link or replay.
+  - `--include-unbound` is removed.
+- **Worker Turso use.** Nothing in this repo has a worker write Turso. The only `tasks` write on a worker's behalf (the PR link) is server-side and checks the claim.
+  - The claude-config hooks inside workers write telemetry, not `tasks`: `po-pivot-sync.sh:20`, `skill-watch.py:302,344`, `agent_route_guard.py:220`. They no-op without the env token. `inbox-session-start.sh:11` and `kb-scout.py:115` read the token file (F4).
+  - So no new endpoint, and workers hold no server credential.
+- **Env scrub.** One function, `scrubAgentEnv(base)` in `worker-invocation.ts`. It is used by `buildWorkerEnv` (→ `worker-supervisor.ts:381` → `spawn` :84, all families) and by `agy-feed.ts:392`.
+  - Deleted (all `/i`): the existing `/^COMPANION_(AUTH_|PEER_|TOKEN)/`, plus `/^(TURSO|LIBSQL)_/`, `DATABASE_URL`, `/^COMPANION_.*(TOKEN|SECRET|KEY)/` (catches COMPANION_BODY_PEER_TOKEN and COMPANION_GCAL_TOKEN_FILE) and `BROKER_TOKEN`.
+  - Set: `CLAUDE_NO_AGENT_ENV=1` (A1), plus explicit pass-through of any shim key a worker needs.
+  - Kept: CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_*, OPENAI/GEMINI/GH auth.
+  - Unchanged: `orchestrator-brain.ts:100` and `receipt-sonnet.ts:49` (tool-denied, `--strict-mcp-config`) and `brain-headless.ts:147` (F5).
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `POST /hooks/brain/propose` (handoff) | endpoint | req +`repo` (invalid/absent → no claim, never 400); resp +`claim` | `brain/bin/propose:50-62`, `routes/brain.ts:124-126`, `docs/brain-api.md:80,102` | additive |
+| `bin/propose --handoff` | CLI | +`--repo` (old script exits 2 on it → ship with docs) | brain (`brain/CLAUDE.md:24,106`) | additive, same PR |
+| `dispatch_task` MCP tool | rpc arg/result | arg +`claim`; result +`claim: verified\|refused:<r>\|absent` | `lib/worker-mcp.ts:11-30,192-205`, `brain/bin/worker:46-60`, peer `/api/mcp/workers` via `forwardToolCall` | additive; old peer drops it (A9) |
+| `bin/worker dispatch` | CLI | +`--claim` | leads (`LEAD.md:11,13`), brain (`CLAUDE.md:39,108,117`) | additive, same PR |
+| `supervisor.dispatchTask` | internal | +`claim?` | `lib/worker-mcp.ts:193`, `routes/api.ts:457-463` (claimless, map blind spot) | claimless keeps the stored claim |
+| worker state file | file | +`handoffClaim` (save+load whitelists), mode 0600 | `worker-supervisor.ts:151,188-211`, `worker-pr-link.ts backfillWorkerPrLinks`, backfill script | old records = unbound |
+| `LinkOutcome` / `workerReceipt` | internal + brain text | +`claim_refused:<reason>` → "(not linked: …)" | `wiring/worker-mcp.ts`, lead/brain receipts | additive |
+| `SupervisedTaskSnapshot` | rpc result | unchanged; must never carry the claim | list/await/get/interrupt/setTaskModel, `syncSession`, `onTaskTerminal` | guarded (A7) |
+| handoff task id | derived | +repo segment only when repo present | brain memory, relay `TASK <id>` | byte-identical without repo |
+No WS frame or iOS change.
+
+**Files: one owner each.** Stacked on #309 (`origin/dispatch/c5a05d6d…`). #309 owns `worker-pr-link.ts`, `worker-supervisor.ts`, `wiring/worker-mcp.ts`, the backfill script and their tests until it freezes; this PR takes them after that.
+| file | owner | change | lines → cap |
+|---|---|---|---|
+| `server/lib/handoff-claim.ts` (+`.test.ts`) | builder | NEW: mintHandoffClaim, verifyHandoffClaim, HANDOFF_KEYS_PATH | 0 → ~75 ✓ |
+| `server/wiring/brain-handoff.ts` | builder | repo input, conditional hash segment, mint, resp `claim`, ledger payload | 51 → ~62 ✓ |
+| `server/routes/brain.ts` | builder | `body.repo` (invalid → undefined) | 401 → 403 ✓ |
+| `server/lib/dispatch-tasks.ts` | builder | `fileHandoff` optional claim meta | 555 → 557 ✓ |
+| `server/lib/worker-pr-link.ts` | builder (after #309) | verify+OWNABLE bind; link/replay verify; `claim_refused`; drop `instr`/`includeUnbound`; comments :6-18 | 130 → ~142 ✓ |
+| `server/lib/worker-supervisor.ts` | builder (after #309) | `claim` input; bind rule A5; whitelists A6; 0600 write; no claim in snapshot | 596 → over cap likely → split persistence into `lib/worker-task-store.ts` (NEW: workerStateFile, loadTaskRecords, saveTaskRecords; one concern: the state file) |
+| `server/wiring/worker-mcp.ts` | builder (after #309) | claim to bind/link; claim status in log | 93 → ~97 ✓ |
+| `server/lib/worker-mcp.ts` | builder | schema + pass `claim`; result `claim` status | 268 → 272 ✓ |
+| `server/lib/worker-invocation.ts` | builder | NEW export `scrubAgentEnv`; `buildWorkerEnv` uses it + `CLAUDE_NO_AGENT_ENV=1` | 193 → ~200 ✓ |
+| `server/lib/agy-feed.ts` | builder | `env: scrubAgentEnv(process.env)` | 412 → 413 ✓ |
+| `server/routes/api.ts` | builder | none (claimless call kept); test only | 584 ✓ |
+| `server/wiring/brain-lead.ts` | builder | keys-file `denyRead` + `Read()` deny | 251 → 254 ✓ |
+| `server/lib/readonly-claude.ts` | builder | +keys path in `SECRET_PATHS` | 113 ✓ |
+| `scripts/backfill-worker-pr-links.ts` | builder (after #309) | drop `--include-unbound`, comment | 18 → 17 |
+| `brain/bin/propose`, `brain/bin/worker` | builder | `--repo` / `--claim` | ✓ |
+| `brain/CLAUDE.md`, `brain/LEAD.md`, `docs/brain-api.md` | builder | `--repo`; copy `claim` into the relay with `TASK <id>` (no claim = no link, in imperative form); `--claim` on dispatch | ✓ |
+| tests: worker-pr-link, worker-supervisor (rewrite A12 ranges), worker-mcp, routes/brain, routes/api | builder | below | — |
+
+**Fan-in paths to guard**
+- The origin→trust readers stay untouched: `merge-gate.ts:119-125`, `brain-pr-park.ts:14`, claude-config `pr-shepherd.ts:2797-2804 loadTrust`, `pr-shepherd-park.ts:54`. Only who may write `dispatch_pr_url` changes.
+- The 3 other taint reasons, untouched:
+  - (a) least-trusted across every row linked to the PR (`leastTrusted`, merge-gate:120);
+  - (b) client-origin markers in task text/description or label (`clientOriginOf/taintedRunOf`, `pr-shepherd-client.ts:43`);
+  - (c) a tainted origin with sensitive paths or a truncated diff → DENY/park (`taintedSensitive`, merge-gate:122-125, `pr-shepherd.ts:1688`).
+- `supervisor.dispatchTask` has three callers: `/hooks/brain/workers-mcp`, Bearer `/api/mcp/workers` (peer-forwarded), and `routes/api.ts:457` inject. Only a presented, verified claim may set `handoffClaim`; nothing clears it.
+- `linkWorkerPr` has three callers: live "PR ready", `replayWorkerPrLinks` at startup, and the manual script. All verify the claim.
+- `fileHandoff` is called only from `addBrainHandoff`, and minting happens only there.
+
+**Risks**
+- A same-uid agent can still read the Turso token and the keys file from disk: codex bypasses its sandbox, and agy runs with `--dangerously-skip-permissions`. The env scrub plus the claim close the inherited and laundering paths, not the disk path. → F4.
+- `CLAUDE_NO_AGENT_ENV=1` may drop a credential a worker needs (GH push/PR). → the builder enumerates the shim's key names, passes the needed ones explicitly, and the 7(a) smoke test catches a worker that cannot open a PR.
+- `TURSO_TEST_*` is stripped, so workers skip integration tests (A2). → noted in the PR, follow-up if wanted.
+- Mixed-version hosts or a rollback to #309 reopen the hole on the Mac (A9). → both hosts ship together; roll back both PRs together, or neither.
+- A brain that forgets to copy the claim → the dispatch silently binds false (A13). → `claim: absent` in the dispatch result, a receipt note, and the docs.
+- A compromised brain is the trust root and is not defended against. Claims sit in transcripts and the 0600 state file, scoped to one id+repo.
+- Relay DONE (claude-config) still links handoff rows without a claim. → F3.
+- kb: no third-party externals in touched modules, so 0 queries were run.
+
+**Verify** (tests first; `bun install` first; real tls-test Turso via the existing test util)
+1. `handoff-claim.test.ts` → round trip; changed taskId/repo/turnId → `bad_mac`; wrong part count → `malformed`; rotated line 2 verifies; removed line → `unknown_key`; unequal length does not throw; keys file 0600.
+2. `worker-pr-link.test.ts` laundering → handoffs A and B (same repo, jeremie, OWNABLE). Dispatching B with A's claim, with no claim, or with A's claim under another repo → bind false; B's `dispatch_pr_url` stays NULL. A valid claim → true. Forged record (`prLinkBound:true`, no/bad claim) → link `claim_refused`, row untouched. Replay skips claimless records. Rewrite the A12 ranges.
+3. `worker-supervisor.test.ts`:
+   - The `spawnWorker` mock captures `opts.env` for claude, codex and gemini, with seeded TURSO_AUTH_TOKEN, TURSO_DATABASE_URL, TURSO_TEST_AUTH_TOKEN, LIBSQL_AUTH_TOKEN, DATABASE_URL, COMPANION_BODY_PEER_TOKEN, BROKER_TOKEN. All are absent; `CLAUDE_NO_AGENT_ENV=1`; PATH/HOME/CLAUDE_CODE_OAUTH_TOKEN kept.
+   - No `hc1.` in any result or callback (A7).
+   - A claimless re-dispatch keeps the stored claim; re-bind on a later valid claim (A5); claim survives a restart (A6); state file 0600.
+4. `routes/brain.test.ts` → handoff with repo on an open Jeremie turn → `claim` verifies; closed turn or invalid/absent repo → 200 with no `claim`; no-repo id byte-identical to the old hash; replay → same claim.
+5. `worker-mcp.test.ts` → `claim` reaches `dispatchTask`, is forwarded to the peer, and the result shows its status. `routes/api` inject → dispatch without a claim keeps the stored claim. agy spawn env scrubbed.
+6. `bun test` (full; `brain.test.ts:637` fails on main already), `bunx tsc -p tsconfig.server.json`, `bun run ~/.claude/tools/archmap/cli.ts . --lint` → clean; regenerate the map.
+7. Manual pass by Jeremie on Zettlab with both hosts upgraded:
+   - (a) Ask the brain for a handoff on claude-companion. The propose output shows `claim`, and the brain relays it. The worker dispatch result says `claim: verified`. The worker opens its PR (GH auth works without the shim). The log shows `pr link …: linked`, and the shepherd does not park it as tainted.
+   - (b) From a lead, dispatch another open handoff id without `--claim` → `claim: absent`, the receipt says "(not linked: …)", and the PR parks as unknown.
+   - (c) `tr '\0' '\n' </proc/<pid of the real claude binary, not the shim>/environ | grep -c '^TURSO_'` → 0. Same for a codex worker.
+   - (d) `ls -l` on the keys file and the state file → 0600.
+   Not shipped until this pass is clean.
+
+**Out of scope:** F1-F6, the brain's own env, the `tasks` schema, and the iOS app.
+
+**Decisions (Jeremie, 2026-11-12):** 1 stacked on #309, merge back to back, never #309 alone · 2 Mac reads unknown until the key file is copied · 3 codex/agy disk reads out of scope, named as residual · 4 no single-use · 5 the 3 taint reasons untouched · 6 key auto-generated on first mint (0600) · 7 integration tests skipped in workers accepted · 8 claim scope id+repo+turn.
+**Build notes:** the claude shim (`~/.bun/bin/claude` via `tls-agent-env`) exports KB_TRAINER_INGEST_TOKEN, KB_TRAINER_TOKEN, TELEGRAM_BOT_TOKEN, TURSO_AUTH_TOKEN, TURSO_DATABASE_URL (names only); no GH auth, so `CLAUDE_NO_AGENT_ENV=1` drops nothing a worker needs. `worker-supervisor.ts` went to 609 lines → state-file read/write split into `lib/worker-task-store.ts`. `routes/api.ts` unchanged (its claimless re-dispatch is covered in `worker-supervisor.test.ts`). Claim status in the dispatch result is `verified|refused|pending|absent`; the refusal reason is in the server log only. A live lead's settings get the key-file Read deny in place (not a respawn).
+
+**Needs Jeremie decision** (answered above)
+1. Sequencing: stack on #309 and merge back-to-back (recommended), or fold into #309. Never merge #309 alone. Deploy to both hosts together; roll back both PRs together, or neither.
+2. Copy the keys file to the Mac (so Mac-hosted worker PRs can link), or accept unknown for them.
+3. Disk residual (F4): a scoped Turso token without `tasks` write, vs a separate uid, vs bwrap for codex/agy. Pick one.
+4. Single-use claims (a cross-host check on the row): default no.
+5. Confirm the "3 other taint reasons" are (a)-(c).
+6. Auto-generate the key on first mint (default) vs provision by hand.
+7. Workers losing `TURSO_TEST_*` and skipping integration tests: accept, or provision a test-only token some other way.
+
 ### Change Plan — typing-target-validity (2026-11-09)
 **Request:** TASK 7ea7fd77089d3166876a2e91b684155a. Reapply the shared typing-path hardening from `a9ed1b90` after #261 and cancel a pending pick invalidated by a group move. Security-sensitive; human merge only.
 **Approval:** Brain GO with binding conditions: optional guards preserve main behavior when omitted; no HTTP shape/default-send/iOS changes, dependency changes, extra modules or worktree files. Exactly three test files below. This supersedes the draft's automatic identity snapshot/empty-SID refusal for ordinary sends.

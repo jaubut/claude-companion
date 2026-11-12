@@ -77,7 +77,7 @@ turn.card? = {kind:"dispatch"|"voice"|"worker_blocked", source:"app", taskId?, a
 | POST | `/api/brain/restart` | | `{ok, brain}`; 409 `paused` while paused |
 | POST | `/api/capture/voice/start` | `{mime, brainTurnId?}` (`^[\w:-]{1,64}$`) | unchanged. A valid id archives the take: inbox row `result_id = brain:<turnId>`, turn card `audioId`. Best effort — never fails the start. Omit the key when there is no turn. |
 | POST | `/api/capture/voice/:id/validate`, `/discard` | | 409 `brain_take` on a `brain:*` row |
-| POST | `/hooks/brain/propose` | `{title, prompt, noteId, agent?, reasoning, sourceTurnId, handoff?}` | see below |
+| POST | `/hooks/brain/propose` | `{title, prompt, noteId, agent?, reasoning, sourceTurnId, handoff?, repo?}` | see below |
 | GET | `/api/brain/workers` | | `{ok, mode, sessions, foreign}`: the reaper's dry run (below). `foreign` counts every other workspace and never names one. |
 | POST | `/hooks/brain/sessions` | `{op:"list"}` · `{op:"close", workspaceId}` | see below. Same auth as propose (brain/bin/sessions). |
 | POST | `/hooks/brain/thread` | `{q, limit?}` (q ≤ 200 chars, limit 1–50, default 20) | `{ok, turns: [{id, role, at, text}]}`: brain-thread turns containing q, newest first, text ≤ 1,000 chars. Same auth as propose (brain/bin/thread). |
@@ -98,7 +98,7 @@ Auth — all of: TCP peer loopback with no forwarded hop (`clientOrigin(...).tra
 
 - `noteId` missing → 422 `no_project`; unknown → 404; Turso down → 503; unknown agent → 400 `unknown_agent`.
 - Dedupe on (`sourceTurnId`, sha256(prompt)): a repeat answers `{ok, proposalId, replay:true}` and creates nothing.
-- `handoff: true` files a row and queues nothing, without a proposal: `{ok, taskId, origin, replay}`. `origin` is what the row stored (`jeremie` or `unknown`, always `unknown` without an origin column); `replay:true` = this turn, note and prompt were already filed.
+- `handoff: true` files a row and queues nothing, without a proposal: `{ok, taskId, origin, replay, claim?}`. `origin` is what the row stored (`jeremie` or `unknown`, always `unknown` without an origin column); `replay:true` = this turn, note, prompt and repo were already filed. With a valid bare `repo` (lowercased; part of the id) and a row stored `jeremie`, `claim` is the handoff claim (`hc1.<kid>.<turnId>.<HMAC-SHA256 over task id, repo, turn>`, keys in `~/.claude-companion/handoff-claim.keys`, 0600, never in env; `lib/handoff-claim.ts`). `dispatch_task` needs it (`claim` argument, `bin/worker dispatch --claim`) before the worker's PR may link to the row; the bind, the PR link and the startup replay all verify it, and a worker dispatched without it reads origin unknown. A bad or missing repo files the row without a claim, never a refusal.
 - **The brain hands off** (Jeremie, 2026-10-29; replaced voice = consent): every proposal is approved at once (files `queued`, origin jeremie): `{ok, proposalId, dispatchTaskId, status:"queued"}`. No proposal turn, no Approve card, no `filed […]` turn in the brain thread: the agent row ("dispatched") is the receipt. If filing fails the proposal stays `proposed` (a card he can tap): `{ok, proposalId, status:"proposed", error}`.
 
 ### Brain sessions (`/hooks/brain/sessions`, `GET /api/brain/workers`)

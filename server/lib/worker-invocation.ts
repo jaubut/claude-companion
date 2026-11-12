@@ -127,11 +127,23 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
   return Object.keys(out).length > 0 ? out : null
 }
 
-/** Remove Companion control-plane bearer tokens from the worker's environment so a worker cannot invoke `/api/mcp/workers`. */
-export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string): NodeJS.ProcessEnv {
+/**
+ * A headless agent's env (claude -p, codex exec, gemini, agy) without the DB credentials and the Companion / broker
+ * tokens: no `/api/mcp/workers` calls, no direct `tasks` writes. CLAUDE_NO_AGENT_ENV=1 keeps the `claude` launch shim
+ * (~/.bun/bin/claude) from loading the agent secrets back in. Disk reads of those secrets are not covered here.
+ */
+export function scrubAgentEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
-  delete env.COMPANION_AUTH_TOKEN; delete env.COMPANION_TOKEN
-  for (const key of Object.keys(env)) if (/^COMPANION_(AUTH_|PEER_|TOKEN)/i.test(key)) delete env[key]
+  for (const key of Object.keys(env)) {
+    if (/^COMPANION_(AUTH_|PEER_|TOKEN)|^COMPANION_.*(TOKEN|SECRET|KEY)|^(TURSO|LIBSQL)_|^(DATABASE_URL|BROKER_TOKEN)$/i.test(key)) delete env[key]
+  }
+  env.CLAUDE_NO_AGENT_ENV = "1"
+  return env
+}
+
+/** The worker's env: scrubbed (scrubAgentEnv) plus its dispatch identity. */
+export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string): NodeJS.ProcessEnv {
+  const env = scrubAgentEnv(baseEnv)
   env.DISPATCH_TASK_ID = taskId; env.DISPATCH_WORKER = "1"; env.DISPATCH_HEADLESS = "1"; env.COMPANION_TASK_ID = builder
   return env
 }

@@ -27,7 +27,7 @@ const settingsFile = (dir: string): string => join(dir, ".claude", "settings.loc
 interface LeadSettings {
   model: string
   permissions: { allow: string[]; deny: string[] }
-  sandbox: { enabled: boolean; allowUnsandboxedCommands: boolean; failIfUnavailable: boolean; excludedCommands: string[]; filesystem: { denyWrite: string[] } }
+  sandbox: { enabled: boolean; allowUnsandboxedCommands: boolean; failIfUnavailable: boolean; excludedCommands: string[]; filesystem: { denyWrite: string[]; denyRead: string[] } }
 }
 
 const NO_FILE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]
@@ -41,6 +41,8 @@ const NO_FILE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanM
  */
 export function leadSettings(excluded: string[], dir: string): LeadSettings {
   const home = dirname(dirname(dir))
+  // A lead that could read the handoff claim keys could mint a claim for any task id (lib/handoff-claim.ts).
+  const claimKeys = join(home, ".claude-companion", "handoff-claim.keys")
   const commands = excluded.flatMap((c) => [`Bash(${c})`, `Bash(${c.replace(/ \*$/, ":*")})`])
   const allow = [
     "Bash(~/claude-companion/brain/bin/worker:*)",
@@ -60,13 +62,13 @@ export function leadSettings(excluded: string[], dir: string): LeadSettings {
   ]
   return {
     model: "claude-sonnet-5-5",
-    permissions: { allow, deny: [...NO_FILE_TOOLS, ...new Set(commands)] },
+    permissions: { allow, deny: [...NO_FILE_TOOLS, ...new Set(commands), `Read(${claimKeys})`] },
     sandbox: {
       enabled: true,
       allowUnsandboxedCommands: false,
       failIfUnavailable: true,
       excludedCommands: excludedBins,
-      filesystem: { denyWrite: [join(dir, ".claude"), join(dir, ".git")] },
+      filesystem: { denyWrite: [join(dir, ".claude"), join(dir, ".git")], denyRead: [claimKeys] },
     },
   }
 }
@@ -105,7 +107,8 @@ export function leadIsolated(repo: string, home = homedir(), excluded: (home: st
       !Array.isArray(dw) ||
       !expected.sandbox.filesystem.denyWrite.every((p) => dw.includes(p)) ||
       !Array.isArray(deny) ||
-      !expected.permissions.deny.every((d) => deny.includes(d))
+      // The Read() denies are added in place below: a lead from before them is refreshed, not respawned.
+      !expected.permissions.deny.every((d) => d.startsWith("Read(") || deny.includes(d))
     ) {
       return false
     }

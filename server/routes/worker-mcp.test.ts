@@ -210,4 +210,28 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
       rmSync(home, { recursive: true, force: true })
     }
   })
+
+  test("dispatch_task carries the claim to the supervisor and to a peer, and answers its status, never the claim", async () => {
+    const CLAIM = "hc1.0123abcd.turn-1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    const got: Array<Record<string, unknown>> = []
+    const supervisor = {
+      dispatchTask: async (input: Record<string, unknown>) => { got.push(input); return { ok: true, task: { taskId: input.taskId }, claim: "verified" } },
+    } as unknown as Parameters<typeof createWorkerMcpHandler>[0]["supervisor"]
+    const forwarded: unknown[] = []
+    const mcp = createWorkerMcpHandler({
+      supervisor, localHost: "zettlab",
+      resolvePeer: (host) => host === "mac" ? { url: "http://100.64.0.2:4245", token: "t" } : null,
+      fetchPeer: (async (_u: string | URL | Request, init?: RequestInit) => {
+        forwarded.push(JSON.parse(String(init?.body)))
+        return Response.json({ jsonrpc: "2.0", id: 1, result: { structuredContent: { ok: true } } })
+      }) as typeof fetch,
+    })
+    const args = { task_id: "t-1", repo: "claude-companion", prompt: "P", claim: CLAIM }
+    const local = await mcp.callTool(1, "dispatch_task", args) as { result: { structuredContent: Record<string, unknown> } }
+    expect(got[0]).toMatchObject({ taskId: "t-1", repo: "claude-companion", claim: CLAIM })
+    expect(local.result.structuredContent).toMatchObject({ ok: true, claim: "verified" })
+    expect(JSON.stringify(local)).not.toContain(CLAIM)
+    await mcp.callTool(2, "dispatch_task", { ...args, host: "mac" })
+    expect(forwarded[0]).toMatchObject({ params: { name: "dispatch_task", arguments: { ...args, host: "local" } } })
+  })
 })

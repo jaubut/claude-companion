@@ -12,6 +12,7 @@ import {
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
   buildHeadlessWorkerInvocation, buildWorkerEnv, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
+import { type PersistedTaskRecord, loadTaskRecords, saveTaskRecords, workerStateFile } from "./worker-task-store"
 
 export {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
@@ -24,7 +25,12 @@ const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEF
 
 export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
+  /** The handoff claim from `bin/worker dispatch --claim` (lib/handoff-claim.ts). Stays inside the supervisor. */
+  claim?: string
 }
+
+/** What the dispatch made of the task's claim: bound (verified), refused, lookup failed (pending), or none (absent). */
+export type ClaimStatus = "verified" | "refused" | "pending" | "absent"
 
 export interface SupervisedTaskSnapshot {
   taskId: string; repo: string; title: string; builder: string; family: WorkerFamily; model: string | null; branch: string; worktree: string; sessionId: string
@@ -45,13 +51,13 @@ export interface WorkerSupervisorDeps {
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
   onTaskTerminal?(task: SupervisedTaskSnapshot): void
-  /** May this worker task link its PR to the Turso row of its id? Persisted once answered; null (lookup failed) = ask next turn. */
-  bindTask?(taskId: string, repo: string): Promise<boolean | null>
-  /** A bound task's turn reported a PR: link it before the turn is marked completed. Bounded by the caller, never rejects. */
-  linkPr?(task: SupervisedTaskSnapshot): Promise<string>
+  /** Does this claim let the worker task link its PR to the Turso row of its id? Persisted; null (lookup failed) = ask next turn. */
+  bindTask?(taskId: string, repo: string, claim: string): Promise<boolean | null>
+  /** A bound task's turn reported a PR: link it (the claim checked again) before the turn reads completed. Bounded, never rejects. */
+  linkPr?(task: SupervisedTaskSnapshot, claim: string): Promise<string>
 }
 
-export const workerStateFile = (home: string): string => join(home, ".claude", "state", "companion-worker-tasks.json")
+export { workerStateFile }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
   if (!REPO_NAME_RE.test(repo)) return null
@@ -106,13 +112,8 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
   return { pid: child.pid ?? 0, kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) } }
 }
 
-interface PersistedTaskRecord extends SupervisedTaskSnapshot {
-  repoDir: string; pid?: number | null; pidIdentity?: string | null; sessionStarted?: boolean
-  /** bindTask's answer for this id: only true links the PR to the Turso row. Absent / null = not answered yet. */
-  prLinkBound?: boolean | null
-}
 interface InternalTask extends PersistedTaskRecord {
-  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null
+  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null
   activeTurn: number; jobId: string; turnReportedTerminal: boolean
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
@@ -146,29 +147,15 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   }
 
   function savePersistedTasks(): void {
-    try {
-      mkdirSync(dirname(stateFile), { recursive: true })
-      const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({
-        ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound,
-      }))
-      const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
-      writeFileSync(tmp, JSON.stringify(records))
-      renameSync(tmp, stateFile)
-    } catch { /* best-effort persistence */ }
+    saveTaskRecords(stateFile, [...tasks.values()].map((t) => ({
+      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim,
+    })))
   }
 
   function loadPersistedTasks(): void {
-    if (!existsSync(stateFile)) return
-    let parsed: unknown = null
-    try { parsed = JSON.parse(readFileSync(stateFile, "utf8")) as unknown } catch { return }
-    if (!Array.isArray(parsed)) return
     const now = deps.now()
     let dirty = false
-    for (const item of parsed) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) continue
-      const r = item as Partial<PersistedTaskRecord>
-      if (typeof r.taskId !== "string" || !TASK_ID_RE.test(r.taskId) || typeof r.repo !== "string" || !REPO_NAME_RE.test(r.repo)) continue
-      if (typeof r.repoDir !== "string" || !r.repoDir || typeof r.worktree !== "string" || !r.worktree || typeof r.sessionId !== "string" || !r.sessionId) continue
+    for (const r of loadTaskRecords(stateFile)) {
       const wasRunning = r.status === "running"
       const turnCount = typeof r.turnCount === "number" && r.turnCount > 0 ? Math.floor(r.turnCount) : 1
       const rawPid = typeof r.pid === "number" && Number.isInteger(r.pid) && r.pid > 1 ? r.pid : null
@@ -206,6 +193,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         pid: survivingPid, pidIdentity: survivingIdentity, reloadedFromDisk: survivingPid !== null,
         sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
         prLinkBound: typeof r.prLinkBound === "boolean" ? r.prLinkBound : null,
+        handoffClaim: typeof r.handoffClaim === "string" && r.handoffClaim ? r.handoffClaim : null,
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
       }
@@ -302,7 +290,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   }
 
   return {
-    async dispatchTask(input: DispatchTaskInput): Promise<{ ok: true; task: SupervisedTaskSnapshot } | { ok: false; status: number; error: string }> {
+    async dispatchTask(input: DispatchTaskInput): Promise<{ ok: true; task: SupervisedTaskSnapshot; claim: ClaimStatus } | { ok: false; status: number; error: string }> {
       const taskId = typeof input.taskId === "string" ? input.taskId.trim() : ""
       if (!TASK_ID_RE.test(taskId)) return { ok: false, status: 400, error: "invalid_task_id" }
       const repo = typeof input.repo === "string" ? input.repo.trim() : ""
@@ -335,8 +323,12 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
-        const prLinkBound = existing && existing.prLinkBound !== null ? existing.prLinkBound
-          : deps.bindTask ? await deps.bindTask(taskId, repo).catch(() => null) : false
+        // A bound task keeps its first claim; a turn with no claim (a phone inject, routes/api.ts) never clears a stored one.
+        const kept = existing?.prLinkBound === true && existing.handoffClaim ? existing.handoffClaim : null
+        const claim = kept ?? (input.claim || existing?.handoffClaim || null)
+        const prLinkBound = kept ? true : !claim ? false : deps.bindTask ? await deps.bindTask(taskId, repo, claim).catch(() => null) : false
+        const handoffClaim = prLinkBound === false ? null : claim
+        const claimStatus: ClaimStatus = !claim ? "absent" : prLinkBound === true ? "verified" : prLinkBound === false ? "refused" : "pending"
 
         const now = deps.now()
         const familyChanged = !!existing && existing.family !== family
@@ -365,13 +357,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           taskId, repo, repoDir, title, builder, family, model: effectiveModel, branch: wt.branch, worktree: wt.worktree, sessionId,
           status: "running", turnCount: 0, step: `Starting headless ${family} builder`, pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
-          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound,
+          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound, handoffClaim,
           activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
         clearTimers(task)
-        task.prLinkBound = prLinkBound
+        task.prLinkBound = prLinkBound; task.handoffClaim = handoffClaim
         task.title = title; task.family = family; task.model = effectiveModel; task.sessionId = sessionId
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
@@ -445,10 +437,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               }
               if (code === 0 && !sig && !task.error) {
                 // The link lands before the turn reads completed (await_task, the brain): the shepherd reads origin through it.
-                if (task.prUrl && task.prLinkBound === true && deps.linkPr) {
+                if (task.prUrl && task.prLinkBound === true && task.handoffClaim && deps.linkPr) {
                   task.step = `Linking PR: ${task.prUrl}`
                   savePersistedTasks()
-                  void deps.linkPr(toSnapshot(task)).catch(() => "link_failed").then((link) => {
+                  void deps.linkPr(toSnapshot(task), task.handoffClaim).catch(() => "link_failed").then((link) => {
                     if (task.activeTurn === myTurn && task.status === "running") complete(link)
                   })
                   return
@@ -495,7 +487,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           task.timeoutTimer.unref?.()
         }
 
-        return { ok: true, task: toSnapshot(task) }
+        return { ok: true, task: toSnapshot(task), claim: claimStatus }
       } finally {
         inFlightDispatches.delete(taskId); inFlightWorktrees.delete(wtKey)
       }

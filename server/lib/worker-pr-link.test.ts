@@ -3,11 +3,16 @@ import { randomUUID } from "node:crypto"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { mintHandoffClaim } from "./handoff-claim"
 import { installHranaStub } from "./hrana-stub.test-util"
 import type { GhFn } from "./triage-pr"
 import { type SqlArg, tursoExec } from "./turso"
 import { openTestDb, schemaDb, testDbConfigured } from "./turso-test-db.test-util"
 import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr } from "./worker-pr-link"
+
+// The claim key file lives under $HOME (handoffKeysPath): a throwaway one for this file.
+process.env.HOME = mkdtempSync(join(tmpdir(), "cc-prlink-home-"))
+const CLAIM = (id: string, repo = "tls-dashboard-v2") => mintHandoffClaim(id, repo, "turn-1")!
 
 // linkWorkerPr (worker PR ready → tasks.dispatch_pr_url) and the backfill script, with the production tursoExec.
 // Default: the Hrana stub over bun:sqlite on production's schema; with TURSO_TEST_URL + TURSO_TEST_AUTH_TOKEN, tls-test.
@@ -60,7 +65,7 @@ describe("linkWorkerPr", () => {
   test("links on PR ready", async () => {
     await seed(ID)
     const { gh, calls } = fakeGh(() => `dispatch/${ID}`)
-    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("linked")
+    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("linked")
     expect(await prOf(ID)).toBe(URL())
     expect(calls[0]).toEqual(["pr", "view", "423", "--repo", "jaubut/tls-dashboard-v2", "--json", "headRefName,isCrossRepository,url"])
   })
@@ -68,23 +73,23 @@ describe("linkWorkerPr", () => {
   test("refuses a mismatched repo without asking GitHub", async () => {
     await seed(ID)
     const { gh, calls } = fakeGh(() => `dispatch/${ID}`)
-    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL("claude-config") })).toBe("repo_mismatch")
-    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: "https://github.com/someone/tls-dashboard-v2/pull/1" })).toBe("bad_url")
+    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL("claude-config") })).toBe("repo_mismatch")
+    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: "https://github.com/someone/tls-dashboard-v2/pull/1" })).toBe("bad_url")
     expect(calls).toEqual([])
     expect(await prOf(ID)).toBeNull()
   })
 
   test("refuses a mismatched branch or a fork head", async () => {
     await seed(ID)
-    expect(await linkWorkerPr({ gh: fakeGh(() => "dispatch/other").gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("branch_mismatch")
-    expect(await linkWorkerPr({ gh: fakeGh(() => `dispatch/${ID}`, { cross: true }).gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("branch_mismatch")
+    expect(await linkWorkerPr({ gh: fakeGh(() => "dispatch/other").gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("branch_mismatch")
+    expect(await linkWorkerPr({ gh: fakeGh(() => `dispatch/${ID}`, { cross: true }).gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("branch_mismatch")
     expect(await prOf(ID)).toBeNull()
   })
 
   test("never overwrites an existing link", async () => {
     await seed(ID, URL("tls-dashboard-v2", 1))
     const { gh } = fakeGh(() => `dispatch/${ID}`)
-    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("not_linked")
+    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("not_linked")
     expect(await prOf(ID)).toBe(URL("tls-dashboard-v2", 1))
   })
 
@@ -96,25 +101,25 @@ describe("linkWorkerPr", () => {
     await seed(ids[3]!, { status: "running" })
     for (const id of ids) {
       const { gh } = fakeGh(() => `dispatch/${id}`)
-      expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: id, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("not_linked")
-      expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: id, repo: "tls-dashboard-v2", prUrl: URL() }, { write: false })).toBe("not_linked")
+      expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: id, repo: "tls-dashboard-v2", claim: CLAIM(id), prUrl: URL() })).toBe("not_linked")
+      expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: id, repo: "tls-dashboard-v2", claim: CLAIM(id), prUrl: URL() }, { write: false })).toBe("not_linked")
       expect(await prOf(id)).toBeNull()
     }
     // never filed at all
-    expect(await linkWorkerPr({ gh: fakeGh(() => `dispatch/${ID}`).gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("not_linked")
+    expect(await linkWorkerPr({ gh: fakeGh(() => `dispatch/${ID}`).gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("not_linked")
   })
 
   test("writes GitHub's canonical url, not the one the worker printed", async () => {
     await seed(ID)
     const { gh } = fakeGh(() => `dispatch/${ID}`)
-    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: "https://github.com/jaubut/TLS-Dashboard-V2/pull/423" })).toBe("linked")
+    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: "https://github.com/jaubut/TLS-Dashboard-V2/pull/423" })).toBe("linked")
     expect(await prOf(ID)).toBe(URL())
   })
 
   test("a canonical url for another repo is refused", async () => {
     await seed(ID)
     const { gh } = fakeGh(() => `dispatch/${ID}`, { url: URL("claude-config") })
-    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("repo_mismatch")
+    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("repo_mismatch")
     expect(await prOf(ID)).toBeNull()
   })
 
@@ -123,7 +128,7 @@ describe("linkWorkerPr", () => {
     const slept: number[] = []
     const sleep = async (ms: number) => { slept.push(ms) }
     const flaky = fakeGh(() => `dispatch/${ID}`, { fail: 2 })
-    expect(await linkWorkerPr({ gh: flaky.gh, exec: tursoExec, sleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("linked")
+    expect(await linkWorkerPr({ gh: flaky.gh, exec: tursoExec, sleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("linked")
     expect(flaky.calls).toHaveLength(3)
     expect(slept).toHaveLength(2)
 
@@ -131,7 +136,7 @@ describe("linkWorkerPr", () => {
     await seed(id2)
     let n = 0
     const down: GhFn = async () => { n++; throw new Error("gh down") }
-    expect(await linkWorkerPr({ gh: down, exec: tursoExec, sleep: noSleep }, { taskId: id2, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("gh_failed")
+    expect(await linkWorkerPr({ gh: down, exec: tursoExec, sleep: noSleep }, { taskId: id2, repo: "tls-dashboard-v2", claim: CLAIM(id2), prUrl: URL() })).toBe("gh_failed")
     expect(n).toBe(3)
     expect(await prOf(id2)).toBeNull()
   })
@@ -143,7 +148,7 @@ describe("linkWorkerPr", () => {
       if (s.startsWith("UPDATE") && fails-- > 0) throw new Error("turso unreachable")
       return tursoExec(s, a)
     }
-    expect(await linkWorkerPr({ gh: fakeGh(() => `dispatch/${ID}`).gh, exec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() })).toBe("linked")
+    expect(await linkWorkerPr({ gh: fakeGh(() => `dispatch/${ID}`).gh, exec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("linked")
     expect(await prOf(ID)).toBe(URL())
   })
 
@@ -154,7 +159,7 @@ describe("linkWorkerPr", () => {
     const inner = fakeGh(() => `dispatch/${ID}`)
     const slow: GhFn = async (args) => { await gate; return inner.gh(args) }
     const t0 = Date.now()
-    expect(await linkWorkerPr({ gh: slow, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", prUrl: URL() }, { deadlineMs: 50 })).toBe("timeout")
+    expect(await linkWorkerPr({ gh: slow, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() }, { deadlineMs: 50 })).toBe("timeout")
     expect(Date.now() - t0).toBeLessThan(1_000)
     release()
     for (let i = 0; i < 50 && !(await prOf(ID)); i++) await Bun.sleep(10)
@@ -163,22 +168,38 @@ describe("linkWorkerPr", () => {
 })
 
 describe("bindWorkerTask (at dispatch, by the supervisor)", () => {
-  test("binds an open, unclaimed, unlinked handoff row whose description names the repo", async () => {
+  test("binds an open, unclaimed, unlinked handoff row with that id's claim", async () => {
     await seed(ID)
-    expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2")).toBe(true)
-    expect(await bindWorkerTask(tursoExec, ID, "TLS-Dashboard-V2")).toBe(true)
+    expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2", CLAIM(ID))).toBe(true)
+    expect(await bindWorkerTask(tursoExec, ID, "TLS-Dashboard-V2", CLAIM(ID))).toBe(true)
   })
 
-  test("no binding: another repo's row, no row, a done / claimed / linked row; a failed read is no answer (null)", async () => {
-    await seed(ID)
-    expect(await bindWorkerTask(tursoExec, ID, "claude-config")).toBe(false)
-    expect(await bindWorkerTask(tursoExec, `${ID.slice(0, 31)}z`, "tls-dashboard-v2")).toBe(false)
+  test("laundering: another open handoff's id is refused without its own claim", async () => {
+    const A = ID
+    const B = `${ID.slice(0, 30)}zb`
+    await seed(A)
+    await seed(B) // same repo, both jeremie, both OWNABLE
+    for (const claim of [CLAIM(A), undefined, "", CLAIM(A, "claude-config"), CLAIM(B, "claude-config"), `${CLAIM(B).slice(0, -2)}AA`]) {
+      expect(await bindWorkerTask(tursoExec, B, "tls-dashboard-v2", claim)).toBe(false)
+    }
+    // the PR of a dispatch that borrowed B's id never reaches B's row
+    const { gh } = fakeGh(() => `dispatch/${B}`)
+    for (const claim of [CLAIM(A), null]) {
+      expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: B, repo: "tls-dashboard-v2", claim, prUrl: URL() })).toBe("claim_refused")
+    }
+    expect(await prOf(B)).toBeNull()
+    expect(await bindWorkerTask(tursoExec, B, "tls-dashboard-v2", CLAIM(B))).toBe(true)
+  })
+
+  test("no binding: a valid claim for a row that's gone, done, claimed or linked; a failed read is no answer (null)", async () => {
+    expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2", CLAIM(ID))).toBe(false)
     const ids = [`${ID.slice(0, 30)}e1`, `${ID.slice(0, 30)}e2`, `${ID.slice(0, 30)}e3`]
     await seed(ids[0]!, { done: 1 })
     await seed(ids[1]!, { owner: "zettlab" })
     await seed(ids[2]!, { pr: URL("tls-dashboard-v2", 1) })
-    for (const id of ids) expect(await bindWorkerTask(tursoExec, id, "tls-dashboard-v2")).toBe(false)
-    expect(await bindWorkerTask(async () => { throw new Error("turso down") }, ID, "tls-dashboard-v2")).toBeNull()
+    for (const id of ids) expect(await bindWorkerTask(tursoExec, id, "tls-dashboard-v2", CLAIM(id))).toBe(false)
+    await seed(ID)
+    expect(await bindWorkerTask(async () => { throw new Error("turso down") }, ID, "tls-dashboard-v2", CLAIM(ID))).toBeNull()
   })
 })
 
@@ -193,7 +214,7 @@ describe("backfillWorkerPrLinks (script + startup replay)", () => {
     await seed(ID)
     const linked = `${ID.slice(0, 31)}x`
     await seed(linked, URL("tls-dashboard-v2", 1))
-    const file = stateFile([{ taskId: ID, repo: "tls-dashboard-v2", prLinkBound: true }, { taskId: linked, repo: "tls-dashboard-v2", prLinkBound: true }])
+    const file = stateFile([{ taskId: ID, repo: "tls-dashboard-v2", prLinkBound: true, handoffClaim: CLAIM(ID) }, { taskId: linked, repo: "tls-dashboard-v2", prLinkBound: true, handoffClaim: CLAIM(linked) }])
     const { gh, calls } = fakeGh(() => `dispatch/${ID}`, { open: [URL()] })
     const lines: string[] = []
 
@@ -206,14 +227,21 @@ describe("backfillWorkerPrLinks (script + startup replay)", () => {
     expect(await prOf(linked)).toBe(URL("tls-dashboard-v2", 1))
   })
 
-  test("skips a worker task with no dispatch-time binding unless the run includes unbound (legacy) records", async () => {
+  test("the state file is not trusted: a record bound with no claim, a forged or borrowed claim, links nothing and asks GitHub nothing", async () => {
     await seed(ID)
-    const file = stateFile([{ taskId: ID, repo: "tls-dashboard-v2" }])
+    const other = `${ID.slice(0, 31)}o`
+    const file = stateFile([
+      { taskId: ID, repo: "tls-dashboard-v2" },
+      { taskId: ID, repo: "tls-dashboard-v2", prLinkBound: true },
+      { taskId: ID, repo: "tls-dashboard-v2", prLinkBound: true, handoffClaim: CLAIM(other) },
+      { taskId: ID, repo: "tls-dashboard-v2", prLinkBound: true, handoffClaim: `${CLAIM(ID).slice(0, -2)}AA` },
+    ])
     const { gh, calls } = fakeGh(() => `dispatch/${ID}`, { open: [URL()] })
-    expect(await backfillWorkerPrLinks({ gh, exec: tursoExec, sleep: noSleep, log: () => {} }, file, { write: true })).toEqual([])
+    const lines: string[] = []
+    expect(await backfillWorkerPrLinks({ gh, exec: tursoExec, sleep: noSleep, log: (l) => lines.push(l) }, file, { write: true })).toEqual([])
     expect(calls).toEqual([])
     expect(await prOf(ID)).toBeNull()
-    expect(await backfillWorkerPrLinks({ gh, exec: tursoExec, sleep: noSleep, log: () => {} }, file, { write: false, includeUnbound: true })).toEqual([{ taskId: ID, repo: "tls-dashboard-v2", prUrl: URL(), outcome: "would_link" }])
-    expect(await prOf(ID)).toBeNull()
+    expect(lines.filter((l) => l.includes("claim refused"))).toHaveLength(2)
+    expect(lines.join("\n")).not.toContain("hc1.")
   })
 })
