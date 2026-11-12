@@ -6370,7 +6370,7 @@
         },
         {
           "path": "lib/worker-pr-link.ts",
-          "lines": 138,
+          "lines": 140,
           "kind": "lib",
           "exports": [
             "OWNABLE",
@@ -6399,7 +6399,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 589,
+          "lines": 595,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",

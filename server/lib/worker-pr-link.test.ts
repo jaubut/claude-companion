@@ -167,7 +167,7 @@ describe("linkWorkerPr", () => {
   })
 })
 
-describe("bindWorkerTask (at dispatch, by the supervisor)", () => {
+describe("bindWorkerTask (at dispatch, by the supervisor): true, the refusal reason, or null", () => {
   test("binds an open, unclaimed, unlinked handoff row with that id's claim", async () => {
     await seed(ID)
     expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2", CLAIM(ID))).toBe(true)
@@ -179,8 +179,9 @@ describe("bindWorkerTask (at dispatch, by the supervisor)", () => {
     const B = `${ID.slice(0, 30)}zb`
     await seed(A)
     await seed(B) // same repo, both jeremie, both OWNABLE
+    expect(await bindWorkerTask(tursoExec, B, "tls-dashboard-v2", "hc1.zz")).toBe("malformed")
     for (const claim of [CLAIM(A), undefined, "", CLAIM(A, "claude-config"), CLAIM(B, "claude-config"), `${CLAIM(B).slice(0, -2)}AA`]) {
-      expect(await bindWorkerTask(tursoExec, B, "tls-dashboard-v2", claim)).toBe(false)
+      expect(await bindWorkerTask(tursoExec, B, "tls-dashboard-v2", claim)).toBeOneOf(["missing", "bad_mac"])
     }
     // the PR of a dispatch that borrowed B's id never reaches B's row
     const { gh } = fakeGh(() => `dispatch/${B}`)
@@ -192,12 +193,12 @@ describe("bindWorkerTask (at dispatch, by the supervisor)", () => {
   })
 
   test("no binding: a valid claim for a row that's gone, done, claimed or linked; a failed read is no answer (null)", async () => {
-    expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2", CLAIM(ID))).toBe(false)
+    expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2", CLAIM(ID))).toBe("not_ownable")
     const ids = [`${ID.slice(0, 30)}e1`, `${ID.slice(0, 30)}e2`, `${ID.slice(0, 30)}e3`]
     await seed(ids[0]!, { done: 1 })
     await seed(ids[1]!, { owner: "zettlab" })
     await seed(ids[2]!, { pr: URL("tls-dashboard-v2", 1) })
-    for (const id of ids) expect(await bindWorkerTask(tursoExec, id, "tls-dashboard-v2", CLAIM(id))).toBe(false)
+    for (const id of ids) expect(await bindWorkerTask(tursoExec, id, "tls-dashboard-v2", CLAIM(id))).toBe("not_ownable")
     await seed(ID)
     expect(await bindWorkerTask(async () => { throw new Error("turso down") }, ID, "tls-dashboard-v2", CLAIM(ID))).toBeNull()
   })

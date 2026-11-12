@@ -29,8 +29,8 @@ export interface DispatchTaskInput {
   claim?: string
 }
 
-/** What the dispatch made of the task's claim: bound (verified), refused, lookup failed (pending), or none (absent). */
-export type ClaimStatus = "verified" | "refused" | "pending" | "absent"
+/** What the dispatch made of the task's claim: bound (verified), refused with its reason, lookup failed (pending), or none (absent). */
+export type ClaimStatus = "verified" | `claim_refused:${string}` | "pending" | "absent"
 
 export interface SupervisedTaskSnapshot {
   taskId: string; repo: string; title: string; builder: string; family: WorkerFamily; model: string | null; branch: string; worktree: string; sessionId: string
@@ -52,7 +52,7 @@ export interface WorkerSupervisorDeps {
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
   onTaskTerminal?(task: SupervisedTaskSnapshot): void
   /** Does this claim let the worker task link its PR to the Turso row of its id? Persisted; null (lookup failed) = ask next turn. */
-  bindTask?(taskId: string, repo: string, claim: string): Promise<boolean | null>
+  bindTask?(taskId: string, repo: string, claim: string): Promise<true | string | null>
   /** A bound task's turn reported a PR: link it (the claim checked again) before the turn reads completed. Bounded, never rejects. */
   linkPr?(task: SupervisedTaskSnapshot, claim: string): Promise<string>
 }
@@ -323,15 +323,21 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
-        // A bound task keeps its first claim; a turn with no claim (a phone inject, routes/api.ts) never clears a stored one.
-        const kept = existing?.prLinkBound === true && existing.handoffClaim ? existing.handoffClaim : null
-        const claim = kept ?? (input.claim || existing?.handoffClaim || null)
-        const prLinkBound = kept ? true : !claim ? false : deps.bindTask ? await deps.bindTask(taskId, repo, claim).catch(() => null) : false
+        const familyChanged = !!existing && existing.family !== family
+        // The stored claim carries over only to a continuation of the same worker's finished turn (the lead's fix round,
+        // a phone inject): never after a failed / interrupted turn or a reset session, where any dispatcher could redispatch
+        // the id with its own prompt. A supplied claim is always checked itself, and a refused one never falls back.
+        const continues = !!existing && existing.status === "completed" && existing.sessionStarted && !familyChanged
+        const inherited = continues && existing.handoffClaim ? existing.handoffClaim : null
+        const supplied = input.claim || null
+        const claim = supplied ?? inherited
+        const bind = inherited && existing?.prLinkBound === true && (!supplied || supplied === inherited) ? true
+          : !claim ? "absent" : deps.bindTask ? await deps.bindTask(taskId, repo, claim).catch(() => null) : "no_binding"
+        const prLinkBound = bind === true ? true : bind === null ? null : false
         const handoffClaim = prLinkBound === false ? null : claim
-        const claimStatus: ClaimStatus = !claim ? "absent" : prLinkBound === true ? "verified" : prLinkBound === false ? "refused" : "pending"
+        const claimStatus: ClaimStatus = !claim ? "absent" : bind === true ? "verified" : bind === null ? "pending" : `claim_refused:${bind}`
 
         const now = deps.now()
-        const familyChanged = !!existing && existing.family !== family
         const resume = !!existing && existing.sessionStarted && !familyChanged
         const sessionId = (existing && !familyChanged) ? existing.sessionId : deps.uuid()
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)

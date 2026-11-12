@@ -12,8 +12,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 |---|---|---|---|---|
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 597 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
+| `lib/worker-supervisor.ts` | 595 | lib | 13 |  |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
-| `lib/worker-supervisor.ts` | 589 | lib | 13 |  |
 | `routes/api.ts` | 584 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/discover.ts` | 578 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 575 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
@@ -162,8 +162,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-stage.ts` | 141 | lib | 8 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
+| `lib/worker-pr-link.ts` | 140 | lib | 7 |  |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
-| `lib/worker-pr-link.ts` | 138 | lib | 7 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `wiring/brain-stuck-events.ts` | 136 | lib | 4 |  |

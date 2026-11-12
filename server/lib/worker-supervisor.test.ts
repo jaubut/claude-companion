@@ -584,7 +584,7 @@ describe("createWorkerSupervisor", () => {
   describe("PR link binding (tasks.dispatch_pr_url)", () => {
     const PR = "https://github.com/jaubut/claude-companion/pull/999"
     const CLAIM = "hc1.0123abcd.turn-1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-    function harness(home: string, o: { bind?: boolean | null | (() => Promise<boolean | null>); link?: (t: { taskId: string; prUrl: string | null; status: string }) => Promise<string> } = {}) {
+    function harness(home: string, o: { bind?: true | null | string | (() => Promise<true | null | string>); link?: (t: { taskId: string; prUrl: string | null; status: string }) => Promise<string> } = {}) {
       const spawned: SpawnWorkerOpts[] = []
       const binds: Array<[string, string]> = []
       const bindClaims: string[] = []
@@ -665,7 +665,7 @@ describe("createWorkerSupervisor", () => {
 
     test("an id with no eligible row at dispatch never links", async () => {
       const home = tmpHome()
-      const h = harness(home, { bind: false })
+      const h = harness(home, { bind: "not_ownable" })
       try {
         await h.sup.dispatchTask({ taskId: "bind-3", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.finish(0)
@@ -690,13 +690,14 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("the binding survives a state reload: turn 2 after a restart still links, without binding again", async () => {
+    test("the binding survives a state reload: a fix round after a restart still links, without binding again", async () => {
       const home = tmpHome()
       try {
         const a = harness(home)
         await a.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
-        a.spawned[0]!.onExit(1, null)
-        const unbound = harness(home, { bind: false })
+        a.finish(0)
+        await flush(); await flush()
+        const unbound = harness(home, { bind: "not_ownable" })
         await unbound.sup.dispatchTask({ taskId: "bind-6", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         unbound.spawned[0]!.onExit(1, null)
         const file = join(home, ".claude", "state", "companion-worker-tasks.json")
@@ -704,7 +705,7 @@ describe("createWorkerSupervisor", () => {
         expect(saved.find((r) => r.taskId === "bind-6")?.prLinkBound).toBe(false)
 
         const b = harness(home)
-        await b.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Retry", claim: CLAIM })
+        await b.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Fix review findings" })
         expect(b.binds).toEqual([])
         b.finish(0)
         await flush(); await flush()
@@ -717,7 +718,7 @@ describe("createWorkerSupervisor", () => {
     test("a failed bind lookup persists no answer and is retried on the next turn", async () => {
       const home = tmpHome()
       try {
-        const answers: Array<boolean | null> = [null, true]
+        const answers: Array<true | null> = [null, true]
         const a = harness(home, { bind: async () => answers.shift()! })
         await a.sup.dispatchTask({ taskId: "bind-7", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         a.finish(0)
@@ -758,13 +759,13 @@ describe("createWorkerSupervisor", () => {
 
     test("a later turn that brings the claim binds a task dispatched without one; a refused claim says so", async () => {
       const home = tmpHome()
-      const answers = [false, true]
+      const answers: Array<true | string> = ["bad_mac", true]
       const h = harness(home, { bind: async () => answers.shift()! })
       try {
         await h.sup.dispatchTask({ taskId: "claim-2", repo: "claude-companion", prompt: "Ship PR" })
         h.spawned[0]!.onExit(1, null)
         const refused = await h.sup.dispatchTask({ taskId: "claim-2", repo: "claude-companion", prompt: "Retry", claim: "hc1.bad" })
-        expect(refused.ok && refused.claim).toBe("refused")
+        expect(refused.ok && refused.claim).toBe("claim_refused:bad_mac")
         h.spawned[1]!.onExit(1, null)
         const ok = await h.sup.dispatchTask({ taskId: "claim-2", repo: "claude-companion", prompt: "Retry", claim: CLAIM })
         expect(ok.ok && ok.claim).toBe("verified")
@@ -777,21 +778,85 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("a claimless follow-up (a phone inject through routes/api.ts) keeps the stored claim and still links", async () => {
+    test("a fix round continuing the finished turn (the lead's resume, or a phone inject through routes/api.ts) keeps the stored claim and still links", async () => {
       const home = tmpHome()
       const h = harness(home)
       try {
         await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
-        h.spawned[0]!.onExit(1, null)
+        h.finish(0)
+        await flush(); await flush()
         // routes/api.ts deliverInject: no claim field at all
         const inject = await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", title: "T", prompt: "also fix the typo", mode: "auto", family: "claude" })
         expect(inject.ok && inject.claim).toBe("verified")
         expect(h.binds).toHaveLength(1)
         h.finish(1)
         await flush(); await flush()
-        expect(h.linkClaims).toEqual([CLAIM])
+        expect(h.linkClaims).toEqual([CLAIM, CLAIM])
+        expect(h.terminal[1]).toBe(`completed:PR ready: ${PR}`)
         const saved = (JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8")) as Array<{ taskId: string; handoffClaim?: unknown }>)
         expect(saved.find((r) => r.taskId === "claim-3")?.handoffClaim).toBe(CLAIM)
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("a claimed task that failed: anyone's redispatch without a claim runs unbound and drops the stored claim", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-6", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.spawned[0]!.onExit(1, null) // failed before any PR was linked
+        const borrowed = await h.sup.dispatchTask({ taskId: "claim-6", repo: "claude-companion", prompt: "something else entirely" })
+        expect(borrowed.ok && borrowed.claim).toBe("absent")
+        h.finish(1)
+        await flush(); await flush()
+        expect(h.links).toEqual([])
+        expect(h.binds).toHaveLength(1)
+        const saved = (JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8")) as Array<{ taskId: string; handoffClaim?: unknown; prLinkBound?: unknown }>).find((r) => r.taskId === "claim-6")!
+        expect(saved).toMatchObject({ handoffClaim: null, prLinkBound: false })
+        // a fresh valid claim still brings it back
+        const again = await h.sup.dispatchTask({ taskId: "claim-6", repo: "claude-companion", prompt: "Retry", claim: CLAIM })
+        expect(again.ok && again.claim).toBe("verified")
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("a worker reset to a new session (family change) doesn't inherit the claim either", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-7", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.finish(0)
+        await flush(); await flush()
+        h.sup.setTaskModel("claim-7", "gpt-5.4")
+        const reset = await h.sup.dispatchTask({ taskId: "claim-7", repo: "claude-companion", prompt: "Start over" })
+        expect(reset.ok && reset.claim).toBe("absent")
+        h.finish(1)
+        await flush(); await flush()
+        expect(h.links).toHaveLength(1) // turn 1 only
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("an invalid supplied claim is refused with its reason and never falls back to the stored one", async () => {
+      const home = tmpHome()
+      const answers: Array<true | string> = [true, "bad_mac"]
+      const h = harness(home, { bind: async () => answers.shift()! })
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.finish(0)
+        await flush(); await flush()
+        const bad = await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Fix round", claim: "hc1.forged" })
+        expect(bad.ok && bad.claim).toBe("claim_refused:bad_mac")
+        expect(h.bindClaims).toEqual([CLAIM, "hc1.forged"])
+        h.finish(1)
+        await flush(); await flush()
+        expect(h.linkClaims).toEqual([CLAIM]) // turn 1 only
+        h.spawned[1]!.onExit(0, null)
+        const after = await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Fix round" })
+        expect(after.ok && after.claim).toBe("absent")
       } finally {
         rmSync(home, { recursive: true, force: true })
       }

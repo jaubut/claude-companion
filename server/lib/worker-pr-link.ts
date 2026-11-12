@@ -27,14 +27,14 @@ interface LinkDeps { gh: GhFn; exec: ExecFn; sleep?(ms: number): Promise<unknown
 interface LinkTarget { taskId: string; repo: string; prUrl: string; claim: string | null | undefined }
 
 /** The claim checks out for this id and repo; a refusal logs its reason, never the claim. */
-function claimHolds(t: { taskId: string; repo: string; claim: unknown }, log: (line: string) => void = (l) => companionLog(`[worker] ${l}`)): boolean {
+function claimRefusal(t: { taskId: string; repo: string; claim: unknown }, log: (line: string) => void = (l) => companionLog(`[worker] ${l}`)): string | null {
   const c = verifyHandoffClaim(t.claim, t.taskId, t.repo)
   if (!c.ok) log(`${t.taskId.slice(0, 8)} ${t.repo}: claim refused: ${c.reason}`)
-  return c.ok
+  return c.ok ? null : c.reason
 }
 
 async function attempt(deps: LinkDeps, t: LinkTarget, write: boolean): Promise<LinkOutcome> {
-  if (!claimHolds(t)) return "claim_refused"
+  if (claimRefusal(t)) return "claim_refused"
   const m = PR_URL.exec(t.prUrl)
   if (!m) return "bad_url"
   if (m[1]!.toLowerCase() !== t.repo.toLowerCase()) return "repo_mismatch"
@@ -58,11 +58,13 @@ async function attempt(deps: LinkDeps, t: LinkTarget, write: boolean): Promise<L
   }
 }
 
-/** Dispatch-time binding: the claim is this id's and repo's, and the row of this id is OWNABLE. null = the read failed (no answer). */
-export async function bindWorkerTask(exec: ExecFn, taskId: string, repo: string, claim: unknown): Promise<boolean | null> {
-  if (!claimHolds({ taskId, repo, claim })) return false
+/** Dispatch-time binding: true when the claim is this id's and repo's and the row of this id is OWNABLE; else the refusal
+ *  reason (the claim check's, or `not_ownable`). null = the read failed (no answer). */
+export async function bindWorkerTask(exec: ExecFn, taskId: string, repo: string, claim: unknown): Promise<true | string | null> {
+  const refused = claimRefusal({ taskId, repo, claim })
+  if (refused) return refused
   try {
-    return (await exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId])).rows.length > 0
+    return (await exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId])).rows.length > 0 || "not_ownable"
   } catch {
     return null
   }
@@ -119,7 +121,7 @@ export async function backfillWorkerPrLinks(
     if (typeof r.taskId !== "string" || !TASK_ID_RE.test(r.taskId) || typeof r.repo !== "string" || !REPO_NAME_RE.test(r.repo)) continue
     const { taskId, repo } = r
     const claim = typeof r.handoffClaim === "string" ? r.handoffClaim : null
-    if (!claim || !claimHolds({ taskId, repo, claim }, deps.log)) continue
+    if (!claim || claimRefusal({ taskId, repo, claim }, deps.log)) continue
     if (!await deps.exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId]).then((x) => x.rows.length > 0, () => false)) continue
     const list = await deps.gh(["pr", "list", "--repo", `jaubut/${repo}`, "--head", `dispatch/${taskId}`, "--state", "open", "--json", "url"]).catch(() => null)
     let prs: unknown = null

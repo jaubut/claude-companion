@@ -3,7 +3,7 @@
 #
 #   bin/worker dispatch --task <id> --repo <repo> --prompt "<brief>" [--claim <claim>] [--title "<title>"] [--family claude|codex|gemini] [--model <model>] [--mode auto] [--host local|zettlab|mac]
 #     --claim: the handoff claim `bin/propose --handoff --repo` answered for this id and repo. Without it the worker's
-#     PR never links to the task row (origin unknown); the result's "claim" says verified, refused, pending or absent.
+#     PR never links to the task row (origin unknown); the result's "claim" says verified, claim_refused:<reason>, pending or absent.
 #   bin/worker await --task <id> [--wait-ms 30000] [--host local|zettlab|mac]
 #   bin/worker interrupt --task <id> [--close-worktree] [--host local|zettlab|mac]
 #   bin/worker list [--host local|zettlab|mac]
