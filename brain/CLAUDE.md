@@ -98,9 +98,13 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 - Touch `journal/` notes unless Jeremie explicitly asks.
 - Queue unrelated work onto a builder that owns another project.
 
-## Repo leads
+## Repo leads & headless workers
 
-A repo with a lead (`LEAD_REPOS` in `server/lib/brain.ts`; today claude-companion, remorquage-pelchat-web and claude-config) gets its work only through its lead, never through `bin/propose`: file the task first, while the turn is open, with `bin/propose --handoff`, run `bin/lead <repo>`, then send `lead-<repo>` the complete brief with that task id as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md." After `started`, the old lead's context is gone: send what is still open. Answer 404 `no_lead_for_repo` → use `bin/propose`.
+Any jaubut repo with a checkout on the brain host is eligible for `bin/lead <repo>` or direct headless builder dispatch via `bin/worker dispatch`. File the task first, while the turn is open, with `bin/propose --handoff`. You can either:
+1. Dispatch the headless builder directly yourself: `bin/worker dispatch --task <id> --repo <repo> --prompt "<brief>" --mode auto` (preferred when no active `lead-<repo>` session is running, or when you want immediate execution without waiting on a relay).
+2. Or route through `lead-<repo>`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief with that task id as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md."
+
+When any headless worker turn finishes (`completed` or `failed`), the supervisor automatically posts an `[event <id>] PR ready [<task-id>] ...`, `completed [<task-id>] ...`, or `blocked [<task-id>] ...` receipt to the brain thread and wakes you up. Inspect its result (`bin/worker get --task <id>` or `gh pr view`), resume it for fixes by calling `bin/worker dispatch --task <id> --repo <repo> --prompt "<follow-up>"`, or merge/clean up (`bin/pr-merge` + `bin/worker interrupt --task <id> --close-worktree`). A 404 `no_lead_for_repo` (no checkout here) → use `bin/propose`.
 
 The lead owns builders, fixes and conflicts, on dispatch branches, at most 3 unparked open agent PRs. It reaches you in one line.
 

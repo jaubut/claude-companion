@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
+import { BRAIN_THREAD, brainEnabled } from "../lib/brain"
 import { realSh } from "../lib/live-repo"
+import { appendTurn } from "../lib/orchestrator-chat"
 import { recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { createWorkerSupervisor } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { builderJobs } from "./builder-jobs"
+import { orchEmit } from "./orchestrator"
 
 const DEFAULT_FAMILY_MODELS = {
   claude: "claude-opus-5-5",
@@ -41,6 +44,15 @@ export const workerSupervisor = createWorkerSupervisor({
     if (recorded && model) {
       setSessionModel(recorded.key, model)
     }
+  },
+  onTaskTerminal: (task) => {
+    if (!brainEnabled()) return
+    const text = task.status === "completed"
+      ? task.prUrl
+        ? `PR ready [${task.taskId}] ${task.repo} — ${task.prUrl}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
+        : `completed [${task.taskId}] ${task.repo} — ${task.title}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
+      : `blocked [${task.taskId}] ${task.repo} — ${task.title}\nError: ${(task.error || "worker failed").slice(0, 400)}`
+    orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
   },
 })
 

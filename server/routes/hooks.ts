@@ -525,20 +525,29 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       victims = listSessions().filter((s) => s.pid === pid)
       by = "pid"
     }
-    const removedKeys = victims.map((s) => s.key).filter((k) => removeSessionByKey(k))
+    const headlessVictims = victims.filter((s) => s.herdrPane?.startsWith("headless:"))
+    for (const h of headlessVictims) {
+      recordSession({ ...h, agentStatus: "idle" }, { sessionIdConfirmed: true })
+    }
+    const removableVictims = victims.filter((s) => !s.herdrPane?.startsWith("headless:"))
+    const removedKeys = removableVictims.map((s) => s.key).filter((k) => removeSessionByKey(k))
     for (const k of removedKeys) autoCompactor.forget(k)
-    for (const v of victims) herdrSessionGone(v, listSessions, body.reason ?? "")
+    for (const v of removableVictims) herdrSessionGone(v, listSessions, body.reason ?? "")
     const removed = removedKeys.length > 0
     {
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const magenta = "\x1b[35m"
       companionLog(removed
         ? `${magenta}session end${reset} removed ${removedKeys.join(", ")} ${dim}(by ${by}, reason=${body.reason ?? "-"})${reset}`
+        : headlessVictims.length > 0
+        ? `${magenta}session end${reset} ${dim}headless turn finished for ${headlessVictims.map((h) => h.label || h.key).join(", ")} → idle (reason=${body.reason ?? "-"})${reset}`
         : `${magenta}session end${reset} ${dim}no session matched sid=${sid.slice(0, 8) || "?"} pid=${pid || "?"} — nothing removed (reason=${body.reason ?? "-"})${reset}`)
     }
     closeQuestionsFor(body.session_id, undefined, "expired", "session ended", "session_end")
     closeApprovalsFor({ sessionId: body.session_id }, "session ended", "session_end")
-    forgetSession({ tty, sessionId: body.session_id, cwd })
-    for (const id of new Set([sid, ...victims.map((v) => v.sessionId)])) if (id) gauge.drop(id)
+    if (headlessVictims.length === 0) {
+      forgetSession({ tty, sessionId: body.session_id, cwd })
+    }
+    for (const id of new Set([sid, ...removableVictims.map((v) => v.sessionId)])) if (id) gauge.drop(id)
     // `/exit` (and `/clear`, which ends the old session first) fire no
     // UserPromptSubmit; the session ending is their proof of submission.
     noteSessionBoundary({ sessionId: body.session_id, tty, pane: tmuxPane })

@@ -170,6 +170,7 @@ export interface WorkerSupervisorDeps {
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
+  onTaskTerminal?(task: SupervisedTaskSnapshot): void
 }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
@@ -378,7 +379,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         if (savedIdentity && currentIdentity !== null && currentIdentity === savedIdentity) {
           killPid(rawPid, "SIGTERM")
           if (isPidAlive(rawPid)) { survivingPid = rawPid; survivingIdentity = savedIdentity }
-        } else if (currentIdentity === null) { survivingPid = rawPid; survivingIdentity = savedIdentity }
+        } else if (currentIdentity === null || !savedIdentity) { survivingPid = rawPid; survivingIdentity = savedIdentity } // unknown identity != exited: group stays reserved
         dirty = true
       } else if (rawPid !== null) dirty = true
       if (wasRunning) dirty = true
@@ -617,6 +618,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 }
               }
               savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
+              try { deps.onTaskTerminal?.(toSnapshot(task)) } catch { /* best effort */ }
             },
           })
         } catch (err) {
