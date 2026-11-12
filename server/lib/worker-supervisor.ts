@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -78,6 +78,27 @@ export function defaultGetPidIdentity(pid: number): string | null {
     const out = (ps.stdout ?? "").trim()
     return ps.status === 0 && out ? `ps:${pid}:${out}` : null
   } catch { return null }
+}
+
+/**
+ * Claude Code's Linux sandbox ro-binds /dev/null over `.git/config.lock` of the repo a worktree belongs to (hard-coded
+ * in the CLI, no setting turns it off). A sandbox killed mid-command leaves that mount point on the host as a 0-byte
+ * 0444 file, and every later `git config` write there fails ("could not lock config file"). Remove it unless some live
+ * process still has it open or mounted. Without /proc (macOS, where the sandbox doesn't do this) it is left alone.
+ */
+export function clearStaleGitConfigLock(repoDir: string): void {
+  const lock = join(repoDir, ".git", "config.lock")
+  try {
+    const st = statSync(lock)
+    if (!st.isFile() || st.size !== 0 || (st.mode & 0o222) !== 0) return
+    const mountPoint = ` ${lock.replace(/ /g, "\\040")} `
+    for (const pid of readdirSync("/proc")) {
+      if (!/^\d+$/.test(pid)) continue
+      try { if (readFileSync(`/proc/${pid}/mountinfo`, "utf8").includes(mountPoint)) return } catch { /* gone or not ours */ }
+      try { for (const fd of readdirSync(`/proc/${pid}/fd`)) if (readlinkSync(`/proc/${pid}/fd/${fd}`) === lock) return } catch { /* gone or not ours */ }
+    }
+    rmSync(lock, { force: true })
+  } catch { /* no stub, or no /proc */ }
 }
 
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
@@ -246,19 +267,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
   }
 
-  /** Remove 0-byte read-only (0444) `.git/config.lock` mount stubs left behind by bwrap `--ro-bind /dev/null` on the host repo. */
-  function clearEmptyReadOnlyGitConfigLock(repoDir: string): void {
-    try {
-      const lock = join(repoDir, ".git", "config.lock")
-      const st = statSync(lock)
-      if (st.isFile() && st.size === 0 && (st.mode & 0o222) === 0) {
-        rmSync(lock, { force: true })
-      }
-    } catch { /* ignore */ }
-  }
+  for (const dir of new Set([...tasks.values()].map((t) => t.repoDir))) clearStaleGitConfigLock(dir)
 
   async function ensureWorktree(repoDir: string, repo: string, taskId: string, ownedByTask: boolean): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
-    clearEmptyReadOnlyGitConfigLock(repoDir)
+    clearStaleGitConfigLock(repoDir)
     const wtRoot = join(deps.home, "apps", "wt", repo)
     const worktree = join(wtRoot, taskId)
     const branch = `dispatch/${taskId}`
@@ -403,7 +415,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               if (clean) { task.stderrTail.push(clean); if (task.stderrTail.length > 10) task.stderrTail.shift() }
             },
             onExit(code, sig) {
-              clearEmptyReadOnlyGitConfigLock(task.repoDir)
+              clearStaleGitConfigLock(task.repoDir)
               if (settled) return
               settled = true; resolveExit()
               if (task.activeTurn !== myTurn) return
@@ -518,7 +530,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         let worktreeRemoved = false
         let note: string | undefined
         if (opts.closeWorktree && existsSync(t.worktree)) {
-          clearEmptyReadOnlyGitConfigLock(t.repoDir)
+          clearStaleGitConfigLock(t.repoDir)
           const statusRes = await deps.sh("git", ["-C", t.worktree, "status", "--porcelain"], { cwd: t.worktree, timeoutMs: 10_000 })
           if (!statusRes.ok || statusRes.out.trim() !== "") {
             note = "worktree kept: uncommitted changes present"
